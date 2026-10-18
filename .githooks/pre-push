@@ -26,6 +26,10 @@ run_without_git_local_env() {
   )
 }
 
+ensure_server_deps() {
+  (cd "$REPO_ROOT/server" && node scripts/ensure-installed-deps.mjs)
+}
+
 run_self_test() {
   bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL"
   bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts"
@@ -373,8 +377,10 @@ run_mac_gate() {
 echo "pre-push: $CHANGED_COUNT changed paths; server=$SERVER_MODE apple=$APPLE_MODE mac=$MAC_CHANGED harness=$HARNESS_CHANGED"
 
 if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 ]]; then
-  if [[ ! -f "$REPO_ROOT/server/node_modules/.package-lock.json" ]]; then
-    echo "[server] FAILED: No dependencies installed in server/. Run npm ci in server/ and retry." >&2
+  # Install server deps from this worktree's lockfile before any lane starts, so
+  # lanes never race on node_modules. Fails the hook if deps cannot be synced.
+  if ! run_without_git_local_env ensure_server_deps; then
+    echo "[server] FAILED: server dependencies are not in sync with package-lock.json." >&2
     exit 1
   fi
 fi
