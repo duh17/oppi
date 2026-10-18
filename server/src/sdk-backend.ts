@@ -99,7 +99,7 @@ import { resolveSessionWorkRoot } from "./session-work-root.js";
 import { resolveSandboxGuestCwd } from "./workspace-folder.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
 import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "./oppi-docs.js";
-import type { VmSecretDefinition } from "./gondolin-manager.js";
+import type { GondolinManager } from "./gondolin-manager.js";
 import {
   readVmTextFileWithin,
   SANDBOX_CONTEXT_FILE_NAMES,
@@ -961,8 +961,7 @@ export class SdkBackend implements AgentBackend {
   private static readonly DEFAULT_FOLLOW_UP_MODE = "one-at-a-time" as const;
   /** Maximum graceful cleanup time within the documented stop bound. */
   static readonly RUNTIME_LIFECYCLE_TIMEOUT_MS = SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private static _gondolinManager: any;
+  private static _gondolinManager: GondolinManager | undefined;
 
   /** Shared VM owner for both managed backends; never create a parallel VM. */
   static async ensureSandboxWorkspaceVm(
@@ -970,8 +969,17 @@ export class SdkBackend implements AgentBackend {
     hostCwd: string,
   ): Promise<GondolinVm> {
     const { GondolinManager, isQemuAvailable } = await import("./gondolin-manager.js");
-    if (!(await isQemuAvailable())) throw new Error("Sandbox mode requires QEMU on the server");
+    if (!(await isQemuAvailable())) {
+      throw new Error(
+        "Sandbox mode requires QEMU but it is not installed on the server. " +
+          "Install with: brew install qemu (macOS) or apt install qemu-system (Linux)",
+      );
+    }
+    // Lazy singleton — shared across all sessions for VM reuse.
     SdkBackend._gondolinManager ??= new GondolinManager();
+    // Do not inject Oppi/pi provider credentials into the guest by default.
+    // The host process owns model calls; sandbox commands must opt into any
+    // future secret bridge explicitly instead of inheriting LLM API keys.
     return SdkBackend._gondolinManager.ensureWorkspaceVm(
       workspace,
       hostCwd,
@@ -983,22 +991,22 @@ export class SdkBackend implements AgentBackend {
 
   /** Stop one workspace VM. No-op when sandbox mode has never booted. */
   static async stopWorkspaceVm(workspaceId: string): Promise<void> {
-    await SdkBackend._gondolinManager?.stopWorkspaceVm?.(workspaceId);
+    await SdkBackend._gondolinManager?.stopWorkspaceVm(workspaceId);
   }
 
   /** Stop every workspace VM. Wired from server shutdown. */
   static async stopAllWorkspaceVms(): Promise<void> {
-    await SdkBackend._gondolinManager?.stopAll?.();
+    await SdkBackend._gondolinManager?.stopAll();
   }
 
   /** Cancel idle VM teardown while this sandbox session is busy. */
   static noteWorkspaceBusy(workspaceId: string, sessionId: string): void {
-    SdkBackend._gondolinManager?.noteWorkspaceBusy?.(workspaceId, sessionId);
+    SdkBackend._gondolinManager?.noteWorkspaceBusy(workspaceId, sessionId);
   }
 
   /** Start idle VM teardown when this sandbox session is ready/stopped/error. */
   static noteWorkspaceIdle(workspaceId: string, sessionId: string): void {
-    SdkBackend._gondolinManager?.noteWorkspaceIdle?.(workspaceId, sessionId);
+    SdkBackend._gondolinManager?.noteWorkspaceIdle(workspaceId, sessionId);
   }
 
   private runtime: AgentSessionRuntime;
@@ -1309,26 +1317,7 @@ export class SdkBackend implements AgentBackend {
       // The workspace VM comes before the loader: Skills and context files are what it mounts
       // and serves, whichever session booted it.
       if (sandboxMode && workspace) {
-        const { isQemuAvailable, GondolinManager } = await import("./gondolin-manager.js");
-        if (!(await isQemuAvailable())) {
-          throw new Error(
-            "Sandbox mode requires QEMU but it is not installed on the server. " +
-              "Install with: brew install qemu (macOS) or apt install qemu-system (Linux)",
-          );
-        }
-        // Lazy singleton — shared across all sessions for VM reuse.
-        SdkBackend._gondolinManager ??= new GondolinManager();
-        // Do not inject Oppi/pi provider credentials into the guest by default.
-        // The host process owns model calls; sandbox commands must opt into any
-        // future secret bridge explicitly instead of inheriting LLM API keys.
-        const secrets: Record<string, VmSecretDefinition> = {};
-        const vm: GondolinVm = await SdkBackend._gondolinManager.ensureWorkspaceVm(
-          workspace,
-          hostCwd,
-          secrets,
-          workspace.sandboxConfig?.env,
-          guestCwd,
-        );
+        const vm = await SdkBackend.ensureSandboxWorkspaceVm(workspace, hostCwd);
         sandboxVm = vm;
         // Skills come only through the VM, as for durable sandbox sessions: never a host walk
         // or read of the guest-writable workspace.

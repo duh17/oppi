@@ -8,16 +8,16 @@
 export function notifySandboxWorkspaceActivity(
   session: { id: string; workspaceId?: string; status: string },
   workspace: { runtime?: string } | undefined,
-  vm?: {
-    noteWorkspaceBusy?(workspaceId: string, sessionId: string): void;
-    noteWorkspaceIdle?(workspaceId: string, sessionId: string): void;
-  } | null,
+  vm: {
+    noteWorkspaceBusy(workspaceId: string, sessionId: string): void;
+    noteWorkspaceIdle(workspaceId: string, sessionId: string): void;
+  },
 ): void {
   if (!session.workspaceId || workspace?.runtime !== "sandbox") return;
   // Ready/starting/stopping sessions still hold the VM in the session runtime.
   // Only stopped/error may arm idle teardown.
   if (session.status === "stopped" || session.status === "error") {
-    vm?.noteWorkspaceIdle?.(session.workspaceId, session.id);
+    vm.noteWorkspaceIdle(session.workspaceId, session.id);
     return;
   }
   if (
@@ -26,7 +26,7 @@ export function notifySandboxWorkspaceActivity(
     session.status === "starting" ||
     session.status === "stopping"
   ) {
-    vm?.noteWorkspaceBusy?.(session.workspaceId, session.id);
+    vm.noteWorkspaceBusy(session.workspaceId, session.id);
   }
 }
 

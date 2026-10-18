@@ -73,10 +73,6 @@ describe("notifySandboxWorkspaceActivity", () => {
       vm,
     );
     notifySandboxWorkspaceActivity({ id: "s1", status: "busy" }, { runtime: "sandbox" }, vm);
-    notifySandboxWorkspaceActivity(
-      { id: "s1", workspaceId: "ws-1", status: "ready" },
-      { runtime: "sandbox" },
-    );
 
     expect(vm.noteWorkspaceBusy).not.toHaveBeenCalled();
     expect(vm.noteWorkspaceIdle).not.toHaveBeenCalled();
