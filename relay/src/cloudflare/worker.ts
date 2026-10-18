@@ -154,6 +154,10 @@ export class ApnsTokenObject extends DurableObject<Env> {
     return previous;
   }
 
+  async current(): Promise<string | null> {
+    return (await this.ctx.storage.get<string>("registrationId")) ?? null;
+  }
+
   async unbind(registrationId: string): Promise<void> {
     if ((await this.ctx.storage.get<string>("registrationId")) === registrationId) {
       await this.ctx.storage.deleteAll();
@@ -212,6 +216,10 @@ class DurableObjectRelayStore implements RelayStore {
 
   bindApnsToken(apnsToken: string, registrationId: string): Promise<string | null> {
     return this.apnsToken(apnsToken).bind(registrationId);
+  }
+
+  apnsTokenRegistration(apnsToken: string): Promise<string | null> {
+    return this.apnsToken(apnsToken).current();
   }
 
   unbindApnsToken(apnsToken: string, registrationId: string): Promise<void> {

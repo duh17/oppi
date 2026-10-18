@@ -247,11 +247,12 @@ accepted only with `environment` `sandbox`.
 
 One registration per APNs token: registering a token again deletes the earlier
 registration, its permissions, and their send tokens, and the new registration keeps the
-earlier one's quota counts.
+earlier one's quota counts. An unattested registration never replaces an attested one.
 
 Errors: `400 bad_request`, `400 unknown_field`, `400 challenge_invalid` (unknown, used, or
 expired), `401 attestation_required` (production without an attestation; the challenge
-stays unused), `401 attestation_invalid`, `429 rate_limited`.
+stays unused), `401 attestation_invalid`, `409 registration_conflict` (unattested, and the
+token belongs to an attested registration), `429 rate_limited`.
 
 **Registration-authenticated calls** carry `Authorization: Bearer <registrationSecret>`.
 Attested registrations also carry `X-Oppi-Assertion: <base64 CBOR assertion>` whose

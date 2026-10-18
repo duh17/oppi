@@ -419,6 +419,30 @@ describe("App Attest (node adapter with a test root)", () => {
     expect(harness.apnsRequests.at(-1)?.host).toBe("api.push.apple.com");
   });
 
+  it("refuses an unattested registration for a token an attested registration holds", async () => {
+    const { response, attestation } = await attest("production", { aaguid: "production" });
+    const { registrationId, registrationSecret } = response.json as {
+      registrationId: string;
+      registrationSecret: string;
+    };
+    const address = nextAddress();
+    const challenge = (await call(harness, "POST", "/v1/challenge", { address })).json.challenge;
+    const intruder = await call(harness, "POST", "/v1/registrations", {
+      address,
+      body: { challenge, apnsToken: APNS_TOKEN, environment: "sandbox", attestation: null },
+    });
+    expect(intruder).toMatchObject({ status: 409, json: { error: "registration_conflict" } });
+
+    // The phone's own registration still mints send tokens.
+    const path = `/v1/registrations/${registrationId}/permissions`;
+    const minted = await call(harness, "POST", path, {
+      bearer: registrationSecret,
+      rawBody: "{}",
+      headers: { "x-oppi-assertion": await assertionHeader(attestation.credential, "POST", path, "{}", 1) },
+    });
+    expect(minted.status).toBe(201);
+  });
+
   it.each<[string, Partial<AttestationOptions>, "sandbox" | "production"]>([
     ["a development key for production", { aaguid: "development" }, "production"],
     ["an unknown AAGUID", { aaguid: "bogus" }, "sandbox"],

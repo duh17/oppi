@@ -90,6 +90,13 @@ export class MemoryRelayStore implements RelayStore {
     return null;
   }
 
+  async apnsTokenRegistration(apnsToken: string): Promise<string | null> {
+    for (const record of this.registrations.values()) {
+      if (record.apnsToken === apnsToken) return record.id;
+    }
+    return null;
+  }
+
   /** Nothing to forget: the binding is the registration itself. */
   async unbindApnsToken(): Promise<void> {}
 

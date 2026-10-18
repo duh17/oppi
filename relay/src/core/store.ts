@@ -157,6 +157,8 @@ export interface RelayStore {
    * replaces, if any. One phone holds one registration, so it holds one quota.
    */
   bindApnsToken(apnsToken: string, registrationId: string): Promise<string | null>;
+  /** The registration that holds `apnsToken` now, if any. */
+  apnsTokenRegistration(apnsToken: string): Promise<string | null>;
   /** Forget the token's binding when it still names `registrationId`. */
   unbindApnsToken(apnsToken: string, registrationId: string): Promise<void>;
   getRegistration(id: string): Promise<RegistrationRecord | null>;

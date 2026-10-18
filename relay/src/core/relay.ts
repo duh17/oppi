@@ -296,6 +296,15 @@ export function createRelayHandler(deps: RelayDeps): (
       permissions: [],
       quota: emptyQuota(),
     };
+    // Anyone who learns a phone's APNs token can register it unattested in sandbox. That must
+    // not delete the phone's attested registration and cut off its pushes.
+    if (!record.attested) {
+      const holderId = await store.apnsTokenRegistration(apnsToken);
+      if (holderId && (await store.getRegistration(holderId))?.attested) {
+        log("relay.registration_refused", { reason: "attested_holder" });
+        throw new HttpError(409, "registration_conflict");
+      }
+    }
     // Registering again replaces the phone's earlier registration and keeps its counts, so
     // a new registration never brings a fresh daily quota.
     const replacedId = await store.bindApnsToken(apnsToken, record.id);
