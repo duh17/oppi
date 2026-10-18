@@ -90,12 +90,12 @@ final class TestEventPipeline {
         case .toolUpdate(let tool, let args, let toolCallId, let callSegments, let inputPresentation, let display, let outputPresentation, let parent):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.update(sessionId: sessionId, tool: tool, args: args, toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation, parentToolCallId: parent))
-        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details, let outputAvailability, let parent, let outputStream):
+        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details, let outputAvailability, let parent):
             conn.silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details, outputAvailability: outputAvailability, parentToolCallId: parent, outputStream: outputStream))
-        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, let parent, let outputStream):
+            coalescer.receive(toolCallCorrelator.output(sessionId: sessionId, output: output, isError: isError, toolCallId: toolCallId, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details, outputAvailability: outputAvailability, parentToolCallId: parent))
+        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, let parent):
             conn.silenceWatchdog.recordEvent()
-            coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments, nestedCalls: nestedCalls, outputPresentation: outputPresentation, outputAvailability: outputAvailability, parentToolCallId: parent, outputStream: outputStream))
+            coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments, nestedCalls: nestedCalls, outputPresentation: outputPresentation, outputAvailability: outputAvailability, parentToolCallId: parent))
         case .customCard:
             for event in ServerMessageEffects.timelineEvents(for: message, sessionId: sessionId) {
                 coalescer.receive(event)

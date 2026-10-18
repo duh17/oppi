@@ -226,8 +226,8 @@ enum ServerMessage: Sendable, Equatable {
     // Tool execution
     case toolStart(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil, parentToolCallId: String? = nil)
     case toolUpdate(tool: String, args: [String: JSONValue], toolCallId: String?, callSegments: [StyledSegment]?, inputPresentation: ToolInputPresentation? = nil, display: ToolDisplay? = nil, outputPresentation: ToolOutputPresentation? = nil, parentToolCallId: String? = nil)
-    case toolOutput(output: String, isError: Bool, toolCallId: String?, mode: ToolOutputMode, truncated: Bool, totalBytes: Int?, details: JSONValue?, outputAvailability: ToolOutputAvailability? = nil, parentToolCallId: String? = nil, outputStream: ToolOutputStreamChunk? = nil)
-    case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?, nestedCalls: NestedToolCalls? = nil, outputPresentation: ToolOutputPresentation? = nil, outputAvailability: ToolOutputAvailability? = nil, parentToolCallId: String? = nil, outputStream: ToolOutputStreamEnd? = nil)
+    case toolOutput(output: String, isError: Bool, toolCallId: String?, mode: ToolOutputMode, truncated: Bool, totalBytes: Int?, details: JSONValue?, outputAvailability: ToolOutputAvailability? = nil, parentToolCallId: String? = nil)
+    case toolEnd(tool: String, toolCallId: String?, details: JSONValue?, isError: Bool, resultSegments: [StyledSegment]?, nestedCalls: NestedToolCalls? = nil, outputPresentation: ToolOutputPresentation? = nil, outputAvailability: ToolOutputAvailability? = nil, parentToolCallId: String? = nil)
 
     // Message queue
     case queueState(queue: MessageQueueState)
@@ -440,7 +440,7 @@ extension ServerMessage: Decodable {
         // tool_start / tool_update / tool_end
         case tool, args, toolCallId, parentToolCallId, details, callSegments, resultSegments, inputPresentation, nestedCalls, display, outputPresentation, outputAvailability
         // tool_output
-        case output, isError, mode, truncated, totalBytes, outputStream
+        case output, isError, mode, truncated, totalBytes
         // turn_ack
         case stage, clientTurnId, duplicate
         // error
@@ -620,8 +620,7 @@ extension ServerMessage: Decodable {
             let details = try c.decodeIfPresent(JSONValue.self, forKey: .details)
             self = .toolOutput(output: output, isError: isErr, toolCallId: tcId, mode: mode, truncated: truncated, totalBytes: totalBytes, details: details,
                                outputAvailability: try c.decodeIfPresent(ToolOutputAvailability.self, forKey: .outputAvailability),
-                               parentToolCallId: try? c.decodeIfPresent(String.self, forKey: .parentToolCallId),
-                               outputStream: try c.decodeIfPresent(ToolOutputStreamChunk.self, forKey: .outputStream))
+                               parentToolCallId: try? c.decodeIfPresent(String.self, forKey: .parentToolCallId))
 
         case "tool_end":
             let tool = try c.decode(String.self, forKey: .tool)
@@ -633,8 +632,7 @@ extension ServerMessage: Decodable {
                             nestedCalls: try c.decodeIfPresent(NestedToolCalls.self, forKey: .nestedCalls),
                             outputPresentation: try c.decodeIfPresent(ToolOutputPresentation.self, forKey: .outputPresentation),
                             outputAvailability: try c.decodeIfPresent(ToolOutputAvailability.self, forKey: .outputAvailability),
-                            parentToolCallId: try? c.decodeIfPresent(String.self, forKey: .parentToolCallId),
-                            outputStream: try c.decodeIfPresent(ToolOutputStreamEnd.self, forKey: .outputStream))
+                            parentToolCallId: try? c.decodeIfPresent(String.self, forKey: .parentToolCallId))
 
         case "queue_state":
             let queue = try c.decode(MessageQueueState.self, forKey: .queue)

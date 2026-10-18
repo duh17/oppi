@@ -26,7 +26,7 @@ struct LiveNestedToolCalls {
             id = child; declaredParent = parent; name = tool; args = arguments; display = label
         case .toolOutput(let payload):
             id = payload.toolEventId; declaredParent = payload.parentToolCallId
-        case .toolEnd(_, let child, _, let isError, _, _, _, _, let parent, _):
+        case .toolEnd(_, let child, _, let isError, _, _, _, _, let parent):
             if parent == nil, parents[child] == nil {
                 completedParents.insert(child)
                 return nil

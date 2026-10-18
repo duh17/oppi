@@ -1470,7 +1470,7 @@ final class ChatSessionManager {
              .queueItemStarted where replicaOwnsTimeline:
             break
 
-        case .toolEnd(_, _, let details, let isError, _, _, let outputPresentation, _, _, _)
+        case .toolEnd(_, _, let details, let isError, _, _, let outputPresentation, _, _)
             where replicaOwnsTimeline:
             if !isError, outputPresentation?.settingEffect == "voiceReplyMode" {
                 effectsStatePort.applyVoiceReplyModeDetails(details, sessionId: sessionId)
@@ -1488,15 +1488,15 @@ final class ChatSessionManager {
                 toolCallId: toolCallId, callSegments: callSegments, inputPresentation: inputPresentation, display: display, outputPresentation: outputPresentation, parentToolCallId: parent
             ))
 
-        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details, let outputAvailability, let parent, let outputStream):
+        case .toolOutput(let output, let isError, let toolCallId, let mode, let truncated, let totalBytes, let details, let outputAvailability, let parent):
             coalescer.receive(toolCallCorrelator.output(
                 sessionId: sessionId, output: output, isError: isError,
                 toolCallId: toolCallId, mode: mode,
                 truncated: truncated, totalBytes: totalBytes,
-                details: details, outputAvailability: outputAvailability, parentToolCallId: parent, outputStream: outputStream
+                details: details, outputAvailability: outputAvailability, parentToolCallId: parent
             ))
 
-        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, let parent, let outputStream):
+        case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, let parent):
             // Only registry-declared setting producers may mutate preferences.
             // The payload still validates kind/mode; arbitrary result details cannot opt in.
             if !isError, outputPresentation?.settingEffect == "voiceReplyMode" {
@@ -1506,7 +1506,7 @@ final class ChatSessionManager {
                 sessionId: sessionId, toolCallId: toolCallId,
                 details: details, isError: isError,
                 resultSegments: resultSegments, nestedCalls: nestedCalls,
-                outputPresentation: outputPresentation, outputAvailability: outputAvailability, parentToolCallId: parent, outputStream: outputStream
+                outputPresentation: outputPresentation, outputAvailability: outputAvailability, parentToolCallId: parent
             ))
 
         case .messageEnd(let role, let content, _, let entryId, let origin):

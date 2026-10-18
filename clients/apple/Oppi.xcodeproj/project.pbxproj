@@ -440,7 +440,6 @@
 		35009184390672059B35386A /* ToolCallFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCB8887E41CCBAC0B9A146C2 /* ToolCallFormattingTests.swift */; };
 		350CFC58BF9E6567811E7CF5 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D70BF27FE1793A085A826C /* APIClient.swift */; };
 		354CAA9516652F76D5066F27 /* NearbyPairingInviteMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 036E70B04782CB208DE18873 /* NearbyPairingInviteMessage.swift */; };
-		35550E1246123668A67182C1 /* ToolOutputStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E96B2C79FC835E69B50086 /* ToolOutputStream.swift */; };
 		35E546DC4684A0EE0B924C05 /* QuickSessionLaunchRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1558C763E23EC22ADD01AE4 /* QuickSessionLaunchRouting.swift */; };
 		35F0CD95538D2E1B21D053B9 /* AudioScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACC79E91DB825A9B99333FA1 /* AudioScreenshotPreview.swift */; };
 		35FB056E18A60650934292E3 /* OrgToMarkdownConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0DB040FE4B219823572802 /* OrgToMarkdownConverter.swift */; };
@@ -1092,7 +1091,6 @@
 		8400815B59E1F88006EB49D4 /* SessionRowMetricsFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7F12D2F846F78355EE4902B /* SessionRowMetricsFormattingTests.swift */; };
 		841EC03CB73287F5CD587A0B /* ChatSessionManager+iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF5C50651C26D2AE36A4926D /* ChatSessionManager+iOS.swift */; };
 		84240E956D453D3B88647D97 /* ToolPresentationConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43BB23251B4592B564F31A88 /* ToolPresentationConfigTests.swift */; };
-		84370F689C89D3BCD4B83C5D /* ToolOutputStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E96B2C79FC835E69B50086 /* ToolOutputStream.swift */; };
 		846408D30CCBE7BC28D31E4F /* MermaidGitGraphParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C2E6841805BFA525D967F81 /* MermaidGitGraphParser.swift */; };
 		848577E8469BEE7E9AE2424F /* MermaidSequenceParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84585D71B074E4FFDBF65F72 /* MermaidSequenceParser.swift */; };
 		84ABC61E8FD4BAD2D15DA5B0 /* ServerConnection+FileSuggestions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 344D9871BCB7017A5F2690E3 /* ServerConnection+FileSuggestions.swift */; };
@@ -3085,7 +3083,6 @@
 		778F9FC9C3C9902DC967CD47 /* ExtensionNotifyChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionNotifyChip.swift; sourceTree = "<group>"; };
 		77CBDFC89D9B49147A2CB24C /* AppRootLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootLayer.swift; sourceTree = "<group>"; };
 		77E6E5775F430320DD5E4550 /* OppiControlWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OppiControlWidget.entitlements; sourceTree = "<group>"; };
-		77E96B2C79FC835E69B50086 /* ToolOutputStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolOutputStream.swift; sourceTree = "<group>"; };
 		77EA7280CA7643FDB0F72E33 /* ServerSkillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSkillsView.swift; sourceTree = "<group>"; };
 		786983930627F07708352C26 /* ChatFileBrowserPanelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFileBrowserPanelTests.swift; sourceTree = "<group>"; };
 		7870E795CD795EC9D1997B2F /* DeviceResourceSamplerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceResourceSamplerTests.swift; sourceTree = "<group>"; };
@@ -5255,7 +5252,6 @@
 				9B7E7DC726B62185774F3F75 /* StyledSegment.swift */,
 				D305AF56C4E1F4185F6C4749 /* ThinkingLevelMenuSource.swift */,
 				EA1880D688ECE853047D3181 /* ToolCallPresentation.swift */,
-				77E96B2C79FC835E69B50086 /* ToolOutputStream.swift */,
 				71447EE5471DE56B216C7715 /* TraceEvent.swift */,
 				C4CF2DCA9F90102E5D75300B /* Workspace.swift */,
 				57F49C65D24FAC0EB9145592 /* WorkspaceFiles.swift */,
@@ -8125,7 +8121,6 @@
 				765329F758983E0FA45EF651 /* ToolDetailsStore.swift in Sources */,
 				00BD8885A1D3E57C2BA99D28 /* ToolFileInspection.swift in Sources */,
 				AA98A40902CB817DFD71D847 /* ToolOutputStore.swift in Sources */,
-				84370F689C89D3BCD4B83C5D /* ToolOutputStream.swift in Sources */,
 				6FCA6D7BD5EBFBCD6E8970D2 /* ToolSegmentStore.swift in Sources */,
 				5B1AB55BA246DDD5BF090DC0 /* TraceEvent.swift in Sources */,
 				C57364AB9D56C75100FCE072 /* TreeSitterHighlighter.swift in Sources */,
@@ -9617,7 +9612,6 @@
 				15370E00318C7C05002BEF44 /* ToolInspectionPreviewFixture.swift in Sources */,
 				54DA3561FCC6D84F38C04ED9 /* ToolOutputSidecar.swift in Sources */,
 				4D1D18C0DCA2A4E785CF7D40 /* ToolOutputStore.swift in Sources */,
-				35550E1246123668A67182C1 /* ToolOutputStream.swift in Sources */,
 				B6D3AEA81E28082C1979EF0F /* ToolPresentationBuilder.swift in Sources */,
 				25A33BFAF3BF81F3168E90B2 /* ToolRowAudioController.swift in Sources */,
 				38DBE9D35FEE299D9AD77C4F /* ToolRowCodeRenderStrategy.swift in Sources */,

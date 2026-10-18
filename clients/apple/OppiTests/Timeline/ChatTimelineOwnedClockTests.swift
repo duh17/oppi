@@ -17,8 +17,7 @@ struct ChatTimelineOwnedClockTests {
             .textDelta(sessionId: fixture.sessionId, delta: "Hello"),
             .toolStart(sessionId: fixture.sessionId, toolEventId: "terminal", tool: "bash", args: ["command": .string("emit")],
                 outputPresentation: .init(kind: "terminal")),
-            .toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: "ready\n", isError: false,
-                outputStream: .init(epoch: 1, offset: 0, bytes: 6)))
+            .toolOutput(.init(sessionId: fixture.sessionId, toolEventId: "terminal", output: "ready\n", isError: false))
         ])
         #expect(fixture.reducer.toolOutputStore.fullOutput(for: "terminal") == "ready\n")
         #expect(await waitForTimelineCondition(timeoutMs: 1_000) {

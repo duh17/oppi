@@ -1696,7 +1696,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         switch event {
         case .toolStart(_, let id, _, _, _, _, _, let presentation, _),
              .toolUpdate(_, let id, _, _, _, _, _, let presentation, _),
-             .toolEnd(_, let id, _, _, _, _, let presentation, _, _, _):
+             .toolEnd(_, let id, _, _, _, _, let presentation, _, _):
             if let presentation { toolArgsStore.setOutputPresentation(presentation, for: id) }
         default: break
         }
@@ -1843,7 +1843,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return outputDidChange || previewDidChange || toolDetailsStore.details(for: payload.toolEventId) != previousDetails
                 || toolArgsStore.outputAvailability(for: payload.toolEventId) != previousAvailability
 
-        case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, _, _):
+        case .toolEnd(_, let toolEventId, let details, let isError, let resultSegments, let nestedCalls, let outputPresentation, let outputAvailability, _):
             let factsChanged = (outputPresentation != nil && toolArgsStore.outputPresentation(for: toolEventId) != outputPresentation)
                 || (outputAvailability != nil && toolArgsStore.outputAvailability(for: toolEventId) != outputAvailability)
             if let outputPresentation { toolArgsStore.setOutputPresentation(outputPresentation, for: toolEventId) }
