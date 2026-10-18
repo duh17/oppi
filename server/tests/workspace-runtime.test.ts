@@ -270,6 +270,31 @@ describe("WorkspaceRuntime", () => {
       expect(order).toEqual([1, 2]);
     });
 
+    it("keeps serializing a session released while its lock is held", async () => {
+      const order: string[] = [];
+      const firstEntered = deferred();
+      const releaseFirst = deferred();
+
+      // A failed start and a session end both release the slot inside the session lock.
+      const p1 = rt.withSessionLock("s1", async () => {
+        rt.releaseSession({ workspaceId: W, sessionId: "s1" });
+        firstEntered.resolve();
+        await releaseFirst.promise;
+        order.push("first");
+      });
+      await firstEntered.promise;
+
+      const p2 = rt.withSessionLock("s1", async () => {
+        order.push("second");
+      });
+      await flushMicrotasks();
+      expect(order).toEqual([]);
+
+      releaseFirst.resolve();
+      await Promise.all([p1, p2]);
+      expect(order).toEqual(["first", "second"]);
+    });
+
     it("withSessionLock allows parallel for different sessions", async () => {
       const order: number[] = [];
       const firstEntered = deferred();

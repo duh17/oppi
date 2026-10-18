@@ -166,13 +166,24 @@ export class WorkspaceRuntime {
    * Prevents concurrent start/stop/resume on the same session.
    */
   async withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
-    const key = sessionId;
-    let mutex = this.sessionMutexes.get(key);
+    let mutex = this.sessionMutexes.get(sessionId);
     if (!mutex) {
       mutex = new Mutex();
-      this.sessionMutexes.set(key, mutex);
+      this.sessionMutexes.set(sessionId, mutex);
     }
-    return mutex.withLock(fn);
+    try {
+      return await mutex.withLock(fn);
+    } finally {
+      // Drop the entry only when no one holds or waits for it. Deleting a held mutex would let the
+      // next caller lock a fresh one and run alongside the holder.
+      if (
+        !mutex.isLocked &&
+        mutex.queueLength === 0 &&
+        this.sessionMutexes.get(sessionId) === mutex
+      ) {
+        this.sessionMutexes.delete(sessionId);
+      }
+    }
   }
 
   /**
@@ -257,9 +268,6 @@ export class WorkspaceRuntime {
         this.workspaceSlots.delete(wsKey);
       }
     }
-
-    // Clean up per-session mutex to prevent unbounded growth
-    this.sessionMutexes.delete(identity.sessionId);
   }
 
   // ─── Queries ───
