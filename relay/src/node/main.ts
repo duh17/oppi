@@ -11,7 +11,7 @@
  *
  * Environment: OPPI_RELAY_PORT (default 8787), OPPI_RELAY_HOST (default 127.0.0.1),
  * OPPI_RELAY_STORE (JSON file; in memory when unset), OPPI_RELAY_TRUST_FORWARDED_FOR=1 behind
- * a reverse proxy (rate limits use the first X-Forwarded-For address).
+ * one reverse proxy (rate limits use the last X-Forwarded-For address, the one the proxy added).
  */
 
 import { readFileSync } from "node:fs";

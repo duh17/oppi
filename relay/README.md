@@ -100,7 +100,8 @@ OPPI_RELAY_APP_ID=AZAQMY4SPZ.dev.chenda.Oppi OPPI_RELAY_BUNDLE_ID=dev.chenda.Opp
 ```
 
 `OPPI_RELAY_PORT` (default 8787), `OPPI_RELAY_HOST` (default 127.0.0.1), `OPPI_RELAY_STORE`
-(JSON file; memory when unset), and `OPPI_RELAY_TRUST_FORWARDED_FOR=1` behind a reverse proxy.
+(JSON file; memory when unset), and `OPPI_RELAY_TRUST_FORWARDED_FOR=1` behind one reverse proxy.
+Rate limits then use the last `X-Forwarded-For` address, the one that proxy added.
 Put it behind HTTPS; servers accept `http` relays only on loopback.
 
 **Capture mode** records each APNs request it would send instead of contacting Apple, so you

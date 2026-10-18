@@ -215,6 +215,23 @@ describe("node adapter", () => {
     expect((await push(sendToken)).status).toBe(200);
   });
 
+  it("keys address limits on the X-Forwarded-For entry the proxy appended", async () => {
+    harness = await startHarness();
+    const proxied = nextAddress();
+    const madeUp = `osp1.r_${"A".repeat(22)}.p_${"B".repeat(22)}.${"C".repeat(43)}`;
+    // An appending proxy keeps whatever the client sent in front of the address it saw.
+    const push = () =>
+      call(harness, "POST", "/v1/push", {
+        bearer: madeUp,
+        headers: { "x-forwarded-for": `${nextAddress()}, ${proxied}` },
+        body: { envelope: fakeEnvelope() },
+      });
+    for (let index = 0; index < PUSHES_PER_ADDRESS_PER_MINUTE; index += 1) {
+      expect((await push()).status).toBe(410);
+    }
+    expect((await push()).status).toBe(429);
+  });
+
   it("stops an unattested registration at its daily limit until the next UTC day", async () => {
     harness = await startHarness({ now: Date.parse("2026-10-10T00:00:00Z") });
     const sendToken = await mintSendToken(harness, await registerUnattested(harness));

@@ -67,8 +67,9 @@ export async function startNodeRelay(options: NodeRelayOptions): Promise<NodeRel
     void (async () => {
       try {
         const request = await toRequest(req, `http://${host}`);
+        // The proxy appends the peer it saw; anything before it is whatever the client sent.
         const forwarded = options.trustForwardedFor
-          ? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+          ? request.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim()
           : undefined;
         // The address feeds in-memory rate limits only; it is never stored or logged.
         await writeResponse(
