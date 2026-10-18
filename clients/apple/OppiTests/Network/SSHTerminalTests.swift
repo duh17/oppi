@@ -507,8 +507,7 @@ struct SSHTerminalTests {
         #expect(input.hasText)
         var bytes = fixture.bytes.makeAsyncIterator()
         input.insertText("ab")
-        #expect(await bytes.next() == Data("a".utf8))
-        #expect(await bytes.next() == Data("b".utf8))
+        #expect(await bytes.next() == Data("ab".utf8))
         #expect(input.hasText)
         input.deleteBackward()
         #expect(await bytes.next() == Data([127]))
@@ -547,23 +546,105 @@ struct SSHTerminalTests {
         // Writing Tools and similar system edits replace a range.
         let whole = try #require(input.textRange(from: input.beginningOfDocument, to: input.endOfDocument))
         input.replace(whole, withText: "ls\n")
-        // Dictation inserts a phrase in one call. It waits while iOS may
-        // still revise it, and goes before the next input.
+        // Dictation can insert a phrase in one call.
         input.insertText("echo hi\nrm -rf build")
-        #expect(pasted == ["ls\n"])
         input.insertText("\u{1b}[A")
-        #expect(pasted == ["ls\n", "echo hi\nrm -rf build"])
+        #expect(pasted == ["ls\n", "echo hi\nrm -rf build", "\u{1b}[A"])
         // A lone Return from the keyboard is still Enter, and nothing else was sent.
         input.insertText("\n")
-        #expect(pasted == ["ls\n", "echo hi\nrm -rf build", "\u{1b}[A"])
         #expect(await bytes.next() == Data("\r".utf8))
+        // A word the keyboard inserts at once is one write, sent at once.
         input.insertText("a\tb")
-        grid.settlePhrase()
-        #expect(await bytes.next() == Data("a".utf8))
-        #expect(await bytes.next() == Data("\t".utf8))
-        #expect(await bytes.next() == Data("b".utf8))
+        #expect(await bytes.next() == Data("a\tb".utf8))
         #expect(pasted.count == 3)
         channel.close(reason: "done")
+    }
+
+    @Test func aKeyAfterADictatedPhraseThatAsksFirstIsNotSent() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        var pasted = [String?]()
+        let grid = SSHTerminalGridView(channel: channel, paste: { pasted.append($0) }, followChanged: { _ in })
+        var bytes = fixture.bytes.makeAsyncIterator()
+        grid.insertText("echo")
+        #expect(await bytes.next() == Data("echo".utf8))
+        // Dictation revises its guess; the new words wait.
+        let end = grid.textInputStorage.utf16Count
+        grid.applyTextInput(grid.textInputStorage.replace(
+            utf16Range: (end - 4)..<end, with: "echo hi\nrm -rf build", hardwareKeysDown: false
+        ))
+        #expect(pasted.isEmpty)
+        // Return ends the phrase. The phrase asks first; Return is not sent.
+        grid.insertText("\n")
+        #expect(pasted == [" hi\nrm -rf build"])
+        #expect(channel.key(GHOSTTY_KEY_X, text: "x"))
+        #expect(await bytes.next() == Data("x".utf8))
+        // Nor does a key strip key or a paste go out behind a waiting phrase.
+        grid.insertText("ls")
+        #expect(await bytes.next() == Data("ls".utf8))
+        let next = grid.textInputStorage.utf16Count
+        grid.applyTextInput(grid.textInputStorage.replace(
+            utf16Range: (next - 2)..<next, with: "ls\n", hardwareKeysDown: false
+        ))
+        #expect(!grid.finishPhrase())
+        #expect(pasted == [" hi\nrm -rf build", "\n"])
+        #expect(channel.key(GHOSTTY_KEY_Y, text: "y"))
+        #expect(await bytes.next() == Data("y".utf8))
+        channel.close(reason: "done")
+    }
+
+    @Test func wordsLeaveTheOneShotModifierForTheNextKey() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        var bytes = fixture.bytes.makeAsyncIterator()
+        let ctrl = GhosttyMods(GHOSTTY_MODS_CTRL)
+        channel.modifierLatch.toggle(ctrl)
+        grid.insertText("clear")
+        #expect(await bytes.next() == Data("clear".utf8))
+        #expect(channel.modifierLatch.isArmed(ctrl))
+        let end = grid.textInputStorage.utf16Count
+        grid.applyTextInput(grid.textInputStorage.replace(
+            utf16Range: (end - 5)..<end, with: "clear screen", hardwareKeysDown: false
+        ))
+        grid.settlePhrase()
+        #expect(await bytes.next() == Data(" screen".utf8))
+        #expect(channel.modifierLatch.isArmed(ctrl))
+        // The key the modifier was armed for still gets it.
+        grid.insertText("c")
+        #expect(await bytes.next() == Data([3]))
+        #expect(channel.modifierLatch.modifiers == 0)
+        channel.close(reason: "done")
+    }
+
+    @Test func dictatedWordsGoBeforeOppiLeavesTheForegroundAndStayUnsentWhenRefused() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedTerminalTestGrid(grid)
+        defer { mounted.dismiss() }
+        var bytes = fixture.bytes.makeAsyncIterator()
+        func revise(_ last: String, _ next: String) {
+            let end = grid.textInputStorage.utf16Count
+            grid.applyTextInput(grid.textInputStorage.replace(
+                utf16Range: (end - last.utf16.count)..<end, with: next, hardwareKeysDown: false
+            ))
+        }
+        grid.insertText("hello")
+        #expect(await bytes.next() == Data("hello".utf8))
+        revise("hello", "hello there")
+        NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+        #expect(await bytes.next() == Data(" there".utf8))
+        // A write the closed channel refuses is not counted as sent.
+        grid.insertText("bye")
+        _ = await bytes.next()
+        revise("bye", "bye now")
+        channel.close(reason: "done")
+        grid.settlePhrase()
+        #expect(grid.textInputStorage.hasUnsentPhrase)
     }
 
     @Test func softwareDeleteKeepsRepeatingAfterTheCaretIsMoved() async throws {

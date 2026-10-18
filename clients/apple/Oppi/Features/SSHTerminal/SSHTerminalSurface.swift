@@ -208,7 +208,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     @objc private func performHardwareShortcut(_ command: UIKeyCommand) {
         guard let raw = command.propertyList as? Int,
               let shortcut = SSHTerminalHardwareShortcut(rawValue: raw) else { return }
-        finishPhrase()
         switch shortcut {
         case .copy:
             // Same copy and note as a long-press selection; nothing without one.
@@ -216,6 +215,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             channel.copyLocalSelection(selection.text)
             showHighlight(selection, lingering: true)
         case .clearScreen:
+            guard finishPhrase() else { return }
             clearHighlight()
             channel.clearScreen()
             syncHistoryScrollFromEngine()
@@ -253,6 +253,8 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 
     @objc private func sceneResignedActive() {
+        // Into the SSH queue before Oppi may be suspended.
+        finishPhrase()
         sceneActive = false
         stopDisplayLink()
     }
@@ -453,31 +455,56 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         applyTextInput(textInputStorage.deleteBackward(hardwareKeysDown: ignoresSoftwareKeyEcho))
     }
 
-    func applyTextInput(_ actions: [SSHTerminalTextInputStorage.Action]) {
-        schedulePhraseCommit()
-        guard !actions.isEmpty else { return }
+    /// Writes what the text document produced, in order. Returns false when
+    /// text went to paste confirmation: nothing after it in this batch is
+    /// sent, so a key that followed a phrase cannot run the line without it.
+    @discardableResult
+    func applyTextInput(_ actions: [SSHTerminalTextInputStorage.Action]) -> Bool {
+        defer {
+            // Only a dictation revision leaves text waiting; a refused write
+            // waits for the next input instead of retrying on a timer.
+            if actions.isEmpty { schedulePhraseSettle() }
+            if !actions.isEmpty { showModifiers() }
+        }
         for action in actions {
             switch action {
             case .insert(let text):
                 deleteAcceleration.reset()
-                // Dictation, Writing Tools, and system replacements can hand
-                // over a phrase at once. A lone Return is Enter; any other
-                // text that could run a command takes the paste confirmation.
+                // Writing Tools and system replacements can hand over text
+                // at once. A lone Return is Enter; any other text that could
+                // run a command takes the paste confirmation.
                 if text != "\n", text != "\r", SSHTerminalEngine.pasteNeedsConfirmation(text) {
                     requestPaste(text)
-                    continue
+                    return false
                 }
                 for character in text {
                     let piece = String(character)
                     let key = Self.logicalKey(piece)
                     channel.key(key, text: key == GHOSTTY_KEY_ENTER || key == GHOSTTY_KEY_TAB ? "" : piece)
                 }
+            case .phrase(let text, let generation):
+                deleteAcceleration.reset()
+                // A newline anywhere in a phrase, even alone, asks first.
+                if SSHTerminalEngine.pasteNeedsConfirmation(text) || text.contains(where: \.isNewline) {
+                    requestPaste(text)
+                    textInputStorage.phraseSent(text, generation: generation)
+                    return false
+                }
+                // One write without the one-shot latch: a modifier armed for
+                // the next key must not turn the first letter into Ctrl-C.
+                var bytes = Data()
+                for character in text {
+                    let piece = String(character)
+                    let key = Self.logicalKey(piece)
+                    bytes.append(channel.engine.key(key, text: key == GHOSTTY_KEY_TAB ? "" : piece))
+                }
+                if channel.send(bytes) { textInputStorage.phraseSent(text, generation: generation) }
             case .backspace:
                 let word = deleteAcceleration.softwareDeletesWord(at: CACurrentMediaTime())
                 sendBackspace(word: word)
             }
         }
-        showModifiers()
+        return true
     }
 
     /// A word delete is Ctrl-W, encoded for the app's keyboard protocol, and
@@ -504,8 +531,9 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         channel.send(bytes)
     }
 
-    /// Dictated words go to the shell once iOS stops revising them for
-    /// `phraseSettleDelay`. The phrase stays so dictation can add to it.
+    /// Words a dictation revision added go to the shell once iOS stops
+    /// revising them for `phraseSettleDelay`. The phrase stays so dictation
+    /// can add to it.
     func settlePhrase() {
         phraseCommit?.cancel()
         phraseCommit = nil
@@ -513,17 +541,19 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 
     /// Before input that bypasses the text document reaches the shell, the
-    /// dictated words go first and the phrase ends.
-    func finishPhrase() {
+    /// dictated words go first and the phrase ends. Returns false when they
+    /// went to paste confirmation; the caller then sends nothing.
+    @discardableResult
+    func finishPhrase() -> Bool {
         phraseCommit?.cancel()
         phraseCommit = nil
-        applyTextInput(textInputStorage.finishPhrase())
+        return applyTextInput(textInputStorage.finishPhrase())
     }
 
     /// Dictation revises its guess several times a second while you speak.
     static let phraseSettleDelay: Duration = .milliseconds(1500)
 
-    private func schedulePhraseCommit() {
+    private func schedulePhraseSettle() {
         phraseCommit?.cancel()
         phraseCommit = nil
         guard textInputStorage.hasUnsentPhrase else { return }
@@ -534,10 +564,12 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         }
     }
 
-    private func accessoryKey(_ key: GhosttyKey) {
-        finishPhrase()
+    @discardableResult
+    private func accessoryKey(_ key: GhosttyKey) -> Bool {
+        guard finishPhrase() else { return false }
         channel.key(key)
         showModifiers()
+        return true
     }
     func showModifiers() {
         keyStrip?.showModifiers()
@@ -594,7 +626,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             window?.endEditing(true)
         case .mouseClick:
             cancelHideKeyboard()
-            finishPhrase()
+            guard finishPhrase() else { return }
             let cell = self.cell(at: point)
             channel.mouse(.click, column: cell.column, row: cell.row)
         case .focusChatBar:
@@ -652,15 +684,14 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
     /// The edit menu's Paste. iOS grants that read without the Allow Paste alert.
     override func paste(_ sender: Any?) {
-        guard !ignoresSoftwareKeyEcho else { return }
-        finishPhrase()
+        guard !ignoresSoftwareKeyEcho, finishPhrase() else { return }
         requestPaste(UIPasteboard.general.string)
     }
 
     /// The accessory bar's UIPasteControl. Its tap is the consent, so there is
     /// no alert, and the text loads off the main thread.
     override func paste(itemProviders: [NSItemProvider]) {
-        finishPhrase()
+        guard finishPhrase() else { return }
         guard let provider = itemProviders.first(where: { $0.canLoadObject(ofClass: String.self) }) else {
             requestPaste(nil)
             return
@@ -685,10 +716,12 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         var unhandled = Set<UIPress>()
-        if presses.contains(where: { $0.key != nil }) { finishPhrase() }
+        // A phrase sent to paste confirmation takes the keys that ended it.
+        let phraseHeld = presses.contains { $0.key != nil } && !finishPhrase()
         for press in presses {
             guard let key = press.key else { unhandled.insert(press); continue }
             hardwarePresses.insert(press)
+            if phraseHeld { continue }
             // Modifier keys alone (HID 0xE0...0xE7) send nothing and must not
             // spend the one-shot modifiers.
             if (0xE0...0xE7).contains(key.keyCode.rawValue) { continue }
@@ -777,7 +810,10 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             dragSnapshot = nil
             switch target {
             case .mouse:
-                finishPhrase()
+                guard finishPhrase() else {
+                    dragTarget = nil
+                    break
+                }
                 channel.mouse(.press, column: cell.column, row: cell.row)
             case .selection:
                 channel.engine.beginSelection(column: cell.column, row: cell.row, surfacePoint: surface)
@@ -842,7 +878,13 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         guard scrollView === historyScroll else { return }
-        finishPhrase()
+        // Local history sends nothing, and dictation needs its guess kept.
+        // A drag the app receives goes after the phrase, or not at all.
+        if channel.engine.scrollAction != .history, !finishPhrase() {
+            let pan = scrollView.panGestureRecognizer
+            pan.isEnabled = false
+            pan.isEnabled = true
+        }
         appScroll.cancelQueuedSteps()
         appScroll.wheelRemainder = SSHTerminalWheelScaling.Accumulator()
         appScroll.altRemainder = 0
@@ -1139,15 +1181,14 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             role: .accessory,
             handlers: SSHTerminalKeyStripView.Handlers(
                 sendStrokes: { [weak self] strokes in
-                    self?.finishPhrase()
-                    self?.channel.keys(strokes)
+                    guard let self, self.finishPhrase() else { return }
+                    self.channel.keys(strokes)
                 },
                 sendKey: { [weak self] key in self?.accessoryKey(key) },
                 sendArrow: { [weak self] key in
                     guard let self, self.isFirstResponder, self.channel.connected,
                           !self.channel.inputClosed else { return false }
-                    self.accessoryKey(key)
-                    return true
+                    return self.accessoryKey(key)
                 },
                 toggleModifier: { [weak self] modifier in
                     guard let self else { return }
@@ -1206,10 +1247,16 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// of a control sequence.
     private static func hardwareCharacters(_ key: UIKey) -> String? {
         guard key.modifierFlags.contains(.alternate) else { return key.characters }
-        let base = key.charactersIgnoringModifiers
-        guard key.modifierFlags.contains(.shift) else { return base }
-        guard base.lowercased() != base.uppercased() else { return nil }
-        return base.uppercased()
+        return metaCharacters(base: key.charactersIgnoringModifiers, shift: key.modifierFlags.contains(.shift))
+    }
+
+    /// With Shift, only a single ASCII letter, uppercased the same in every
+    /// locale (a Turkish `i` must stay `I`, not `İ`).
+    nonisolated static func metaCharacters(base: String, shift: Bool) -> String? {
+        guard shift else { return base }
+        guard base.unicodeScalars.count == 1, let scalar = base.unicodeScalars.first,
+              scalar.isASCII, scalar.properties.isAlphabetic else { return nil }
+        return base.uppercased(with: Locale(identifier: "en_US_POSIX"))
     }
 
     private static func logicalKey(_ text: String) -> GhosttyKey {

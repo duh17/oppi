@@ -5,25 +5,41 @@ import UIKit
 
 @Suite("SSH terminal software text input")
 struct SSHTerminalTextInputTests {
-    @Test func keystrokesSendAtOnceAndAPhraseWaitsToBeTakenOnce() {
+    /// Sends the phrase in `actions` (as the grid does) and returns its text.
+    private func sendPhrase(_ actions: [SSHTerminalTextInputStorage.Action], into storage: inout SSHTerminalTextInputStorage) -> String? {
+        for case let .phrase(text, generation) in actions {
+            storage.phraseSent(text, generation: generation)
+            return text
+        }
+        return nil
+    }
+
+    @Test func keystrokesAndWordsGoAtOnceAndARefusedWriteStaysUnsent() {
         var storage = SSHTerminalTextInputStorage()
         #expect(storage.insertText("a", hardwareKeysDown: false) == [.insert("a")])
-        #expect(storage.insertText("bc", hardwareKeysDown: false).isEmpty)
+        // A suggestion or slide-typed word is one phrase, sent now.
+        let word = storage.insertText("bc", hardwareKeysDown: false)
+        #expect(word.count == 1)
         #expect(storage.markedText == nil)
-        #expect(storage.takeUnsentPhrase() == [.insert("bc")])
+        // The write was refused (say, the channel closed): still unsent.
+        #expect(storage.hasUnsentPhrase)
+        #expect(sendPhrase(storage.takeUnsentPhrase(), into: &storage) == "bc")
+        #expect(!storage.hasUnsentPhrase)
         #expect(storage.takeUnsentPhrase().isEmpty)
-        // An unsent phrase goes before whatever comes next.
-        #expect(storage.insertText("de", hardwareKeysDown: false).isEmpty)
-        #expect(storage.deleteBackward(hardwareKeysDown: false) == [.insert("de"), .backspace])
-        #expect(storage.insertText("fg", hardwareKeysDown: false).isEmpty)
-        #expect(storage.finishPhrase() == [.insert("fg")])
+        #expect(sendPhrase(storage.insertText("de", hardwareKeysDown: false), into: &storage) == "de")
+        #expect(storage.deleteBackward(hardwareKeysDown: false) == [.backspace])
+        // A report for a phrase that has ended changes nothing.
+        let ended = storage.insertText("fg", hardwareKeysDown: false)
+        #expect(storage.finishPhrase().count == 1)
+        _ = sendPhrase(ended, into: &storage)
         #expect(storage.text == SSHTerminalTextInputStorage.filler)
+        #expect(!storage.hasUnsentPhrase)
     }
 
     /// iOS streaming dictation inserts a guess, then replaces it by finding
     /// it before the caret. Each revision must find the last one, and the
-    /// shell gets each settled word once.
-    @Test func dictationRevisionsFindTheirGuessAndSendSettledWordsOnce() {
+    /// shell gets each word once.
+    @Test func dictationRevisionsFindTheirGuessAndSendEachWordOnce() {
         var storage = SSHTerminalTextInputStorage()
         let start = SSHTerminalTextInputStorage.filler.utf16.count
         func revise(_ last: String, _ next: String) -> [SSHTerminalTextInputStorage.Action] {
@@ -33,24 +49,25 @@ struct SSHTerminalTextInputTests {
             #expect(storage.selectedUTF16 == end..<end)
             return storage.replace(utf16Range: range, with: next, hardwareKeysDown: false)
         }
-        #expect(storage.insertText("Hello", hardwareKeysDown: false).isEmpty)
+        // The first guess goes like any word; what revisions add waits.
+        #expect(sendPhrase(storage.insertText("Hello", hardwareKeysDown: false), into: &storage) == "Hello")
         #expect(revise("Hello", "Hello word").isEmpty)
         #expect(revise("Hello word", "Hello world").isEmpty)
-        #expect(storage.takeUnsentPhrase() == [.insert("Hello world")])
+        #expect(sendPhrase(storage.takeUnsentPhrase(), into: &storage) == " world")
         // Dictation keeps going after a pause: only the new words go.
         #expect(revise("Hello world", "Hello world how are you").isEmpty)
-        #expect(storage.takeUnsentPhrase() == [.insert(" how are you")])
+        #expect(sendPhrase(storage.takeUnsentPhrase(), into: &storage) == " how are you")
         // A revision of words already sent cannot be taken back: dropped.
         #expect(revise("Hello world how are you", "Hello world. How are you?").isEmpty)
         #expect(storage.takeUnsentPhrase().isEmpty)
         #expect(revise("Hello world. How are you?", "Hello world. How are you? Fine").isEmpty)
-        #expect(storage.takeUnsentPhrase() == [.insert(" Fine")])
+        #expect(sendPhrase(storage.takeUnsentPhrase(), into: &storage) == " Fine")
         // The filler stays in front, so held ⌫ still has text to delete.
         #expect(storage.text(in: 0..<start) == SSHTerminalTextInputStorage.filler)
         // A single-character guess is sent like a keystroke and can still grow.
         #expect(storage.insertText("I", hardwareKeysDown: false) == [.insert("I")])
         #expect(revise("I", "I am").isEmpty)
-        #expect(storage.takeUnsentPhrase() == [.insert(" am")])
+        #expect(sendPhrase(storage.takeUnsentPhrase(), into: &storage) == " am")
     }
 
     @Test func deleteOnFilledStorageEmitsBackspaceAndRefills() {
@@ -200,5 +217,16 @@ struct SSHTerminalTextInputTests {
         #expect(SSHTerminalHardwareShortcut.matching(input: "c", modifiers: [.command, .shift]) == nil)
         #expect(SSHTerminalHardwareShortcut.matching(input: "c", modifiers: .control) == nil)
         #expect(SSHTerminalHardwareShortcut.matching(input: ".", modifiers: [.command, .alternate]) == nil)
+    }
+
+    @Test func optionShiftSendsOnlyAnASCIILetterUppercasedTheSameEverywhere() {
+        #expect(SSHTerminalGridView.metaCharacters(base: "b", shift: false) == "b")
+        #expect(SSHTerminalGridView.metaCharacters(base: "b", shift: true) == "B")
+        // Turkish uppercases i to a dotted capital; Meta must not.
+        #expect("i".uppercased(with: Locale(identifier: "tr_TR")) != "I")
+        #expect(SSHTerminalGridView.metaCharacters(base: "i", shift: true) == "I")
+        for base in ["\u{df}", "\u{e9}", "[", "1", "ab", ""] {
+            #expect(SSHTerminalGridView.metaCharacters(base: base, shift: true) == nil, "\(base)")
+        }
     }
 }

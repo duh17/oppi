@@ -4,7 +4,13 @@ import UIKit
 /// The grid never paints this storage; each mutation maps to terminal keys.
 struct SSHTerminalTextInputStorage {
     enum Action: Equatable {
+        /// Keys, one per character; a one-shot Ctrl or Alt applies.
         case insert(String)
+        /// Text the keyboard put in at once (a suggestion, a slide-typed
+        /// word, dictation): one write, no modifier. The owner reports it
+        /// with `phraseSent` once it is in the shell or handed to paste
+        /// confirmation.
+        case phrase(String, generation: Int)
         case backspace
     }
 
@@ -24,11 +30,11 @@ struct SSHTerminalTextInputStorage {
     /// The last text the keyboard inserted, kept after the filler. Streaming
     /// dictation inserts a guess, then replaces it by finding it before the
     /// caret; without it here iOS cancels dictation after the first guess.
-    /// `sent` is the start of it already in the shell. A phrase of more than
-    /// one character waits until the owner takes it, so the shell gets the
-    /// words iOS settled on, once.
+    /// `sent` is the start of it already in the shell. An insert goes at
+    /// once; only what a revision adds waits, until the owner takes it.
     private(set) var phrase = ""
     private var sent = ""
+    private var phraseGeneration = 0
 
     var utf16Count: Int { text.utf16.count }
     var awaitsCommitEcho: Bool { unmarkedCommit != nil }
@@ -54,20 +60,24 @@ struct SSHTerminalTextInputStorage {
         // An IME commit is final; only plain insertions can be revised.
         guard pending == nil else { return earlier + [.insert(string)] }
         keepPhrase(string)
-        // A keystroke goes at once. Several characters at once (dictation,
-        // slide typing) wait for `takeUnsentPhrase`.
-        guard string.count == 1 else { return earlier }
+        guard string.count == 1 else { return earlier + [.phrase(string, generation: phraseGeneration)] }
+        // A keystroke spends a one-shot modifier like a key does.
         sent = phrase
         return earlier + [.insert(string)]
     }
 
-    /// The unsent rest of the phrase. The phrase stays, so dictation can
-    /// still extend it; characters already sent are never sent again.
+    /// What a revision added and the shell does not have yet. The phrase
+    /// stays, so dictation can still extend it.
     mutating func takeUnsentPhrase() -> [Action] {
         guard hasUnsentPhrase else { return [] }
-        let unsent = String(phrase.dropFirst(sent.count))
-        sent = phrase
-        return [.insert(unsent)]
+        return [.phrase(String(phrase.dropFirst(sent.count)), generation: phraseGeneration)]
+    }
+
+    /// The owner wrote `text` from `takeUnsentPhrase` or an insert. Text a
+    /// write refused stays unsent; a phrase that has since ended is ignored.
+    mutating func phraseSent(_ text: String, generation: Int) {
+        guard generation == phraseGeneration, phrase.hasPrefix(sent + text) else { return }
+        sent += text
     }
 
     /// Input that bypasses this document (an arrow, a paste, a hardware key)
@@ -117,6 +127,7 @@ struct SSHTerminalTextInputStorage {
             selectedUTF16 = location..<(location + lengthInMarked)
             phrase = ""
             sent = ""
+            phraseGeneration &+= 1
         }
         return earlier
     }
@@ -156,7 +167,9 @@ struct SSHTerminalTextInputStorage {
             var revised = phrase
             revised.replaceSubrange(start..<stop, with: string)
             let kept = sent
+            let generation = phraseGeneration
             keepPhrase(revised)
+            phraseGeneration = generation
             sent = revised.hasPrefix(kept) ? kept : revised
             return []
         }
@@ -196,6 +209,7 @@ struct SSHTerminalTextInputStorage {
     private mutating func keepPhrase(_ string: String) {
         phrase = string
         sent = ""
+        phraseGeneration &+= 1
         text = Self.filler + string
         let end = utf16Count
         selectedUTF16 = end..<end
@@ -206,6 +220,7 @@ struct SSHTerminalTextInputStorage {
         markedText = nil
         phrase = ""
         sent = ""
+        phraseGeneration &+= 1
         let end = text.utf16.count
         selectedUTF16 = end..<end
     }
@@ -460,8 +475,7 @@ extension SSHTerminalGridView {
     // move the dummy caret, so the trackpad cannot stop held ⌫ from
     // repeating. A composition in progress keeps its own caret.
     func beginFloatingCursor(at point: CGPoint) {
-        guard textInputStorage.markedText == nil else { return }
-        finishPhrase()
+        guard textInputStorage.markedText == nil, finishPhrase() else { return }
         trackpadArrows.begin(at: point)
     }
 
