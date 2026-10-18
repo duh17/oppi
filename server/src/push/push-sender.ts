@@ -210,13 +210,18 @@ export function pushCollapseId(sendToken: string, collapseKey: string): string {
     .toString("base64url");
 }
 
-/** Session pushes collapse per session; pairing pushes per approval or enrolled device. */
+/**
+ * Session alerts collapse per session, an agent's message apart from them so a later question
+ * never replaces what it asked the user to read; pairing pushes per approval or enrolled device.
+ */
 function pushCollapseKey(notification: PushNotification): string {
   switch (notification.event) {
     case "pairing_approval":
       return `pairing:${notification.approvalId}`;
     case "device_enrolled":
       return `device:${notification.deviceId}`;
+    case "notify":
+      return `notify:${notification.sessionId}`;
     default:
       return notification.sessionId;
   }

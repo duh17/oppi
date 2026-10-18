@@ -111,13 +111,13 @@ function addValid(name: string, plaintext: PushPlaintext): Buffer {
 
 const blocked = addValid("blocked-permission", base());
 addValid(
-  "done-no-workspace",
+  "notify-no-workspace",
   base({
-    event: "done",
+    event: "notify",
     kind: undefined,
     workspaceId: undefined,
-    title: "Session Done",
-    body: "Finished.",
+    title: "Push relay fix landed",
+    body: "Read the summary in the session.",
   }),
 );
 addValid(

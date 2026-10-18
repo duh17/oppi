@@ -180,6 +180,9 @@ export class DurableThreads {
       loaded: this.deps.runtime.loadedPackages,
       sessions: this.deps.runtime.sessionsExtension,
       spawn: grant,
+      // Children report to their parent; only top-level sessions notify the user.
+      notify: this.deps.runtime.notifyExtension,
+      notifies: false,
       grant,
       ...(saved
         ? {

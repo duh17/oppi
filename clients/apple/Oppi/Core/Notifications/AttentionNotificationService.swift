@@ -21,6 +21,16 @@ private struct NotificationCompletion: @unchecked Sendable {
     }
 }
 
+private struct PresentationCompletion: @unchecked Sendable {
+    private let handler: (UNNotificationPresentationOptions) -> Void
+    init(_ handler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        self.handler = handler
+    }
+    func call(_ options: UNNotificationPresentationOptions) {
+        handler(options)
+    }
+}
+
 /// Signals that iOS reclaimed the pairing-deny background budget.
 /// One notification Deny: its background task and the notification completion handler.
 /// `finish()` runs the handler exactly once and ends the task, on whichever comes first:
@@ -82,20 +92,14 @@ private final class PairingDenyBudget: @unchecked Sendable {
 /// - App is foregrounded but the request is for a different session
 ///
 /// This keeps agent questions and extension prompts visible while working across sessions.
-/// It also posts the `done` banner a pushing server skips while this device holds a live
-/// stream in the background. Remote APNs registration lives in `PushRegistration`.
+/// Pushes that reach the app in the foreground show here too, unless the user is already
+/// looking at that session. Remote APNs registration lives in `PushRegistration`.
 @MainActor
 final class AttentionNotificationService: NSObject, UNUserNotificationCenterDelegate {
     static let shared = AttentionNotificationService()
 
     /// Category ID for agent questions. Tapping opens the owning session.
     nonisolated static let askCategoryId = AttentionNotificationPolicy.askCategoryId
-
-    /// Remote session-ended and session-done alerts, and the local `done` banner while
-    /// backgrounded. Tapping opens the owning session.
-    nonisolated static let sessionDoneCategoryId = AttentionNotificationPolicy.sessionDoneCategoryId
-
-    /// Remote session-error alerts. Tapping opens the owning session.
 
     /// Remote alerts for a session waiting on approval, an answer, or a sign-in. Tapping opens the owning session.
     nonisolated static let sessionBlockedCategoryId = AttentionNotificationPolicy.sessionBlockedCategoryId
@@ -118,6 +122,11 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             deliverPendingNavigationTapsIfPossible()
         }
     }
+
+    /// Whether that session's chat on that server is the one the user is in (its focused
+    /// stream; a sheet over the chat still counts). A failed run or an agent's message arriving
+    /// while Oppi is in front shows unless it is.
+    var isSessionOnScreen: ((_ serverId: String, _ sessionId: String) -> Bool)?
 
     var onPairingNotification: ((PairingNotificationPayload) -> Void)? {
         didSet {
@@ -243,43 +252,6 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         }
     }
 
-    /// Post the Stopped banner the server skipped: a device holding a live stream gets no
-    /// push, and agent keep-alive holds the stream open while the app is in the background.
-    /// Only while the app is not active, like the push it replaces.
-    /// - Parameters:
-    ///   - body: how the run ended (`AttentionNotificationPolicy.stoppedBody`).
-    ///   - hidesSessionName: true when a scoped lock covers the session; read when the
-    ///     request is added.
-    func notifySessionDoneIfNeeded(
-        sessionId: String,
-        sessionName: String?,
-        body: String,
-        hidesSessionName: @escaping @MainActor () -> Bool
-    ) {
-        let appState = _applicationStateForTesting ?? UIApplication.shared.applicationState
-        guard appState != .active else { return }
-
-        schedule(identifier: AttentionNotificationPolicy.sessionDoneRequestIdentifier(sessionId: sessionId)) { [self] in
-            let payload = AttentionNotificationPolicy.sessionDonePayload(
-                sessionId: sessionId,
-                sessionName: sessionName,
-                body: body,
-                revealsSessionName: !(_appLockEnabledForTesting ?? AppLockService.shared.isEnabled)
-                    && !hidesSessionName()
-            )
-            let content = UNMutableNotificationContent()
-            content.title = payload.title
-            content.subtitle = payload.subtitle
-            content.body = payload.body
-            content.categoryIdentifier = payload.categoryIdentifier
-            content.userInfo = payload.userInfo
-            content.threadIdentifier = payload.threadIdentifier
-            content.targetContentIdentifier = payload.targetContentIdentifier
-            content.interruptionLevel = .passive
-            return content
-        }
-    }
-
     nonisolated static func shouldNotify(
         isAppActive: Bool,
         requestSessionId: String,
@@ -304,8 +276,8 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     }
 
     /// App Lock or a new lock turned on: remove delivered and pending notifications
-    /// that may show text from before (ask questions, session names in local `done`
-    /// banners and in decrypted pushes).
+    /// that may show text from before (ask questions, and session names and agent messages
+    /// in decrypted pushes).
     func removeLockSensitiveNotifications() {
         guard !_skipSchedulingForTesting else { return }
         let center = UNUserNotificationCenter.current()
@@ -317,8 +289,8 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         }
     }
 
-    /// Every Oppi session notification: local ask and `done` banners, and decrypted pushes,
-    /// whose subtitle is the session name unless a lock was already on when they arrived.
+    /// Every Oppi session notification: local ask banners and decrypted pushes, whose
+    /// subtitle is the session name unless a lock was already on when they arrived.
     nonisolated static func lockSensitiveIdentifiers(in requests: [UNNotificationRequest]) -> [String] {
         requests
             .filter { AttentionNotificationPolicy.sessionCategoryIds.contains($0.content.categoryIdentifier) }
@@ -366,8 +338,8 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     }
 
     /// The user saw these sessions on `serverId`: their notifications leave Notification
-    /// Center, as the badge counts down. Done notifications share one thread, so this matches
-    /// each notification's session, and its server when it names one (local banners do not).
+    /// Center, as the badge counts down. This matches each notification's session, and its
+    /// server when it names one (local banners do not).
     func removeDeliveredNotifications(serverId: String, sessionIds: [String]) {
         guard !_skipSchedulingForTesting else { return }
         let center = UNUserNotificationCenter.current()
@@ -631,11 +603,28 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        switch notification.request.content.categoryIdentifier {
+        let content = notification.request.content
+        switch content.categoryIdentifier {
         case Self.askCategoryId, Self.pairingApprovalCategoryId:
             completionHandler([.banner, .sound])
         case Self.deviceEnrolledCategoryId:
             completionHandler([.banner])
+        case AttentionNotificationPolicy.sessionFailedCategoryId, AttentionNotificationPolicy.agentMessageCategoryId:
+            let category = content.categoryIdentifier
+            let serverId = content.userInfo["serverId"] as? String
+            let sessionId = content.userInfo["sessionId"] as? String
+            let completion = PresentationCompletion(completionHandler)
+            Task { @MainActor in
+                let onScreen = serverId.flatMap { server in
+                    sessionId.map { isSessionOnScreen?(server, $0) ?? false }
+                } ?? false
+                completion.call(
+                    AttentionNotificationPolicy.showsInForeground(
+                        categoryIdentifier: category,
+                        sessionIsOnScreen: onScreen
+                    ) ? [.banner, .list, .sound] : []
+                )
+            }
         default:
             completionHandler([])
         }

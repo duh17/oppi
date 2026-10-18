@@ -1,0 +1,16 @@
+{
+  "name": "oppi-notify",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Oppi built-in: the notify tool that sends the user a push notification.",
+  "type": "module",
+  "oppi": {
+    "durable": {
+      "entry": "./durable.js",
+      "runtimes": [
+        "host",
+        "sandbox"
+      ]
+    }
+  }
+}

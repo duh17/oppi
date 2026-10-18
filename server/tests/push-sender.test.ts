@@ -7,6 +7,7 @@ import type { SealedPushEnvelope } from "../src/push/envelope.js";
 import {
   LIVE_ACTIVITY_DEVICE_BUDGET,
   PUSH_DEVICE_BUDGET,
+  pushCollapseId,
   PushSender,
 } from "../src/push/push-sender.js";
 import { RelayClient } from "../src/push/relay-client.js";
@@ -109,7 +110,7 @@ describe("PushSender", () => {
 
     expect(await push.send(registration, notification)).toEqual({ status: "delivered" });
     expect(
-      await push.send(registration, { ...notification, event: "done", kind: undefined }),
+      await push.send(registration, { ...notification, event: "notify", kind: undefined }),
     ).toEqual({
       status: "delivered",
     });
@@ -118,6 +119,9 @@ describe("PushSender", () => {
     expect(calls[0]?.authorization).toBe("Bearer osp1.r_a.p_a.secret-a");
     expect(calls[0]?.body.ttl).toBe(3600);
     expect(calls[0]?.body.collapseId).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    // A later Needs you never replaces what the agent asked the user to read.
+    expect(calls[0]?.body.collapseId).toBe(pushCollapseId("osp1.r_a.p_a.secret-a", "s1"));
+    expect(calls[1]?.body.collapseId).toBe(pushCollapseId("osp1.r_a.p_a.secret-a", "notify:s1"));
     // The relay body carries no readable content.
     expect(JSON.stringify(calls)).not.toContain("Deploy");
     expect(JSON.stringify(calls)).not.toContain("Needs Approval");
@@ -207,7 +211,7 @@ describe("PushSender", () => {
   });
 
   describe("per-device budget", () => {
-    const done = { ...notification, event: "done" as const, kind: undefined };
+    const agentAlert = { ...notification, event: "notify" as const, kind: undefined };
     let clock: number;
 
     function budgeted(fetchImpl: typeof fetch): PushSender {
@@ -222,7 +226,7 @@ describe("PushSender", () => {
     async function sendMany(
       push: PushSender,
       count: number,
-      alert: typeof notification | typeof done,
+      alert: typeof notification | typeof agentAlert,
     ): Promise<string[]> {
       const [registration] = push.registrations();
       if (!registration) throw new Error("missing registration");
@@ -241,7 +245,7 @@ describe("PushSender", () => {
       const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
       const push = budgeted(fetchImpl);
 
-      const routine = await sendMany(push, PUSH_DEVICE_BUDGET.routinePerMinute + 1, done);
+      const routine = await sendMany(push, PUSH_DEVICE_BUDGET.routinePerMinute + 1, agentAlert);
       expect(routine.at(-1)).toBe("throttled");
       const reserve = PUSH_DEVICE_BUDGET.perMinute - PUSH_DEVICE_BUDGET.routinePerMinute;
       expect(await sendMany(push, reserve + 1, notification)).toEqual([
@@ -251,7 +255,7 @@ describe("PushSender", () => {
       expect(calls).toHaveLength(PUSH_DEVICE_BUDGET.perMinute);
 
       clock += 60_000;
-      expect(await sendMany(push, 1, done)).toEqual(["delivered"]);
+      expect(await sendMany(push, 1, agentAlert)).toEqual(["delivered"]);
     });
 
     it("keeps daily room for approvals and resets on the next UTC day", async () => {
@@ -261,15 +265,19 @@ describe("PushSender", () => {
 
       for (let sent = 0; sent < PUSH_DEVICE_BUDGET.routinePerDay; sent += perMinute) {
         clock += 60_000;
-        await sendMany(push, Math.min(perMinute, PUSH_DEVICE_BUDGET.routinePerDay - sent), done);
+        await sendMany(
+          push,
+          Math.min(perMinute, PUSH_DEVICE_BUDGET.routinePerDay - sent),
+          agentAlert,
+        );
       }
       clock += 60_000;
-      expect(await sendMany(push, 1, done)).toEqual(["throttled"]);
+      expect(await sendMany(push, 1, agentAlert)).toEqual(["throttled"]);
       expect(await sendMany(push, 1, notification)).toEqual(["delivered"]);
       expect(calls).toHaveLength(PUSH_DEVICE_BUDGET.routinePerDay + 1);
 
       clock = Date.parse("2026-10-18T00:00:00Z");
-      expect(await sendMany(push, 1, done)).toEqual(["delivered"]);
+      expect(await sendMany(push, 1, agentAlert)).toEqual(["delivered"]);
     });
 
     it("stops asking the relay until its quota Retry-After passes", async () => {

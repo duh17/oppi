@@ -589,7 +589,6 @@ export class Server {
     this.authModule = new AuthModule(config.auth?.module);
     this.sessionPushNotifier = new SessionPushNotifier(this.push, this.storage, {
       isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),
-      hasWorkingChild: (sessionId) => this.sessions.hasWorkingChild(sessionId),
     });
     this.liveActivityNotifier = new LiveActivityNotifier(this.push, {
       isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),
@@ -599,6 +598,7 @@ export class Server {
     this.sessions.contextWindowResolver = (modelId: string) =>
       this.models.getContextWindow(modelId);
     this.sessions.skillPathResolver = (names: string[]) => this.resolveSkillPaths(names);
+    this.sessions.notifyPort = this.sessionPushNotifier;
 
     this.mirrorRuntime = new PiTuiMirrorRuntime(this.storage, {
       mobileRenderers: this.sessions.mobileRenderer,
@@ -1380,7 +1380,7 @@ export class Server {
 
   /**
    * A device holding an app-event or focused session stream sees state changes itself, so
-   * blocked/done pushes skip it. Owner (local socket) streams belong to no device and never
+   * Needs you pushes and the Live Activity skip it. Owner (local socket) streams belong to no device and never
    * silence anyone's pushes.
    */
   private notePresenceSocket(ws: WebSocket): void {

@@ -64,7 +64,6 @@ final class NotificationService: UNNotificationServiceExtension {
         content.targetContentIdentifier = presentation.targetContentIdentifier
         content.userInfo = presentation.userInfo
         content.interruptionLevel = switch presentation.interruption {
-        case .passive: .passive
         case .active: .active
         case .timeSensitive: .timeSensitive
         }

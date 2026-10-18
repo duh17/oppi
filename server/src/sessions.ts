@@ -59,6 +59,7 @@ import type { TraceOutlineResult } from "./trace-outline.js";
 import type { SessionStopTimers } from "./session-stop.js";
 import { notifySandboxWorkspaceActivity } from "./workspace-sandbox-lifecycle.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
+import type { SessionNotifyPort } from "./session-push-notifier.js";
 
 const log = createLogger({ base: { component: "sessions" } });
 
@@ -108,6 +109,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   /** Injected by the server to resolve skill names to host directory paths. */
   skillPathResolver: ((skillNames: string[]) => Promise<string[]>) | null = null;
+
+  /** Injected by the server: who is offered the agent `notify` tool, and its send. */
+  notifyPort: SessionNotifyPort | null = null;
 
   /** Injected by the server for auto-title generation on first message. */
   onFirstMessage: ((session: Session) => void) | null = null;
@@ -162,6 +166,13 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
             onCreated: (session) => this.emit("session_created", session),
           }),
         );
+        runtime.bindNotify({
+          offersNotify: (sessionId) => this.notifyPort?.offersNotify(sessionId) ?? false,
+          notify: async (sessionId, input) =>
+            this.notifyPort ? this.notifyPort.notify(sessionId, input) : { status: "off" },
+          sessionIdOf: (storeId, conversationId) =>
+            storage.findSessionByDurableConversation(storeId, conversationId)?.id,
+        });
         runtime.bindControl(
           new DurableControlCli({
             dataDir: storage.getDataDir(),
@@ -194,6 +205,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       stopTimers,
       getContextWindowResolver: () => this.contextWindowResolver,
       getSkillPathResolver: () => this.skillPathResolver,
+      getNotifyPort: () => this.notifyPort,
       emitSessionEvent: (payload) => this.emit("session_event", payload),
       onProgramStatusChange: (session, change) =>
         this.emit("program_status_change", session, change),
@@ -1099,19 +1111,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   getActiveSession(sessionId: string): Session | undefined {
     return this.active.get(this.sessionKey(sessionId))?.session;
-  }
-
-  /** True while a session launched by `parentSessionId` is still starting or working. */
-  hasWorkingChild(parentSessionId: string): boolean {
-    for (const { session } of this.active.values()) {
-      if (
-        session.launch?.parentSessionId === parentSessionId &&
-        (session.status === "starting" || session.status === "busy")
-      ) {
-        return true;
-      }
-    }
-    return false;
   }
 
   /** Return replayable extension UI notifications and pending dialogs for stream re-subscribe. */

@@ -31,62 +31,38 @@ struct RemotePushTests {
         #expect(APNsEnvironment.fromProvisioningProfile(Data("not a profile".utf8)) == nil)
     }
 
-    // MARK: - Local done banner
+    // MARK: - Foreground and local alerts
 
-    private func working(_ id: String = "s1", parent: String? = nil) -> Session {
+    @Test func failedRunsAndAgentMessagesShowInFrontUnlessTheirChatIsOnScreen() {
+        for category in [AttentionNotificationPolicy.sessionFailedCategoryId, AttentionNotificationPolicy.agentMessageCategoryId] {
+            #expect(AttentionNotificationPolicy.showsInForeground(categoryIdentifier: category, sessionIsOnScreen: false))
+            #expect(!AttentionNotificationPolicy.showsInForeground(categoryIdentifier: category, sessionIsOnScreen: true))
+        }
+        // The server skips a present device for Needs you; the app shows its own ask banner.
+        #expect(!AttentionNotificationPolicy.showsInForeground(
+            categoryIdentifier: AttentionNotificationPolicy.sessionBlockedCategoryId,
+            sessionIsOnScreen: false
+        ))
+    }
+
+    /// The server pushes a failed run to every device, present or not: a backgrounded app that
+    /// still holds its streams must not add a second alert of its own.
+    @Test func aStoppedRunPostsNoLocalBanner() async {
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials(fingerprint: "sha256:push-srv"))
+        connection.setSplitStreamCapabilitiesForTesting(
+            appEventStream: true,
+            pushRelay: URL(string: "https://push.example.test")
+        )
+        PushRegistration.setEnabled(true, serverId: "sha256:push-srv")
+        defer { PushRegistration.setEnabled(false, serverId: "sha256:push-srv") }
         var session = makeTestSession(
-            id: id,
+            id: "s1",
             workspaceId: "w1",
             name: "Fix login",
             status: .busy,
             programStatus: ProgramStatus(state: .working, since: Date(timeIntervalSince1970: 1))
         )
-        session.parentSessionId = parent
-        return session
-    }
-
-    private func finished(_ session: Session, as state: ProgramStatusState = .done) -> Session {
-        var done = session
-        done.status = .ready
-        done.programStatus = ProgramStatus(state: state, since: Date(timeIntervalSince1970: 2))
-        return done
-    }
-
-    @Test func aTopLevelRunStoppingGetsOneBodyPerOutcome() {
-        let session = working()
-        #expect(AttentionNotificationPolicy.stoppedBody(previous: session, current: finished(session), sessions: []) == "Finished.")
-        #expect(AttentionNotificationPolicy.stoppedBody(previous: session, current: finished(session, as: .error), sessions: []) == "Stopped with an error.")
-        #expect(AttentionNotificationPolicy.stoppedBody(previous: session, current: finished(session, as: .idle), sessions: []) == "Stopped before finishing.")
-        #expect(AttentionNotificationPolicy.stoppedBody(previous: finished(session), current: finished(session), sessions: []) == nil)
-        // Not a run stopping: done to idle, or a first-seen status.
-        #expect(AttentionNotificationPolicy.stoppedBody(previous: finished(session), current: finished(session, as: .idle), sessions: []) == nil)
-        #expect(AttentionNotificationPolicy.stoppedBody(previous: nil, current: finished(session), sessions: []) == nil)
-
-        let child = working("child", parent: "s1")
-        #expect(AttentionNotificationPolicy.stoppedBody(previous: child, current: finished(child, as: .error), sessions: []) == nil)
-    }
-
-    @Test func aLeadIsNotDoneWhileAChildStillWorks() {
-        let lead = working()
-        let child = working("child", parent: "s1")
-        #expect(AttentionNotificationPolicy.stoppedBody(previous: lead, current: finished(lead), sessions: [child]) == nil)
-        #expect(AttentionNotificationPolicy.stoppedBody(previous: lead, current: finished(lead), sessions: [finished(child)]) != nil)
-        // Another lead's working child does not hold this one.
-        let otherChild = working("other-child", parent: "s2")
-        #expect(AttentionNotificationPolicy.stoppedBody(previous: lead, current: finished(lead), sessions: [otherChild]) != nil)
-    }
-
-    /// Delivers the request a `working -> done` app-event summary schedules, or nil.
-    private func doneBanner(serverPushes: Bool, optedIn: Bool = true) async -> DeliveredBanner? {
-        let connection = ServerConnection()
-        _ = connection.configure(credentials: makeTestCredentials(fingerprint: "sha256:push-srv"))
-        connection.setSplitStreamCapabilitiesForTesting(
-            appEventStream: true,
-            pushRelay: serverPushes ? URL(string: "https://push.example.test") : nil
-        )
-        PushRegistration.setEnabled(optedIn, serverId: "sha256:push-srv")
-        defer { PushRegistration.setEnabled(false, serverId: "sha256:push-srv") }
-        let session = working()
         connection.sessionStore.upsert(session)
 
         let service = AttentionNotificationService.shared
@@ -94,45 +70,28 @@ struct RemotePushTests {
         defer {
             service._applicationStateForTesting = previousState
             service._deliverForTesting = nil
-            service._appLockEnabledForTesting = nil
         }
         service._applicationStateForTesting = .background
-        service._appLockEnabledForTesting = false
 
-        return await withCheckedContinuation { continuation in
+        let delivered: DeliveredBanner? = await withCheckedContinuation { continuation in
             let once = DeliveredOnce(continuation)
             service._deliverForTesting = { once.resume(DeliveredBanner($0)) }
-            connection.handleAppEvent(.sessionSummary(
-                sessionId: "s1",
-                workspaceId: "w1",
-                emittedAt: 2,
-                summary: SessionSummary(from: finished(session))
-            ))
+            for state in [ProgramStatusState.error, .done] {
+                session.status = .ready
+                session.programStatus = ProgramStatus(state: state, since: Date(timeIntervalSince1970: 2))
+                connection.handleAppEvent(.sessionSummary(
+                    sessionId: "s1",
+                    workspaceId: "w1",
+                    emittedAt: 2,
+                    summary: SessionSummary(from: session)
+                ))
+            }
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(1))
                 once.resume(nil)
             }
         }
-    }
-
-    @Test func backgroundedAppPostsTheDoneBannerItsPushingServerSkipped() async throws {
-        let request = try #require(await doneBanner(serverPushes: true))
-
-        #expect(request.identifier == "done-s1")
-        #expect(request.category == AttentionNotificationPolicy.sessionDoneCategoryId)
-        #expect(request.title == String(localized: "Session Done"))
-        #expect(request.subtitle == "Fix login")
-        #expect(request.interruptionLevel == .passive)
-        #expect(request.sessionId == "s1")
-    }
-
-    @Test func serverWithoutPushKeepsDoneInApp() async {
-        #expect(await doneBanner(serverPushes: false) == nil)
-    }
-
-    /// Without the opt-in the server never pushes to this device, so it has nothing to skip.
-    @Test func pushingServerKeepsDoneInAppUntilTheUserOptsIn() async {
-        #expect(await doneBanner(serverPushes: true, optedIn: false) == nil)
+        #expect(delivered == nil)
     }
 }
 

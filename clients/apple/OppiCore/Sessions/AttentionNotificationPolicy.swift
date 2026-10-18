@@ -2,20 +2,27 @@ import Foundation
 
 /// UIKit-free attention-notification policy shared by iOS and Mac painters.
 ///
-/// Local banners exist for agent asks, and for the Stopped alert while the app runs in the
-/// background on a server that pushes: that server skips its push to a device holding a
-/// live stream. `SESSION_DONE` / `SESSION_BLOCKED` are also the tap-routing categories for
-/// remote session-event payloads (done, blocked).
+/// Local banners exist only for agent asks. Every other session alert is a server push
+/// (`SESSION_BLOCKED`, `SESSION_FAILED`, `AGENT_MESSAGE`), and these categories also route its tap.
 enum AttentionNotificationPolicy: Sendable {
     static let askCategoryId = SessionNotificationCategory.ask
-    static let sessionDoneCategoryId = SessionNotificationCategory.sessionDone
     static let sessionBlockedCategoryId = SessionNotificationCategory.sessionBlocked
+    static let sessionFailedCategoryId = SessionNotificationCategory.sessionFailed
+    static let agentMessageCategoryId = SessionNotificationCategory.agentMessage
 
     static let sessionCategoryIds = [
         askCategoryId,
-        sessionDoneCategoryId,
         sessionBlockedCategoryId,
+        sessionFailedCategoryId,
+        agentMessageCategoryId,
     ]
+
+    /// The server pushes a failed run and an agent's message to every device, even one with
+    /// Oppi open, so the app shows them unless that session's chat is on screen.
+    static func showsInForeground(categoryIdentifier: String, sessionIsOnScreen: Bool) -> Bool {
+        (categoryIdentifier == sessionFailedCategoryId || categoryIdentifier == agentMessageCategoryId)
+            && !sessionIsOnScreen
+    }
 
     static func shouldNotify(
         isAppActive: Bool,
@@ -43,57 +50,6 @@ enum AttentionNotificationPolicy: Sendable {
 
     static func askRequestIdentifier(sessionId: String) -> String {
         "ask-\(sessionId)"
-    }
-
-    static func sessionDoneRequestIdentifier(sessionId: String) -> String {
-        "done-\(sessionId)"
-    }
-
-    /// The Stopped alert's body when a store update means a top-level run stopped, else nil.
-    /// Matches the server's push rule: from `working` or `blocked` into `done`, `error`, or
-    /// `idle`; delegated sessions report to their parent; a lead with a child (in `sessions`)
-    /// still starting or working has not stopped; a first-seen status is not a transition.
-    static func stoppedBody(previous: Session?, current: Session, sessions: [Session]) -> String? {
-        guard current.parentSessionId == nil,
-              let previousState = previous?.programStatus?.state,
-              previousState == .working || previousState == .blocked,
-              !sessions.contains(where: {
-                  $0.parentSessionId == current.id && ($0.status == .starting || $0.status == .busy)
-              }) else {
-            return nil
-        }
-        switch current.programStatus?.state {
-        case .done: return String(localized: "Finished.")
-        case .error: return String(localized: "Stopped with an error.")
-        case .idle: return String(localized: "Stopped before finishing.")
-        default: return nil
-        }
-    }
-
-    /// Local stand-in for the server's Stopped push: same title, body, category, and
-    /// tap-routing key (`sessionId`). The push names the session; this banner hides the name,
-    /// and shows the push's fixed redacted body, while App Lock or a scoped lock covers it.
-    static func sessionDonePayload(
-        sessionId: String,
-        sessionName: String?,
-        body: String,
-        revealsSessionName: Bool
-    ) -> AttentionNotificationPayload {
-        let name = sessionName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let text = PushAlertPresentation.fixedText(event: .done, kind: nil)
-        return AttentionNotificationPayload(
-            identifier: sessionDoneRequestIdentifier(sessionId: sessionId),
-            title: text.title,
-            subtitle: revealsSessionName ? name : "",
-            body: revealsSessionName ? body : text.body,
-            categoryIdentifier: sessionDoneCategoryId,
-            userInfo: [
-                "event": "done",
-                "sessionId": sessionId,
-            ],
-            threadIdentifier: PushAlertPresentation.sessionDoneThreadIdentifier,
-            targetContentIdentifier: sessionId
-        )
     }
 
     /// Body that names no question text.

@@ -181,6 +181,9 @@ interface DurableAgentInput {
   /** Oppi's extension that offers `subagent`. */
   sessions: Extension;
   spawn: boolean;
+  /** Oppi's extension that offers `notify`, and whether this conversation selects it. */
+  notify: Extension;
+  notifies: boolean;
   grant: boolean;
   /** Where the instructions come from; unset keeps the base agent's (a child without an Agent). */
   instructions?: { cwd: string; workspacePrompt?: string };
@@ -210,6 +213,7 @@ export function resolveDurableAgent(input: DurableAgentInput): {
     (extension) =>
       !extension.name.startsWith(DURABLE_MCP_EXTENSION_PREFIX) &&
       extension.name !== input.sessions.name &&
+      extension.name !== input.notify.name &&
       // A saved Agent picks its own packages; a copy keeps the parent's.
       !(saved && packageNames.has(extension.name)),
   );
@@ -223,7 +227,12 @@ export function resolveDurableAgent(input: DurableAgentInput): {
     : (selection?.packages ?? loaded.filter((entry) => entry.runtimes.includes(runtime))).map(
         (entry) => entry.extension,
       );
-  const extensions = [...kept, ...(input.spawn ? [input.sessions] : []), ...packages];
+  const extensions = [
+    ...kept,
+    ...(input.spawn ? [input.sessions] : []),
+    ...(input.notifies ? [input.notify] : []),
+    ...packages,
+  ];
 
   const policy: DurableToolPolicy | undefined =
     input.policy ??

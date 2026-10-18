@@ -63,6 +63,7 @@ import { createLogger } from "./logger.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { DurableThreads } from "./durable-threads.js";
+import type { SessionNotifyPort } from "./session-push-notifier.js";
 import { properLockfile } from "./pi-lockfile.js";
 import { requireDurableStoreId } from "./session-runtime-capabilities.js";
 import type { ConversationStreamServerMessage, Session } from "./types.js";
@@ -180,6 +181,13 @@ function summarize(loaded: LoadedDurableExtension, builtIn: boolean): DurableExt
 const CONTROL_EXTENSION = "oppi.control";
 /** Offers `subagent`; a session selects it only when it may spawn. */
 const SESSIONS_EXTENSION = "oppi.sessions";
+/** Offers `notify`; a session selects it only while the server offers it (`offersNotify`). */
+const NOTIFY_EXTENSION = "oppi.notify";
+
+/** `SessionNotifyPort` plus the Session bound to a store's conversation. */
+export interface DurableNotifyBinding extends SessionNotifyPort {
+  sessionIdOf(storeId: string, conversationId: ConversationId): string | undefined;
+}
 
 /**
  * What Oppi's built-ins get from `oppiHost()`: the subagent and control hosts scoped to the
@@ -197,6 +205,12 @@ const durableHost: OppiDurableHost = {
       caller.host.storeId,
       caller.conversationId,
     );
+  },
+  notify: (env) => {
+    const caller = conversationOfEnv(env);
+    const notify = caller?.host.runtime.boundNotify;
+    const sessionId = caller && notify?.sessionIdOf(caller.host.storeId, caller.conversationId);
+    return notify && sessionId ? (input) => notify.notify(sessionId, input) : undefined;
   },
   sandbox: sandboxHost,
 };
@@ -1123,6 +1137,7 @@ export class DurableHarness {
   private registry?: Registry;
   private threads?: DurableThreads;
   private control?: DurableControlCli;
+  private notifyBinding?: DurableNotifyBinding;
   /** Extensions from Oppi's bundled packages, in install order. */
   private bundled: readonly LoadedDurableExtension[] = [];
   /** Extensions from the durable entries of enabled Pi packages, in load order. */
@@ -1179,6 +1194,16 @@ export class DurableHarness {
     return this.builtIn(SESSIONS_EXTENSION);
   }
 
+  /** The installed `oppi.notify`, which offers `notify`. */
+  get notifyExtension(): Extension {
+    return this.builtIn(NOTIFY_EXTENSION);
+  }
+
+  /** Whether `sessionId` selects `oppi.notify` now: top-level, while push is on. */
+  offersNotify(sessionId: string): boolean {
+    return this.notifyBinding?.offersNotify(sessionId) ?? false;
+  }
+
   /** The control conversation's exact selection. Never part of `defaultExtensions`. */
   get controlExtensions(): readonly Extension[] {
     return controlConversationExtensions((name) => this.builtIn(name), this.controlCodemode);
@@ -1213,15 +1238,17 @@ export class DurableHarness {
 
   /**
    * The built-ins a bound conversation's `{ add }` edit enrolls on every attach, in install order:
-   * those every runtime allows, with `oppi.sessions` only when the session may spawn.
+   * those every runtime allows, with `oppi.sessions` only when the session may spawn and
+   * `oppi.notify` only when it is offered.
    */
-  attachedBuiltIns(spawn: boolean): Extension[] {
+  attachedBuiltIns(spawn: boolean, notifies: boolean): Extension[] {
     return this.bundled
       .filter(
         (builtIn) =>
           builtIn.runtimes.includes("host") &&
           builtIn.runtimes.includes("sandbox") &&
-          (spawn || builtIn.extension.name !== SESSIONS_EXTENSION),
+          (spawn || builtIn.extension.name !== SESSIONS_EXTENSION) &&
+          (notifies || builtIn.extension.name !== NOTIFY_EXTENSION),
       )
       .map((builtIn) => builtIn.extension);
   }
@@ -1235,6 +1262,12 @@ export class DurableHarness {
   }
   bindControl(control: DurableControlCli): void {
     this.control = control;
+  }
+  bindNotify(binding: DurableNotifyBinding): void {
+    this.notifyBinding = binding;
+  }
+  get boundNotify(): DurableNotifyBinding | undefined {
+    return this.notifyBinding;
   }
   get boundThreads(): DurableThreads | undefined {
     return this.threads;

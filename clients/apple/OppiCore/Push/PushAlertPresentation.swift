@@ -35,7 +35,7 @@ struct PushRedactionSnapshot: Codable, Equatable, Sendable {
 /// fixed fallback.
 struct PushAlertPresentation: Equatable, Sendable {
     enum Interruption: Equatable, Sendable {
-        case passive, active, timeSensitive
+        case active, timeSensitive
     }
 
     let title: String
@@ -87,7 +87,7 @@ struct PushAlertPresentation: Equatable, Sendable {
             targetContentIdentifier: plaintext.sessionId ?? plaintext.approvalId ?? plaintext.deviceId,
             userInfo: userInfo,
             interruption: interruption(for: plaintext.event),
-            playsSound: plaintext.event == .blocked || plaintext.event == .pairingApproval
+            playsSound: plaintext.event != .deviceEnrolled
         )
     }
 
@@ -100,8 +100,9 @@ struct PushAlertPresentation: Equatable, Sendable {
             case .question: (String(localized: "Question"), String(localized: "Waiting for your answer."))
             case .auth: (String(localized: "Sign-in Needed"), String(localized: "Waiting for you to sign in."))
             }
-        // The Stopped alert: the unredacted body says how the run ended.
-        case .done: (String(localized: "Session Done"), String(localized: "Stopped working."))
+        case .error: (String(localized: "Session Failed"), String(localized: "Stopped with an error."))
+        // The agent's own words stay out of a redacted alert.
+        case .notify: (String(localized: "Agent Message"), String(localized: "Open Oppi to read it."))
         case .pairingApproval:
             (String(localized: "Approve New Device?"), String(localized: "A new device is waiting for your approval."))
         case .deviceEnrolled:
@@ -112,7 +113,8 @@ struct PushAlertPresentation: Equatable, Sendable {
     private static func category(for event: PushPlaintext.Event) -> String {
         switch event {
         case .blocked: SessionNotificationCategory.sessionBlocked
-        case .done: SessionNotificationCategory.sessionDone
+        case .error: SessionNotificationCategory.sessionFailed
+        case .notify: SessionNotificationCategory.agentMessage
         case .pairingApproval: SessionNotificationCategory.pairingApproval
         case .deviceEnrolled: SessionNotificationCategory.deviceEnrolled
         }
@@ -121,14 +123,9 @@ struct PushAlertPresentation: Equatable, Sendable {
     private static func interruption(for event: PushPlaintext.Event) -> Interruption {
         switch event {
         case .blocked, .pairingApproval: .timeSensitive
-        case .deviceEnrolled: .active
-        case .done: .passive
+        case .deviceEnrolled, .error, .notify: .active
         }
     }
-
-    /// One Notification Center stack for every finished run, so a night of agent work is one
-    /// stack instead of one per session. Shared with the app's local `done` banner.
-    static let sessionDoneThreadIdentifier = "session-done"
 
     private static func threadIdentifier(for plaintext: PushPlaintext) -> String {
         switch plaintext.event {
@@ -136,9 +133,7 @@ struct PushAlertPresentation: Equatable, Sendable {
             plaintext.approvalId.map { "pairing:\($0)" } ?? ""
         case .deviceEnrolled:
             plaintext.deviceId.map { "device:\($0)" } ?? ""
-        case .done:
-            sessionDoneThreadIdentifier
-        case .blocked:
+        case .blocked, .error, .notify:
             plaintext.sessionId ?? ""
         }
     }

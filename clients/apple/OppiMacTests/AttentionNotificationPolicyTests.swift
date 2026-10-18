@@ -53,9 +53,9 @@ struct AttentionNotificationPolicyTests {
         )
         #expect(
             AttentionNotificationPolicy.navigationSessionId(
-                categoryIdentifier: AttentionNotificationPolicy.sessionDoneCategoryId,
-                userInfo: ["sessionId": "ended-session"]
-            ) == "ended-session"
+                categoryIdentifier: AttentionNotificationPolicy.sessionFailedCategoryId,
+                userInfo: ["sessionId": "failed-session"]
+            ) == "failed-session"
         )
         #expect(
             AttentionNotificationPolicy.navigationSessionId(
@@ -86,7 +86,6 @@ struct AttentionNotificationPolicyTests {
         let payload = AttentionNotificationPolicy.askPayload(for: ask)
         #expect(payload.identifier == "ask-sess-9")
         #expect(payload.categoryIdentifier == AttentionNotificationPolicy.askCategoryId)
-        #expect(payload.categoryIdentifier != AttentionNotificationPolicy.sessionDoneCategoryId)
         #expect(payload.body == "Continue?")
         #expect(payload.subtitle == "2 questions")
         #expect(payload.userInfo["kind"] == "ask")

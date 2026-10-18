@@ -81,6 +81,8 @@ import {
 } from "./host-mcp-extensions.js";
 import { sandboxMcpForWorkspace } from "./sandbox-mcp.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
+import { createNotifyExtension } from "./session-notify-extension.js";
+import type { SessionNotifyPort } from "./session-push-notifier.js";
 import {
   DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
   freezeMobileOutputGuideSettingsSnapshot,
@@ -773,6 +775,8 @@ export interface SdkBackendConfig {
   /** Startup-only relay, registered before protected project resources load. */
   onUIBridgeReady?: (bridge: SdkUiBridge | undefined) => void;
   hasUI?: () => boolean;
+  /** Offers the agent `notify` tool while the server allows it for this session. */
+  notify?: SessionNotifyPort;
 }
 
 type MobileOutputGuideSettingsHolder = {
@@ -1346,6 +1350,7 @@ export class SdkBackend implements AgentBackend {
         appendSystemPromptOverride: (base) => buildCurrentAppendSystemPrompt(base),
         extensionFactories: [
           createLifecycleJournalExtension(sessionManager),
+          ...(config.notify ? [createNotifyExtension(session.id, config.notify)] : []),
           ...createMcpBuiltinExtensions(mcpBuiltinNames, sandboxMcp),
           ...(sandboxSkillCommand ? [sandboxSkillCommand] : []),
         ],

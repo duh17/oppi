@@ -2005,6 +2005,9 @@ final class OppiApp {
                 }
             }
         }
+        notificationService.isSessionOnScreen = { [coordinator] serverId, sessionId in
+            coordinator.connection(for: serverId)?.isFocusedSession(sessionId) ?? false
+        }
         notificationService.onPairingDeny = { [coordinator] payload in
             guard let approvalId = payload.approvalId else { return }
             await PairingApprovalController.shared.performNotificationDeny(

@@ -417,8 +417,8 @@ struct AppLockRedactionTests {
         }
         let requests = [
             request("ask-s1", category: AttentionNotificationPolicy.askCategoryId, sessionId: "s1"),
-            request("done-s1", category: AttentionNotificationPolicy.sessionDoneCategoryId, sessionId: "s1"),
-            request("6F1C2A9E-REMOTE", category: AttentionNotificationPolicy.sessionDoneCategoryId, sessionId: "s2"),
+            request("5B2E-REMOTE", category: AttentionNotificationPolicy.agentMessageCategoryId, sessionId: "s1"),
+            request("6F1C2A9E-REMOTE", category: AttentionNotificationPolicy.sessionFailedCategoryId, sessionId: "s2"),
             request("ask-s2", category: AttentionNotificationPolicy.askCategoryId, sessionId: "s2"),
             request("7A0D-REMOTE", category: AttentionNotificationPolicy.sessionBlockedCategoryId, sessionId: "s3"),
             request("other-app-category", category: "SOMETHING_ELSE", sessionId: "s4"),
@@ -426,7 +426,7 @@ struct AppLockRedactionTests {
 
         #expect(
             AttentionNotificationService.lockSensitiveIdentifiers(in: requests)
-                == ["ask-s1", "done-s1", "6F1C2A9E-REMOTE", "ask-s2", "7A0D-REMOTE"]
+                == ["ask-s1", "5B2E-REMOTE", "6F1C2A9E-REMOTE", "ask-s2", "7A0D-REMOTE"]
         )
     }
 

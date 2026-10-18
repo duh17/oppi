@@ -71,9 +71,15 @@ struct AttentionNotificationServiceTests {
         )
         #expect(
             AttentionNotificationService.navigationSessionId(
-                categoryIdentifier: AttentionNotificationService.sessionDoneCategoryId,
-                userInfo: ["sessionId": "ended-session"]
-            ) == "ended-session"
+                categoryIdentifier: AttentionNotificationPolicy.agentMessageCategoryId,
+                userInfo: ["sessionId": "message-session"]
+            ) == "message-session"
+        )
+        #expect(
+            AttentionNotificationService.navigationSessionId(
+                categoryIdentifier: AttentionNotificationPolicy.sessionFailedCategoryId,
+                userInfo: ["sessionId": "failed-session"]
+            ) == "failed-session"
         )
         #expect(
             AttentionNotificationService.navigationSessionId(
@@ -100,17 +106,15 @@ struct AttentionNotificationServiceTests {
             let content = UNMutableNotificationContent()
             content.categoryIdentifier = category
             content.userInfo = userInfo
-            // Every Session Done shares one thread.
-            content.threadIdentifier = PushAlertPresentation.sessionDoneThreadIdentifier
             return UNNotificationRequest(identifier: id, content: content, trigger: nil)
         }
-        let done = AttentionNotificationService.sessionDoneCategoryId
+        let message = AttentionNotificationPolicy.agentMessageCategoryId
         let delivered = [
-            notification("push-done", category: done, ["serverId": "a", "sessionId": "s1"]),
+            notification("push-message", category: message, ["serverId": "a", "sessionId": "s1"]),
             notification("push-blocked", category: AttentionNotificationService.sessionBlockedCategoryId, ["serverId": "a", "sessionId": "s1"]),
             notification("local-ask", category: AttentionNotificationService.askCategoryId, ["sessionId": "s1"]),
-            notification("other-session", category: done, ["serverId": "a", "sessionId": "s2"]),
-            notification("other-server", category: done, ["serverId": "b", "sessionId": "s1"]),
+            notification("other-session", category: message, ["serverId": "a", "sessionId": "s2"]),
+            notification("other-server", category: message, ["serverId": "b", "sessionId": "s1"]),
             notification("pairing", category: AttentionNotificationService.pairingApprovalCategoryId, ["serverId": "a"]),
         ]
 
@@ -118,7 +122,7 @@ struct AttentionNotificationServiceTests {
             in: delivered,
             serverId: "a",
             sessionIds: ["s1"]
-        ) == ["push-done", "push-blocked", "local-ask"])
+        ) == ["push-message", "push-blocked", "local-ask"])
     }
 }
 

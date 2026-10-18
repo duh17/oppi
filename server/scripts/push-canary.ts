@@ -372,6 +372,8 @@ async function runCanary(
     sessionName: `CANARY-NAME-${tag}`,
     sessionId: `canary-session-${tag}`,
     workspaceId: `canary-workspace-${tag}`,
+    agentTitle: `CANARY-TITLE-${tag}`,
+    agentMessage: `CANARY-NOTIFY-${tag}`,
   };
   try {
     const dataDir = path.join(workDir, "server");
@@ -425,7 +427,6 @@ async function runCanary(
     });
     const notifier = new SessionPushNotifier(tracking, storage, {
       isDevicePresent: () => false,
-      hasWorkingChild: () => false,
     });
     const current = storage.getSession(canaries.sessionId);
     if (!current) fail("session missing");
@@ -434,11 +435,12 @@ async function runCanary(
       current: { state: "blocked", kind: "permission", message: canaries.sessionName, since: 2 },
       changed: true,
     });
-    notifier.handleProgramStatusChange(current, {
-      previous: { state: "working", since: 3 },
-      current: { state: "done", since: 4 },
-      changed: true,
+    // The agent's own words travel only inside the envelope.
+    const notified = notifier.notify(canaries.sessionId, {
+      title: canaries.agentTitle,
+      body: canaries.agentMessage,
     });
+    if ((await notified).status !== "sent") fail(`${name}: agent notify not sent`);
     const settled = (await Promise.all(results)) as Array<{ status: string } | null>;
     if (settled.length !== 2 || settled.some((result) => result?.status !== "delivered")) {
       fail(`${name}: expected 2 delivered pushes, got ${JSON.stringify(settled)}`);

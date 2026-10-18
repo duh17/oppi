@@ -40,7 +40,7 @@ struct PushPairingPlaintextTests {
     }
 
     @Test func sessionEventWithoutSessionIdIsRejectedAsPlaintext() throws {
-        let json = #"{"v":1,"ts":1,"event":"done","title":"Session Done","body":"Finished."}"#
+        let json = #"{"v":1,"ts":1,"event":"notify","title":"Report ready","body":"Read it."}"#
         #expect(throws: DecodingError.self) {
             try decode(json)
         }

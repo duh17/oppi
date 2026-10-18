@@ -212,6 +212,7 @@ const BUNDLED_PACKAGES = [
   "sessions",
   "project-context",
   "sql-explorer",
+  "notify",
   "control",
 ] as const;
 

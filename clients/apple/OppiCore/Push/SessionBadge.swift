@@ -26,13 +26,13 @@ struct SessionBadge: Codable, Equatable, Sendable {
     }
 
     /// The session a decrypted push says owes a look, or nil for a pairing push. Blocked
-    /// pushes come for any session; the server sends done only for top-level runs, and a run
-    /// that just ended is unseen.
+    /// pushes come for any session; the server sends a failed run and an agent's message only
+    /// for top-level sessions, and each is something the user has not seen yet.
     static func key(serverId: String, plaintext: PushPlaintext) -> Key? {
         guard let sessionId = plaintext.sessionId,
               owesLook(
                 isBlocked: plaintext.event == .blocked,
-                hasUnseenOutcome: plaintext.event == .done,
+                hasUnseenOutcome: plaintext.event == .error || plaintext.event == .notify,
                 isTopLevel: true
               ) else { return nil }
         return Key(serverId: serverId, sessionId: sessionId)

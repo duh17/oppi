@@ -3,6 +3,7 @@ import { applyHostEnv } from "./host-env.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import type { ProgramStatusChangeListener } from "./program-status.js";
+import type { SessionNotifyPort } from "./session-push-notifier.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
   SessionActivationCoordinator,
@@ -70,6 +71,7 @@ export interface SessionCoordinatorBundleDeps {
   stopTimers?: SessionStopTimers;
   getContextWindowResolver: () => ((modelId: string) => number) | null;
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
+  getNotifyPort: () => SessionNotifyPort | null;
   emitSessionEvent: (payload: SessionBroadcastEvent) => void;
   onProgramStatusChange?: ProgramStatusChangeListener;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
@@ -158,6 +160,7 @@ export function createSessionCoordinatorBundle(
     durableHarness: deps.durableHarness,
     eventRingCapacity: deps.eventRingCapacity,
     getSkillPathResolver: () => deps.getSkillPathResolver(),
+    getNotifyPort: () => deps.getNotifyPort(),
     onPiEvent: (key, event) => deps.onPiEvent(key, event),
     onSessionEnd: (key, reason) => deps.onSessionEnd(key, reason),
     registerActiveSession: (key, active) => {

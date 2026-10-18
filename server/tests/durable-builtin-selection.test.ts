@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
+import {
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type FauxResponseStep,
+} from "@earendil-works/pi-ai/providers/faux";
+import type { NotifyInput } from "../extensions/durable/notify/contract.js";
 import { AgentDoc, type ConversationId, type Harness } from "@earendil-works/pi-durable";
 import { ensureControlConversationSession } from "../src/control-conversation-service.js";
 import { SessionHost } from "../src/durable-harness.js";
@@ -12,7 +18,7 @@ import type { GondolinVm } from "../src/gondolin-ops.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
-import type { Session } from "../src/types.js";
+import type { ServerMessage, Session } from "../src/types.js";
 
 // What each kind of durable session selects, pinned by name: the built-in extensions, the tools
 // offered, and the prompt sections, in order, when the conversation is created and after it
@@ -76,6 +82,8 @@ const PINNED = {
           "project-context",
           "sql-explorer",
         ],
+        // No device registered for pushes: no `notify`.
+        remove: ["oppi.notify"],
       },
       extensions: [
         "coding-tools",
@@ -163,6 +171,7 @@ const PINNED = {
           "project-context",
           "sql-explorer",
         ],
+        remove: ["oppi.notify"],
       },
       extensions: [
         "coding-tools",
@@ -231,7 +240,7 @@ const PINNED = {
     reattached: {
       stored: {
         add: ["ask", "working-words", "background-jobs", "project-context", "sql-explorer"],
-        remove: ["oppi.sessions"],
+        remove: ["oppi.sessions", "oppi.notify"],
       },
       extensions: [
         "coding-tools",
@@ -320,7 +329,7 @@ afterEach(async () => {
   else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 });
 
-async function fixture() {
+async function fixture(responses: FauxResponseStep[] = []) {
   const dir = mkdtempSync(join(tmpdir(), "oppi-durable-selection-"));
   // No user packages: only Oppi's own extensions.
   process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
@@ -331,6 +340,7 @@ async function fixture() {
     refreshOnCreate: false,
   });
   const faux = fauxProvider();
+  faux.setResponses(responses);
   models.registerNativeProvider(faux.provider);
   await models.setRuntimeApiKey("faux", "test-only-faux-credential");
   await models.refresh({ allowNetwork: false });
@@ -444,5 +454,67 @@ describe("durable built-in selection", () => {
       control: await createdAndReattached(f, control),
     };
     expect(pinned).toEqual(PINNED);
+  });
+
+  it("offers notify only while the server does, and sends a call through it", async () => {
+    const f = await fixture([
+      fauxAssistantMessage(
+        [fauxToolCall("notify", { title: "Report ready", body: "Read the summary." })],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("Sent."),
+    ]);
+    let offered = true;
+    const sent: Array<[string, NotifyInput]> = [];
+    f.manager.notifyPort = {
+      offersNotify: () => offered,
+      notify: async (sessionId, input) => {
+        sent.push([sessionId, input]);
+        return { status: "sent", devices: 1 };
+      },
+    };
+    const { session, workspace } = workspaceSession(f, "host");
+
+    await f.manager.startSession(session.id, workspace);
+    const created = await selection(f, session.id);
+    expect(created.extensions).toContain("oppi.notify");
+    expect(created.tools).toContain("notify");
+    expect(created.sections).toContain("notify-guidelines");
+
+    const ended = new Promise<void>((resolve) => {
+      const unsubscribe = f.manager.subscribe(session.id, (message: ServerMessage) => {
+        if (message.type !== "agent_end") return;
+        unsubscribe();
+        resolve();
+      });
+    });
+    await f.manager.sendPrompt(session.id, "Write the report");
+    await ended;
+    expect(sent).toEqual([[session.id, { title: "Report ready", body: "Read the summary." }]]);
+    const harness: Harness = (await f.opening.mock.results.at(-1)!.value).harness;
+    const id = f.storage.getSession(session.id)!.serverDurable!.conversationId as ConversationId;
+    const page = await (await harness.conversation(id, context))!.entries(
+      {},
+      50,
+      undefined,
+      context,
+    );
+    const result = page.items
+      .map((entry) => entry.model?.[0])
+      .find((message) => message?.role === "toolResult");
+    expect(result).toMatchObject({
+      toolName: "notify",
+      isError: false,
+      content: [{ type: "text", text: "Notification sent to 1 device." }],
+    });
+    await f.manager.stopSession(session.id);
+
+    // Push turned off: the next attach drops the tool.
+    offered = false;
+    await f.manager.startSession(session.id, workspace);
+    const reattached = await selection(f, session.id);
+    expect(reattached.extensions).not.toContain("oppi.notify");
+    expect(reattached.tools).not.toContain("notify");
+    await f.manager.stopSession(session.id);
   });
 });

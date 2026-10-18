@@ -108,14 +108,14 @@ bytes `[0, 577)`. The signature covers the version, `kid`, `enc`, and `ct`.
 | --- | --- |
 | `v` | `1` |
 | `ts` | Server time in Unix milliseconds when sealed. |
-| `event` | `blocked`, `done`, `pairing_approval`, or `device_enrolled` |
+| `event` | `blocked`, `error`, `notify`, `pairing_approval`, or `device_enrolled` |
 | `kind` | `blocked` only: `permission`, `question`, or `auth` |
 | `sessionId` | Session the push is about; omitted for `pairing_approval` and `device_enrolled` |
 | `workspaceId` | Present when the session has a workspace |
 | `approvalId` | `pairing_approval` only: the pending approval (`pa_...`) |
 | `deviceId` | `device_enrolled` only: the newly paired device |
-| `title`, `body` | Display text |
-| `subtitle` | Session name; the server shortens it until the JSON fits 510 bytes, and drops it when nothing else fits |
+| `title`, `body` | Display text; for `notify`, the agent's own words (title at most 80 code points, body at most 200) |
+| `subtitle` | Session name; the server shortens it until the JSON fits 510 bytes, and drops it when nothing else fits. A `notify` keeps it: the server caps the title and name by size and shortens the agent's body instead |
 
 Pairing pushes carry no session:
 
@@ -190,7 +190,8 @@ plaintext.
 | `blocked`/`permission` | Needs Approval | Waiting for your approval. |
 | `blocked`/`question` | Question | Waiting for your answer. |
 | `blocked`/`auth` | Sign-in Needed | Waiting for you to sign in. |
-| `done` | Session Done | Stopped working. |
+| `error` | Session Failed | Stopped with an error. |
+| `notify` | Agent Message | Open Oppi to read it. |
 | `pairing_approval` | Approve New Device? | A new device is waiting for your approval. |
 | `device_enrolled` | New Device Paired | A new device was paired with your server. |
 
@@ -345,9 +346,8 @@ The relay accepts no APNs headers or payload fields from callers.
 ```
 
 There is no outer sound, thread ID, category, or interruption level. The extension sets
-those after decrypting, so urgency and session grouping stay inside the ciphertext. It
-stacks every `done` in one Notification Center thread; other session events stack per
-session.
+those after decrypting, so urgency and session grouping stay inside the ciphertext. Session
+events stack per session.
 
 ### 3.6 Live Activity
 
@@ -512,16 +512,18 @@ any field from a push that failed a check. Without Apple's
   write and asks the relay to delete the permission.
 - Per-device budget, in memory: 100 pushes per UTC day and 10 per minute for each device,
   matching the relay's quota so the server stops before the relay refuses. Routine events
-  (`done`, `device_enrolled`) stop at 80 a day and 8 a minute; the rest
+  (`error`, `notify`, `device_enrolled`) stop at 80 a day and 8 a minute; the rest
   is kept for `blocked` and `pairing_approval`, which wait on the user. A relay `429` with
   `Retry-After` pauses that device's pushes until it passes.
-- Session events are program-status transitions only, at most once a minute per session
-  and event, skipping devices that hold a live stream. `blocked` (Needs you): any session
-  enters `blocked`. `done` (Stopped): a top-level session goes from `working` or `blocked`
-  to `done`, `error`, or `idle` with no child session still starting or working; the body
-  says which (Finished., Stopped with an error., Stopped before finishing.). A failed model
-  call that an automatic retry recovers never leaves `working`, so it pushes nothing, and a
-  session ending pushes nothing. `pairing_approval` when a pairing waits
+- Session events, at most once a minute per session and event. `blocked` (Needs you): any
+  session enters `blocked`, skipping devices that hold a live stream. `error` (Failed): a
+  top-level session goes from `working` or `blocked` to `error`, with fixed text. A failed
+  model call that an automatic retry recovers never leaves `working`, so it pushes nothing;
+  a run that finishes or is stopped, and a session ending, push nothing. `notify` (Agent
+  message): a top-level session's agent calls the `notify` tool, which the server offers only
+  while some device holds a push registration. `error` and `notify` go to every registered
+  device, present or not; the app hides one while that session's chat is on screen.
+  `pairing_approval` when a pairing waits
   for approval and `device_enrolled` after each enrollment (never to the new device). See
   [onboarding](../../docs/onboarding.md) for when pairing needs approval.
 - Sends go to the primary; network errors, timeouts, and `5xx` move to the standby. A `410`
@@ -529,7 +531,9 @@ any field from a push that failed a check. Without Apple's
   because a standby may not share the primary's permissions.
 - `collapseId` = base64url of the first 16 bytes of
   `HMAC-SHA256(key = SHA-256(sendToken), "oppi-push-collapse-v1\n" + key)`, where `key` is the
-  `sessionId` for session events, `pairing:<approvalId>` for `pairing_approval`, and
+  `sessionId` for `blocked` and `error`, `notify:<sessionId>` for `notify` (so a later
+  question never replaces a message the user has not read), `pairing:<approvalId>` for
+  `pairing_approval`, and
   `device:<deviceId>` for `device_enrolled`: stable per device and subject, unlinkable across
   devices.
 - Fail closed: the relay client accepts only a sealed-envelope type that only the sealing
@@ -593,10 +597,15 @@ practice.
    the device or turning push off ends it. A hostile relay is not bound by its own quotas, but
    it can already do worse (threat 1). Apple's `com.apple.developer.usernotifications.filtering` entitlement, if
    granted, would let the extension drop such pushes instead of showing the fallback (§4).
-3. **Lock Screen exposure.** Someone holding the phone can read a decrypted alert on the Lock
-   Screen. App Lock and scoped locks remove the session name (§2.6); iOS **Settings →
+3. **Agent-written text.** A `notify` alert carries words the session's model chose, and the
+   model may have read hostile content. The alert is genuinely from the server (signed) but
+   its text is not vetted: it can ask the user to do anything. It always names its session
+   (subtitle; the server shortens the agent's body rather than drop the name), the tap invariant above still holds (it only opens that session), and the
+   per-session throttle and device budget bound how many there can be.
+4. **Lock Screen exposure.** Someone holding the phone can read a decrypted alert on the Lock
+   Screen. App Lock and scoped locks remove the session name and an agent's words (§2.6); iOS **Settings →
    Notifications → Show Previews → When Unlocked** hides alert text until the phone is unlocked.
-4. **Push key theft (out of scope).** The private push key is a keychain item with
+5. **Push key theft (out of scope).** The private push key is a keychain item with
    `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`: it never moves to another device
    through a backup or iCloud Keychain, and only Oppi and its extension can read it. Taking it needs full device compromise, and
    an attacker with that can already open Oppi itself.

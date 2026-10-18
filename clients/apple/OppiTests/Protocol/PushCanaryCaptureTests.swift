@@ -121,7 +121,10 @@ struct PushCanaryCaptureTests {
             let alerts = try capture.apnsPayloads.map { open(try userInfo($0)) }
             let name = try #require(capture.canaries["sessionName"])
             // The first two sends ran concurrently, so APNs saw them in any order.
-            #expect(Set(alerts.prefix(2).map(\.title)) == ["Needs Approval", "Session Done"])
+            let agentTitle = try #require(capture.canaries["agentTitle"])
+            #expect(Set(alerts.prefix(2).map(\.title)) == ["Needs Approval", agentTitle])
+            // The agent's own words reach only this device.
+            #expect(alerts.contains { $0.body == capture.canaries["agentMessage"] })
             #expect(alerts.allSatisfy { $0.subtitle == name })
             #expect(alerts.allSatisfy { $0.userInfo["sessionId"] == capture.canaries["sessionId"] })
             #expect(alerts.allSatisfy { $0.userInfo["workspaceId"] == capture.canaries["workspaceId"] })

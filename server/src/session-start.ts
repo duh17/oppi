@@ -19,6 +19,7 @@ import {
   type RuntimeSessionStateScaffold,
 } from "./session-runtime-state.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { SessionNotifyPort } from "./session-push-notifier.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { Storage } from "./storage.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
@@ -42,6 +43,7 @@ export interface SessionStartCoordinatorDeps {
   config: ServerConfig;
   eventRingCapacity: number;
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
+  getNotifyPort: () => SessionNotifyPort | null;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
   onSessionEnd: (key: string, reason: string) => void;
   registerActiveSession: (key: string, active: SessionStartActiveSession) => void;
@@ -150,6 +152,7 @@ export class SessionStartCoordinator {
                   serverConfig: this.deps.config,
                   onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
                   hasUI: () => this.deps.hasUI?.(key) ?? false,
+                  notify: this.deps.getNotifyPort() ?? undefined,
                 });
           this.deps.metrics?.record("server.session_create_ms", Date.now() - createStart);
 

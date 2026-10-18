@@ -8,6 +8,7 @@ import type {
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import type { TSchema } from "typebox";
+import type { NotifyInput, NotifyOutcome } from "../extensions/durable/notify/contract.js";
 import type { agentMessageEntry } from "../extensions/durable/sessions/agent-message.js";
 
 /**
@@ -61,6 +62,13 @@ export interface OppiDurableHost {
    * conversation.
    */
   control(env: ExecutionEnv | undefined): DurableControlHost | undefined;
+  /**
+   * `notify`'s send for the Session bound to the conversation running `env`. Undefined for an
+   * env the server did not make, or a conversation without a Session.
+   */
+  notify(
+    env: ExecutionEnv | undefined,
+  ): ((input: NotifyInput) => Promise<NotifyOutcome>) | undefined;
   /** File tools over a sandbox session's Gondolin VM. */
   readonly sandbox: OppiSandboxHost;
 }

@@ -266,9 +266,9 @@ struct PushEnvelopeTests {
         #expect(seeded?.count == 1)
 
         #expect(try Self.badge(Self.envelope("blocked-permission"), storedAt: url) == 2)
-        // Every vector names the same session: a second push and its done add nothing.
+        // Every vector names the same session: a second push and an agent message add nothing.
         #expect(try Self.badge(Self.envelope("blocked-auth"), storedAt: url) == 2)
-        #expect(try Self.badge(Self.envelope("done-no-workspace"), storedAt: url) == 2)
+        #expect(try Self.badge(Self.envelope("notify-no-workspace"), storedAt: url) == 2)
     }
 
     @Test func aFallbackOrPairingPushLeavesTheBadgeAsItIs() throws {
@@ -355,15 +355,29 @@ struct PushEnvelopeTests {
         #expect(alert.subtitle.hasPrefix("名"))
     }
 
-    @Test func doneIsPassiveAndSilentInTheSharedFinishedStack() throws {
-        let alert = try present("done-no-workspace", redaction: PushRedactionSnapshot(appLockEnabled: false, lockedScopes: []))
-        #expect(alert.interruption == .passive)
-        #expect(!alert.playsSound)
-        #expect(alert.categoryIdentifier == AttentionNotificationPolicy.sessionDoneCategoryId)
-        // Every session's done shares one stack; a tap still opens this session.
-        #expect(alert.threadIdentifier == PushAlertPresentation.sessionDoneThreadIdentifier)
-        #expect(alert.targetContentIdentifier == alert.userInfo["sessionId"])
-        #expect(alert.userInfo["sessionId"] != nil)
+    @Test func anAgentMessageShowsTheAgentsWordsAndOpensItsSession() throws {
+        let alert = try present("notify-no-workspace", redaction: PushRedactionSnapshot(appLockEnabled: false, lockedScopes: []))
+        #expect(alert.title == "Push relay fix landed")
+        #expect(alert.body == "Read the summary in the session.")
+        #expect(alert.subtitle == "Fix the flaky test")
+        #expect(alert.interruption == .active)
+        #expect(alert.playsSound)
+        #expect(alert.categoryIdentifier == AttentionNotificationPolicy.agentMessageCategoryId)
+        #expect(alert.threadIdentifier == "s_vector")
+        #expect(AttentionNotificationPolicy.navigationSessionId(
+            categoryIdentifier: alert.categoryIdentifier,
+            userInfo: alert.userInfo
+        ) == "s_vector")
+    }
+
+    @Test(arguments: redactingSnapshots)
+    func locksHideTheAgentsWords(redaction: PushRedactionSnapshot) throws {
+        let alert = try present("notify-no-workspace", redaction: redaction)
+        // The workspace lock cannot apply: this push names no workspace.
+        if redaction.lockedScopes.contains(where: { $0.workspaceId != nil }) { return }
+        #expect(alert.title == String(localized: "Agent Message"))
+        #expect(alert.subtitle.isEmpty)
+        #expect(alert.body == String(localized: "Open Oppi to read it."))
     }
 
     @Test func aPushWithoutAnEnvelopeShowsOnlyTheFixedText() {

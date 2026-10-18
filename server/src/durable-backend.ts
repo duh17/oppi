@@ -426,6 +426,8 @@ export class DurableBackend implements AgentBackend {
       sessions: host.runtime.sessionsExtension,
       spawn,
       grant,
+      notify: host.runtime.notifyExtension,
+      notifies: host.runtime.offersNotify(session.id),
       instructions: { cwd: target.cwd, ...(workspacePrompt ? { workspacePrompt } : {}) },
     });
     return { doc: created.doc, spawn, created };
@@ -461,7 +463,9 @@ export class DurableBackend implements AgentBackend {
         : host.runtime.packageExtensionsFor(sandbox ? "sandbox" : "host");
     // A child without the `allowNestedDelegation` grant has no `subagent` tool.
     const spawn = launched?.spawn === true;
-    const builtIns = host.runtime.attachedBuiltIns(spawn);
+    // Asked again on every attach: push may have turned on or off since the last one.
+    const notifies = host.runtime.offersNotify(session.id);
+    const builtIns = host.runtime.attachedBuiltIns(spawn, notifies);
     let conversation: Conversation;
     if (id !== undefined) {
       const existing = await harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
@@ -488,8 +492,11 @@ export class DurableBackend implements AgentBackend {
           : {
               extensions: {
                 add: [...builtIns, ...packageExtensions, ...(mcp ? [mcp.selection] : [])],
-                // The host default selection includes it.
-                ...(spawn ? {} : { remove: [host.runtime.sessionsExtension] }),
+                // The host default selection includes both.
+                remove: [
+                  ...(spawn ? [] : [host.runtime.sessionsExtension]),
+                  ...(notifies ? [] : [host.runtime.notifyExtension]),
+                ],
               },
             },
         BACKGROUND_CONTEXT,

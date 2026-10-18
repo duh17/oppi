@@ -12,7 +12,12 @@ import type { Session } from "../src/types.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
 
 // The sandbox tools' entry reads the host when it is evaluated, as the loader's import does.
-bindOppiHost({ sandbox: sandboxHost, sessions: () => undefined, control: () => undefined });
+bindOppiHost({
+  sandbox: sandboxHost,
+  sessions: () => undefined,
+  control: () => undefined,
+  notify: () => undefined,
+});
 const { default: DurableSandboxTools } =
   await import("../extensions/durable/sandbox-tools/durable.js");
 
@@ -33,6 +38,8 @@ function toolsFor(policy: Policy): string[] {
     sessions: defineExtension({ name: "oppi.sessions" }),
     spawn: false,
     grant: false,
+    notify: defineExtension({ name: "oppi.notify" }),
+    notifies: false,
   });
   return change.tools.map((tool) => tool.name).sort();
 }
