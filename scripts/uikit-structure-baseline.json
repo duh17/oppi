@@ -316,9 +316,6 @@
     "clients/apple/Oppi/Features/Chat/Composer/MicButtonLabel.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Composer/SSHTerminalComposerHost.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Composer/SlashCommandSuggestionList.swift": {
       "import SwiftUI": 1
     },

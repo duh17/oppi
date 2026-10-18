@@ -522,6 +522,12 @@ struct SSHTerminalTests {
             }
             return nil
         }
+        func collectArrows(_ root: UIView) -> [SSHTerminalArrowButton] {
+            var found: [SSHTerminalArrowButton] = []
+            if let arrow = root as? SSHTerminalArrowButton { found.append(arrow) }
+            for child in root.subviews { found.append(contentsOf: collectArrows(child)) }
+            return found
+        }
         #expect(find(composer, "sshTerminal.composer.page") != nil)
         #expect(find(composer, "sshTerminal.composer.rawKeyboard") != nil)
         if let page = find(composer, "sshTerminal.composer.page") as? UIButton {
@@ -529,7 +535,10 @@ struct SSHTerminalTests {
             composer.layoutIfNeeded()
         }
         #expect(findType(composer) { $0 is SSHTerminalArrowButton } != nil)
+        let composerArrows = collectArrows(composer)
+        #expect(Set(composerArrows.compactMap { $0.configuration?.title }) == ["\u{2190}", "\u{2193}", "\u{2191}", "\u{2192}"])
         if let page = find(composer, "sshTerminal.composer.page") as? UIButton {
+            #expect(page.titleLabel?.numberOfLines == 1)
             page.sendActions(for: .touchUpInside)
             composer.layoutIfNeeded()
         }
@@ -553,6 +562,74 @@ struct SSHTerminalTests {
         #expect(find(accessory, "sshTerminal.useChatBar") != nil)
         #expect(find(accessory, "sshTerminal.hideKeyboard") != nil)
         #expect(findType(accessory) { $0 is SSHTerminalArrowButton } != nil)
+        let accessoryArrows = collectArrows(accessory)
+        #expect(Set(accessoryArrows.compactMap { $0.configuration?.title }) == ["\u{2190}", "\u{2193}", "\u{2191}", "\u{2192}"])
+    }
+
+    @Test func terminalDictationWritesTheLiveDraftAndKeepsItAfterLeavingTheBar() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        defer { channel.close(reason: "done") }
+        let host = SSHTerminalComposerHost(
+            channel: channel, connection: nil, draftStore: nil,
+            themeID: ThemeRuntimeState.currentThemeID(), showRawKeyboard: {}
+        )
+        let session = MockVoiceSession()
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        manager.setEngineMode(.onDevice)
+        _ = manager.beginStandaloneComposer(serverId: "preview", credentials: nil, connection: nil)
+        try await manager.startRecording(keyboardLanguage: "en-US", source: ComposerShared.VoiceInputOwner.inlineComposer.rawValue)
+        host.installVoiceManager(manager)
+        host.setTextBeforeRecording("")
+        session.yieldEvent(.replaceFinalTranscript("hello", committedText: "", activeText: "hello"))
+        #expect(await waitForMainActorCondition { manager.currentTranscript == "hello" })
+        host.applyOwnedVoiceObservation()
+        #expect(host.content.text == "hello")
+        host.releaseVoice()
+        #expect(host.content.text == "hello", "Leaving the chat bar must keep the dictated words")
+        await manager.cancelRecording()
+    }
+
+    @Test func terminalDictationFailureRestoresThePrefixAndShowsTheRetryBanner() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        defer { channel.close(reason: "done") }
+        let host = SSHTerminalComposerHost(
+            channel: channel, connection: nil, draftStore: nil,
+            themeID: ThemeRuntimeState.currentThemeID(), showRawKeyboard: {}
+        )
+        var banner: String?
+        host.onFailureChange = { banner = $0 }
+        let session = MockVoiceSession()
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        manager.setEngineMode(.onDevice)
+        _ = manager.beginStandaloneComposer(serverId: "preview", credentials: nil, connection: nil)
+        try await manager.startRecording(
+            keyboardLanguage: "en-US",
+            source: ComposerShared.VoiceInputOwner.inlineComposer.rawValue,
+            onCaptureFailure: {}
+        )
+        host.installVoiceManager(manager)
+        host.setText("kept ")
+        host.setTextBeforeRecording("kept ")
+        host.setText("kept extra")
+        session.finishEvents(throwing: VoiceInputError.audioCaptureUnavailable)
+        #expect(await waitForMainActorCondition { manager.currentComposerCaptureFailure != nil })
+        host.applyOwnedVoiceObservation()
+        #expect(host.content.text == "kept ")
+        #expect(ComposerShared.captureFailure(manager, owner: .inlineComposer) != nil)
+        await manager.cancelRecording()
+        _ = banner
     }
 
     @Test func navigationBarIgnoresOrdinaryScrollsAndNeedsADeliberatePull() {

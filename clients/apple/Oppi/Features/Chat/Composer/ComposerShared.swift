@@ -1260,3 +1260,207 @@ private struct ComposerPhotoLibraryCoverModifier: ViewModifier {
             }
     }
 }
+
+extension ComposerShared {
+    private static func bind<Value>(_ get: @escaping () -> Value, _ set: @escaping (Value) -> Void) -> Binding<Value> {
+        Binding(get: get, set: set)
+    }
+
+    static func startVoiceInput(
+        manager: VoiceInputManager,
+        keyboardLanguage: String?,
+        owner: VoiceInputOwner,
+        baseText: String,
+        getText: @escaping () -> String,
+        setText: @escaping (String) -> Void,
+        getTextBeforeRecording: @escaping () -> String?,
+        setTextBeforeRecording: @escaping (String?) -> Void,
+        getSuppressKeyboard: @escaping () -> Bool,
+        setSuppressKeyboard: @escaping (Bool) -> Void,
+        getFocusRequestID: @escaping () -> Int,
+        setFocusRequestID: @escaping (Int) -> Void,
+        prepare: (() async throws -> Void)? = nil
+    ) async throws {
+        _ = try await startVoiceInput(
+            manager: manager,
+            keyboardLanguage: keyboardLanguage,
+            owner: owner,
+            baseText: baseText,
+            text: bind(getText, setText),
+            textBeforeRecording: bind(getTextBeforeRecording, setTextBeforeRecording),
+            suppressKeyboard: bind(getSuppressKeyboard, setSuppressKeyboard),
+            focusRequestID: bind(getFocusRequestID, setFocusRequestID),
+            prepare: prepare
+        )
+    }
+
+    static func stopVoiceInput(
+        manager: VoiceInputManager,
+        getText: @escaping () -> String,
+        setText: @escaping (String) -> Void,
+        getTextBeforeRecording: @escaping () -> String?,
+        setTextBeforeRecording: @escaping (String?) -> Void
+    ) async {
+        await stopVoiceInput(
+            manager: manager,
+            text: bind(getText, setText),
+            textBeforeRecording: bind(getTextBeforeRecording, setTextBeforeRecording)
+        )
+    }
+
+    static func cancelVoiceInput(
+        manager: VoiceInputManager,
+        getTextBeforeRecording: @escaping () -> String?,
+        setTextBeforeRecording: @escaping (String?) -> Void,
+        getSuppressKeyboard: @escaping () -> Bool,
+        setSuppressKeyboard: @escaping (Bool) -> Void
+    ) async {
+        await cancelVoiceInput(
+            manager: manager,
+            textBeforeRecording: bind(getTextBeforeRecording, setTextBeforeRecording),
+            suppressKeyboard: bind(getSuppressKeyboard, setSuppressKeyboard)
+        )
+    }
+
+    static func finishOwnedVoiceInputBeforeSubmit(
+        manager: VoiceInputManager?,
+        owner: VoiceInputOwner,
+        getText: @escaping () -> String,
+        setText: @escaping (String) -> Void,
+        getTextBeforeRecording: @escaping () -> String?,
+        setTextBeforeRecording: @escaping (String?) -> Void,
+        getSuppressKeyboard: @escaping () -> Bool,
+        setSuppressKeyboard: @escaping (Bool) -> Void,
+        restoreKeyboard: Bool = true
+    ) async {
+        _ = await finishOwnedVoiceInputBeforeSubmit(
+            manager: manager,
+            owner: owner,
+            text: bind(getText, setText),
+            textBeforeRecording: bind(getTextBeforeRecording, setTextBeforeRecording),
+            suppressKeyboard: bind(getSuppressKeyboard, setSuppressKeyboard),
+            restoreKeyboard: restoreKeyboard
+        )
+    }
+
+    static func handlePastedImages(_ images: [UIImage], getAttachments: @escaping () -> [PendingAttachment], setAttachments: @escaping ([PendingAttachment]) -> Void) {
+        handlePastedImages(images, into: bind(getAttachments, setAttachments))
+    }
+
+    static func insertSlashCommand(_ command: SlashCommand, getText: @escaping () -> String, setText: @escaping (String) -> Void) {
+        insertSlashCommand(command, into: bind(getText, setText))
+    }
+
+    static func insertFileSuggestion(
+        _ suggestion: FileSuggestion,
+        getText: @escaping () -> String,
+        setText: @escaping (String) -> Void,
+        getPointers: @escaping () -> [PendingFileReference],
+        setPointers: @escaping ([PendingFileReference]) -> Void
+    ) {
+        insertFileSuggestion(
+            suggestion,
+            text: bind(getText, setText),
+            pendingRepoPointers: bind(getPointers, setPointers)
+        )
+    }
+
+    static func removeAttachment(_ id: String, getAttachments: @escaping () -> [PendingAttachment], setAttachments: @escaping ([PendingAttachment]) -> Void) {
+        removeAttachment(id, from: bind(getAttachments, setAttachments))
+    }
+
+    static func removeFile(_ id: String, getPointers: @escaping () -> [PendingFileReference], setPointers: @escaping ([PendingFileReference]) -> Void) {
+        removeFile(id, from: bind(getPointers, setPointers))
+    }
+
+    static func importPhotoLibraryProviders(
+        _ providers: [NSItemProvider],
+        getAttachments: @escaping () -> [PendingAttachment],
+        setAttachments: @escaping ([PendingAttachment]) -> Void,
+        store: ComposerDraftStore?,
+        shouldAccept: @escaping @MainActor () -> Bool,
+        onFailure: @escaping @MainActor (String) -> Void
+    ) {
+        importPhotoLibraryProviders(
+            providers,
+            into: bind(getAttachments, setAttachments),
+            store: store,
+            shouldAccept: shouldAccept,
+            onFailure: onFailure
+        )
+    }
+
+    static func addCapturedImage(_ image: UIImage, getAttachments: @escaping () -> [PendingAttachment], setAttachments: @escaping ([PendingAttachment]) -> Void) {
+        addCapturedImage(image, to: bind(getAttachments, setAttachments))
+    }
+
+    static func applyCanvasToComposer(
+        attachment: PendingAttachment,
+        recognizedText: String,
+        getText: @escaping () -> String,
+        setText: @escaping (String) -> Void,
+        getAttachments: @escaping () -> [PendingAttachment],
+        setAttachments: @escaping ([PendingAttachment]) -> Void,
+        replacingAttachmentID: String?
+    ) -> Bool {
+        applyCanvasToComposer(
+            attachment: attachment,
+            recognizedText: recognizedText,
+            text: bind(getText, setText),
+            pendingAttachments: bind(getAttachments, setAttachments),
+            replacingAttachmentID: replacingAttachmentID
+        )
+    }
+
+    static func loadSelectedFiles(
+        _ result: Result<[URL], Error>,
+        getAttachments: @escaping () -> [PendingAttachment],
+        setAttachments: @escaping ([PendingAttachment]) -> Void,
+        store: ComposerDraftStore?,
+        shouldAccept: @escaping @MainActor () -> Bool,
+        onFailure: @escaping @MainActor (String) -> Void
+    ) {
+        loadSelectedFiles(
+            result,
+            into: bind(getAttachments, setAttachments),
+            store: store,
+            shouldAccept: shouldAccept,
+            onFailure: onFailure
+        )
+    }
+
+    static func discardFailedTake(
+        manager: VoiceInputManager?,
+        owner: VoiceInputOwner,
+        getText: @escaping () -> String,
+        setText: @escaping (String) -> Void,
+        getTextBeforeRecording: @escaping () -> String?,
+        setTextBeforeRecording: @escaping (String?) -> Void,
+        getSuppressKeyboard: @escaping () -> Bool,
+        setSuppressKeyboard: @escaping (Bool) -> Void
+    ) {
+        discardFailedTake(
+            manager: manager,
+            owner: owner,
+            text: bind(getText, setText),
+            textBeforeRecording: bind(getTextBeforeRecording, setTextBeforeRecording),
+            suppressKeyboard: bind(getSuppressKeyboard, setSuppressKeyboard)
+        )
+    }
+
+    static func handleKeyboardRestore(
+        getSuppressKeyboard: @escaping () -> Bool,
+        setSuppressKeyboard: @escaping (Bool) -> Void,
+        getTextBeforeRecording: @escaping () -> String?,
+        setTextBeforeRecording: @escaping (String?) -> Void,
+        voiceInputManager: VoiceInputManager?,
+        expectedOwner: VoiceInputOwner?
+    ) {
+        handleKeyboardRestore(
+            suppressKeyboard: bind(getSuppressKeyboard, setSuppressKeyboard),
+            textBeforeRecording: bind(getTextBeforeRecording, setTextBeforeRecording),
+            voiceInputManager: voiceInputManager,
+            expectedOwner: expectedOwner
+        )
+    }
+}

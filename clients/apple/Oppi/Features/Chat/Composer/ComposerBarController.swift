@@ -711,6 +711,8 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             _ = manager.voiceSpectrum
             _ = manager.activeLanguageLabel
             _ = manager.routeIndicator
+            _ = manager.transcriptPresentationRevision
+            _ = manager.currentTranscript
             _ = manager.currentComposerCaptureFailure
         }
         applyMicChrome()

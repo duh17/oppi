@@ -69,6 +69,7 @@
 		0823B49A692D7A0765A3E082 /* PermissionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C626ECC16F58F6FE6D214EF9 /* PermissionsView.swift */; };
 		08452F59BD5D5A35DE507B16 /* ShareQuickSessionComposerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C163A37C3B639CAE8420C462 /* ShareQuickSessionComposerViewController.swift */; };
 		0882BF6C1A5AC61D22718A1E /* WorkspaceSettingsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFF4C3F93358B0D1EA351CC5 /* WorkspaceSettingsModel.swift */; };
+		0884770414A7038A08A4C900 /* SSHTerminalComposerHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FA402FCF7844298D3E5D567 /* SSHTerminalComposerHost.swift */; };
 		0885D505BC21AFA6FE02FFB1 /* MacWorkspaceWorktreeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 702BC47E7ABC614F3A2C7A0D /* MacWorkspaceWorktreeTests.swift */; };
 		0888AECC29424FC523029060 /* APIClient+ServerMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F1AD630B1769A4FC2B4F62 /* APIClient+ServerMetrics.swift */; };
 		08B507FC7E52C507B6A5C83B /* ExtensionUIWireDecoding.swift in Sources */ = {isa = PBXBuildFile; fileRef = C06F312FB9AB528776C77D7F /* ExtensionUIWireDecoding.swift */; };
@@ -96,7 +97,6 @@
 		0C18B154AA6AB78D811F690C /* FileBrowserContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC5339DAF104D6C80D767EFF /* FileBrowserContentView.swift */; };
 		0C3ACDE6B7916015A86EE960 /* WorkspaceSessionNavigationChromePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C043EFF3BB5934EAC976C65F /* WorkspaceSessionNavigationChromePolicy.swift */; };
 		0C75B3B8BBA3D57435EADF83 /* MacSessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FBEACB8B33BDFA2BA8F64A0 /* MacSessionListView.swift */; };
-		0C8B9DD5B44AFC66F612CFCF /* SSHTerminalComposerHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5110A214857D5A3617BF5E6 /* SSHTerminalComposerHost.swift */; };
 		0D01784BD4A9A2CD89079BB1 /* SessionListEntryRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B461FE67356E6AE92BEDA0E /* SessionListEntryRow.swift */; };
 		0D1FA8BE0CD344C5D30A4B79 /* ToolCallDocumentBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91C9E67C0AA877212B554EAE /* ToolCallDocumentBuilder.swift */; };
 		0D381B28E236FBC1D24289AF /* MacSessionDiffPreviewPlanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCE3EAD5E5FE4E3CE33B6B5A /* MacSessionDiffPreviewPlanTests.swift */; };
@@ -3126,6 +3126,7 @@
 		7F24671E04B05124466AB226 /* AttentionNotificationPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttentionNotificationPolicyTests.swift; sourceTree = "<group>"; };
 		7F69390322324DBB0B5A5DD9 /* IPhoneSessionsFirstScreenshotE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPhoneSessionsFirstScreenshotE2ETests.swift; sourceTree = "<group>"; };
 		7F7425251D8A345D3EF8E04D /* SegmentRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentRenderer.swift; sourceTree = "<group>"; };
+		7FA402FCF7844298D3E5D567 /* SSHTerminalComposerHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalComposerHost.swift; sourceTree = "<group>"; };
 		7FBC0F8C16B5298704A5B983 /* DelimitedTableRenderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DelimitedTableRenderView.swift; sourceTree = "<group>"; };
 		7FC5F2FED64A93DDF6F902A1 /* NerdFontSymbols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NerdFontSymbols.swift; sourceTree = "<group>"; };
 		80152A9E949EE41BAB30F127 /* MacWorkspaceSnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWorkspaceSnapshotStore.swift; sourceTree = "<group>"; };
@@ -3485,7 +3486,6 @@
 		B488362E8AD725D3820A3F0F /* SSHTerminalSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalSetupView.swift; sourceTree = "<group>"; };
 		B4908AD06AE12591790D6345 /* MacPDFPreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacPDFPreviewTests.swift; sourceTree = "<group>"; };
 		B4BAD411CB60FD93BBF578F0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		B5110A214857D5A3617BF5E6 /* SSHTerminalComposerHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalComposerHost.swift; sourceTree = "<group>"; };
 		B518AE4B8F6E89D8BF80C59E /* ModelBreakdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelBreakdownView.swift; sourceTree = "<group>"; };
 		B53A89D135E833A09DFE8C42 /* SessionOutline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionOutline.swift; sourceTree = "<group>"; };
 		B5AA38362B00BC3A0FF7BF80 /* SessionRowDisplayEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRowDisplayEditor.swift; sourceTree = "<group>"; };
@@ -6348,6 +6348,7 @@
 				491FE68E4FDCD214D7D60AFD /* SSHTerminalArrowControl.swift */,
 				7604543D7376547482B645A2 /* SSHTerminalAttention.swift */,
 				353DCB2C42D2506A8FB1E917 /* SSHTerminalChannel.swift */,
+				7FA402FCF7844298D3E5D567 /* SSHTerminalComposerHost.swift */,
 				238CD4ACFBF1BEC48550C643 /* SSHTerminalConnectChrome.swift */,
 				7B69A0FD4B8E42D904683F95 /* SSHTerminalConnectSession.swift */,
 				555E01FCFE0ADCEA18DD9236 /* SSHTerminalEngine.swift */,
@@ -6406,7 +6407,6 @@
 				FBC2CD3074D3F04148C616EC /* PendingAttachmentUploader.swift */,
 				A3FB1ADC4F9301F7E86D7CE5 /* PhotoLibraryMediaImporter.swift */,
 				FE4E210755821503F8D2B192 /* SlashCommandSuggestionList.swift */,
-				B5110A214857D5A3617BF5E6 /* SSHTerminalComposerHost.swift */,
 			);
 			path = Composer;
 			sourceTree = "<group>";
@@ -9359,7 +9359,7 @@
 				85F814797633890EF841906B /* SSHTerminalArrowControl.swift in Sources */,
 				C680FE8306AD79676CB8A8CD /* SSHTerminalAttention.swift in Sources */,
 				63FD9760B8095D8383C20A37 /* SSHTerminalChannel.swift in Sources */,
-				0C8B9DD5B44AFC66F612CFCF /* SSHTerminalComposerHost.swift in Sources */,
+				0884770414A7038A08A4C900 /* SSHTerminalComposerHost.swift in Sources */,
 				A2891EC5C676AEA17C86A56C /* SSHTerminalConnectChrome.swift in Sources */,
 				E17CB949F4B8F528B830EDD2 /* SSHTerminalConnectSession.swift in Sources */,
 				633E3686C8AA2E6906E3F903 /* SSHTerminalEngine.swift in Sources */,

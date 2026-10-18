@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
@@ -117,8 +116,35 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
         if Task.isCancelled { return }
         configureVoice(manager)
+        if Task.isCancelled { return }
         voiceInputManager = manager
         controller?.apply()
+    }
+
+    func installVoiceManager(_ manager: VoiceInputManager) {
+        voiceInputManager = manager
+    }
+
+    /// Copies a live take into the draft and rolls back a failed take.
+    /// The terminal controller observes the manager and calls this.
+    func applyOwnedVoiceObservation() {
+        guard let manager = voiceInputManager else { return }
+        _ = manager.transcriptPresentationRevision
+        _ = manager.currentTranscript
+        _ = manager.state
+        _ = manager.currentComposerCaptureFailure
+        if ComposerShared.shouldSuppressKeyboardForActiveVoiceInput(manager, owner: .inlineComposer) {
+            suppressKeyboard = true
+        }
+        if ComposerShared.captureFailure(manager, owner: .inlineComposer) != nil {
+            discardFailedVoiceTake()
+            return
+        }
+        guard let prefix = textBeforeRecording,
+              ComposerShared.ownsVoiceInput(manager, owner: .inlineComposer) else { return }
+        text = prefix + manager.currentTranscript
+        controller?.apply()
+        onNeedsLayout?()
     }
 
     func releaseVoice() {
@@ -197,10 +223,14 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
             keyboardLanguage: keyboardLanguage,
             owner: owner,
             baseText: baseText,
-            text: textBinding,
-            textBeforeRecording: textBeforeRecordingBinding,
-            suppressKeyboard: suppressKeyboardBinding,
-            focusRequestID: focusRequestBinding,
+            getText: { [weak self] in self?.text ?? "" },
+            setText: { [weak self] in self?.text = $0 },
+            getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
+            setTextBeforeRecording: { [weak self] in self?.textBeforeRecording = $0 },
+            getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
+            setSuppressKeyboard: { [weak self] in self?.suppressKeyboard = $0 },
+            getFocusRequestID: { [weak self] in self?.focusRequestID ?? 0 },
+            setFocusRequestID: { [weak self] in self?.focusRequestID = $0 },
             prepare: { [weak self] in
                 guard let self, let manager = self.voiceInputManager else { return }
                 self.configureVoice(manager)
@@ -212,8 +242,10 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         guard let manager = voiceInputManager else { return }
         await ComposerShared.stopVoiceInput(
             manager: manager,
-            text: textBinding,
-            textBeforeRecording: textBeforeRecordingBinding
+            getText: { [weak self] in self?.text ?? "" },
+            setText: { [weak self] in self?.text = $0 },
+            getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
+            setTextBeforeRecording: { [weak self] in self?.textBeforeRecording = $0 }
         )
         controller?.apply()
     }
@@ -222,8 +254,10 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         guard let manager = voiceInputManager else { return }
         await ComposerShared.cancelVoiceInput(
             manager: manager,
-            textBeforeRecording: textBeforeRecordingBinding,
-            suppressKeyboard: suppressKeyboardBinding
+            getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
+            setTextBeforeRecording: { [weak self] in self?.textBeforeRecording = $0 },
+            getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
+            setSuppressKeyboard: { [weak self] in self?.suppressKeyboard = $0 }
         )
         controller?.apply()
     }
@@ -233,39 +267,60 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
             manager: manager,
             owner: .inlineComposer,
-            text: textBinding,
-            textBeforeRecording: textBeforeRecordingBinding,
-            suppressKeyboard: suppressKeyboardBinding,
+            getText: { [weak self] in self?.text ?? "" },
+            setText: { [weak self] in self?.text = $0 },
+            getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
+            setTextBeforeRecording: { [weak self] in self?.textBeforeRecording = $0 },
+            getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
+            setSuppressKeyboard: { [weak self] in self?.suppressKeyboard = $0 },
             restoreKeyboard: false
         )
     }
 
     func handlePastedImages(_ images: [UIImage]) {
-        ComposerShared.handlePastedImages(images, into: attachmentsBinding)
+        ComposerShared.handlePastedImages(
+            images,
+            getAttachments: { [weak self] in self?.pendingAttachments ?? [] },
+            setAttachments: { [weak self] in self?.setPendingAttachments($0) }
+        )
     }
 
     func insertSlashCommand(_ command: SlashCommand) {
-        ComposerShared.insertSlashCommand(command, into: textBinding)
+        ComposerShared.insertSlashCommand(
+            command,
+            getText: { [weak self] in self?.text ?? "" },
+            setText: { [weak self] in self?.text = $0 }
+        )
         controller?.apply()
     }
 
     func insertFileSuggestion(_ suggestion: FileSuggestion) {
         ComposerShared.insertFileSuggestion(
             suggestion,
-            text: textBinding,
-            pendingRepoPointers: pointersBinding
+            getText: { [weak self] in self?.text ?? "" },
+            setText: { [weak self] in self?.text = $0 },
+            getPointers: { [weak self] in self?.pendingRepoPointers ?? [] },
+            setPointers: { [weak self] in self?.setPendingRepoPointers($0) }
         )
         controller?.apply()
     }
 
     func removeAttachment(id: String) {
-        ComposerShared.removeAttachment(id, from: attachmentsBinding)
+        ComposerShared.removeAttachment(
+            id,
+            getAttachments: { [weak self] in self?.pendingAttachments ?? [] },
+            setAttachments: { [weak self] in self?.setPendingAttachments($0) }
+        )
         controller?.apply()
         onNeedsLayout?()
     }
 
     func removeRepoPointer(id: String) {
-        ComposerShared.removeFile(id, from: pointersBinding)
+        ComposerShared.removeFile(
+            id,
+            getPointers: { [weak self] in self?.pendingRepoPointers ?? [] },
+            setPointers: { [weak self] in self?.setPendingRepoPointers($0) }
+        )
         controller?.apply()
         onNeedsLayout?()
     }
@@ -279,7 +334,8 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
     ) {
         ComposerShared.importPhotoLibraryProviders(
             providers,
-            into: attachmentsBinding,
+            getAttachments: { [weak self] in self?.pendingAttachments ?? [] },
+            setAttachments: { [weak self] in self?.setPendingAttachments($0) },
             store: draftStore,
             shouldAccept: { capturedLocal == currentLocal() },
             onFailure: { message in
@@ -291,7 +347,11 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
     }
 
     func addCapturedImage(_ image: UIImage) {
-        ComposerShared.addCapturedImage(image, to: attachmentsBinding)
+        ComposerShared.addCapturedImage(
+            image,
+            getAttachments: { [weak self] in self?.pendingAttachments ?? [] },
+            setAttachments: { [weak self] in self?.setPendingAttachments($0) }
+        )
     }
 
     func applyCanvas(
@@ -302,8 +362,10 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         let ok = ComposerShared.applyCanvasToComposer(
             attachment: attachment,
             recognizedText: recognizedText,
-            text: textBinding,
-            pendingAttachments: attachmentsBinding,
+            getText: { [weak self] in self?.text ?? "" },
+            setText: { [weak self] in self?.text = $0 },
+            getAttachments: { [weak self] in self?.pendingAttachments ?? [] },
+            setAttachments: { [weak self] in self?.setPendingAttachments($0) },
             replacingAttachmentID: replacingAttachmentID
         )
         controller?.apply()
@@ -320,7 +382,8 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
     ) {
         ComposerShared.loadSelectedFiles(
             result,
-            into: attachmentsBinding,
+            getAttachments: { [weak self] in self?.pendingAttachments ?? [] },
+            setAttachments: { [weak self] in self?.setPendingAttachments($0) },
             store: draftStore,
             shouldAccept: { capturedLocal == currentLocal() },
             onFailure: { message in
@@ -343,17 +406,22 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         ComposerShared.discardFailedTake(
             manager: voiceInputManager,
             owner: .inlineComposer,
-            text: textBinding,
-            textBeforeRecording: textBeforeRecordingBinding,
-            suppressKeyboard: suppressKeyboardBinding
+            getText: { [weak self] in self?.text ?? "" },
+            setText: { [weak self] in self?.text = $0 },
+            getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
+            setTextBeforeRecording: { [weak self] in self?.textBeforeRecording = $0 },
+            getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
+            setSuppressKeyboard: { [weak self] in self?.suppressKeyboard = $0 }
         )
         controller?.apply()
     }
 
     func restoreKeyboardFromSuppression() {
         ComposerShared.handleKeyboardRestore(
-            suppressKeyboard: suppressKeyboardBinding,
-            textBeforeRecording: textBeforeRecordingBinding,
+            getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
+            setSuppressKeyboard: { [weak self] in self?.suppressKeyboard = $0 },
+            getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
+            setTextBeforeRecording: { [weak self] in self?.textBeforeRecording = $0 },
             voiceInputManager: voiceInputManager,
             expectedOwner: .inlineComposer
         )
@@ -432,36 +500,4 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         )
     }
 
-    private var textBinding: Binding<String> {
-        Binding(get: { self.text }, set: { self.text = $0 })
-    }
-    private var textBeforeRecordingBinding: Binding<String?> {
-        Binding(get: { self.textBeforeRecording }, set: { self.textBeforeRecording = $0 })
-    }
-    private var suppressKeyboardBinding: Binding<Bool> {
-        Binding(get: { self.suppressKeyboard }, set: { self.suppressKeyboard = $0 })
-    }
-    private var focusRequestBinding: Binding<Int> {
-        Binding(get: { self.focusRequestID }, set: { self.focusRequestID = $0 })
-    }
-    private var attachmentsBinding: Binding<[PendingAttachment]> {
-        Binding(
-            get: { self.pendingAttachments },
-            set: {
-                self.pendingAttachments = $0
-                self.controller?.apply()
-                self.onNeedsLayout?()
-            }
-        )
-    }
-    private var pointersBinding: Binding<[PendingFileReference]> {
-        Binding(
-            get: { self.pendingRepoPointers },
-            set: {
-                self.pendingRepoPointers = $0
-                self.controller?.apply()
-                self.onNeedsLayout?()
-            }
-        )
-    }
 }

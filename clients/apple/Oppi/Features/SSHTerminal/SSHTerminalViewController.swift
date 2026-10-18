@@ -34,6 +34,7 @@ final class SSHTerminalViewController: UIViewController {
     private var dictationFailureView: ComposerDictationFailureView?
     private var composerHeightConstraint: NSLayoutConstraint?
     private var lastAppliedComposerFocus = 0
+    private var voicePrepareTask: Task<Void, Never>?
     private var gridBottomToKeyboard: NSLayoutConstraint?
     private var gridBottomToComposer: NSLayoutConstraint?
 
@@ -189,6 +190,14 @@ final class SSHTerminalViewController: UIViewController {
         _ = keymap.actions
         _ = keymap.profile
         _ = keymap.userFile
+        if let manager = composerSession?.voiceManager {
+            _ = manager.transcriptPresentationRevision
+            _ = manager.currentTranscript
+            _ = manager.state
+            _ = manager.currentComposerCaptureFailure
+            composerSession?.applyOwnedVoiceObservation()
+            applyDictationFailure()
+        }
         let locked = AppLockService.shared.isLocked
         let phase = AppScenePhase.shared.phase
         let themeID = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
@@ -701,12 +710,19 @@ final class SSHTerminalViewController: UIViewController {
             bottom,
             height,
         ])
-        Task { await composerSession?.prepareVoice() }
+        voicePrepareTask?.cancel()
+        voicePrepareTask = Task { [weak self] in
+            await self?.composerSession?.prepareVoice()
+            guard !Task.isCancelled else { return }
+            self?.setNeedsUpdateProperties()
+        }
         updateComposerHeight()
     }
 
     private func unembedComposer() {
         guard let bar = composerBar, bar.parent === self else { return }
+        voicePrepareTask?.cancel()
+        voicePrepareTask = nil
         composerKeyStrip?.stopRepeating()
         composerSession?.releaseVoice()
         bar.view.endEditing(true)
@@ -721,6 +737,8 @@ final class SSHTerminalViewController: UIViewController {
     }
 
     private func destroyComposer() {
+        voicePrepareTask?.cancel()
+        voicePrepareTask = nil
         unembedComposer()
         composerBar = nil
         composerSession = nil
