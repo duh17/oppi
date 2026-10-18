@@ -830,7 +830,8 @@ struct MermaidRendererTests {
         #expect(flowchart.edges.count == 4)
         #expect(flowchart.edges.map(\.label) == [nil, "timeline", "tool output", nil])
 
-        let layout = renderer.layout(diagram, configuration: config)
+        // Natural left-to-right routing; a phone width would turn it.
+        let layout = renderer.layout(diagram, configuration: .default(maxWidth: 2_000))
         #expect(layout.graphResult.edgePaths.count == flowchart.edges.count)
         guard let reducer = layout.graphResult.nodePositions["reducer"] else {
             Issue.record("Expected reducer diamond position")
@@ -1012,7 +1013,8 @@ struct MermaidRendererTests {
                     ModuleReady --> PhoneOn : identity.dictationStream
                     ModuleMissing --> PhoneOff : iOS on-device only
             """),
-            configuration: config
+            // Natural wrapping; fitting a narrow width wraps labels tighter.
+            configuration: .default(maxWidth: 2_000)
         )
         let labels = Set(layout.edgeLabels.values)
         #expect(labels.contains { $0.contains("backend=module and model") && $0.contains("\n") })
@@ -1261,6 +1263,89 @@ struct MermaidRendererTests {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )))
         result.draw(ctx, .zero)
+    }
+
+    // MARK: - Fit to width
+
+    private static let wideLeftToRight = """
+        flowchart LR
+            A[Receive webhook] --> B[Validate signature] --> C{Known event?}
+            C -->|yes| D[Enqueue job] --> E[Worker picks up] --> F[Write to database]
+            C -->|no| G[Log and drop]
+            F --> H[Notify subscribers]
+        """
+
+    private func fitLayout(_ source: String, maxWidth: CGFloat) -> MermaidFlowchartRenderer.FlowchartLayout {
+        renderer.layout(parser.parse(source), configuration: .default(maxWidth: maxWidth))
+    }
+
+    @Test func wideLeftToRightFlowchartTurnsTopDownToFitPhoneWidth() throws {
+        let layout = fitLayout(Self.wideLeftToRight, maxWidth: 360)
+        let size = renderer.boundingBox(layout)
+        #expect(size.width <= 360, "size=\(size)")
+        let positions = layout.graphResult.nodePositions
+        let a = try #require(positions["A"])
+        let b = try #require(positions["B"])
+        #expect(b.minY >= a.maxY, "A=\(a) B=\(b) should stack top to bottom")
+    }
+
+    @Test func wideLeftToRightFlowchartKeepsDirectionOnWideSurface() throws {
+        let layout = fitLayout(Self.wideLeftToRight, maxWidth: 900)
+        let positions = layout.graphResult.nodePositions
+        let a = try #require(positions["A"])
+        let b = try #require(positions["B"])
+        #expect(b.minX >= a.maxX, "A=\(a) B=\(b) should stay left to right at 900pt")
+    }
+
+    @Test func diagramThatFitsIsLaidOutTheSameAtAnyWidth() {
+        let source = """
+            flowchart TD
+                A[User Request] --> B{Auth?}
+                B -->|Yes| C[Process]
+                B -->|No| D[Reject]
+                C --> E[Response]
+            """
+        let narrow = fitLayout(source, maxWidth: 360)
+        let wide = fitLayout(source, maxWidth: 900)
+        #expect(renderer.boundingBox(narrow) == renderer.boundingBox(wide))
+        #expect(narrow.graphResult.nodePositions == wide.graphResult.nodePositions)
+        #expect(narrow.subgraphFrames == wide.subgraphFrames)
+    }
+
+    @Test func turningTheRootKeepsSubgraphDirectionThatFits() throws {
+        let source = """
+            flowchart LR
+                subgraph Pair
+                    direction LR
+                    P1[Left] --> P2[Right]
+                end
+                A[Receive webhook] --> B[Validate signature] --> C[Enqueue job]
+                C --> D[Worker picks up] --> E[Write to database] --> Pair
+            """
+        let layout = fitLayout(source, maxWidth: 360)
+        #expect(renderer.boundingBox(layout).width <= 360)
+        let positions = layout.graphResult.nodePositions
+        let a = try #require(positions["A"])
+        let b = try #require(positions["B"])
+        #expect(b.minY >= a.maxY, "root should run top to bottom")
+        let left = try #require(positions["P1"])
+        let right = try #require(positions["P2"])
+        #expect(right.minX >= left.maxX, "the subgraph's own LR direction fits and stays")
+    }
+
+    @Test func topDownDiagramTightensSpacingBeforeOverflowing() {
+        let source = """
+            flowchart TD
+                R[Root] --> A[Alpha] & B[Bravo] & C[Charlie] & D[Delta] & E[Echo]
+            """
+        let natural = fitLayout(source, maxWidth: 2_000)
+        let limit = renderer.boundingBox(natural).width - 20
+        let fitted = fitLayout(source, maxWidth: limit)
+        #expect(renderer.boundingBox(fitted).width <= limit)
+        // Spacing gives way; boxes (and the text in them) keep their size.
+        for id in ["R", "A", "B", "C", "D", "E"] {
+            #expect(natural.graphResult.nodePositions[id]?.size == fitted.graphResult.nodePositions[id]?.size)
+        }
     }
 
     private struct OverlappingTrunk {

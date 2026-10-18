@@ -7,7 +7,9 @@ import Foundation
 /// Conforms to `GraphicalDocumentRenderer`. Sequence diagrams return a
 /// placeholder — only flowcharts are supported in this phase.
 ///
-/// Pipeline: measure text → build layout input → Sugiyama → draw shapes + edges.
+/// Pipeline: measure text → build layout input → Sugiyama → route edges, then
+/// narrower variants only if that overflows `maxWidth` (`layoutFlowchart`), then
+/// a draw plan for the chosen layout so drawing only paints.
 ///
 /// Thread safety: all methods are `nonisolated`. The draw closure captures only
 /// value types and the pre-laid-out result. `CGContext` is not thread-safe itself
@@ -15,6 +17,24 @@ import Foundation
 /// (which UIView.draw / NSView.draw guarantees).
 struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     typealias Document = MermaidDiagram
+
+    /// How far a layout pass departs from the natural spacing and wrapping to
+    /// fit `maxWidth`. Natural unless `layoutFlowchart` is fitting a diagram.
+    private struct FlowFit: Sendable {
+        /// Half the sibling gaps and slimmer subgraph padding.
+        var tight = false
+        /// Three quarters of the rank gaps. Only for a root that runs across,
+        /// the one case where rank gaps add width.
+        var tightRanks = false
+        /// Wrap node and edge labels to about 100pt instead of about 160pt.
+        var narrowLabels = false
+    }
+
+    private var fit = FlowFit()
+
+    /// Below this width a left-to-right diagram that does not fit is turned to
+    /// run top to bottom. Wider surfaces keep the author's direction.
+    static let directionBreakpoint: CGFloat = 640
 
     /// Laid-out flowchart ready for drawing.
     struct FlowchartLayout: Sendable {
@@ -44,6 +64,10 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         let customSize: CGSize?
         /// Layout-space hit regions. Empty for families that do not emit selection geometry.
         var semanticRegions: [SemanticRegion] = []
+        /// Flowchart/state drawing resolved once after fitting: colors, shape
+        /// paths, label placement, and CoreText lines. `draw` then issues only
+        /// Core Graphics calls. Nil for custom-drawn families and placeholders.
+        var drawPlan: FlowDrawPlan?
 
         /// Shared bag for dedicated renderers (pie, xy, gitGraph, …).
         static func custom(
@@ -275,9 +299,161 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         )
     }
 
+    // MARK: - Fit to width
+
+    /// Lays the diagram out at its natural size and, only when that is wider
+    /// than `maxWidth`, tries up to three narrower variants in order of how
+    /// much they change the drawing:
+    ///
+    /// 1. Below `directionBreakpoint`, turn a left-to-right root to run top to
+    ///    bottom, along with any left-to-right subgraph that is too wide alone.
+    ///    Other subgraph directions stay as written.
+    /// 2. Tighter node, rank, and subgraph spacing.
+    /// 3. Tighter spacing plus narrower label wrapping.
+    ///
+    /// The first variant that fits wins. Otherwise the narrowest one does and
+    /// the surface scales it. Text always stays at `fontSize`.
+    private func layoutFlowchart(
+        _ flowchart: FlowchartDiagram,
+        configuration: RenderConfiguration
+    ) -> FlowchartLayout {
+        let limit = configuration.maxWidth
+        var best = measured(layoutFlowchartPass(flowchart, configuration: configuration))
+        guard best.width > limit else { return finalized(best) }
+        let natural = best
+
+        // Tighter corridors can leave the router no clear lane. A variant that
+        // drops an edge the natural layout drew is never used.
+        func routedEdgeCount(_ layout: FlowchartLayout) -> Int {
+            layout.graphResult.edgePaths.count(where: { $0.points.count >= 2 })
+        }
+        let naturalRoutedEdges = routedEdgeCount(natural.layout)
+
+        /// Keeps the narrower layout; true when it fits.
+        func fits(_ layout: FlowchartLayout) -> Bool {
+            guard routedEdgeCount(layout) >= naturalRoutedEdges else { return false }
+            let candidate = measured(layout)
+            if candidate.width < best.width { best = candidate }
+            return candidate.width <= limit
+        }
+
+        var chart = flowchart
+        if limit < Self.directionBreakpoint,
+           let turned = turnedFlowchart(flowchart, naturalFrames: natural.layout.subgraphFrames, limit: limit) {
+            if fits(layoutFlowchartPass(turned, configuration: configuration)) { return finalized(best) }
+            // Tighten whichever direction came out narrower.
+            if best.width < natural.width { chart = turned }
+        }
+
+        var tight = self
+        tight.fit.tight = true
+        tight.fit.tightRanks = chart.direction == .LR || chart.direction == .RL
+        if fits(tight.layoutFlowchartPass(chart, configuration: configuration)) { return finalized(best) }
+
+        tight.fit.narrowLabels = true
+        if tight.rewrapsLabels(of: natural.layout) {
+            _ = fits(tight.layoutFlowchartPass(chart, configuration: configuration))
+        }
+        return finalized(best)
+    }
+
+    /// A laid-out candidate with its edge label placement and padded width,
+    /// computed once and reused when it becomes the final layout.
+    private struct MeasuredFlowchart {
+        let layout: FlowchartLayout
+        let labels: [Int: EdgeLabelLayout]
+        let bounds: CGRect
+        /// Same as `boundingBox(layout).width`.
+        let width: CGFloat
+    }
+
+    private func measured(_ layout: FlowchartLayout) -> MeasuredFlowchart {
+        let labels = edgeLabelLayouts(layout)
+        let bounds = flowchartContentBounds(layout, labelLayouts: labels)
+        return MeasuredFlowchart(
+            layout: layout,
+            labels: labels,
+            bounds: bounds,
+            width: bounds.width + flowchartOuterPadding * 2
+        )
+    }
+
+    /// Whether this renderer's label wrapping would break any node or edge
+    /// label differently from `layout`. A narrow-label pass that rewraps
+    /// nothing would only repeat the tight pass.
+    private func rewrapsLabels(of layout: FlowchartLayout) -> Bool {
+        let font = CTFontCreateWithName("Helvetica" as CFString, layout.fontSize, nil)
+        for node in layout.flowchart.nodes where !node.isMarkdown {
+            let wrapped = wrapFlowNodeLabel(node.label, shape: node.shape, font: font, fontSize: layout.fontSize)
+            if wrapped != layout.nodeLabels[node.id] { return true }
+        }
+        for (index, edge) in layout.flowchart.edges.enumerated() {
+            guard let label = edge.label, !label.isEmpty, index < layout.edgeKeys.count else { continue }
+            if wrapFlowEdgeLabel(label, fontSize: layout.fontSize) != layout.edgeLabels[layout.edgeKeys[index]] {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// The diagram turned to run top to bottom: a left-to-right root, and any
+    /// left-to-right subgraph whose natural frame alone is wider than the
+    /// room. Nil when nothing would turn.
+    private func turnedFlowchart(
+        _ flowchart: FlowchartDiagram,
+        naturalFrames: [String: CGRect],
+        limit: CGFloat
+    ) -> FlowchartDiagram? {
+        func runsAcross(_ direction: FlowDirection?) -> Bool {
+            direction == .LR || direction == .RL
+        }
+        let room = limit - flowchartOuterPadding * 2
+        var turnsSubgraph = false
+        func turned(_ subgraph: FlowSubgraph) -> FlowSubgraph {
+            var direction = subgraph.direction
+            if runsAcross(direction), (naturalFrames[subgraph.id]?.width ?? 0) > room {
+                direction = .TB
+                turnsSubgraph = true
+            }
+            return FlowSubgraph(
+                id: subgraph.id,
+                title: subgraph.title,
+                direction: direction,
+                nodeIds: subgraph.nodeIds,
+                regionCount: subgraph.regionCount,
+                subgraphs: subgraph.subgraphs.map(turned),
+                isMarkdown: subgraph.isMarkdown
+            )
+        }
+        let subgraphs = flowchart.subgraphs.map(turned)
+        let turnsRoot = runsAcross(flowchart.direction)
+        guard turnsRoot || turnsSubgraph else { return nil }
+        return FlowchartDiagram(
+            direction: turnsRoot ? .TB : flowchart.direction,
+            nodes: flowchart.nodes,
+            edges: flowchart.edges,
+            subgraphs: subgraphs,
+            classDefs: flowchart.classDefs,
+            styleDirectives: flowchart.styleDirectives,
+            classApplications: flowchart.classApplications
+        )
+    }
+
+    /// Hit regions and the draw plan, built once for the chosen layout only.
+    private func finalized(_ candidate: MeasuredFlowchart) -> FlowchartLayout {
+        var layout = candidate.layout
+        layout.semanticRegions = semanticRegions(
+            for: layout,
+            contentBounds: candidate.bounds,
+            labelLayouts: candidate.labels
+        )
+        layout.drawPlan = makeDrawPlan(layout, contentBounds: candidate.bounds, labelLayouts: candidate.labels)
+        return layout
+    }
+
     // MARK: - Flowchart layout
 
-    private func layoutFlowchart(
+    private func layoutFlowchartPass(
         _ flowchart: FlowchartDiagram,
         configuration: RenderConfiguration
     ) -> FlowchartLayout {
@@ -501,7 +677,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             }
         }
 
-        var layout = FlowchartLayout(
+        return FlowchartLayout(
             graphResult: graphResult,
             flowchart: flowchart,
             subgraphFrames: subgraphFrames,
@@ -522,12 +698,13 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             customDraw: nil,
             customSize: nil
         )
-        layout.semanticRegions = semanticRegions(for: layout)
-        return layout
     }
 
-    private func semanticRegions(for layout: FlowchartLayout) -> [SemanticRegion] {
-        let contentBounds = flowchartContentBounds(layout)
+    private func semanticRegions(
+        for layout: FlowchartLayout,
+        contentBounds: CGRect,
+        labelLayouts: [Int: EdgeLabelLayout]
+    ) -> [SemanticRegion] {
         let offset = CGPoint(
             x: flowchartOuterPadding - contentBounds.minX,
             y: flowchartOuterPadding - contentBounds.minY
@@ -569,14 +746,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                 geometry: geometry,
                 precedence: 40
             ))
-            if let label = layout.edgeLabels[key],
-               let labelLayout = edgeLabelLayout(
-                label,
-                path: path,
-                fontSize: layout.fontSize,
-                isMarkdown: index < layout.flowchart.edges.count && layout.flowchart.edges[index].isMarkdown,
-                among: layout.graphResult.edgePaths
-               ) {
+            if let labelLayout = labelLayouts[index] {
                 regions.append(SemanticRegion(
                     targetID: edgeIDs[index],
                     geometry: .rectangle(labelLayout.rect.offsetBy(dx: offset.x, dy: offset.y)),
@@ -662,19 +832,21 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
 
     /// Modest wrap budget so long labels break into a few lines instead of stretching the canvas.
     private func flowEdgeLabelWrapBudget(fontSize: CGFloat) -> CGFloat {
-        fontSize * 12
+        fontSize * (fit.narrowLabels ? 7 : 12)
     }
 
-    /// Phone-first node text: wrap near 160pt (140pt in diamonds) at 14pt.
-    /// A longer single identifier widens the box up to twice that before it
-    /// is broken mid-word.
+    /// Phone-first node text: wrap near 160pt (140pt in diamonds) at 14pt,
+    /// or near 100pt when fitting a narrow width. A longer single identifier
+    /// widens the box up to twice that before it is broken mid-word.
     private func wrapFlowNodeLabel(
         _ label: String,
         shape: FlowNodeShape,
         font: CTFont,
         fontSize: CGFloat
     ) -> String {
-        let budget = shape == .diamond ? fontSize * 10 : fontSize * 11.5
+        let budget = fit.narrowLabels
+            ? (shape == .diamond ? fontSize * 6 : fontSize * 7)
+            : (shape == .diamond ? fontSize * 10 : fontSize * 11.5)
         let widestWord = label.split(whereSeparator: \.isWhitespace)
             .map { MermaidTextUtils.measureText(String($0), font: font, fontSize: fontSize).width }
             .max() ?? 0
@@ -687,14 +859,19 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     }
 
     private func flowNodeGap(fontSize: CGFloat) -> CGFloat {
-        fontSize * 2
+        fontSize * 2 * siblingGapScale
     }
 
     /// Gap for a plain one-to-one connection. Shared trunks and labels
     /// raise only the rank gaps they cross (`flowLayoutEdges`).
     private func flowRankGap(fontSize: CGFloat) -> CGFloat {
-        fontSize * 2.3
+        fontSize * 2.3 * rankGapScale
     }
+
+    /// Tight fitting halves gaps between siblings, where width comes from in
+    /// a top-down layout, and trims rank gaps less so edges keep room to route.
+    private var siblingGapScale: CGFloat { fit.tight ? 0.5 : 1 }
+    private var rankGapScale: CGFloat { fit.tightRanks ? 0.75 : 1 }
 
     /// Layout edges with the rank gap each one needs: a fan-out/fan-in bus
     /// needs room for its trunk plus unique stubs, and a label needs its
@@ -716,13 +893,13 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         return specs.enumerated().map { index, spec in
             var gap: CGFloat = 0
             if (outDegree[spec.from] ?? 0) > 1 || (inDegree[spec.to] ?? 0) > 1 {
-                gap = fontSize * 3.7
+                gap = fontSize * 3.7 * rankGapScale
             }
             if let label = wrappedLabels[index] {
                 // A label needs its own corridor clear of both nodes and of
                 // any shared bus, so it keeps the full pre-phone label gap.
                 let size = MermaidTextUtils.measureText(label, font: labelFont, fontSize: labelFontSize)
-                gap = max(gap, fontSize * 4.5 + (isHorizontal ? size.width : size.height))
+                gap = max(gap, fontSize * 4.5 * rankGapScale + (isHorizontal ? size.width : size.height))
             }
             return GraphLayoutEdge(from: spec.from, to: spec.to, minRankGap: gap)
         }
@@ -933,8 +1110,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             nodes: unitNodes,
             edges: unitEdges,
             direction: direction,
-            nodeSpacing: fontSize * 4 + reservedSibling,
-            rankSpacing: fontSize * 5 + reservedRank
+            nodeSpacing: fontSize * 4 * siblingGapScale + reservedSibling,
+            rankSpacing: fontSize * 5 * rankGapScale + reservedRank
         ))
 
         var positions: [String: CGRect] = [:]
@@ -952,14 +1129,11 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             }
         }
 
+        // Only placement is used: `layoutFlowchartPass` routes every edge once
+        // against the final positions and subgraph frames.
         return GraphLayoutResult(
             nodePositions: positions,
-            edgePaths: routeEdgesRespectingSubgraphDirections(
-                layoutEdges,
-                positions: positions,
-                flowchart: flowchart,
-                rootDirection: direction
-            ),
+            edgePaths: [],
             totalSize: totalSize(for: positions)
         )
     }
@@ -2277,9 +2451,10 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             rowHeight = max(rowHeight, size.height)
         }
 
+        // Placement only; edges are routed once the whole diagram is placed.
         return GraphLayoutResult(
             nodePositions: positions,
-            edgePaths: routeEdges(edges, positions: positions, direction: direction),
+            edgePaths: [],
             totalSize: totalSize(for: positions)
         )
     }
@@ -2626,163 +2801,285 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
 
     // MARK: - Drawing: Flowchart
 
+    /// Everything `drawFlowchart` paints, resolved once at layout time in
+    /// content coordinates: style colors, shape and edge paths, arrowheads,
+    /// label placement, and typeset text. CTLine and CGPath are immutable once
+    /// built, so drawing the plan from any thread is safe.
+    struct FlowDrawPlan: @unchecked Sendable {
+        fileprivate struct Subgraph {
+            let rect: CGRect
+            let fill: CGColor
+            let stroke: CGColor
+            let lineWidth: CGFloat
+            let regionCount: Int
+            let title: MermaidPreparedText?
+            let titleRect: CGRect
+        }
+
+        fileprivate struct Edge {
+            let path: CGPath
+            let color: CGColor
+            let lineWidth: CGFloat
+            let dash: [CGFloat]?
+            /// Filled triangle (tip, left, right) for styles with an arrowhead.
+            let arrowhead: [CGPoint]?
+        }
+
+        fileprivate struct Label {
+            let rect: CGRect
+            let text: MermaidPreparedText
+        }
+
+        fileprivate struct Node {
+            let shape: FlowNodeShape
+            let rect: CGRect
+            let path: CGPath
+            let fill: CGColor
+            let stroke: CGColor
+            let lineWidth: CGFloat
+            let label: MermaidPreparedText
+        }
+
+        fileprivate let contentBounds: CGRect
+        /// Parents before their children, so nested clusters paint on top.
+        fileprivate let subgraphs: [Subgraph]
+        fileprivate let edges: [Edge]
+        fileprivate let labels: [Label]
+        fileprivate let nodes: [Node]
+    }
+
+    private func makeDrawPlan(
+        _ layout: FlowchartLayout,
+        contentBounds: CGRect,
+        labelLayouts: [Int: EdgeLabelLayout]
+    ) -> FlowDrawPlan {
+        let theme = layout.theme
+        let fontSize = layout.fontSize
+
+        var subgraphs: [FlowDrawPlan.Subgraph] = []
+        let defaultSubgraphFill = subgraphFillColor(theme: theme)
+        let defaultSubgraphStroke = subgraphStrokeColor(theme: theme)
+        let titleFontSize = fontSize * 0.85
+        let titleFont = CTFontCreateWithName("Helvetica-Bold" as CFString, titleFontSize, nil)
+        let edgeInk = layout.graphResult.edgePaths.map(\.points).filter { $0.count >= 2 }
+        func collect(_ subgraph: FlowSubgraph) {
+            guard let rect = subgraphFrame(subgraph, layout: layout) else { return }
+            let style = layout.styleDirectives[subgraph.id] ?? [:]
+            let title = subgraph.title ?? subgraph.id
+            let titleText = title.isEmpty ? nil : MermaidPreparedText(
+                title,
+                font: titleFont,
+                fontSize: titleFontSize,
+                color: parseStyleColor(style["color"], theme: theme) ?? theme.foreground,
+                isMarkdown: subgraph.isMarkdown
+            )
+            let band = CGRect(
+                x: rect.minX + 10,
+                y: rect.minY + 4,
+                width: max(1, rect.width - 20),
+                height: max(fontSize * 1.4, subgraphTitleHeight(fontSize: fontSize) - 6)
+            )
+            subgraphs.append(FlowDrawPlan.Subgraph(
+                rect: rect,
+                fill: parseStyleColor(style["fill"], theme: theme) ?? defaultSubgraphFill,
+                stroke: parseStyleColor(style["stroke"], theme: theme) ?? defaultSubgraphStroke,
+                lineWidth: parseLineWidth(style["stroke-width"]) ?? 1,
+                regionCount: subgraph.regionCount,
+                title: titleText,
+                titleRect: titleText.map { subgraphTitleRect($0.size, in: band, avoiding: edgeInk) } ?? band
+            ))
+            subgraph.subgraphs.forEach(collect)
+        }
+        layout.flowchart.subgraphs.forEach(collect)
+
+        var edges: [FlowDrawPlan.Edge] = []
+        var labels: [FlowDrawPlan.Label] = []
+        for (index, edgePath) in layout.graphResult.edgePaths.enumerated() {
+            if let labelLayout = labelLayouts[index],
+               let label = layout.edgeLabels[edgeKey(layout, index: index)] {
+                labels.append(FlowDrawPlan.Label(
+                    rect: labelLayout.rect,
+                    text: MermaidPreparedText(
+                        label,
+                        font: labelLayout.font,
+                        fontSize: labelLayout.fontSize,
+                        color: theme.foreground,
+                        isMarkdown: index < layout.flowchart.edges.count
+                            && layout.flowchart.edges[index].isMarkdown
+                    )
+                ))
+            }
+            let key = edgeKey(layout, index: index)
+            let style = layout.edgeStyles[key] ?? .arrow
+            let points = edgePath.points
+            guard points.count >= 2, style != .invisible else { continue }
+            let styleProperties = layout.edgeStyleDirectives[key] ?? [:]
+            let color = parseStyleColor(styleProperties["stroke"], theme: theme) ?? theme.foreground
+            let parsedDash = parseDashArray(styleProperties["stroke-dasharray"])
+            edges.append(FlowDrawPlan.Edge(
+                path: edgeDrawingPath(points),
+                color: color,
+                lineWidth: edgeStrokeWidth(style: style, styleProperties: styleProperties),
+                dash: style == .dotted ? (parsedDash ?? [4, 4]) : parsedDash,
+                arrowhead: style.hasArrowhead
+                    ? arrowheadTriangle(at: points[points.count - 1], from: points[points.count - 2], size: fontSize * 0.6)
+                    : nil
+            ))
+        }
+
+        var nodes: [FlowDrawPlan.Node] = []
+        let nodeFont = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
+        var seen: Set<String> = []
+        for node in layout.flowchart.nodes where seen.insert(node.id).inserted {
+            guard let rect = layout.graphResult.nodePositions[node.id] else { continue }
+            let shape = layout.nodeShapes[node.id] ?? .default
+            let style = layout.styleDirectives[node.id] ?? [:]
+            let fill = parseStyleColor(style["fill"], theme: theme) ?? theme.background
+            nodes.append(FlowDrawPlan.Node(
+                shape: shape,
+                rect: rect,
+                path: nodeShapePath(shape, rect: rect),
+                fill: fill,
+                stroke: parseStyleColor(style["stroke"], theme: theme) ?? theme.foreground,
+                lineWidth: parseLineWidth(style["stroke-width"]) ?? 1.5,
+                label: MermaidPreparedText(
+                    layout.nodeLabels[node.id] ?? node.id,
+                    font: nodeFont,
+                    fontSize: fontSize,
+                    color: contrastingTextColor(on: fill, theme: theme),
+                    isMarkdown: node.isMarkdown
+                )
+            ))
+        }
+
+        return FlowDrawPlan(
+            contentBounds: contentBounds,
+            subgraphs: subgraphs,
+            edges: edges,
+            labels: labels,
+            nodes: nodes
+        )
+    }
+
+    /// Where a cluster title sits in its band: centered, unless an edge that
+    /// enters or leaves the cluster runs through the centered text (common
+    /// once a diagram runs top to bottom); then the left or right end of the
+    /// band, whichever is clear.
+    private func subgraphTitleRect(_ size: CGSize, in band: CGRect, avoiding edges: [[CGPoint]]) -> CGRect {
+        let width = min(size.width, band.width)
+        let candidates = [band.midX - width / 2, band.minX, band.maxX - width].map {
+            CGRect(x: $0, y: band.minY, width: width, height: band.height)
+        }
+        let clearance: CGFloat = 3
+        return candidates.first { candidate in
+            let obstacle = [candidate.insetBy(dx: -clearance, dy: 0)]
+            return !edges.contains { pathIntersectsObstacles($0, obstacles: obstacle) }
+        } ?? candidates[0]
+    }
+
+    private func edgeKey(_ layout: FlowchartLayout, index: Int) -> String {
+        if index < layout.edgeKeys.count { return layout.edgeKeys[index] }
+        let path = layout.graphResult.edgePaths[index]
+        return "\(path.from)->\(path.to)"
+    }
+
     private func drawFlowchart(
         _ layout: FlowchartLayout,
         in ctx: CGContext,
         at origin: CGPoint
     ) {
-        let contentBounds = flowchartContentBounds(layout)
+        let plan = layout.drawPlan ?? {
+            let labels = edgeLabelLayouts(layout)
+            return makeDrawPlan(
+                layout,
+                contentBounds: flowchartContentBounds(layout, labelLayouts: labels),
+                labelLayouts: labels
+            )
+        }()
         let padding: CGFloat = flowchartOuterPadding
-        let offset = CGPoint(
-            x: origin.x + padding - contentBounds.minX,
-            y: origin.y + padding - contentBounds.minY
+        ctx.saveGState()
+        defer { ctx.restoreGState() }
+        ctx.translateBy(
+            x: origin.x + padding - plan.contentBounds.minX,
+            y: origin.y + padding - plan.contentBounds.minY
         )
 
-        // Draw subgraph/composite-state containers behind the graph content.
-        for subgraph in layout.flowchart.subgraphs {
-            drawSubgraph(subgraph, layout: layout, in: ctx, offset: offset)
+        // Subgraph/composite-state containers behind the graph content.
+        // Mermaid v11 clusters are solid filled rectangles with a top label.
+        for subgraph in plan.subgraphs {
+            ctx.saveGState()
+            ctx.setFillColor(subgraph.fill)
+            ctx.setStrokeColor(subgraph.stroke)
+            ctx.setLineWidth(subgraph.lineWidth)
+            ctx.addRect(subgraph.rect)
+            ctx.drawPath(using: .fillStroke)
+            ctx.restoreGState()
+            if subgraph.regionCount > 0 {
+                drawSubgraphRegions(
+                    count: subgraph.regionCount,
+                    in: subgraph.rect,
+                    color: layout.theme.foregroundDim,
+                    fontSize: layout.fontSize,
+                    ctx: ctx
+                )
+            }
+            subgraph.title?.draw(centeredIn: subgraph.titleRect, in: ctx)
         }
 
         // Strokes, then arrowheads, then labels. Interleaving let later shared
         // trunks paint across earlier labels and other arrowhead envelopes.
-        for (index, edgePath) in layout.graphResult.edgePaths.enumerated() {
-            let key = index < layout.edgeKeys.count
-                ? layout.edgeKeys[index]
-                : "\(edgePath.from)->\(edgePath.to)"
-            let style = layout.edgeStyles[key] ?? .arrow
-            let styleProperties = layout.edgeStyleDirectives[key] ?? [:]
-            drawEdge(
-                edgePath,
-                style: style,
-                styleProperties: styleProperties,
-                layout: layout,
-                in: ctx,
-                offset: offset,
-                includeArrowhead: false
-            )
-        }
-        for (index, edgePath) in layout.graphResult.edgePaths.enumerated() {
-            let key = index < layout.edgeKeys.count
-                ? layout.edgeKeys[index]
-                : "\(edgePath.from)->\(edgePath.to)"
-            let style = layout.edgeStyles[key] ?? .arrow
-            let styleProperties = layout.edgeStyleDirectives[key] ?? [:]
-            drawEdgeArrowhead(
-                edgePath,
-                style: style,
-                styleProperties: styleProperties,
-                layout: layout,
-                in: ctx,
-                offset: offset
-            )
-        }
-        for (index, edgePath) in layout.graphResult.edgePaths.enumerated() {
-            let key = index < layout.edgeKeys.count
-                ? layout.edgeKeys[index]
-                : "\(edgePath.from)->\(edgePath.to)"
-            if let label = layout.edgeLabels[key] {
-                let isMarkdown = index < layout.flowchart.edges.count
-                    && layout.flowchart.edges[index].isMarkdown
-                drawEdgeLabel(
-                    label,
-                    path: edgePath,
-                    isMarkdown: isMarkdown,
-                    layout: layout,
-                    in: ctx,
-                    offset: offset
-                )
+        for edge in plan.edges {
+            ctx.saveGState()
+            ctx.setStrokeColor(edge.color)
+            ctx.setLineWidth(edge.lineWidth)
+            if let dash = edge.dash {
+                ctx.setLineDash(phase: 0, lengths: dash)
             }
+            ctx.addPath(edge.path)
+            ctx.strokePath()
+            ctx.restoreGState()
+        }
+        for edge in plan.edges {
+            guard let triangle = edge.arrowhead else { continue }
+            ctx.setFillColor(edge.color)
+            ctx.addLines(between: triangle)
+            ctx.closePath()
+            ctx.fillPath()
+        }
+        ctx.setFillColor(layout.theme.background)
+        for label in plan.labels {
+            // Background behind the label for readability.
+            ctx.fill(label.rect)
+            label.text.drawCentered(at: CGPoint(x: label.rect.minX + 3, y: label.rect.minY + 2), in: ctx)
         }
 
-        // Draw nodes.
-        for (id, rect) in layout.graphResult.nodePositions {
-            let shape = layout.nodeShapes[id] ?? .default
-            let label = layout.nodeLabels[id] ?? id
-            let offsetRect = rect.offsetBy(dx: offset.x, dy: offset.y)
-
-            let styleProps = layout.styleDirectives[id] ?? [:]
-            drawNodeShape(shape, rect: offsetRect, style: styleProps, layout: layout, in: ctx)
-            let isMarkdown = layout.flowchart.nodes.first { $0.id == id }?.isMarkdown ?? false
-            drawNodeLabel(
-                label,
-                in: offsetRect,
-                style: styleProps,
-                isMarkdown: isMarkdown,
-                layout: layout,
-                ctx: ctx
-            )
-        }
-    }
-
-    private func drawSubgraph(
-        _ subgraph: FlowSubgraph,
-        layout: FlowchartLayout,
-        in ctx: CGContext,
-        offset: CGPoint
-    ) {
-        guard let rect = subgraphFrame(subgraph, layout: layout) else { return }
-        let offsetRect = rect.offsetBy(dx: offset.x, dy: offset.y)
-        let style = layout.styleDirectives[subgraph.id] ?? [:]
-
-        ctx.saveGState()
-        let fillColor = parseStyleColor(style["fill"], theme: layout.theme)
-            ?? subgraphFillColor(theme: layout.theme)
-        let strokeColor = parseStyleColor(style["stroke"], theme: layout.theme)
-            ?? subgraphStrokeColor(theme: layout.theme)
-        ctx.setFillColor(fillColor)
-        ctx.setStrokeColor(strokeColor)
-        ctx.setLineWidth(parseLineWidth(style["stroke-width"]) ?? 1)
-        // Mermaid v11 flowchart clusters render as solid filled rectangles with
-        // a top label. Keep subgraphs visually like clusters, not callout boxes.
-        let path = CGPath(rect: offsetRect, transform: nil)
-        ctx.addPath(path)
-        ctx.drawPath(using: .fillStroke)
-        ctx.restoreGState()
-
-        if subgraph.regionCount > 0 {
-            drawSubgraphRegions(count: subgraph.regionCount, in: offsetRect, layout: layout, ctx: ctx)
-        }
-
-        let title = subgraph.title ?? subgraph.id
-        if !title.isEmpty {
-            let titleColor = parseStyleColor(style["color"], theme: layout.theme) ?? layout.theme.foreground
-            let titleFontSize = layout.fontSize * 0.85
-            let font = CTFontCreateWithName("Helvetica-Bold" as CFString, titleFontSize, nil)
-            let titleRect = CGRect(
-                x: offsetRect.minX + 10,
-                y: offsetRect.minY + 4,
-                width: max(1, offsetRect.width - 20),
-                height: max(layout.fontSize * 1.4, subgraphTitleHeight(fontSize: layout.fontSize) - 6)
-            )
-            MermaidTextUtils.drawText(
-                title,
-                centeredIn: titleRect,
-                font: font,
-                fontSize: titleFontSize,
-                foregroundColor: titleColor,
-                isMarkdown: subgraph.isMarkdown,
-                in: ctx
-            )
-        }
-
-        for child in subgraph.subgraphs {
-            drawSubgraph(child, layout: layout, in: ctx, offset: offset)
+        for node in plan.nodes {
+            ctx.saveGState()
+            ctx.setLineWidth(node.lineWidth)
+            ctx.setStrokeColor(node.stroke)
+            ctx.setFillColor(node.fill)
+            ctx.addPath(node.path)
+            ctx.drawPath(using: .fillStroke)
+            drawNodeShapeOverlays(node.shape, rect: node.rect, in: ctx)
+            ctx.restoreGState()
+            node.label.draw(centeredIn: node.rect, in: ctx)
         }
     }
 
     private func drawSubgraphRegions(
         count: Int,
         in rect: CGRect,
-        layout: FlowchartLayout,
+        color: CGColor,
+        fontSize: CGFloat,
         ctx: CGContext
     ) {
         guard count > 0 else { return }
         ctx.saveGState()
-        ctx.setStrokeColor(layout.theme.foregroundDim)
+        ctx.setStrokeColor(color)
         ctx.setLineWidth(1)
         ctx.setLineDash(phase: 0, lengths: [4, 4])
 
-        let contentTop = rect.minY + layout.fontSize * 2
+        let contentTop = rect.minY + fontSize * 2
         let availableHeight = max(1, rect.maxY - contentTop)
         for index in 1 ... count {
             let y = contentTop + availableHeight * CGFloat(index) / CGFloat(count + 1)
@@ -2795,7 +3092,32 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
 
     private var flowchartOuterPadding: CGFloat { 20 }
 
-    private func flowchartContentBounds(_ layout: FlowchartLayout) -> CGRect {
+    /// Edge label placement by edge path index, for edges that have a label.
+    private func edgeLabelLayouts(_ layout: FlowchartLayout) -> [Int: EdgeLabelLayout] {
+        var result: [Int: EdgeLabelLayout] = [:]
+        for (index, path) in layout.graphResult.edgePaths.enumerated() {
+            let key = index < layout.edgeKeys.count
+                ? layout.edgeKeys[index]
+                : "\(path.from)->\(path.to)"
+            guard let label = layout.edgeLabels[key],
+                  let labelLayout = edgeLabelLayout(
+                      label,
+                      path: path,
+                      fontSize: layout.fontSize,
+                      isMarkdown: index < layout.flowchart.edges.count
+                          && layout.flowchart.edges[index].isMarkdown,
+                      among: layout.graphResult.edgePaths
+                  ) else { continue }
+            result[index] = labelLayout
+        }
+        return result
+    }
+
+    private func flowchartContentBounds(
+        _ layout: FlowchartLayout,
+        labelLayouts: [Int: EdgeLabelLayout]? = nil
+    ) -> CGRect {
+        if let plan = layout.drawPlan { return plan.contentBounds }
         guard !layout.graphResult.nodePositions.isEmpty else { return .zero }
         var bounds = CGRect(origin: .zero, size: layout.graphResult.totalSize)
         for subgraph in layout.flowchart.subgraphs {
@@ -2811,19 +3133,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                 height: edgeMargin * 2
             ))
         }
-        for (index, path) in layout.graphResult.edgePaths.enumerated() {
-            let key = index < layout.edgeKeys.count
-                ? layout.edgeKeys[index]
-                : "\(path.from)->\(path.to)"
-            guard let label = layout.edgeLabels[key],
-                  let labelLayout = edgeLabelLayout(
-                      label,
-                      path: path,
-                      fontSize: layout.fontSize,
-                      isMarkdown: index < layout.flowchart.edges.count
-                          && layout.flowchart.edges[index].isMarkdown,
-                      among: layout.graphResult.edgePaths
-                  ) else { continue }
+        for labelLayout in (labelLayouts ?? edgeLabelLayouts(layout)).values {
             bounds = bounds.union(labelLayout.rect)
         }
         return bounds
@@ -2833,16 +3143,21 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         layout.subgraphFrames[subgraph.id]
     }
 
+    // Subgraph padding is baked into `subgraphFrames` at layout time, so a
+    // tight layout draws correctly with any renderer instance. The title
+    // height is drawn from, so it never changes with fitting.
     private func subgraphHorizontalPadding(fontSize: CGFloat) -> CGFloat {
-        max(24, fontSize * 2)
+        fit.tight ? max(12, fontSize) : max(24, fontSize * 2)
     }
 
     private func subgraphTopPadding(fontSize: CGFloat) -> CGFloat {
-        max(32, subgraphTitleHeight(fontSize: fontSize) + fontSize)
+        fit.tight
+            ? subgraphTitleHeight(fontSize: fontSize) + fontSize * 0.5
+            : max(32, subgraphTitleHeight(fontSize: fontSize) + fontSize)
     }
 
     private func subgraphBottomPadding(fontSize: CGFloat) -> CGFloat {
-        max(24, fontSize * 1.8)
+        fit.tight ? max(12, fontSize) : max(24, fontSize * 1.8)
     }
 
     private func subgraphTitleHeight(fontSize: CGFloat) -> CGFloat {
@@ -2925,32 +3240,6 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     }
 
     // MARK: - Node shapes
-
-    private func drawNodeShape(
-        _ shape: FlowNodeShape,
-        rect: CGRect,
-        style: [String: String],
-        layout: FlowchartLayout,
-        in ctx: CGContext
-    ) {
-        let fillColor = parseStyleColor(style["fill"], theme: layout.theme) ?? layout.theme.background
-        let strokeColor = parseStyleColor(style["stroke"], theme: layout.theme) ?? layout.theme.foreground
-        let lineWidth: CGFloat = parseLineWidth(style["stroke-width"]) ?? 1.5
-
-        ctx.saveGState()
-        ctx.setLineWidth(lineWidth)
-        ctx.setStrokeColor(strokeColor)
-        ctx.setFillColor(fillColor)
-
-        let path = nodeShapePath(shape, rect: rect)
-
-        ctx.addPath(path)
-        ctx.drawPath(using: .fillStroke)
-
-        drawNodeShapeOverlays(shape, rect: rect, in: ctx)
-
-        ctx.restoreGState()
-    }
 
     private func drawNodeShapeOverlays(_ shape: FlowNodeShape, rect: CGRect, in ctx: CGContext) {
         switch shape {
@@ -3353,82 +3642,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         return path
     }
 
-    // MARK: - Node label
-
-    private func drawNodeLabel(
-        _ text: String,
-        in rect: CGRect,
-        style: [String: String],
-        isMarkdown: Bool,
-        layout: FlowchartLayout,
-        ctx: CGContext
-    ) {
-        let font = CTFontCreateWithName("Helvetica" as CFString, layout.fontSize, nil)
-        let fillColor = parseStyleColor(style["fill"], theme: layout.theme) ?? layout.theme.background
-        let foreground = contrastingTextColor(on: fillColor, theme: layout.theme)
-        MermaidTextUtils.drawText(
-            text,
-            centeredIn: rect,
-            font: font,
-            fontSize: layout.fontSize,
-            foregroundColor: foreground,
-            isMarkdown: isMarkdown,
-            in: ctx
-        )
-    }
-
     // MARK: - Edges
-
-    private func drawEdge(
-        _ edgePath: GraphLayoutEdgePath,
-        style: FlowEdgeStyle,
-        styleProperties: [String: String],
-        layout: FlowchartLayout,
-        in ctx: CGContext,
-        offset: CGPoint,
-        includeArrowhead: Bool = true
-    ) {
-        guard edgePath.points.count >= 2 else { return }
-        if style == .invisible { return }
-
-        let points = edgePath.points.map {
-            CGPoint(x: $0.x + offset.x, y: $0.y + offset.y)
-        }
-
-        ctx.saveGState()
-        let strokeColor = parseStyleColor(styleProperties["stroke"], theme: layout.theme)
-            ?? layout.theme.foreground
-        ctx.setStrokeColor(strokeColor)
-
-        switch style {
-        case .arrow, .circle, .cross, .biArrow, .biCircle, .biCross, .open, .thick:
-            ctx.setLineWidth(edgeStrokeWidth(style: style, styleProperties: styleProperties))
-        case .dotted:
-            ctx.setLineWidth(edgeStrokeWidth(style: style, styleProperties: styleProperties))
-            ctx.setLineDash(phase: 0, lengths: parseDashArray(styleProperties["stroke-dasharray"]) ?? [4, 4])
-        case .invisible:
-            ctx.restoreGState()
-            return
-        }
-        if style != .dotted, let dashArray = parseDashArray(styleProperties["stroke-dasharray"]) {
-            ctx.setLineDash(phase: 0, lengths: dashArray)
-        }
-
-        ctx.addPath(edgeDrawingPath(points))
-        ctx.strokePath()
-        ctx.restoreGState()
-
-        if includeArrowhead {
-            drawEdgeArrowhead(
-                edgePath,
-                style: style,
-                styleProperties: styleProperties,
-                layout: layout,
-                in: ctx,
-                offset: offset
-            )
-        }
-    }
 
     /// Single edge-ink path shared by drawing, hit testing, and highlighting.
     private func edgeDrawingPath(_ points: [CGPoint]) -> CGPath {
@@ -3446,40 +3660,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         return path
     }
 
-    private func drawEdgeArrowhead(
-        _ edgePath: GraphLayoutEdgePath,
-        style: FlowEdgeStyle,
-        styleProperties: [String: String],
-        layout: FlowchartLayout,
-        in ctx: CGContext,
-        offset: CGPoint
-    ) {
-        guard edgePath.points.count >= 2 else { return }
-        guard style == .arrow || style == .dotted || style == .thick
-            || style == .biArrow || style == .cross || style == .biCross
-            || style == .circle || style == .biCircle else { return }
-
-        let points = edgePath.points.map {
-            CGPoint(x: $0.x + offset.x, y: $0.y + offset.y)
-        }
-        let strokeColor = parseStyleColor(styleProperties["stroke"], theme: layout.theme)
-            ?? layout.theme.foreground
-        drawArrowhead(
-            at: points[points.count - 1],
-            from: points[points.count - 2],
-            size: layout.fontSize * 0.6,
-            in: ctx,
-            color: strokeColor
-        )
-    }
-
-    private func drawArrowhead(
-        at tip: CGPoint,
-        from prev: CGPoint,
-        size: CGFloat,
-        in ctx: CGContext,
-        color: CGColor
-    ) {
+    /// Filled arrowhead (tip, left, right) for a segment ending at `tip`.
+    private func arrowheadTriangle(at tip: CGPoint, from prev: CGPoint, size: CGFloat) -> [CGPoint] {
         let angle = atan2(tip.y - prev.y, tip.x - prev.x)
         let spread: CGFloat = .pi / 6 // 30 degrees
 
@@ -3491,15 +3673,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             x: tip.x - size * cos(angle + spread),
             y: tip.y - size * sin(angle + spread)
         )
-
-        ctx.saveGState()
-        ctx.setFillColor(color)
-        ctx.move(to: tip)
-        ctx.addLine(to: left)
-        ctx.addLine(to: right)
-        ctx.closePath()
-        ctx.fillPath()
-        ctx.restoreGState()
+        return [tip, left, right]
     }
 
     // MARK: - Edge labels
@@ -3623,43 +3797,6 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             }
             return false
         }
-    }
-
-    private func drawEdgeLabel(
-        _ text: String,
-        path: GraphLayoutEdgePath,
-        isMarkdown: Bool,
-        layout: FlowchartLayout,
-        in ctx: CGContext,
-        offset: CGPoint
-    ) {
-        guard let labelLayout = edgeLabelLayout(
-            text,
-            path: path,
-            fontSize: layout.fontSize,
-            isMarkdown: isMarkdown,
-            among: layout.graphResult.edgePaths
-        ) else { return }
-        let labelRect = labelLayout.rect.offsetBy(dx: offset.x, dy: offset.y)
-
-        // Draw background behind label for readability.
-        ctx.saveGState()
-        ctx.setFillColor(layout.theme.background)
-        ctx.fill(labelRect)
-
-        // Draw text.
-        MermaidTextUtils.drawText(
-            text,
-            at: CGPoint(x: labelRect.minX + 3, y: labelRect.minY + 2),
-            width: labelLayout.textSize.width,
-            font: labelLayout.font,
-            fontSize: labelLayout.fontSize,
-            foregroundColor: layout.theme.foreground,
-            alignment: .center,
-            isMarkdown: isMarkdown,
-            in: ctx
-        )
-        ctx.restoreGState()
     }
 
     // MARK: - CSS parsing helpers
@@ -3800,5 +3937,89 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         ctx.textPosition = .zero
         CTLineDraw(line, ctx)
         ctx.restoreGState()
+    }
+}
+
+private extension FlowEdgeStyle {
+    /// Styles that end in a filled arrowhead. Circle and cross ends draw the
+    /// same head until they get their own markers.
+    var hasArrowhead: Bool {
+        switch self {
+        case .arrow, .dotted, .thick, .biArrow, .cross, .biCross, .circle, .biCircle: true
+        case .open, .invisible: false
+        }
+    }
+}
+
+/// Text measured and typeset once at layout time, then drawn as prebuilt
+/// CoreText lines.
+///
+/// Places lines exactly like `MermaidTextUtils.drawText` (same line height,
+/// spacing, and per-line centering), so a renderer can move typesetting out
+/// of draw without moving a pixel. Drawing builds no attributed strings,
+/// lines, or fonts. CTLine is immutable, so drawing from any thread is safe.
+struct MermaidPreparedText: @unchecked Sendable {
+    private struct Line {
+        let line: CTLine
+        let width: CGFloat
+        let top: CGFloat
+    }
+
+    private let lines: [Line]
+    private let fontSize: CGFloat
+    /// The size `MermaidTextUtils.measureText` reports for the same text.
+    let size: CGSize
+
+    init(_ text: String, font: CTFont, fontSize: CGFloat, color: CGColor, isMarkdown: Bool = false) {
+        let spacing = fontSize * 0.3
+        var top: CGFloat = 0
+        var lines: [Line] = []
+        for piece in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = CTLineCreateWithAttributedString(MermaidTextUtils.attributedLabel(
+                String(piece),
+                font: font,
+                fontSize: fontSize,
+                foregroundColor: color,
+                isMarkdown: isMarkdown
+            ))
+            let bounds = CTLineGetBoundsWithOptions(line, [])
+            lines.append(Line(line: line, width: bounds.width, top: top))
+            top += max(bounds.height, fontSize * 1.4) + spacing
+        }
+        self.lines = lines
+        self.fontSize = fontSize
+        size = MermaidTextUtils.measureText(text, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
+    }
+
+    /// Left-aligned lines; `origin` is the block's top-left.
+    func draw(at origin: CGPoint, in ctx: CGContext) {
+        for line in lines {
+            MermaidTextUtils.drawCTLine(
+                line.line,
+                at: CGPoint(x: origin.x, y: origin.y + line.top),
+                fontSize: fontSize,
+                in: ctx
+            )
+        }
+    }
+
+    /// Lines centered on each other across `size.width`; `origin` is the block's top-left.
+    func drawCentered(at origin: CGPoint, in ctx: CGContext) {
+        for line in lines {
+            MermaidTextUtils.drawCTLine(
+                line.line,
+                at: CGPoint(x: origin.x + (size.width - line.width) / 2, y: origin.y + line.top),
+                fontSize: fontSize,
+                in: ctx
+            )
+        }
+    }
+
+    /// The block centered in `rect`, lines centered on each other.
+    func draw(centeredIn rect: CGRect, in ctx: CGContext) {
+        drawCentered(
+            at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2),
+            in: ctx
+        )
     }
 }

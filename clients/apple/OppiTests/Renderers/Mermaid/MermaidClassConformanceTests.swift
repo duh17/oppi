@@ -589,9 +589,10 @@ struct MermaidClassConformanceTests {
             "  direction RL",
             "  Student \"1\" --o \"1\" IdCard : carries",
         ])
+        // Wide enough that right to left is not turned to fit a phone.
         let layout = MermaidClassRenderer.layout(
             diagram,
-            configuration: .default(maxWidth: 360)
+            configuration: .default(maxWidth: 2_000)
         )
         guard let student = layout.graphResult.nodePositions["Student"],
               let idCard = layout.graphResult.nodePositions["IdCard"]
@@ -909,6 +910,28 @@ struct MermaidClassConformanceTests {
         "      +run()",
         "    }",
     ]
+
+    // MARK: - Fit to width
+
+    @Test func wideLeftToRightClassDiagramTurnsTopDownToFitPhoneWidth() throws {
+        let diagram = MermaidClassParser.parse(lines: [
+            "classDiagram",
+            "    direction LR",
+            "    Session --> Workspace : uses",
+            "    Workspace --> Agent : owns",
+            "    Agent --> Tool : invokes",
+        ])
+        let narrow = MermaidClassRenderer.layout(diagram, configuration: .default(maxWidth: 360))
+        #expect((narrow.customSize?.width ?? .infinity) <= 360, "size=\(String(describing: narrow.customSize))")
+        let session = try #require(narrow.graphResult.nodePositions["Session"])
+        let workspace = try #require(narrow.graphResult.nodePositions["Workspace"])
+        #expect(workspace.minY >= session.maxY, "should stack top to bottom at 360pt")
+
+        let wide = MermaidClassRenderer.layout(diagram, configuration: .default(maxWidth: 900))
+        let wideSession = try #require(wide.graphResult.nodePositions["Session"])
+        let wideWorkspace = try #require(wide.graphResult.nodePositions["Workspace"])
+        #expect(wideWorkspace.minX >= wideSession.maxX, "should stay left to right at 900pt")
+    }
 
     private func ids(in diagram: ClassDiagram) -> [String] {
         diagram.classes.map(\.id)

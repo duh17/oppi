@@ -496,7 +496,7 @@ struct MermaidSemanticSelectionTests {
         flowchart TD
         A[One] --> B[Two]
         """
-        let config = DocumentRenderPipeline.mermaidConfiguration(theme: .fallback)
+        let config = DocumentRenderPipeline.mermaidConfiguration(theme: .fallback, availableWidth: 360)
         let first = DocumentRenderPipeline.layoutGraphical(
             parser: MermaidParser(),
             renderer: MermaidRenderer(),
@@ -568,7 +568,7 @@ struct MermaidSemanticSelectionTests {
             parser: MermaidParser(),
             renderer: MermaidRenderer(),
             text: source,
-            config: DocumentRenderPipeline.mermaidConfiguration(theme: .fallback)
+            config: DocumentRenderPipeline.mermaidConfiguration(theme: .fallback, availableWidth: 360)
         )
         let view = ZoomableGraphicalView(size: layout.size, draw: layout.draw)
         var comments: [String] = []
@@ -663,7 +663,7 @@ struct MermaidSemanticSelectionTests {
             parser: MermaidParser(),
             renderer: MermaidRenderer(),
             text: source,
-            config: DocumentRenderPipeline.mermaidConfiguration(theme: .fallback)
+            config: DocumentRenderPipeline.mermaidConfiguration(theme: .fallback, availableWidth: 360)
         )
         let view = ZoomableGraphicalView(size: layout.size, draw: layout.draw)
         view.configureSemanticPick(map: layout.semanticMap) { _ in }

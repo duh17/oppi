@@ -12,8 +12,9 @@ import UIKit
 /// export support (image, PDF, source). No inline zoom — keeps the view
 /// simple and avoids UIScrollView gesture conflicts.
 ///
-/// Inline always shows the whole diagram, scaled to fit the bubble and
-/// capped at 400pt. Tap opens the same geometry full screen.
+/// The diagram is laid out for the bubble's width (graph families turn,
+/// tighten, or rewrap to fit it). Whatever still overflows is scaled to fit
+/// the bubble, capped at 400pt tall. Full screen lays out for its own width.
 @MainActor
 final class NativeMermaidBlockView: UIView {
     struct RasterResult: @unchecked Sendable {
@@ -26,15 +27,18 @@ final class NativeMermaidBlockView: UIView {
         let renderAsync: @Sendable (String, CGFloat, RenderTheme) async -> RasterResult?
 
         static let live = Self(
-            renderSync: { code, _, theme in
+            renderSync: { code, availableWidth, theme in
                 DocumentRenderPipeline.renderInlineGraphicalImage(
                     parser: MermaidParser(),
                     renderer: MermaidRenderer(),
                     text: code,
-                    config: DocumentRenderPipeline.mermaidConfiguration(theme: theme)
+                    config: DocumentRenderPipeline.mermaidConfiguration(
+                        theme: theme,
+                        availableWidth: availableWidth
+                    )
                 ).map { RasterResult(image: $0.image, size: $0.size) }
             },
-            renderAsync: { code, _, theme in
+            renderAsync: { code, availableWidth, theme in
                 #if DEBUG
                 await NativeMermaidBlockView.testHooks.beforeAsyncRaster?(code)
                 #endif
@@ -43,7 +47,10 @@ final class NativeMermaidBlockView: UIView {
                         parser: MermaidParser(),
                         renderer: MermaidRenderer(),
                         text: code,
-                        config: DocumentRenderPipeline.mermaidConfiguration(theme: theme)
+                        config: DocumentRenderPipeline.mermaidConfiguration(
+                            theme: theme,
+                            availableWidth: availableWidth
+                        )
                     ).map { RasterResult(image: $0.image, size: $0.size) }
                 }.value
             }
@@ -372,7 +379,8 @@ final class NativeMermaidBlockView: UIView {
         }
         return bounds.width > 0
             ? bounds.width
-            : ((superview?.bounds.width).flatMap { $0 > 0 ? $0 : nil } ?? 360)
+            : ((superview?.bounds.width).flatMap { $0 > 0 ? $0 : nil }
+                ?? DocumentRenderPipeline.mermaidFallbackLayoutWidth)
     }
 
     private func rasterWidthMismatch(
@@ -436,7 +444,8 @@ final class NativeMermaidBlockView: UIView {
 
     /// Fence-close reservation: activate the layout-cache height before the
     /// async raster arrives so the image swap does not change cell height.
-    /// Same natural-raster budget as `renderInlineGraphicalImage`.
+    /// Same natural-raster budget and the same available width as the
+    /// rasterizer call it reserves for, so both resolve to one cached layout.
     @discardableResult
     private func reserveDiagramHeightFromLayout(
         code: String,
@@ -447,7 +456,10 @@ final class NativeMermaidBlockView: UIView {
             parser: MermaidParser(),
             renderer: MermaidRenderer(),
             text: code,
-            config: DocumentRenderPipeline.mermaidConfiguration(theme: theme)
+            config: DocumentRenderPipeline.mermaidConfiguration(
+                theme: theme,
+                availableWidth: availableWidth
+            )
         )
         guard layout.size.width > 0, layout.size.height > 0,
               DocumentRenderPipeline.naturalRasterBudget.permits(

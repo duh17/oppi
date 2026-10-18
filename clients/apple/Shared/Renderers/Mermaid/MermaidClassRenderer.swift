@@ -31,14 +31,17 @@ enum MermaidClassRenderer {
         let maxBoxWidth: CGFloat
         let minCompartmentHeight: CGFloat
 
-        init(fontSize: CGFloat, maxWidth: CGFloat) {
+        /// `tight` is the fit-to-width variant: half the sibling gap, and
+        /// three quarters of the rank gap when ranks run across (`tightRanks`),
+        /// the only case where rank gaps add width.
+        init(fontSize: CGFloat, maxWidth: CGFloat, tight: Bool = false, tightRanks: Bool = false) {
             self.fontSize = fontSize
             self.rowPaddingH = fontSize * 0.7
             self.rowPaddingV = fontSize * 0.25
             self.headerPaddingV = fontSize * 0.4
             self.outerMargin = fontSize * 1.5
-            self.nodeSpacing = fontSize * 3.2
-            self.rankSpacing = fontSize * 5.0
+            self.nodeSpacing = fontSize * 3.2 * (tight ? 0.5 : 1)
+            self.rankSpacing = fontSize * 5.0 * (tight && tightRanks ? 0.75 : 1)
             self.minBoxWidth = fontSize * 8
             // Leave room for the outer margin; wide diagrams may still exceed
             // the bubble and scale to fit inline (fullscreen zoom is the
@@ -83,15 +86,45 @@ enum MermaidClassRenderer {
         let toCardinality: String?
     }
 
+    /// Typeset text for one box, built once for the chosen arrangement.
+    private struct BoxText: Sendable {
+        let stereotype: MermaidPreparedText?
+        let title: MermaidPreparedText
+        let attributes: [RowText]
+        let methods: [RowText]
+    }
+
+    private struct RowText: Sendable {
+        let text: MermaidPreparedText
+        /// Static members: underline width and baseline-relative top per line.
+        let underlines: [(width: CGFloat, top: CGFloat)]
+    }
+
+    private struct EdgeText: Sendable {
+        let label: MermaidPreparedText?
+        let fromCardinality: MermaidPreparedText?
+        let toCardinality: MermaidPreparedText?
+    }
+
+    /// One placement of the diagram, before any text is typeset for drawing.
+    private struct Arrangement {
+        let constants: LayoutConstants
+        let graphResult: GraphLayoutResult
+        let boxes: [PreparedBox]
+        let edges: [PreparedEdge]
+        let size: CGSize
+    }
+
     // MARK: - Public entry point
 
+    /// Lays out at the natural size; only when that is wider than `maxWidth`
+    /// tries, in order, turning a left-to-right diagram top to bottom (below
+    /// `MermaidFlowchartRenderer.directionBreakpoint`) and tighter spacing in
+    /// the narrower direction. The first that fits wins, else the narrowest.
     nonisolated static func layout(
         _ diagram: ClassDiagram,
         configuration: RenderConfiguration
     ) -> MermaidFlowchartRenderer.FlowchartLayout {
-        let constants = LayoutConstants(fontSize: configuration.fontSize, maxWidth: configuration.maxWidth)
-        let theme = configuration.theme
-
         guard !diagram.classes.isEmpty else {
             return MermaidFlowchartRenderer().placeholderLayout(
                 text: "Empty class diagram",
@@ -99,6 +132,39 @@ enum MermaidClassRenderer {
             )
         }
 
+        let limit = configuration.maxWidth
+        var best = arrange(diagram, configuration: configuration, tight: false)
+        guard best.size.width > limit else { return finish(best, diagram: diagram, configuration: configuration) }
+
+        func fits(_ candidate: Arrangement) -> Bool {
+            if candidate.size.width < best.size.width { best = candidate }
+            return candidate.size.width <= limit
+        }
+
+        var chart = diagram
+        if limit < MermaidFlowchartRenderer.directionBreakpoint,
+           diagram.direction == .LR || diagram.direction == .RL {
+            let turned = ClassDiagram(direction: .TB, classes: diagram.classes, relations: diagram.relations)
+            let naturalWidth = best.size.width
+            let candidate = arrange(turned, configuration: configuration, tight: false)
+            if fits(candidate) { return finish(candidate, diagram: turned, configuration: configuration) }
+            if best.size.width < naturalWidth { chart = turned }
+        }
+        _ = fits(arrange(chart, configuration: configuration, tight: true))
+        return finish(best, diagram: diagram, configuration: configuration)
+    }
+
+    private static func arrange(
+        _ diagram: ClassDiagram,
+        configuration: RenderConfiguration,
+        tight: Bool
+    ) -> Arrangement {
+        let constants = LayoutConstants(
+            fontSize: configuration.fontSize,
+            maxWidth: configuration.maxWidth,
+            tight: tight,
+            tightRanks: diagram.direction == .LR || diagram.direction == .RL
+        )
         let laidOut = layoutGraph(diagram, constants: constants)
 
         let boxes: [PreparedBox] = diagram.classes.compactMap { node in
@@ -135,22 +201,43 @@ enum MermaidClassRenderer {
             width: fitted.width + constants.outerMargin * 2,
             height: fitted.height + constants.outerMargin * 2
         )
+        return Arrangement(
+            constants: constants,
+            graphResult: graphResult,
+            boxes: boxes,
+            edges: edges,
+            size: size
+        )
+    }
+
+    /// Typesets the chosen arrangement once so drawing only paints.
+    private static func finish(
+        _ arrangement: Arrangement,
+        diagram: ClassDiagram,
+        configuration: RenderConfiguration
+    ) -> MermaidFlowchartRenderer.FlowchartLayout {
+        let constants = arrangement.constants
+        let theme = configuration.theme
+        let boxes = arrangement.boxes
+        let edges = arrangement.edges
+        let boxTexts = boxes.map { boxText($0, constants: constants, theme: theme) }
+        let edgeTexts = edges.map { edgeText($0, constants: constants, theme: theme) }
 
         let drawBlock: @Sendable (CGContext, CGPoint) -> Void = { ctx, origin in
             let offset = CGPoint(
                 x: origin.x + constants.outerMargin,
                 y: origin.y + constants.outerMargin
             )
-            for edge in edges {
-                drawRelation(edge, at: offset, constants: constants, theme: theme, in: ctx)
+            for (edge, text) in zip(edges, edgeTexts) {
+                drawRelation(edge, text: text, at: offset, constants: constants, theme: theme, in: ctx)
             }
-            for box in boxes {
-                drawBox(box, at: offset, constants: constants, theme: theme, in: ctx)
+            for (box, text) in zip(boxes, boxTexts) {
+                drawBox(box, text: text, at: offset, constants: constants, theme: theme, in: ctx)
             }
         }
 
         return MermaidFlowchartRenderer.FlowchartLayout(
-            graphResult: graphResult,
+            graphResult: arrangement.graphResult,
             flowchart: .empty,
             subgraphFrames: [:],
             nodeLabels: Dictionary(uniqueKeysWithValues: diagram.classes.map { ($0.id, $0.displayName) }),
@@ -168,7 +255,45 @@ enum MermaidClassRenderer {
             isPlaceholder: false,
             placeholderText: nil,
             customDraw: drawBlock,
-            customSize: size
+            customSize: arrangement.size
+        )
+    }
+
+    private static func boxText(_ box: PreparedBox, constants: LayoutConstants, theme: RenderTheme) -> BoxText {
+        let fontSize = constants.fontSize
+        func rows(_ rows: [PreparedRow]) -> [RowText] {
+            rows.map { row in
+                let font = row.isAbstract ? italicFont(fontSize) : bodyFont(fontSize)
+                return RowText(
+                    text: MermaidPreparedText(row.text, font: font, fontSize: fontSize, color: theme.foreground),
+                    underlines: row.isStatic ? underlines(for: row.text, font: font, fontSize: fontSize) : []
+                )
+            }
+        }
+        return BoxText(
+            stereotype: box.stereotype.map {
+                MermaidPreparedText($0, font: stereoFont(fontSize), fontSize: fontSize * 0.85, color: theme.foregroundDim)
+            },
+            title: MermaidPreparedText(box.title, font: headerFont(fontSize), fontSize: fontSize, color: theme.foreground),
+            attributes: rows(box.attributes),
+            methods: rows(box.methods)
+        )
+    }
+
+    private static func edgeText(_ edge: PreparedEdge, constants: LayoutConstants, theme: RenderTheme) -> EdgeText {
+        let fontSize = constants.fontSize
+        let cardinalityFont = bodyFont(fontSize * 0.85)
+        func cardinality(_ text: String?) -> MermaidPreparedText? {
+            text.map {
+                MermaidPreparedText($0, font: cardinalityFont, fontSize: fontSize * 0.85, color: theme.foregroundDim)
+            }
+        }
+        return EdgeText(
+            label: edge.label.map {
+                MermaidPreparedText($0, font: bodyFont(fontSize), fontSize: fontSize, color: theme.foregroundDim)
+            },
+            fromCardinality: cardinality(edge.fromCardinality),
+            toCardinality: cardinality(edge.toCardinality)
         )
     }
 
@@ -220,7 +345,7 @@ enum MermaidClassRenderer {
     ) -> CGFloat {
         let font = bodyFont(constants.fontSize)
         let isHorizontal = diagram.direction == .LR || diagram.direction == .RL
-        let padding = constants.fontSize * 0.5
+        let padding = labelLaneGap(constants)
         var extra: CGFloat = 0
         var byFrom: [String: [ClassRelation]] = [:]
         for relation in diagram.relations {
@@ -239,6 +364,17 @@ enum MermaidClassRenderer {
         return extra
     }
 
+    /// Space between the text of two labels in neighboring lanes: both chips'
+    /// padding plus a visible gap, so packed chips never touch.
+    private static func labelLaneGap(_ constants: LayoutConstants) -> CGFloat {
+        constants.fontSize * 0.5 + labelChipPadding(constants) * 2
+    }
+
+    /// Background chip padding around a relationship label.
+    private static func labelChipPadding(_ constants: LayoutConstants) -> CGFloat {
+        constants.fontSize * 0.25
+    }
+
     /// Pack labels that share a rank corridor into non-overlapping cross-axis lanes.
     private static func assignLabelLanes(
         _ edges: [PreparedEdge],
@@ -247,7 +383,7 @@ enum MermaidClassRenderer {
     ) -> [PreparedEdge] {
         let isHorizontal = direction == .LR || direction == .RL
         let font = bodyFont(constants.fontSize)
-        let padding = constants.fontSize * 0.5
+        let padding = labelLaneGap(constants)
 
         struct Item {
             let index: Int
@@ -598,6 +734,7 @@ enum MermaidClassRenderer {
 
     private static func drawBox(
         _ box: PreparedBox,
+        text: BoxText,
         at offset: CGPoint,
         constants: LayoutConstants,
         theme: RenderTheme,
@@ -635,110 +772,74 @@ enum MermaidClassRenderer {
 
         // Stereotype + name in the top compartment. Stereotype is already wrapped.
         var headerCursor = headerRect.minY + constants.headerPaddingV
-        if let stereotype = box.stereotype {
-            let stereoSize = measureText(
-                stereotype,
-                font: stereoFont(fontSize),
-                fontSize: fontSize * 0.85
-            )
-            MermaidTextUtils.drawText(
-                stereotype,
+        if let stereotype = text.stereotype {
+            stereotype.draw(
                 centeredIn: CGRect(
                     x: headerRect.minX + constants.rowPaddingH,
                     y: headerCursor,
                     width: headerRect.width - constants.rowPaddingH * 2,
-                    height: stereoSize.height
+                    height: stereotype.size.height
                 ),
-                font: stereoFont(fontSize),
-                fontSize: fontSize * 0.85,
-                foregroundColor: theme.foregroundDim,
                 in: ctx
             )
-            headerCursor += stereoSize.height + fontSize * 0.1
+            headerCursor += stereotype.size.height + fontSize * 0.1
         }
-        let titleSize = measureText(box.title, font: headerFont(fontSize), fontSize: fontSize)
-        MermaidTextUtils.drawText(
-            box.title,
+        text.title.draw(
             centeredIn: CGRect(
                 x: headerRect.minX + constants.rowPaddingH,
                 y: headerCursor,
                 width: headerRect.width - constants.rowPaddingH * 2,
-                height: titleSize.height
+                height: text.title.size.height
             ),
-            font: headerFont(fontSize),
-            fontSize: fontSize,
-            foregroundColor: theme.foreground,
             in: ctx
         )
 
-        for row in box.attributes {
-            drawMember(row, in: rect, constants: constants, theme: theme, ctx: ctx)
-        }
-        for row in box.methods {
-            drawMember(row, in: rect, constants: constants, theme: theme, ctx: ctx)
-        }
-    }
-
-    private static func drawMember(
-        _ row: PreparedRow,
-        in rect: CGRect,
-        constants: LayoutConstants,
-        theme: RenderTheme,
-        ctx: CGContext
-    ) {
-        let fontSize = constants.fontSize
-        let font = row.isAbstract ? italicFont(fontSize) : bodyFont(fontSize)
-        let origin = CGPoint(x: rect.minX + constants.rowPaddingH, y: rect.minY + row.top)
-        MermaidTextUtils.drawText(
-            row.text,
-            at: origin,
-            font: font,
-            fontSize: fontSize,
-            foregroundColor: theme.foreground,
-            in: ctx
-        )
-        if row.isStatic {
-            drawUnderline(
-                for: row.text,
-                at: origin,
-                font: font,
-                fontSize: fontSize,
-                color: theme.foreground,
-                in: ctx
-            )
+        for (row, rowText) in zip(box.attributes + box.methods, text.attributes + text.methods) {
+            let origin = CGPoint(x: rect.minX + constants.rowPaddingH, y: rect.minY + row.top)
+            rowText.text.draw(at: origin, in: ctx)
+            drawUnderlines(rowText.underlines, at: origin, color: theme.foreground, in: ctx)
         }
     }
 
     /// UML static classifier: underline each painted line of the member.
-    private static func drawUnderline(
+    /// Measured once at layout; `top` is relative to the row origin.
+    private static func underlines(
         for text: String,
-        at origin: CGPoint,
         font: CTFont,
-        fontSize: CGFloat,
-        color: CGColor,
-        in ctx: CGContext
-    ) {
+        fontSize: CGFloat
+    ) -> [(width: CGFloat, top: CGFloat)] {
         let spacing = fontSize * 0.3
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        var y = origin.y
-        ctx.saveGState()
-        ctx.setStrokeColor(color)
-        ctx.setLineWidth(1.0)
-        ctx.setLineCap(.round)
-        for line in lines {
-            let width = max(lineWidth(line, font: font), fontSize * 0.8)
+        var y: CGFloat = 0
+        var result: [(width: CGFloat, top: CGFloat)] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
             let lineHeight = max(
                 measureText(line, font: font, fontSize: fontSize).height,
                 fontSize * 1.4
             )
-            // drawCTLine places the baseline at origin.y + fontSize.
-            let underlineY = y + fontSize + 1.5
             if !line.isEmpty {
-                ctx.move(to: CGPoint(x: origin.x, y: underlineY))
-                ctx.addLine(to: CGPoint(x: origin.x + width, y: underlineY))
-                ctx.strokePath()
+                // drawCTLine places the baseline at origin.y + fontSize.
+                result.append((max(lineWidth(line, font: font), fontSize * 0.8), y + fontSize + 1.5))
             }
             y += lineHeight + spacing
+        }
+        return result
+    }
+
+    private static func drawUnderlines(
+        _ underlines: [(width: CGFloat, top: CGFloat)],
+        at origin: CGPoint,
+        color: CGColor,
+        in ctx: CGContext
+    ) {
+        guard !underlines.isEmpty else { return }
+        ctx.saveGState()
+        ctx.setStrokeColor(color)
+        ctx.setLineWidth(1.0)
+        ctx.setLineCap(.round)
+        for underline in underlines {
+            ctx.move(to: CGPoint(x: origin.x, y: origin.y + underline.top))
+            ctx.addLine(to: CGPoint(x: origin.x + underline.width, y: origin.y + underline.top))
+            ctx.strokePath()
         }
         ctx.restoreGState()
     }
@@ -747,6 +848,7 @@ enum MermaidClassRenderer {
 
     private static func drawRelation(
         _ edge: PreparedEdge,
+        text: EdgeText,
         at offset: CGPoint,
         constants: LayoutConstants,
         theme: RenderTheme,
@@ -788,10 +890,10 @@ enum MermaidClassRenderer {
             in: ctx
         )
 
-        if let card = edge.fromCardinality {
+        if let card = text.fromCardinality {
             drawCardinality(card, at: points[0], away: points[1], theme: theme, constants: constants, in: ctx)
         }
-        if let card = edge.toCardinality {
+        if let card = text.toCardinality {
             drawCardinality(
                 card,
                 at: points[points.count - 1],
@@ -802,7 +904,7 @@ enum MermaidClassRenderer {
             )
         }
 
-        if let label = edge.label {
+        if let label = text.label {
             let center = edge.labelCenter.map {
                 CGPoint(x: $0.x + offset.x, y: $0.y + offset.y)
             } ?? arcMidpoint(points)
@@ -890,7 +992,7 @@ enum MermaidClassRenderer {
     }
 
     private static func drawCardinality(
-        _ text: String,
+        _ text: MermaidPreparedText,
         at point: CGPoint,
         away: CGPoint,
         theme: RenderTheme,
@@ -903,8 +1005,7 @@ enum MermaidClassRenderer {
         guard length > 0.001 else { return }
         let u = CGPoint(x: dx / length, y: dy / length)
         let v = CGPoint(x: -u.y, y: u.x)
-        let font = bodyFont(constants.fontSize * 0.85)
-        let size = measureText(text, font: font, fontSize: constants.fontSize * 0.85)
+        let size = text.size
         let anchor = CGPoint(
             x: point.x + u.x * constants.fontSize * 1.6 + v.x * constants.fontSize * 0.85,
             y: point.y + u.y * constants.fontSize * 1.6 + v.y * constants.fontSize * 0.85
@@ -919,26 +1020,18 @@ enum MermaidClassRenderer {
         ctx.setFillColor(theme.background)
         ctx.fill(rect.insetBy(dx: -2, dy: -1))
         ctx.restoreGState()
-        MermaidTextUtils.drawText(
-            text,
-            centeredIn: rect,
-            font: font,
-            fontSize: constants.fontSize * 0.85,
-            foregroundColor: theme.foregroundDim,
-            in: ctx
-        )
+        text.draw(centeredIn: rect, in: ctx)
     }
 
     private static func drawLabel(
-        _ label: String,
+        _ label: MermaidPreparedText,
         at mid: CGPoint,
         theme: RenderTheme,
         constants: LayoutConstants,
         in ctx: CGContext
     ) {
-        let font = bodyFont(constants.fontSize)
-        let textSize = measureText(label, font: font, fontSize: constants.fontSize)
-        let padding = constants.fontSize * 0.25
+        let textSize = label.size
+        let padding = labelChipPadding(constants)
         let background = CGRect(
             x: mid.x - textSize.width / 2 - padding,
             y: mid.y - textSize.height / 2 - padding,
@@ -949,14 +1042,7 @@ enum MermaidClassRenderer {
         ctx.setFillColor(theme.background)
         ctx.fill(background)
         ctx.restoreGState()
-        MermaidTextUtils.drawText(
-            label,
-            centeredIn: background,
-            font: font,
-            fontSize: constants.fontSize,
-            foregroundColor: theme.foregroundDim,
-            in: ctx
-        )
+        label.draw(centeredIn: background, in: ctx)
     }
 
     private static func arcMidpoint(_ points: [CGPoint]) -> CGPoint {

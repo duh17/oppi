@@ -65,16 +65,34 @@ enum DocumentRenderPipeline {
         maxBytes: 64 * 1_024 * 1_024
     )
 
-    /// Diagram geometry is independent of the viewport. Inline previews, file
-    /// viewers, and expansion must scale the same canvas, not shelf-pack it again.
-    /// One phone-first geometry for inline, file, and expanded diagrams.
-    /// `maxWidth` is a soft target: renderers wrap and pack toward it, while
-    /// connected ranks may still exceed it and scale to fit inline.
-    static func mermaidConfiguration(theme: RenderTheme) -> RenderConfiguration {
-        RenderConfiguration(fontSize: 14, maxWidth: mermaidLayoutWidth, theme: theme, displayMode: .document)
+    /// Mermaid lays out for the width it will be shown at. Renderers that can
+    /// adapt (graph families) lay out naturally first and only turn, tighten,
+    /// or rewrap when that does not fit `maxWidth`; whatever still overflows
+    /// scales to fit inline. Text stays at `fontSize` either way.
+    ///
+    /// `availableWidth` is the surface's content width (bubble, reader column,
+    /// full-screen container). It is clamped to `mermaidLayoutWidthRange` so a
+    /// transient tiny or huge width cannot produce a degenerate layout. The
+    /// layout cache and raster cache key on the clamped width, so callers that
+    /// pass the same available width (fence-close height reservation and the
+    /// raster it reserves for) get the same geometry.
+    static func mermaidConfiguration(theme: RenderTheme, availableWidth: CGFloat) -> RenderConfiguration {
+        RenderConfiguration(
+            fontSize: 14,
+            maxWidth: mermaidLayoutWidth(forAvailableWidth: availableWidth),
+            theme: theme,
+            displayMode: .document
+        )
     }
 
-    static let mermaidLayoutWidth: CGFloat = 360
+    private static func mermaidLayoutWidth(forAvailableWidth width: CGFloat) -> CGFloat {
+        guard width.isFinite, width > 0 else { return mermaidFallbackLayoutWidth }
+        return min(max(width.rounded(), mermaidLayoutWidthRange.lowerBound), mermaidLayoutWidthRange.upperBound)
+    }
+
+    private static let mermaidLayoutWidthRange: ClosedRange<CGFloat> = 240...900
+    /// Phone bubble width, for a surface that has no width yet.
+    static let mermaidFallbackLayoutWidth: CGFloat = 360
 
     // MARK: - Render Cache
 

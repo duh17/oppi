@@ -686,9 +686,10 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func mermaidInlineDiagramRecomputesPresentationWhenWidthChanges() {
-        // About 280pt wide: a 330pt bubble shows it near natural size, and a
-        // 210pt bubble scales the whole diagram down to fit.
+    @Test func mermaidInlineDiagramRecomputesPresentationWhenWidthChanges() async throws {
+        // About 280pt wide left to right: a 330pt bubble shows it as written,
+        // and a 210pt bubble lays it out top to bottom (and scales what still
+        // overflows the 240pt minimum layout width).
         let mermaidCode = """
         flowchart LR
             A[Alpha] --> B[Beta] --> C[Gamma]
@@ -720,6 +721,14 @@ struct AssistantTimelineRowContentViewTests {
         container.setNeedsLayout()
         container.layoutIfNeeded()
 
+        // The new width lays the diagram out again; wait for that raster.
+        for _ in 0..<200 where view.debugRenderedImageForTesting === narrowImage {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        container.layoutIfNeeded()
+        let wideImage = view.debugRenderedImageForTesting
+        #expect(wideImage !== narrowImage, "a wider bubble re-lays out the diagram")
+
         let wideHeight = view.systemLayoutSizeFitting(
             CGSize(width: 330, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
@@ -727,13 +736,15 @@ struct AssistantTimelineRowContentViewTests {
         ).height
         let wideFrame = view.debugDiagramImageFrameForTesting
 
-        // Both widths show the whole diagram, scaled to the bubble.
+        // Both widths show the whole diagram, undistorted, within the bubble.
         #expect(narrowFrame.width <= 210.5)
         #expect(wideFrame.width <= 330.5)
-        if let narrowImage, narrowImage.size.height > 0, narrowFrame.height > 0 {
-            let imageAspect = narrowImage.size.width / narrowImage.size.height
-            #expect(abs(narrowFrame.width / narrowFrame.height - imageAspect) < 0.02)
-            #expect(abs(wideFrame.width / max(wideFrame.height, 1) - imageAspect) < 0.02)
+        for (image, frame) in [(narrowImage, narrowFrame), (wideImage, wideFrame)] {
+            guard let image, image.size.height > 0, frame.height > 0 else {
+                Issue.record("missing raster or frame")
+                continue
+            }
+            #expect(abs(frame.width / frame.height - image.size.width / image.size.height) < 0.02)
         }
         #expect(
             abs(wideHeight - narrowHeight) > 5,

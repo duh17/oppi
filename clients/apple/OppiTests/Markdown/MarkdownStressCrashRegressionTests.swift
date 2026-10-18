@@ -264,7 +264,8 @@ struct MarkdownStressCrashRegressionTests {
             renderer: MermaidRenderer(),
             text: code,
             config: DocumentRenderPipeline.mermaidConfiguration(
-                theme: ThemeID.dark.palette.renderTheme
+                theme: ThemeID.dark.palette.renderTheme,
+                availableWidth: availableWidth
             )
         )
         let scale = min(1.0, availableWidth / max(layout.size.width, 1))

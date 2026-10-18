@@ -5902,7 +5902,10 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
             // ZoomableGraphicalView has its own scroll + zoom — embed directly
             let layout = DocumentRenderPipeline.layoutGraphical(
                 parser: MermaidParser(), renderer: MermaidRenderer(), text: text,
-                config: DocumentRenderPipeline.mermaidConfiguration(theme: palette.renderTheme)
+                config: DocumentRenderPipeline.mermaidConfiguration(
+                    theme: palette.renderTheme,
+                    availableWidth: Self.mermaidContainerWidth()
+                )
             )
             let zoomable = ZoomableGraphicalView(
                 size: layout.size, draw: layout.draw
@@ -5994,6 +5997,17 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// Full screen fits the diagram to its own width rather than the bubble's.
+    /// The body is built before it has bounds and fills the presenting window,
+    /// so the key window's width stands in for the container width.
+    private static func mermaidContainerWidth() -> CGFloat {
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+        let window = windows.first(where: \.isKeyWindow) ?? windows.first
+        return window?.bounds.width ?? DocumentRenderPipeline.mermaidFallbackLayoutWidth
+    }
 
     private func presentSemanticComment(for target: SemanticTarget) {
         guard let reviewCommentSelectionRouter, let reviewCommentSourceContext else { return }

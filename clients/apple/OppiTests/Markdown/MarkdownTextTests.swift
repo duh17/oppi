@@ -4758,6 +4758,25 @@ struct NativeMermaidBlockViewTests {
         return view
     }
 
+    /// The live rasterizer lays out for the width it is given, so a wide
+    /// left-to-right diagram comes back no wider than a phone bubble instead
+    /// of a 1,000pt canvas shrunk to a third.
+    @Test func wideDiagramIsLaidOutForTheBubbleWidth() throws {
+        let source = """
+        flowchart LR
+            A[Receive webhook] --> B[Validate signature] --> C{Known event?}
+            C -->|yes| D[Enqueue job] --> E[Worker picks up] --> F[Write to database]
+            C -->|no| G[Log and drop]
+            F --> H[Notify subscribers]
+        """
+        let view = makeDiagramView()
+        view.layoutIfNeeded()
+        view.applyAsDiagramSync(code: source, palette: ThemeID.dark.palette, availableWidth: 360)
+
+        let image = try #require(view.debugRenderedImageForTesting)
+        #expect(image.size.width <= 360, "raster \(image.size) is wider than the bubble")
+    }
+
     /// A clipped diagram's container owns the tap, including areas outside the
     /// backing bitmap. Locate the rendered control, not a tappable UIImageView.
     private func renderedDiagramTapTarget(in root: UIView) -> UIView? {
@@ -5067,7 +5086,10 @@ struct NativeMermaidBlockViewTests {
             parser: MermaidParser(),
             renderer: MermaidRenderer(),
             text: code,
-            config: DocumentRenderPipeline.mermaidConfiguration(theme: palette.renderTheme)
+            config: DocumentRenderPipeline.mermaidConfiguration(
+                theme: palette.renderTheme,
+                availableWidth: availableWidth
+            )
         )
         #expect(layout.size.width > 0 && layout.size.height > 0)
         let scale = min(1.0, availableWidth / layout.size.width)
@@ -5199,7 +5221,7 @@ struct NativeMermaidBlockViewTests {
                 parser: MermaidParser(),
                 renderer: MermaidRenderer(),
                 text: source,
-                config: DocumentRenderPipeline.mermaidConfiguration(theme: theme)
+                config: DocumentRenderPipeline.mermaidConfiguration(theme: theme, availableWidth: 360)
             )
             if layout.size.width > 0,
                layout.size.height > 0,

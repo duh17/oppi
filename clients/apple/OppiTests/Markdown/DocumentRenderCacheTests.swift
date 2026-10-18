@@ -34,7 +34,7 @@ struct DocumentRenderCacheTests {
         A[Start] --> B[Done]
     """
 
-    @MainActor @Test func mermaidExpansionAndViewportChangesPreserveGeometry() throws {
+    @MainActor @Test func mermaidLaysOutForEachWidthAndReusesTheRasterPerWidth() throws {
         let source = """
         graph TD
           subgraph Clients[Apple clients]
@@ -49,16 +49,13 @@ struct DocumentRenderCacheTests {
           S --> D
         """
         let palette = ThemeID.dark.palette
-        let narrow = try #require(NativeMermaidBlockView.Rasterizer.live.renderSync(source, 320, palette.renderTheme))
-        let wide = try #require(NativeMermaidBlockView.Rasterizer.live.renderSync(source, 700, palette.renderTheme))
-        let body = NativeFullScreenRenderedDocumentBody(
-            content: .mermaid(source), themeID: .dark, palette: palette,
-            reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil
-        )
-        let canvas = try #require(timelineFirstView(ofType: GraphicalRendererUIView.self, in: body))
-        #expect(narrow.size == wide.size, "viewport width must only scale, never rearrange the graph")
-        #expect(narrow.size == canvas.intrinsicContentSize, "expansion must preserve the inline geometry")
-        #expect(narrow.image === wide.image, "viewport changes should reuse the canonical raster")
+        let live = NativeMermaidBlockView.Rasterizer.live
+        let narrow = try #require(live.renderSync(source, 320, palette.renderTheme))
+        let wide = try #require(live.renderSync(source, 700, palette.renderTheme))
+        let wideAgain = try #require(live.renderSync(source, 700, palette.renderTheme))
+        #expect(narrow.size.width <= 320, "a phone bubble gets a layout that fits it, not a shrunk canvas")
+        #expect(narrow.size != wide.size, "a wide surface keeps the roomier natural layout")
+        #expect(wideAgain.image === wide.image, "the same width reuses its cached raster")
     }
 
     @Test func identicalLaTeXRendersReuseTheSameRaster() throws {

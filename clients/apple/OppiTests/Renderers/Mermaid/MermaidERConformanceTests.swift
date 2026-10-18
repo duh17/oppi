@@ -457,11 +457,12 @@ struct MermaidERConformanceTests {
         CUSTOMER ||--o{ ORDER : places
         ORDER ||--|{ LINE-ITEM : contains
         """
-        let tbLayout = layoutER(parseER(source))
+        // Wide enough that left to right is not turned to fit a phone.
+        let tbLayout = layoutER(parseER(source), maxWidth: 2_000)
         let lr = parseER("direction lr\n" + source)
         #expect(lr.direction == .LR)
         #expect(lr.entities.map(\.name) == ["CUSTOMER", "ORDER", "LINE-ITEM"])
-        let lrLayout = layoutER(lr)
+        let lrLayout = layoutER(lr, maxWidth: 2_000)
         #expect(tbLayout.graphResult.nodePositions != lrLayout.graphResult.nodePositions)
     }
 
@@ -624,8 +625,9 @@ struct MermaidERConformanceTests {
         let lr = parseER("direction LR\n" + source)
         #expect(lr.direction == .LR)
 
-        let tbLayout = layoutER(tb)
-        let lrLayout = layoutER(lr)
+        // Wide enough that left to right is not turned to fit a phone.
+        let tbLayout = layoutER(tb, maxWidth: 2_000)
+        let lrLayout = layoutER(lr, maxWidth: 2_000)
         #expect(tbLayout.graphResult.nodePositions != lrLayout.graphResult.nodePositions)
     }
 
@@ -801,6 +803,28 @@ struct MermaidERConformanceTests {
         }
         draw(ctx, .zero)
         #expect(ctx.makeImage() != nil)
+    }
+
+    // MARK: - Fit to width
+
+    @Test func wideLeftToRightERDiagramTurnsTopDownToFitPhoneWidth() throws {
+        let diagram = parseER("""
+        erDiagram
+            direction LR
+            CUSTOMER ||--o{ ORDER : places
+            ORDER ||--|{ LINE-ITEM : contains
+            LINE-ITEM }o--|| PRODUCT : lists
+        """)
+        let narrow = layoutER(diagram, maxWidth: 360)
+        #expect((narrow.customSize?.width ?? .infinity) <= 360, "size=\(String(describing: narrow.customSize))")
+        let customer = try #require(narrow.graphResult.nodePositions["CUSTOMER"])
+        let order = try #require(narrow.graphResult.nodePositions["ORDER"])
+        #expect(order.minY >= customer.maxY, "should stack top to bottom at 360pt")
+
+        let wide = layoutER(diagram, maxWidth: 900)
+        let wideCustomer = try #require(wide.graphResult.nodePositions["CUSTOMER"])
+        let wideOrder = try #require(wide.graphResult.nodePositions["ORDER"])
+        #expect(wideOrder.minX >= wideCustomer.maxX, "should stay left to right at 900pt")
     }
 }
 

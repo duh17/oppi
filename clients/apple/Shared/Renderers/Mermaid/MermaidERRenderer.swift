@@ -36,14 +36,16 @@ enum MermaidERRenderer {
         var font: CTFont { CTFontCreateWithName("Helvetica" as CFString, fontSize, nil) }
         var headerFont: CTFont { CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize, nil) }
 
-        init(fontSize: CGFloat, maxWidth: CGFloat) {
+        /// `tight` is the fit-to-width variant: half the sibling gap. The rank
+        /// gap stays, since crow's-foot markers and the label share it.
+        init(fontSize: CGFloat, maxWidth: CGFloat, tight: Bool = false) {
             self.fontSize = fontSize
             self.rowPaddingH = fontSize * 0.7
             self.rowPaddingV = fontSize * 0.3
             self.headerPaddingV = fontSize * 0.4
             self.columnGap = fontSize * 0.8
             self.outerMargin = fontSize * 1.5
-            self.nodeSpacing = fontSize * 3
+            self.nodeSpacing = fontSize * 3 * (tight ? 0.5 : 1)
             self.rankSpacing = fontSize * 4.5
             self.minTableWidth = fontSize * 8
             // Leave room for the outer margin; wide diagrams may still exceed
@@ -87,13 +89,38 @@ enum MermaidERRenderer {
         let label: String?
     }
 
+    /// Typeset text for one table, built once for the chosen arrangement.
+    private struct TableText: Sendable {
+        let title: MermaidPreparedText
+        let rows: [RowText]
+    }
+
+    private struct RowText: Sendable {
+        let type: MermaidPreparedText
+        let name: MermaidPreparedText
+        let keys: MermaidPreparedText?
+        let comment: MermaidPreparedText?
+    }
+
+    /// One placement of the diagram, before any text is typeset for drawing.
+    private struct Arrangement {
+        let constants: LayoutConstants
+        let graphResult: GraphLayoutResult
+        let tables: [PreparedTable]
+        let edges: [PreparedEdge]
+        let size: CGSize
+    }
+
     // MARK: - Public entry point
 
+    /// Lays out at the natural size; only when that is wider than `maxWidth`
+    /// tries, in order, turning a left-to-right diagram top to bottom (below
+    /// `MermaidFlowchartRenderer.directionBreakpoint`) and tighter spacing in
+    /// the narrower direction. The first that fits wins, else the narrowest.
     nonisolated static func layout(
         _ diagram: ERDiagram,
         configuration: RenderConfiguration
     ) -> MermaidFlowchartRenderer.FlowchartLayout {
-        let constants = LayoutConstants(fontSize: configuration.fontSize, maxWidth: configuration.maxWidth)
         let theme = configuration.theme
 
         guard !diagram.entities.isEmpty else {
@@ -119,6 +146,39 @@ enum MermaidERRenderer {
                 customSize: CGSize(width: 1, height: 1)
             )
         }
+
+        let limit = configuration.maxWidth
+        var best = arrange(diagram, configuration: configuration, tight: false)
+        guard best.size.width > limit else { return finish(best, configuration: configuration) }
+
+        func fits(_ candidate: Arrangement) -> Bool {
+            if candidate.size.width < best.size.width { best = candidate }
+            return candidate.size.width <= limit
+        }
+
+        var chart = diagram
+        if limit < MermaidFlowchartRenderer.directionBreakpoint,
+           diagram.direction == .LR || diagram.direction == .RL {
+            let turned = ERDiagram(direction: .TB, entities: diagram.entities, relationships: diagram.relationships)
+            let naturalWidth = best.size.width
+            let candidate = arrange(turned, configuration: configuration, tight: false)
+            if fits(candidate) { return finish(candidate, configuration: configuration) }
+            if best.size.width < naturalWidth { chart = turned }
+        }
+        _ = fits(arrange(chart, configuration: configuration, tight: true))
+        return finish(best, configuration: configuration)
+    }
+
+    private static func arrange(
+        _ diagram: ERDiagram,
+        configuration: RenderConfiguration,
+        tight: Bool
+    ) -> Arrangement {
+        let constants = LayoutConstants(
+            fontSize: configuration.fontSize,
+            maxWidth: configuration.maxWidth,
+            tight: tight
+        )
 
         // Measure wrapped tables first so Sugiyama's rectangles match the ink.
         let measuredTables = Dictionary(uniqueKeysWithValues: diagram.entities.map { entity in
@@ -153,22 +213,47 @@ enum MermaidERRenderer {
             width: graphResult.totalSize.width + constants.outerMargin * 2,
             height: graphResult.totalSize.height + constants.outerMargin * 2
         )
+        return Arrangement(
+            constants: constants,
+            graphResult: graphResult,
+            tables: tables,
+            edges: edges,
+            size: size
+        )
+    }
+
+    /// Typesets the chosen arrangement once so drawing only paints.
+    private static func finish(
+        _ arrangement: Arrangement,
+        configuration: RenderConfiguration
+    ) -> MermaidFlowchartRenderer.FlowchartLayout {
+        let constants = arrangement.constants
+        let theme = configuration.theme
+        let tables = arrangement.tables
+        let edges = arrangement.edges
+        let tableTexts = tables.map { tableText($0, constants: constants, theme: theme) }
+        let labelFont = constants.font
+        let labels = edges.map { edge in
+            edge.label.map {
+                MermaidPreparedText($0, font: labelFont, fontSize: constants.fontSize, color: theme.foregroundDim)
+            }
+        }
 
         let drawBlock: @Sendable (CGContext, CGPoint) -> Void = { ctx, origin in
             let offset = CGPoint(
                 x: origin.x + constants.outerMargin,
                 y: origin.y + constants.outerMargin
             )
-            for edge in edges {
-                drawRelationship(edge, at: offset, constants: constants, theme: theme, in: ctx)
+            for (edge, label) in zip(edges, labels) {
+                drawRelationship(edge, label: label, at: offset, constants: constants, theme: theme, in: ctx)
             }
-            for table in tables {
-                drawTable(table, at: offset, constants: constants, theme: theme, in: ctx)
+            for (table, text) in zip(tables, tableTexts) {
+                drawTable(table, text: text, at: offset, constants: constants, theme: theme, in: ctx)
             }
         }
 
         return MermaidFlowchartRenderer.FlowchartLayout(
-            graphResult: graphResult,
+            graphResult: arrangement.graphResult,
             flowchart: .empty,
             subgraphFrames: [:],
             nodeLabels: [:],
@@ -186,7 +271,40 @@ enum MermaidERRenderer {
             isPlaceholder: false,
             placeholderText: nil,
             customDraw: drawBlock,
-            customSize: size
+            customSize: arrangement.size
+        )
+    }
+
+    private static func tableText(
+        _ table: PreparedTable,
+        constants: LayoutConstants,
+        theme: RenderTheme
+    ) -> TableText {
+        let font = constants.font
+        let fontSize = constants.fontSize
+        return TableText(
+            title: MermaidPreparedText(
+                table.title,
+                font: constants.headerFont,
+                fontSize: fontSize,
+                color: theme.foreground
+            ),
+            rows: table.rows.map { row in
+                RowText(
+                    type: MermaidPreparedText(row.typeText, font: font, fontSize: fontSize, color: theme.foregroundDim),
+                    name: MermaidPreparedText(row.nameText, font: font, fontSize: fontSize, color: theme.foreground),
+                    keys: row.keysText.isEmpty ? nil : MermaidPreparedText(
+                        row.keysText,
+                        font: font,
+                        fontSize: fontSize,
+                        color: theme.accentOrange
+                    ),
+                    // Comments keep the body font and only space lines at 0.9x.
+                    comment: row.commentText.map {
+                        MermaidPreparedText($0, font: font, fontSize: fontSize * 0.9, color: theme.comment)
+                    }
+                )
+            }
         )
     }
 
@@ -563,6 +681,7 @@ enum MermaidERRenderer {
 
     private static func drawTable(
         _ table: PreparedTable,
+        text: TableText,
         at offset: CGPoint,
         constants: LayoutConstants,
         theme: RenderTheme,
@@ -605,17 +724,10 @@ enum MermaidERRenderer {
         ctx.restoreGState()
 
         // Header title.
-        MermaidTextUtils.drawText(
-            table.title,
-            centeredIn: headerRect.insetBy(dx: constants.rowPaddingH, dy: 0),
-            font: constants.headerFont,
-            fontSize: constants.fontSize,
-            foregroundColor: theme.foreground,
-            in: ctx
-        )
+        text.title.draw(centeredIn: headerRect.insetBy(dx: constants.rowPaddingH, dy: 0), in: ctx)
 
         // Attribute rows.
-        for row in table.rows {
+        for (row, rowText) in zip(table.rows, text.rows) {
             let rowRect = CGRect(
                 x: rect.minX,
                 y: rect.minY + row.top,
@@ -627,53 +739,18 @@ enum MermaidERRenderer {
             let nameX = typeX
                 + (table.typeColumnWidth > 0 ? table.typeColumnWidth + constants.columnGap : 0)
 
-            // Type (dim).
-            MermaidTextUtils.drawText(
-                row.typeText,
-                at: CGPoint(x: typeX, y: textTop),
-                font: constants.font,
-                fontSize: constants.fontSize,
-                foregroundColor: theme.foregroundDim,
-                in: ctx
-            )
-
-            // Name (primary text).
-            MermaidTextUtils.drawText(
-                row.nameText,
-                at: CGPoint(x: nameX, y: textTop),
-                font: constants.font,
-                fontSize: constants.fontSize,
-                foregroundColor: theme.foreground,
-                in: ctx
-            )
-
-            // Keys (right-aligned accent).
-            if !row.keysText.isEmpty {
-                let keysWidth = measureText(row.keysText, font: constants.font, fontSize: constants.fontSize).width
-                MermaidTextUtils.drawText(
-                    row.keysText,
-                    at: CGPoint(
-                        x: rect.maxX - constants.rowPaddingH - keysWidth,
-                        y: textTop
-                    ),
-                    font: constants.font,
-                    fontSize: constants.fontSize,
-                    foregroundColor: theme.accentOrange,
-                    in: ctx
-                )
+            // Type (dim), name (primary text), keys (right-aligned accent).
+            rowText.type.draw(at: CGPoint(x: typeX, y: textTop), in: ctx)
+            rowText.name.draw(at: CGPoint(x: nameX, y: textTop), in: ctx)
+            if let keys = rowText.keys {
+                keys.draw(at: CGPoint(x: rect.maxX - constants.rowPaddingH - keys.size.width, y: textTop), in: ctx)
             }
 
             // Comment (dim, under the name).
-            if let comment = row.commentText {
-                MermaidTextUtils.drawText(
-                    comment,
-                    at: CGPoint(x: nameX, y: textTop + row.nameHeight + constants.fontSize * 0.15),
-                    font: constants.font,
-                    fontSize: constants.fontSize * 0.9,
-                    foregroundColor: theme.comment,
-                    in: ctx
-                )
-            }
+            rowText.comment?.draw(
+                at: CGPoint(x: nameX, y: textTop + row.nameHeight + constants.fontSize * 0.15),
+                in: ctx
+            )
         }
     }
 
@@ -681,6 +758,7 @@ enum MermaidERRenderer {
 
     private static func drawRelationship(
         _ edge: PreparedEdge,
+        label: MermaidPreparedText?,
         at offset: CGPoint,
         constants: LayoutConstants,
         theme: RenderTheme,
@@ -724,7 +802,7 @@ enum MermaidERRenderer {
         )
 
         // Label at the polyline's arc-length midpoint.
-        if let label = edge.label {
+        if let label {
             drawLabel(label, on: points, theme: theme, constants: constants, in: ctx)
         }
     }
@@ -824,15 +902,14 @@ enum MermaidERRenderer {
     }
 
     private static func drawLabel(
-        _ label: String,
+        _ label: MermaidPreparedText,
         on points: [CGPoint],
         theme: RenderTheme,
         constants: LayoutConstants,
         in ctx: CGContext
     ) {
         let mid = arcMidpoint(points)
-        let labelFont = constants.font
-        let textSize = measureText(label, font: labelFont, fontSize: constants.fontSize)
+        let textSize = label.size
         let padding = constants.fontSize * 0.25
         let background = CGRect(
             x: mid.x - textSize.width / 2 - padding,
@@ -846,14 +923,7 @@ enum MermaidERRenderer {
         ctx.fill(background)
         ctx.restoreGState()
 
-        MermaidTextUtils.drawText(
-            label,
-            centeredIn: background,
-            font: labelFont,
-            fontSize: constants.fontSize,
-            foregroundColor: theme.foregroundDim,
-            in: ctx
-        )
+        label.draw(centeredIn: background, in: ctx)
     }
 
     /// Point at half the polyline's total arc length.
