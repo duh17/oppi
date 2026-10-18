@@ -92,9 +92,8 @@ struct ComposerOptionRow {
 
 /// Chat input bar with full-width composer and action row.
 ///
-/// UIKit owns the bar. SwiftUI hosts embed it through one representable seam.
-/// Ask card content stays SwiftUI until its own conversion and is hosted with
-/// `HostFactory.content`.
+/// UIKit owns the bar, including the Ask card. SwiftUI hosts embed it through
+/// one representable seam.
 ///
 /// **Layout**:
 /// ```
@@ -155,9 +154,8 @@ struct ChatInputBar: View {
     @Environment(\.themeID) private var themeID
     @Environment(\.composerDraftStore) private var composerDraftStore
     @Environment(\.composerMediaImportGate) private var mediaImportGate
-    @State private var askHeight: CGFloat = 0
-    /// Bumped when a hosted slot (Ask card, busy-mode tip) changes height
-    /// outside a SwiftUI update, so SwiftUI measures the bar again.
+    /// Bumped when a hosted slot (busy-mode tip) or the UIKit Ask card changes
+    /// height outside a SwiftUI update, so SwiftUI measures the bar again.
     @State private var slotHeightRevision = 0
     @State private var suppressKeyboard = false
     @State private var focusRequestID = 0
@@ -218,7 +216,6 @@ struct ChatInputBar: View {
                 reduceMotion: reduceMotion,
                 composerDraftStore: composerDraftStore,
                 mediaImportGate: mediaImportGate,
-                askHeight: $askHeight,
                 slotHeightRevision: $slotHeightRevision,
                 suppressKeyboard: $suppressKeyboard,
                 focusRequestID: $focusRequestID,
@@ -616,7 +613,6 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
     var reduceMotion: Bool
     var composerDraftStore: ComposerDraftStore?
     var mediaImportGate: ComposerMediaImportGate?
-    @Binding var askHeight: CGFloat
     @Binding var slotHeightRevision: Int
     @Binding var suppressKeyboard: Bool
     @Binding var focusRequestID: Int
@@ -665,9 +661,9 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
     final class Coordinator: ComposerBarHosting {
         var parent: ChatInputBarHost
         weak var controller: ComposerBarController?
-        private var askHost: HostedContentController?
         private var tipHost: HostedContentController?
         private var slotRefreshScheduled = false
+        private var askRemeasureScheduled = false
 
         init(parent: ChatInputBarHost) {
             self.parent = parent
@@ -709,7 +705,7 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
                 suppressKeyboard: parent.suppressKeyboard,
                 focusRequestID: parent.focusRequestID,
                 keyboardLanguage: parent.keyboardLanguage,
-                askHeight: parent.askHeight,
+                askHeight: 0,
                 keyStripHeight: 0,
                 mediaImportEpoch: parent.mediaImportGate?.epoch ?? 0
             )
@@ -895,92 +891,35 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
             )
         }
 
+        var askAutoAdvanceController: AskInlineAutoAdvanceController? {
+            parent.autoAdvanceController
+        }
+
+        /// The slot can change inside this representable's update (a new Ask
+        /// measured during `apply()`); bump the revision after it, once.
+        func askSlotDidChangeHeight() {
+            guard !askRemeasureScheduled else { return }
+            askRemeasureScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.askRemeasureScheduled = false
+                self.parent.slotHeightRevision += 1
+            }
+        }
+
         func scheduleSlots() {
             guard !slotRefreshScheduled else { return }
             slotRefreshScheduled = true
             DispatchQueue.main.async { [weak self] in
                 self?.slotRefreshScheduled = false
-                self?.updateAsk()
                 self?.updateTip()
             }
-        }
-
-        private func updateAsk() {
-            guard let controller else { return }
-            guard let request = parent.askRequest else {
-                controller.installAsk(nil)
-                controller.setAskHeight(0)
-                return
-            }
-            guard let root = HostFactory.root(near: controller) else { return }
-            let card = askCard(request: request)
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
-                .onGeometryChange(for: CGFloat.self) { proxy in
-                    proxy.size.height
-                } action: { [weak self] height in
-                    DispatchQueue.main.async {
-                        self?.commitAskHeight(height)
-                    }
-                }
-            if let askHost {
-                askHost.setContent(card)
-                askHost.view.backgroundColor = .clear
-                controller.installAsk(askHost)
-            } else {
-                let hosted = HostFactory.content(card, root: root)
-                hosted.sizingOptions = []
-                hosted.view.backgroundColor = .clear
-                askHost = hosted
-                controller.installAsk(hosted)
-            }
-        }
-
-        private func commitAskHeight(_ height: CGFloat) {
-            let next = max(height, 0)
-            if abs(parent.askHeight - next) > 0.5 {
-                parent.askHeight = next
-                parent.slotHeightRevision += 1
-            }
-            controller?.setAskHeight(next)
-            controller?.view.invalidateIntrinsicContentSize()
         }
 
         private func commitTipHeight(_ height: CGFloat) {
             guard controller?.setBusyTipHeight(height) == true else { return }
             parent.slotHeightRevision += 1
             controller?.view.invalidateIntrinsicContentSize()
-        }
-
-        private func askCard(request: AskRequest) -> AskCard {
-            AskCard(
-                request: request,
-                currentPage: Binding(
-                    get: { self.controller?.askCurrentPage ?? 0 },
-                    set: {
-                        self.controller?.askCurrentPage = $0
-                        self.updateAsk()
-                    }
-                ),
-                answers: Binding(
-                    get: { self.controller?.askDraftAnswers ?? [:] },
-                    set: {
-                        self.controller?.askDraftAnswers = $0
-                        self.updateAsk()
-                    }
-                ),
-                onSubmit: { [weak self] answers, complete in
-                    self?.controller?.submitAskResponse(request: request, answers: answers, completion: complete)
-                },
-                onIgnoreAll: { [weak self] complete in
-                    self?.controller?.submitAskResponse(request: request, answers: nil, completion: complete)
-                },
-                voiceInputManager: parent.voiceInputManager,
-                submittedRequestID: controller?.askSubmittedRequestID,
-                responseFailed: controller?.askFailed(for: request) ?? false,
-                autoAdvanceController: parent.autoAdvanceController
-            )
         }
 
         private func updateTip() {

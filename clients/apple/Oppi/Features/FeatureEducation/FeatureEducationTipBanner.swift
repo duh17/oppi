@@ -359,3 +359,126 @@ struct FeatureEducationTipBannerHost<TipType: Tip>: View {
 #endif
     }
 }
+
+/// UIKit host for the answer-prompt tip. Claims through the same coordinator
+/// as the SwiftUI banner so the tip still shows once.
+@MainActor
+final class FeatureEducationAskPromptTipHostView: UIView {
+    var onHeightChange: (() -> Void)?
+
+    private let banner = FeatureEducationTipBannerView()
+    private let tip = FeatureEducationTips.AnswerPromptTip()
+    private let ownerID = UUID()
+    private let coordinator = FeatureEducationTipPresentationCoordinator.shared
+    private var heightConstraint: NSLayoutConstraint?
+    private var updatesTask: Task<Void, Never>?
+    private var revisionObserver: AnyCancellable?
+    private var shouldDisplay = false
+    private var isPresented = false
+    private let bottomInset: CGFloat = 8
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        clipsToBounds = true
+        banner.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(banner)
+        let height = heightAnchor.constraint(equalToConstant: 0)
+        heightConstraint = height
+        NSLayoutConstraint.activate([
+            banner.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            banner.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            banner.topAnchor.constraint(equalTo: topAnchor),
+            banner.heightAnchor.constraint(equalToConstant: FeatureEducationTipBannerView.preferredHeight),
+            height,
+        ])
+        banner.isHidden = true
+        revisionObserver = coordinator.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshPresentation()
+            }
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    deinit {
+        updatesTask?.cancel()
+    }
+
+    func start() {
+        guard updatesTask == nil else { return }
+        updatesTask = Task { [weak self] in
+            guard let self else { return }
+            shouldDisplay = tip.shouldDisplay
+            refreshPresentation()
+            for await display in tip.shouldDisplayUpdates {
+                if Task.isCancelled { return }
+                shouldDisplay = display
+                refreshPresentation()
+            }
+        }
+    }
+
+    func stop() {
+        updatesTask?.cancel()
+        updatesTask = nil
+        if isPresented {
+            coordinator.release(tipID: FeatureEducationTips.answerPrompt.id, ownerID: ownerID)
+            isPresented = false
+            applyHeight()
+        }
+    }
+
+    private func refreshPresentation() {
+        let eligible = shouldDisplay || Self.forceTipsForTesting
+        if isPresented {
+            if !eligible || !coordinator.isActive(
+                tipID: FeatureEducationTips.answerPrompt.id,
+                ownerID: ownerID
+            ) {
+                isPresented = false
+                applyHeight()
+            }
+            return
+        }
+        guard eligible else { return }
+        isPresented = coordinator.claim(
+            tipID: FeatureEducationTips.answerPrompt.id,
+            ownerID: ownerID,
+            force: Self.forceTipsForTesting
+        )
+        if isPresented {
+            banner.configure(descriptor: FeatureEducationTips.answerPrompt) { [weak self] in
+                self?.tip.invalidate(reason: .tipClosed)
+                self?.coordinator.release(
+                    tipID: FeatureEducationTips.answerPrompt.id,
+                    ownerID: self?.ownerID ?? UUID()
+                )
+                self?.isPresented = false
+                self?.applyHeight()
+            }
+        }
+        applyHeight()
+    }
+
+    private func applyHeight() {
+        banner.isHidden = !isPresented
+        let next: CGFloat = isPresented
+            ? FeatureEducationTipBannerView.preferredHeight + bottomInset
+            : 0
+        if heightConstraint?.constant != next {
+            heightConstraint?.constant = next
+            onHeightChange?()
+        }
+        isHidden = next <= 0
+    }
+
+    private static var forceTipsForTesting: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--show-feature-tips-for-testing")
+#else
+        false
+#endif
+    }
+}

@@ -170,7 +170,7 @@ final class TrailingColumnController: UIViewController {
             let hosted = HostFactory.screen(root: root, content: makeContent)
             hostedScreen = hosted
             screen = hosted
-        case .controller(let makeController):
+        case .controller(let makeController, _):
             screen = makeController()
         }
         let container = RouterNavigationController(rootViewController: screen)

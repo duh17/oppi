@@ -86,15 +86,11 @@ struct QuickSessionSkillSlashCommandTests {
 struct QuickSessionFileMentionWiringTests {
     @Test func bothComposersUseSelectedCheckoutSuggestions() throws {
         let sheet = try appleSource("Oppi/Features/QuickSession/QuickSessionSheet.swift")
-        let expanded = try sourceSlice(sheet, start: "ExpandedComposerView(", end: ".task {\n            await setupInitialState()")
         let inline = try sourceSlice(sheet, start: "ChatInputBar(", end: ".padding(.top, 6)")
-
-        for composer in [expanded, inline] {
-            #expect(composer.contains("fileSuggestions: selectedChatState.fileSuggestions"))
-            #expect(composer.contains("onFileSuggestionQuery: updateFileSuggestions"))
-            #expect(!composer.contains("fileSuggestions: []"))
-            #expect(!composer.contains("onFileSuggestionQuery: nil"))
-        }
+        #expect(inline.contains("fileSuggestions: selectedChatState.fileSuggestions"))
+        #expect(inline.contains("onFileSuggestionQuery: updateFileSuggestions"))
+        #expect(!inline.contains("fileSuggestions: []"))
+        #expect(!inline.contains("onFileSuggestionQuery: nil"))
 
         let index = try sourceSlice(sheet, start: "private var fileIndexLoadKey:", end: "var body: some View")
         #expect(index.contains("QuickSessionWorktreePickerPolicy.resolvedWorktreeId("))

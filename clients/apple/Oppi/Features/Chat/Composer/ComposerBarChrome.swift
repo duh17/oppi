@@ -1,3 +1,4 @@
+import PhotosUI
 import UIKit
 
 /// Snapshot of theme colors for UIKit composer chrome. Built from `ThemePalette`
@@ -24,6 +25,47 @@ struct ComposerThemeColors {
 enum ComposerAttachmentButtonPlacement {
     case leading
     case trailing
+}
+
+/// The + menu and media pickers shared by the inline and expanded composers.
+@MainActor
+enum ComposerAttachmentPickers {
+    /// Photo Library, Camera, Choose File, Canvas, in the app's menu order.
+    /// Item identifiers are `<identifierPrefix>.<item>`.
+    static func menu(
+        identifierPrefix: String,
+        onSelect: @escaping (PaperMarkupCanvasSession.AttachmentMenuItem) -> Void
+    ) -> UIMenu {
+        UIMenu(children: PaperMarkupCanvasSession.attachmentMenuItems.map { item in
+            UIAction(
+                title: item.title,
+                image: UIImage(systemName: item.systemImage),
+                identifier: UIAction.Identifier("\(identifierPrefix).\(String(describing: item))")
+            ) { _ in onSelect(item) }
+        })
+    }
+
+    /// Over full screen keeps the composer's presenter in the window.
+    static func photoLibrary(delegate: PHPickerViewControllerDelegate) -> PHPickerViewController {
+        let picker = PHPickerViewController(
+            configuration: PhotoLibraryPicker.makeConfiguration(
+                selectionLimit: ComposerShared.maxPhotoSelectionCount
+            )
+        )
+        picker.delegate = delegate
+        picker.modalPresentationStyle = .overFullScreen
+        return picker
+    }
+
+    static func camera(
+        delegate: UIImagePickerControllerDelegate & UINavigationControllerDelegate
+    ) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = delegate
+        picker.modalPresentationStyle = .overFullScreen
+        return picker
+    }
 }
 
 /// Composer capsule: the same untinted Liquid Glass as its pills and the

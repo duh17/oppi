@@ -748,41 +748,6 @@ struct ChatInputBarTests {
         #expect(maxLines == ComposerInputMetrics.inlineMaxLines)
     }
 
-    @Test("Unfocused inline ask is a capped scrolling viewport, not an unbounded card")
-    func unfocusedInlineAskIsCappedScrollingViewport() throws {
-        let source = try chatInputBarSource()
-        let cap = try chatInputBarSourceSlice(
-            named: "private func applyAskViewport() {",
-            until: "private func applyActionPills",
-            in: source
-        )
-
-        #expect(cap.contains("ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard"))
-        #expect(cap.contains("ExtensionNativeSurfaceLayout.expandedMaxHeight"))
-        #expect(cap.contains("askScroll.isScrollEnabled"))
-        #expect(source.contains("private let askScroll = UIScrollView()"))
-        #expect(!source.contains("NativeSurfaceViewportScrollContainer"))
-        #expect(ExtensionNativeSurfaceLayout.expandedMaxHeight == 260)
-        #expect(ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard == 240)
-        #expect(cap.contains("if slotChanged"))
-        #expect(cap.contains("view.invalidateIntrinsicContentSize()"))
-    }
-
-    @Test("Composer apply does not layout the hosted Ask card")
-    func composerApplyDoesNotLayoutHostedAskCard() throws {
-        let controller = try composerSource(named: "ComposerBarController.swift")
-        #expect(!controller.contains("capsuleStack.layoutIfNeeded()"))
-        let visibility = try chatInputBarSourceSlice(
-            named: "private func applyActionRowVisibility",
-            until: "private func applyAskViewport",
-            in: controller
-        )
-        #expect(visibility.contains("self.actionRowStack.layoutIfNeeded()"))
-        #expect(!visibility.contains("capsuleStack.layoutIfNeeded()"))
-        let layoutCalls = controller.components(separatedBy: "layoutIfNeeded()").count - 1
-        #expect(layoutCalls == 1)
-    }
-
     @Test("Expand affordance reserves only a tight trailing gutter")
     func expandAffordanceUsesTightTrailingGutter() {
         #expect(ChatInputBar.composerTextTrailingPadding(showsExpandButton: false) == 0)
@@ -811,48 +776,6 @@ struct ChatInputBarTests {
         #expect(chrome.contains("cornerRadius: CGFloat = 20"))
         #expect(chrome.contains("UIGlassEffect(style: .regular)"))
         #expect(!source.contains(".glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20"))
-    }
-
-    @Test("Photo picker presentation stays on stable composer roots")
-    func photoPickerPresentationStaysOnStableComposerRoots() throws {
-        let inlineSource = try chatInputBarSource()
-        let inlinePresent = try chatInputBarSourceSlice(
-            named: "private func presentPhotoLibrary() {",
-            until: "private func presentCamera()",
-            in: inlineSource
-        )
-        let inlineAttachMenu = try chatInputBarSourceSlice(
-            named: "private func attachmentMenu() -> UIMenu {",
-            until: "private func presentPhotoLibrary()",
-            in: inlineSource
-        )
-
-        let expandedSource = try expandedComposerSource()
-        let expandedRoot = try chatInputBarSourceSlice(
-            named: "var body: some View {",
-            until: "// MARK: - Subviews",
-            in: expandedSource
-        )
-        let expandedAttachMenu = try chatInputBarSourceSlice(
-            named: "private var attachMenu: some View {",
-            until: "// MARK: - Mic Button",
-            in: expandedSource
-        )
-
-        #expect(inlinePresent.contains("presentPhotoLibrary()") || inlinePresent.contains("PhotoLibraryPicker"))
-        #expect(inlinePresent.contains(".composerCover") || inlinePresent.contains("PHPickerViewController"))
-        #expect(!inlineAttachMenu.contains("PhotoLibraryPicker"))
-        #expect(!inlineAttachMenu.contains(".composerPhotoLibraryCover("))
-        #expect(expandedRoot.contains(".composerPhotoLibraryCover("))
-        #expect(!expandedAttachMenu.contains(".composerPhotoLibraryCover("))
-        #expect(!expandedAttachMenu.contains("PhotoLibraryPicker"))
-        #expect(!inlineSource.contains(".photosPicker("))
-        #expect(!expandedRoot.contains(".photosPicker("))
-
-        let pickerSource = try photoLibraryPickerSource()
-        #expect(pickerSource.contains(".any(of: [.images, .videos])"))
-        #expect(pickerSource.contains("preferredAssetRepresentationMode = .current"))
-        #expect(pickerSource.contains("selectionLimit"))
     }
 
     @Test("Active asks can disable expanded composer routing")
@@ -1630,35 +1553,159 @@ struct ChatInputBarTests {
         window.isHidden = true
     }
 
-    @Test("Long Ask cards scroll inside a capped slot; short cards stay short")
-    func askSlotScrollsWhenTallerThanCap() {
+    @Test("A long Ask scrolls its rows inside the capped slot, rows fit their text, and actions stay in view")
+    func longAskScrollsInsideCappedSlotWithActionsInView() throws {
         let host = ComposerBarTestHost()
-        host.content.askRequest = AskRequest(
-            id: "ask", sessionId: "s", questions: [], allowCustom: true, timeout: nil
-        )
-        host.content.askHeight = 80
+        host.content.askRequest = Self.longMultiSelectAsk
+        let (controller, window) = Self.mountComposer(host)
+        defer { window.rootViewController = nil; window.isHidden = true }
+
+        let scroll = try #require(descendant(in: controller.view, identifier: "chat.ask.scroll") as? UIScrollView)
+        let card = try #require(scroll.superview)
+        #expect(card.bounds.height <= ExtensionNativeSurfaceLayout.expandedMaxHeight + 0.5)
+        #expect(card.bounds.height > 120)
+        #expect(scroll.isScrollEnabled)
+        #expect(scroll.contentSize.height > scroll.bounds.height)
+
+        // Send and Ignore stay inside the visible card, not below the fold.
+        for id in ["ask.send", "ask.ignore"] {
+            let button = try #require(descendant(in: controller.view, identifier: id))
+            let frame = button.convert(button.bounds, to: card)
+            #expect(card.bounds.contains(frame), "\(id) is outside the visible card: \(frame) in \(card.bounds)")
+            #expect(frame.height >= 44)
+        }
+
+        // Every option row is at least as tall as its wrapped text.
+        for option in Self.longMultiSelectAsk.questions[0].options {
+            let row = try #require(descendant(in: scroll, identifier: "ask.option.\(option.value)"))
+            for label in Self.labels(in: row) where !label.isHidden {
+                let needed = label.sizeThatFits(CGSize(width: label.bounds.width, height: .greatestFiniteMagnitude)).height
+                #expect(label.bounds.height >= needed - 0.5, "\(option.value) clips its text")
+                #expect(label.convert(label.bounds, to: row).maxY <= row.bounds.height)
+            }
+        }
+    }
+
+    @Test("A short Ask sizes the slot to the card without scrolling")
+    func shortAskSizesSlotToCard() throws {
+        let host = ComposerBarTestHost()
+        host.content.askRequest = Self.shortAsk(id: "short")
+        let (controller, window) = Self.mountComposer(host)
+        defer { window.rootViewController = nil; window.isHidden = true }
+
+        let scroll = try #require(descendant(in: controller.view, identifier: "chat.ask.scroll") as? UIScrollView)
+        #expect(!scroll.isScrollEnabled)
+        #expect(scroll.contentSize.height <= scroll.bounds.height + 0.5)
+        #expect(scroll.superview!.bounds.height < ExtensionNativeSurfaceLayout.expandedMaxHeight)
+    }
+
+    @Test("A new Ask after a scrolled one starts at its top in a slot sized for it")
+    func replacingAskResetsScrollAndSlot() throws {
+        let host = ComposerBarTestHost()
+        host.content.askRequest = Self.longMultiSelectAsk
+        let (controller, window) = Self.mountComposer(host)
+        defer { window.rootViewController = nil; window.isHidden = true }
+        let scroll = try #require(descendant(in: controller.view, identifier: "chat.ask.scroll") as? UIScrollView)
+        scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height), animated: false)
+
+        host.content.askRequest = Self.shortAsk(id: "next")
+        controller.apply()
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+
+        let next = try #require(descendant(in: controller.view, identifier: "chat.ask.scroll") as? UIScrollView)
+        #expect(next.contentOffset.y == 0)
+        #expect(!next.isScrollEnabled)
+        let first = try #require(descendant(in: next, identifier: "ask.option.yes"))
+        #expect(next.bounds.contains(first.convert(first.bounds, to: next)))
+    }
+
+    @Test("A submitted Ask forwards one response and disables its controls until delivery fails")
+    func submittedAskDisablesControlsUntilDeliveryFails() throws {
+        let host = ComposerBarTestHost()
+        host.holdsAskCompletions = true
+        host.content.askRequest = Self.longMultiSelectAsk
+        let (controller, window) = Self.mountComposer(host)
+        defer { window.rootViewController = nil; window.isHidden = true }
+
+        let option = try #require(descendant(in: controller.view, identifier: "ask.option.trackpad") as? UIControl)
+        option.sendActions(for: .touchUpInside)
+        let send = try #require(descendant(in: controller.view, identifier: "ask.send") as? UIButton)
+        send.sendActions(for: .touchUpInside)
+        send.sendActions(for: .touchUpInside)
+        #expect(host.askDeliveries.count == 1)
+        #expect(host.askDeliveries.first??["features"] == .multi(["trackpad"]))
+        #expect(!send.isEnabled)
+        #expect(!option.isEnabled)
+        #expect((descendant(in: controller.view, identifier: "ask.ignore") as? UIButton)?.isEnabled == false)
+
+        // A failed delivery hands the card back for a retry.
+        host.heldAskCompletions.removeFirst()(.retryableFailure)
+        controller.apply()
+        controller.view.layoutIfNeeded()
+        #expect(send.isEnabled)
+        #expect(option.isEnabled)
+        #expect(send.configuration?.title == "Retry")
+        send.sendActions(for: .touchUpInside)
+        #expect(host.askDeliveries.count == 2)
+    }
+
+    private static func mountComposer(_ host: ComposerBarTestHost) -> (ComposerBarController, UIWindow) {
         let controller = ComposerBarController()
         controller.host = host
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.apply()
-        controller.setAskHeight(80)
+        _ = controller.sizeThatFits(width: 390)
+        controller.view.setNeedsLayout()
         controller.view.layoutIfNeeded()
-        #expect(!controller.askScrollViewForTesting.isScrollEnabled)
-        #expect(controller.askScrollViewForTesting.bounds.height <= 81)
-
-        controller.setAskHeight(400)
-        host.content.askHeight = 400
         controller.apply()
         controller.view.layoutIfNeeded()
-        #expect(controller.askScrollViewForTesting.isScrollEnabled)
-        #expect(
-            controller.askScrollViewForTesting.bounds.height
-                <= ExtensionNativeSurfaceLayout.expandedMaxHeight + 0.5
+        return (controller, window)
+    }
+
+    private static let longMultiSelectAsk = AskRequest(
+        id: "long",
+        sessionId: "s",
+        questions: [AskQuestion(
+            id: "features",
+            question: "Which keyboard follow-ups should ship in the next terminal build?",
+            options: [
+                AskOption(value: "trackpad", label: "Space bar trackpad \u{2192} arrow keys (Recommended)",
+                          description: "Long-press the space bar and slide: sends \u{2190}/\u{2192} (and \u{2191}/\u{2193}) to the shell, like moving the cursor in a text field."),
+                AskOption(value: "dictation", label: "Keyboard mic dictation into the terminal",
+                          description: "The system keyboard's mic types the dictated words straight into the shell (once, no partial results)."),
+                AskOption(value: "shortcuts", label: "Hardware keyboard shortcuts",
+                          description: "\u{2318}C copy selection, \u{2318}V paste (with the usual confirm), \u{2318}K clear, Option as Meta, \u{2318}. as Esc; shown in the \u{2318} shortcut overlay."),
+                AskOption(value: "delete", label: "Faster delete when held long",
+                          description: "After a second of holding Delete, deletes a word at a time instead of one character."),
+            ],
+            multiSelect: true
+        )],
+        allowCustom: true,
+        timeout: nil
+    )
+
+    private static func shortAsk(id: String) -> AskRequest {
+        AskRequest(
+            id: id,
+            sessionId: "s",
+            questions: [AskQuestion(
+                id: "confirm",
+                question: "Run it?",
+                options: [AskOption(value: "yes", label: "Yes"), AskOption(value: "no", label: "No")],
+                multiSelect: false
+            )],
+            allowCustom: false,
+            timeout: nil
         )
-        window.rootViewController = nil
-        window.isHidden = true
+    }
+
+    private static func labels(in view: UIView) -> [UILabel] {
+        view.subviews.flatMap { subview -> [UILabel] in
+            (subview as? UILabel).map { [$0] } ?? labels(in: subview)
+        }
     }
 
     @Test("A draft set outside typing (dictation, restore) shows expand once it reaches the inline budget")
@@ -1880,56 +1927,12 @@ struct AskSubmissionWiringTests {
         #expect(forwarded == 2)
     }
 
-    @Test func inlineCallbacksRejectAlreadySubmittedRequestsBeforeForwarding() throws {
-        let source = try chatInputBarSource()
-        let card = try chatInputBarSourceSlice(
-            named: "private func askCard(request: AskRequest)",
-            until: "private func updateTip()",
-            in: source
-        )
-        #expect(card.contains("submitAskResponse(request: request, answers:"))
-        let marker = try chatInputBarSourceSlice(
-            named: "func submitAskResponse(", until: "private func handleAlternateSend", in: source
-        )
-        #expect(marker.contains("guard host?.content.askRequest?.id == request.id else") || marker.contains("guard askRequest?.id == request.id else"))
-        #expect(marker.contains("askClearing.submission.submit(requestID: request.id"))
-        #expect(marker.contains("composerTextForActiveAskQuestion("))
-        let delivery = try chatInputBarSourceSlice(
-            named: "deliver: { complete in", until: "self.host?.setText(\"\")", in: marker
-        )
-        #expect(delivery.contains("submittedTextRevision = self.askClearing.textRevision") || delivery.contains("submittedTextRevision = askClearing.textRevision"))
-        #expect(source.contains("askClearing.textRevision &+= 1"))
-    }
-
-    @Test func finalPageSendIsDisabledAndSubmissionIsGuarded() throws {
-        let source = try composerSource(named: "AskCard.swift")
-        let footer = try chatInputBarSourceSlice(named: "private func questionFooter", until: "// MARK: - Page Indicator", in: source)
-        #expect(footer.components(separatedBy: ".disabled(isAskSubmitted)").count - 1 == 2)
-        for (start, end) in [("private func submitAnswers", "private func ignoreAll"),
-                             ("private func ignoreAll", "private func recordResponseMetric")] {
-            let action = try chatInputBarSourceSlice(named: start, until: end, in: source)
-            #expect(action.contains("guard !isAskSubmitted else { return }"))
-        }
-    }
 }
 
 private func chatInputBarSource() throws -> String {
     let bar = try composerSource(named: "ChatInputBar.swift")
     let controller = try composerSource(named: "ComposerBarController.swift")
     return bar + "\n" + controller
-}
-
-private func expandedComposerSource() throws -> String {
-    try composerSource(named: "ExpandedComposerView.swift")
-}
-
-private func photoLibraryPickerSource() throws -> String {
-    let sourceURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: "Oppi/Core/Views/PhotoLibraryPicker.swift")
-    return try String(contentsOf: sourceURL, encoding: .utf8)
 }
 
 private func composerSource(named fileName: String) throws -> String {
@@ -2041,13 +2044,22 @@ private final class ComposerBarTestHost: ComposerBarHosting {
     func performStop() {}
     func performForceStop() {}
     func performExpand() {}
+    /// Delivered Ask responses; nil answers is Ignore. Completions run at once
+    /// unless a test holds them to play delivery itself.
+    var askDeliveries: [[String: AskAnswer]?] = []
+    var holdsAskCompletions = false
+    var heldAskCompletions: [AskResponseSubmission.Completion] = []
     func submitAsk(
         _ request: AskRequest,
         answers: [String: AskAnswer],
         completion: @escaping AskResponseSubmission.Completion
-    ) { completion(.completed) }
+    ) {
+        askDeliveries.append(answers)
+        if holdsAskCompletions { heldAskCompletions.append(completion) } else { completion(.completed) }
+    }
     func ignoreAsk(_ request: AskRequest, completion: @escaping AskResponseSubmission.Completion) {
-        completion(.completed)
+        askDeliveries.append(nil)
+        if holdsAskCompletions { heldAskCompletions.append(completion) } else { completion(.completed) }
     }
     func startVoice(
         keyboardLanguage: String?,

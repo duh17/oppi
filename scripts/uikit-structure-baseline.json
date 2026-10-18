@@ -286,25 +286,10 @@
     "clients/apple/Oppi/Features/Chat/ChatView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Composer/AskCard.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Composer/AskCardExpanded.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Composer/AskCardShared.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Composer/ChatInputBar.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Composer/ComposerShared.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Composer/ExpandedComposerView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Composer/FileSuggestionList.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Composer/MessageQueueContainer.swift": {
@@ -314,9 +299,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Composer/MicButtonLabel.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Composer/SlashCommandSuggestionList.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Output/ToolPresentationBuilder.swift": {

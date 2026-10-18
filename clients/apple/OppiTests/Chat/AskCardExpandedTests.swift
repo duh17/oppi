@@ -1,11 +1,62 @@
 import Foundation
 import Testing
+import UIKit
 
 @testable import Oppi
 
 @Suite("AskCardExpanded")
 @MainActor
 struct AskCardExpandedTests {
+    @Test("The expanded sheet shows every paragraph of the question above the options")
+    func expandedSheetShowsWholeMultiParagraphQuestion() throws {
+        let request = AskRequest(
+            id: "deploy",
+            sessionId: "s",
+            questions: [AskQuestion(
+                id: "deploy",
+                question: "Ready to deploy?\n\nThe build passed all checks. Deploying restarts the server and briefly drops live sessions; they resume on reconnect.",
+                options: [AskOption(value: "deploy", label: "Deploy now"), AskOption(value: "later", label: "Later")],
+                multiSelect: false
+            )],
+            allowCustom: true,
+            timeout: nil
+        )
+        let sheet = AskCardExpandedViewController()
+        sheet.apply(request: request, currentPage: 0, answers: [:], colors: .placeholder, reduceMotion: true)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = sheet
+        window.makeKeyAndVisible()
+        defer { window.rootViewController = nil; window.isHidden = true }
+        for _ in 0..<3 {
+            sheet.view.setNeedsLayout()
+            sheet.view.layoutIfNeeded()
+        }
+
+        let markdown = try #require(Self.firstSubview(of: AssistantMarkdownContentView.self, in: sheet.view))
+        let option = try #require(Self.subview(identifier: "ask.option.deploy", in: sheet.view))
+        let textViews = Self.allSubviews(in: markdown).compactMap { $0 as? UITextView }
+        let paragraph = try #require(textViews.first { ($0.text ?? "").contains("The build passed") })
+        let paragraphFrame = paragraph.convert(paragraph.bounds, to: sheet.view)
+        let markdownFrame = markdown.convert(markdown.bounds, to: sheet.view)
+        let optionFrame = option.convert(option.bounds, to: sheet.view)
+        let needed = paragraph.sizeThatFits(CGSize(width: paragraph.bounds.width, height: .greatestFiniteMagnitude)).height
+        #expect(paragraph.bounds.height >= needed - 1, "second paragraph clipped: \(paragraph.bounds.height) < \(needed)")
+        #expect(paragraphFrame.maxY <= markdownFrame.maxY + 0.5, "paragraph spills out of the markdown view")
+        #expect(markdownFrame.maxY <= optionFrame.minY, "question overlaps the options")
+    }
+
+    private static func allSubviews(in view: UIView) -> [UIView] {
+        view.subviews + view.subviews.flatMap(allSubviews(in:))
+    }
+
+    private static func firstSubview<T: UIView>(of type: T.Type, in view: UIView) -> T? {
+        allSubviews(in: view).lazy.compactMap { $0 as? T }.first
+    }
+
+    private static func subview(identifier: String, in view: UIView) -> UIView? {
+        allSubviews(in: view).first { $0.accessibilityIdentifier == identifier }
+    }
+
     // MARK: - Fixtures
 
     private static func singleSelectRequest() -> AskRequest {
@@ -162,7 +213,7 @@ struct AskCardExpandedTests {
             AskCardExpanded.sheetDetentForCustomAnswerFocus(
                 request: Self.singleSelectRequest(),
                 isCustomAnswerFocused: true
-            ) == .large
+            ) == UISheetPresentationController.Detent.Identifier.large
         )
         #expect(
             AskCardExpanded.sheetDetentForCustomAnswerFocus(

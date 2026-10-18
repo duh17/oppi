@@ -1343,6 +1343,20 @@ extension ComposerShared {
         )
     }
 
+    static func cancelOwnedVoiceInput(
+        manager: VoiceInputManager?,
+        owner: VoiceInputOwner,
+        setTextBeforeRecording: @escaping (String?) -> Void,
+        setSuppressKeyboard: @escaping (Bool) -> Void
+    ) async {
+        _ = await cancelOwnedVoiceInput(
+            manager: manager,
+            owner: owner,
+            textBeforeRecording: bind({ nil }, setTextBeforeRecording),
+            suppressKeyboard: bind({ false }, setSuppressKeyboard)
+        )
+    }
+
     static func handlePastedImages(_ images: [UIImage], getAttachments: @escaping () -> [PendingAttachment], setAttachments: @escaping ([PendingAttachment]) -> Void) {
         handlePastedImages(images, into: bind(getAttachments, setAttachments))
     }

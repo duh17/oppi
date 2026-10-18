@@ -478,10 +478,23 @@ extension EnvironmentValues {
 /// hosted through `HostFactory.screen`, or a UIKit view controller that owns
 /// its `navigationItem` (title, bar items, search) itself. A UIKit root needs
 /// a navigation presentation (`.inNavigation()`). It is built once per
-/// presentation; when the presenter re-renders, only hosted content refreshes.
+/// presentation. When the presenter re-renders, hosted content refreshes and
+/// a controller's `update` runs with the presenter's current values, so a
+/// UIKit modal that mirrors presenter state stays live like hosted content.
 enum RouterScreen {
     case hosted(() -> AnyView)
-    case controller(() -> UIViewController)
+    case controller(() -> UIViewController, update: ((UIViewController) -> Void)? = nil)
+
+    /// A UIKit root that the presenter refreshes on every re-render.
+    static func liveController<Controller: UIViewController>(
+        _ make: @escaping () -> Controller,
+        update: @escaping (Controller) -> Void
+    ) -> RouterScreen {
+        .controller(make, update: { controller in
+            guard let controller = controller as? Controller else { return }
+            update(controller)
+        })
+    }
 }
 
 extension View {
@@ -526,6 +539,24 @@ extension View {
         }
     }
 
+    /// Boolean form of `routerModal(item:presentation:onDismiss:screen:)`.
+    func routerModal(
+        isPresented: Binding<Bool>,
+        presentation: ModalPresentation = .sheet,
+        onDismiss: (() -> Void)? = nil,
+        screen: RouterScreen
+    ) -> some View {
+        background {
+            RouterModalFlagAnchor(
+                isPresented: isPresented,
+                presentation: presentation,
+                onDismiss: onDismiss,
+                screen: { _ in screen }
+            )
+            .accessibilityHidden(true)
+        }
+    }
+
     /// Boolean form of `routerModal(item:presentation:onDismiss:content:)`.
     func routerModal<ModalContent: View>(
         isPresented: Binding<Bool>,
@@ -538,7 +569,7 @@ extension View {
                 isPresented: isPresented,
                 presentation: presentation,
                 onDismiss: onDismiss,
-                modalContent: content
+                screen: { _ in RouterScreen.hosted { AnyView(content()) } }
             )
             .accessibilityHidden(true)
         }
@@ -580,21 +611,19 @@ private struct RouterPresentedFlag: Identifiable {
 /// Derives the item binding in its own body. `Binding(get:set:)` calls its
 /// getter when created: created in the presenter's body, that read made the
 /// whole presenter re-render on every open and close.
-private struct RouterModalFlagAnchor<ModalContent: View>: View {
+private struct RouterModalFlagAnchor: View {
     @Binding var isPresented: Bool
     let presentation: ModalPresentation
     let onDismiss: (() -> Void)?
-    let modalContent: () -> ModalContent
+    let screen: (RouterPresentedFlag) -> RouterScreen
 
     var body: some View {
-        let modalContent = modalContent
         RouterModalAnchor(
             item: $isPresented.routerPresentedFlag,
             presentation: presentation,
-            onDismiss: onDismiss
-        ) { _ in
-            RouterScreen.hosted { AnyView(modalContent()) }
-        }
+            onDismiss: onDismiss,
+            screen: screen
+        )
     }
 }
 
@@ -743,8 +772,11 @@ final class RouterModalPresenter {
                 }
                 // The presenter re-rendered (it is still in the window under
                 // sheets and popovers): refresh the content it builds.
-                if case .hosted(let makeContent) = request.screen {
+                switch request.screen {
+                case .hosted(let makeContent):
                     hostedScreen?.setContent(makeContent)
+                case .controller(_, let update):
+                    update?(screen)
                 }
                 return
             }
@@ -791,7 +823,7 @@ final class RouterModalPresenter {
             )
             screen = hosted
             hostedScreen = hosted
-        case .controller(let makeController):
+        case .controller(let makeController, _):
             let controller = makeController()
             screen = controller
             Router.present(

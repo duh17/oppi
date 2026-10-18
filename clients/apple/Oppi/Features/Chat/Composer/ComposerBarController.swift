@@ -102,6 +102,13 @@ protocol ComposerBarHosting: AnyObject {
     func notifyFileSuggestionContext(for text: String)
     func discardFailedVoiceTake()
     func restoreKeyboardFromSuppression()
+    var askAutoAdvanceController: AskInlineAutoAdvanceController? { get }
+    func askSlotDidChangeHeight()
+}
+
+extension ComposerBarHosting {
+    var askAutoAdvanceController: AskInlineAutoAdvanceController? { nil }
+    func askSlotDidChangeHeight() {}
 }
 
 /// Emoji / asset / symbol workspace mark plus the sandbox lock. UIKit counterpart
@@ -627,12 +634,12 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     private let failureView = ComposerDictationFailureView()
     private let capsule = ComposerThemedPanelView()
     private let capsuleStack = UIStackView()
+    /// Ask slot: the UIKit Ask card at its natural height, capped; the card
+    /// scrolls its rows inside the cap.
     private let askContainer = UIView()
-    private let askScroll = UIScrollView()
     private var askHeightConstraint: NSLayoutConstraint?
-    private var askChildHeight: NSLayoutConstraint?
     private var askNaturalHeight: CGFloat = 0
-    private var askChild: UIViewController?
+    private var askCard: AskCardViewController?
     private var lastShowActionRow: Bool?
     private let attachmentStrip = ComposerAttachmentStripView()
     private let attachmentStripWrapper = UIView()
@@ -721,6 +728,11 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     func sizeThatFits(width: CGFloat) -> CGSize {
         let targetWidth = max(width, 1)
         applyTextLayout(proposedWidth: targetWidth)
+        if askCard != nil {
+            let outer: CGFloat = host?.content.appliesOuterPadding == true ? 32 : 0
+            measureAskCard(slotWidth: targetWidth - outer)
+            applyAskViewport(notifyHost: false)
+        }
         let target = CGSize(width: targetWidth, height: UIView.layoutFittingCompressedSize.height)
         return view.systemLayoutSizeFitting(
             target,
@@ -772,45 +784,81 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         return false
     }
 
-    func setAskHeight(_ height: CGFloat) {
-        askNaturalHeight = max(height, 0)
-        applyAskViewport()
+    /// Keeps the UIKit Ask card in the Ask slot in step with the host's request.
+    private func refreshAskCard() {
+        guard let host else { return }
+        let content = host.content
+        guard let request = content.askRequest else {
+            removeAskCard()
+            return
+        }
+        let card = askCard ?? installAskCard()
+        card.autoAdvanceController = host.askAutoAdvanceController
+        card.voiceInputManager = content.voiceInputManager
+        card.onPageChange = { [weak self] page in
+            self?.askCurrentPage = page
+        }
+        card.onAnswersChange = { [weak self] answers in
+            self?.askDraftAnswers = answers
+        }
+        card.onSubmit = { [weak self] answers, complete in
+            self?.submitAskResponse(request: request, answers: answers, completion: complete)
+        }
+        card.onIgnoreAll = { [weak self] complete in
+            self?.submitAskResponse(request: request, answers: nil, completion: complete)
+        }
+        card.onHeightChange = { [weak self] height in
+            self?.askNaturalHeight = height
+            self?.applyAskViewport()
+        }
+        card.apply(
+            request: request,
+            currentPage: askClearing.currentPage,
+            answers: askClearing.draftAnswers,
+            submittedRequestID: askClearing.submittedRequestID,
+            responseFailed: askFailed(for: request),
+            colors: content.colors,
+            reduceMotion: content.reduceMotion
+        )
+        measureAskCard(slotWidth: askContainer.bounds.width > 1
+            ? askContainer.bounds.width
+            : view.bounds.width - (content.appliesOuterPadding ? 32 : 0))
     }
 
-    func installAsk(_ child: UIViewController?) {
-        if askChild === child {
-            applyAskViewport()
-            return
-        }
-        askChild?.willMove(toParent: nil)
-        askChild?.view.removeFromSuperview()
-        askChild?.removeFromParent()
-        askChild = child
-        askChildHeight = nil
-        guard let child else {
-            applyAskViewport()
-            return
-        }
-        addChild(child)
-        child.view.translatesAutoresizingMaskIntoConstraints = false
-        child.view.backgroundColor = .clear
-        askScroll.addSubview(child.view)
-        let height = child.view.heightAnchor.constraint(equalToConstant: askNaturalHeight)
-        askChildHeight = height
+    private func installAskCard() -> AskCardViewController {
+        let card = AskCardViewController()
+        addChild(card)
+        card.view.translatesAutoresizingMaskIntoConstraints = false
+        askContainer.addSubview(card.view)
         NSLayoutConstraint.activate([
-            child.view.leadingAnchor.constraint(equalTo: askScroll.contentLayoutGuide.leadingAnchor),
-            child.view.trailingAnchor.constraint(equalTo: askScroll.contentLayoutGuide.trailingAnchor),
-            child.view.topAnchor.constraint(equalTo: askScroll.contentLayoutGuide.topAnchor),
-            child.view.bottomAnchor.constraint(equalTo: askScroll.contentLayoutGuide.bottomAnchor),
-            child.view.widthAnchor.constraint(equalTo: askScroll.frameLayoutGuide.widthAnchor),
-            height,
+            card.view.leadingAnchor.constraint(equalTo: askContainer.leadingAnchor),
+            card.view.trailingAnchor.constraint(equalTo: askContainer.trailingAnchor),
+            card.view.topAnchor.constraint(equalTo: askContainer.topAnchor),
+            card.view.bottomAnchor.constraint(equalTo: askContainer.bottomAnchor),
         ])
-        child.didMove(toParent: self)
-        applyAskViewport()
+        card.didMove(toParent: self)
+        askCard = card
+        return card
+    }
+
+    private func removeAskCard() {
+        guard let card = askCard else { return }
+        askCard = nil
+        askNaturalHeight = 0
+        card.tearDown()
+        card.willMove(toParent: nil)
+        card.view.removeFromSuperview()
+        card.removeFromParent()
+    }
+
+    /// The card's natural height at the slot's width; the slot caps it.
+    private func measureAskCard(slotWidth: CGFloat) {
+        guard let askCard, slotWidth > 1 else { return }
+        askCard.loadViewIfNeeded()
+        askNaturalHeight = askCard.preferredHeight(for: slotWidth)
     }
 
     var presentedActionIDForTesting: String? { presentedActionID }
-    var askScrollViewForTesting: UIScrollView { askScroll }
 
     func presentActionForTesting(id: String) {
         presentActionPopover(id: id)
@@ -894,21 +942,6 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         askHeight.isActive = true
         askContainer.isHidden = true
         askContainer.clipsToBounds = true
-        askScroll.translatesAutoresizingMaskIntoConstraints = false
-        askScroll.accessibilityIdentifier = "chat.ask.scroll"
-        askScroll.alwaysBounceVertical = false
-        askScroll.keyboardDismissMode = .none
-        askScroll.showsVerticalScrollIndicator = true
-        askScroll.showsHorizontalScrollIndicator = false
-        askScroll.backgroundColor = .clear
-        askScroll.contentInsetAdjustmentBehavior = .never
-        askContainer.addSubview(askScroll)
-        NSLayoutConstraint.activate([
-            askScroll.leadingAnchor.constraint(equalTo: askContainer.leadingAnchor),
-            askScroll.trailingAnchor.constraint(equalTo: askContainer.trailingAnchor),
-            askScroll.topAnchor.constraint(equalTo: askContainer.topAnchor),
-            askScroll.bottomAnchor.constraint(equalTo: askContainer.bottomAnchor),
-        ])
 
         textRow.axis = .horizontal
         textRow.alignment = .bottom
@@ -1265,11 +1298,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         applyMicChrome()
         refreshPresentedPopover(content.actionRow)
 
-        if content.askRequest == nil {
-            askNaturalHeight = 0
-        } else if content.askHeight > 0 {
-            askNaturalHeight = content.askHeight
-        }
+        refreshAskCard()
         applyAskViewport()
     }
 
@@ -1297,7 +1326,8 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         }
     }
 
-    private func applyAskViewport() {
+    /// `notifyHost` is false while SwiftUI is already measuring the bar.
+    private func applyAskViewport(notifyHost: Bool = true) {
         let hasAsk = host?.content.askRequest != nil
         let focused = isInputFocused && !(host?.content.suppressKeyboard ?? false)
         let cap = focused
@@ -1309,13 +1339,10 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         if slotChanged {
             askHeightConstraint?.constant = slot
         }
-        if askChildHeight?.constant != natural {
-            askChildHeight?.constant = natural
-        }
-        askScroll.isScrollEnabled = natural > cap + 0.5
         askContainer.isHidden = !hasAsk || slot <= 0
         if slotChanged {
             view.invalidateIntrinsicContentSize()
+            if notifyHost { host?.askSlotDidChangeHeight() }
         }
     }
 
@@ -1921,40 +1948,22 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     // MARK: - Presentations
 
     private func attachmentMenu() -> UIMenu {
-        let items = PaperMarkupCanvasSession.attachmentMenuItems.map { item in
-            UIAction(
-                title: item.title,
-                image: UIImage(systemName: item.systemImage),
-                identifier: UIAction.Identifier("chat.attach.\(String(describing: item))")
-            ) { [weak self] _ in
-                switch item {
-                case .photoLibrary: self?.presentPhotoLibrary()
-                case .camera: self?.presentCamera()
-                case .chooseFile: self?.presentFileImporter()
-                case .canvas: self?.presentCanvas()
-                }
+        ComposerAttachmentPickers.menu(identifierPrefix: "chat.attach") { [weak self] item in
+            switch item {
+            case .photoLibrary: self?.presentPhotoLibrary()
+            case .camera: self?.presentCamera()
+            case .chooseFile: self?.presentFileImporter()
+            case .canvas: self?.presentCanvas()
             }
         }
-        return UIMenu(children: items)
     }
 
     private func presentPhotoLibrary() {
-        let picker = PHPickerViewController(
-            configuration: PhotoLibraryPicker.makeConfiguration(
-                selectionLimit: ComposerShared.maxPhotoSelectionCount
-            )
-        )
-        picker.delegate = self
-        picker.modalPresentationStyle = .overFullScreen
-        present(picker, animated: true)
+        present(ComposerAttachmentPickers.photoLibrary(delegate: self), animated: true)
     }
 
     private func presentCamera() {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.delegate = self
-        picker.modalPresentationStyle = .overFullScreen
-        present(picker, animated: true)
+        present(ComposerAttachmentPickers.camera(delegate: self), animated: true)
     }
 
     private func presentCanvas() {

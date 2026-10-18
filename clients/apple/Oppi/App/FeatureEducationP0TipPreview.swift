@@ -207,15 +207,42 @@ private struct FeatureEducationPromptCardPreview: View {
     )
 
     var body: some View {
-        AskCard(
+        AskCardPreviewHost(
             request: Self.request,
             currentPage: $currentPage,
-            answers: $answers,
-            onSubmit: { _, complete in complete(.completed) },
-            onIgnoreAll: { complete in complete(.completed) }
+            answers: $answers
         )
         .padding(12)
         .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+}
+
+private struct AskCardPreviewHost: UIViewControllerRepresentable {
+    let request: AskRequest
+    @Binding var currentPage: Int
+    @Binding var answers: [String: AskAnswer]
+    @Environment(\.themeID) private var themeID
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeUIViewController(context: Context) -> AskCardViewController {
+        let controller = AskCardViewController()
+        controller.onPageChange = { currentPage = $0 }
+        controller.onAnswersChange = { answers = $0 }
+        controller.onSubmit = { _, complete in complete(.completed) }
+        controller.onIgnoreAll = { complete in complete(.completed) }
+        return controller
+    }
+
+    func updateUIViewController(_ controller: AskCardViewController, context: Context) {
+        controller.apply(
+            request: request,
+            currentPage: currentPage,
+            answers: answers,
+            submittedRequestID: nil,
+            responseFailed: false,
+            colors: ComposerThemeColors(palette: themeID.palette),
+            reduceMotion: reduceMotion
+        )
     }
 }
 

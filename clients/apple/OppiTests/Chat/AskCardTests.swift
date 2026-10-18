@@ -1,6 +1,6 @@
 import Foundation
-import SwiftUI
 import Testing
+import UIKit
 
 @testable import Oppi
 
@@ -84,18 +84,18 @@ struct AskCardTests {
 
     @Test("Short inline questions do not use compact preview")
     func shortInlineQuestionDoesNotUsePreview() {
-        #expect(AskCard.usesInlineQuestionPreview("Pick an option", dynamicTypeSize: .large) == false)
+        #expect(AskCard.usesInlineQuestionPreview("Pick an option", contentSizeCategory: .large) == false)
     }
 
     @Test("Long inline questions use compact preview")
     func longInlineQuestionUsesPreview() {
         let question = (1...9).map { "Detail line \($0)" }.joined(separator: "\n")
-        #expect(AskCard.usesInlineQuestionPreview(question, dynamicTypeSize: .large) == true)
+        #expect(AskCard.usesInlineQuestionPreview(question, contentSizeCategory: .large) == true)
     }
 
     @Test("Accessibility sizes keep a larger inline question preview")
     func accessibilityInlineQuestionPreviewLimit() {
-        #expect(AskCard.inlineQuestionLineLimit(for: .accessibility1) > AskCard.inlineQuestionLineLimit(for: .large))
+        #expect(AskCard.inlineQuestionLineLimit(for: .accessibilityMedium) > AskCard.inlineQuestionLineLimit(for: .large))
     }
 
     @Test("Inline question display extracts fenced command preview")
@@ -144,14 +144,42 @@ struct AskCardTests {
         #expect(display.commandPreview == nil)
     }
 
-    // MARK: - Option Row Density
+    // MARK: - Option Row Sizing
 
-    @Test("Inline and expanded option padding keeps wrapping text inside the rounded fill")
-    func optionRowPaddingKeepsWrappingTextInsideRoundedFill() {
-        let densities: [AskOptionChoiceRow.Density] = [.inline, .expanded]
-        for density in densities {
-            #expect(density.verticalPadding >= density.cornerRadius)
-            #expect(density.horizontalPadding >= density.cornerRadius)
+    @Test("Long multi-line option titles and descriptions fit inside their row")
+    func optionRowGrowsToFitLongTitleAndDescription() {
+        let option = AskOption(
+            value: "trackpad",
+            label: "Space bar trackpad \u{2192} arrow keys (Recommended) for moving the shell cursor",
+            description: "Long-press the space bar and slide: sends \u{2190}/\u{2192} (and \u{2191}/\u{2193}) to the shell, like moving the cursor in a text field, without lifting the finger."
+        )
+        for density in [AskOptionChoiceRowView.Density.inline, .expanded] {
+            for isMultiSelect in [false, true] {
+                let row = AskOptionChoiceRowView(density: density)
+                row.apply(option: option, isSelected: true, isMultiSelect: isMultiSelect, colors: .placeholder)
+                let width: CGFloat = 300
+                let height = row.systemLayoutSizeFitting(
+                    CGSize(width: width, height: 0),
+                    withHorizontalFittingPriority: .required,
+                    verticalFittingPriority: .fittingSizeLevel
+                ).height
+                row.frame = CGRect(x: 0, y: 0, width: width, height: height)
+                row.layoutIfNeeded()
+                let labels = Self.labels(in: row).filter { !$0.isHidden && !($0.text ?? "").isEmpty }
+                #expect(labels.count == 2)
+                for label in labels {
+                    let frame = label.convert(label.bounds, to: row)
+                    let needed = label.sizeThatFits(CGSize(width: label.bounds.width, height: .greatestFiniteMagnitude)).height
+                    #expect(label.bounds.height >= needed - 0.5, "\(density) label clipped: \(label.bounds.height) < \(needed)")
+                    #expect(frame.minY >= 0 && frame.maxY <= row.bounds.height, "\(density) label outside its row")
+                }
+            }
+        }
+    }
+
+    private static func labels(in view: UIView) -> [UILabel] {
+        view.subviews.flatMap { subview -> [UILabel] in
+            (subview as? UILabel).map { [$0] } ?? labels(in: subview)
         }
     }
 

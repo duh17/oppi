@@ -1,789 +1,13 @@
-import SwiftUI
 import UIKit
 
-// MARK: - AskCardExpanded
-
-/// Expanded sheet view for ask questions.
-///
-/// Presents a vertical option list with full question text, descriptions,
-/// and optional custom text input. Multi-question requests use page
-/// navigation across questions only (no extra submit/review page).
-///
-/// All state is shared with the inline `AskCard` via bindings — collapsing
-/// preserves answers and current page position.
-struct AskCardExpanded: View {
-    let request: AskRequest
-    @Binding var currentPage: Int
-    @Binding var answers: [String: AskAnswer]
-    @Binding var isExpanded: Bool
-    var voiceInputManager: VoiceInputManager? = nil
-    var sheetDetent: Binding<PresentationDetent>? = nil
-    let onSubmit: ([String: AskAnswer]) -> Void
-    let onIgnoreAll: () -> Void
-
-    @State private var customTexts: [String: String] = [:]
-    @State private var focusedQuestionId: String?
-    @State private var navigatingForward: Bool = true
-    @State private var suppressKeyboard = false
-    @State private var keyboardLanguage: String?
-    @State private var focusRequestID = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.theme) private var theme
-
-    /// Question currently receiving custom dictation text.
-    @State private var dictationQuestionId: String?
-
-    /// Custom text value before dictation started.
-    @State private var dictationBaseText: String = ""
-
-    /// Prefix used while streaming transcript updates (base + separator).
-    @State private var dictationPrefixText: String = ""
-
-    private let optionCornerRadius: CGFloat = 12
-
-    private var isSingleQuestionSingleSelect: Bool {
-        request.questions.count == 1 && !request.questions[0].multiSelect
-    }
-
-    private var totalPages: Int {
-        AskCard.pageCount(for: request)
-    }
-
-    private var currentQuestion: AskQuestion? {
-        guard currentPage < request.questions.count else { return nil }
-        return request.questions[currentPage]
-    }
-
-    private var isLastQuestionPage: Bool {
-        !isSingleQuestionSingleSelect && currentPage == request.questions.count - 1
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            navigationHeader
-
-            Divider()
-                .overlay(theme.text.tertiary.opacity(0.15))
-
-            ZStack {
-                ScrollView {
-                    Group {
-                        if let question = currentQuestion {
-                            questionPageContent(question)
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 24)
-                    .padding(.bottom, 24)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .accessibilityIdentifier("ask.approval.scroll")
-                .id(currentPage)
-                .transition(ThemeMotion.directionalPage(forward: navigatingForward, reduceMotion: reduceMotion))
-            }
-            .clipped()
-            .frame(maxHeight: .infinity)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            bottomChrome
-        }
-        .background(theme.bg.primary.ignoresSafeArea())
-        .onAppear {
-            loadCustomTextsFromAnswers()
-        }
-        .onChange(of: voiceInputManager?.transcriptPresentationRevision) { _, _ in
-            guard let questionId = dictationQuestionId else { return }
-            guard ComposerShared.ownsVoiceInput(voiceInputManager, owner: .askCard) else { return }
-            applyDictationTranscript(voiceInputManager?.currentTranscript ?? "", for: questionId)
-        }
-        .onChange(of: keyboardLanguage) { _, newLanguage in
-            guard let manager = voiceInputManager,
-                  AppPreferences.Keyboard.normalize(newLanguage) != nil else { return }
-            Task {
-                await manager.prewarm(
-                    keyboardLanguage: newLanguage,
-                    source: "ask_card_keyboard_change"
-                )
-            }
-        }
-        .onDisappear {
-            suppressKeyboard = false
-            cancelDictationIfNeeded()
-        }
-    }
-
-    // MARK: - Navigation Header
-
-    private var navigationHeader: some View {
-        HStack {
-            if !isSingleQuestionSingleSelect && currentPage > 0 {
-                Button {
-                    navigateBack()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
-                            .font(.body.weight(.medium))
-                        Text("Back")
-                            .font(.body)
-                    }
-                    .foregroundStyle(.themeBlue)
-                }
-                .buttonStyle(.plain)
-            } else {
-                Color.clear.frame(width: 60, height: 1)
-            }
-
-            Spacer()
-
-            if !isSingleQuestionSingleSelect {
-                Text("Question \(currentPage + 1) of \(request.questions.count)")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.themeComment)
-            }
-
-            Spacer()
-
-            Button {
-                Task {
-                    await finalizeDictationIfNeeded()
-                    commitCustomTextIfNeeded()
-                    suppressKeyboard = false
-                    focusedQuestionId = nil
-                    isExpanded = false
-                }
-            } label: {
-                Image(systemName: "arrow.down.right.and.arrow.up.left")
-                    .font(.body)
-                    .foregroundStyle(.themeComment)
-                    .padding(8)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("ask.expanded.collapse")
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-    }
-
-    // MARK: - Question Page
-
-    @ViewBuilder
-    private func questionPageContent(_ question: AskQuestion) -> some View {
-        VStack(alignment: .leading, spacing: 20) {
-            MarkdownContentViewWrapper(
-                content: question.question,
-                isStreaming: false,
-                textSelectionEnabled: true
-            )
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            AskSelectionModePill(question: question)
-
-            if !usesPinnedConfirmationActions {
-                VStack(spacing: 10) {
-                    ForEach(question.options, id: \.value) { option in
-                        expandedOptionCard(option, question: question)
-                    }
-                }
-            }
-
-            if question.multiSelect,
-               let count = AskCardShared.multiSelectCount(for: question, answers: answers),
-               count > 0,
-               !isLastQuestionPage {
-                Button {
-                    confirmMultiSelect()
-                } label: {
-                    Text("Done (\(count) selected)")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.themeBlue)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 8)
-                        .background(.themeBlue.opacity(0.12), in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity)
-            }
-        }
-    }
-
-    private func expandedOptionCard(_ option: AskOption, question: AskQuestion) -> some View {
-        let isSelected = AskCardShared.isOptionSelected(option, in: question, answers: answers)
-
-        return Button {
-            cancelDictationIfNeeded(for: question.id)
-            suppressKeyboard = false
-            focusedQuestionId = nil
-            customTexts[question.id] = ""
-            AskCardShared.handleOptionTap(option, question: question, answers: $answers) {
-                if isSingleQuestionSingleSelect {
-                    isExpanded = false
-                    onSubmit(answers)
-                }
-            }
-        } label: {
-            AskOptionChoiceRow(
-                option: option,
-                isSelected: isSelected,
-                isMultiSelect: question.multiSelect,
-                density: .expanded
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private func customTextInput(for question: AskQuestion) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if focusedQuestionId != question.id {
-                Text("Or type your answer")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.themeComment)
-            }
-
-            HStack(alignment: .bottom, spacing: 8) {
-                dictationButton(for: question)
-                    .fixedSize()
-
-                ZStack(alignment: .leading) {
-                    if (customTexts[question.id] ?? "").isEmpty {
-                        Text("Type your answer...")
-                            .font(.body)
-                            .foregroundStyle(.themeComment)
-                            .padding(.vertical, 4)
-                            .allowsHitTesting(false)
-                    }
-
-                    PastableTextView(
-                        text: customTextBinding(for: question.id),
-                        placeholder: "",
-                        font: .preferredFont(forTextStyle: .body),
-                        textColor: UIColor(theme.text.primary),
-                        tintColor: UIColor(theme.accent.blue),
-                        volatileSuffixLength: dictationQuestionId == question.id
-                            ? ComposerShared.volatileSuffixLength(manager: voiceInputManager, owner: .askCard)
-                            : 0,
-                        correctionRanges: correctionRangesForDisplay(questionId: question.id),
-                        maxLines: 5,
-                        autocorrectionEnabled: true,
-                        onPasteImages: { _ in },
-                        onCommandEnter: {
-                            Task {
-                                await finalizeDictationIfNeeded()
-                                commitCustomText(for: question)
-                                focusedQuestionId = nil
-                                if isSingleQuestionSingleSelect {
-                                    suppressKeyboard = false
-                                    isExpanded = false
-                                    onSubmit(answers)
-                                }
-                            }
-                        },
-                        onAlternateEnter: nil,
-                        onOverflowChange: nil,
-                        onLineCountChange: nil,
-                        onFocusChange: { isFocused in
-                            handleCustomAnswerFocusChange(isFocused: isFocused, questionId: question.id)
-                        },
-                        onDictationStateChange: nil,
-                        focusRequestID: focusRequestID,
-                        blurRequestID: 0,
-                        dictationRequestID: 0,
-                        suppressKeyboard: suppressKeyboard,
-                        allowKeyboardRestoreOnTap: true,
-                        onKeyboardRestoreRequest: handleKeyboardRestoreRequest,
-                        accessibilityIdentifier: "ask.input",
-                        keyboardLanguage: $keyboardLanguage
-                    )
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .layoutPriority(1)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(minHeight: 46)
-            .background(theme.bg.highlight, in: RoundedRectangle(cornerRadius: optionCornerRadius))
-            .overlay(
-                RoundedRectangle(cornerRadius: optionCornerRadius)
-                    .stroke(theme.text.tertiary.opacity(0.12), lineWidth: 1)
-            )
-            .id("ask-input-\(question.id)")
-        }
-    }
-
-    @ViewBuilder
-    private func dictationButton(for question: AskQuestion) -> some View {
-        if let manager = voiceInputManager {
-            let ownsActiveQuestion = dictationQuestionId == question.id
-            let presentation = ownsActiveQuestion
-                ? ComposerShared.micButtonPresentation(for: manager, owner: .askCard)
-                : ComposerShared.blockedMicButtonPresentation(for: manager)
-
-            Button {
-                Task {
-                    await handleDictationTap(for: question, manager: manager)
-                }
-            } label: {
-                MicButtonLabel(
-                    presentation: presentation,
-                    accentColor: .themeBlue,
-                    diameter: 32
-                )
-            }
-            .buttonStyle(.plain)
-            .disabled(!presentation.isEnabled)
-            .accessibilityIdentifier("ask.voiceInput")
-            .accessibilityLabel(presentation.accessibilityLabel)
-            .accessibilityValue(presentation.accessibilityValue)
-        }
-    }
-
-    // MARK: - Footer
-
-    /// Custom answers live in this keyboard-safe chrome so a long option list
-    /// cannot scroll the field under the keyboard.
-    private var bottomChrome: some View {
-        VStack(spacing: 0) {
-            Divider()
-                .overlay(theme.text.tertiary.opacity(0.15))
-
-            if let question = currentQuestion, Self.pinsCustomAnswerInBottomChrome(request) {
-                customTextInput(for: question)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 12)
-                    .padding(.bottom, 4)
-            }
-
-            footerActions
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-        }
-        .background(theme.bg.primary)
-    }
-
-    @ViewBuilder
-    private var footerActions: some View {
-        if usesPinnedConfirmationActions {
-            pinnedConfirmationActions
-        } else {
-            standardFooterActions
-        }
-    }
-
-    private var standardFooterActions: some View {
-            HStack {
-                Button {
-                    handleIgnore()
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(isLastQuestionPage ? "Ignore & Send" : "Ignore")
-                            .font(.body)
-                            .foregroundStyle(.themeComment)
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment.opacity(0.6))
-                    }
-                }
-                .buttonStyle(.plain)
-
-                Spacer()
-
-                if isSingleQuestionSingleSelect {
-                    // Single-question single-select: show Send when custom text is entered
-                    if hasCustomTextForCurrentQuestion {
-                        Button {
-                            Task {
-                                await finalizeDictationIfNeeded()
-                                commitCustomTextIfNeeded()
-                                suppressKeyboard = false
-                                isExpanded = false
-                                onSubmit(answers)
-                            }
-                        } label: {
-                            Text("Send")
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(.themeOnBlue)
-                                .padding(.horizontal, 24)
-                                .padding(.vertical, 10)
-                                .background(.themeBlue, in: RoundedRectangle(cornerRadius: 10))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                } else if isLastQuestionPage {
-                    Button {
-                        Task {
-                            await finalizeDictationIfNeeded()
-                            commitCustomTextIfNeeded()
-                            suppressKeyboard = false
-                            isExpanded = false
-                            onSubmit(answers)
-                        }
-                    } label: {
-                        Text("Send")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(.themeOnBlue)
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 10)
-                            .background(.themeBlue, in: RoundedRectangle(cornerRadius: 10))
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    Button {
-                        navigateForward()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text("Next")
-                                .font(.body.weight(.medium))
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.medium))
-                        }
-                        .foregroundStyle(.themeBlue)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-    }
-
-    private var pinnedConfirmationActions: some View {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    ignoreConfirmationButton
-                    Spacer(minLength: 0)
-                    cancelConfirmationButton
-                    confirmConfirmationButton
-                }
-
-                VStack(spacing: 8) {
-                    confirmConfirmationButton
-                    cancelConfirmationButton
-                    ignoreConfirmationButton
-                }
-                .frame(maxWidth: .infinity)
-            }
-    }
-
-    private var ignoreConfirmationButton: some View {
-        Button(Self.confirmationDismissTitle) {
-            isExpanded = false
-        }
-        .buttonStyle(.plain)
-        .font(.body)
-        .foregroundStyle(.themeComment)
-        .frame(minWidth: 44, minHeight: 44)
-        .accessibilityHint("Closes details without responding")
-        .accessibilityIdentifier("ask.confirmation.closeDetails")
-    }
-
-    private var cancelConfirmationButton: some View {
-        Button("Cancel") {
-            submitPinnedConfirmation(value: ExtensionUIRequest.cancelValue)
-        }
-        .buttonStyle(.plain)
-        .font(.body.weight(.medium))
-        .foregroundStyle(.themeFg)
-        .padding(.horizontal, 16)
-        .frame(minHeight: 44)
-        .background(theme.bg.highlight, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .accessibilityIdentifier("ask.confirmation.cancel")
-    }
-
-    private var confirmConfirmationButton: some View {
-        Button("Confirm") {
-            submitPinnedConfirmation(value: ExtensionUIRequest.confirmValue)
-        }
-        .buttonStyle(.plain)
-        .font(.body.weight(.semibold))
-        .foregroundStyle(.themeOnBlue)
-        .padding(.horizontal, 18)
-        .frame(minHeight: 44)
-        .background(.themeBlue, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .accessibilityIdentifier("ask.confirmation.confirm")
-    }
-
-    private var usesPinnedConfirmationActions: Bool {
-        Self.usesPinnedConfirmationActions(request)
-    }
-
-    private func submitPinnedConfirmation(value: String) {
-        guard let question = currentQuestion else { return }
-        answers[question.id] = .single(value)
-        suppressKeyboard = false
-        focusedQuestionId = nil
-        isExpanded = false
-        onSubmit(answers)
-    }
-
-    // MARK: - Navigation
-
-    private func navigateForward() {
-        if dictationQuestionId != nil {
-            Task {
-                await finalizeDictationIfNeeded()
-                navigateForwardWithoutDictation()
-            }
-        } else {
-            navigateForwardWithoutDictation()
-        }
-    }
-
-    private func navigateBack() {
-        if dictationQuestionId != nil {
-            Task {
-                await finalizeDictationIfNeeded()
-                navigateBackWithoutDictation()
-            }
-        } else {
-            navigateBackWithoutDictation()
-        }
-    }
-
-    private func navigateForwardWithoutDictation() {
-        suppressKeyboard = false
-        focusedQuestionId = nil
-        commitCustomTextIfNeeded()
-        navigatingForward = true
-        withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
-            if currentPage < totalPages - 1 {
-                currentPage += 1
-            }
-        }
-    }
-
-    private func navigateBackWithoutDictation() {
-        suppressKeyboard = false
-        focusedQuestionId = nil
-        navigatingForward = false
-        withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
-            if currentPage > 0 {
-                currentPage -= 1
-            }
-        }
-    }
-
-    // MARK: - Selection Logic
-
-    private func confirmMultiSelect() {
-        AppHaptics.impact(style: .light)
-        if !isLastQuestionPage {
-            navigateForward()
-        }
-    }
-
-    private func handleIgnore() {
-        AppHaptics.impact(style: .soft)
-        if let question = currentQuestion {
-            cancelDictationIfNeeded(for: question.id)
-            suppressKeyboard = false
-            focusedQuestionId = nil
-            answers[question.id] = nil
-            customTexts[question.id] = ""
-        }
-
-        if isSingleQuestionSingleSelect {
-            suppressKeyboard = false
-            isExpanded = false
-            onIgnoreAll()
-        } else if isLastQuestionPage {
-            Task {
-                await finalizeDictationIfNeeded()
-                commitCustomTextIfNeeded()
-                suppressKeyboard = false
-                isExpanded = false
-                onSubmit(answers)
-            }
-        } else {
-            navigateForward()
-        }
-    }
-
-    /// True when the current question has non-empty custom text entered.
-    private var hasCustomTextForCurrentQuestion: Bool {
-        guard let question = currentQuestion else { return false }
-        let text = (customTexts[question.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return !text.isEmpty
-    }
-
-    // MARK: - Custom Text
-
-    private func customTextBinding(for questionId: String) -> Binding<String> {
-        Binding(
-            get: { customTexts[questionId] ?? "" },
-            set: { newValue in
-                customTexts[questionId] = newValue
-                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    answers[questionId] = .custom(trimmed)
-                }
-            }
-        )
-    }
-
-    private func dictationPrefixBinding() -> Binding<String?> {
-        Binding(
-            get: { dictationPrefixText },
-            set: { dictationPrefixText = $0 ?? "" }
-        )
-    }
-
-    private func commitCustomText(for question: AskQuestion) {
-        let text = (customTexts[question.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if !text.isEmpty {
-            answers[question.id] = .custom(text)
-        }
-    }
-
-    private func commitCustomTextIfNeeded() {
-        if let question = currentQuestion {
-            commitCustomText(for: question)
-        }
-    }
-
-    private func correctionRangesForDisplay(questionId: String) -> [NSRange] {
-        guard dictationQuestionId == questionId,
-              let manager = voiceInputManager,
-              ComposerShared.ownsVoiceInput(manager, owner: .askCard) else { return [] }
-        let offset = (dictationPrefixText as NSString).length
-        return manager.currentTranscriptCorrectionRanges.map { range in
-            NSRange(location: range.location + offset, length: range.length)
-        }
-    }
-
-    // MARK: - Dictation
-
-    private func handleDictationTap(for question: AskQuestion, manager: VoiceInputManager) async {
-        guard ComposerShared.canControlVoiceInput(manager, owner: .askCard) else { return }
-        switch ComposerShared.micTapAction(for: manager.state) {
-        case .stop, .cancelPreparing:
-            guard dictationQuestionId == question.id else { return }
-            await finalizeDictationIfNeeded()
-        case .start:
-            await startDictation(for: question, manager: manager)
-        case .ignore:
-            break
-        }
-    }
-
-    private func startDictation(for question: AskQuestion, manager: VoiceInputManager) async {
-        let base = customTexts[question.id] ?? ""
-        dictationQuestionId = question.id
-        dictationBaseText = base
-        revealCustomAnswerChrome(for: question.id)
-
-        do {
-            dictationPrefixText = try await ComposerShared.startVoiceInput(
-                manager: manager,
-                keyboardLanguage: keyboardLanguage,
-                owner: .askCard,
-                baseText: base,
-                suppressKeyboard: $suppressKeyboard,
-                focusRequestID: $focusRequestID
-            )
-        } catch {
-            clearDictationState()
-        }
-    }
-
-    private func applyDictationTranscript(_ transcript: String, for questionId: String) {
-        guard dictationQuestionId == questionId else { return }
-
-        let combinedText = Self.combinedDictationText(
-            base: dictationBaseText,
-            prefix: dictationPrefixText,
-            transcript: transcript
-        )
-        customTexts[questionId] = combinedText
-
-        let trimmed = combinedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            answers[questionId] = .custom(trimmed)
-        }
-    }
-
-    private func finalizeDictationIfNeeded() async {
-        guard let manager = voiceInputManager, let questionId = dictationQuestionId else { return }
-        guard ComposerShared.ownsVoiceInput(manager, owner: .askCard) else { return }
-        defer { clearDictationState() }
-
-        if manager.isRecording {
-            await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
-                manager: manager,
-                owner: .askCard,
-                text: customTextBinding(for: questionId),
-                textBeforeRecording: dictationPrefixBinding()
-            )
-        } else if manager.isPreparing {
-            await ComposerShared.cancelOwnedVoiceInput(
-                manager: manager,
-                owner: .askCard,
-                textBeforeRecording: dictationPrefixBinding()
-            )
-        }
-    }
-
-    private func cancelDictationIfNeeded(for questionId: String? = nil) {
-        guard let manager = voiceInputManager, let activeQuestionId = dictationQuestionId else { return }
-
-        if let questionId, activeQuestionId != questionId {
-            return
-        }
-
-        clearDictationState()
-
-        Task {
-            await ComposerShared.cancelOwnedVoiceInput(
-                manager: manager,
-                owner: .askCard,
-                textBeforeRecording: dictationPrefixBinding()
-            )
-        }
-    }
-
-    private func clearDictationState() {
-        dictationQuestionId = nil
-        dictationBaseText = ""
-        dictationPrefixText = ""
-    }
-
-    private func handleCustomAnswerFocusChange(isFocused: Bool, questionId: String) {
-        if isFocused {
-            revealCustomAnswerChrome(for: questionId)
-        } else if focusedQuestionId == questionId {
-            focusedQuestionId = nil
-        }
-    }
-
-    private func revealCustomAnswerChrome(for questionId: String) {
-        focusedQuestionId = questionId
-        if let detent = Self.sheetDetentForCustomAnswerFocus(
-            request: request,
-            isCustomAnswerFocused: true
-        ) {
-            sheetDetent?.wrappedValue = detent
-        }
-    }
-
-    private func handleKeyboardRestoreRequest() {
-        suppressKeyboard = false
-        guard dictationQuestionId != nil else { return }
-        Task {
-            await finalizeDictationIfNeeded()
-        }
-    }
-
-    private func loadCustomTextsFromAnswers() {
-        for (key, answer) in answers {
-            if case .custom(let text) = answer {
-                customTexts[key] = text
-            }
-        }
-    }
-
-}
-
-extension AskCardExpanded {
+/// Rules for the expanded Ask sheet.
+@MainActor
+enum AskCardExpanded {
     static let confirmationDismissTitle = "Close Details"
 
+    /// An extension confirm request (one single-choice question with confirm
+    /// and cancel values) gets pinned Confirm / Cancel / Close Details buttons
+    /// instead of option rows.
     static func usesPinnedConfirmationActions(_ request: AskRequest) -> Bool {
         guard request.responseEncoding == .extensionConfirm,
               request.questions.count == 1,
@@ -803,7 +27,7 @@ extension AskCardExpanded {
     static func sheetDetentForCustomAnswerFocus(
         request: AskRequest,
         isCustomAnswerFocused: Bool
-    ) -> PresentationDetent? {
+    ) -> UISheetPresentationController.Detent.Identifier? {
         guard isCustomAnswerFocused, pinsCustomAnswerInBottomChrome(request) else {
             return nil
         }
@@ -817,5 +41,986 @@ extension AskCardExpanded {
     static func combinedDictationText(base: String, prefix: String, transcript: String) -> String {
         guard !transcript.isEmpty else { return base }
         return prefix + transcript
+    }
+}
+
+/// Expanded sheet for an Ask request: the full question as Markdown, option
+/// rows, and an optional typed answer pinned above the keyboard. Several
+/// questions page with Back / Next. The inline card and this sheet share the
+/// page and draft answers both ways, so collapsing keeps both.
+///
+/// ```
+/// ┌──────────────────────────────────────┐
+/// │ ‹ Back    Question 1 of 3         ⤡ │
+/// ├──────────────────────────────────────┤
+/// │ Full question (Markdown)             │ scrolls
+/// │ [☑ Select multiple]                  │
+/// │ option rows                          │
+/// ├──────────────────────────────────────┤
+/// │ Or type your answer                  │ custom answers only
+/// │ [🎤 Type your answer…              ] │
+/// │ Ignore ›                      Send   │
+/// └──────────────────────────────────────┘
+/// ```
+@MainActor
+final class AskCardExpandedViewController: UIViewController, RouterModalContainer, UITextViewDelegate {
+    var onDismissed: (() -> Void)?
+    var onPageChange: ((Int) -> Void)?
+    var onAnswersChange: (([String: AskAnswer]) -> Void)?
+    var onSubmit: (([String: AskAnswer]) -> Void)?
+    var onIgnoreAll: (() -> Void)?
+    var voiceInputManager: VoiceInputManager?
+
+    private var request: AskRequest?
+    private var currentPage = 0
+    private var answers: [String: AskAnswer] = [:]
+    private var colors = ComposerThemeColors.placeholder
+    private var reduceMotion = false
+    private var customTexts: [String: String] = [:]
+    private var focusedQuestionId: String?
+    private var suppressKeyboard = false
+    private var keyboardLanguage: String?
+    private var focusRequestID = 0
+    /// Question currently receiving dictated custom text, its text before
+    /// dictation, and the prefix (base plus separator) transcripts follow.
+    private var dictationQuestionId: String?
+    private var dictationBaseText = ""
+    private var dictationPrefixText = ""
+    private var builtRequest: AskRequest?
+    private var builtPage: Int?
+    private var optionRows: [AskOptionChoiceRowView] = []
+
+    private let header = UIView()
+    private let backButton = UIButton(type: .system)
+    private let titleLabel = UILabel()
+    private let collapseButton = UIButton(type: .system)
+    private let divider = UIView()
+    private let scrollView = UIScrollView()
+    private let contentStack = UIStackView()
+    private let markdownView = AssistantMarkdownContentView()
+    private let selectionPillRow = UIView()
+    private let selectionPill = AskSelectionModePillView()
+    private let optionsStack = UIStackView()
+    private let multiSelectDone = UIButton(type: .system)
+
+    private let bottomChrome = UIView()
+    private let bottomDivider = UIView()
+    private let customWrap = UIView()
+    private let customHint = UILabel()
+    private let customField = UIView()
+    private let customPlaceholder = UILabel()
+    private let customTextView = PastableUITextView()
+    private var customTextHeight: NSLayoutConstraint?
+    private let micButton = MicButtonChromeView()
+    private let footerStack = UIStackView()
+    private let ignoreButton = UIButton(type: .system)
+    private let nextButton = UIButton(type: .system)
+    private let sendButton = UIButton(type: .system)
+    private let pinnedStack = UIStackView()
+    private let closeDetailsButton = UIButton(type: .system)
+    private let cancelConfirmButton = UIButton(type: .system)
+    private let confirmButton = UIButton(type: .system)
+    nonisolated(unsafe) private var inputModeObserver: NSObjectProtocol?
+
+    deinit {
+        if let inputModeObserver {
+            NotificationCenter.default.removeObserver(inputModeObserver)
+        }
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        buildHierarchy()
+        inputModeObserver = NotificationCenter.default.addObserver(
+            forName: UITextInputMode.currentInputModeDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.updateKeyboardLanguage() }
+        }
+        loadCustomTextsFromAnswers()
+        applyChrome()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        suppressKeyboard = false
+        cancelDictationIfNeeded()
+        if isBeingDismissed || presentingViewController == nil, let onDismissed {
+            self.onDismissed = nil
+            onDismissed()
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        layoutPinnedActions()
+    }
+
+    /// Voice state is `@Observable`; reading it here re-runs this on every
+    /// state, spectrum, and transcript change.
+    override func updateProperties() {
+        super.updateProperties()
+        guard let manager = voiceInputManager else { return }
+        _ = manager.state
+        _ = manager.voiceSpectrum
+        _ = manager.transcriptPresentationRevision
+        if let questionId = dictationQuestionId,
+           ComposerShared.ownsVoiceInput(manager, owner: .askCard) {
+            applyDictationTranscript(manager.currentTranscript, for: questionId)
+        }
+        applyMic()
+    }
+
+    func apply(
+        request: AskRequest,
+        currentPage: Int,
+        answers: [String: AskAnswer],
+        colors: ComposerThemeColors,
+        reduceMotion: Bool
+    ) {
+        self.request = request
+        self.currentPage = AskCard.clampedPage(currentPage, for: request)
+        self.answers = answers
+        self.colors = colors
+        self.reduceMotion = reduceMotion
+        if isViewLoaded {
+            applyChrome()
+        }
+    }
+
+    // MARK: - Build
+
+    private func buildHierarchy() {
+        for view in [header, divider, scrollView, bottomChrome] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            self.view.addSubview(view)
+        }
+
+        var backConfig = UIButton.Configuration.plain()
+        backConfig.title = "Back"
+        backConfig.image = UIImage(systemName: "chevron.left")
+        backConfig.imagePadding = 4
+        backConfig.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 8)
+        backButton.configuration = backConfig
+        backButton.addAction(UIAction { [weak self] _ in self?.navigateBack() }, for: .touchUpInside)
+
+        titleLabel.font = AskUIFont.preferred(.subheadline, weight: .medium)
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textAlignment = .center
+
+        var collapseConfig = UIButton.Configuration.plain()
+        collapseConfig.image = UIImage(systemName: "arrow.down.right.and.arrow.up.left")
+        collapseConfig.contentInsets = .zero
+        collapseButton.configuration = collapseConfig
+        collapseButton.accessibilityLabel = "Collapse"
+        collapseButton.accessibilityIdentifier = "ask.expanded.collapse"
+        collapseButton.addAction(UIAction { [weak self] _ in self?.collapse() }, for: .touchUpInside)
+
+        for view in [backButton, titleLabel, collapseButton] as [UIView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            header.addSubview(view)
+        }
+        let side = AskCard.quietControlMinimumHitSize
+        NSLayoutConstraint.activate([
+            backButton.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 12),
+            backButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            backButton.heightAnchor.constraint(equalToConstant: side),
+            titleLabel.centerXAnchor.constraint(equalTo: header.centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 8),
+            collapseButton.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
+            collapseButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            collapseButton.widthAnchor.constraint(equalToConstant: side),
+            collapseButton.heightAnchor.constraint(equalToConstant: side),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: collapseButton.leadingAnchor, constant: -8),
+            header.heightAnchor.constraint(equalToConstant: 56),
+        ])
+
+        scrollView.alwaysBounceVertical = true
+        scrollView.keyboardDismissMode = .interactive
+        scrollView.accessibilityIdentifier = "ask.approval.scroll"
+        contentStack.axis = .vertical
+        contentStack.alignment = .fill
+        contentStack.spacing = 20
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(contentStack)
+        // The markdown view sizes itself (intrinsic height at its width).
+        markdownView.backgroundColor = .clear
+        markdownView.setContentCompressionResistancePriority(.required, for: .vertical)
+        selectionPill.translatesAutoresizingMaskIntoConstraints = false
+        selectionPillRow.addSubview(selectionPill)
+        NSLayoutConstraint.activate([
+            selectionPill.leadingAnchor.constraint(equalTo: selectionPillRow.leadingAnchor),
+            selectionPill.trailingAnchor.constraint(lessThanOrEqualTo: selectionPillRow.trailingAnchor),
+            selectionPill.topAnchor.constraint(equalTo: selectionPillRow.topAnchor),
+            selectionPill.bottomAnchor.constraint(equalTo: selectionPillRow.bottomAnchor),
+        ])
+        optionsStack.axis = .vertical
+        optionsStack.spacing = 10
+        multiSelectDone.addAction(UIAction { [weak self] _ in self?.confirmMultiSelect() }, for: .touchUpInside)
+        let doneRow = UIView()
+        multiSelectDone.translatesAutoresizingMaskIntoConstraints = false
+        doneRow.addSubview(multiSelectDone)
+        NSLayoutConstraint.activate([
+            multiSelectDone.centerXAnchor.constraint(equalTo: doneRow.centerXAnchor),
+            multiSelectDone.topAnchor.constraint(equalTo: doneRow.topAnchor),
+            multiSelectDone.bottomAnchor.constraint(equalTo: doneRow.bottomAnchor),
+            multiSelectDone.heightAnchor.constraint(equalToConstant: side),
+        ])
+        for view in [markdownView, selectionPillRow, optionsStack, doneRow] as [UIView] {
+            contentStack.addArrangedSubview(view)
+        }
+
+        NSLayoutConstraint.activate([
+            contentStack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 20),
+            contentStack.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -20),
+            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 24),
+            contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -24),
+            scrollView.contentLayoutGuide.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+        ])
+
+        buildBottomChrome()
+
+        let hairline = 1 / max(traitCollection.displayScale, 1)
+        NSLayoutConstraint.activate([
+            header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            header.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            divider.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            divider.topAnchor.constraint(equalTo: header.bottomAnchor),
+            divider.heightAnchor.constraint(equalToConstant: hairline),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: divider.bottomAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomChrome.topAnchor),
+            bottomChrome.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomChrome.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            // The custom answer stays above the keyboard, so a long option list
+            // cannot scroll it out of reach.
+            bottomChrome.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+        ])
+    }
+
+    private func buildBottomChrome() {
+        for view in [bottomDivider, customWrap, footerStack, pinnedStack] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            bottomChrome.addSubview(view)
+        }
+
+        customHint.font = AskUIFont.preferred(.subheadline, weight: .medium)
+        customHint.adjustsFontForContentSizeCategory = true
+        customHint.text = "Or type your answer"
+        let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+        customPlaceholder.font = bodyFont
+        customPlaceholder.text = "Type your answer..."
+        customPlaceholder.isUserInteractionEnabled = false
+        customTextView.delegate = self
+        customTextView.backgroundColor = .clear
+        customTextView.font = bodyFont
+        customTextView.textContainerInset = UIEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+        customTextView.textContainer.lineFragmentPadding = 0
+        customTextView.isScrollEnabled = true
+        customTextView.accessibilityIdentifier = "ask.input"
+        customTextView.installKeyboardRestoreGesture()
+        customTextView.setAllowKeyboardRestoreOnTap(true)
+        customTextView.onCommandEnter = { [weak self] in
+            Task { await self?.commitCustomFromKeyboard() }
+        }
+        customTextView.onKeyboardRestoreRequest = { [weak self] in
+            self?.handleKeyboardRestoreRequest()
+        }
+        applyComposerInputTraits(to: customTextView, autocorrectionEnabled: true)
+        let customHeight = customTextView.heightAnchor.constraint(equalToConstant: 36)
+        customHeight.isActive = true
+        customTextHeight = customHeight
+        micButton.addAction(UIAction { [weak self] _ in
+            Task { await self?.handleDictationTap() }
+        }, for: .touchUpInside)
+        micButton.accessibilityIdentifier = "ask.voiceInput"
+
+        let inputRow = UIStackView(arrangedSubviews: [micButton, customTextView])
+        inputRow.axis = .horizontal
+        inputRow.alignment = .bottom
+        inputRow.spacing = 8
+        inputRow.translatesAutoresizingMaskIntoConstraints = false
+        customPlaceholder.translatesAutoresizingMaskIntoConstraints = false
+        customTextView.addSubview(customPlaceholder)
+        customField.addSubview(inputRow)
+        customField.layer.cornerRadius = 12
+        customField.layer.cornerCurve = .continuous
+        customField.layer.borderWidth = 1
+        NSLayoutConstraint.activate([
+            customPlaceholder.leadingAnchor.constraint(equalTo: customTextView.leadingAnchor),
+            customPlaceholder.topAnchor.constraint(equalTo: customTextView.topAnchor, constant: 4),
+            micButton.widthAnchor.constraint(equalToConstant: 32),
+            micButton.heightAnchor.constraint(equalToConstant: 32),
+            inputRow.leadingAnchor.constraint(equalTo: customField.leadingAnchor, constant: 12),
+            inputRow.trailingAnchor.constraint(equalTo: customField.trailingAnchor, constant: -12),
+            inputRow.topAnchor.constraint(equalTo: customField.topAnchor, constant: 7),
+            inputRow.bottomAnchor.constraint(equalTo: customField.bottomAnchor, constant: -7),
+            customField.heightAnchor.constraint(greaterThanOrEqualToConstant: 46),
+        ])
+        let customStack = UIStackView(arrangedSubviews: [customHint, customField])
+        customStack.axis = .vertical
+        customStack.spacing = 8
+        customStack.translatesAutoresizingMaskIntoConstraints = false
+        customWrap.addSubview(customStack)
+        NSLayoutConstraint.activate([
+            customStack.leadingAnchor.constraint(equalTo: customWrap.leadingAnchor, constant: 20),
+            customStack.trailingAnchor.constraint(equalTo: customWrap.trailingAnchor, constant: -20),
+            customStack.topAnchor.constraint(equalTo: customWrap.topAnchor, constant: 12),
+            customStack.bottomAnchor.constraint(equalTo: customWrap.bottomAnchor, constant: -4),
+        ])
+
+        ignoreButton.addAction(UIAction { [weak self] _ in self?.handleIgnore() }, for: .touchUpInside)
+        nextButton.addAction(UIAction { [weak self] _ in self?.navigateForward() }, for: .touchUpInside)
+        sendButton.addAction(UIAction { [weak self] _ in
+            Task { await self?.sendCurrent() }
+        }, for: .touchUpInside)
+        let footerSpacer = UIView()
+        footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        footerStack.axis = .horizontal
+        footerStack.alignment = .center
+        for view in [ignoreButton, footerSpacer, nextButton, sendButton] as [UIView] {
+            footerStack.addArrangedSubview(view)
+        }
+
+        closeDetailsButton.accessibilityHint = "Closes details without responding"
+        closeDetailsButton.accessibilityIdentifier = "ask.confirmation.closeDetails"
+        closeDetailsButton.addAction(UIAction { [weak self] _ in self?.collapse() }, for: .touchUpInside)
+        cancelConfirmButton.accessibilityIdentifier = "ask.confirmation.cancel"
+        cancelConfirmButton.addAction(UIAction { [weak self] _ in
+            self?.submitPinnedConfirmation(value: ExtensionUIRequest.cancelValue)
+        }, for: .touchUpInside)
+        confirmButton.accessibilityIdentifier = "ask.confirmation.confirm"
+        confirmButton.addAction(UIAction { [weak self] _ in
+            self?.submitPinnedConfirmation(value: ExtensionUIRequest.confirmValue)
+        }, for: .touchUpInside)
+        let pinnedSpacer = UIView()
+        pinnedSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        pinnedStack.axis = .horizontal
+        pinnedStack.alignment = .center
+        pinnedStack.spacing = 10
+        for view in [closeDetailsButton, pinnedSpacer, cancelConfirmButton, confirmButton] as [UIView] {
+            pinnedStack.addArrangedSubview(view)
+        }
+
+        let hairline = 1 / max(traitCollection.displayScale, 1)
+        let side = AskCard.quietControlMinimumHitSize
+        NSLayoutConstraint.activate([
+            bottomDivider.leadingAnchor.constraint(equalTo: bottomChrome.leadingAnchor),
+            bottomDivider.trailingAnchor.constraint(equalTo: bottomChrome.trailingAnchor),
+            bottomDivider.topAnchor.constraint(equalTo: bottomChrome.topAnchor),
+            bottomDivider.heightAnchor.constraint(equalToConstant: hairline),
+            customWrap.leadingAnchor.constraint(equalTo: bottomChrome.leadingAnchor),
+            customWrap.trailingAnchor.constraint(equalTo: bottomChrome.trailingAnchor),
+            customWrap.topAnchor.constraint(equalTo: bottomDivider.bottomAnchor),
+            footerStack.leadingAnchor.constraint(equalTo: bottomChrome.leadingAnchor, constant: 20),
+            footerStack.trailingAnchor.constraint(equalTo: bottomChrome.trailingAnchor, constant: -20),
+            footerStack.topAnchor.constraint(equalTo: customWrap.bottomAnchor, constant: 6),
+            footerStack.bottomAnchor.constraint(equalTo: bottomChrome.safeAreaLayoutGuide.bottomAnchor, constant: -6),
+            pinnedStack.leadingAnchor.constraint(equalTo: bottomChrome.leadingAnchor, constant: 20),
+            pinnedStack.trailingAnchor.constraint(equalTo: bottomChrome.trailingAnchor, constant: -20),
+            pinnedStack.topAnchor.constraint(equalTo: customWrap.bottomAnchor, constant: 10),
+            pinnedStack.bottomAnchor.constraint(equalTo: bottomChrome.safeAreaLayoutGuide.bottomAnchor, constant: -10),
+            ignoreButton.heightAnchor.constraint(greaterThanOrEqualToConstant: side),
+            nextButton.heightAnchor.constraint(greaterThanOrEqualToConstant: side),
+            sendButton.heightAnchor.constraint(greaterThanOrEqualToConstant: side),
+            closeDetailsButton.heightAnchor.constraint(greaterThanOrEqualToConstant: side),
+            cancelConfirmButton.heightAnchor.constraint(greaterThanOrEqualToConstant: side),
+            confirmButton.heightAnchor.constraint(greaterThanOrEqualToConstant: side),
+        ])
+    }
+
+    // MARK: - Derived state
+
+    private var isSingleQuestionSingleSelect: Bool {
+        guard let request else { return true }
+        return request.questions.count == 1 && !request.questions[0].multiSelect
+    }
+
+    private var totalPages: Int {
+        request.map(AskCard.pageCount(for:)) ?? 1
+    }
+
+    private var currentQuestion: AskQuestion? {
+        guard let request, currentPage < request.questions.count else { return nil }
+        return request.questions[currentPage]
+    }
+
+    private var isLastQuestionPage: Bool {
+        guard let request else { return false }
+        return !isSingleQuestionSingleSelect && currentPage == request.questions.count - 1
+    }
+
+    private var usesPinnedConfirmationActions: Bool {
+        request.map(AskCardExpanded.usesPinnedConfirmationActions) ?? false
+    }
+
+    private var hasCustomTextForCurrentQuestion: Bool {
+        guard let question = currentQuestion else { return false }
+        return !(customTexts[question.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    // MARK: - Apply
+
+    private func applyChrome() {
+        guard let request else { return }
+        view.backgroundColor = colors.bg
+        bottomChrome.backgroundColor = colors.bg
+        divider.backgroundColor = colors.comment.withAlphaComponent(0.15)
+        bottomDivider.backgroundColor = colors.comment.withAlphaComponent(0.15)
+        collapseButton.configuration?.baseForegroundColor = colors.comment
+        titleLabel.textColor = colors.comment
+        titleLabel.text = isSingleQuestionSingleSelect
+            ? nil
+            : "Question \(currentPage + 1) of \(request.questions.count)"
+        titleLabel.isHidden = isSingleQuestionSingleSelect
+        backButton.isHidden = isSingleQuestionSingleSelect || currentPage == 0
+        backButton.configuration?.baseForegroundColor = colors.blue
+
+        guard let question = currentQuestion else { return }
+        let pageChanged = builtRequest?.id != request.id || builtPage != currentPage
+        if builtRequest != request || builtPage != currentPage {
+            rebuildPage(question)
+            if pageChanged, builtPage != nil {
+                scrollView.setContentOffset(.zero, animated: false)
+            }
+            builtRequest = request
+            builtPage = currentPage
+        }
+        selectionPill.apply(question: question, colors: colors)
+        selectionPillRow.isHidden = selectionPill.isHidden
+        for (row, option) in zip(optionRows, question.options) {
+            row.apply(
+                option: option,
+                isSelected: AskCardShared.isOptionSelected(option, in: question, answers: answers),
+                isMultiSelect: question.multiSelect,
+                colors: colors
+            )
+        }
+
+        let count = AskCardShared.multiSelectCount(for: question, answers: answers) ?? 0
+        let showsDone = question.multiSelect && count > 0 && !isLastQuestionPage
+        multiSelectDone.superview?.isHidden = !showsDone
+        if showsDone {
+            var config = UIButton.Configuration.plain()
+            config.title = "Done (\(count) selected)"
+            config.baseForegroundColor = colors.blue
+            config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+                var outgoing = incoming
+                outgoing.font = AskUIFont.preferred(.subheadline, weight: .semibold)
+                return outgoing
+            }
+            config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 18, bottom: 0, trailing: 18)
+            config.background.backgroundColor = colors.blue.withAlphaComponent(0.14)
+            config.background.backgroundInsets = NSDirectionalEdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
+            config.background.cornerRadius = 18
+            multiSelectDone.configuration = config
+        }
+
+        applyCustomField(question: question)
+        applyFooterActions()
+        applyMic()
+    }
+
+    /// New request or page: markdown and option rows rebuild once; selection
+    /// changes afterwards update rows in place.
+    private func rebuildPage(_ question: AskQuestion) {
+        markdownView.apply(configuration: .make(
+            content: question.question,
+            isStreaming: false,
+            themeID: ThemeRuntimeState.currentThemeID(),
+            textSelectionEnabled: true
+        ))
+        optionRows.forEach { $0.removeFromSuperview() }
+        optionRows = []
+        if !usesPinnedConfirmationActions {
+            for option in question.options {
+                let row = AskOptionChoiceRowView(density: .expanded)
+                row.onTap = { [weak self] in self?.selectOption(option, question: question) }
+                optionsStack.addArrangedSubview(row)
+                optionRows.append(row)
+            }
+        }
+        optionsStack.isHidden = optionRows.isEmpty
+        if builtPage != nil, !reduceMotion {
+            UIView.transition(
+                with: contentStack,
+                duration: 0.22,
+                options: [.transitionCrossDissolve, .allowUserInteraction],
+                animations: nil
+            )
+        }
+    }
+
+    private func applyCustomField(question: AskQuestion) {
+        let show = request.map(AskCardExpanded.pinsCustomAnswerInBottomChrome) ?? false
+        customWrap.isHidden = !show
+        customHint.textColor = colors.comment
+        customHint.isHidden = focusedQuestionId == question.id
+        customPlaceholder.textColor = colors.comment
+        customField.backgroundColor = colors.bgHighlight
+        customField.layer.borderColor = colors.comment.withAlphaComponent(0.12).cgColor
+        let text = customTexts[question.id] ?? ""
+        customTextView.applyStyledText(
+            text,
+            font: UIFont.preferredFont(forTextStyle: .body),
+            baseColor: colors.fg,
+            volatileSuffixLength: dictationQuestionId == question.id
+                ? ComposerShared.volatileSuffixLength(manager: voiceInputManager, owner: .askCard)
+                : 0,
+            volatileColor: colors.blue,
+            volatileBackgroundColor: colors.blue.withAlphaComponent(0.20),
+            correctionRanges: correctionRangesForDisplay(questionId: question.id),
+            correctionUnderlineColor: colors.orange
+        )
+        customPlaceholder.isHidden = !text.isEmpty
+        customTextView.tintColor = colors.blue
+        if customTextView.isKeyboardSuppressed != suppressKeyboard {
+            customTextView.setKeyboardSuppressed(suppressKeyboard)
+        }
+        let growth = ComposerInputMetrics.textViewGrowth(
+            for: customTextView,
+            fittingWidth: max(customTextView.bounds.width, 200),
+            minHeight: 36,
+            maxLines: 5
+        )
+        customTextHeight?.constant = growth.height
+        customTextView.isScrollEnabled = growth.isScrollEnabled
+    }
+
+    private func applyFooterActions() {
+        let onBlue = ComposerColorContrast.foreground(for: colors.blue, fg: colors.fg, bg: colors.bg)
+        if usesPinnedConfirmationActions {
+            footerStack.isHidden = true
+            pinnedStack.isHidden = false
+            var closeConfig = UIButton.Configuration.plain()
+            closeConfig.title = AskCardExpanded.confirmationDismissTitle
+            closeConfig.baseForegroundColor = colors.comment
+            closeDetailsButton.configuration = closeConfig
+            cancelConfirmButton.configuration = Self.filledConfiguration(
+                title: "Cancel", foreground: colors.fg, fill: colors.bgHighlight, weight: .medium
+            )
+            confirmButton.configuration = Self.filledConfiguration(
+                title: "Confirm", foreground: onBlue, fill: colors.blue, weight: .semibold
+            )
+            layoutPinnedActions()
+            return
+        }
+        footerStack.isHidden = false
+        pinnedStack.isHidden = true
+
+        var ignoreConfig = UIButton.Configuration.plain()
+        ignoreConfig.title = isLastQuestionPage ? "Ignore & Send" : "Ignore"
+        ignoreConfig.image = UIImage(
+            systemName: "chevron.right",
+            withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption1)
+        )
+        ignoreConfig.imagePlacement = .trailing
+        ignoreConfig.imagePadding = 4
+        ignoreConfig.baseForegroundColor = colors.comment
+        ignoreConfig.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8)
+        ignoreButton.configuration = ignoreConfig
+
+        let showsSend: Bool
+        if isSingleQuestionSingleSelect {
+            showsSend = hasCustomTextForCurrentQuestion
+        } else {
+            showsSend = isLastQuestionPage
+        }
+        nextButton.isHidden = isSingleQuestionSingleSelect || isLastQuestionPage
+        sendButton.isHidden = !showsSend
+        sendButton.configuration = Self.filledConfiguration(
+            title: "Send", foreground: onBlue, fill: colors.blue, weight: .semibold
+        )
+
+        var nextConfig = UIButton.Configuration.plain()
+        nextConfig.title = "Next"
+        nextConfig.image = UIImage(
+            systemName: "chevron.right",
+            withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption1, scale: .medium)
+        )
+        nextConfig.imagePlacement = .trailing
+        nextConfig.imagePadding = 4
+        nextConfig.baseForegroundColor = colors.blue
+        nextButton.configuration = nextConfig
+    }
+
+    private static func filledConfiguration(
+        title: String,
+        foreground: UIColor,
+        fill: UIColor,
+        weight: UIFont.Weight
+    ) -> UIButton.Configuration {
+        var config = UIButton.Configuration.plain()
+        config.title = title
+        config.baseForegroundColor = foreground
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = AskUIFont.preferred(.body, weight: weight)
+            return outgoing
+        }
+        config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20)
+        config.background.backgroundColor = fill
+        config.background.cornerRadius = 12
+        return config
+    }
+
+    /// Confirm / Cancel / Close Details sit in one row when they fit and
+    /// stack, Confirm first, when they do not.
+    private func layoutPinnedActions() {
+        guard usesPinnedConfirmationActions, !pinnedStack.isHidden else { return }
+        let width = view.bounds.width
+        guard width > 1 else { return }
+        let needed = closeDetailsButton.intrinsicContentSize.width
+            + cancelConfirmButton.intrinsicContentSize.width
+            + confirmButton.intrinsicContentSize.width
+            + 52
+        let vertical = needed > width - 40
+        guard vertical != (pinnedStack.axis == .vertical) else { return }
+        let ordered: [UIView] = vertical
+            ? [confirmButton, cancelConfirmButton, closeDetailsButton]
+            : [closeDetailsButton, pinnedStack.arrangedSubviews.first { $0.superview != nil && !($0 is UIButton) } ?? UIView(), cancelConfirmButton, confirmButton]
+        pinnedStack.arrangedSubviews.forEach { pinnedStack.removeArrangedSubview($0) }
+        ordered.forEach { pinnedStack.addArrangedSubview($0) }
+        pinnedStack.axis = vertical ? .vertical : .horizontal
+        pinnedStack.alignment = vertical ? .fill : .center
+        pinnedStack.spacing = vertical ? 8 : 10
+    }
+
+    private func applyMic() {
+        guard let manager = voiceInputManager else {
+            micButton.isHidden = true
+            return
+        }
+        let owns = dictationQuestionId != nil && dictationQuestionId == currentQuestion?.id
+        let presentation = owns
+            ? ComposerShared.micButtonPresentation(for: manager, owner: .askCard)
+            : ComposerShared.blockedMicButtonPresentation(for: manager)
+        micButton.apply(presentation: presentation, accentColor: colors.blue, diameter: 32)
+        micButton.isEnabled = presentation.isEnabled
+        micButton.accessibilityLabel = presentation.accessibilityLabel
+        micButton.accessibilityValue = presentation.accessibilityValue
+        micButton.isHidden = false
+    }
+
+    // MARK: - Actions
+
+    private func selectOption(_ option: AskOption, question: AskQuestion) {
+        cancelDictationIfNeeded(for: question.id)
+        suppressKeyboard = false
+        focusedQuestionId = nil
+        customTexts[question.id] = ""
+        var singleSelected = false
+        AskCardShared.handleOptionTap(option, question: question, answers: &answers) {
+            singleSelected = true
+        }
+        onAnswersChange?(answers)
+        if singleSelected, isSingleQuestionSingleSelect {
+            dismissAndSubmit()
+            return
+        }
+        applyChrome()
+    }
+
+    private func confirmMultiSelect() {
+        AppHaptics.impact(style: .light)
+        if !isLastQuestionPage {
+            navigateForward()
+        }
+    }
+
+    private func handleIgnore() {
+        AppHaptics.impact(style: .soft)
+        if let question = currentQuestion {
+            cancelDictationIfNeeded(for: question.id)
+            suppressKeyboard = false
+            focusedQuestionId = nil
+            answers[question.id] = nil
+            customTexts[question.id] = ""
+            onAnswersChange?(answers)
+        }
+        if isSingleQuestionSingleSelect {
+            suppressKeyboard = false
+            Router.finish(self)
+            onIgnoreAll?()
+        } else if isLastQuestionPage {
+            Task { await sendCurrent() }
+        } else {
+            navigateForward()
+        }
+    }
+
+    private func navigateForward() {
+        Task {
+            await finalizeDictationIfNeeded()
+            suppressKeyboard = false
+            focusedQuestionId = nil
+            commitCustomTextIfNeeded()
+            guard currentPage < totalPages - 1 else { return }
+            setPage(currentPage + 1)
+        }
+    }
+
+    private func navigateBack() {
+        Task {
+            await finalizeDictationIfNeeded()
+            suppressKeyboard = false
+            focusedQuestionId = nil
+            guard currentPage > 0 else { return }
+            setPage(currentPage - 1)
+        }
+    }
+
+    private func setPage(_ page: Int) {
+        currentPage = page
+        onPageChange?(page)
+        applyChrome()
+    }
+
+    private func collapse() {
+        Task {
+            await finalizeDictationIfNeeded()
+            commitCustomTextIfNeeded()
+            suppressKeyboard = false
+            focusedQuestionId = nil
+            Router.finish(self)
+        }
+    }
+
+    private func sendCurrent() async {
+        await finalizeDictationIfNeeded()
+        commitCustomTextIfNeeded()
+        suppressKeyboard = false
+        dismissAndSubmit()
+    }
+
+    private func dismissAndSubmit() {
+        Router.finish(self)
+        onSubmit?(answers)
+    }
+
+    private func submitPinnedConfirmation(value: String) {
+        guard let question = currentQuestion else { return }
+        answers[question.id] = .single(value)
+        onAnswersChange?(answers)
+        suppressKeyboard = false
+        focusedQuestionId = nil
+        dismissAndSubmit()
+    }
+
+    // MARK: - Custom text
+
+    private func commitCustomText(for question: AskQuestion) {
+        let text = (customTexts[question.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        answers[question.id] = .custom(text)
+        onAnswersChange?(answers)
+    }
+
+    private func commitCustomTextIfNeeded() {
+        if let question = currentQuestion {
+            commitCustomText(for: question)
+        }
+    }
+
+    private func commitCustomFromKeyboard() async {
+        await finalizeDictationIfNeeded()
+        guard let question = currentQuestion else { return }
+        commitCustomText(for: question)
+        focusedQuestionId = nil
+        if isSingleQuestionSingleSelect {
+            suppressKeyboard = false
+            dismissAndSubmit()
+        }
+    }
+
+    private func loadCustomTextsFromAnswers() {
+        for (key, answer) in answers {
+            if case .custom(let text) = answer {
+                customTexts[key] = text
+            }
+        }
+    }
+
+    // MARK: - Dictation
+
+    private func handleDictationTap() async {
+        guard let question = currentQuestion, let manager = voiceInputManager else { return }
+        guard ComposerShared.canControlVoiceInput(manager, owner: .askCard) else { return }
+        switch ComposerShared.micTapAction(for: manager.state) {
+        case .stop, .cancelPreparing:
+            guard dictationQuestionId == question.id else { return }
+            await finalizeDictationIfNeeded()
+        case .start:
+            await startDictation(for: question, manager: manager)
+        case .ignore:
+            break
+        }
+        applyChrome()
+    }
+
+    private func startDictation(for question: AskQuestion, manager: VoiceInputManager) async {
+        let base = customTexts[question.id] ?? ""
+        dictationQuestionId = question.id
+        dictationBaseText = base
+        revealCustomAnswerChrome(for: question.id)
+        do {
+            try await ComposerShared.startVoiceInput(
+                manager: manager,
+                keyboardLanguage: keyboardLanguage,
+                owner: .askCard,
+                baseText: base,
+                getText: { [weak self] in self?.customTexts[question.id] ?? "" },
+                setText: { [weak self] value in self?.customTexts[question.id] = value },
+                getTextBeforeRecording: { [weak self] in self?.dictationPrefixText },
+                setTextBeforeRecording: { [weak self] value in self?.dictationPrefixText = value ?? "" },
+                getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
+                setSuppressKeyboard: { [weak self] value in self?.suppressKeyboard = value },
+                getFocusRequestID: { [weak self] in self?.focusRequestID ?? 0 },
+                setFocusRequestID: { [weak self] value in
+                    self?.focusRequestID = value
+                    self?.customTextView.becomeFirstResponder()
+                }
+            )
+        } catch {
+            clearDictationState()
+        }
+    }
+
+    private func applyDictationTranscript(_ transcript: String, for questionId: String) {
+        guard dictationQuestionId == questionId else { return }
+        let combined = AskCardExpanded.combinedDictationText(
+            base: dictationBaseText,
+            prefix: dictationPrefixText,
+            transcript: transcript
+        )
+        guard combined != customTexts[questionId] else { return }
+        customTexts[questionId] = combined
+        let trimmed = combined.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            answers[questionId] = .custom(trimmed)
+            onAnswersChange?(answers)
+        }
+        if let question = currentQuestion {
+            applyCustomField(question: question)
+            applyFooterActions()
+        }
+    }
+
+    private func finalizeDictationIfNeeded() async {
+        guard let manager = voiceInputManager, let questionId = dictationQuestionId else { return }
+        guard ComposerShared.ownsVoiceInput(manager, owner: .askCard) else { return }
+        defer { clearDictationState() }
+        if manager.isRecording {
+            await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
+                manager: manager,
+                owner: .askCard,
+                getText: { [weak self] in self?.customTexts[questionId] ?? "" },
+                setText: { [weak self] value in self?.customTexts[questionId] = value },
+                getTextBeforeRecording: { [weak self] in self?.dictationPrefixText },
+                setTextBeforeRecording: { [weak self] value in self?.dictationPrefixText = value ?? "" },
+                getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
+                setSuppressKeyboard: { [weak self] value in self?.suppressKeyboard = value }
+            )
+        } else if manager.isPreparing {
+            await ComposerShared.cancelOwnedVoiceInput(
+                manager: manager,
+                owner: .askCard,
+                setTextBeforeRecording: { [weak self] value in self?.dictationPrefixText = value ?? "" },
+                setSuppressKeyboard: { [weak self] value in self?.suppressKeyboard = value }
+            )
+        }
+    }
+
+    private func cancelDictationIfNeeded(for questionId: String? = nil) {
+        guard let manager = voiceInputManager, let activeQuestionId = dictationQuestionId else { return }
+        if let questionId, activeQuestionId != questionId { return }
+        clearDictationState()
+        Task {
+            await ComposerShared.cancelOwnedVoiceInput(
+                manager: manager,
+                owner: .askCard,
+                setTextBeforeRecording: { [weak self] value in self?.dictationPrefixText = value ?? "" },
+                setSuppressKeyboard: { _ in }
+            )
+        }
+    }
+
+    private func clearDictationState() {
+        dictationQuestionId = nil
+        dictationBaseText = ""
+        dictationPrefixText = ""
+    }
+
+    /// Focusing or dictating a custom answer lifts the sheet to its large
+    /// detent so the field and keyboard both fit.
+    private func revealCustomAnswerChrome(for questionId: String) {
+        focusedQuestionId = questionId
+        if let request, AskCardExpanded.sheetDetentForCustomAnswerFocus(
+            request: request,
+            isCustomAnswerFocused: true
+        ) != nil {
+            Router.selectSheetDetent(.large, of: self)
+        }
+        applyChrome()
+    }
+
+    private func handleKeyboardRestoreRequest() {
+        suppressKeyboard = false
+        guard dictationQuestionId != nil else { return }
+        Task { await finalizeDictationIfNeeded() }
+    }
+
+    private func correctionRangesForDisplay(questionId: String) -> [NSRange] {
+        guard dictationQuestionId == questionId,
+              let manager = voiceInputManager,
+              ComposerShared.ownsVoiceInput(manager, owner: .askCard) else { return [] }
+        let offset = (dictationPrefixText as NSString).length
+        return manager.currentTranscriptCorrectionRanges.map { range in
+            NSRange(location: range.location + offset, length: range.length)
+        }
+    }
+
+    private func updateKeyboardLanguage() {
+        guard !customTextView.isKeyboardSuppressed, customTextView.isFirstResponder else { return }
+        let language = customTextView.textInputMode?.primaryLanguage
+        keyboardLanguage = language
+        guard let manager = voiceInputManager,
+              AppPreferences.Keyboard.normalize(language) != nil else { return }
+        Task {
+            await manager.prewarm(keyboardLanguage: language, source: "ask_card_keyboard_change")
+        }
+    }
+
+    // MARK: - UITextViewDelegate
+
+    func textViewDidChange(_ textView: UITextView) {
+        guard let question = currentQuestion else { return }
+        let newValue = textView.text ?? ""
+        customTexts[question.id] = newValue
+        customPlaceholder.isHidden = !newValue.isEmpty
+        let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            answers[question.id] = .custom(trimmed)
+            onAnswersChange?(answers)
+        }
+        applyCustomField(question: question)
+        applyFooterActions()
+    }
+
+    func textViewDidBeginEditing(_ textView: UITextView) {
+        guard let question = currentQuestion else { return }
+        revealCustomAnswerChrome(for: question.id)
+        updateKeyboardLanguage()
+    }
+
+    func textViewDidEndEditing(_ textView: UITextView) {
+        guard focusedQuestionId == currentQuestion?.id else { return }
+        focusedQuestionId = nil
+        applyChrome()
     }
 }

@@ -417,35 +417,15 @@ struct QuickSessionSheet: View {
             .environment(\.apiClient, selectedServerConnection()?.apiClient)
             .environment(selectedChatState)
         }
-        // Over full screen keeps this sheet in the window, so the composer's
-        // bindings into its state stay live.
-        .routerModal(isPresented: $showExpandedComposer, presentation: ModalPresentation(style: .overFullScreen)) {
-            ExpandedComposerView(
-                text: $text,
-                textBeforeRecording: $composerTextBeforeRecording,
-                pendingAttachments: $pendingAttachments,
-                pendingRepoPointers: $pendingRepoPointers,
-                isBusy: false,
-                busyStreamingBehavior: .followUp,
-                slashCommands: slashCommands,
-                fileSuggestions: selectedChatState.fileSuggestions,
-                onFileSuggestionQuery: updateFileSuggestions,
-                session: nil,
-                modelOverride: effectiveModelId ?? modelPresentation.pillText,
-                providerOverride: modelPresentation.pillProvider,
-                thinkingLevel: effectiveThinkingLevel,
-                voiceInputManager: voiceInputManager,
-                onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
-                onSend: handleSend,
-                onModelTap: { showModelPicker = true },
-                onThinkingSelect: selectThinkingLevel,
-                supportedThinkingLevels: ThinkingLevelMenuSource.levels(
-                    for: displayedModelId,
-                    in: selectedChatState.cachedModels
-                ),
-                allowsEmptySubmit: selectedAgentId == nil && !engineDecision.blocksLaunch
-            )
-        }
+        // Over full screen keeps this sheet in the window and rendering, so
+        // each re-render refreshes the open composer with this sheet's state.
+        .routerModal(
+            isPresented: $showExpandedComposer,
+            presentation: ModalPresentation(style: .overFullScreen).inNavigation(),
+            screen: .liveController(makeExpandedComposerController) { composer in
+                composer.live = expandedComposerLiveState
+            }
+        )
         .task {
             await setupInitialState()
         }
@@ -501,6 +481,51 @@ struct QuickSessionSheet: View {
         .onChange(of: pendingAttachments.map(\.id)) { _, _ in
             persistQuickSessionDraft()
         }
+    }
+
+    private func makeExpandedComposerController() -> ExpandedComposerViewController {
+        let text = $text
+        let prefix = $composerTextBeforeRecording
+        let attachments = $pendingAttachments
+        let pointers = $pendingRepoPointers
+        let configuration = ExpandedComposerConfiguration(
+            voiceInputManager: voiceInputManager,
+            onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
+            onSend: handleSend,
+            onModelTap: { showModelPicker = true },
+            onThinkingSelect: selectThinkingLevel,
+            onFileSuggestionQuery: updateFileSuggestions,
+            onTextChange: { text.wrappedValue = $0 },
+            onTextBeforeRecordingChange: { prefix.wrappedValue = $0 },
+            onAttachmentsChange: { attachments.wrappedValue = $0 },
+            onRepoPointersChange: { pointers.wrappedValue = $0 },
+            composerDraftStore: composerDraftStore
+        )
+        return ExpandedComposerViewController(configuration: configuration, live: expandedComposerLiveState)
+    }
+
+    /// This sheet's draft, model, and thinking level for the open expanded composer.
+    private var expandedComposerLiveState: ExpandedComposerLiveState {
+        ExpandedComposerLiveState(
+            text: text,
+            textBeforeRecording: composerTextBeforeRecording,
+            pendingAttachments: pendingAttachments,
+            pendingRepoPointers: pendingRepoPointers,
+            isBusy: false,
+            busyStreamingBehavior: .followUp,
+            slashCommands: slashCommands,
+            fileSuggestions: selectedChatState.fileSuggestions,
+            modelOverride: effectiveModelId ?? modelPresentation.pillText,
+            providerOverride: modelPresentation.pillProvider,
+            thinkingLevel: effectiveThinkingLevel,
+            supportedThinkingLevels: ThinkingLevelMenuSource.levels(
+                for: displayedModelId,
+                in: selectedChatState.cachedModels
+            ),
+            allowsEmptySubmit: selectedAgentId == nil && !engineDecision.blocksLaunch,
+            colors: ComposerThemeColors(palette: themeID.palette),
+            thinkingTint: UIColor(theme.thinking.color(for: effectiveThinkingLevel))
+        )
     }
 
     private var composerContent: some View {

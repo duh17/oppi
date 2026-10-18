@@ -57,7 +57,7 @@ final class AskCardIntentUITests: XCTestCase {
         tapOption("alpha")
         waitForDelayPending()
 
-        let expand = app.otherElements["Expand ask request"]
+        let expand = app.descendants(matching: .any)["ask.expand"]
         XCTAssertTrue(expand.waitForExistence(timeout: 2), "Expand ask request should be visible")
         expand.tap()
 

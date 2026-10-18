@@ -911,8 +911,11 @@ struct ChatView: View {
             ) { chatModalScope(shareRedactionSheet) }
             .routerModal(
                 isPresented: $showComposer,
-                presentation: ModalPresentation(style: .overFullScreen)
-            ) { chatModalScope(composerSheet) }
+                presentation: ModalPresentation(style: .overFullScreen).inNavigation(),
+                screen: .liveController(makeExpandedComposerController) { composer in
+                    composer.live = expandedComposerLiveState
+                }
+            )
             .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
     }
 
@@ -3078,21 +3081,12 @@ struct ChatView: View {
         )
     }
 
-    private var composerSheet: some View {
-        ExpandedComposerView(
-            text: composerTextBinding,
-            textBeforeRecording: $composerTextBeforeRecording,
-            pendingAttachments: composerPendingAttachmentsBinding,
-            pendingRepoPointers: composerRepoPointersBinding,
-            isBusy: isBusy,
-            busyStreamingBehavior: busyStreamingBehavior,
-            slashCommands: availableSlashCommands,
-            fileSuggestions: chatState.fileSuggestions,
-            onFileSuggestionQuery: { query in
-                updateFileSuggestions(query: query)
-            },
-            session: session,
-            thinkingLevel: chatState.thinkingLevel,
+    private func makeExpandedComposerController() -> ExpandedComposerViewController {
+        let text = composerTextBinding
+        let prefix = $composerTextBeforeRecording
+        let attachments = composerPendingAttachmentsBinding
+        let pointers = composerRepoPointersBinding
+        let configuration = ExpandedComposerConfiguration(
             voiceInputManager: voiceInputManager,
             onPrepareVoiceInput: prepareChatVoiceInput,
             onSend: { sendComposerAction(draftClearance: .afterSuccess) },
@@ -3114,12 +3108,38 @@ struct ChatView: View {
                     persist: true
                 )
             } : nil,
+            onFileSuggestionQuery: { query in updateFileSuggestions(query: query) },
+            onTextChange: { text.wrappedValue = $0 },
+            onTextBeforeRecordingChange: { prefix.wrappedValue = $0 },
+            onAttachmentsChange: { attachments.wrappedValue = $0 },
+            onRepoPointersChange: { pointers.wrappedValue = $0 },
+            composerDraftStore: composerDraftStore,
+            mediaImportGate: composerDraftController.mediaImportGate,
+            preservesVoiceInputOnDismiss: true
+        )
+        return ExpandedComposerViewController(configuration: configuration, live: expandedComposerLiveState)
+    }
+
+    /// The chat's current draft and session values for the open expanded composer.
+    private var expandedComposerLiveState: ExpandedComposerLiveState {
+        ExpandedComposerLiveState(
+            text: composerDraftController.text,
+            textBeforeRecording: composerTextBeforeRecording,
+            pendingAttachments: pendingAttachments,
+            pendingRepoPointers: composerDraftController.repoPointers,
+            isBusy: isBusy,
+            busyStreamingBehavior: busyStreamingBehavior,
+            slashCommands: availableSlashCommands,
+            fileSuggestions: chatState.fileSuggestions,
+            session: session,
+            thinkingLevel: chatState.thinkingLevel,
             supportedThinkingLevels: ThinkingLevelMenuSource.levels(
                 for: session?.model,
                 in: chatState.cachedModels
             ),
             isSubmitInFlight: composerIsSending,
-            preservesVoiceInputOnDismiss: true
+            colors: ComposerThemeColors(palette: themeID.palette),
+            thinkingTint: UIColor(theme.thinking.color(for: chatState.thinkingLevel))
         )
     }
 

@@ -1497,17 +1497,31 @@ struct VoiceInputManagerTests {
         let draft = CaptureFailureTestDraft()
         let text = Binding(get: { draft.text }, set: { draft.text = $0 })
         let prefix = Binding(get: { draft.prefix }, set: { draft.prefix = $0 })
-        let root: AnyView
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let hostView: UIView
         if expanded {
-            root = AnyView(ExpandedComposerView(
-                text: text, textBeforeRecording: prefix, pendingAttachments: .constant([]),
-                pendingRepoPointers: .constant([]), isBusy: false, busyStreamingBehavior: .steer,
-                slashCommands: [], fileSuggestions: [], onFileSuggestionQuery: nil,
-                session: nil, thinkingLevel: .off, voiceInputManager: manager,
-                onSend: {}, onModelTap: {}, onThinkingSelect: { _ in }
-            ))
+            let controller = ExpandedComposerViewController(
+                configuration: ExpandedComposerConfiguration(
+                    voiceInputManager: manager,
+                    onSend: {},
+                    onTextChange: { draft.text = $0 },
+                    onTextBeforeRecordingChange: { draft.prefix = $0 }
+                ),
+                live: ExpandedComposerLiveState(
+                    text: draft.text,
+                    textBeforeRecording: draft.prefix,
+                    busyStreamingBehavior: .steer,
+                    thinkingLevel: .off,
+                    colors: .placeholder,
+                    thinkingTint: .systemBlue
+                )
+            )
+            window.rootViewController = controller
+            hostView = controller.view
         } else {
-            root = AnyView(ChatInputBar(
+            let root = ChatInputBar(
                 text: text, textBeforeRecording: prefix, pendingAttachments: .constant([]),
                 pendingRepoPointers: .constant([]), isBusy: false, busyStreamingBehavior: .constant(.steer),
                 isSending: false, sendProgressText: nil, isStopping: false,
@@ -1515,17 +1529,18 @@ struct VoiceInputManagerTests {
                 slashCommands: [], fileSuggestions: [], onFileSuggestionQuery: nil,
                 onSend: {}, onStop: {}, onForceStop: {}, onExpand: {},
                 externalFocusRequestID: 0, appliesOuterPadding: true
-            ))
+            )
+            let host = UIHostingController(rootView: root.environment(\.dynamicTypeSize, .accessibility1))
+            window.rootViewController = host
+            hostView = host.view
         }
-        let host = UIHostingController(rootView: root.environment(\.dynamicTypeSize, .accessibility1))
-        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }
-        host.view.layoutIfNeeded()
-        try await manager.startRecording(keyboardLanguage: "en-US", source: "inline_mic_tap")
+        hostView.layoutIfNeeded()
+        try await manager.startRecording(
+            keyboardLanguage: "en-US",
+            source: expanded ? "expanded_mic_tap" : "inline_mic_tap"
+        )
         session.yieldEvent(.partialTranscript("discard these words"))
         let previewed = await waitForTestCondition(timeoutMs: 1000) {
             await MainActor.run { draft.text.contains("discard these words") }
@@ -1552,14 +1567,15 @@ struct VoiceInputManagerTests {
             await MainActor.run { draft.text == "Keep draft " && draft.prefix == nil }
         }
         #expect(restored, "The mounted composer's observer must commit draft rollback")
-        host.view.layoutIfNeeded()
-        let editors = captureFailureSubviews(host.view).compactMap { $0 as? UITextView }
+        hostView.layoutIfNeeded()
+        let editors = captureFailureSubviews(hostView).compactMap { $0 as? UITextView }
         #expect(editors.contains { $0.text == "Keep draft " }, "Visible UIKit editor must match the retained draft")
-        let failure = try #require(ComposerShared.captureFailure(manager, owner: .inlineComposer))
+        let owner: ComposerShared.VoiceInputOwner = expanded ? .expandedComposer : .inlineComposer
+        let failure = try #require(ComposerShared.captureFailure(manager, owner: owner))
         #expect(failure.message.contains("discarded"))
         #expect(failure.message.contains("earlier draft was kept"))
-        let screenshot = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
-            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        let screenshot = UIGraphicsImageRenderer(bounds: hostView.bounds).image { _ in
+            hostView.drawHierarchy(in: hostView.bounds, afterScreenUpdates: true)
         }
         let artifact = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
