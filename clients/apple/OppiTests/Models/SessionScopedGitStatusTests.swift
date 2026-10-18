@@ -7,60 +7,36 @@ struct SessionScopedGitStatusTests {
     // MARK: - Path matching
 
     @Test func absoluteSessionPathMatchesRelativeGitPath() {
-        let result = SessionScopedGitStatus.sessionPathMatches(
-            sessionPath: "/Users/dev/project/src/App.swift",
-            gitRelativePath: "src/App.swift"
-        )
-        #expect(result == true)
+        #expect(matches(session: "/Users/dev/project/src/App.swift", git: "src/App.swift"))
     }
 
     @Test func identicalRelativePathsMatch() {
-        let result = SessionScopedGitStatus.sessionPathMatches(
-            sessionPath: "src/App.swift",
-            gitRelativePath: "src/App.swift"
-        )
-        #expect(result == true)
+        #expect(matches(session: "src/App.swift", git: "src/App.swift"))
     }
 
     @Test func nonMatchingPathsDoNotMatch() {
-        let result = SessionScopedGitStatus.sessionPathMatches(
-            sessionPath: "/Users/dev/project/src/Other.swift",
-            gitRelativePath: "src/App.swift"
-        )
-        #expect(result == false)
+        #expect(!matches(session: "/Users/dev/project/src/Other.swift", git: "src/App.swift"))
     }
 
     @Test func partialDirectoryOverlapDoesNotFalseMatch() {
         // "notasrc/foo.swift" should NOT match "src/foo.swift"
-        let result = SessionScopedGitStatus.sessionPathMatches(
-            sessionPath: "/Users/dev/project/notasrc/foo.swift",
-            gitRelativePath: "src/foo.swift"
-        )
-        #expect(result == false)
+        #expect(!matches(session: "/Users/dev/project/notasrc/foo.swift", git: "src/foo.swift"))
+    }
+
+    @Test func partialFileNameOverlapDoesNotFalseMatch() {
+        #expect(!matches(session: "/Users/dev/project/src/MyApp.swift", git: "App.swift"))
     }
 
     @Test func rootLevelFileMatchesWithAbsolutePath() {
-        let result = SessionScopedGitStatus.sessionPathMatches(
-            sessionPath: "/Users/dev/project/README.md",
-            gitRelativePath: "README.md"
-        )
-        #expect(result == true)
+        #expect(matches(session: "/Users/dev/project/README.md", git: "README.md"))
     }
 
     @Test func backslashesInSessionPathNormalized() {
-        let result = SessionScopedGitStatus.sessionPathMatches(
-            sessionPath: "src\\Views\\App.swift",
-            gitRelativePath: "src/Views/App.swift"
-        )
-        #expect(result == true)
+        #expect(matches(session: "src\\Views\\App.swift", git: "src/Views/App.swift"))
     }
 
     @Test func backslashesInGitPathNormalized() {
-        let result = SessionScopedGitStatus.sessionPathMatches(
-            sessionPath: "/Users/dev/project/src/App.swift",
-            gitRelativePath: "src\\App.swift"
-        )
-        #expect(result == true)
+        #expect(matches(session: "/Users/dev/project/src/App.swift", git: "src\\App.swift"))
     }
 
     // MARK: - Basic filtering
@@ -263,6 +239,11 @@ struct SessionScopedGitStatusTests {
     }
 
     // MARK: - Helpers
+
+    private func matches(session: String, git: String) -> Bool {
+        let gitStatus = makeGitStatus(files: [makeFile(git, added: 1, removed: 0)])
+        return SessionScopedGitStatus.filter(gitStatus: gitStatus, sessionChangedFiles: [session]).sessionFileCount == 1
+    }
 
     private func makeGitStatus(
         branch: String = "main",

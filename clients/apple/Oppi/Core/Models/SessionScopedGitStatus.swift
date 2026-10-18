@@ -39,14 +39,24 @@ struct SessionScopedGitStatus: Sendable, Equatable {
             )
         }
 
-        // Normalize session paths once for O(n*m) matching below
-        let normalizedSessionPaths = Set(sessionChangedFiles.map { $0.replacing("\\", with: "/") })
-
-        let filtered = gitStatus.files.filter { file in
-            normalizedSessionPaths.contains { sessionPath in
-                sessionPathMatches(sessionPath: sessionPath, gitRelativePath: file.path)
+        // The context bar reads this on every render, and every session list
+        // update re-renders it, so matching must not compare every git file
+        // with every session file. Group git files by file name; a session
+        // path only checks the git files that share its name.
+        let gitPaths = gitStatus.files.map { normalized($0.path) }
+        var gitIndicesByName: [Substring: [Int]] = [:]
+        for (index, path) in gitPaths.enumerated() {
+            gitIndicesByName[fileName(of: path), default: []].append(index)
+        }
+        var matched = Set<Int>()
+        for sessionChangedFile in sessionChangedFiles {
+            let sessionPath = normalized(sessionChangedFile)
+            for index in gitIndicesByName[fileName(of: sessionPath)] ?? []
+            where sessionPathMatches(sessionPath: sessionPath, gitRelativePath: gitPaths[index]) {
+                matched.insert(index)
             }
         }
+        let filtered = gitStatus.files.indices.filter(matched.contains).map { gitStatus.files[$0] }
 
         let addedLines = filtered.compactMap(\.addedLines).reduce(0, +)
         let removedLines = filtered.compactMap(\.removedLines).reduce(0, +)
@@ -61,17 +71,27 @@ struct SessionScopedGitStatus: Sendable, Equatable {
 
     // MARK: - Path matching
 
-    /// Check whether a session-tracked path (typically absolute) matches a git-relative path.
-    ///
-    /// Handles two cases:
-    /// - Exact match (both relative)
-    /// - Suffix match with path separator (session path is absolute, git path is relative)
-    static func sessionPathMatches(sessionPath: String, gitRelativePath: String) -> Bool {
-        let normalizedSession = sessionPath.replacing("\\", with: "/")
-        let normalizedGit = gitRelativePath.replacing("\\", with: "/")
+    /// A session-tracked path (typically absolute) matches a git-relative path
+    /// when they are equal or the git path is a suffix that starts right after
+    /// a separator, so `notasrc/foo.swift` does not match `src/foo.swift`.
+    /// Both paths are already normalized. Paths compare as bytes, like git;
+    /// UTF-8 views also skip the grapheme breaking that made `Character`
+    /// scans the main cost of a render.
+    private static func sessionPathMatches(sessionPath: Substring, gitRelativePath: Substring) -> Bool {
+        let session = sessionPath.utf8
+        let git = gitRelativePath.utf8
+        guard session.count >= git.count else { return false }
+        let start = session.index(session.endIndex, offsetBy: -git.count)
+        guard session[start...].elementsEqual(git) else { return false }
+        return start == session.startIndex || session[session.index(before: start)] == UInt8(ascii: "/")
+    }
 
-        if normalizedSession == normalizedGit { return true }
-        if normalizedSession.hasSuffix("/\(normalizedGit)") { return true }
-        return false
+    private static func fileName(of path: Substring) -> Substring {
+        guard let separator = path.utf8.lastIndex(of: UInt8(ascii: "/")) else { return path }
+        return path[path.utf8.index(after: separator)...]
+    }
+
+    private static func normalized(_ path: String) -> Substring {
+        path.utf8.contains(UInt8(ascii: "\\")) ? path.replacing("\\", with: "/")[...] : path[...]
     }
 }
