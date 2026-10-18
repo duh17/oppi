@@ -1306,7 +1306,6 @@ extension ComposerThemeColors {
             red: UIColor(palette.red),
             yellow: UIColor(palette.yellow),
             scrim: UIColor(palette.bgDark.opacity(0.82)),
-            elevatedFill: UIColor(elevated.fill),
             elevatedStroke: UIColor(elevated.stroke ?? palette.fg.opacity(0.12)),
             floatingFill: UIColor(floating.fill)
         )

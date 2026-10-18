@@ -17,7 +17,6 @@ struct ComposerThemeColors {
     var red: UIColor
     var yellow: UIColor
     var scrim: UIColor
-    var elevatedFill: UIColor
     var elevatedStroke: UIColor
     var floatingFill: UIColor
 }
@@ -27,25 +26,24 @@ enum ComposerAttachmentButtonPlacement {
     case trailing
 }
 
-/// Elevated composer capsule: glass + themed fill + hairline, 20pt continuous corners.
+/// Composer capsule: the same untinted Liquid Glass as its pills and the
+/// app's floating controls, a theme hairline, and 20pt continuous corners.
+/// Glass blurs the timeline behind it, so the bar needs no opaque fill.
 final class ComposerThemedPanelView: UIView {
     var cornerRadius: CGFloat = 20 {
         didSet { applyShape() }
     }
 
     private let glassView = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
-    private let fillView = UIView()
     let contentView = UIView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         glassView.clipsToBounds = true
-        fillView.clipsToBounds = true
         contentView.backgroundColor = .clear
         addSubview(glassView)
-        addSubview(fillView)
         addSubview(contentView)
-        for view in [glassView, fillView, contentView] {
+        for view in [glassView, contentView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 view.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -61,19 +59,8 @@ final class ComposerThemedPanelView: UIView {
     required init?(coder: NSCoder) { nil }
 
     func apply(colors: ComposerThemeColors) {
-        fillView.backgroundColor = colors.elevatedFill
         layer.borderColor = colors.elevatedStroke.cgColor
         layer.borderWidth = 0.5
-    }
-
-    /// Hide the UIKit glass when SwiftUI draws the capsule around the bar plus
-    /// host-provided action pills (pills cannot overlay this view and still receive taps).
-    func setChromeVisible(_ visible: Bool) {
-        glassView.isHidden = !visible
-        fillView.isHidden = !visible
-        layer.borderWidth = visible ? 0.5 : 0
-        clipsToBounds = visible
-        backgroundColor = .clear
     }
 
     override func layoutSubviews() {
@@ -86,7 +73,7 @@ final class ComposerThemedPanelView: UIView {
         layer.cornerRadius = radius
         layer.cornerCurve = .continuous
         clipsToBounds = true
-        for view in [glassView, fillView, contentView] {
+        for view in [glassView, contentView] {
             view.layer.cornerRadius = radius
             view.layer.cornerCurve = .continuous
             view.clipsToBounds = true
@@ -971,7 +958,6 @@ extension ComposerThemeColors {
             red: .systemRed,
             yellow: .systemYellow,
             scrim: gray,
-            elevatedFill: gray,
             elevatedStroke: gray,
             floatingFill: gray
         )

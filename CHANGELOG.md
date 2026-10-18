@@ -87,6 +87,7 @@ Example:
 - **Client:** Custom Themes: describe a theme to have an Oppi session write it, or choose **Edit with Oppi** on an existing one.
 - **Client:** Session rows, threads, and the inbox show one status from the server: Working, Needs approval, Question, or Sign-in, then Done or Error until you open the session, then Idle or Stopped. Idle is no longer green.
 - **Client:** Extension notifications are a chip above the composer that names the extension, instead of a sheet you must dismiss.
+- **Client:** The chat composer is clear Liquid Glass, like its pills and the app's floating controls, instead of a near-opaque panel.
 - **Client:** Settings, Server Settings, and Workspace Settings are short indexes with one page per topic. Workspace toggles apply right away, so there is no global Save. Settings → Network is gone, and Customize Rows moved to **Settings → Sessions → Session Rows**. Destructive actions ask first.
 - **Client:** "Require Face ID" is now **Confirm New Servers**, and MCP transports are named HTTP and stdio.
 - **Client:** Durable Sessions experiment: new sessions start Classic; the composer's pill switches one launch to Durable, and **Start Sessions as Durable** makes Durable the default. Durable sessions show ∞ in All Sessions, and the sidebar's Durable list is gone.
