@@ -9,7 +9,7 @@
  *   1. translatePiEvent (session-protocol.ts) — event → ServerMessage translation
  *   2. MobileRendererRegistry.renderCall/renderResult (mobile-renderer.ts)
  *   3. sanitizeToolResultDetails (visual-schema.ts) — dynamic UI sanitization
- *   4. EventRing.push + EventRing.since (event-ring.ts) — durable sequencing + catch-up
+ *   4. EventRing.push + EventRing.since (event-ring.ts) — sequencing + catch-up
  *   5. SessionBroadcaster.broadcast (session-broadcast.ts) — fan-out
  *   6. stripAnsiEscapes (ansi.ts) — tool output cleaning
  *
@@ -19,7 +19,7 @@
 import { translatePiEvent, type TranslationContext } from "../src/session-protocol.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { sanitizeToolResultDetails } from "../src/visual-schema.js";
-import { EventRing } from "../src/event-ring.js";
+import { EventRing, type SequencedMessage } from "../src/event-ring.js";
 import { SessionBroadcaster, type BroadcastSessionState } from "../src/session-broadcast.js";
 import { stripAnsiEscapes } from "../src/ansi.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
@@ -475,11 +475,7 @@ function benchEventRing(): BenchResult[] {
     runBench("ring:push_500", BENCH_ITERATIONS, () => {
       const ring = new EventRing(500);
       for (let i = 1; i <= 500; i++) {
-        ring.push({
-          seq: i,
-          event: { type: "text_delta", delta: "token " } as ServerMessage,
-          timestamp: Date.now(),
-        });
+        ring.push({ type: "text_delta", delta: "token ", seq: i } as SequencedMessage);
       }
     }),
   );
@@ -488,30 +484,18 @@ function benchEventRing(): BenchResult[] {
   let pushSeq = 501;
   const pushRing = new EventRing(500);
   for (let i = 1; i <= 500; i++) {
-    pushRing.push({
-      seq: i,
-      event: { type: "text_delta", delta: "token " } as ServerMessage,
-      timestamp: Date.now(),
-    });
+    pushRing.push({ type: "text_delta", delta: "token ", seq: i } as SequencedMessage);
   }
   results.push(
     runBench("ring:push_single", BENCH_ITERATIONS, () => {
-      pushRing.push({
-        seq: pushSeq++,
-        event: { type: "text_delta", delta: "token " } as ServerMessage,
-        timestamp: Date.now(),
-      });
+      pushRing.push({ type: "text_delta", delta: "token ", seq: pushSeq++ } as SequencedMessage);
     }),
   );
 
   // 2. Catch-up query (full ring, recent miss)
   const fullRing = new EventRing(500);
   for (let i = 1; i <= 500; i++) {
-    fullRing.push({
-      seq: i,
-      event: { type: "text_delta", delta: `token ${i}` } as ServerMessage,
-      timestamp: Date.now(),
-    });
+    fullRing.push({ type: "text_delta", delta: `token ${i}`, seq: i } as SequencedMessage);
   }
 
   results.push(
@@ -555,6 +539,7 @@ function benchBroadcaster(): BenchResult[] {
     session: ephSession,
     subscribers: new Set(),
     seq: 0,
+    runtimeEpoch: "bench-epoch",
     eventRing: new EventRing(500),
   };
   ephState.subscribers.add(() => {});
@@ -588,6 +573,7 @@ function benchBroadcaster(): BenchResult[] {
     session: durSession,
     subscribers: new Set(),
     seq: 0,
+    runtimeEpoch: "bench-epoch",
     eventRing: new EventRing(500),
   };
   durState.subscribers.add(() => {});

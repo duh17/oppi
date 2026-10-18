@@ -180,23 +180,19 @@ describe("AppEventStreamMux", () => {
     session.lastActivity += 1;
     mux.handleSessionBroadcastEvent({
       sessionId: session.id,
-      durable: false,
       event: { type: "state", session },
     });
 
     mux.handleSessionBroadcastEvent({
       sessionId: session.id,
-      durable: true,
       event: { type: "text_delta", delta: "hidden" },
     });
     mux.handleSessionBroadcastEvent({
       sessionId: session.id,
-      durable: true,
       event: { type: "tool_start", tool: "bash", args: { command: "echo nope" } },
     });
     mux.handleSessionBroadcastEvent({
       sessionId: session.id,
-      durable: true,
       event: { type: "message_end", role: "assistant", content: "done" },
     });
 
@@ -216,12 +212,11 @@ describe("AppEventStreamMux", () => {
       allowCustom: false,
     };
     pendingMessages.push(request);
-    mux.handleSessionBroadcastEvent({ sessionId: session.id, durable: false, event: request });
+    mux.handleSessionBroadcastEvent({ sessionId: session.id, event: request });
 
     pendingMessages.length = 0;
     mux.handleSessionBroadcastEvent({
       sessionId: session.id,
-      durable: false,
       event: { type: "extension_ui_settled", id: "ask-1", sessionId: session.id },
     });
 
@@ -269,7 +264,6 @@ describe("AppEventStreamMux", () => {
 
     mux.handleSessionBroadcastEvent({
       sessionId: session.id,
-      durable: false,
       event: {
         type: "git_status",
         workspaceId: "ws-1",

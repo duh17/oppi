@@ -1,5 +1,5 @@
 import { safeErrorMessage } from "./log-utils.js";
-import type { EventRing } from "./event-ring.js";
+import type { EventRing, SequencedMessage } from "./event-ring.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
@@ -22,13 +22,12 @@ const log = createLogger({ base: { component: "session_broadcast" } });
 export interface SessionBroadcastEvent {
   sessionId: string;
   event: ServerMessage;
-  durable: boolean;
 }
 
 export interface BroadcastSessionState extends ProgramStatusHost {
   subscribers: Set<(msg: ServerMessage) => void>;
   seq: number;
-  runtimeEpoch?: string;
+  runtimeEpoch: string;
   eventRing: EventRing;
 }
 
@@ -107,7 +106,7 @@ export class SessionBroadcaster {
     }
 
     const canServe = active.eventRing.canServe(sinceSeq);
-    const events = canServe ? active.eventRing.since(sinceSeq).map((entry) => entry.event) : [];
+    const events = canServe ? active.eventRing.since(sinceSeq) : [];
 
     const metrics = this.deps.metrics;
     if (metrics) {
@@ -122,9 +121,7 @@ export class SessionBroadcaster {
     return {
       events,
       currentSeq: active.seq,
-      ...(typeof active.runtimeEpoch === "string" && active.runtimeEpoch.length > 0
-        ? { runtimeEpoch: active.runtimeEpoch }
-        : {}),
+      runtimeEpoch: active.runtimeEpoch,
       session: active.session,
       catchUpComplete: canServe,
     };
@@ -190,18 +187,13 @@ export class SessionBroadcaster {
     }
 
     active.seq += 1;
-    const sequenced: ServerMessage = { ...message, seq: active.seq };
+    const sequenced: SequencedMessage = { ...message, seq: active.seq };
 
-    active.eventRing.push({
-      seq: active.seq,
-      event: sequenced,
-      timestamp: Date.now(),
-    });
+    active.eventRing.push(sequenced);
 
     this.deps.emitSessionEvent({
       sessionId: active.session.id,
       event: sequenced,
-      durable: true,
     });
 
     this.deps.metrics?.record("server.broadcast_fanout", active.subscribers.size, {
@@ -215,7 +207,6 @@ export class SessionBroadcaster {
         log.error("session_broadcast.subscriber_callback.failed", {
           sessionId: active.session.id,
           messageType: sequenced.type,
-          durable: true,
           error: safeErrorMessage(err),
         });
       }
@@ -243,7 +234,6 @@ export class SessionBroadcaster {
       this.deps.emitSessionEvent({
         sessionId: active.session.id,
         event: message,
-        durable: false,
       });
     }
 
@@ -254,7 +244,6 @@ export class SessionBroadcaster {
         log.error("session_broadcast.subscriber_callback.failed", {
           sessionId: active.session.id,
           messageType: message.type,
-          durable: false,
           error: safeErrorMessage(err),
         });
       }

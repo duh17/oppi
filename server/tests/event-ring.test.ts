@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { EventRing, type SequencedEvent } from "../src/event-ring.js";
+import { EventRing, type SequencedMessage } from "../src/event-ring.js";
 import type { ServerMessage } from "../src/types.js";
 
-function makeEvent(seq: number, type: ServerMessage["type"] = "agent_start"): SequencedEvent {
-  return { seq, event: { type } as ServerMessage, timestamp: Date.now() };
+function makeEvent(seq: number, type: ServerMessage["type"] = "agent_start"): SequencedMessage {
+  return { type, seq } as SequencedMessage;
+}
+
+function retainedSeqs(ring: EventRing): number[] {
+  return ring.since(0).map((message) => message.seq);
 }
 
 describe("EventRing", () => {
@@ -11,7 +15,7 @@ describe("EventRing", () => {
     it("accepts valid positive integer sequence", () => {
       const ring = new EventRing(10);
       expect(() => ring.push(makeEvent(1))).not.toThrow();
-      expect(ring.currentSeq).toBe(1);
+      expect(retainedSeqs(ring)).toEqual([1]);
     });
 
     it("accepts multiple events in increasing order", () => {
@@ -19,7 +23,7 @@ describe("EventRing", () => {
       ring.push(makeEvent(1));
       ring.push(makeEvent(2));
       ring.push(makeEvent(5)); // gaps are fine
-      expect(ring.currentSeq).toBe(5);
+      expect(retainedSeqs(ring)).toEqual([1, 2, 5]);
     });
 
     it("rejects seq 0", () => {
@@ -59,22 +63,19 @@ describe("EventRing", () => {
       ring.push(makeEvent(1));
       ring.push(makeEvent(2));
       ring.push(makeEvent(3));
-      expect(ring.oldestSeq).toBe(1);
+      expect(retainedSeqs(ring)).toEqual([1, 2, 3]);
 
       ring.push(makeEvent(4));
-      expect(ring.oldestSeq).toBe(2);
-      expect(ring.currentSeq).toBe(4);
+      expect(retainedSeqs(ring)).toEqual([2, 3, 4]);
     });
 
     it("works with capacity 1", () => {
       const ring = new EventRing(1);
       ring.push(makeEvent(1));
-      expect(ring.currentSeq).toBe(1);
-      expect(ring.oldestSeq).toBe(1);
+      expect(retainedSeqs(ring)).toEqual([1]);
 
       ring.push(makeEvent(2));
-      expect(ring.currentSeq).toBe(2);
-      expect(ring.oldestSeq).toBe(2);
+      expect(retainedSeqs(ring)).toEqual([2]);
     });
   });
 
@@ -189,7 +190,7 @@ describe("EventRing", () => {
     });
 
     // BUG PROBE: canServe boundary after eviction
-    // The condition `sinceSeq >= this.oldestSeq - 1` means asking for
+    // The condition `sinceSeq >= oldest retained seq - 1` means asking for
     // sinceSeq = oldestSeq - 1 returns true, but since(oldestSeq - 1) will
     // return all events in the ring. This is correct behavior — the client
     // is saying "I have up to seq N, give me N+1 onwards" and we have N+1.
@@ -211,21 +212,18 @@ describe("EventRing", () => {
     });
   });
 
-  describe("currentSeq / oldestSeq", () => {
-    it("returns 0 for both on empty ring", () => {
+  describe("retained window", () => {
+    it("is empty on an empty ring", () => {
       const ring = new EventRing(10);
-      expect(ring.currentSeq).toBe(0);
-      expect(ring.oldestSeq).toBe(0);
+      expect(retainedSeqs(ring)).toEqual([]);
+      expect(ring.length).toBe(0);
     });
 
-    it("tracks oldest correctly through evictions", () => {
-      const ring = new EventRing(2);
-      ring.push(makeEvent(10));
-      expect(ring.oldestSeq).toBe(10);
-      ring.push(makeEvent(20));
-      expect(ring.oldestSeq).toBe(10);
-      ring.push(makeEvent(30)); // evicts 10
-      expect(ring.oldestSeq).toBe(20);
+    it("keeps the numbered message itself", () => {
+      const ring = new EventRing(10);
+      const message = makeEvent(1, "tool_start");
+      ring.push(message);
+      expect(ring.since(0)[0]).toBe(message);
     });
 
     it("reports retained sequence window after capacity overflow", () => {
@@ -235,9 +233,8 @@ describe("EventRing", () => {
         ring.push(makeEvent(seq));
       }
 
-      expect(ring.oldestSeq).toBe(3);
-      expect(ring.currentSeq).toBe(5);
-      expect(ring.since(0).map((event) => event.seq)).toEqual([3, 4, 5]);
+      expect(ring.length).toBe(3);
+      expect(retainedSeqs(ring)).toEqual([3, 4, 5]);
     });
   });
 });

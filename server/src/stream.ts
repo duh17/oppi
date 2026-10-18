@@ -586,7 +586,6 @@ export class BoundSessionStreamMux {
           catchup_requested: "true",
           catchup_complete: "false",
           started_session: openResult.startedSession ? "true" : "false",
-          pending_permissions: "0",
           pending_ui_requests: "0",
         });
         cleanupBoundConnection(1011);
@@ -659,7 +658,6 @@ export class BoundSessionStreamMux {
         catchup_requested: catchUpEvents.length > 0 ? "true" : "false",
         catchup_complete: catchUp ? "true" : "false",
         started_session: openResult.startedSession ? "true" : "false",
-        pending_permissions: countBucketForTag(0),
         pending_ui_requests: countBucketForTag(pendingUIDialogCount),
       });
 
@@ -862,7 +860,6 @@ export class BoundSessionStreamMux {
         catchup_requested: "false",
         catchup_complete: "false",
         started_session: "false",
-        pending_permissions: "0",
         pending_ui_requests: "0",
       });
       // Session lifecycle wraps configuration failures for HTTP callers with a

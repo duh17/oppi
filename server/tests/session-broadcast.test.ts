@@ -26,6 +26,7 @@ function makeActive(session?: Session): BroadcastSessionState {
     session: sess,
     subscribers: new Set(),
     seq: 0,
+    runtimeEpoch: "epoch-test",
     eventRing: new EventRing(100),
   };
 }
@@ -72,7 +73,6 @@ describe("SessionBroadcaster", () => {
 
       expect(active.seq).toBe(1);
       expect(emitted).toHaveLength(1);
-      expect(emitted[0]!.durable).toBe(true);
       expect(emitted[0]!.event.seq).toBe(1);
     });
 
@@ -106,7 +106,6 @@ describe("SessionBroadcaster", () => {
         session: active.session,
       } as ServerMessage);
       expect(emitted).toHaveLength(1);
-      expect(emitted[0]!.durable).toBe(false);
 
       broadcaster.broadcast("k1", {
         type: "extension_ui_request",
@@ -116,7 +115,6 @@ describe("SessionBroadcaster", () => {
       } as ServerMessage);
       expect(emitted).toHaveLength(2);
       expect(emitted[1]!.event.type).toBe("extension_ui_request");
-      expect(emitted[1]!.durable).toBe(false);
 
       broadcaster.broadcast("k1", {
         type: "extension_ui_notification",
@@ -126,7 +124,6 @@ describe("SessionBroadcaster", () => {
       } as ServerMessage);
       expect(emitted).toHaveLength(3);
       expect(emitted[2]!.event.type).toBe("extension_ui_notification");
-      expect(emitted[2]!.durable).toBe(false);
     });
 
     // Verify every durable type is actually in the set
@@ -197,7 +194,7 @@ describe("SessionBroadcaster", () => {
       broadcaster.broadcast("k1", { type: "tool_end", tool: "bash" } as ServerMessage);
 
       expect(active.seq).toBe(3);
-      expect(active.eventRing.currentSeq).toBe(3);
+      expect(active.eventRing.since(0).map((message) => message.seq)).toEqual([1, 2, 3]);
     });
 
     it("pushes events to the event ring", () => {
@@ -210,8 +207,8 @@ describe("SessionBroadcaster", () => {
 
       const events = active.eventRing.since(0);
       expect(events).toHaveLength(2);
-      expect(events[0]!.event.type).toBe("agent_start");
-      expect(events[1]!.event.type).toBe("agent_end");
+      expect(events[0]!.type).toBe("agent_start");
+      expect(events[1]!.type).toBe("agent_end");
     });
 
     it("fans out to all subscribers", () => {
@@ -348,6 +345,7 @@ describe("SessionBroadcaster", () => {
         session: makeSession(),
         subscribers: new Set(),
         seq: 0,
+        runtimeEpoch: "epoch-test",
         eventRing: new EventRing(2),
       };
       activeSessions.set("k1", active);
@@ -374,7 +372,7 @@ describe("SessionBroadcaster", () => {
       expect(catchUp!.session.id).toBe("s42");
     });
 
-    it("includes the scaffold runtimeEpoch when present", () => {
+    it("includes the runtimeEpoch", () => {
       const { broadcaster, activeSessions } = createHarness();
       const active = makeActive();
       active.runtimeEpoch = "epoch-live-1";
@@ -508,7 +506,12 @@ describe("SessionBroadcaster program status", () => {
     return new Map([
       [
         "ui-1",
-        { type: "extension_ui_request", id: "ui-1", method: "confirm", title: "Allow rm?" } as never,
+        {
+          type: "extension_ui_request",
+          id: "ui-1",
+          method: "confirm",
+          title: "Allow rm?",
+        } as never,
       ],
     ]);
   }

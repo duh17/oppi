@@ -116,10 +116,10 @@ function enrollTestDevice(storage: Storage): string {
   const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const jwk = publicKey.export({ format: "jwk" }) as { x: string; y: string };
   const pairingToken = storage.issuePairingToken();
-  const result = storage.enrollViaPairing(
-    pairingToken,
-    { name: "app-event-test", publicKey: { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y } },
-  );
+  const result = storage.enrollViaPairing(pairingToken, {
+    name: "app-event-test",
+    publicKey: { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y },
+  });
   if (!result) throw new Error("test device enrollment failed");
   return result.accessToken;
 }
@@ -409,9 +409,9 @@ function summaryFor(session: Session, overrides: Partial<SessionSummary> = {}): 
   return { ...buildSessionSummary(session), ...overrides };
 }
 
-function emitSessionEvent(sessionId: string, event: ServerMessage, durable = false): void {
+function emitSessionEvent(sessionId: string, event: ServerMessage): void {
   const eventSource = (server as unknown as { sessions: SessionEventSource }).sessions;
-  eventSource.emit("session_event", { sessionId, event, durable });
+  eventSource.emit("session_event", { sessionId, event });
 }
 
 function expectSessionScopedAppFrame(frame: AppEventFrame, type: string, session: Session): void {

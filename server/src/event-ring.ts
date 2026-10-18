@@ -1,7 +1,8 @@
 /**
- * Bounded ring buffer of sequenced durable events.
+ * Bounded ring buffer of sequenced messages (the numbered copies the broadcaster
+ * delivers to subscribers).
  *
- * Used by SessionManager to support per-session reconnect catch-up without
+ * Used by SessionBroadcaster to support per-session reconnect catch-up without
  * unbounded memory growth.
  *
  * Implementation uses a circular buffer with head/tail pointers
@@ -11,19 +12,16 @@
 
 import type { ServerMessage } from "./types.js";
 
-export interface SequencedEvent {
-  seq: number;
-  event: ServerMessage;
-  timestamp: number;
-}
+/** A server message carrying its per-session sequence number. */
+export type SequencedMessage = ServerMessage & { seq: number };
 
 export class EventRing {
-  private buf: (SequencedEvent | undefined)[];
+  private buf: (SequencedMessage | undefined)[];
   private head = 0; // index of oldest element
   private len = 0; // number of stored elements
   private readonly cap: number;
-  /** Cached seq of the most recently pushed event. Avoids a modular index
-   *  lookup on every push for the monotonicity check, and makes currentSeq O(1). */
+  /** Cached seq of the most recently pushed message. Avoids a modular index
+   *  lookup on every push for the monotonicity check. */
   private _lastSeq = 0;
 
   constructor(capacity = 500) {
@@ -31,8 +29,8 @@ export class EventRing {
     this.buf = new Array(capacity);
   }
 
-  push(event: SequencedEvent): void {
-    const seq = event.seq;
+  push(message: SequencedMessage): void {
+    const seq = message.seq;
     // Faster integer check than Number.isInteger (avoids function call overhead).
     if (seq <= 0 || (seq | 0) !== seq) {
       throw new Error(`EventRing sequence must be a positive integer (received ${seq})`);
@@ -47,16 +45,16 @@ export class EventRing {
 
     if (this.len < this.cap) {
       // Not yet full — append at tail
-      this.buf[(this.head + this.len) % this.cap] = event;
+      this.buf[(this.head + this.len) % this.cap] = message;
       this.len++;
     } else {
       // Full — overwrite oldest (head) and advance head
-      this.buf[this.head] = event;
+      this.buf[this.head] = message;
       this.head = (this.head + 1) % this.cap;
     }
   }
 
-  since(sinceSeq: number): SequencedEvent[] {
+  since(sinceSeq: number): SequencedMessage[] {
     if (this.len === 0) return [];
 
     // Binary search for first event with seq > sinceSeq
@@ -76,22 +74,12 @@ export class EventRing {
 
     // Copy matching events into result array
     const count = this.len - lo;
-    const result: SequencedEvent[] = new Array(count);
+    const result: SequencedMessage[] = new Array(count);
     for (let i = 0; i < count; i++) {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- ring buffer slot guaranteed occupied
       result[i] = this.buf[(this.head + lo + i) % this.cap]!;
     }
     return result;
-  }
-
-  get currentSeq(): number {
-    return this.len === 0 ? 0 : this._lastSeq;
-  }
-
-  get oldestSeq(): number {
-    if (this.len === 0) return 0;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- head always occupied when len > 0
-    return this.buf[this.head]!.seq;
   }
 
   canServe(sinceSeq: number): boolean {

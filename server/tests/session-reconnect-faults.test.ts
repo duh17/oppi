@@ -68,6 +68,7 @@ function createHarness(ringCapacity: number): Harness {
     session: makeSession(),
     subscribers: new Set(),
     seq: 0,
+    runtimeEpoch: "epoch-test",
     eventRing: new EventRing(ringCapacity),
   };
   const activeSessions = new Map([[active.session.id, active]]);
@@ -157,7 +158,6 @@ function assertSchedule(schedule: ReconnectSchedule): void {
 
   expect(closeLanded, label).toBe(true);
   expect(active.seq, label).toBe(eventCount);
-  expect(active.eventRing.currentSeq, label).toBe(eventCount);
   expect(catchUp, label).not.toBeNull();
   expect(canonicalSeqs, label).toEqual(range(1, eventCount));
   expect(new Set(canonicalSeqs).size, label).toBe(canonicalSeqs.length);
@@ -168,7 +168,11 @@ function assertSchedule(schedule: ReconnectSchedule): void {
   // must come through catch-up, not through a leaky subscription.
   expect(seqs(reconnectingClient), label).toEqual(range(1, disconnectAfter));
 
-  const oldestSeq = active.eventRing.oldestSeq;
+  const retainedSeqs = active.eventRing.since(0).map((message) => message.seq);
+  expect(retainedSeqs, label).toEqual(
+    range(Math.max(1, eventCount - ringCapacity + 1), eventCount),
+  );
+  const oldestSeq = retainedSeqs[0] ?? 0;
   const canServe = eventCount === 0 || lastSeenSeq >= oldestSeq - 1;
   expect(catchUp!.currentSeq, label).toBe(eventCount);
   expect(catchUp!.catchUpComplete, label).toBe(canServe);

@@ -380,13 +380,10 @@ describe("SessionManager extension UI", () => {
     manager.subscribeStartupUI(key, (msg) => {
       socketFrames.push(msg);
     });
-    const appEvents: Array<{ sessionId: string; event: ServerMessage; durable: boolean }> = [];
-    manager.on(
-      "session_event",
-      (payload: { sessionId: string; event: ServerMessage; durable: boolean }) => {
-        appEvents.push(payload);
-      },
-    );
+    const appEvents: Array<{ sessionId: string; event: ServerMessage }> = [];
+    manager.on("session_event", (payload: { sessionId: string; event: ServerMessage }) => {
+      appEvents.push(payload);
+    });
 
     feedEvent(manager, key, {
       type: "extension_ui_request",
@@ -406,7 +403,6 @@ describe("SessionManager extension UI", () => {
     expect(appEvents).toHaveLength(1);
     expect(appEvents[0]).toMatchObject({
       sessionId: key,
-      durable: false,
       event: {
         type: "extension_ui_notification",
         method: "notify",

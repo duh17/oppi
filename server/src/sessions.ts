@@ -285,7 +285,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     this.emit("session_event", {
       sessionId: key,
       event: framed,
-      durable: false,
     });
     for (const send of this.startupUISubscribers.get(key) ?? []) send(framed);
   }
