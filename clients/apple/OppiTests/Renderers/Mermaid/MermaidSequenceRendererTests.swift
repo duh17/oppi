@@ -743,10 +743,12 @@ struct MermaidSequenceRendererTests {
         }
     }
 
-    /// Notes, self-messages, and label-driven gaps all read the width. A
-    /// diagram that fits must get the same layout at any width it fits in:
-    /// one that spreads to the phone width, and one wider than the phone
-    /// that never spreads.
+    /// Fitting must not change a diagram that already fits: these fixtures
+    /// get the same layout at both widths, one that spreads to the phone
+    /// width and one wider than the phone that never spreads. This is not a
+    /// claim for every width: self-message and note wrap widths still scale
+    /// with maxWidth, so longer labels can lay out differently. The labels
+    /// here are short enough that those wrap widths never bind.
     @Test(arguments: [
         (source: """
             sequenceDiagram

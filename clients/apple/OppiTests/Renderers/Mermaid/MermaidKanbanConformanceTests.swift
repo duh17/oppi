@@ -247,6 +247,43 @@ struct MermaidKanbanConformanceTests {
         #expect(Set(frames.map(\.minY)).count == 1, "Four short-word columns fit one row at 360pt")
     }
 
+    /// Six short-word columns share less than the column floor at 360pt,
+    /// so they must wrap rather than overflow the canvas.
+    @Test func sixShortWordColumnsStayInsideCanvasAt360() {
+        let source = """
+            kanban
+              a[Todo]
+                t1[Fix it]
+              b[Doing]
+                t2[Add it]
+              c[Test]
+                t3[Run it]
+              d[Done]
+                t4[Ship it]
+              e[Ship]
+                t5[Tag it]
+              f[Live]
+                t6[Watch it]
+            """
+        guard case .kanban(let diagram) = MermaidParser().parse(source) else {
+            Issue.record("Expected kanban")
+            return
+        }
+        let layout = layoutKanban(diagram, maxWidth: 360)
+        let size = layout.customSize ?? .zero
+        #expect(size.width <= 360)
+        let frames = (0..<6).compactMap { layout.graphResult.nodePositions["column-\($0)"] }
+        #expect(frames.count == 6)
+        for (c, frame) in frames.enumerated() {
+            #expect(frame.minX >= 0 && frame.maxX <= size.width, "column-\(c) \(frame) outside canvas width \(size.width)")
+        }
+        for (i, a) in frames.enumerated() {
+            for b in frames[(i + 1)...] {
+                #expect(!a.insetBy(dx: 0.5, dy: 0.5).intersects(b))
+            }
+        }
+    }
+
     /// A board whose words fit the shared row keeps the shared row at every
     /// width: one row, equal columns tiling the content width.
     @Test(arguments: [360, 600, 1200] as [CGFloat])

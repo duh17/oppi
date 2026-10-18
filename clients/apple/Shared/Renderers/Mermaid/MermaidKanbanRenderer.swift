@@ -13,6 +13,9 @@ enum MermaidKanbanRenderer {
     private static let columnGap: CGFloat = 8
     private static let cardGap: CGFloat = 6
     private static let corner: CGFloat = 6
+    /// Narrowest a column gets. Row fitting uses it too, so columns raised
+    /// to this floor still fit the row they were assigned to.
+    private static let minColumnWidth: CGFloat = 56
 
     nonisolated static func layout(
         _ diagram: KanbanDiagram,
@@ -41,8 +44,8 @@ enum MermaidKanbanRenderer {
         let columnCount = max(diagram.columns.count, 1)
         let contentWidth = max(maxWidth - outerMargin * 2, 80)
         // Columns share one row's width. Only when that shared width would
-        // split the widest word do columns wrap onto further rows, as many
-        // per row as fit at the width of that word.
+        // split the widest word, or fall below the column floor, do columns
+        // wrap onto further rows, as many per row as fit at that width.
         var widestWord: CGFloat = 0
         for column in diagram.columns {
             widestWord = max(widestWord, MermaidTextUtils.widestWord(column.title, font: titleFont, fontSize: fontSize * 0.95) + 8)
@@ -55,10 +58,11 @@ enum MermaidKanbanRenderer {
         }
         let sharedWidth = (contentWidth - columnGap * CGFloat(columnCount - 1)) / CGFloat(columnCount)
         let perRow: Int
-        if sharedWidth >= widestWord {
+        let neededWidth = max(widestWord, minColumnWidth)
+        if sharedWidth >= neededWidth {
             perRow = columnCount
         } else {
-            let readableWidth = min(widestWord, contentWidth)
+            let readableWidth = min(neededWidth, contentWidth)
             perRow = max(1, min(
                 columnCount,
                 Int(((contentWidth + columnGap) / (readableWidth + columnGap)).rounded(.down))
@@ -66,7 +70,7 @@ enum MermaidKanbanRenderer {
         }
         let columnWidth = max(
             (contentWidth - columnGap * CGFloat(perRow - 1)) / CGFloat(perRow),
-            56
+            minColumnWidth
         )
 
         var nodePositions: [String: CGRect] = [:]
