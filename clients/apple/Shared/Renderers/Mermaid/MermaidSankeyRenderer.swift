@@ -440,12 +440,21 @@ enum MermaidSankeyRenderer {
     /// diagonally down a tall diagram costs as much as filling that box;
     /// clipping to bands keeps each pass to its band's share. Band edges sit
     /// on device pixel rows, so the cuts leave no antialiasing seams.
+    ///
+    /// Only bitmap contexts band. Vector contexts such as PDF (width 0) get
+    /// one fill, because a viewer redraws them at any zoom, where band edges
+    /// stop landing on pixel rows.
     private static func fillInBands(_ path: CGPath, in ctx: CGContext) {
         let box = path.boundingBoxOfPath
         let device = ctx.userSpaceToDeviceSpaceTransform
         let bandHeight: CGFloat = 48
-        // Rotated or skewed contexts, and short ribbons, fill in one pass.
-        guard box.height > bandHeight * 2, device.b == 0, device.c == 0, device.d != 0 else {
+        // Vector, rotated, skewed, or tiny-scale contexts, and short ribbons,
+        // fill in one pass. A band must span at least one device row so
+        // snapping its edge to a row always moves the next band forward.
+        guard ctx.width > 0,
+              box.height > bandHeight * 2,
+              device.b == 0, device.c == 0,
+              abs(device.d) * bandHeight >= 1 else {
             ctx.addPath(path)
             ctx.fillPath()
             return

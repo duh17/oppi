@@ -49,27 +49,42 @@ enum MermaidGanttRenderer {
         case leftOfBar
     }
 
-    /// Decide where a compact task label is drawn.
+    /// Decide where a task label on the bars is drawn, and how wide it may be.
     ///
     /// Order of preference: centered inside the bar when it fits with
-    /// padding, else to the right of the bar, else to the left when the
-    /// right side would clip past `chartRight`.
+    /// padding, else to the right of the bar, else to the left of it. A
+    /// label that fits whole in none of those spots never crosses its bar's
+    /// edge: it takes the roomiest one and `width` is less than
+    /// `labelWidth`, so the caller truncates it.
     static func compactLabelPlacement(
         labelWidth: CGFloat,
         barX: CGFloat,
         barWidth: CGFloat,
         chartLeft: CGFloat,
         chartRight: CGFloat
-    ) -> (alignment: CompactLabelAlignment, x: CGFloat) {
+    ) -> (alignment: CompactLabelAlignment, x: CGFloat, width: CGFloat) {
         let padding: CGFloat = 8
         let gap: CGFloat = 4
         if labelWidth + padding * 2 <= barWidth {
-            return (.centerInBar, barX + (barWidth - labelWidth) / 2)
+            return (.centerInBar, barX + (barWidth - labelWidth) / 2, labelWidth)
         }
-        if barX + barWidth + gap + labelWidth <= chartRight {
-            return (.rightOfBar, barX + barWidth + gap)
+        let rightX = barX + barWidth + gap
+        let rightRoom = chartRight - rightX
+        if labelWidth <= rightRoom {
+            return (.rightOfBar, rightX, labelWidth)
         }
-        return (.leftOfBar, max(chartLeft, barX - gap - labelWidth))
+        let leftRoom = barX - gap - chartLeft
+        if labelWidth <= leftRoom {
+            return (.leftOfBar, barX - gap - labelWidth, labelWidth)
+        }
+        let insideRoom = barWidth - padding * 2
+        if insideRoom >= rightRoom, insideRoom >= leftRoom {
+            return (.centerInBar, barX + padding, insideRoom)
+        }
+        if rightRoom >= leftRoom {
+            return (.rightOfBar, rightX, max(rightRoom, 0))
+        }
+        return (.leftOfBar, chartLeft, leftRoom)
     }
 
     // MARK: - Public entry point
@@ -389,21 +404,22 @@ enum MermaidGanttRenderer {
                     }
 
                     if labelsOnBars {
-                        // Diamonds are markers, not bars: measure against the
-                        // diamond size so labels never try to center inside it.
-                        let effectiveBarW = task.status == .milestone
-                            ? milestoneSize
-                            : barW
+                        // Diamonds are markers, not bars: place against the
+                        // diamond centered on `barX` so labels never try to
+                        // center inside it or cover it.
+                        let isMilestone = task.status == .milestone
                         let labelWidth = MermaidTextUtils.lineWidth(task.name, font: smallFont, fontSize: smallFontSize)
                         let placement = Self.compactLabelPlacement(
                             labelWidth: labelWidth,
-                            barX: barX,
-                            barWidth: effectiveBarW,
+                            barX: isMilestone ? barX - milestoneSize / 2 : barX,
+                            barWidth: isMilestone ? milestoneSize : barW,
                             chartLeft: ox + chartLeft,
                             chartRight: ox + labelRight
                         )
                         text(
-                            task.name,
+                            placement.width < labelWidth
+                                ? Self.truncated(task.name, toWidth: placement.width, font: smallFont, fontSize: smallFontSize)
+                                : task.name,
                             at: CGPoint(x: placement.x, y: oy + row.y + 3),
                             small: true,
                             color: theme.foreground
@@ -436,6 +452,29 @@ enum MermaidGanttRenderer {
             customDraw: customDraw,
             customSize: size
         )
+    }
+
+    /// `text` cut at the end with an ellipsis to fit `width`; empty when not
+    /// even the ellipsis fits.
+    private static func truncated(_ text: String, toWidth width: CGFloat, font: CTFont, fontSize: CGFloat) -> String {
+        let ellipsis = "…"
+        guard MermaidTextUtils.lineWidth(ellipsis, font: font, fontSize: fontSize) <= width else { return "" }
+        let characters = Array(text)
+        func candidate(_ count: Int) -> String {
+            String(characters[..<count]).trimmingCharacters(in: .whitespaces) + ellipsis
+        }
+        // Longest prefix whose truncated form fits.
+        var low = 0
+        var high = characters.count - 1
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if MermaidTextUtils.lineWidth(candidate(mid), font: font, fontSize: fontSize) <= width {
+                low = mid
+            } else {
+                high = mid - 1
+            }
+        }
+        return low == 0 ? ellipsis : candidate(low)
     }
 
     /// Smallest 1, 2, 5 × 10ⁿ unit step that is at least `units` long.

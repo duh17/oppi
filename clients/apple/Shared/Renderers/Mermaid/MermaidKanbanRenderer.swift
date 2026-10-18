@@ -40,9 +40,9 @@ enum MermaidKanbanRenderer {
 
         let columnCount = max(diagram.columns.count, 1)
         let contentWidth = max(maxWidth - outerMargin * 2, 80)
-        // Columns share the width. When that would split words, columns
-        // wrap onto further rows instead, as many per row as fit at the
-        // width of the widest word (and never narrower than six ems).
+        // Columns share one row's width. Only when that shared width would
+        // split the widest word do columns wrap onto further rows, as many
+        // per row as fit at the width of that word.
         var widestWord: CGFloat = 0
         for column in diagram.columns {
             widestWord = max(widestWord, MermaidTextUtils.widestWord(column.title, font: titleFont, fontSize: fontSize * 0.95) + 8)
@@ -53,11 +53,17 @@ enum MermaidKanbanRenderer {
                 }
             }
         }
-        let readableWidth = min(max(widestWord, fontSize * 6), contentWidth)
-        let perRow = max(1, min(
-            columnCount,
-            Int(((contentWidth + columnGap) / (readableWidth + columnGap)).rounded(.down))
-        ))
+        let sharedWidth = (contentWidth - columnGap * CGFloat(columnCount - 1)) / CGFloat(columnCount)
+        let perRow: Int
+        if sharedWidth >= widestWord {
+            perRow = columnCount
+        } else {
+            let readableWidth = min(widestWord, contentWidth)
+            perRow = max(1, min(
+                columnCount,
+                Int(((contentWidth + columnGap) / (readableWidth + columnGap)).rounded(.down))
+            ))
+        }
         let columnWidth = max(
             (contentWidth - columnGap * CGFloat(perRow - 1)) / CGFloat(perRow),
             56

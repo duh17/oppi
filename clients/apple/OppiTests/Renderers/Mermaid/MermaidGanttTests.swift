@@ -697,6 +697,46 @@ struct MermaidGanttRendererTests {
         )
         #expect(placement.alignment == .leftOfBar)
         #expect(placement.x == 320 - 4 - 150 as CGFloat)
+        #expect(placement.width == 150)
+    }
+
+    /// A name too long for every spot shrinks into the roomiest one instead
+    /// of being drawn across its own bar.
+    @Test(arguments: [
+        // Long bar: the bar itself has the most room.
+        (barX: 35, barWidth: 282, expected: MermaidGanttRenderer.CompactLabelAlignment.centerInBar),
+        // Late short bar: the left side has the most room.
+        (barX: 300, barWidth: 20, expected: .leftOfBar),
+        // Early short bar: the right side has the most room.
+        (barX: 20, barWidth: 20, expected: .rightOfBar),
+    ] as [(barX: CGFloat, barWidth: CGFloat, expected: MermaidGanttRenderer.CompactLabelAlignment)])
+    func labelThatFitsNowhereStaysOffItsBar(
+        bar: (barX: CGFloat, barWidth: CGFloat, expected: MermaidGanttRenderer.CompactLabelAlignment)
+    ) {
+        let chartLeft: CGFloat = 16
+        let chartRight: CGFloat = 346
+        let placement = MermaidGanttRenderer.compactLabelPlacement(
+            labelWidth: 330,
+            barX: bar.barX,
+            barWidth: bar.barWidth,
+            chartLeft: chartLeft,
+            chartRight: chartRight
+        )
+        #expect(placement.alignment == bar.expected)
+        #expect(placement.width > 0)
+        #expect(placement.width < 330)
+        let span = placement.x...(placement.x + placement.width)
+        #expect(span.lowerBound >= chartLeft)
+        #expect(span.upperBound <= chartRight)
+        let barEnd = bar.barX + bar.barWidth
+        switch placement.alignment {
+        case .centerInBar:
+            #expect(span.lowerBound >= bar.barX && span.upperBound <= barEnd, "label leaves its bar")
+        case .rightOfBar:
+            #expect(span.lowerBound > barEnd, "label crosses its bar")
+        case .leftOfBar:
+            #expect(span.upperBound < bar.barX, "label crosses its bar")
+        }
     }
 
     @Test func verticalMarkerLabelsAddHeightBelowChart() {

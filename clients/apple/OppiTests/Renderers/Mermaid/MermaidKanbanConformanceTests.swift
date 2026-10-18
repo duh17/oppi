@@ -224,6 +224,50 @@ struct MermaidKanbanConformanceTests {
         }
     }
 
+    private static let shortWordBoard = """
+        kanban
+          a[Todo]
+            t1[Fix bug]
+          b[In progress]
+            t2[Add tests]
+          c[Review]
+            t3[Check docs]
+          d[Done]
+            t4[Ship it]
+        """
+
+    @Test func shortWordBoardStaysOnOneRowAt360() {
+        guard case .kanban(let diagram) = MermaidParser().parse(Self.shortWordBoard) else {
+            Issue.record("Expected kanban")
+            return
+        }
+        let layout = layoutKanban(diagram, maxWidth: 360)
+        let frames = (0..<4).compactMap { layout.graphResult.nodePositions["column-\($0)"] }
+        #expect(frames.count == 4)
+        #expect(Set(frames.map(\.minY)).count == 1, "Four short-word columns fit one row at 360pt")
+    }
+
+    /// A board whose words fit the shared row keeps the shared row at every
+    /// width: one row, equal columns tiling the content width.
+    @Test(arguments: [360, 600, 1200] as [CGFloat])
+    func boardThatFitsIsUnchangedByMaxWidth(maxWidth: CGFloat) {
+        guard case .kanban(let diagram) = MermaidParser().parse(Self.shortWordBoard) else {
+            Issue.record("Expected kanban")
+            return
+        }
+        let layout = layoutKanban(diagram, maxWidth: maxWidth)
+        let size = layout.customSize ?? .zero
+        let frames = (0..<4).compactMap { layout.graphResult.nodePositions["column-\($0)"] }
+        #expect(frames.count == 4)
+        #expect(Set(frames.map(\.minY)).count == 1)
+        let expectedWidth = (size.width - 12 * 2 - 8 * 3) / 4
+        for (c, frame) in frames.enumerated() {
+            #expect(abs(frame.width - expectedWidth) < 0.5, "column-\(c) width \(frame.width) at \(maxWidth)")
+            #expect(abs(frame.minX - (12 + CGFloat(c) * (expectedWidth + 8))) < 0.5)
+        }
+        #expect(abs(size.width - maxWidth) < 0.5)
+    }
+
     @Test func dispatcherRendersKanbanWithoutPlaceholder() {
         let layout = MermaidRenderer().layout(
             MermaidParser().parse(Self.gallery),

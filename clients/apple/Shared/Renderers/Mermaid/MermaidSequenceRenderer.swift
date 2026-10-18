@@ -83,6 +83,10 @@ enum MermaidSequenceRenderer {
         var minMessageWrap: CGFloat { fontSize * (tight ? 3 : 5) }
         /// Padding a `box` group draws around its participants.
         var groupPad: CGFloat { fontSize * 0.9 }
+        /// Least room between a `box` group's border and the canvas edge.
+        /// The natural side margin already leaves more; the tight one, being
+        /// narrower than `groupPad`, relies on this.
+        var groupEdgeInset: CGFloat { fontSize * 0.5 }
         /// Vertical spacing between consecutive messages. Extra room so arrows do not cluster.
         var messageSpacing: CGFloat { fontSize * 4.2 }
         /// Title band inside an alt/loop/par frame.
@@ -572,25 +576,24 @@ enum MermaidSequenceRenderer {
         // Notes beside or over the outer participants, and `box` group
         // padding, may reach past the participant heads; widen the canvas
         // on that side so they are not pushed onto the lifelines or clipped.
-        var edgeMinX = CGFloat.infinity
-        var edgeMaxX = -CGFloat.infinity
+        var leftOverhang: CGFloat = 0
+        var rightOverhang: CGFloat = 0
+        func keepInside(minX: CGFloat, maxX: CGFloat, inset: CGFloat) {
+            leftOverhang = max(leftOverhang, inset - minX)
+            rightOverhang = max(rightOverhang, maxX + inset - totalWidth)
+        }
         for (eventIndex, event) in diagram.events.enumerated() {
             guard case .note(let note) = event, let prepared = preparedNotes[eventIndex],
                   let x = noteRawX(note, width: prepared.size.width, participants: participants,
                                    participantIndex: participantIndex, constants: c)
             else { continue }
-            edgeMinX = min(edgeMinX, x)
-            edgeMaxX = max(edgeMaxX, x + prepared.size.width)
+            keepInside(minX: x, maxX: x + prepared.size.width, inset: c.sideMargin * 0.25)
         }
         for box in diagram.boxes {
             let rects = box.participantIds.compactMap { participantIndex[$0].map { participants[$0].boxRect } }
             guard let minX = rects.map(\.minX).min(), let maxX = rects.map(\.maxX).max() else { continue }
-            edgeMinX = min(edgeMinX, minX - c.groupPad)
-            edgeMaxX = max(edgeMaxX, maxX + c.groupPad)
+            keepInside(minX: minX - c.groupPad, maxX: maxX + c.groupPad, inset: c.groupEdgeInset)
         }
-        let edgeInset = c.sideMargin * 0.25
-        let leftOverhang = edgeMinX.isFinite ? max(0, edgeInset - edgeMinX) : 0
-        let rightOverhang = edgeMaxX.isFinite ? max(0, edgeMaxX + edgeInset - totalWidth) : 0
         if leftOverhang > 0 {
             participants = participants.map { moved($0, centerX: $0.centerX + leftOverhang) }
         }

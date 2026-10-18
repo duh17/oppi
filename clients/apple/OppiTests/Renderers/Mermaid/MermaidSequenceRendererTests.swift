@@ -743,11 +743,71 @@ struct MermaidSequenceRendererTests {
         }
     }
 
-    @Test func sequenceThatFitsIsUnchangedByMaxWidth() {
+    /// Notes, self-messages, and label-driven gaps all read the width. A
+    /// diagram that fits must get the same layout at any width it fits in:
+    /// one that spreads to the phone width, and one wider than the phone
+    /// that never spreads.
+    @Test(arguments: [
+        (source: """
+            sequenceDiagram
+                participant A as Alice
+                participant B as Bob
+                participant C as Carol
+                A->>B: Hi
+                Note right of B: ok
+                B->>B: think
+                B->>C: ask
+                Note over A,B: sync
+                C-->>A: done
+            """, narrow: 360, wide: 900),
+        (source: """
+            sequenceDiagram
+                participant Client
+                participant Gateway
+                participant Service
+                participant Database
+                Client->>Gateway: request
+                Note over Client,Gateway: signed
+                Gateway->>Service: forward
+                Service->>Service: validate
+                Service->>Database: write row
+                Note right of Database: stored
+                Database-->>Client: done
+            """, narrow: 600, wide: 1200),
+    ] as [(source: String, narrow: CGFloat, wide: CGFloat)])
+    func sequenceThatFitsIsUnchangedByMaxWidth(fixture: (source: String, narrow: CGFloat, wide: CGFloat)) {
+        guard case .sequence(let diagram) = parser.parse(fixture.source) else {
+            Issue.record("Expected sequence")
+            return
+        }
+        func facts(maxWidth: CGFloat) -> SequenceLayoutFacts {
+            MermaidSequenceRenderer.layoutFacts(diagram, configuration: RenderConfiguration(
+                fontSize: config.fontSize, maxWidth: maxWidth, theme: config.theme, displayMode: .document
+            ))
+        }
+        let narrow = facts(maxWidth: fixture.narrow)
+        #expect(narrow.size.width <= fixture.narrow + 0.5, "Fixture must fit at \(fixture.narrow)")
+        if fixture.narrow > 360 {
+            #expect(narrow.size.width > 360, "Fixture must be wider than the phone, got \(narrow.size.width)")
+        }
+        #expect(narrow == facts(maxWidth: fixture.wide))
+    }
+
+    @Test func fittedBoxGroupsKeepRoomFromCanvasEdges() throws {
         guard case .sequence(let diagram) = parser.parse("""
             sequenceDiagram
-                Alice->>Bob: Hello Bob
-                Bob-->>Alice: Hi Alice
+                box Purple Alice & John
+                participant A
+                participant J
+                end
+                box Another Group
+                participant B
+                participant C
+                end
+                A->>J: Hello John, how are you?
+                J->>A: Great!
+                A->>B: Hello Bob, how is Charley?
+                B->>C: Hello Charley, how are you?
             """) else {
             Issue.record("Expected sequence")
             return
@@ -757,7 +817,18 @@ struct MermaidSequenceRendererTests {
                 fontSize: config.fontSize, maxWidth: maxWidth, theme: config.theme, displayMode: .document
             ))
         }
-        #expect(facts(maxWidth: 360) == facts(maxWidth: 900))
+        #expect(facts(maxWidth: 2000).size.width > 360, "Fixture must need fitting")
+        let fitted = facts(maxWidth: 360)
+        #expect(fitted.size.width <= 360.5)
+        // A group draws its border 0.9 em outside its participant heads.
+        let groupPad = config.fontSize * 0.9
+        let leftBorder = try #require(fitted.participants.first).rect.minX - groupPad
+        let rightBorder = try #require(fitted.participants.last).rect.maxX + groupPad
+        #expect(leftBorder >= config.fontSize * 0.5 - 0.5, "left group border \(leftBorder)pt from the edge")
+        #expect(
+            fitted.size.width - rightBorder >= config.fontSize * 0.5 - 0.5,
+            "right group border \(fitted.size.width - rightBorder)pt from the edge"
+        )
     }
 
     @Test func tooNarrowViewportKeepsHeadsApartInsteadOfOverlapping() {
