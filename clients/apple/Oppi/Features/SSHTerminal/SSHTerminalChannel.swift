@@ -416,6 +416,12 @@ final class SSHTerminalChannel {
         })
     }
 
+    /// ⌘K. Clears locally; sends only the form feed a shell prompt needs.
+    func clearScreen() {
+        let bytes = engine.clearScreen()
+        if !bytes.isEmpty { send(bytes) }
+    }
+
     func mouse(_ input: SSHTerminalEngine.MouseInput, column: Int, row: Int) {
         guard connected, !inputClosed else { return }
         send(engine.mouse(input, column: column, row: row))

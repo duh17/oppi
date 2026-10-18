@@ -459,7 +459,8 @@ struct SSHTerminalTests {
             var bytes = fixture.bytes.makeAsyncIterator()
             // A latch armed elsewhere (the composer strip) is spent by raw typing.
             channel.modifierLatch.toggle(modifier)
-            keyboard.insertText("cc")
+            keyboard.insertText("c")
+            keyboard.insertText("c")
             let expected = modifier == GhosttyMods(GHOSTTY_MODS_CTRL) ? Data([3]) : Data("\u{1b}c".utf8)
             #expect(await bytes.next() == expected)
             #expect(await bytes.next() == Data("c".utf8))
@@ -546,14 +547,18 @@ struct SSHTerminalTests {
         // Writing Tools and similar system edits replace a range.
         let whole = try #require(input.textRange(from: input.beginningOfDocument, to: input.endOfDocument))
         input.replace(whole, withText: "ls\n")
-        // Dictation inserts its phrase in one call.
+        // Dictation inserts a phrase in one call. It waits while iOS may
+        // still revise it, and goes before the next input.
         input.insertText("echo hi\nrm -rf build")
+        #expect(pasted == ["ls\n"])
         input.insertText("\u{1b}[A")
-        #expect(pasted == ["ls\n", "echo hi\nrm -rf build", "\u{1b}[A"])
+        #expect(pasted == ["ls\n", "echo hi\nrm -rf build"])
         // A lone Return from the keyboard is still Enter, and nothing else was sent.
         input.insertText("\n")
+        #expect(pasted == ["ls\n", "echo hi\nrm -rf build", "\u{1b}[A"])
         #expect(await bytes.next() == Data("\r".utf8))
         input.insertText("a\tb")
+        grid.settlePhrase()
         #expect(await bytes.next() == Data("a".utf8))
         #expect(await bytes.next() == Data("\t".utf8))
         #expect(await bytes.next() == Data("b".utf8))
@@ -584,6 +589,127 @@ struct SSHTerminalTests {
             input.deleteBackward()
             #expect(await bytes.next() == Data([127]))
         }
+        channel.close(reason: "done")
+    }
+
+    @Test func optionIsMetaAndReturnVariantsFollowTheAppsKeyboardProtocol() throws {
+        let engine = try SSHTerminalEngine { _ in }
+        let alt = GhosttyMods(GHOSTTY_MODS_ALT)
+        let shift = GhosttyMods(GHOSTTY_MODS_SHIFT)
+        #expect(engine.key(GHOSTTY_KEY_B, text: "b", modifiers: alt) == Data("\u{1b}b".utf8))
+        #expect(engine.key(GHOSTTY_KEY_ENTER, modifiers: alt) == Data("\u{1b}\r".utf8))
+        #expect(engine.key(GHOSTTY_KEY_ENTER, modifiers: shift) == Data("\u{1b}[27;2;13~".utf8))
+        // modifyOtherKeys 2 (Codex asks for it when Kitty is not there).
+        engine.receive(Data("\u{1b}[>4;2m".utf8))
+        #expect(engine.key(GHOSTTY_KEY_B, text: "b", modifiers: alt) == Data("\u{1b}[27;3;98~".utf8))
+        engine.receive(Data("\u{1b}[>4;0m".utf8))
+        // Kitty keyboard protocol, as pi, Claude Code, and Codex request it.
+        engine.receive(Data("\u{1b}[>1u".utf8))
+        #expect(engine.key(GHOSTTY_KEY_ENTER, modifiers: shift) == Data("\u{1b}[13;2u".utf8))
+        #expect(engine.key(GHOSTTY_KEY_ENTER, modifiers: alt) == Data("\u{1b}[13;3u".utf8))
+        #expect(engine.key(GHOSTTY_KEY_B, text: "b", modifiers: alt) == Data("\u{1b}[98;3u".utf8))
+        #expect(engine.key(GHOSTTY_KEY_W, text: "w", modifiers: GhosttyMods(GHOSTTY_MODS_CTRL)) == Data("\u{1b}[119;5u".utf8))
+        #expect(engine.key(GHOSTTY_KEY_ENTER) == Data("\r".utf8))
+    }
+
+    @Test func commandKClearsLikeGhosttyAndSendsAFormFeedOnlyAtAPrompt() throws {
+        func rows(_ engine: SSHTerminalEngine) -> [String] {
+            engine.frame().rows.map { $0.map(\.text).joined().trimmingCharacters(in: .whitespaces) }
+        }
+        // A command's output: history and the rows above the cursor go,
+        // the cursor row moves to the top, and nothing is sent.
+        let output = try SSHTerminalEngine(geometry: .init(columns: 10, rows: 3)) { _ in }
+        output.receive(Data("one\r\ntwo\r\nthree\r\nfour\r\nrun".utf8))
+        #expect(output.scrollbar.total > output.scrollbar.len)
+        #expect(output.clearScreen().isEmpty)
+        #expect(rows(output) == ["run", "", ""])
+        #expect(output.scrollbar.total == output.scrollbar.len)
+        #expect(output.cursorCell.column == 3 && output.cursorCell.row == 0)
+        output.receive(Data("!".utf8))
+        #expect(rows(output)[0] == "run!")
+
+        // At a shell prompt (OSC 133): the whole screen, then a form feed.
+        let prompt = try SSHTerminalEngine(geometry: .init(columns: 10, rows: 3)) { _ in }
+        prompt.receive(Data("old\r\nout\r\n\u{1b}]133;A\u{07}$ \u{1b}]133;B\u{07}ls".utf8))
+        #expect(prompt.clearScreen() == Data([0x0C]))
+        #expect(rows(prompt) == ["", "", ""])
+        #expect(prompt.scrollbar.total == prompt.scrollbar.len)
+
+        // A full-screen app keeps its screen, and so does a stream stopped
+        // inside an escape sequence.
+        let app = try SSHTerminalEngine(geometry: .init(columns: 10, rows: 3)) { _ in }
+        app.receive(Data("\u{1b}[?1049hvim\r\nbuf".utf8))
+        #expect(app.clearScreen().isEmpty)
+        #expect(rows(app)[0] == "vim")
+        let split = try SSHTerminalEngine(geometry: .init(columns: 10, rows: 3)) { _ in }
+        split.receive(Data("a\r\nb\u{1b}[".utf8))
+        #expect(split.clearScreen().isEmpty)
+        split.receive(Data("1m".utf8))
+        #expect(rows(split) == ["a", "b", ""])
+    }
+
+    @Test func trackpadTravelSendsArrowsInTheAppsCursorKeyModeOncePerFrame() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        grid.frame = CGRect(x: 0, y: 0, width: 320, height: 240)
+        let input = grid as UITextInput
+        var bytes = fixture.bytes.makeAsyncIterator()
+        let cell = grid.cellSize
+        input.beginFloatingCursor?(at: CGPoint(x: 100, y: 100))
+        input.updateFloatingCursor?(at: CGPoint(x: 100 + cell.width * 1.5, y: 100))
+        input.updateFloatingCursor?(at: CGPoint(x: 100 + cell.width * 2.5, y: 100 - cell.height * 1.2))
+        grid.flushTrackpadArrows()
+        #expect(await bytes.next() == Data("\u{1b}[C\u{1b}[C\u{1b}[A".utf8))
+        // vim and less turn on application cursor keys (DECCKM).
+        channel.engine.receive(Data("\u{1b}[?1h".utf8))
+        input.updateFloatingCursor?(at: CGPoint(x: 100 - cell.width, y: 100 - cell.height * 1.2))
+        // Lifting the finger sends the last frame's travel at once.
+        input.endFloatingCursor?()
+        #expect(await bytes.next() == Data("\u{1b}OD\u{1b}OD\u{1b}OD".utf8))
+        // While an IME composes, the trackpad is the IME's.
+        input.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        input.beginFloatingCursor?(at: CGPoint(x: 100, y: 100))
+        input.updateFloatingCursor?(at: CGPoint(x: 200, y: 100))
+        input.endFloatingCursor?()
+        input.unmarkText()
+        #expect(await bytes.next() == Data("に".utf8))
+        channel.close(reason: "done")
+    }
+
+    @Test func commandShortcutsCopyTheShownSelectionAndClear() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        var bytes = fixture.bytes.makeAsyncIterator()
+        let commands = try #require(grid.keyCommands)
+        #expect(commands.map(\.input) == ["c", "k"])
+        #expect(commands.allSatisfy { $0.modifierFlags == .command && !$0.title.isEmpty })
+        func run(_ input: String) throws {
+            let command = try #require(commands.first { $0.input == input })
+            _ = grid.perform(command.action, with: command)
+        }
+        UIPasteboard.general.string = "before"
+        let copies = channel.copies
+        try run("c") // nothing selected: no copy and nothing sent
+        #expect(channel.copies == copies)
+        #expect(UIPasteboard.general.string == "before")
+        // A double-tapped word stays the selection while it is highlighted.
+        channel.engine.receive(Data("hello world".utf8))
+        let word = CGPoint(x: grid.cellSize.width * 1.5, y: grid.cellSize.height * 0.5)
+        grid.handleTap(at: word, now: 100)
+        grid.handleTap(at: word, now: 100.1)
+        #expect(channel.copies == copies + 1)
+        UIPasteboard.general.string = "before"
+        try run("c")
+        #expect(channel.copies == copies + 2)
+        #expect(UIPasteboard.general.string == "hello")
+        channel.engine.receive(Data("\u{1b}]133;A\u{07}$ \u{1b}]133;B\u{07}".utf8))
+        try run("k")
+        // The first bytes sent: neither "⌘C" sent anything.
+        #expect(await bytes.next() == Data([0x0C]))
         channel.close(reason: "done")
     }
 

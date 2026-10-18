@@ -355,6 +355,10 @@ final class SSHTerminalEngine {
         guard ghostty_key_event_new(nil, &event) == GHOSTTY_SUCCESS else { return Data() }
         defer { ghostty_key_event_free(event) }
         ghostty_key_encoder_setopt_from_terminal(encoder, terminal)
+        // Option is Alt (Meta), like Ghostty's `macos-option-as-alt = true`.
+        // The terminal-state call above resets this, so it is set per key.
+        var optionAsAlt = GHOSTTY_OPTION_AS_ALT_TRUE
+        ghostty_key_encoder_setopt(encoder, GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT, &optionAsAlt)
         ghostty_key_event_set_action(event, GHOSTTY_KEY_ACTION_PRESS)
         ghostty_key_event_set_key(event, key)
         ghostty_key_event_set_mods(event, modifiers)
@@ -370,6 +374,45 @@ final class SSHTerminalEngine {
             guard result == GHOSTTY_SUCCESS else { return Data() }
             return output.withUnsafeBytes { Data($0.prefix(length)) }
         }
+    }
+
+    /// The cursor's cell in the active area.
+    var cursorCell: (column: Int, row: Int) {
+        var x: UInt16 = 0
+        var y: UInt16 = 0
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_CURSOR_X, &x)
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_CURSOR_Y, &y)
+        return (Int(x), Int(y))
+    }
+
+    /// ⌘K, as Ghostty does it: never on the alternate screen, where a full-
+    /// screen app owns every row. Local history goes. At a shell prompt known
+    /// from OSC 133 the screen is cleared and a form feed is returned for the
+    /// caller to send, so the shell redraws its prompt. Elsewhere the rows
+    /// above the cursor go, the cursor row moves to the top, and nothing is
+    /// sent. The local sequences are written only between remote sequences.
+    func clearScreen() -> Data {
+        guard live, !alternateScreen else { return Data() }
+        var ground = false
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_VT_GROUND, &ground)
+        guard ground else { return Data() }
+        var atPrompt = false
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT, &atPrompt)
+        let row = cursorCell.row
+        // ED 2 at a prompt moves the screen into history, so ED 3 runs last.
+        let local = if atPrompt {
+            "\u{1b}[2J\u{1b}[3J"
+        } else if row > 0 {
+            "\u{1b}[\(row)S\u{1b}[\(row)A\u{1b}[3J"
+        } else {
+            "\u{1b}[3J"
+        }
+        let bytes = Data(local.utf8)
+        bytes.withUnsafeBytes { buffer in
+            ghostty_terminal_vt_write(terminal, buffer.bindMemory(to: UInt8.self).baseAddress, bytes.count)
+        }
+        backToLive()
+        return atPrompt ? Data([0x0C]) : Data()
     }
 
     /// True while the remote application asked for mouse reports (Herdr, tmux

@@ -21,9 +21,18 @@ struct SSHTerminalTextInputStorage {
     /// identical keystroke still sends.
     private var unmarkedCommit: String?
     private(set) var commitEchoGeneration = 0
+    /// The last text the keyboard inserted, kept after the filler. Streaming
+    /// dictation inserts a guess, then replaces it by finding it before the
+    /// caret; without it here iOS cancels dictation after the first guess.
+    /// `sent` is the start of it already in the shell. A phrase of more than
+    /// one character waits until the owner takes it, so the shell gets the
+    /// words iOS settled on, once.
+    private(set) var phrase = ""
+    private var sent = ""
 
     var utf16Count: Int { text.utf16.count }
     var awaitsCommitEcho: Bool { unmarkedCommit != nil }
+    var hasUnsentPhrase: Bool { phrase.count > sent.count }
 
     init(text: String = Self.filler) {
         self.text = text
@@ -37,10 +46,37 @@ struct SSHTerminalTextInputStorage {
         let pending = markedText
         let echo = unmarkedCommit
         unmarkedCommit = nil
+        let earlier = takeUnsentPhrase()
         refill()
-        guard !hardwareKeysDown else { return [] }
-        if pending == nil, echo == string { return [] }
-        return string.isEmpty ? [] : [.insert(string)]
+        guard !hardwareKeysDown else { return earlier }
+        if pending == nil, echo == string { return earlier }
+        guard !string.isEmpty else { return earlier }
+        // An IME commit is final; only plain insertions can be revised.
+        guard pending == nil else { return earlier + [.insert(string)] }
+        keepPhrase(string)
+        // A keystroke goes at once. Several characters at once (dictation,
+        // slide typing) wait for `takeUnsentPhrase`.
+        guard string.count == 1 else { return earlier }
+        sent = phrase
+        return earlier + [.insert(string)]
+    }
+
+    /// The unsent rest of the phrase. The phrase stays, so dictation can
+    /// still extend it; characters already sent are never sent again.
+    mutating func takeUnsentPhrase() -> [Action] {
+        guard hasUnsentPhrase else { return [] }
+        let unsent = String(phrase.dropFirst(sent.count))
+        sent = phrase
+        return [.insert(unsent)]
+    }
+
+    /// Input that bypasses this document (an arrow, a paste, a hardware key)
+    /// may move the shell's cursor, so the phrase ends after its unsent rest.
+    mutating func finishPhrase() -> [Action] {
+        guard markedText == nil, !phrase.isEmpty else { return [] }
+        let rest = takeUnsentPhrase()
+        refill()
+        return rest
     }
 
     mutating func deleteBackward(hardwareKeysDown: Bool) -> [Action] {
@@ -59,13 +95,15 @@ struct SSHTerminalTextInputStorage {
             }
             return []
         }
+        let earlier = takeUnsentPhrase()
         refill()
-        guard !hardwareKeysDown else { return [] }
-        return [.backspace]
+        guard !hardwareKeysDown else { return earlier }
+        return earlier + [.backspace]
     }
 
     mutating func setMarkedText(_ markedText: String?, selectedRange: NSRange) -> [Action] {
         unmarkedCommit = nil
+        let earlier = takeUnsentPhrase()
         let next = markedText ?? ""
         if next.isEmpty {
             self.markedText = nil
@@ -77,8 +115,10 @@ struct SSHTerminalTextInputStorage {
             let location = min(max(selectedRange.location, 0), length)
             let lengthInMarked = min(max(selectedRange.length, 0), length - location)
             selectedUTF16 = location..<(location + lengthInMarked)
+            phrase = ""
+            sent = ""
         }
-        return []
+        return earlier
     }
 
     /// A commit already sent by `insertText` cleared the mark, so the
@@ -105,10 +145,26 @@ struct SSHTerminalTextInputStorage {
             )
         }
         unmarkedCommit = nil
+        let fillerEnd = Self.filler.utf16.count
+        if !hardwareKeysDown, !phrase.isEmpty, utf16Range.lowerBound >= fillerEnd, utf16Range.upperBound <= utf16Count {
+            // Dictation revising its guess. What follows the sent text is
+            // the new unsent rest. A guess that rewrites sent text cannot be
+            // taken back from the shell, so that revision is dropped and
+            // later words continue from it.
+            let start = String.Index(utf16Offset: utf16Range.lowerBound - fillerEnd, in: phrase)
+            let stop = String.Index(utf16Offset: utf16Range.upperBound - fillerEnd, in: phrase)
+            var revised = phrase
+            revised.replaceSubrange(start..<stop, with: string)
+            let kept = sent
+            keepPhrase(revised)
+            sent = revised.hasPrefix(kept) ? kept : revised
+            return []
+        }
+        let earlier = takeUnsentPhrase()
         refill()
-        guard !hardwareKeysDown else { return [] }
-        if string.isEmpty { return [.backspace] }
-        return [.insert(string)]
+        guard !hardwareKeysDown else { return earlier }
+        if string.isEmpty { return earlier + [.backspace] }
+        return earlier + [.insert(string)]
     }
 
     /// Outside a composition the caret stays after the filler, so ⌫ always
@@ -137,11 +193,132 @@ struct SSHTerminalTextInputStorage {
         return String(text[start..<stop])
     }
 
+    private mutating func keepPhrase(_ string: String) {
+        phrase = string
+        sent = ""
+        text = Self.filler + string
+        let end = utf16Count
+        selectedUTF16 = end..<end
+    }
+
     private mutating func refill() {
         text = Self.filler
         markedText = nil
+        phrase = ""
+        sent = ""
         let end = text.utf16.count
         selectedUTF16 = end..<end
+    }
+}
+
+/// The space-bar trackpad as arrow keys: one ←/→ per cell of horizontal
+/// travel and one ↑/↓ per row of vertical travel from where the drag began.
+/// Steps wait in `pending` so one write carries a frame's travel.
+struct SSHTerminalTrackpadArrows: Equatable {
+    struct Steps: Equatable {
+        var columns = 0
+        var rows = 0
+        var isEmpty: Bool { columns == 0 && rows == 0 }
+    }
+
+    private var origin: CGPoint?
+    private var counted = Steps()
+    private(set) var pending = Steps()
+    var isTracking: Bool { origin != nil }
+
+    mutating func begin(at point: CGPoint) {
+        origin = point
+        counted = Steps()
+    }
+
+    mutating func update(to point: CGPoint, cell: CGSize) {
+        guard let origin, cell.width > 0, cell.height > 0 else { return }
+        // Whole cells only, rounded toward the start, so a drag that comes
+        // back to where it began has sent equal and opposite steps.
+        let columns = Int((point.x - origin.x) / cell.width)
+        let rows = Int((point.y - origin.y) / cell.height)
+        pending.columns += columns - counted.columns
+        pending.rows += rows - counted.rows
+        counted = Steps(columns: columns, rows: rows)
+    }
+
+    mutating func end() {
+        origin = nil
+        counted = Steps()
+    }
+
+    mutating func takePending() -> Steps {
+        defer { pending = Steps() }
+        return pending
+    }
+}
+
+/// Held ⌫ deletes words after about a second, as iOS text fields do. The
+/// owner sends Ctrl-W for a word only on the primary screen, where shells and
+/// agent prompts read it as delete-word; a full-screen app may bind it to
+/// something else (nano search, Emacs kill-region, a vim window command).
+struct SSHTerminalDeleteAcceleration: Equatable {
+    static let wordDeleteAfter: TimeInterval = 1.0
+    /// The software keyboard sends its first repeat about this long after
+    /// the press, then one every 0.1 s.
+    static let softwareRepeatDelay: TimeInterval = 0.5
+    /// Deletes further apart than this are separate presses. A tap rate
+    /// that fast cannot be kept up for long, so taps do not accelerate.
+    static let softwareRepeatGap: TimeInterval = 0.13
+
+    private var runStart: TimeInterval?
+    private var lastDelete: TimeInterval?
+
+    /// Software ⌫: UIKit delivers each repeat like a press, so a hold is a
+    /// run of deletes one repeat apart. The run starts at the first repeat,
+    /// one repeat delay after the finger went down.
+    mutating func softwareDeletesWord(at now: TimeInterval) -> Bool {
+        defer { lastDelete = now }
+        guard let lastDelete, let runStart, now - lastDelete <= Self.softwareRepeatGap else {
+            runStart = now
+            return false
+        }
+        return now - runStart + Self.softwareRepeatDelay >= Self.wordDeleteAfter
+    }
+
+    /// Hardware ⌫: our own repeater knows when the key went down.
+    static func hardwareDeletesWord(heldFor duration: TimeInterval) -> Bool {
+        duration >= wordDeleteAfter
+    }
+
+    mutating func reset() {
+        runStart = nil
+        lastDelete = nil
+    }
+}
+
+/// ⌘ shortcuts the grid owns, offered to UIKit as key commands so they show
+/// in the ⌘ overlay. UIKit delivers the press too; the press path leaves
+/// these to the commands, so a shortcut never also types its letter. ⌘V
+/// stays on the press path. ⌘. needs no command: iOS hands it over as Esc.
+enum SSHTerminalHardwareShortcut: Int, CaseIterable {
+    case copy
+    case clearScreen
+
+    var input: String {
+        switch self {
+        case .copy: "c"
+        case .clearScreen: "k"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .copy: "Copy"
+        case .clearScreen: "Clear Screen"
+        }
+    }
+
+    static func matching(input: String, modifiers: UIKeyModifierFlags) -> Self? {
+        let chord = modifiers.intersection([.command, .control, .alternate, .shift])
+        guard chord == .command else { return nil }
+        let input = input.lowercased()
+        return allCases.first { $0.input == input }
     }
 }
 
@@ -279,12 +456,25 @@ extension SSHTerminalGridView {
         return position
     }
 
-    // The space-bar trackpad drives these. No-ops keep the dummy caret at the
-    // end, so the trackpad cannot stop held ⌫ from repeating. Moving the
-    // shell cursor with it is not supported.
-    func beginFloatingCursor(at point: CGPoint) {}
-    func updateFloatingCursor(at point: CGPoint) {}
-    func endFloatingCursor() {}
+    // The space-bar trackpad drives these. They send arrow keys and never
+    // move the dummy caret, so the trackpad cannot stop held ⌫ from
+    // repeating. A composition in progress keeps its own caret.
+    func beginFloatingCursor(at point: CGPoint) {
+        guard textInputStorage.markedText == nil else { return }
+        finishPhrase()
+        trackpadArrows.begin(at: point)
+    }
+
+    func updateFloatingCursor(at point: CGPoint) {
+        guard trackpadArrows.isTracking else { return }
+        trackpadArrows.update(to: point, cell: cellSize)
+        if !trackpadArrows.pending.isEmpty { requestDisplayLink() }
+    }
+
+    func endFloatingCursor() {
+        trackpadArrows.end()
+        flushTrackpadArrows()
+    }
 
     func characterRange(at point: CGPoint) -> UITextRange? {
         guard let position = closestPosition(to: point) else { return nil }

@@ -71,7 +71,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// Rebuilt when Code Font, Code Text Size, or the Nerd Font symbols change;
     /// a new cell size resizes the remote terminal on the next layout.
     private var metrics = SSHTerminalCellMetrics.codeFont()
-    private var cellSize: CGSize { metrics.cellSize }
+    var cellSize: CGSize { metrics.cellSize }
     private var renderer: SSHTerminalMetalRenderer?
     /// Theme, font, or bounds changed: encode the whole grid even if libghostty
     /// reported no dirty rows.
@@ -101,6 +101,22 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// UIKit does not repeat pressesBegan for a held key, so repeats are ours.
     private let keyRepeater = SSHTerminalKeyRepeater()
     private var repeatingPress: UIPress?
+    var trackpadArrows = SSHTerminalTrackpadArrows()
+    private var deleteAcceleration = SSHTerminalDeleteAcceleration()
+    private var phraseCommit: Task<Void, Never>?
+    /// The highlighted selection, while a drag or its copy highlight shows.
+    private var shownSelection: SSHTerminalSelectionSnapshot?
+    private lazy var shortcutCommands: [UIKeyCommand] = SSHTerminalHardwareShortcut.allCases.map { shortcut in
+        let command = UIKeyCommand(
+            title: shortcut.title,
+            action: #selector(performHardwareShortcut(_:)),
+            input: shortcut.input,
+            modifierFlags: .command,
+            propertyList: shortcut.rawValue
+        )
+        command.wantsPriorityOverSystemBehavior = true
+        return command
+    }
     private var appScroll = SSHTerminalAppScrollAccumulator()
     private var appliedScrollAction = SSHTerminalScrollAction.history
     private var displayLink: CADisplayLink?
@@ -187,6 +203,26 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     var writingToolsBehavior: UIWritingToolsBehavior { get { .none } set { _ = newValue } }
     var keyboardType: UIKeyboardType { get { .asciiCapable } set { _ = newValue } }
     override var inputAccessoryView: UIView? { bar }
+    override var keyCommands: [UIKeyCommand]? { shortcutCommands }
+
+    @objc private func performHardwareShortcut(_ command: UIKeyCommand) {
+        guard let raw = command.propertyList as? Int,
+              let shortcut = SSHTerminalHardwareShortcut(rawValue: raw) else { return }
+        finishPhrase()
+        switch shortcut {
+        case .copy:
+            // Same copy and note as a long-press selection; nothing without one.
+            guard let selection = shownSelection else { return }
+            channel.copyLocalSelection(selection.text)
+            showHighlight(selection, lingering: true)
+        case .clearScreen:
+            clearHighlight()
+            channel.clearScreen()
+            syncHistoryScrollFromEngine()
+        }
+        needsPaint = true
+        requestDisplayLink()
+    }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -418,10 +454,12 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 
     func applyTextInput(_ actions: [SSHTerminalTextInputStorage.Action]) {
+        schedulePhraseCommit()
         guard !actions.isEmpty else { return }
         for action in actions {
             switch action {
             case .insert(let text):
+                deleteAcceleration.reset()
                 // Dictation, Writing Tools, and system replacements can hand
                 // over a phrase at once. A lone Return is Enter; any other
                 // text that could run a command takes the paste confirmation.
@@ -435,12 +473,69 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
                     channel.key(key, text: key == GHOSTTY_KEY_ENTER || key == GHOSTTY_KEY_TAB ? "" : piece)
                 }
             case .backspace:
-                channel.key(GHOSTTY_KEY_BACKSPACE)
+                let word = deleteAcceleration.softwareDeletesWord(at: CACurrentMediaTime())
+                sendBackspace(word: word)
             }
         }
         showModifiers()
     }
+
+    /// A word delete is Ctrl-W, encoded for the app's keyboard protocol, and
+    /// only on the primary screen; see `SSHTerminalDeleteAcceleration`.
+    @discardableResult
+    private func sendBackspace(word: Bool) -> Bool {
+        if word, channel.modifierLatch.modifiers == 0, !channel.engine.alternateScreen {
+            return channel.key(GHOSTTY_KEY_W, text: "w", modifiers: GhosttyMods(GHOSTTY_MODS_CTRL))
+        }
+        return channel.key(GHOSTTY_KEY_BACKSPACE)
+    }
+
+    /// One write for the trackpad travel since the last frame. Arrows follow
+    /// the app's cursor-key mode and do not spend a Ctrl or Alt latch.
+    func flushTrackpadArrows() {
+        let steps = trackpadArrows.takePending()
+        guard !steps.isEmpty, channel.connected, !channel.inputClosed else { return }
+        var bytes = SSHTerminalScrollCoalescing.encodeRepeated(abs(steps.columns)) {
+            channel.engine.key(steps.columns < 0 ? GHOSTTY_KEY_ARROW_LEFT : GHOSTTY_KEY_ARROW_RIGHT)
+        }
+        bytes.append(SSHTerminalScrollCoalescing.encodeRepeated(abs(steps.rows)) {
+            channel.engine.key(steps.rows < 0 ? GHOSTTY_KEY_ARROW_UP : GHOSTTY_KEY_ARROW_DOWN)
+        })
+        channel.send(bytes)
+    }
+
+    /// Dictated words go to the shell once iOS stops revising them for
+    /// `phraseSettleDelay`. The phrase stays so dictation can add to it.
+    func settlePhrase() {
+        phraseCommit?.cancel()
+        phraseCommit = nil
+        applyTextInput(textInputStorage.takeUnsentPhrase())
+    }
+
+    /// Before input that bypasses the text document reaches the shell, the
+    /// dictated words go first and the phrase ends.
+    func finishPhrase() {
+        phraseCommit?.cancel()
+        phraseCommit = nil
+        applyTextInput(textInputStorage.finishPhrase())
+    }
+
+    /// Dictation revises its guess several times a second while you speak.
+    static let phraseSettleDelay: Duration = .milliseconds(1500)
+
+    private func schedulePhraseCommit() {
+        phraseCommit?.cancel()
+        phraseCommit = nil
+        guard textInputStorage.hasUnsentPhrase else { return }
+        phraseCommit = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.phraseSettleDelay)
+            guard !Task.isCancelled else { return }
+            self?.settlePhrase()
+        }
+    }
+
     private func accessoryKey(_ key: GhosttyKey) {
+        finishPhrase()
         channel.key(key)
         showModifiers()
     }
@@ -499,6 +594,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             window?.endEditing(true)
         case .mouseClick:
             cancelHideKeyboard()
+            finishPhrase()
             let cell = self.cell(at: point)
             channel.mouse(.click, column: cell.column, row: cell.row)
         case .focusChatBar:
@@ -557,12 +653,14 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// The edit menu's Paste. iOS grants that read without the Allow Paste alert.
     override func paste(_ sender: Any?) {
         guard !ignoresSoftwareKeyEcho else { return }
+        finishPhrase()
         requestPaste(UIPasteboard.general.string)
     }
 
     /// The accessory bar's UIPasteControl. Its tap is the consent, so there is
     /// no alert, and the text loads off the main thread.
     override func paste(itemProviders: [NSItemProvider]) {
+        finishPhrase()
         guard let provider = itemProviders.first(where: { $0.canLoadObject(ofClass: String.self) }) else {
             requestPaste(nil)
             return
@@ -573,7 +671,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
     override func resignFirstResponder() -> Bool {
         hardwarePresses.removeAll()
+        finishPhrase()
         textInputStorage.reset()
+        deleteAcceleration.reset()
+        trackpadArrows.end()
+        _ = trackpadArrows.takePending()
         keyRepeater.stop()
         keyStrip?.stopRepeating()
         let resigned = super.resignFirstResponder()
@@ -583,24 +685,37 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         var unhandled = Set<UIPress>()
+        if presses.contains(where: { $0.key != nil }) { finishPhrase() }
         for press in presses {
             guard let key = press.key else { unhandled.insert(press); continue }
             hardwarePresses.insert(press)
             // Modifier keys alone (HID 0xE0...0xE7) send nothing and must not
             // spend the one-shot modifiers.
             if (0xE0...0xE7).contains(key.keyCode.rawValue) { continue }
+            // ⌘C and ⌘K run as key commands (`keyCommands`), never here.
+            if SSHTerminalHardwareShortcut.matching(input: key.charactersIgnoringModifiers, modifiers: key.modifierFlags) != nil {
+                unhandled.insert(press)
+                continue
+            }
             if key.modifierFlags.contains(.command), key.charactersIgnoringModifiers.lowercased() == "v" {
                 requestPaste(UIPasteboard.general.string)
                 continue
             }
-            let physical = Self.physicalKey(key.keyCode) ?? Self.logicalKey(key.charactersIgnoringModifiers)
+            // iOS hands ⌘. over as Esc: the period key, no modifiers, and
+            // the Esc input string as its characters.
+            let escape = key.characters == UIKeyCommand.inputEscape
+            let physical = escape ? GHOSTTY_KEY_ESCAPE
+                : Self.physicalKey(key.keyCode) ?? Self.logicalKey(key.charactersIgnoringModifiers)
             var mods: GhosttyMods = 0
             if key.modifierFlags.contains(.control) { mods |= GhosttyMods(GHOSTTY_MODS_CTRL) }
             if key.modifierFlags.contains(.alternate) { mods |= GhosttyMods(GHOSTTY_MODS_ALT) }
             if key.modifierFlags.contains(.shift) { mods |= GhosttyMods(GHOSTTY_MODS_SHIFT) }
             if key.modifierFlags.contains(.command) { mods |= GhosttyMods(GHOSTTY_MODS_SUPER) }
-            let text = key.characters.unicodeScalars.contains { $0.value < 32 || $0.value == 127 || (0xf700...0xf8ff).contains($0.value) }
-                ? "" : key.characters
+            guard let characters = Self.hardwareCharacters(key) else { continue }
+            // UIKit names special keys with input strings (UIKeyInputEscape),
+            // never text for the shell.
+            let text = escape || characters.unicodeScalars.contains { $0.value < 32 || $0.value == 127 || (0xf700...0xf8ff).contains($0.value) }
+                ? "" : characters
             // Snapshot for repeats, but only key() may consume the latch.
             let repeatMods = mods | channel.modifierLatch.modifiers
             let accepted = channel.key(physical, text: text, modifiers: mods)
@@ -608,10 +723,19 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             guard accepted else { continue }
             // The held key repeats with the modifiers it was pressed with
             // (including a spent one-shot Ctrl); DECCKM is read at each encode.
+            // A plain ⌫ held past a second deletes words.
             repeatingPress = press
+            let pressedAt = CACurrentMediaTime()
+            let plainDelete = physical == GHOSTTY_KEY_BACKSPACE && repeatMods == 0
             keyRepeater.start { [weak self] in
                 guard let self, self.channel.connected else { return false }
-                let accepted = self.channel.key(physical, text: text, modifiers: repeatMods)
+                let accepted: Bool
+                if plainDelete {
+                    let held = CACurrentMediaTime() - pressedAt
+                    accepted = self.sendBackspace(word: SSHTerminalDeleteAcceleration.hardwareDeletesWord(heldFor: held))
+                } else {
+                    accepted = self.channel.key(physical, text: text, modifiers: repeatMods)
+                }
                 self.showModifiers()
                 return accepted
             }
@@ -653,6 +777,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             dragSnapshot = nil
             switch target {
             case .mouse:
+                finishPhrase()
                 channel.mouse(.press, column: cell.column, row: cell.row)
             case .selection:
                 channel.engine.beginSelection(column: cell.column, row: cell.row, surfacePoint: surface)
@@ -717,6 +842,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         guard scrollView === historyScroll else { return }
+        finishPhrase()
         appScroll.cancelQueuedSteps()
         appScroll.wheelRemainder = SSHTerminalWheelScaling.Accumulator()
         appScroll.altRemainder = 0
@@ -968,6 +1094,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 
     private func showHighlight(_ snapshot: SSHTerminalSelectionSnapshot, lingering: Bool) {
+        shownSelection = snapshot
         selectionOverlay.spans = snapshot.spans.compactMap { span in
             guard span.row >= 0 else { return nil }
             let x = CGFloat(span.startColumn) * cellSize.width
@@ -994,6 +1121,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private func clearHighlight() {
         highlightClear?.cancel()
         highlightClear = nil
+        shownSelection = nil
         selectionOverlay.spans = []
         selectionOverlay.isHidden = true
     }
@@ -1010,7 +1138,10 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         let strip = SSHTerminalKeyStripView(
             role: .accessory,
             handlers: SSHTerminalKeyStripView.Handlers(
-                sendStrokes: { [weak self] strokes in self?.channel.keys(strokes) },
+                sendStrokes: { [weak self] strokes in
+                    self?.finishPhrase()
+                    self?.channel.keys(strokes)
+                },
                 sendKey: { [weak self] key in self?.accessoryKey(key) },
                 sendArrow: { [weak self] key in
                     guard let self, self.isFirstResponder, self.channel.connected,
@@ -1020,6 +1151,8 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
                 },
                 toggleModifier: { [weak self] modifier in
                     guard let self else { return }
+                    // Dictated words go first, so the latch is for the next key.
+                    self.finishPhrase()
                     self.channel.modifierLatch.toggle(modifier)
                     self.showModifiers()
                 },
@@ -1065,6 +1198,20 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         backgroundColor ?? .systemBackground
     }
 
+    /// Option is Meta: Option-b sends Alt with `b`, not the `∫` a Mac layout
+    /// puts on that key, so readline and agent TUIs see their Alt bindings.
+    /// UIKey has no Shift-only character for an Option chord, so Option-Shift
+    /// works for letters only. With another key it sends nothing: guessing
+    /// the unshifted key would turn Option-Shift-[ into `ESC [`, the start
+    /// of a control sequence.
+    private static func hardwareCharacters(_ key: UIKey) -> String? {
+        guard key.modifierFlags.contains(.alternate) else { return key.characters }
+        let base = key.charactersIgnoringModifiers
+        guard key.modifierFlags.contains(.shift) else { return base }
+        guard base.lowercased() != base.uppercased() else { return nil }
+        return base.uppercased()
+    }
+
     private static func logicalKey(_ text: String) -> GhosttyKey {
         switch text {
         case "\n", "\r": return GHOSTTY_KEY_ENTER
@@ -1104,6 +1251,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             guard let view else { return }
             view.displayLinkTickCount &+= 1
             view.flushPendingAppScroll()
+            view.flushTrackpadArrows()
             // A hold has a one-second deadline even if no more bytes arrive.
             let changes = view.channel.engine.changeCount
             let generation = view.displayLinkGeneration

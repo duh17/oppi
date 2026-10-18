@@ -51,7 +51,27 @@ The file is read once each time that program changes, through a side command on 
 
 Photos and files from **+** or a pasted image are saved on the host before Send, in an owner-only `oppi-ssh` folder under `$TMPDIR` (or `/tmp`), over the same SSH connection. The prompt then lists each file's path on its own line, so the agent can read it. Each file is limited to 32 MB.
 
-- In direct typing, holding ⌫ on the on-screen keyboard repeats. Text the keyboard hands over in one piece, such as a dictated phrase, that contains a newline or a control character asks first, like a multi-line paste, and is then pasted as one block. Return alone is Enter. Writing Tools is off there, and the space-bar cursor does not move the shell's cursor.
+- In direct typing, holding ⌫ repeats, on the on-screen keyboard and on a hardware keyboard. After about a second of holding, each repeat deletes a word (Ctrl-W, in the app's keyboard protocol) instead of a character, as in iOS text fields; letting go starts over with characters. Words are deleted only on the normal screen (shells and agent prompts such as pi or Claude Code). A full-screen app on the alternate screen (vim, nano, less, Emacs) keeps getting ⌫, since it may bind Ctrl-W to something else.
+- Touch and hold the space bar, then slide, to move the cursor: one ← or → per character cell of travel and one ↑ or ↓ per row, sent once per frame in the app's cursor-key mode. In a shell, ↑ and ↓ walk the command history. The trackpad moves nothing while a keyboard such as Japanese is composing.
+- The keyboard's mic dictates into the shell. iOS keeps revising the words while you speak, so they go to the shell once they have stayed the same for about 1.5 seconds, or at once when you press Return or any other key. Each word is sent once: if iOS later rewrites words already sent (adding punctuation or a capital at the end, say), that rewrite is left out. Words entered by sliding across the keyboard go the same way.
+- Text the keyboard hands over in one piece, such as a dictated phrase, that contains a newline or a control character asks first, like a multi-line paste, and is then pasted as one block. Return alone is Enter. Writing Tools is off there.
+- On the terminal keyboard's bar, **Alt** then Return sends Alt+Enter (the same as Option-Return below). There is no Shift key on the bar, so Shift-Return needs a hardware keyboard.
+
+### Hardware keyboard
+
+While typing in the terminal (not the chat bar), a hardware keyboard adds these. Hold ⌘ to see ⌘C and ⌘K in the shortcut overlay.
+
+| Keys | What happens |
+|---|---|
+| ⌘C | Copies the highlighted selection, with the same **Copied N characters** note as a touch selection: during a touch-and-hold drag, or while a double-tapped word or a released selection is still highlighted. With nothing highlighted it does nothing and sends nothing. |
+| ⌘K | Clears like Ghostty's ⌘K. Local history is deleted. At a shell prompt the shell reported with OSC 133, the screen is cleared and a form feed (Ctrl-L) is sent so the shell redraws its prompt. Elsewhere the rows above the cursor are removed, the cursor's row moves to the top, and nothing is sent. On the alternate screen (vim, less, a TUI) ⌘K does nothing. |
+| ⌘. | Esc. iOS turns ⌘. into Esc for every app, so it is not in the overlay. |
+| ⌘V | Paste, with the same confirmation as **Paste**. |
+| Option | Meta: Option with a key sends Alt with that key, as Ghostty does with `macos-option-as-alt = true`. In a shell Option-B and Option-F move by word. Option with Shift works with letters only; Option-Shift with another key sends nothing, since iOS does not report which shifted character it would be. Option does not type the characters a Mac layout puts on it (∫, é, or @ on some layouts). |
+| Shift-Return | Shift+Enter: `ESC [ 27 ; 2 ; 13 ~`, or `ESC [ 13 ; 2 u` when the app turned on the Kitty keyboard protocol. pi reads it as a new line without sending. |
+| Option-Return | Alt+Enter: `ESC` then Return, or `ESC [ 13 ; 3 u` with the Kitty keyboard protocol. pi reads it as a queued follow-up message. |
+
+Other keys, including other ⌘ shortcuts, are sent as before.
 - With the keyboard hidden, a tap starts typing: into the terminal when that is the input (a shell, or after the keyboard button or **Type in Terminal**), even if the app asked for mouse input; into the input bar for an agent.
 - While the direct keyboard is up and an app asks for mouse input (Herdr, tmux with `mouse on`, many TUIs), a tap is a click at the cell and the keyboard stays up. Hide that keyboard with ⌄ on its bar. A tap hides the keyboard only when the app did not ask for mouse input.
 - While the chat bar is the input and an app asks for mouse input, that tap is a click at the cell.
