@@ -1729,13 +1729,14 @@ export class Server {
       try {
         await this.routes.dispatch(method, path, url, req, res);
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : "Internal error";
         log.error("http.request.failed", {
           method,
           path,
           error: safeErrorMessage(err),
         });
-        this.error(res, 500, message);
+        // The caller is not authenticated yet, and error text can name host paths and
+        // config details. It stays in the log.
+        this.error(res, 500, "Internal error");
       }
       return;
     }
