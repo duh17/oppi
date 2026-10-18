@@ -33,8 +33,6 @@ scripts/*
 !scripts/screenshot-screen-guard.ts
 !scripts/pre-push-plan.ts
 !scripts/pre-push-plan.test.ts
-!scripts/detect-ci-relevant-paths.sh
-!scripts/detect-ci-relevant-paths.test.ts
 !scripts/sim-pool.sh
 clients/apple/scripts/*
 !clients/apple/scripts/build-tailscalekit.sh
@@ -91,8 +89,6 @@ server/scripts/manual/*
 .github/*
 !.github/workflows/
 .github/workflows/*
-!.github/workflows/server.yml
-!.github/workflows/apple.yml
 !.github/workflows/hygiene.yml
 .reviews/
 .internal/
