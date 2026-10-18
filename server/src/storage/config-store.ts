@@ -880,17 +880,10 @@ function normalizeConfig(
       changed = true;
     }
     if (asr.liveVoiceBackend !== undefined) {
-      if (
-        asr.liveVoiceBackend === "yuwp" ||
-        asr.liveVoiceBackend === "cloud-duplex" ||
-        asr.liveVoiceBackend === "gpt-live" ||
-        asr.liveVoiceBackend === "grok-voice"
-      ) {
+      if (asr.liveVoiceBackend === "yuwp" || asr.liveVoiceBackend === "grok-voice") {
         asrConfig.liveVoiceBackend = asr.liveVoiceBackend;
       } else {
-        errors.push(
-          "config.asr.liveVoiceBackend: expected yuwp, cloud-duplex, gpt-live, or grok-voice",
-        );
+        errors.push("config.asr.liveVoiceBackend: expected yuwp or grok-voice");
       }
     }
     // An invalid explicit provider must not silently become the HTTP backend.

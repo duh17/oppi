@@ -102,8 +102,7 @@ export interface SessionCoordinatorBundleDeps {
     key: string,
   ) => SessionStartActiveSession["pendingUIRequests"] | undefined;
   getRegisterVoiceControlBridge?: () =>
-    | ((sessionId: string, bridge: VoiceControlBridge) => () => void)
-    | undefined;
+    ((sessionId: string, bridge: VoiceControlBridge) => () => void) | undefined;
 }
 
 export function createSessionCoordinatorBundle(

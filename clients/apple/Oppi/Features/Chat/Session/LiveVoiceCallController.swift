@@ -87,6 +87,8 @@ final class LiveVoiceCallController {
 
     func start(using connection: ServerConnection) async {
         bind(connection)
+        // A reply being read aloud would talk over the call.
+        connection.audioPlayer.stop()
         await start()
     }
 
@@ -242,7 +244,7 @@ final class LiveVoiceCallController {
             }
         case .voiceApprovalRequired(let required):
             approvalSummary = required.summary
-            statusText = LiveVoiceBar.statusText(approvalSummary: required.summary)
+            statusText = LiveVoiceBarView.statusText(approvalSummary: required.summary)
         case .voiceApprovalResult:
             approvalSummary = nil
             statusText = callState.map(Self.statusText(for:)) ?? "Listening"

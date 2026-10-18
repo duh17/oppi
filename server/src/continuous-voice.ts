@@ -18,7 +18,12 @@ export type VoiceFrontendSemanticEvent =
   | { type: "user_speech_started" }
   | { type: "user_speech_ended" }
   | { type: "user_transcript_partial"; text: string }
+  /** A finished user utterance that the backend's turn policy turns into Pi work (Yuwp). */
   | { type: "user_utterance_committed"; utteranceId: string; text: string }
+  /** The voice model explicitly asked Pi to do this (Grok Voice). Never approval evidence. */
+  | { type: "delegation_requested"; utteranceId: string; text: string }
+  /** The user's own finished words. Display and spoken approval only; never a Pi prompt. */
+  | { type: "user_transcript_final"; text: string }
   | { type: "assistant_speech_started" }
   | { type: "assistant_speech_stopped" };
 
@@ -39,11 +44,7 @@ export interface VoiceDelegationUpdate {
 }
 
 export type VoiceDelegationState =
-  | "delegated"
-  | "acknowledged"
-  | "working"
-  | "blocked"
-  | "completed";
+  "delegated" | "acknowledged" | "working" | "blocked" | "completed";
 
 export interface VoiceDelegationSnapshot extends VoiceDelegation {
   state: VoiceDelegationState;
@@ -207,7 +208,10 @@ export class ContinuousVoiceSession {
       case "assistant_speech_stopped":
         this.output = "idle";
         return;
-      case "user_utterance_committed": {
+      case "user_transcript_final":
+        return;
+      case "user_utterance_committed":
+      case "delegation_requested": {
         const request = event.text.trim();
         if (!request) return;
         const delegationId = this.options.nextDelegationId();

@@ -11,8 +11,8 @@ import type { SttProvider, SttTranscriptUpdate } from "./stt-provider.js";
 import { parseVoiceApprovalDecision } from "./voice-approval-bridge.js";
 
 /**
- * Media adapters speak only semantic frontend events. Local Yuwp and a future
- * cloud duplex backend swap here; VoiceCallController stays provider-neutral.
+ * Media adapters speak only semantic frontend events. Local Yuwp and Grok Voice
+ * swap here; VoiceCallController stays provider-neutral.
  */
 export interface VoiceMediaAdapter extends VoiceFrontend {
   feedAudio?(pcm: Buffer): void;
@@ -24,62 +24,18 @@ export interface LiveVoiceTtsPort {
   speak(text: string, signal?: AbortSignal): AsyncIterable<Buffer>;
 }
 
-export type VoiceMediaBackend = "yuwp" | "cloud-duplex" | "gpt-live" | "grok-voice";
-export type CloudVoiceProvider = "gpt-live" | "grok-voice";
-
-/** Vendor duplex session. GPT Live and Grok Voice implement this, not the call protocol. */
-export interface CloudDuplexRemote {
-  start(handler: VoiceFrontendEventHandler): void | Promise<void>;
-  stop?(): void | Promise<void>;
-}
-
-const cloudVoiceRemotes = new Map<CloudVoiceProvider, CloudDuplexRemote>();
-
-export function registerCloudVoiceRemote(
-  provider: CloudVoiceProvider,
-  remote: CloudDuplexRemote,
-): void {
-  cloudVoiceRemotes.set(provider, remote);
-}
-
-export function clearCloudVoiceRemotes(): void {
-  cloudVoiceRemotes.clear();
-}
-
-export function unimplementedCloudRemote(provider: CloudVoiceProvider): CloudDuplexRemote {
-  return {
-    async start() {
-      throw new Error(`Live Voice cloud provider ${provider} is not implemented`);
-    },
-  };
-}
-
-export function createVoiceMediaAdapter(
-  backend: VoiceMediaBackend,
-  deps: { stt?: SttProvider; cloudRemote?: CloudDuplexRemote; tts?: LiveVoiceTtsPort } = {},
-): VoiceMediaAdapter {
-  if (backend === "cloud-duplex") {
-    return new CloudDuplexVoiceMediaAdapter(deps.cloudRemote);
-  }
-  if (backend === "gpt-live" || backend === "grok-voice") {
-    return new CloudDuplexVoiceMediaAdapter(
-      deps.cloudRemote ?? cloudVoiceRemotes.get(backend) ?? unimplementedCloudRemote(backend),
-    );
-  }
-  if (!deps.stt) throw new Error("Live Voice ASR is unavailable");
-  return new YuwpVoiceMediaAdapter(deps.stt, { tts: deps.tts });
-}
-
-/** Production selector. Server must call this instead of hardcoding Yuwp. */
+/** Production selector: one adapter per attached call. */
 export function selectLiveVoiceMediaAdapter(input: {
   liveVoiceBackend?: string;
   sttEndpoint?: string;
   createStt?: () => SttProvider;
   tts?: LiveVoiceTtsPort;
+  createGrokVoice?: () => VoiceMediaAdapter;
 }): VoiceMediaAdapter {
-  const backend = (input.liveVoiceBackend ?? "yuwp") as VoiceMediaBackend;
-  if (backend === "cloud-duplex" || backend === "gpt-live" || backend === "grok-voice") {
-    return createVoiceMediaAdapter(backend);
+  const backend = input.liveVoiceBackend ?? "yuwp";
+  if (backend === "grok-voice") {
+    if (!input.createGrokVoice) throw new Error("Grok Voice is unavailable");
+    return input.createGrokVoice();
   }
   if (backend !== "yuwp") {
     throw new Error(`Unknown Live Voice media backend: ${String(input.liveVoiceBackend)}`);
@@ -87,7 +43,7 @@ export function selectLiveVoiceMediaAdapter(input: {
   if (!input.sttEndpoint || !input.createStt) {
     throw new Error("Live Voice ASR is unavailable");
   }
-  return createVoiceMediaAdapter("yuwp", { stt: input.createStt(), tts: input.tts });
+  return new YuwpVoiceMediaAdapter(input.createStt(), { tts: input.tts });
 }
 
 export interface VoiceCallMediaAttachInput {
@@ -250,7 +206,7 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     // Token, idle-pause, and leftover/stop can overlap. Queue so one claim
     // of lastCommitted happens per distinct segment.
     if (!raw.trim()) return Promise.resolve();
-    const perform = async () => {
+    const perform = async (): Promise<void> => {
       const handler = this.handler;
       if (!handler) return;
       const next = raw.trim();
@@ -277,46 +233,6 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
       if (this.commitInFlight === work) this.commitInFlight = undefined;
     });
     return work;
-  }
-}
-
-/**
- * Stub for a future remote duplex backend. It accepts the same semantic events
- * so GPT Live vs Grok Voice is an adapter swap, not a second call protocol.
- */
-export class CloudDuplexVoiceMediaAdapter implements VoiceMediaAdapter {
-  private handler: VoiceFrontendEventHandler | undefined;
-
-  constructor(private readonly remote?: CloudDuplexRemote) {}
-
-  async start(handler: VoiceFrontendEventHandler): Promise<void> {
-    this.handler = handler;
-    if (this.remote) {
-      await this.remote.start(handler);
-      return;
-    }
-    await handler({ type: "connected" });
-  }
-
-  feedAudio(_pcm: Buffer): void {
-    // Remote duplex media does not ingest Oppi-captured PCM.
-  }
-
-  publish(_update: VoiceDelegationUpdate): void {}
-
-  async emit(event: VoiceFrontendSemanticEvent): Promise<void> {
-    await this.handler?.(event);
-  }
-
-  async stop(): Promise<void> {
-    try {
-      await this.remote?.stop?.();
-    } catch {
-      // Remote teardown cannot block detach.
-    }
-    const handler = this.handler;
-    this.handler = undefined;
-    if (handler) await handler({ type: "disconnected" });
   }
 }
 
@@ -461,34 +377,62 @@ export class VoiceCallMediaCoordinator {
         // A pending voice_approval_required challenge owns the next committed
         // utterance. Exact Stage 1 phrases go to submitApprovalTranscript;
         // anything else fails closed instead of becoming a Pi delegation.
-        const pending = this.deps.calls.snapshot(session.callId).pendingApprovals[0];
+        const pending = this.pendingChallengeId(session);
         if (pending) {
-          if (parseVoiceApprovalDecision(request)) {
-            await this.deps.calls.submitApprovalTranscript(
-              {
-                callId: session.callId,
-                controllerLeaseEpoch: session.controllerLeaseEpoch,
-                challengeId: pending.challengeId,
-                transcript: request,
-              },
-              session.frontend,
-            );
-          }
+          await this.answerApproval(session, pending, request);
           return;
         }
-        this.deps.calls.commitFrontendUtterance({
-          callId: session.callId,
-          controllerLeaseEpoch: session.controllerLeaseEpoch,
-          frontendConnectionId: session.frontend.connectionId,
-          utteranceId: this.deps.nextUtteranceId?.() ?? event.utteranceId,
-          delegationId: this.deps.nextDelegationId?.() ?? randomUUID(),
-          request,
-        });
+        this.delegate(session, event.utteranceId, request);
+        return;
+      }
+      case "user_transcript_final": {
+        // The user's own words can answer a challenge; they never start Pi work.
+        const pending = this.pendingChallengeId(session);
+        if (pending) await this.answerApproval(session, pending, event.text.trim());
+        return;
+      }
+      case "delegation_requested": {
+        // The voice model composed this request, so it is work, never approval evidence.
+        const request = event.text.trim();
+        if (request) this.delegate(session, event.utteranceId, request);
         return;
       }
       default:
         return;
     }
+  }
+
+  private pendingChallengeId(session: MediaSession): string | undefined {
+    return this.deps.calls.snapshot(session.callId).pendingApprovals[0]?.challengeId;
+  }
+
+  /** Only exact decision phrases reach the approval authority; anything else is dropped. */
+  private async answerApproval(
+    session: MediaSession,
+    challengeId: string,
+    transcript: string,
+  ): Promise<void> {
+    if (!transcript || !parseVoiceApprovalDecision(transcript)) return;
+    await this.deps.calls.submitApprovalTranscript(
+      {
+        callId: session.callId,
+        controllerLeaseEpoch: session.controllerLeaseEpoch,
+        challengeId,
+        transcript,
+      },
+      session.frontend,
+    );
+  }
+
+  private delegate(session: MediaSession, utteranceId: string, request: string): void {
+    this.deps.calls.commitFrontendUtterance({
+      callId: session.callId,
+      controllerLeaseEpoch: session.controllerLeaseEpoch,
+      frontendConnectionId: session.frontend.connectionId,
+      utteranceId: this.deps.nextUtteranceId?.() ?? utteranceId,
+      delegationId: this.deps.nextDelegationId?.() ?? randomUUID(),
+      request,
+    });
   }
 }
 

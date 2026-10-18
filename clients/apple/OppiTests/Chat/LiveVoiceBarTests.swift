@@ -1,4 +1,3 @@
-import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -6,18 +5,11 @@ import UIKit
 @Suite("LiveVoiceBar")
 @MainActor
 struct LiveVoiceBarTests {
-    @Test("Mute, state, and End keep stable identifiers")
-    func exposesStableIdentifiers() {
-        #expect(LiveVoiceBar.muteIdentifier == "chat.liveVoice.mute")
-        #expect(LiveVoiceBar.endIdentifier == "chat.liveVoice.end")
-        #expect(LiveVoiceBar.stateIdentifier == "chat.liveVoice.state")
-    }
-
     @Test("Center state prefers an approval challenge summary")
     func presentsApprovalSummary() {
-        #expect(LiveVoiceBar.statusText(approvalSummary: "Allow the test command?") == "Allow the test command?")
-        #expect(LiveVoiceBar.statusText(approvalSummary: "   ") == "Listening")
-        #expect(LiveVoiceBar.statusText(approvalSummary: nil) == "Listening")
+        #expect(LiveVoiceBarView.statusText(approvalSummary: "Allow the test command?") == "Allow the test command?")
+        #expect(LiveVoiceBarView.statusText(approvalSummary: "   ") == "Listening")
+        #expect(LiveVoiceBarView.statusText(approvalSummary: nil) == "Listening")
     }
 
     @Test("Footer keeps the composer until a live call is active")
@@ -47,32 +39,34 @@ struct LiveVoiceBarTests {
         #expect(ChatView.showsLiveVoiceBar(isLive: true, isStopped: true))
     }
 
-    @Test("Hosted bar mounts Mute, center state, and End")
-    func hostedBarMounts() {
-        var muted = false
-        var ended = false
-        let controller = UIHostingController(
-            rootView: LiveVoiceBar(
-                statusText: "Listening",
-                isMuted: false,
-                onMute: { muted = true },
-                onEnd: { ended = true }
-            )
-        )
-        controller.loadViewIfNeeded()
-        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 180)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        controller.view.setNeedsLayout()
-        controller.view.layoutIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    @Test("Mute and End reach their owner actions, and the state reads as its text")
+    func controlsReachOwnerActions() throws {
+        let bar = LiveVoiceBarView(frame: CGRect(x: 0, y: 0, width: 390, height: 96))
+        var mutes = 0
+        var ends = 0
+        bar.onMute = { mutes += 1 }
+        bar.onEnd = { ends += 1 }
+        bar.apply(statusText: "Pi says the tests passed", isMuted: true)
+        bar.layoutIfNeeded()
 
-        #expect(controller.view.bounds.width == 390)
-        #expect(!muted)
-        #expect(!ended)
+        let mute = try #require(control(LiveVoiceBarView.muteIdentifier, in: bar) as? UIButton)
+        let end = try #require(control(LiveVoiceBarView.endIdentifier, in: bar) as? UIButton)
+        #expect(mute.accessibilityLabel == "Unmute")
+        mute.sendActions(for: .touchUpInside)
+        end.sendActions(for: .touchUpInside)
+        #expect(mutes == 1)
+        #expect(ends == 1)
 
-        window.isHidden = true
-        window.rootViewController = nil
+        let state = try #require(control(LiveVoiceBarView.stateIdentifier, in: bar))
+        #expect(state.isAccessibilityElement)
+        #expect(state.accessibilityLabel == "Pi says the tests passed")
+    }
+
+    private func control(_ identifier: String, in view: UIView) -> UIView? {
+        if view.accessibilityIdentifier == identifier { return view }
+        for child in view.subviews {
+            if let match = control(identifier, in: child) { return match }
+        }
+        return nil
     }
 }

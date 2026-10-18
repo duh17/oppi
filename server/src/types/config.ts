@@ -217,8 +217,8 @@ export interface ServerConfig {
     sttEndpoint?: string;
     /** Model id for the HTTP/Yuwp backend. */
     sttModel?: string;
-    /** Live Voice media adapter. Yuwp is local ASR; cloud-duplex is the GPT Live / Grok swap. */
-    liveVoiceBackend?: "yuwp" | "cloud-duplex" | "gpt-live" | "grok-voice";
+    /** Live Voice media: local Yuwp ASR + TTS, or Grok Voice (xAI realtime speech). */
+    liveVoiceBackend?: "yuwp" | "grok-voice";
   };
 
   /** Image attachment preprocessing performed by clients before upload. */

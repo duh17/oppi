@@ -55,9 +55,7 @@ export interface VoiceCallApprovalAuthority {
 }
 
 export type VoiceCallEventMessage =
-  | VoiceDelegationUpdateMessage
-  | VoiceApprovalRequiredMessage
-  | VoiceApprovalResultMessage;
+  VoiceDelegationUpdateMessage | VoiceApprovalRequiredMessage | VoiceApprovalResultMessage;
 
 export interface PersistedVoiceCall {
   callId: string;

@@ -214,7 +214,7 @@ Pi's host MCP commands (`pi mcp list`, `login`, `logout`), which the MCP Servers
 | `asr.provider`                          | `http` or `xai` (restart)                          |
 | `asr.sttModel`                          | HTTP/Yuwp STT model id (restart)                                      |
 | `tts.provider` / `tts.endpoint` / `tts.model` / `tts.voice` / `tts.language` | Read aloud (restart; see [Read aloud](#read-aloud)) |
-| `asr.liveVoiceBackend`                  | Live Voice media: `yuwp`, `cloud-duplex`, `gpt-live`, or `grok-voice` (restart) |
+| `asr.liveVoiceBackend`                  | Live Voice media: `yuwp` or `grok-voice` (restart)                  |
 | `runtimeEnv.<NAME>`                     | Host runtime env, including TTS URLs (restart)                      |
 | `extensions.voice.defaultVoiceId`       | Default voice id                                                    |
 | `images.autoResize`                     | Client image preprocessing preference                               |

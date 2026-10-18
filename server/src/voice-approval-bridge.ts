@@ -3,9 +3,7 @@ import { createHash } from "node:crypto";
 import type { ExtensionUIResponse } from "./extension-ui-state.js";
 
 export type VoiceApprovalRisk =
-  | "voice_eligible"
-  | "secondary_confirmation_required"
-  | "voice_ineligible";
+  "voice_eligible" | "secondary_confirmation_required" | "voice_ineligible";
 
 export interface VoiceControllerLease {
   callId: string;

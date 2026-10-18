@@ -338,36 +338,15 @@ describe("Storage config validation", () => {
     expect(result.config?.asr?.sttEndpoint).toBe("http://localhost:9847");
   });
 
-  it("preserves asr.liveVoiceBackend for Yuwp vs cloud-duplex", () => {
+  it("preserves asr.liveVoiceBackend grok-voice", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
-      asr: {
-        sttEndpoint: "http://127.0.0.1:7936",
-        liveVoiceBackend: "cloud-duplex",
-      },
+      asr: { sttEndpoint: "http://127.0.0.1:7936", liveVoiceBackend: "grok-voice" },
     };
 
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(true);
-    expect(result.config?.asr?.liveVoiceBackend).toBe("cloud-duplex");
-  });
-
-  it("accepts reserved GPT Live and Grok Voice backend names", () => {
-    for (const liveVoiceBackend of ["gpt-live", "grok-voice"] as const) {
-      const result = Storage.validateConfig(
-        {
-          ...Storage.getDefaultConfig(dir),
-          asr: {
-            sttEndpoint: "http://127.0.0.1:7936",
-            liveVoiceBackend,
-          },
-        },
-        dir,
-        true,
-      );
-      expect(result.valid).toBe(true);
-      expect(result.config?.asr?.liveVoiceBackend).toBe(liveVoiceBackend);
-    }
+    expect(result.config?.asr?.liveVoiceBackend).toBe("grok-voice");
   });
 
   it("rejects an unknown asr.liveVoiceBackend in strict mode", () => {
@@ -375,15 +354,13 @@ describe("Storage config validation", () => {
       ...Storage.getDefaultConfig(dir),
       asr: {
         sttEndpoint: "http://127.0.0.1:7936",
-        liveVoiceBackend: "openai-realtime",
+        liveVoiceBackend: "gpt-live",
       },
     };
 
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(false);
-    expect(result.errors).toContain(
-      "config.asr.liveVoiceBackend: expected yuwp, cloud-duplex, gpt-live, or grok-voice",
-    );
+    expect(result.errors).toContain("config.asr.liveVoiceBackend: expected yuwp or grok-voice");
   });
 
   it("rejects retired asr preserveAudio in strict mode", () => {

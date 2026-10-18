@@ -113,17 +113,9 @@ export type TurnAckStage = "accepted" | "dispatched" | "started";
 export type VoiceCallLifecycleState = "active" | "ended";
 export type VoiceCallFrontendState = "attached" | "detached";
 export type VoiceCallDelegationState =
-  | "delegated"
-  | "acknowledged"
-  | "working"
-  | "blocked"
-  | "completed";
+  "delegated" | "acknowledged" | "working" | "blocked" | "completed";
 export type VoiceCallDelegationUpdateKind =
-  | "delegated"
-  | "acknowledgement"
-  | "progress"
-  | "blocked"
-  | "final";
+  "delegated" | "acknowledgement" | "progress" | "blocked" | "final";
 
 export interface VoiceCallDelegationSnapshot {
   delegationId: string;

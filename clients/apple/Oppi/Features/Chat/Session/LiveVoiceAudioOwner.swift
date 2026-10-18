@@ -54,6 +54,9 @@ final class LiveVoiceAudioOwner: LiveVoiceAudioOwning {
     func start() async throws {
         started = true
         muted = false
+        // Same process-wide claim dictation holds: read aloud and media autoplay
+        // stay quiet while the call owns the microphone and speaker.
+        AudioPlayerService.beginProcessCaptureInterruption(owner: self)
         try beginCapture()
     }
 
@@ -83,6 +86,7 @@ final class LiveVoiceAudioOwner: LiveVoiceAudioOwning {
         playback?.teardown()
         engine.stopCapture()
         isCapturing = false
+        AudioPlayerService.endProcessCaptureInterruption(owner: self)
     }
 
     private func beginCapture() throws {

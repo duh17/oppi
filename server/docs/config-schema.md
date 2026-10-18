@@ -157,7 +157,7 @@ Configures routing for server-side dictation to an external STT backend.
 | `asr.provider`    | string | `http`  | STT vendor: `http` (Yuwp session API) or `xai`. Omitted infers `xai` from `api.x.ai`, else HTTP/Yuwp. Invalid providers fail validation and disable dictation on startup. |
 | `asr.sttEndpoint` | string | -       | STT backend base URL. Required for Yuwp/`http`. Optional override for xAI (`https://api.x.ai`). A non-empty value with a valid provider, or `provider: xai`, enables server dictation. Oppi does not persist dictation audio locally. Leftover `asr.backend: pi-extension` and `asr.extension` values are ignored on load. |
 | `asr.sttModel`    | string | -       | HTTP/Yuwp model id; defaults to the bundled Qwen3 ASR id. xAI's official STT API does not take a model id.                                       |
-| `asr.liveVoiceBackend` | string | `yuwp` | Live Voice media adapter. `yuwp` is local ASR. `cloud-duplex` is the generic remote stub. `gpt-live` and `grok-voice` are reserved switches and currently fail closed until those adapters exist. |
+| `asr.liveVoiceBackend` | string | `yuwp` | Live Voice media. `yuwp` uses local ASR (`asr.sttEndpoint`) and TTS (`TTS_BASE_URL`). `grok-voice` uses xAI realtime speech with the server's xAI sign-in or API key; Grok listens and talks, and hands computer work to the hidden Pi voice session. |
 
 ### Images
 

@@ -20,7 +20,10 @@ import type {
   WorkspaceSessionSummarySnapshot,
   WorkspaceStoppedTimeBucketSnapshot,
 } from "./session-dao.js";
-import { runSessionStateDeadSchemaCleanup, tableColumns } from "./session-state-cleanup-migration.js";
+import {
+  runSessionStateDeadSchemaCleanup,
+  tableColumns,
+} from "./session-state-cleanup-migration.js";
 import {
   backfillContextTokensFromTrace,
   backfillCostFromTokens,

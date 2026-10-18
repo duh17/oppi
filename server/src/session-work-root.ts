@@ -104,7 +104,11 @@ export async function resolveSessionWorkRoot(
   { create }: { create: boolean },
 ): Promise<SessionWorkRoot> {
   if (isControlRouteSession(session)) {
-    return controlRoot(isControlConversation(session) ? "conversation" : "session", dataDir, create);
+    return controlRoot(
+      isControlConversation(session) ? "conversation" : "session",
+      dataDir,
+      create,
+    );
   }
   if (isDeclaredVoiceControlSession(session)) {
     return controlRoot("voice", dataDir, create);

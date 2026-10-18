@@ -1281,7 +1281,7 @@ struct ChatView: View {
             isStopped: isStopped,
             lastError: liveVoiceController.lastError
         ) {
-            LiveVoiceBar(
+            LiveVoiceBarHost(
                 statusText: liveVoiceController.statusText,
                 isMuted: liveVoiceController.isMuted,
                 onMute: { liveVoiceController.toggleMute() },
@@ -2117,6 +2117,34 @@ struct ChatView: View {
 
     static func shouldPauseTimelinePresentation(for phase: ScenePhase) -> Bool {
         phase == .inactive || phase == .background
+    }
+
+    /// Hosts the UIKit call bar in ChatView's SwiftUI footer.
+    private struct LiveVoiceBarHost: UIViewRepresentable {
+        let statusText: String
+        let isMuted: Bool
+        let onMute: () -> Void
+        let onEnd: () -> Void
+
+        func makeUIView(context: Context) -> LiveVoiceBarView {
+            LiveVoiceBarView()
+        }
+
+        func updateUIView(_ bar: LiveVoiceBarView, context: Context) {
+            bar.onMute = onMute
+            bar.onEnd = onEnd
+            bar.apply(statusText: statusText, isMuted: isMuted)
+        }
+
+        func sizeThatFits(_ proposal: ProposedViewSize, uiView: LiveVoiceBarView, context: Context) -> CGSize? {
+            let width = proposal.width ?? uiView.bounds.width
+            let height = uiView.systemLayoutSizeFitting(
+                CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+            return CGSize(width: width, height: height)
+        }
     }
 
     static func showsLiveVoiceBar(isLive: Bool, isStopped: Bool, lastError: String? = nil) -> Bool {
