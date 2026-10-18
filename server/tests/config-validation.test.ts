@@ -414,6 +414,29 @@ describe("Storage config validation", () => {
     expect(result.errors).toContain("config.asr.provider: expected http or xai");
   });
 
+  it("keeps a valid read-aloud config and never enables one from invalid tts", () => {
+    const validate = (tts: unknown) =>
+      Storage.validateConfig({ ...Storage.getDefaultConfig(dir), tts }, dir, true);
+
+    const valid = validate({ endpoint: " http://127.0.0.1:7938 ", voice: "elena" });
+    expect(valid.valid).toBe(true);
+    expect(valid.config?.tts).toEqual({ endpoint: "http://127.0.0.1:7938", voice: "elena" });
+
+    for (const [tts, error] of [
+      [
+        { provider: "openai", endpoint: "http://127.0.0.1:7938" },
+        "config.tts.provider: expected http or xai",
+      ],
+      [{ endpoint: "127.0.0.1:7938" }, "config.tts.endpoint: expected http(s) URL"],
+      [{ provider: "http" }, "config.tts.endpoint: required for provider http"],
+      [{ provider: "xai", speed: 2 }, "config.tts.speed: unknown key"],
+    ] as const) {
+      const result = validate(tts);
+      expect(result.valid, error).toBe(false);
+      expect(result.errors).toContain(error);
+    }
+  });
+
   it("omits asr when not present in config", () => {
     const raw = Storage.getDefaultConfig(dir);
     const result = Storage.validateConfig(raw, dir, true);

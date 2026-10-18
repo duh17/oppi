@@ -437,40 +437,105 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func contextMenuUsesCopyAndCopyAsMarkdown() throws {
-        let text = "Assistant answer"
-        let view = AssistantTimelineRowContentView(configuration: makeTimelineAssistantConfiguration(text: text))
-
-        let menu = try #require(view.buildContextMenu())
-        #expect(timelineActionTitles(in: menu) == ["Copy", "Copy as Markdown"])
-    }
-
-    @MainActor
-    @Test func contextMenuAppendsForkAfterCopyActions() throws {
-        let text = "Assistant answer"
-        let view = AssistantTimelineRowContentView(
-            configuration: makeTimelineAssistantConfiguration(
-                text: text,
-                canFork: true,
-                onFork: {}
-            )
-        )
-
-        let menu = try #require(view.buildContextMenu())
-        #expect(timelineActionTitles(in: menu) == ["Copy", "Fork from here", "Copy as Markdown"])
-    }
-
-    @MainActor
-    @Test func bubbleInstallsDoubleTapCopyGesture() {
-        let text = "Assistant answer"
-        let view = AssistantTimelineRowContentView(configuration: makeTimelineAssistantConfiguration(text: text))
-
-        let recognizers = timelineAllGestureRecognizers(in: view)
-        let hasDoubleTap = recognizers.contains {
-            guard let tap = $0 as? UITapGestureRecognizer else { return false }
-            return tap.numberOfTapsRequired == 2
+    private func isShown(_ view: UIView, in root: UIView) -> Bool {
+        var current: UIView? = view
+        while let candidate = current, candidate !== root {
+            if candidate.isHidden { return false }
+            current = candidate.superview
         }
-        #expect(hasDoubleTap)
+        return true
+    }
+
+    @MainActor
+    private func actionButton(_ name: String, in view: UIView) -> UIButton? {
+        timelineAllViews(in: view)
+            .compactMap { $0 as? UIButton }
+            .first { $0.accessibilityIdentifier == "chat.timeline.assistant.a1.\(name)" }
+    }
+
+    @MainActor
+    @Test func copyButtonCopiesTheWholeFinishedReply() throws {
+        let text = "## Plan\n\nFirst `step`, then [docs](https://example.com)."
+        let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
+            text: text, isStreaming: false, canFork: false, onFork: nil, itemID: "a1"
+        ))
+
+        let copy = try #require(actionButton("copy", in: view))
+        #expect(isShown(copy, in: view))
+        let readAloud = try #require(actionButton("readAloud", in: view))
+        #expect(!isShown(readAloud, in: view), "No server read aloud, no speaker")
+
+        UIPasteboard.general.string = "sentinel"
+        copy.sendActions(for: .primaryActionTriggered)
+        #expect(UIPasteboard.general.string == text)
+    }
+
+    @MainActor
+    @Test func actionButtonsAreFullTouchTargetsInsideTheRow() throws {
+        for style in [ChatTimelineChromeStyle.standard, .conversation] {
+            let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
+                text: "Answer.", isStreaming: false, canFork: false, onFork: nil, itemID: "a1",
+                chromeStyle: style,
+                speech: AssistantMessageSpeech(state: .idle, failure: nil) {}
+            ))
+            let size = fittedTimelineSize(for: view, width: 390)
+            view.frame = CGRect(origin: .zero, size: size)
+            view.layoutIfNeeded()
+
+            for name in ["copy", "readAloud"] {
+                let button = try #require(actionButton(name, in: view))
+                let frame = button.convert(button.bounds, to: view)
+                #expect(frame.width >= 44 && frame.height >= 44, "\(name) in \(style)")
+                // Every corner of the 44pt target reaches the button, not the text or bubble.
+                for point in [
+                    CGPoint(x: frame.minX + 1, y: frame.minY + 1),
+                    CGPoint(x: frame.maxX - 1, y: frame.maxY - 1),
+                ] {
+                    #expect(view.hitTest(point, with: nil) === button, "\(name) at \(point) in \(style)")
+                }
+            }
+        }
+    }
+
+    @MainActor
+    @Test func streamingReplyHasNoActionBarUntilItFinishes() throws {
+        var toggles = 0
+        let speech = AssistantMessageSpeech(state: .idle, failure: nil) { toggles += 1 }
+        let streaming = AssistantTimelineRowConfiguration(
+            text: "Partial", isStreaming: true, canFork: false, onFork: nil, itemID: "a1", speech: speech
+        )
+        let view = AssistantTimelineRowContentView(configuration: streaming)
+        let copy = try #require(actionButton("copy", in: view))
+        let readAloud = try #require(actionButton("readAloud", in: view))
+        #expect(!isShown(copy, in: view))
+        #expect(!isShown(readAloud, in: view))
+
+        view.configuration = AssistantTimelineRowConfiguration(
+            text: "Partial, now done.", isStreaming: false, canFork: false, onFork: nil, itemID: "a1", speech: speech
+        )
+        #expect(isShown(copy, in: view))
+        #expect(isShown(readAloud, in: view))
+        #expect(readAloud.accessibilityLabel == "Read Aloud")
+        readAloud.sendActions(for: .primaryActionTriggered)
+        #expect(toggles == 1)
+    }
+
+    @MainActor
+    @Test func readAloudButtonOffersStopWhileLoadingOrPlayingAndShowsFailures() throws {
+        func row(_ state: AssistantMessageSpeech.State, failure: String? = nil) -> AssistantTimelineRowContentView {
+            AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
+                text: "Answer", isStreaming: false, canFork: false, onFork: nil, itemID: "a1",
+                speech: AssistantMessageSpeech(state: state, failure: failure) {}
+            ))
+        }
+
+        for state in [AssistantMessageSpeech.State.loading, .playing] {
+            let button = try #require(actionButton("readAloud", in: row(state)))
+            #expect(button.accessibilityLabel == "Stop Reading")
+        }
+        let failed = row(.idle, failure: "Read aloud is not configured on this server")
+        let labels = timelineAllViews(in: failed).compactMap { $0 as? UILabel }.filter { !$0.isHidden }
+        #expect(labels.contains { $0.text == "Read aloud is not configured on this server" })
     }
 
     // MARK: - Code Block Horizontal Scroll Regression
@@ -719,12 +784,14 @@ struct AssistantTimelineRowContentViewTests {
         let badge = try #require(timelineFirstView(ofType: SessionGridBadgeView.self, in: view))
 
         let padding = style.assistantBubble.padding
-        #expect(abs(markdown.frame.minX - padding.leading) < 0.5)
-        #expect(abs(view.bounds.width - markdown.frame.maxX - padding.trailing) < 0.5)
+        // The badge and the content share the bubble's coordinate space.
+        let markdownFrame = markdown.convert(markdown.bounds, to: badge.superview)
+        #expect(abs(markdownFrame.minX - padding.leading) < 0.5)
+        #expect(abs(view.bounds.width - markdownFrame.maxX - padding.trailing) < 0.5)
         // The avatar shows, sits in the content inset, and is level with line 1.
         #expect(!badge.isHidden)
-        #expect(abs(badge.frame.minX - markdown.frame.minX) < 0.5)
-        #expect(abs(badge.frame.minY - markdown.frame.minY - AssistantTimelineRowContentView.avatarTopOffset) < 0.5)
+        #expect(abs(badge.frame.minX - markdownFrame.minX) < 0.5)
+        #expect(abs(badge.frame.minY - markdownFrame.minY - AssistantTimelineRowContentView.avatarTopOffset) < 0.5)
 
         // First prose text view should reserve the avatar column via exclusion path.
         let proseViews = timelineAllTextViews(in: markdown).filter { textView in

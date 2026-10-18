@@ -939,6 +939,7 @@ export class Server {
           ),
         });
       },
+      getProviderAuth: async (providerId) => this.modelRuntime?.getAuth(providerId),
       searchIndex: this.searchIndex ?? undefined,
       appEvents: this.appEventStreamMux,
       serverStartedAt: Date.now(),

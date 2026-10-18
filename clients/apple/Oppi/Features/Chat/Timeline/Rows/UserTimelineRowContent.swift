@@ -123,7 +123,9 @@ enum UserTimelinePathPillChrome {
     }
 }
 
-final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowInteractionProvider {
+/// Long press and double-tap on the message belong to native text selection;
+/// the row adds no copy gesture or menu of its own.
+final class UserTimelineRowContentView: UIView, UIContentView {
     /// UIControl so the outer timeline can cancel the touch and take a vertical
     /// drag. A tap recognizer on the first-row commit chip ate pull-to-top.
     private final class PathPillControl: UIControl {
@@ -183,24 +185,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
     private var thumbnailViews: [UIView] = []
     private var hasAppliedConfiguration = false
     private var previousThemeID: ThemeID?
-    private var interactionHandlers: TimelineRowInteractionHandlers?
     private var pathPillTapHandlers: [PathPillTapHandler] = []
-
-    // MARK: - TimelineRowInteractionProvider
-
-    var copyableText: String? {
-        let text = UserMessageAttachmentPresentation.parse(rawText: currentConfiguration.text).visibleText
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        return text
-    }
-
-    var interactionFeedbackView: UIView { bubbleContainer }
-
-    var supportsFork: Bool {
-        currentConfiguration.canFork && currentConfiguration.onFork != nil
-    }
-
-    var forkAction: (() -> Void)? { currentConfiguration.onFork }
 
     private var isReviewCommentSelectionEnabled: Bool {
         currentConfiguration.interactionContext?.reviewCommentSelectionContext != nil
@@ -351,28 +336,6 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         outerStack.addArrangedSubview(bubbleContainer)
 
         addSubview(outerStack)
-
-        // User row uses manual interaction wiring (not the shared installer)
-        // because it needs custom context menu filtering for the selectable
-        // text area. The protocol's buildContextMenu() is still used.
-        let doubleTapHandler = TimelineRowDoubleTapHandler()
-        doubleTapHandler.provider = self
-        let gesture = DoubleTapCopyGesture.makeGesture(
-            target: doubleTapHandler,
-            action: #selector(TimelineRowDoubleTapHandler.handleDoubleTap)
-        )
-        bubbleContainer.addGestureRecognizer(gesture)
-        addInteraction(UIContextMenuInteraction(delegate: self))
-
-        // Store a placeholder handlers struct to keep the doubleTapHandler alive
-        // and provide gesture access for selection policy updates.
-        let contextMenuHandler = TimelineRowContextMenuHandler()
-        contextMenuHandler.provider = self
-        interactionHandlers = TimelineRowInteractionHandlers(
-            doubleTapHandler: doubleTapHandler,
-            contextMenuHandler: contextMenuHandler,
-            gesture: gesture
-        )
 
         NSLayoutConstraint.activate([
             outerStack.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -651,10 +614,6 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         }
     }
 
-    private var markdownTextViews: [UITextView] {
-        [messageTextView] + extraMarkdownTextViews
-    }
-
     private func applyMarkdownBody(_ text: String, palette: ThemePalette) {
         guard !text.isEmpty else {
             resetMarkdownBodyToSingleTextView()
@@ -756,9 +715,6 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         for textView in extraMarkdownTextViews {
             textView.isSelectable = selectionEnabled && !textView.isHidden
         }
-        let anySelectable = messageTextView.isSelectable
-            || extraMarkdownTextViews.contains(where: \.isSelectable)
-        interactionHandlers?.gesture.isEnabled = !anySelectable
 
         let tableContext = currentConfiguration.interactionContext?.sourceContext(
             surface: .userMessage,
@@ -1072,11 +1028,6 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             view.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -inset),
         ])
     }
-
-    // Note: double-tap copy and context menu are handled by
-    // TimelineRowInteractionProvider + TimelineRowInteractionInstaller.
-    // The UIContextMenuInteractionDelegate override below filters out
-    // taps inside the selectable text area.
 }
 
 /// UIKit-only thumbnail; the row owns decode cancellation and path-pill taps.
@@ -1262,23 +1213,3 @@ extension UserTimelineRowContentView: UITextViewDelegate {
     }
 }
 
-extension UserTimelineRowContentView: UIContextMenuInteractionDelegate {
-    func contextMenuInteraction(
-        _ interaction: UIContextMenuInteraction,
-        configurationForMenuAtLocation location: CGPoint
-    ) -> UIContextMenuConfiguration? {
-        // Don't show context menu when tapping inside the selectable text area.
-        for textView in markdownTextViews where textView.isSelectable {
-            let pointInText = textView.convert(location, from: self)
-            if textView.bounds.contains(pointInText) {
-                return nil
-            }
-        }
-
-        guard let menu = buildContextMenu() else { return nil }
-
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
-            menu
-        }
-    }
-}

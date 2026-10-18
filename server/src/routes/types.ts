@@ -20,6 +20,7 @@ import type { ServerMetricCollector } from "../server-metric-collector.js";
 import type { PushSender } from "../push/push-sender.js";
 import type { DevicePairing } from "../device-pairing.js";
 import type { ServerResourceRecord } from "../server-metrics-history.js";
+import type { SttGetAuth } from "../create-stt-provider.js";
 
 /** The resource sampler behind the Server Metrics page. */
 export interface ServerMetricsControl {
@@ -49,6 +50,8 @@ export interface RouteContext {
     model: string | undefined,
   ) => { short?: number; long?: number } | undefined;
   getProviderQuotasStatus?: () => Promise<ProviderQuotasStatus>;
+  /** Configured provider credentials (API key or refreshed OAuth token), e.g. xAI for read aloud. */
+  getProviderAuth?: SttGetAuth;
   searchIndex?: SearchIndex;
   appEvents?: AppEventEmitter;
   serverStartedAt: number;

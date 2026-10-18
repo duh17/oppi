@@ -64,6 +64,7 @@ struct AssistantLongMarkdownBlankTailTests {
         let stack = try #require(timelineFirstView(ofType: UIStackView.self, in: markdownView))
         let contentHeight = stack.arrangedSubviews.map(\.frame.maxY).max() ?? 0
         let expectedRowHeight = contentHeight
+            + assistantActionBarHeight(in: row)
             + ChatTimelineChromeStyle.standard.assistantBubble.padding.top
             + ChatTimelineChromeStyle.standard.assistantBubble.padding.bottom
 

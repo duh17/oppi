@@ -188,6 +188,24 @@ export interface ServerConfig {
   };
 
   /**
+   * Read-aloud (text-to-speech) for chat messages. Enabled by `provider: "xai"`
+   * or a non-empty `endpoint`. Changes need a server restart: the running server
+   * serves its loaded config, and apps read `capabilities.speech` on connect.
+   */
+  tts?: {
+    /** Vendor. Omitted means infer from endpoint: api.x.ai is xai, else http. */
+    provider?: "http" | "xai";
+    /** Base URL. http: OpenAI-compatible server. xai: defaults to https://api.x.ai. */
+    endpoint?: string;
+    /** Model id for the http backend. Omitted lets the backend choose. */
+    model?: string;
+    /** Voice id. Omitted lets the backend choose its default voice. */
+    voice?: string;
+    /** BCP-47 language for xai. Defaults to `auto`. */
+    language?: string;
+  };
+
+  /**
    * ASR / dictation pipeline configuration. Controls remote dictation routing
    * by pointing Oppi at an STT backend endpoint.
    */

@@ -148,6 +148,15 @@ func timelineRenderedTableText(in tableView: NativeTableBlockView) -> String {
         .joined(separator: "\n")
 }
 
+/// Height a finished assistant row adds below its Markdown for the Copy /
+/// read-aloud bar (bar plus spacing); 0 while the bar is hidden.
+@MainActor
+func assistantActionBarHeight(in row: UIView) -> CGFloat {
+    guard let markdown = timelineFirstView(ofType: AssistantMarkdownContentView.self, in: row),
+          let content = markdown.superview as? UIStackView else { return 0 }
+    return content.bounds.height - markdown.bounds.height
+}
+
 @MainActor
 func timelineActionTitles(in menu: UIMenu) -> [String] {
     menu.children.compactMap { ($0 as? UIAction)?.title }
@@ -679,15 +688,13 @@ func makeTimelineToolConfiguration(
 }
 
 func makeTimelineAssistantConfiguration(
-    text: String = "Assistant response with https://example.com",
-    canFork: Bool = false,
-    onFork: (() -> Void)? = nil
+    text: String = "Assistant response with https://example.com"
 ) -> AssistantTimelineRowConfiguration {
     AssistantTimelineRowConfiguration(
         text: text,
         isStreaming: false,
-        canFork: canFork,
-        onFork: onFork
+        canFork: false,
+        onFork: nil
     )
 }
 

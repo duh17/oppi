@@ -1381,6 +1381,63 @@ struct ChatTimelineCoordinatorTests {
         #expect(harness.coordinator._audioStateRefreshedItemIDsForTesting == ["tool-voice-1"])
     }
 
+    /// Starting or stopping read aloud updates the reply's speaker button;
+    /// playback progress ticks must not relayout that reply four times a second.
+    @MainActor
+    @Test func readAloudRefreshesItsReplyOnStartAndStopButNotOnProgress() async {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        let config = makeTimelineConfiguration(
+            items: [.assistantMessage(id: "reply-1", text: "Done.", timestamp: Date())],
+            sessionId: "session-a",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+        let speechID = AudioPlayerService.speechPlaybackItemID(forMessageID: "reply-1")
+        func post(_ userInfo: [String: String]) {
+            NotificationCenter.default.post(
+                name: AudioPlayerService.stateDidChangeNotification,
+                object: harness.audioPlayer,
+                userInfo: userInfo
+            )
+        }
+
+        post([
+            AudioPlayerService.previousPlayingItemIDUserInfoKey: "",
+            AudioPlayerService.playingItemIDUserInfoKey: speechID,
+            AudioPlayerService.previousLoadingItemIDUserInfoKey: speechID,
+            AudioPlayerService.loadingItemIDUserInfoKey: "",
+        ])
+        #expect(await waitForTimelineCondition(timeoutMs: 300) {
+            await MainActor.run { harness.coordinator._audioStateRefreshCountForTesting == 1 }
+        })
+        #expect(harness.coordinator._audioStateRefreshedItemIDsForTesting == ["reply-1"])
+
+        // Progress ticks carry only the current IDs.
+        for _ in 0..<3 {
+            post([
+                AudioPlayerService.playingItemIDUserInfoKey: speechID,
+                AudioPlayerService.loadingItemIDUserInfoKey: "",
+            ])
+        }
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(harness.coordinator._audioStateRefreshCountForTesting == 1)
+
+        post([
+            AudioPlayerService.previousPlayingItemIDUserInfoKey: speechID,
+            AudioPlayerService.playingItemIDUserInfoKey: "",
+            AudioPlayerService.previousLoadingItemIDUserInfoKey: "",
+            AudioPlayerService.loadingItemIDUserInfoKey: "",
+        ])
+        #expect(await waitForTimelineCondition(timeoutMs: 300) {
+            await MainActor.run { harness.coordinator._audioStateRefreshCountForTesting == 2 }
+        })
+    }
+
     @MainActor
     @Test func audioStateChangeWithoutIDsRefreshesAllVisibleAudioRows() async {
         let harness = makeTimelineHarness(sessionId: "session-a")

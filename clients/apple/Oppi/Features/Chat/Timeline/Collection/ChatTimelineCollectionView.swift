@@ -865,7 +865,16 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     }
                     return [id]
                 })
-                targetIDs = currentIDs.filter { correlatedIDs.contains($0) && isAudioStateReactiveItem(id: $0) }
+                // Read-aloud state belongs to an assistant message, which is not
+                // otherwise audio-reactive. Only identity changes (start, stop,
+                // load) carry previous* keys; progress ticks must not relayout it.
+                let isIdentityChange = notification.userInfo?[AudioPlayerService.previousPlayingItemIDUserInfoKey] != nil
+                let readAloudIDs = isIdentityChange
+                    ? Set(changedIDs.compactMap(AudioPlayerService.messageID(fromSpeechPlaybackItemID:)))
+                    : []
+                targetIDs = currentIDs.filter {
+                    (correlatedIDs.contains($0) && isAudioStateReactiveItem(id: $0)) || readAloudIDs.contains($0)
+                }
             }
 
             guard !targetIDs.isEmpty else { return }

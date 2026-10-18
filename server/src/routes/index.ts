@@ -7,6 +7,7 @@ import { createIdentityRoutes } from "./identity.js";
 import { createServerUpdateRoutes } from "./server-update.js";
 import { createServerMetricsRoutes } from "./server-metrics.js";
 import { createDictationDictionaryRoutes } from "./dictation-dictionary.js";
+import { createSpeechRoutes } from "./speech.js";
 import { createSkillRoutes } from "./skills.js";
 import { createWorkspaceRoutes } from "./workspaces.js";
 import { createAgentRoutes } from "./agents.js";
@@ -39,6 +40,7 @@ export class RouteHandler {
       createServerUpdateRoutes(this.ctx, this.helpers),
       createServerMetricsRoutes(this.ctx, this.helpers),
       createDictationDictionaryRoutes(this.ctx, this.helpers),
+      createSpeechRoutes(this.ctx, this.helpers),
       createServerResourceRoutes(this.ctx, this.helpers),
       createSkillRoutes(this.ctx, this.helpers),
       createWorkspaceRoutes(this.ctx, this.helpers),

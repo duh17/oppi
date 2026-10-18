@@ -183,6 +183,8 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     private var streamFormat: AVAudioFormat?
     private var streamID: String?
     private var streamSessionID: String?
+    /// Reads a message aloud: fetches server-synthesized PCM and feeds the stream graph.
+    private var speechTask: Task<Void, Never>?
     private var suppressedAudioStreamIDs: Set<String> = []
     private var autoPlayedVoiceReplyItemIDs: Set<String> = []
     private var playbackSuppressedForCapture: Bool {
@@ -368,6 +370,8 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     func stop() {
         playbackFailure = nil
+        speechTask?.cancel()
+        speechTask = nil
         let activeStreamID = streamID
         saveResumePosition()
         endLongformItem()
@@ -625,6 +629,91 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     func markVoiceReplyAutoplayed(itemID: String) {
         autoPlayedVoiceReplyItemIDs.insert(itemID)
+    }
+
+    // MARK: - Read aloud
+
+    /// Playback ID for reading a timeline message aloud.
+    nonisolated static func speechPlaybackItemID(forMessageID messageID: String) -> String {
+        "speech-\(messageID)"
+    }
+
+    nonisolated static func messageID(fromSpeechPlaybackItemID itemID: String) -> String? {
+        let prefix = "speech-"
+        guard itemID.hasPrefix(prefix) else { return nil }
+        return String(itemID.dropFirst(prefix.count))
+    }
+
+    /// Reads a message aloud from server-synthesized PCM, or stops it when that
+    /// message is already loading or playing. Audio starts with the first
+    /// passage while later passages are still being synthesized.
+    func toggleSpeech(
+        messageID: String,
+        open: @escaping @MainActor () async throws -> SpeechAudioStream
+    ) {
+        let itemID = Self.speechPlaybackItemID(forMessageID: messageID)
+        if playingItemID == itemID || loadingItemID == itemID {
+            stop()
+            return
+        }
+        stop()
+        guard !playbackSuppressedForCapture else { return }
+        let startedAtMs = ChatSessionTelemetry.nowMs()
+        claimGlobalPlaybackOwnership()
+        activePlaybackContext = sessionContext
+        setPlaybackState(playing: nil, loading: itemID)
+        speechTask = Task { [weak self] in
+            await self?.playSpeech(itemID: itemID, open: open, startedAtMs: startedAtMs)
+        }
+    }
+
+    private func playSpeech(
+        itemID: String,
+        open: @MainActor () async throws -> SpeechAudioStream,
+        startedAtMs: Int64
+    ) async {
+        do {
+            let audio = try await open()
+            guard !Task.isCancelled, loadingItemID == itemID else { return }
+            let channels = AVAudioChannelCount(audio.channels)
+            guard Self.isPlayableStreamFormat(sampleRate: audio.sampleRate, channels: channels) else {
+                throw SpeechAudioStream.Failure.unsupportedFormat
+            }
+            try beginAudioStream(
+                id: itemID,
+                playbackItemID: itemID,
+                sessionId: nil,
+                sampleRate: audio.sampleRate,
+                channels: channels
+            )
+            guard let format = streamFormat else { return }
+            recordVoicePlaybackStart(source: "speech", mode: "manual", durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs))
+
+            // Schedule about a quarter second at a time, always whole frames.
+            let frameBytes = Int(channels) * 2
+            let batchBytes = Int(audio.sampleRate) / 4 * frameBytes
+            var pending = Data()
+            func enqueue(minimumBytes: Int) {
+                let usable = pending.count - pending.count % frameBytes
+                guard usable >= max(minimumBytes, frameBytes),
+                      let buffer = pcm16LEBuffer(data: pending.prefix(usable), format: format) else { return }
+                pending.removeFirst(usable)
+                _ = enqueueStreamPCM(buffer, streamID: itemID)
+            }
+            for try await chunk in audio.chunks {
+                guard streamID == itemID else { return }
+                pending.append(chunk)
+                enqueue(minimumBytes: batchBytes)
+            }
+            guard streamID == itemID else { return }
+            enqueue(minimumBytes: 0)
+            streamReceivedDone = true
+            finishAudioStreamIfDrained(id: itemID)
+        } catch {
+            guard !Task.isCancelled, loadingItemID == itemID || streamID == itemID else { return }
+            reportPlaybackFailure(itemID: itemID, source: "speech", phase: streamID == itemID ? "stream" : "load", error: error)
+            stopAudioStream(clearState: true)
+        }
     }
 
     func isStreamingPlaybackActive(itemID: String) -> Bool {
@@ -913,52 +1002,72 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     private func startAudioStream(id: String, sessionId: String?, sampleRate: Double, channels: AVAudioChannelCount) {
         let startedAtMs = ChatSessionTelemetry.nowMs()
-        guard (8_000...48_000).contains(sampleRate), channels == 1 || channels == 2 else {
+        guard Self.isPlayableStreamFormat(sampleRate: sampleRate, channels: channels) else {
             recordVoicePlaybackError(source: "stream_pcm", phase: "start", errorKind: "invalid_format")
             logger.error("Ignoring invalid audio stream format: \(sampleRate)Hz \(channels)ch")
             return
         }
         stop()
-        claimGlobalPlaybackOwnership()
-
         do {
-            let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playback, mode: .default)
-            try audioSession.setActive(true)
-
-            let engine = AVAudioEngine()
-            let node = AVAudioPlayerNode()
-            guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels) else {
-                recordVoicePlaybackError(source: "stream_pcm", phase: "start", errorKind: "invalid_format")
-                logger.error("Failed to create audio stream format")
-                return
-            }
-
-            engine.attach(node)
-            engine.connect(node, to: engine.mainMixerNode, format: format)
-            try engine.start()
-            node.play()
-
-            streamEngine = engine
-            streamNode = node
-            streamFormat = format
-            streamID = id
-            streamSessionID = sessionId ?? sessionContext?.sessionID
-            streamPendingBuffers = []
-            streamReceivedDone = false
-            streamEngineGeneration &+= 1
-            observeStreamConfigurationChanges(engine)
-            beginNowPlayingItem(title: Self.nowPlayingFallbackTitle)
+            try beginAudioStream(
+                id: id,
+                playbackItemID: Self.streamingPlaybackItemID(for: id),
+                sessionId: sessionId,
+                sampleRate: sampleRate,
+                channels: channels
+            )
             markVoiceReplyAutoplayed(itemID: id)
-            activePlaybackContext = sessionContext
-            setPlaybackState(playing: Self.streamingPlaybackItemID(for: id), loading: nil)
-            updateNowPlayingInfo(durationSeconds: nil, isLiveStream: true)
             recordVoicePlaybackStart(source: "stream_pcm", mode: "autoplay", durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs))
         } catch {
             recordVoicePlaybackError(source: "stream_pcm", phase: "start", error: error)
             logger.error("Audio stream start failed: \(error.localizedDescription)")
             stopAudioStream(clearState: true)
         }
+    }
+
+    private static func isPlayableStreamFormat(sampleRate: Double, channels: AVAudioChannelCount) -> Bool {
+        (8_000...48_000).contains(sampleRate) && (channels == 1 || channels == 2)
+    }
+
+    /// Starts the live PCM graph for `id` and reports `playbackItemID` as playing.
+    /// The caller has already stopped whatever played before, and on a throw
+    /// reports the failure and clears the partial graph with `stopAudioStream`.
+    private func beginAudioStream(
+        id: String,
+        playbackItemID: String,
+        sessionId: String?,
+        sampleRate: Double,
+        channels: AVAudioChannelCount
+    ) throws {
+        claimGlobalPlaybackOwnership()
+        let audioSession = AVAudioSession.sharedInstance()
+        try audioSession.setCategory(.playback, mode: .default)
+        try audioSession.setActive(true)
+
+        let engine = AVAudioEngine()
+        let node = AVAudioPlayerNode()
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels) else {
+            throw SpeechAudioStream.Failure.unsupportedFormat
+        }
+
+        engine.attach(node)
+        engine.connect(node, to: engine.mainMixerNode, format: format)
+        try engine.start()
+        node.play()
+
+        streamEngine = engine
+        streamNode = node
+        streamFormat = format
+        streamID = id
+        streamSessionID = sessionId ?? sessionContext?.sessionID
+        streamPendingBuffers = []
+        streamReceivedDone = false
+        streamEngineGeneration &+= 1
+        observeStreamConfigurationChanges(engine)
+        beginNowPlayingItem(title: Self.nowPlayingFallbackTitle)
+        activePlaybackContext = sessionContext
+        setPlaybackState(playing: playbackItemID, loading: nil)
+        updateNowPlayingInfo(durationSeconds: nil, isLiveStream: true)
     }
 
     private func appendAudioStreamChunk(_ stream: AudioStreamMessage, sessionId: String?) {
@@ -1739,6 +1848,25 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     private static func streamingPlaybackItemID(for streamID: String) -> String {
         "audio-stream-\(streamID)"
     }
+}
+
+// MARK: - Read aloud
+
+/// Server-synthesized speech for one message (`POST /speech`).
+struct SpeechAudioStream: Sendable {
+    enum Failure: LocalizedError {
+        case unsupportedFormat
+
+        var errorDescription: String? {
+            String(localized: "The server sent audio this device can't play.")
+        }
+    }
+
+    let sampleRate: Double
+    let channels: Int
+    /// 16-bit little-endian PCM in arbitrary-size pieces, in playback order.
+    /// Ends with an error when the server stops before the message is done.
+    let chunks: AsyncThrowingStream<Data, Error>
 }
 
 // MARK: - Delegate

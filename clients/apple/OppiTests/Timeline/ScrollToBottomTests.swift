@@ -389,6 +389,9 @@ struct ScrollToBottomTests {
         anchored.testIsDragging = true
         windowed.coordinator.scrollViewWillBeginDragging(collectionView)
         setTimelineUserScrollOffsetY(collectionView, maxOffsetY * 0.35)
+        // A real drag keeps moving after the rows under the finger are laid
+        // out; the jump above alone samples the previous screen's cells.
+        setTimelineUserScrollOffsetY(collectionView, collectionView.contentOffset.y - 1)
         windowed.coordinator.scrollViewDidScroll(collectionView)
         anchored.testIsTracking = false
         anchored.testIsDragging = false
@@ -472,6 +475,8 @@ struct ScrollToBottomTests {
         anchored.testIsDragging = true
         windowed.coordinator.scrollViewWillBeginDragging(collectionView)
         setTimelineUserScrollOffsetY(collectionView, maxOffsetY * 0.35)
+        // A real drag keeps moving after the rows under the finger are laid out.
+        setTimelineUserScrollOffsetY(collectionView, collectionView.contentOffset.y - 1)
         windowed.coordinator.scrollViewDidScroll(collectionView)
         anchored.testIsTracking = false
         anchored.testIsDragging = false

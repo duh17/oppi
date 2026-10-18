@@ -37,16 +37,46 @@ struct TimelineCopyContextMenuTests {
         let menu = try #require(rowCase.contextMenu(from: view))
         #expect(timelineActionTitles(in: menu) == ["Copy"])
     }
+
+    /// Long press and double-tap on a message belong to native text selection,
+    /// so message rows must not add a row menu or copy gesture that would take them.
+    @MainActor
+    @Test func messageRowsLeaveLongPressAndDoubleTapToTextSelection() {
+        let selectionContext = TimelineInteractionContext()
+        selectionContext.reviewCommentSelectionRouter = ReviewCommentSelectionRouter { _ in }
+        selectionContext.sessionId = "session-1"
+        let rows: [UIView] = [
+            UserTimelineRowContentView(configuration: UserTimelineRowConfiguration(
+                text: "hello", images: [], canFork: false, onFork: nil, interactionContext: selectionContext
+            )),
+            AssistantTimelineRowContentView(configuration: makeTimelineAssistantConfiguration(text: "Answer")),
+        ]
+        for row in rows {
+            row.frame = CGRect(x: 0, y: 0, width: 390, height: 200)
+            row.layoutIfNeeded()
+            #expect(timelineAllTextViews(in: row).contains { $0.isSelectable && !($0.text ?? "").isEmpty })
+            // UITextView's own selection machinery is the behavior we want to keep.
+            let rowOwned = timelineViewsOutsideTextViews(in: row)
+            #expect(!rowOwned.contains { $0.interactions.contains { $0 is UIContextMenuInteraction } })
+            #expect(!rowOwned.contains { view in
+                (view.gestureRecognizers ?? []).contains { ($0 as? UITapGestureRecognizer)?.numberOfTapsRequired == 2 }
+            })
+        }
+    }
+
+    @MainActor
+    private func timelineViewsOutsideTextViews(in root: UIView) -> [UIView] {
+        guard !(root is UITextView) else { return [] }
+        return [root] + root.subviews.flatMap { timelineViewsOutsideTextViews(in: $0) }
+    }
 }
 
 enum TimelineCopyRowCase: CaseIterable, Sendable {
-    case user
     case error
     case compaction
 
     var name: String {
         switch self {
-        case .user: return "user"
         case .error: return "error"
         case .compaction: return "compaction"
         }
@@ -60,8 +90,6 @@ enum TimelineCopyRowCase: CaseIterable, Sendable {
     @MainActor
     func makeView() -> UIView {
         switch self {
-        case .user:
-            return UserTimelineRowContentView(configuration: userConfiguration)
         case .error:
             return ErrorTimelineRowContentView(configuration: errorConfiguration)
         case .compaction:
@@ -72,13 +100,6 @@ enum TimelineCopyRowCase: CaseIterable, Sendable {
     @MainActor
     func reconfigure(_ view: UIView) {
         switch self {
-        case .user:
-            guard let typedView = view as? UserTimelineRowContentView else {
-                Issue.record("Expected UserTimelineRowContentView for \(name)")
-                return
-            }
-            typedView.configuration = userConfiguration
-
         case .error:
             guard let typedView = view as? ErrorTimelineRowContentView else {
                 Issue.record("Expected ErrorTimelineRowContentView for \(name)")
@@ -98,22 +119,11 @@ enum TimelineCopyRowCase: CaseIterable, Sendable {
     @MainActor
     func contextMenu(from view: UIView) -> UIMenu? {
         switch self {
-        case .user:
-            return (view as? UserTimelineRowContentView)?.buildContextMenu()
         case .error:
             return (view as? ErrorTimelineRowContentView)?.buildContextMenu()
         case .compaction:
             return (view as? CompactionTimelineRowContentView)?.buildContextMenu()
         }
-    }
-
-    private var userConfiguration: UserTimelineRowConfiguration {
-        UserTimelineRowConfiguration(
-            text: "hello",
-            images: [],
-            canFork: false,
-            onFork: nil
-        )
     }
 
     private var errorConfiguration: ErrorTimelineRowConfiguration {

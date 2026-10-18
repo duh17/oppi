@@ -23,6 +23,7 @@ final class SessionContentAccess {
 
     private let currentAPIClient: @MainActor () -> APIClient?
     private let currentServerId: @MainActor () -> String?
+    private let currentSpeechAvailable: @MainActor () -> Bool
     private let sessionStore: SessionStore
     private let workspaceStore: WorkspaceStore
     private let readinessPoll: Duration
@@ -30,12 +31,14 @@ final class SessionContentAccess {
     init(
         apiClient: @escaping @MainActor () -> APIClient?,
         serverId: @escaping @MainActor () -> String?,
+        speechAvailable: @escaping @MainActor () -> Bool = { false },
         sessionStore: SessionStore,
         workspaceStore: WorkspaceStore,
         readinessPoll: Duration = SessionContentAccess.defaultReadinessPoll
     ) {
         self.currentAPIClient = apiClient
         self.currentServerId = serverId
+        self.currentSpeechAvailable = speechAvailable
         self.sessionStore = sessionStore
         self.workspaceStore = workspaceStore
         self.readinessPoll = readinessPoll
@@ -97,6 +100,15 @@ final class SessionContentAccess {
     ) -> SessionToolOutputAccess? {
         guard let apiClient = currentAPIClient(), let routeScope else { return nil }
         return SessionToolOutputAccess(apiClient: apiClient, scope: routeScope, sessionId: sessionId)
+    }
+
+    // MARK: - Read aloud
+
+    /// Reads message text aloud through the server's TTS provider. Nil when the
+    /// server does not offer read aloud or no client is installed right now.
+    func speechReader() -> ((_ text: String) async throws -> SpeechAudioStream)? {
+        guard currentSpeechAvailable(), let apiClient = currentAPIClient() else { return nil }
+        return { text in try await apiClient.speech(text: text) }
     }
 
     // MARK: - Session files

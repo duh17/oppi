@@ -13,6 +13,7 @@ import { inviteHostForTlsMode, proveSameTailscaleUser } from "../tailscale-whois
 import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import { isDictationStreamEnabled } from "../dictation-types.js";
+import { isSpeechEnabled } from "../speech-synthesis.js";
 import { MAX_WORKSPACE_FILE_EDIT_BYTES } from "../file-serving-policy.js";
 import { isDeviceAccessPrincipal, type RequestPrincipal } from "../request-principal.js";
 import { checkPushRegistration } from "../push/registration.js";
@@ -456,6 +457,8 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         } satisfies WorkspaceFileEditingCapability,
         appEventStream: { version: 1 },
         dictationStream: isDictationStreamEnabled(config.asr) ? { version: 1 } : undefined,
+        // `POST /speech` reads messages aloud with the configured `tts` provider.
+        speech: isSpeechEnabled(config.tts) ? { version: 1 } : undefined,
         // Create requests may ask for engine "durable" (experimental.serverDurable).
         durableSessions: ctx.sessions.durableSessionsAvailable() ? { version: 1 } : undefined,
         // Experimental: `attach` on a durable session's focused stream sends snapshot/update.

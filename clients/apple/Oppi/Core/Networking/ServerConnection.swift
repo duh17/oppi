@@ -266,6 +266,8 @@ final class ServerConnection {
     private(set) var conversationStreamAvailable = false
     /// The server advertises experimental live H.264 (`capabilities.desktopLiveView`).
     private(set) var desktopLiveViewAvailable = false
+    /// The server reads messages aloud (`capabilities.speech`, `POST /speech`).
+    private(set) var speechAvailable = false
     /// Relay the server pushes through (`capabilities.pushNotifications`); nil when it does not.
     private(set) var pushRelay: URL?
 
@@ -299,6 +301,7 @@ final class ServerConnection {
     @ObservationIgnored private(set) lazy var sessionContent = SessionContentAccess(
         apiClient: { [weak self] in self?.apiClient },
         serverId: { [weak self] in self?.currentServerId },
+        speechAvailable: { [weak self] in self?.speechAvailable == true },
         sessionStore: sessionStore,
         workspaceStore: workspaceStore
     )
@@ -1010,6 +1013,7 @@ final class ServerConnection {
         self.durableSessionsAvailable = false
         self.conversationStreamAvailable = false
         self.desktopLiveViewAvailable = false
+        self.speechAvailable = false
         self.pushRelay = nil
         self.appEventStreamAvailable = false
         self.appEventStreamTransportState = .disconnected
@@ -1393,6 +1397,7 @@ final class ServerConnection {
                     self.dictationStreamAvailable = false
                     self.appEventStreamAvailable = false
                     self.desktopLiveViewAvailable = false
+                    self.speechAvailable = false
                     self.disconnectAppEventStream()
                     self.missingRequiredSplitStreamCapabilities = []
                     self.streamCapabilitiesLoaded = false
@@ -1428,6 +1433,7 @@ final class ServerConnection {
         durableSessionsAvailable = capabilities?.durableSessions?.version ?? 0 >= 1
         conversationStreamAvailable = capabilities?.conversationStream?.version ?? 0 >= 1
         desktopLiveViewAvailable = capabilities?.desktopLiveView?.version ?? 0 >= 1
+        speechAvailable = capabilities?.speech?.version ?? 0 >= 1
         let previousRelay = pushRelay
         pushRelay = capabilities?.pushRelay
         // Only a server that pushes, and that the user opted in for, gets this device's push
@@ -3121,12 +3127,14 @@ final class ServerConnection {
         durableSessions: Bool = false,
         conversationStream: Bool = false,
         desktopLiveView: Bool = false,
+        speech: Bool = false,
         pushRelay: URL? = nil
     ) {
         dictationStreamAvailable = dictationStream
         durableSessionsAvailable = durableSessions
         conversationStreamAvailable = conversationStream
         desktopLiveViewAvailable = desktopLiveView
+        speechAvailable = speech
         self.pushRelay = pushRelay
         appEventStreamAvailable = appEventStream
         var missing: [String] = []

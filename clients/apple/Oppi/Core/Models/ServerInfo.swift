@@ -74,6 +74,8 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var conversationStream: CapabilityVersion? = nil
         /// Experimental live H.264 of a granted Mac window (`experimental.desktopLiveView`).
         var desktopLiveView: CapabilityVersion? = nil
+        /// `POST /speech` reads messages aloud with the server's configured TTS provider.
+        var speech: CapabilityVersion? = nil
         /// The server pushes end to end encrypted through this relay (`push.mode` relay).
         var pushNotifications: PushNotificationsCapability? = nil
 

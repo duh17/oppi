@@ -64,9 +64,33 @@ oppi dictionary list --workspace <id>
 
 Agents can inspect past sessions and add selected phrases with `oppi dictionary`; conversations are not harvested automatically. The lists are hints, not guaranteed corrections. On-device dictation can use them without sending phrases to server ASR. For server dictation, the iPhone has a separate, default-off consent to send selected phrases to the paired server and its configured speech provider. Use `oppi dictionary --help` for batch input, removal, and workspace cleanup.
 
-## Voice / TTS
+## Read aloud
 
-TTS is not a single built-in endpoint. Extensions provide synthesis. Common server-side pieces:
+The speaker button under an assistant reply reads it aloud through the server. It appears once `tts` is configured and the server restarts; the app picks it up when it reconnects.
+
+| Key            | Value |
+| -------------- | ----- |
+| `tts.provider` | `http` (OpenAI-compatible `POST /v1/audio/speech` returning WAV, such as Yuwp) or `xai` (Grok voice). Omitted: `xai` for an `api.x.ai` endpoint, else `http`. |
+| `tts.endpoint` | Base URL. Required for `http`; `xai` defaults to `https://api.x.ai`. |
+| `tts.model`    | Model id sent to an `http` backend. Omitted lets the backend choose. |
+| `tts.voice`    | Voice id, such as a saved Yuwp voice or a Grok voice like `eve`. Omitted uses the backend's default. |
+| `tts.language` | `xai` only: BCP-47 code or `auto` (default). |
+
+```bash
+# Local Yuwp server, for example Fish Audio Drama 3
+oppi config set tts '{"provider":"http","endpoint":"http://127.0.0.1:7938","voice":"elena"}'
+
+# Grok voice, using the xAI credentials already set up for models or dictation
+oppi config set tts '{"provider":"xai","voice":"eve"}'
+
+oppi server restart
+```
+
+Code blocks, images, and URLs are skipped; link labels and list items are read. The server synthesizes a short first passage and then paragraph-sized ones, so playback starts before the whole reply is ready.
+
+## Voice extensions
+
+Voice extensions synthesize speech for their own tools. Common server-side pieces:
 
 | Setting                           | Purpose                                                                |
 | --------------------------------- | ---------------------------------------------------------------------- |
@@ -189,6 +213,7 @@ Pi's host MCP commands (`pi mcp list`, `login`, `logout`), which the MCP Servers
 | `asr.sttEndpoint`                       | HTTP/Yuwp dictation STT base URL (restart)                          |
 | `asr.provider`                          | `http` or `xai` (restart)                          |
 | `asr.sttModel`                          | HTTP/Yuwp STT model id (restart)                                      |
+| `tts.provider` / `tts.endpoint` / `tts.model` / `tts.voice` / `tts.language` | Read aloud (restart; see [Read aloud](#read-aloud)) |
 | `runtimeEnv.<NAME>`                     | Host runtime env, including TTS URLs (restart)                      |
 | `extensions.voice.defaultVoiceId`       | Default voice id                                                    |
 | `images.autoResize`                     | Client image preprocessing preference                               |

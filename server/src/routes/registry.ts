@@ -74,6 +74,7 @@ const sessionOperationIds = new Set<string>([
   "openSessionStream",
   "openAppEventStream",
   "openDictationStream",
+  "synthesizeSpeech",
   "searchSessions",
   "listSessions",
   "getSession",
@@ -843,6 +844,14 @@ const rawApiRouteSpecs = [
     surface: "core",
     auth: "owner",
     transport: "websocket",
+  },
+  {
+    method: "POST",
+    path: "/speech",
+    operationId: "synthesizeSpeech",
+    surface: "core",
+    auth: "owner",
+    description: "Read a message aloud with the configured TTS provider; streams 16-bit PCM.",
   },
 
   {

@@ -89,6 +89,7 @@ const sessionOperationIds = [
   "openSessionStream",
   "openAppEventStream",
   "openDictationStream",
+  "synthesizeSpeech",
   "searchSessions",
   "listSessions",
   "getSession",

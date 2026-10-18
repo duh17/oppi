@@ -256,6 +256,7 @@ function normalizeConfig(
     "pushRegistrations",
     "autoTitle",
     "asr",
+    "tts",
     "providerQuotas",
     "images",
     "uploadStore",
@@ -875,6 +876,58 @@ function normalizeConfig(
     // An invalid explicit provider must not silently become the HTTP backend.
     if (Object.keys(asrConfig).length > 0 && (!("provider" in asr) || asrConfig.provider)) {
       config.asr = asrConfig;
+    }
+  }
+
+  // Read-aloud (TTS) config
+  if ("tts" in obj) {
+    if (!isRecord(obj.tts)) {
+      errors.push("config.tts: expected object");
+      changed = true;
+    } else {
+      const tts = obj.tts;
+      const allowedTtsKeys = new Set(["provider", "endpoint", "model", "voice", "language"]);
+      if (strictUnknown) {
+        for (const key of Object.keys(tts)) {
+          if (!allowedTtsKeys.has(key)) errors.push(`config.tts.${key}: unknown key`);
+        }
+      }
+      const ttsConfig: NonNullable<ServerConfig["tts"]> = {};
+      let validTts = true;
+      if ("provider" in tts && tts.provider !== undefined) {
+        if (tts.provider === "http" || tts.provider === "xai") {
+          ttsConfig.provider = tts.provider;
+        } else {
+          errors.push("config.tts.provider: expected http or xai");
+          changed = true;
+          validTts = false;
+        }
+      }
+      for (const key of ["endpoint", "model", "voice", "language"] as const) {
+        const value = tts[key];
+        if (typeof value === "string") {
+          if (value.trim().length > 0) ttsConfig[key] = value.trim();
+        } else if (value !== undefined) {
+          errors.push(`config.tts.${key}: expected string`);
+          changed = true;
+        }
+      }
+      if (ttsConfig.endpoint) {
+        try {
+          const url = new URL(ttsConfig.endpoint);
+          if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("protocol");
+        } catch {
+          errors.push("config.tts.endpoint: expected http(s) URL");
+          changed = true;
+          validTts = false;
+        }
+      }
+      if (ttsConfig.provider === "http" && !ttsConfig.endpoint) {
+        errors.push("config.tts.endpoint: required for provider http");
+        changed = true;
+      }
+      // An invalid provider or endpoint must not silently enable another backend.
+      if (validTts && Object.keys(ttsConfig).length > 0) config.tts = ttsConfig;
     }
   }
 
