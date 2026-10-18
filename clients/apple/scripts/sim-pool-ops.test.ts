@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,6 +47,22 @@ describe("sim-pool-ops helpers", () => {
     const after = treeCpu(10, "10 1 0:01.10\n20 10 1:00.20\n22 20 1-00:00:01\n23 20 0:01.70\n99 1 9:00.00\n");
     expect(treeCpuRate(before, after, 4)).toBeCloseTo((0.1 + 0.2 + 1 + 1.7) / 4);
     expect(treeCpuRate(after, after, 4)).toBe(0);
+  });
+
+  test("the tree walk reads the host's own ps output, which the CLI tests replace", () => {
+    // The sim-pool CLI tests feed the detector a synthetic ps (OPPI_SIM_POOL_PS); this keeps the
+    // real `/bin/ps -axo pid=,ppid=,time=` columns and our parser in agreement.
+    const child = spawn("/bin/sleep", ["30"]);
+    try {
+      const ps = spawnSync("/bin/ps", ["-axo", "pid=,ppid=,time="], { encoding: "utf8" });
+      expect(ps.status).toBe(0);
+      const tree = treeCpu(process.pid, ps.stdout);
+      expect(tree.has(process.pid)).toBe(true);
+      expect(tree.has(child.pid!)).toBe(true);
+      for (const seconds of tree.values()) expect(Number.isFinite(seconds)).toBe(true);
+    } finally {
+      child.kill("SIGKILL");
+    }
   });
 
   test("compiler diagnostics are kept and rebuild logs are not", () => {

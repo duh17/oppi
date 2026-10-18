@@ -731,9 +731,15 @@ export const BUILD_CPU_PROGRESS_RATE = 0.25;
  */
 export const CPU_ONLY_SILENCE_WINDOWS = 5;
 
-/** Undefined when ps fails or stalls; the caller keeps its previous sample instead of charging all CPU to one window. */
+/**
+ * Undefined when ps fails or stalls; the caller keeps its previous sample instead of charging all CPU to one window.
+ *
+ * `OPPI_SIM_POOL_PS` replaces `/bin/ps` (same seam as `OPPI_SIM_POOL_PGREP`): the CLI tests feed
+ * a CPU curve tied to the wall clock, so the detector's decisions do not depend on how much real
+ * CPU a starved test host grants a spinner.
+ */
 function sampleTreeCpu(rootPid: number): Map<number, number> | undefined {
-  const ps = spawnSync("/bin/ps", ["-axo", "pid=,ppid=,time="], {
+  const ps = spawnSync(process.env.OPPI_SIM_POOL_PS ?? "/bin/ps", ["-axo", "pid=,ppid=,time="], {
     encoding: "utf8",
     timeout: 5_000,
     killSignal: "SIGKILL",

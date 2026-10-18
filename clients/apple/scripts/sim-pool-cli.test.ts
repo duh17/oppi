@@ -158,6 +158,22 @@ Test Suite 'Selected tests' ${failures ? "failed" : "passed"} at 2026-10-08 20:0
 `;
 const e2eArgs = ["-scheme", "Oppi", "test", "-only-testing:OppiE2ETests/ChatE2ETests/testSend"];
 
+/**
+ * A `ps` for `OPPI_SIM_POOL_PS`: the real process table plus one synthetic child of the fake
+ * xcodebuild (pid read from `pidFile`) whose CPU time grows four seconds per wall-clock second.
+ */
+function writeFakeBusyPs(path: string, pidFile: string): void {
+  writeFileSync(path, `#!/usr/bin/perl
+use Time::HiRes qw(time);
+system("/bin/ps", @ARGV);
+open(my $f, "<", "${pidFile}") or exit 0;
+chomp(my $pid = <$f>);
+my $cpu = 4 * (time - ${Date.now() / 1000});
+my $minutes = int($cpu / 60);
+printf("999999 %d %d:%05.2f\\n", $pid, $minutes, $cpu - 60 * $minutes);
+`, { mode: 0o755 });
+}
+
 function runCompletionFixture(text: string, options: {
   /** Replaces the default unit-lane arguments. */
   args?: string[];
@@ -167,6 +183,14 @@ function runCompletionFixture(text: string, options: {
   failQuery?: boolean;
   /** Seconds the fake simctl erase sleeps, to make hang-recovery time visible. */
   eraseSleep?: string;
+  /**
+   * Report a busy compiler under xcodebuild through `OPPI_SIM_POOL_PS` (four cores' worth of CPU,
+   * computed from the wall clock) instead of spawning a real CPU spinner. A real spinner's share
+   * of a loaded host decides whether the detector sees it; this curve cannot be starved.
+   */
+  busyCpu?: boolean;
+  /** Limit for the whole pool run; the default suits runs that finish in a couple of seconds. */
+  timeoutMs?: number;
 } = {}) {
   const root = tempDir("completion");
   const fake = join(root, "fake");
@@ -186,7 +210,7 @@ echo attempt >> "${fake}/attempts"
 cat <<'TEST_LOG'
 ${text}TEST_LOG
 : > "${fake}/started"
-${options.afterLog ?? "exec /bin/sleep 30"}
+${options.busyCpu ? `echo $$ > "${fake}/xcodebuild.pid"\n` : ""}${options.afterLog ?? "exec /bin/sleep 30"}
 `, { mode: 0o755 });
   if (options.failQuery) {
     writeFileSync(join(bin, "pgrep"), `#!/bin/sh
@@ -194,11 +218,14 @@ if [ -f "${fake}/started" ]; then exit 2; fi
 exec /usr/bin/pgrep "$@"
 `, { mode: 0o755 });
   }
+  if (options.busyCpu) {
+    writeFakeBusyPs(join(fake, "ps"), join(fake, "xcodebuild.pid"));
+  }
   const args = options.args ?? ["-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests"];
   const run = spawnSync("bun", [cli, "run", "--", "xcodebuild", ...args, ...(options.extraArgs ?? [])], {
     cwd: root,
     encoding: "utf8",
-    timeout: 15_000,
+    timeout: options.timeoutMs ?? 15_000,
     env: {
       ...process.env,
       PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -214,6 +241,7 @@ exec /usr/bin/pgrep "$@"
       OPPI_SIM_POOL_COMPLETION_TIMEOUT: "1",
       OPPI_SIM_POOL_PROGRESS_POLL: "0.05",
       ...(options.failQuery ? { OPPI_SIM_POOL_PGREP: join(bin, "pgrep") } : {}),
+      ...(options.busyCpu ? { OPPI_SIM_POOL_PS: join(fake, "ps") } : {}),
       ...options.env,
     },
   });
@@ -1024,30 +1052,42 @@ sleep 30
   }
 
   test("silent build that keeps the CPU busy is progress, not a hang", () => {
-    // Like swift-frontend emitting a module: no log output for longer than the
-    // silence timeout, in a child process outside xcodebuild's process group.
+    // Like swift-frontend emitting a module: no log output for two silence windows
+    // while a compiler under xcodebuild burns CPU, then a clean exit.
     const result = runCompletionFixture("", {
       env: { OPPI_SIM_POOL_SILENCE_TIMEOUT: "2" },
-      afterLog: "/usr/bin/perl -e 'my $end = time + 5; 1 while time < $end' & wait; exit 0",
+      busyCpu: true,
+      afterLog: "/bin/sleep 4; exit 0",
+      // The run lasts a fixed ~4s plus pool start-up, which took 5s more than usual on a host at
+      // load ~100 (9.9s of the default 15s measured); a hang-kill would end it near 2s instead.
+      timeoutMs: 30_000,
     });
     expect(result.run.status).toBe(0);
     expect(result.attempts).toHaveLength(1);
     expect(result.summary.hang_detected).toBe(false);
     expect(result.run.stderr).not.toContain("hang detected");
-  }, 15_000);
+  }, 40_000);
 
   test("CPU alone cannot keep a silent run alive past five silence windows", () => {
     const result = runCompletionFixture("", {
       env: { OPPI_SIM_POOL_HANG_RETRIES: "0" },
-      afterLog: "exec /usr/bin/perl -e 'my $end = time + 12; 1 while time < $end'",
+      busyCpu: true,
+      afterLog: "exec /bin/sleep 120",
+      // The kill comes at a fixed ~6s (five windows plus one) after pool start-up, which took up to
+      // 5s more at load ~100 (11.3s of the default 15s measured).
+      timeoutMs: 30_000,
     });
+    // The reported CPU never stops and xcodebuild would sleep 120 seconds, so only the cap can
+    // end this run inside the 30-second limit.
     expect(result.run.status).not.toBe(0);
     expect(result.summary.hang_detected).toBe(true);
-    // Up to five 1-second windows of CPU-only life, then the kill; the spinner would run 12
-    // seconds. Without the CPU signal the kill would come after one window instead.
+    // Up to five 1-second windows of CPU-only life, then the kill. Without the CPU signal the
+    // kill would come after one window instead. elapsed_seconds starts once xcodebuild runs, so
+    // pool start-up under load is not in it: the kill is wall-clock math against the last output
+    // (~6s expected; 6, 6, 7, 7, 6 measured at 4x load). More than eight means the cap grew.
     expect(result.summary.elapsed_seconds).toBeGreaterThanOrEqual(4);
-    expect(result.summary.elapsed_seconds).toBeLessThan(11);
-  }, 20_000);
+    expect(result.summary.elapsed_seconds).toBeLessThan(9);
+  }, 40_000);
 
   test("silent hang is retried after a simulator erase", () => {
     const result = runCompletionFixture("Resolve Package Graph\nTest session started\n", { eraseSleep: "1" });
