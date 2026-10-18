@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { AssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	createAgentSession,
+	createEventBus,
 	DefaultResourceLoader,
 	ModelRuntime,
 	SessionManager,
@@ -32,6 +33,8 @@ async function fixture(
 	jobCount = 1,
 	tool: "background_job" | "bash" = "background_job",
 	launch?: { autoStop: boolean },
+	/** A job an earlier process backgrounded and never reported, as after a restart. */
+	lostJob?: { jobId: string; command: string },
 ) {
 	const dir = await mkdtemp(join(tmpdir(), "background-busy-"));
 	cleanups.push(() => rm(dir, { recursive: true, force: true }));
@@ -114,19 +117,29 @@ async function fixture(
 			return stream;
 		},
 	});
+	const events = createEventBus();
+	const wakes: Array<Record<string, unknown>> = [];
+	events.on("oppi:pending-wake:v1", (data) => wakes.push(data as Record<string, unknown>));
 	const loader = new DefaultResourceLoader({
-		cwd: dir, agentDir: dir, settingsManager: settings,
+		cwd: dir, agentDir: dir, settingsManager: settings, eventBus: events,
 		noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true,
 		additionalExtensionPaths: [join(import.meta.dir, "index.ts")],
 		systemPromptOverride: () => "Test fixture.", agentsFilesOverride: () => ({ agentsFiles: [] }),
 	});
 	await loader.reload();
 	expect(loader.getExtensions().errors).toEqual([]);
+	const sessionManager = SessionManager.inMemory(dir);
+	if (lostJob) {
+		sessionManager.appendCustomEntry("background-job-started", {
+			key: `earlier-run:${lostJob.jobId}`, sessionId: sessionManager.getSessionId(),
+			jobId: lostJob.jobId, command: lostJob.command, cwd: dir,
+		});
+	}
 	const created = await createAgentSession({
 		cwd: dir, agentDir: dir, modelRuntime: runtime,
 		model: runtime.getModel("background-test", "fixture"), thinkingLevel: "off",
 		resourceLoader: loader, settingsManager: settings,
-		sessionManager: SessionManager.inMemory(dir), tools: ["background_job", "bash"],
+		sessionManager, tools: ["background_job", "bash"],
 	});
 	session = created.session;
 	await session.bindExtensions({ onError: (error) => errors.push(error.error) });
@@ -145,7 +158,7 @@ async function fixture(
 	});
 	return {
 		session, waiting: waiting.promise, afterResult: afterResult.promise, connections,
-		errors, observed, requests: () => requests,
+		errors, observed, wakes, requests: () => requests,
 		lookups: async () => (await readFile(lookups, "utf8").catch(() => "")).split("\n").filter(Boolean),
 		results: () => session.messages.filter((message) =>
 			message.role === "custom" && message.customType === "background-job"),
@@ -285,6 +298,21 @@ describe("background jobs keep Pi busy", () => {
 		expect(f.results()).toHaveLength(2);
 		expect(f.observed.filter((event) => event === "agent_settled")).toHaveLength(1);
 		expect(await f.lookups()).toHaveLength(1);
+		expect(f.errors).toEqual([]);
+	}, 10_000);
+
+	test("a job lost with an earlier process is reported to Oppi until the turn that carries its notice starts", async () => {
+		const f = await fixture(0, "background_job", undefined, { jobId: "bash-7", command: "sleep 900" });
+		// Oppi's restart resume reads this to prompt the session; nothing else would start the turn.
+		expect(f.wakes.at(-1)).toEqual({ source: "background-jobs", count: 0, lost: 1 });
+		expect(f.session.isIdle).toBe(true);
+		expect(f.requests()).toBe(0);
+
+		await f.session.prompt("The server restarted; continue.");
+		expect(f.wakes.at(-1)).toEqual({ source: "background-jobs", count: 0, lost: 0 });
+		const notice = f.results().map((message) => message.content).join("\n");
+		expect(notice).toContain("Background job bash-7 never reported back");
+		expect(notice).toContain("command: sleep 900");
 		expect(f.errors).toEqual([]);
 	}, 10_000);
 

@@ -965,33 +965,51 @@ export function forkPiSessionFrom(
 /**
  * Pi event-bus channel where an extension announces work that will wake its session later,
  * such as running background jobs or supervised children. Payload: `{ source, count,
- * survivesRestart? }`, the extension's current total; `count: 0` withdraws it. Work that does
- * not survive a restart makes a restart prompt the session. See docs/extensions.md.
+ * survivesRestart?, lost? }`, the extension's current totals; zero withdraws them. Work that
+ * does not survive a restart makes a restart prompt the session. `lost` counts notices about
+ * work an earlier process already lost, queued for the session's next turn; a restart resume
+ * prompts a session that reports any. See docs/extensions.md.
  */
 export const PENDING_WAKE_CHANNEL = "oppi:pending-wake:v1";
 
 export interface PendingWakeTracker {
   pending(): boolean;
   lostOnRestart(): boolean;
+  reportsLostWork(): boolean;
+}
+
+interface WakeHold {
+  waiting: boolean;
+  survivesRestart: boolean;
+  lost: boolean;
 }
 
 /** Listen on `bus` for the extensions' current pending wakes. */
 export function trackPendingWake(bus: EventBus): PendingWakeTracker {
-  const holds = new Map<string, { survivesRestart: boolean }>();
+  const holds = new Map<string, WakeHold>();
+  const positive = (value: unknown): boolean =>
+    typeof value === "number" && Number.isFinite(value) && value > 0;
   bus.on(PENDING_WAKE_CHANNEL, (data) => {
-    const { source, count, survivesRestart } = (data ?? {}) as {
+    const { source, count, survivesRestart, lost } = (data ?? {}) as {
       source?: unknown;
       count?: unknown;
       survivesRestart?: unknown;
+      lost?: unknown;
     };
     if (typeof source !== "string" || !source) return;
-    if (typeof count === "number" && Number.isFinite(count) && count > 0)
-      holds.set(source, { survivesRestart: survivesRestart === true });
+    const hold: WakeHold = {
+      waiting: positive(count),
+      survivesRestart: survivesRestart === true,
+      lost: positive(lost),
+    };
+    if (hold.waiting || hold.lost) holds.set(source, hold);
     else holds.delete(source);
   });
+  const some = (test: (hold: WakeHold) => boolean): boolean => [...holds.values()].some(test);
   return {
-    pending: () => holds.size > 0,
-    lostOnRestart: () => [...holds.values()].some((hold) => !hold.survivesRestart),
+    pending: () => some((hold) => hold.waiting),
+    lostOnRestart: () => some((hold) => hold.waiting && !hold.survivesRestart),
+    reportsLostWork: () => some((hold) => hold.lost),
   };
 }
 
@@ -1084,7 +1102,11 @@ export class SdkBackend implements AgentBackend {
     assertSelectedResourcesAvailableBeforeReload?: () => void,
     consumeSelectedResourceReloadError?: () => Error | undefined,
     uiBridge?: SdkUiBridge,
-    pendingWake: PendingWakeTracker = { pending: () => false, lostOnRestart: () => false },
+    pendingWake: PendingWakeTracker = {
+      pending: () => false,
+      lostOnRestart: () => false,
+      reportsLostWork: () => false,
+    },
   ) {
     this.pendingWake = pendingWake;
     this.runtime = runtime;
@@ -2408,6 +2430,10 @@ export class SdkBackend implements AgentBackend {
 
   get holdsWorkLostOnRestart(): boolean {
     return this.pendingWake.lostOnRestart();
+  }
+
+  get reportsLostWork(): boolean {
+    return this.pendingWake.reportsLostWork();
   }
 
   get isStreaming(): boolean {

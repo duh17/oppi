@@ -46,6 +46,12 @@ export interface AgentBackend {
    * prompt the session to continue instead of leaving it idle.
    */
   readonly holdsWorkLostOnRestart: boolean;
+  /**
+   * Whether an extension holds a notice about work an earlier process lost, such as a
+   * background job a restart or crash killed, queued for the session's next turn. A restart
+   * resume prompts such a session so that turn runs instead of the session going cold.
+   */
+  readonly reportsLostWork: boolean;
 
   prompt(
     message: string,

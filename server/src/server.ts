@@ -1405,6 +1405,7 @@ export class Server {
       lifecycle,
       sendPrompt: (sessionId, text) => this.sessions.sendPrompt(sessionId, text),
       sendFollowUp: (sessionId, text) => this.sessions.sendFollowUp(sessionId, text),
+      reportsLostWork: (sessionId) => this.sessions.reportsLostWork(sessionId),
       cancelled: () => state.cancelled,
     }).then(
       () => undefined,

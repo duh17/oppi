@@ -1132,6 +1132,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return ids;
   }
 
+  /** Whether a live session holds a notice about work an earlier process lost (see restart resume). */
+  reportsLostWork(sessionId: string): boolean {
+    return this.active.get(this.sessionKey(sessionId))?.sdkBackend.reportsLostWork ?? false;
+  }
+
   /** Return replayable extension UI notifications and pending dialogs for stream re-subscribe. */
   getPendingUIRequestMessages(sessionId: string): ServerMessage[] {
     return buildPendingExtensionUIRequestMessages(this.active.get(this.sessionKey(sessionId)));

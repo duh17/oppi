@@ -801,6 +801,7 @@ export class DurableBackend implements AgentBackend {
   }
   /** Durable tasks recover after a restart and report an interrupted job themselves. */
   readonly holdsWorkLostOnRestart = false;
+  readonly reportsLostWork = false;
   get isStreaming(): boolean {
     return this.live.run !== undefined;
   }

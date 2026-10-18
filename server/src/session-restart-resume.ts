@@ -10,7 +10,12 @@
  *   and queues them while marking them stopped.
  *
  * Startup then resumes each queued session once. A session that was mid-turn
- * gets a continuation prompt so the agent picks the work back up. Entries are
+ * gets a continuation prompt so the agent picks the work back up. So does an
+ * idle one that comes back holding a notice about work the restart killed (a
+ * background job it was waiting on): that notice rides on the next turn, and
+ * without the prompt the session would sit idle until its idle timeout. This
+ * check runs in the new process, so it also covers a crash and a shutdown that
+ * could not tell which sessions were waiting. Entries are
  * cleared one by one, so a crash during resume keeps the rest queued; a session
  * already resumed is stored as running and the crash path queues it again.
  *
@@ -128,6 +133,8 @@ export interface RestartResumeDeps {
   >;
   sendPrompt: (sessionId: string, text: string) => Promise<void>;
   sendFollowUp: (sessionId: string, text: string) => Promise<void>;
+  /** The resumed session holds a notice about work an earlier process lost. */
+  reportsLostWork: (sessionId: string) => boolean;
   /** Stop before the next entry; server shutdown sets this. */
   cancelled?: () => boolean;
 }
@@ -195,7 +202,11 @@ async function resumeOne(
 
   // Durable continues the original submission; an extra continuation prompt
   // would manufacture a second user turn after a crash.
-  if (session.serverDurable?.conversationId !== undefined || !entry.wasBusy || deps.cancelled?.())
+  if (
+    session.serverDurable?.conversationId !== undefined ||
+    !(entry.wasBusy || deps.reportsLostWork(session.id)) ||
+    deps.cancelled?.()
+  )
     return { outcome: "resumed" };
   // Input sent to the session or an explicit stop while this resume ran
   // cleared the entry: that person now directs it. Opening or reconnecting to

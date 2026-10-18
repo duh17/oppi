@@ -55,6 +55,7 @@ function saveSession(
 function makeDeps(
   storage: Storage,
   resumedStatus: (id: string) => Session["status"] = () => "ready",
+  reportsLostWork: (id: string) => boolean = () => false,
 ): RestartResumeDeps & {
   sendPrompt: ReturnType<typeof vi.fn>;
   sendFollowUp: ReturnType<typeof vi.fn>;
@@ -74,6 +75,7 @@ function makeDeps(
     },
     sendPrompt: vi.fn(async () => undefined),
     sendFollowUp: vi.fn(async () => undefined),
+    reportsLostWork,
   };
 }
 
@@ -254,6 +256,28 @@ describe("session restart resume", () => {
     for (const session of live) saveSession(storage, session.id, { ...session, status: "stopped" });
 
     const deps = makeDeps(storage, () => "ready");
+    const results = await resumeSessionsAfterRestart(deps);
+
+    expect(Object.fromEntries(results.map((r) => [r.sessionId, r.outcome]))).toEqual({
+      "waiting-on-job": "continued",
+      idle: "resumed",
+    });
+    expect(deps.sendPrompt.mock.calls).toEqual([["waiting-on-job", RESTART_CONTINUE_PROMPT]]);
+  });
+
+  it("continues an idle session that comes back owed a result its killed job never sent", async () => {
+    // A crash, or a shutdown that could not tell the session was waiting, queues it idle.
+    const { storage, workspace } = makeStorage();
+    const ws = { workspaceId: workspace.id };
+    saveSession(storage, "waiting-on-job", { ...ws, status: "ready" });
+    saveSession(storage, "idle", { ...ws, status: "ready" });
+    queueOrphanedSessionsForRestart(storage);
+
+    const deps = makeDeps(
+      storage,
+      () => "ready",
+      (id) => id === "waiting-on-job",
+    );
     const results = await resumeSessionsAfterRestart(deps);
 
     expect(Object.fromEntries(results.map((r) => [r.sessionId, r.outcome]))).toEqual({

@@ -24,6 +24,8 @@ import {
   resolveSessionSeedModel,
   resolveSdkSessionCwdAsync,
   SdkBackend,
+  PENDING_WAKE_CHANNEL,
+  trackPendingWake,
 } from "../src/sdk-backend.js";
 import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
@@ -3189,5 +3191,29 @@ describe("SdkBackend.dispose", () => {
       cause: "extension_shutdown_timeout",
       timeoutMs: 5_000,
     });
+  });
+});
+
+describe("pending wake tracker", () => {
+  it("prompts a restart for a lost-job notice without holding the idle timeout for it", () => {
+    const bus = PiSdk.createEventBus();
+    const tracker = trackPendingWake(bus);
+    const state = () => ({
+      pending: tracker.pending(),
+      lostOnRestart: tracker.lostOnRestart(),
+      reportsLostWork: tracker.reportsLostWork(),
+    });
+
+    // A session restored with notices about jobs an earlier process killed: nothing will
+    // wake it, so the idle timeout may stop it, but a restart resume must prompt it.
+    bus.emit(PENDING_WAKE_CHANNEL, { source: "jobs", count: 0, lost: 2 });
+    expect(state()).toEqual({ pending: false, lostOnRestart: false, reportsLostWork: true });
+
+    // The turn that carries the notices starts while a new job runs.
+    bus.emit(PENDING_WAKE_CHANNEL, { source: "jobs", count: 1, lost: 0 });
+    expect(state()).toEqual({ pending: true, lostOnRestart: true, reportsLostWork: false });
+
+    bus.emit(PENDING_WAKE_CHANNEL, { source: "jobs", count: 0, lost: 0 });
+    expect(state()).toEqual({ pending: false, lostOnRestart: false, reportsLostWork: false });
   });
 });

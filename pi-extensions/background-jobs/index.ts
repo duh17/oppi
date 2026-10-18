@@ -186,6 +186,9 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 	const run = randomUUID();
 	const keyFor = (jobId: string) => `${run}:${jobId}`;
 	let announcedWake = 0;
+	// Lost-job notices this instance queued for the next turn, until that turn starts.
+	let lostQueued = 0;
+	let announcedLost = 0;
 	let sessionId: string | undefined;
 	const buffer = createResultBuffer();
 	const cancelFlush = () => {
@@ -201,10 +204,13 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 		const count = closed
 			? 0
 			: manager.visibleRunning().length + (delivering ? buffer.pendingCount() : 0);
-		if (count === announcedWake) return;
+		// A queued lost-job notice tells Oppi's restart resume to start the turn that carries it.
+		const lost = closed ? 0 : lostQueued;
+		if (count === announcedWake && lost === announcedLost) return;
 		announcedWake = count;
+		announcedLost = lost;
 		try {
-			pi.events.emit(PENDING_WAKE_CHANNEL, { source: PILL_KEY, count });
+			pi.events.emit(PENDING_WAKE_CHANNEL, { source: PILL_KEY, count, lost });
 		} catch {
 			// A stale runtime has no listeners left.
 		}
@@ -515,9 +521,10 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 		rememberUi(ctx);
 		// Jobs this session backgrounded in an earlier process died with it. Tell the agent
 		// with its next turn without starting one: Oppi's restart resume prompts a session
-		// that was waiting on them, and after an explicit Stop the user decides what runs next.
-		// A record stays unreported until that turn puts it in the transcript.
+		// that reports queued notices, and after an explicit Stop the user decides what runs
+		// next. A record stays unreported until that turn puts it in the transcript.
 		sessionId = ctx.sessionManager.getSessionId();
+		lostQueued = 0;
 		const queued = queuedLostJobs(sessionId);
 		let lost = unreportedJobs(ctx.sessionManager.getEntries(), sessionId)
 			.filter((job) => !queued.has(job.key))
@@ -539,12 +546,15 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 				break;
 			}
 			for (const key of batch.keys) queued.add(key);
+			lostQueued += batch.keys.length;
 			lost = lost.filter((item) => !queued.has(item.key));
 		}
 		refreshPill();
 	});
 
 	pi.on("agent_start", () => {
+		// This run's first request carried the queued lost-job notices.
+		lostQueued = 0;
 		idle = false;
 		suppressIdleWake = false;
 		cancelFlush();

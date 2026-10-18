@@ -133,6 +133,7 @@ describe("control conversation marker gates", () => {
       lifecycle,
       sendPrompt: vi.fn(),
       sendFollowUp: vi.fn(),
+      reportsLostWork: () => false,
     });
     expect(results).toEqual([{ sessionId: "control", outcome: "resumed" }]);
     expect(lifecycle.resumeControlConversation).toHaveBeenCalledOnce();
@@ -433,6 +434,7 @@ describe("control conversation lifecycle on the durable harness", () => {
       },
       sendPrompt: vi.fn(),
       sendFollowUp: vi.fn(),
+      reportsLostWork: () => false,
     });
     await second.manager.ensureControlConversation();
 
