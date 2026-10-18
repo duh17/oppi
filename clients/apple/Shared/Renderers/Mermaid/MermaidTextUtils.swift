@@ -347,8 +347,10 @@ enum MermaidTextUtils {
 
     // MARK: - Text measurement
 
-    /// CTLine metrics reused across wrap, layout, and draw. Color is applied
-    /// at draw time, so the cache key is font + markdown + text only.
+    /// Typeset lines and their metrics, reused across wrap, layout, and draw.
+    /// Lines take their color from the context fill color at draw time, so
+    /// the line typeset while measuring in layout is the one drawn and the
+    /// cache key is font + markdown + text only.
     private final class LineMetricsStore: @unchecked Sendable {
         let cache: NSCache<NSString, CachedLineMetrics> = {
             let cache = NSCache<NSString, CachedLineMetrics>()
@@ -360,12 +362,15 @@ enum MermaidTextUtils {
 
     private static let lineMetricsStore = LineMetricsStore()
 
+    /// Immutable after init; CTLine is safe to draw from any thread.
     private final class CachedLineMetrics: @unchecked Sendable {
+        let line: CTLine
         let paddedSize: CGSize
         let boundsWidth: CGFloat
         let boundsHeight: CGFloat
 
-        init(paddedSize: CGSize, boundsWidth: CGFloat, boundsHeight: CGFloat) {
+        init(line: CTLine, paddedSize: CGSize, boundsWidth: CGFloat, boundsHeight: CGFloat) {
+            self.line = line
             self.paddedSize = paddedSize
             self.boundsWidth = boundsWidth
             self.boundsHeight = boundsHeight
@@ -392,10 +397,18 @@ enum MermaidTextUtils {
         if let hit = lineMetricsStore.cache.object(forKey: key) {
             return hit
         }
-        let attrStr = attributedLabel(text, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
+        let attrStr = NSMutableAttributedString(
+            attributedString: attributedLabel(text, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
+        )
+        attrStr.addAttribute(
+            NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String),
+            value: true,
+            range: NSRange(location: 0, length: attrStr.length)
+        )
         let line = CTLineCreateWithAttributedString(attrStr)
         let bounds = CTLineGetBoundsWithOptions(line, [])
         let metrics = CachedLineMetrics(
+            line: line,
             paddedSize: CGSize(
                 width: max(bounds.width, fontSize * 2),
                 height: max(bounds.height, fontSize * 1.4)
@@ -441,6 +454,20 @@ enum MermaidTextUtils {
             width: max(maxWidth, fontSize * 2),
             height: max(totalHeight, fontSize * 1.4)
         )
+    }
+
+    /// Width of the widest whitespace-separated word. Wrapping to at least
+    /// this never splits a word across lines.
+    static func widestWord(_ text: String, font: CTFont, fontSize: CGFloat) -> CGFloat {
+        text.split(whereSeparator: { $0.isWhitespace })
+            .map { lineWidth(String($0), font: font, fontSize: fontSize) }
+            .max() ?? 0
+    }
+
+    /// Ink width of one line of text, without the minimum-size padding
+    /// `measureText` applies.
+    static func lineWidth(_ text: String, font: CTFont, fontSize: CGFloat) -> CGFloat {
+        lineMetrics(text, font: font, fontSize: fontSize, isMarkdown: false).boundsWidth
     }
 
     /// Measure a single line of text.
@@ -535,15 +562,10 @@ enum MermaidTextUtils {
                 x = origin.x + (blockWidth - metrics.boundsWidth)
             }
 
-            let attrStr = attributedLabel(
-                line,
-                font: font,
-                fontSize: fontSize,
-                foregroundColor: foregroundColor,
-                isMarkdown: isMarkdown
-            )
-            let ctLine = CTLineCreateWithAttributedString(attrStr)
-            drawCTLine(ctLine, at: CGPoint(x: x, y: currentY), fontSize: fontSize, in: ctx)
+            ctx.saveGState()
+            ctx.setFillColor(foregroundColor)
+            drawCTLine(metrics.line, at: CGPoint(x: x, y: currentY), fontSize: fontSize, in: ctx)
+            ctx.restoreGState()
             currentY += lineHeight + spacing
         }
     }

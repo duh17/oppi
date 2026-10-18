@@ -63,12 +63,26 @@ enum MermaidSequenceRenderer {
 
     private struct Constants {
         let fontSize: CGFloat
+        /// Narrower padding and gaps for the pass that runs only when the
+        /// natural layout is wider than `RenderConfiguration.maxWidth`.
+        var tight = false
         /// Horizontal padding inside participant boxes.
-        var boxPadH: CGFloat { fontSize * 1.2 }
+        var boxPadH: CGFloat { fontSize * (tight ? 0.6 : 1.2) }
+        /// Narrowest participant box.
+        var minBoxWidth: CGFloat { fontSize * (tight ? 3 : 4) }
         /// Vertical padding inside participant boxes.
         var boxPadV: CGFloat { fontSize * 0.6 }
-        /// Minimum horizontal gap between participant boxes.
-        var participantGap: CGFloat { fontSize * 4 }
+        /// Minimum horizontal gap between participant boxes. Message and
+        /// note labels widen the gaps they sit in beyond this.
+        var participantGap: CGFloat { fontSize * (tight ? 0.8 : 2) }
+        /// Widest a natural-pass message label grows before it wraps.
+        var naturalLabelCap: CGFloat { fontSize * 20 }
+        /// Room kept between a message label and the lifelines it spans.
+        var messageLabelPad: CGFloat { labelGap * (tight ? 3 : 4) }
+        /// Narrowest wrap width for a message label.
+        var minMessageWrap: CGFloat { fontSize * (tight ? 3 : 5) }
+        /// Padding a `box` group draws around its participants.
+        var groupPad: CGFloat { fontSize * 0.9 }
         /// Vertical spacing between consecutive messages. Extra room so arrows do not cluster.
         var messageSpacing: CGFloat { fontSize * 4.2 }
         /// Title band inside an alt/loop/par frame.
@@ -90,7 +104,7 @@ enum MermaidSequenceRenderer {
         /// Bottom margin below last message.
         var bottomMargin: CGFloat { fontSize * 2 }
         /// Left/right margin around the diagram.
-        var sideMargin: CGFloat { fontSize * 1.5 }
+        var sideMargin: CGFloat { fontSize * (tight ? 0.75 : 1.5) }
         /// Height of the self-message loopback arc.
         var selfMessageHeight: CGFloat { fontSize * 2.5 }
         /// Horizontal offset for self-message loopback.
@@ -140,6 +154,8 @@ enum MermaidSequenceRenderer {
     private struct FrameLayout: Sendable {
         let kind: SequenceBlockKind
         let label: String
+        /// Keyword plus label, wrapped to the frame width.
+        let title: String
         let rect: CGRect
         let depth: Int
     }
@@ -332,11 +348,45 @@ enum MermaidSequenceRenderer {
         return regions
     }
 
+    /// Lays the diagram out at its natural spacing. Only when that is wider
+    /// than `configuration.maxWidth` does it retry with tight spacing and
+    /// labels wrapped to a per-participant budget (at most three extra
+    /// passes), keeping the first pass that fits, else the narrowest.
+    /// Text stays at `configuration.fontSize`; view scaling is the fallback.
     private static func prepare(
         _ diagram: SequenceDiagram,
         configuration: RenderConfiguration
     ) -> PreparedSequenceLayout {
-        let c = Constants(fontSize: configuration.fontSize)
+        let natural = prepare(diagram, configuration: configuration, labelBudget: nil)
+        let available = configuration.maxWidth
+        guard natural.totalWidth > available + 0.5, !diagram.participants.isEmpty else {
+            return natural
+        }
+        let floor = configuration.fontSize * 4
+        let count = CGFloat(diagram.participants.count)
+        var budget = max(floor, (available - configuration.fontSize * 1.5) / count)
+        var best = natural
+        for _ in 0..<3 {
+            let candidate = prepare(diagram, configuration: configuration, labelBudget: budget)
+            if candidate.totalWidth < best.totalWidth { best = candidate }
+            if candidate.totalWidth <= available + 0.5 { break }
+            let next = max(floor, budget - (candidate.totalWidth - available) / count)
+            guard next < budget - 0.5 else { break }
+            budget = next
+        }
+        return best
+    }
+
+    /// One layout pass. `labelBudget == nil` is the natural layout. A budget
+    /// selects the tight constants and wraps participant, message, and note
+    /// labels to roughly that width per participant column.
+    private static func prepare(
+        _ diagram: SequenceDiagram,
+        configuration: RenderConfiguration,
+        labelBudget: CGFloat?
+    ) -> PreparedSequenceLayout {
+        var c = Constants(fontSize: configuration.fontSize)
+        c.tight = labelBudget != nil
         let font = CTFontCreateWithName("Helvetica" as CFString, c.fontSize, nil)
         let msgFontSize = c.fontSize * 0.85
         let msgFont = CTFontCreateWithName("Helvetica" as CFString, msgFontSize, nil)
@@ -350,38 +400,144 @@ enum MermaidSequenceRenderer {
             participantIndex[p.id] = i
         }
 
-        let minGap = c.participantGap
-        // Wrap to a comfortable intrinsic width. Never squeeze box widths to
-        // fit a narrow viewport — keep a wider canvas instead.
-        let maxBoxWidth = c.fontSize * 11
+        let tight = labelBudget != nil
+        // Natural boxes wrap at a comfortable intrinsic width; the tight pass
+        // wraps them to the per-column budget instead.
+        let maxBoxWidth = labelBudget.map { max($0, c.minBoxWidth) } ?? c.fontSize * 11
 
         var wrappedLabels: [String: String] = [:]
         var boxWidths: [String: CGFloat] = [:]
         var labelSizes: [String: CGSize] = [:]
         for p in diagram.participants {
+            // The tight pass wraps names between words, never inside one.
+            let wrapLimit = tight
+                ? max(maxBoxWidth - c.boxPadH * 2, MermaidTextUtils.widestWord(p.label, font: font, fontSize: c.fontSize))
+                : max(maxBoxWidth - c.boxPadH * 2, c.fontSize * 4)
             let wrapped = MermaidTextUtils.wrapText(
                 p.label,
-                maxWidth: max(maxBoxWidth - c.boxPadH * 2, c.fontSize * 4),
+                maxWidth: wrapLimit,
                 font: font,
                 fontSize: c.fontSize
             )
+            let boxCap = max(maxBoxWidth, wrapLimit + c.boxPadH * 2)
             wrappedLabels[p.id] = wrapped
             let size = measureText(wrapped, font: font, fontSize: c.fontSize)
             labelSizes[p.id] = size
-            boxWidths[p.id] = min(max(size.width + c.boxPadH * 2, c.fontSize * 4), maxBoxWidth + c.boxPadH)
+            boxWidths[p.id] = min(max(size.width + c.boxPadH * 2, c.minBoxWidth), boxCap + c.boxPadH)
+        }
+
+        // Self-message labels sit right of their loop and wrap at a fixed
+        // width; message labels between lifelines wrap to the final span.
+        let selfLabelWrap = labelBudget.map { max($0 - c.selfMessageWidth - c.labelGap, c.fontSize * 4) }
+            ?? min(max(c.fontSize * 8, maxWidth * 0.35), 180)
+        let naturalNoteWrap = min(max(maxWidth * 0.55, c.fontSize * 10), 240)
+        let noteGap = c.fontSize * 0.8
+
+        // Message and note labels say how far apart the lifelines they touch
+        // must be. Measured before placement; keyed by lo * count + hi.
+        let count = diagram.participants.count
+        var needs: [Int: CGFloat] = [:]
+        func need(_ lo: Int, _ hi: Int, _ width: CGFloat) {
+            guard lo >= 0, hi < count, lo < hi else { return }
+            let key = lo * count + hi
+            needs[key] = max(needs[key] ?? 0, width)
+        }
+
+        let sequenceNumbers = sequenceNumberLabels(for: diagram)
+        func messageLabel(_ text: String, number: String?, maxWidth: CGFloat) -> String {
+            wrapMessageLabel(
+                text, sequenceNumber: number, maxWidth: maxWidth, keepWords: tight,
+                font: msgFont, fontSize: msgFontSize
+            )
+        }
+
+        var preparedNotes: [Int: (wrapped: String, size: CGSize)] = [:]
+        var messageIndex = 0
+        for (eventIndex, event) in diagram.events.enumerated() {
+            switch event {
+            case .message(let message):
+                let number = messageIndex < sequenceNumbers.count ? sequenceNumbers[messageIndex] : nil
+                messageIndex += 1
+                guard let a = participantIndex[message.from], let b = participantIndex[message.to],
+                      !message.text.isEmpty || number != nil else { continue }
+                if a == b {
+                    let wrapped = messageLabel(message.text, number: number, maxWidth: selfLabelWrap)
+                    let width = measureText(wrapped, font: msgFont, fontSize: msgFontSize).width
+                    need(a, a + 1, c.selfMessageWidth + c.labelGap + width + c.fontSize * 0.5)
+                } else {
+                    let lo = min(a, b), hi = max(a, b)
+                    let limit = labelBudget.map {
+                        max($0 * CGFloat(hi - lo) - c.messageLabelPad, c.minMessageWrap)
+                    } ?? c.naturalLabelCap
+                    let wrapped = messageLabel(message.text, number: number, maxWidth: limit)
+                    let width = measureText(wrapped, font: msgFont, fontSize: msgFontSize).width
+                    need(lo, hi, width + c.messageLabelPad)
+                }
+            case .note(let note):
+                let indices = note.actors.compactMap { participantIndex[$0] }
+                let spanned = CGFloat((indices.max() ?? 0) - (indices.min() ?? 0) + 1)
+                var wrap = naturalNoteWrap
+                if let labelBudget {
+                    let room = note.position == .over ? labelBudget * spanned : labelBudget
+                    wrap = min(wrap, max(room, c.fontSize * 6), configuration.maxWidth - c.sideMargin)
+                    // Wrap between words, never inside one.
+                    wrap = max(wrap, MermaidTextUtils.widestWord(note.text, font: noteFont, fontSize: noteFontSize) + c.notePadH * 2)
+                }
+                let wrapped = MermaidTextUtils.wrapText(
+                    note.text, maxWidth: wrap - c.notePadH * 2, font: noteFont, fontSize: noteFontSize
+                )
+                let textSize = measureText(wrapped, font: noteFont, fontSize: noteFontSize)
+                let size = CGSize(width: textSize.width + c.notePadH * 2, height: textSize.height + c.notePadV * 2)
+                preparedNotes[eventIndex] = (wrapped, size)
+                guard let a = indices.first else { continue }
+                switch note.position {
+                case .rightOf: need(a, a + 1, size.width + noteGap * 2)
+                case .leftOf: need(a - 1, a, size.width + noteGap * 2)
+                case .over where indices.count == 1:
+                    need(a - 1, a, size.width / 2 + noteGap)
+                    need(a, a + 1, size.width / 2 + noteGap)
+                case .over: break
+                }
+            default:
+                continue
+            }
+        }
+
+        // `box` groups draw padding around their participants; neighbours in
+        // different groups keep room for both paddings plus a gap.
+        var groupOf: [String: Int] = [:]
+        for (index, box) in diagram.boxes.enumerated() {
+            for id in box.participantIds { groupOf[id] = index }
+        }
+        var gaps: [CGFloat] = (0..<max(count - 1, 0)).map { i in
+            let left = diagram.participants[i].id
+            let right = diagram.participants[i + 1].id
+            let halves = ((boxWidths[left] ?? 0) + (boxWidths[right] ?? 0)) / 2
+            var grouping: CGFloat = 0
+            if groupOf[left] != groupOf[right] {
+                grouping = (groupOf[left] == nil ? 0 : c.groupPad) + (groupOf[right] == nil ? 0 : c.groupPad)
+            }
+            return max(halves + c.participantGap + grouping, needs[i * count + i + 1] ?? 0)
+        }
+        // A label across several lifelines widens each gap it crosses by an
+        // equal share of what is missing, shortest spans first.
+        let spans = needs
+            .map { (lo: $0.key / count, hi: $0.key % count, width: $0.value) }
+            .filter { $0.hi - $0.lo > 1 }
+            .sorted { ($0.hi - $0.lo, $0.lo) < ($1.hi - $1.lo, $1.lo) }
+        for span in spans {
+            let total = gaps[span.lo..<span.hi].reduce(0, +)
+            guard total < span.width else { continue }
+            let share = (span.width - total) / CGFloat(span.hi - span.lo)
+            for i in span.lo..<span.hi { gaps[i] += share }
         }
 
         var participants: [ParticipantLayout] = []
         var currentX = c.sideMargin
         for (i, p) in diagram.participants.enumerated() {
-            let boxW = boxWidths[p.id] ?? c.fontSize * 4
+            let boxW = boxWidths[p.id] ?? c.minBoxWidth
             let halfW = boxW / 2
-            if i == 0 {
-                currentX += halfW
-            } else {
-                let prevHalfW = (boxWidths[diagram.participants[i - 1].id] ?? 0) / 2
-                currentX += prevHalfW + minGap + halfW
-            }
+            currentX += i == 0 ? halfW : gaps[i - 1]
             let textSize = labelSizes[p.id] ?? .zero
             let boxH = textSize.height + c.boxPadV * 2
             participants.append(ParticipantLayout(
@@ -396,53 +552,67 @@ enum MermaidSequenceRenderer {
         }
 
         let maxBoxH = participants.map(\.boxRect.height).max() ?? (c.fontSize * 2)
-        participants = participants.map { p in
+        func moved(_ p: ParticipantLayout, centerX: CGFloat) -> ParticipantLayout {
             ParticipantLayout(
                 id: p.id,
                 label: p.label,
                 wrappedLabel: p.wrappedLabel,
                 isActor: p.isActor,
                 kind: p.kind,
-                centerX: p.centerX,
-                boxRect: CGRect(x: p.boxRect.minX, y: p.boxRect.minY, width: p.boxRect.width, height: maxBoxH)
+                centerX: centerX,
+                boxRect: CGRect(x: centerX - p.boxRect.width / 2, y: p.boxRect.minY, width: p.boxRect.width, height: maxBoxH)
             )
         }
+        participants = participants.map { moved($0, centerX: $0.centerX) }
 
         let lastCenter = participants.last?.centerX ?? c.sideMargin
         let lastHalf = (participants.last?.boxRect.width ?? 0) / 2
         var totalWidth = lastCenter + lastHalf + c.sideMargin
+
+        // Notes beside or over the outer participants, and `box` group
+        // padding, may reach past the participant heads; widen the canvas
+        // on that side so they are not pushed onto the lifelines or clipped.
+        var edgeMinX = CGFloat.infinity
+        var edgeMaxX = -CGFloat.infinity
+        for (eventIndex, event) in diagram.events.enumerated() {
+            guard case .note(let note) = event, let prepared = preparedNotes[eventIndex],
+                  let x = noteRawX(note, width: prepared.size.width, participants: participants,
+                                   participantIndex: participantIndex, constants: c)
+            else { continue }
+            edgeMinX = min(edgeMinX, x)
+            edgeMaxX = max(edgeMaxX, x + prepared.size.width)
+        }
+        for box in diagram.boxes {
+            let rects = box.participantIds.compactMap { participantIndex[$0].map { participants[$0].boxRect } }
+            guard let minX = rects.map(\.minX).min(), let maxX = rects.map(\.maxX).max() else { continue }
+            edgeMinX = min(edgeMinX, minX - c.groupPad)
+            edgeMaxX = max(edgeMaxX, maxX + c.groupPad)
+        }
+        let edgeInset = c.sideMargin * 0.25
+        let leftOverhang = edgeMinX.isFinite ? max(0, edgeInset - edgeMinX) : 0
+        let rightOverhang = edgeMaxX.isFinite ? max(0, edgeMaxX + edgeInset - totalWidth) : 0
+        if leftOverhang > 0 {
+            participants = participants.map { moved($0, centerX: $0.centerX + leftOverhang) }
+        }
+        totalWidth += leftOverhang + rightOverhang
+
         // Spread to fill a ~360 chat bubble. Do not stretch participant
         // span across an 800pt document canvas — that flattens the ratio.
         let chatSpreadCap: CGFloat = 360
         let spreadTarget = min(maxWidth, chatSpreadCap)
         if totalWidth < spreadTarget, participants.count > 1 {
             // Spread intrinsic boxes across useful available width without
-            // shrinking heads or violating the minimum gap.
+            // shrinking heads or any label-driven gap.
             let first = participants[0]
             let last = participants[participants.count - 1]
-            let newFirstCenter = c.sideMargin + first.boxRect.width / 2
-            let newLastCenter = spreadTarget - c.sideMargin - last.boxRect.width / 2
+            let newFirstCenter = c.sideMargin + first.boxRect.width / 2 + leftOverhang
+            let newLastCenter = spreadTarget - c.sideMargin - last.boxRect.width / 2 - rightOverhang
             let oldSpan = last.centerX - first.centerX
             let newSpan = newLastCenter - newFirstCenter
             if newSpan > oldSpan, oldSpan > 0 {
                 let origin = first.centerX
                 participants = participants.map { p in
-                    let t = (p.centerX - origin) / oldSpan
-                    let centerX = newFirstCenter + t * newSpan
-                    return ParticipantLayout(
-                        id: p.id,
-                        label: p.label,
-                        wrappedLabel: p.wrappedLabel,
-                        isActor: p.isActor,
-                        kind: p.kind,
-                        centerX: centerX,
-                        boxRect: CGRect(
-                            x: centerX - p.boxRect.width / 2,
-                            y: p.boxRect.minY,
-                            width: p.boxRect.width,
-                            height: p.boxRect.height
-                        )
-                    )
+                    moved(p, centerX: newFirstCenter + (p.centerX - origin) / oldSpan * newSpan)
                 }
                 totalWidth = spreadTarget
             }
@@ -453,18 +623,21 @@ enum MermaidSequenceRenderer {
                 return max(c.fontSize * 8, maxWidth * 0.4)
             }
             if fromIdx == toIdx {
-                return min(max(c.fontSize * 8, maxWidth * 0.35), 180)
+                return selfLabelWrap
             }
             let span = abs(participants[fromIdx].centerX - participants[toIdx].centerX)
-            return max(span - c.labelGap * 4, c.fontSize * 5)
+            return max(span - c.messageLabelPad, c.minMessageWrap)
         }
 
-        let sequenceNumbers = sequenceNumberLabels(for: diagram)
         var messageNumberIndex = 0
+        let frameTitleFontSize = c.fontSize * 0.78
+        let frameTitleFont = CTFontCreateWithName("Helvetica-Bold" as CFString, frameTitleFontSize, nil)
+        let frameTitleLineHeight = measureText(" ", font: frameTitleFont, fontSize: frameTitleFontSize).height
 
         struct OpenFrame {
             let kind: SequenceBlockKind
             let label: String
+            let title: String
             let startY: CGFloat
             let depth: Int
             var dividers: [DividerLayout]
@@ -522,22 +695,35 @@ enum MermaidSequenceRenderer {
                 width: pair.width,
                 height: max(c.fontSize, y - open.startY)
             )
-            frames.append(FrameLayout(kind: open.kind, label: open.label, rect: rect, depth: open.depth))
+            frames.append(FrameLayout(
+                kind: open.kind, label: open.label, title: open.title, rect: rect, depth: open.depth
+            ))
             dividers.append(contentsOf: open.dividers)
         }
 
-        for event in diagram.events {
+        for (eventIndex, event) in diagram.events.enumerated() {
             switch event {
             case .blockOpen(let kind, let label):
                 let depth = openFrames.count
+                // Long frame titles wrap inside the frame and grow its header.
+                let title = MermaidTextUtils.wrapText(
+                    sequenceBlockTitle(SequenceBlock(kind: kind, label: label, elseBlocks: nil)),
+                    maxWidth: frameX(depth: depth).width - 16,
+                    font: frameTitleFont,
+                    fontSize: frameTitleFontSize
+                )
+                let titleHeight = title.isEmpty
+                    ? 0
+                    : measureText(title, font: frameTitleFont, fontSize: frameTitleFontSize).height
                 openFrames.append(OpenFrame(
                     kind: kind,
                     label: label,
+                    title: title,
                     startY: currentY,
                     depth: depth,
                     dividers: []
                 ))
-                currentY += c.frameHeaderHeight
+                currentY += c.frameHeaderHeight + max(0, titleHeight - frameTitleLineHeight)
 
             case .blockDivider(let kind, let label):
                 currentY += c.dividerGap * 0.35
@@ -561,29 +747,19 @@ enum MermaidSequenceRenderer {
                 closeFrame(at: currentY)
 
             case .note(let note):
-                let wrap = min(max(maxWidth * 0.55, c.fontSize * 10), 240)
-                let wrapped = MermaidTextUtils.wrapText(
-                    note.text, maxWidth: wrap - c.notePadH * 2, font: noteFont, fontSize: noteFontSize
-                )
-                let textSize = measureText(wrapped, font: noteFont, fontSize: noteFontSize)
-                let size = CGSize(
-                    width: textSize.width + c.notePadH * 2,
-                    height: textSize.height + c.notePadV * 2
-                )
-                noteLayouts.append(NoteLayout(note: note, wrappedText: wrapped, y: currentY, size: size))
-                currentY += size.height + c.noteGap
+                guard let prepared = preparedNotes[eventIndex] else { continue }
+                noteLayouts.append(NoteLayout(
+                    note: note, wrappedText: prepared.wrapped, y: currentY, size: prepared.size
+                ))
+                currentY += prepared.size.height + c.noteGap
 
             case .message(let message):
                 let number = messageNumberIndex < sequenceNumbers.count
                     ? sequenceNumbers[messageNumberIndex]
                     : nil
                 messageNumberIndex += 1
-                let display = messageDisplayText(message.text, sequenceNumber: number)
-                let wrapped = MermaidTextUtils.wrapText(
-                    display,
-                    maxWidth: wrapWidth(from: message.from, to: message.to),
-                    font: msgFont,
-                    fontSize: msgFontSize
+                let wrapped = messageLabel(
+                    message.text, number: number, maxWidth: wrapWidth(from: message.from, to: message.to)
                 )
                 let labelSize = measureText(wrapped, font: msgFont, fontSize: msgFontSize)
                 currentY += labelSize.height + c.labelGap
@@ -929,7 +1105,7 @@ enum MermaidSequenceRenderer {
 
         let minParticipantX = participants[first...last].map(\.boxRect.minX).min() ?? participants[first].boxRect.minX
         let maxParticipantX = participants[first...last].map(\.boxRect.maxX).max() ?? participants[last].boxRect.maxX
-        let horizontalPadding = c.fontSize * 0.9
+        let horizontalPadding = c.groupPad
         let titleHeight = box.label == nil ? c.fontSize * 0.4 : c.fontSize * 1.7
         let rect = CGRect(
             x: ox + minParticipantX - horizontalPadding,
@@ -996,10 +1172,13 @@ enum MermaidSequenceRenderer {
             } else {
                 endY = oy + prepared.totalHeight - c.bottomMargin
             }
+            // One stroke per lifeline: Core Graphics rasterizes a path over
+            // its whole bounding box, and one path holding every lifeline
+            // spans the full canvas.
             ctx.move(to: CGPoint(x: x, y: startY))
             ctx.addLine(to: CGPoint(x: x, y: max(endY, startY)))
+            ctx.strokePath()
         }
-        ctx.strokePath()
         ctx.restoreGState()
     }
 
@@ -1040,12 +1219,11 @@ enum MermaidSequenceRenderer {
         ctx.drawPath(using: .fillStroke)
         ctx.restoreGState()
 
-        let title = sequenceBlockTitle(fakeBlock)
-        guard !title.isEmpty else { return }
+        guard !frame.title.isEmpty else { return }
         let titleFontSize = fontSize * 0.78
         let font = CTFontCreateWithName("Helvetica-Bold" as CFString, titleFontSize, nil)
         MermaidTextUtils.drawText(
-            title,
+            frame.title,
             at: CGPoint(x: rect.minX + 8, y: rect.minY + 4),
             font: font,
             fontSize: titleFontSize,
@@ -1657,39 +1835,45 @@ enum MermaidSequenceRenderer {
         oy: CGFloat,
         totalWidth: CGFloat
     ) -> CGRect {
-        let note = noteLayout.note
         let width = noteLayout.size.width
         let height = noteLayout.size.height
         let y = oy + noteLayout.y
-        let gap = c.fontSize * 0.8
-
-        let rawX: CGFloat
-        switch note.position {
-        case .rightOf:
-            rawX = note.actors.first
-                .flatMap { participantIndex[$0] }
-                .map { ox + participants[$0].centerX + gap }
-                ?? ox + c.sideMargin
-        case .leftOf:
-            rawX = note.actors.first
-                .flatMap { participantIndex[$0] }
-                .map { ox + participants[$0].centerX - width - gap }
-                ?? ox + c.sideMargin
-        case .over:
-            let indices = note.actors.compactMap { participantIndex[$0] }
-            if let first = indices.first, let last = indices.last {
-                let minX = min(participants[first].centerX, participants[last].centerX)
-                let maxX = max(participants[first].centerX, participants[last].centerX)
-                rawX = ox + (minX + maxX) / 2 - width / 2
-            } else {
-                rawX = ox + c.sideMargin
-            }
-        }
+        let rawX = ox + (noteRawX(
+            noteLayout.note,
+            width: width,
+            participants: participants,
+            participantIndex: participantIndex,
+            constants: c
+        ) ?? c.sideMargin)
 
         let minX = ox + c.sideMargin * 0.25
         let maxX = max(minX, ox + totalWidth - c.sideMargin * 0.25 - width)
         let clampedX = min(max(rawX, minX), maxX)
         return CGRect(x: clampedX, y: y, width: width, height: height)
+    }
+
+    /// Unclamped left edge of a note in layout space, or nil when none of
+    /// its participants exist. Layout widens the canvas to contain it.
+    private static func noteRawX(
+        _ note: SequenceNote,
+        width: CGFloat,
+        participants: [ParticipantLayout],
+        participantIndex: [String: Int],
+        constants c: Constants
+    ) -> CGFloat? {
+        let gap = c.fontSize * 0.8
+        let indices = note.actors.compactMap { participantIndex[$0] }
+        guard let first = indices.first, let last = indices.last else { return nil }
+        switch note.position {
+        case .rightOf:
+            return participants[first].centerX + gap
+        case .leftOf:
+            return participants[first].centerX - width - gap
+        case .over:
+            let minX = min(participants[first].centerX, participants[last].centerX)
+            let maxX = max(participants[first].centerX, participants[last].centerX)
+            return (minX + maxX) / 2 - width / 2
+        }
     }
 
     // MARK: - Messages
@@ -2077,10 +2261,25 @@ enum MermaidSequenceRenderer {
         return labels
     }
 
-    private static func messageDisplayText(_ text: String, sequenceNumber: String?) -> String {
-        guard let sequenceNumber else { return text }
-        if text.isEmpty { return "\(sequenceNumber)." }
-        return "\(sequenceNumber). \(text)"
+    /// Wraps a message label to `maxWidth`, keeping an autonumber prefix
+    /// on the first line with the start of the text. With `keepWords` the
+    /// width never drops below the widest word, so words never split.
+    private static func wrapMessageLabel(
+        _ text: String,
+        sequenceNumber: String?,
+        maxWidth: CGFloat,
+        keepWords: Bool,
+        font: CTFont,
+        fontSize: CGFloat
+    ) -> String {
+        let prefix = sequenceNumber.map { text.isEmpty ? "\($0)." : "\($0). " } ?? ""
+        guard !text.isEmpty else { return prefix }
+        let prefixWidth = prefix.isEmpty ? 0 : MermaidTextUtils.lineWidth(prefix, font: font, fontSize: fontSize)
+        var width = maxWidth - prefixWidth
+        if keepWords {
+            width = max(width, MermaidTextUtils.widestWord(text, font: font, fontSize: fontSize))
+        }
+        return prefix + MermaidTextUtils.wrapText(text, maxWidth: width, font: font, fontSize: fontSize)
     }
 
     private static func formatSequenceNumber(_ value: Double) -> String {

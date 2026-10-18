@@ -18,9 +18,9 @@ import Foundation
 ///
 /// Column widths derive from `RenderConfiguration.maxWidth` so a small
 /// timeline fills the chat bubble and long event text wraps and truncates
-/// with an ellipsis instead of overflowing. Diagrams with many periods are
-/// allowed to grow wider than `maxWidth`; the inline view scales to fit and
-/// fullscreen pinch-zoom is the inspection path.
+/// with an ellipsis instead of overflowing. An LR timeline with too many
+/// periods to fit `maxWidth` side by side is drawn top-down instead, which
+/// always fits the width and grows in height.
 enum MermaidTimelineRenderer {
 
     // MARK: - Layout constants
@@ -157,7 +157,10 @@ enum MermaidTimelineRenderer {
         if diagram.direction == .TD {
             return buildLayoutTD(diagram, configuration: configuration)
         }
-        return buildLayoutLR(diagram, configuration: configuration)
+        let across = buildLayoutLR(diagram, configuration: configuration)
+        guard across.size.width > configuration.maxWidth else { return across }
+        let down = buildLayoutTD(diagram, configuration: configuration)
+        return down.size.width < across.size.width ? down : across
     }
 
     private static func buildLayoutLR(
@@ -176,8 +179,13 @@ enum MermaidTimelineRenderer {
 
         // Column width from the available width, clamped so phones stay
         // readable and wide timelines stay bounded per column.
+        // Fixed space between columns: column gaps inside each section band,
+        // band padding, and the gaps between bands.
         let usable = max(maxWidth, 320) - margin * 2
-        let gaps = CGFloat(max(totalPeriods - 1, 0)) * columnGap
+        let sectionCount = max(sections.count, 1)
+        let gaps = CGFloat(max(totalPeriods - sectionCount, 0)) * columnGap
+            + CGFloat(sectionCount - 1) * sectionGap
+            + CGFloat(sectionCount) * bandPadX * 2
         let ideal = (usable - gaps) / CGFloat(totalPeriods)
         let columnWidth = min(max(ideal, minColumnWidth), maxColumnWidth)
         let labelWrapWidth = columnWidth

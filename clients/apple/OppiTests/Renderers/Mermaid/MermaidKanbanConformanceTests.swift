@@ -137,7 +137,10 @@ struct MermaidKanbanConformanceTests {
             #expect(column.minX >= -0.5, "column-\(index) clips left")
             #expect(column.maxX <= size.width + 0.5, "column-\(index) overflows width")
             if index > 0 {
-                #expect(column.minX + 0.5 >= columns[index - 1].maxX, "column-\(index) overlaps previous")
+                #expect(
+                    !column.insetBy(dx: 0.5, dy: 0.5).intersects(columns[index - 1]),
+                    "column-\(index) overlaps previous"
+                )
             }
         }
 
@@ -177,6 +180,48 @@ struct MermaidKanbanConformanceTests {
         #expect(firstCard.contains("Collect"))
         #expect(firstCard.contains("\n"), "long kanban cards must wrap at 360pt")
         #expect(draw(layout) != nil)
+    }
+
+    @Test func columnsWrapOntoRowsInsteadOfSplittingWords() {
+        let source = """
+            kanban
+              a[Todo]
+                t1[Investigate]
+              b[Ready for deploy]
+                t2[Design grammar]
+              c[Ready for test]
+                t3[Create parsing tests]
+              d[Done]
+                t4[Title duplicates diagram]
+              e[Can't reproduce]
+                t5[Weird flickering in Firefox]
+            """
+        guard case .kanban(let diagram) = MermaidParser().parse(source) else {
+            Issue.record("Expected kanban")
+            return
+        }
+        let layout = layoutKanban(diagram, maxWidth: 360)
+        let size = layout.customSize ?? .zero
+        #expect(size.width <= 360)
+
+        func words(_ text: String) -> [Substring] {
+            text.split(whereSeparator: { $0.isWhitespace })
+        }
+        for (c, column) in diagram.columns.enumerated() {
+            let wrappedTitle = layout.nodeLabels["$column-\(c)"] ?? ""
+            #expect(words(wrappedTitle) == words(column.title), "column-\(c) title split a word: \(wrappedTitle)")
+            for (t, task) in column.tasks.enumerated() {
+                let wrapped = layout.nodeLabels["$task-\(c)-\(t)"] ?? ""
+                #expect(words(wrapped) == words(task.description), "task-\(c)-\(t) split a word: \(wrapped)")
+            }
+        }
+        let frames = (0..<diagram.columns.count).compactMap { layout.graphResult.nodePositions["column-\($0)"] }
+        #expect(Set(frames.map(\.minY)).count > 1, "Five columns at 360pt should wrap onto a second row")
+        for (i, a) in frames.enumerated() {
+            for b in frames[(i + 1)...] {
+                #expect(!a.insetBy(dx: 0.5, dy: 0.5).intersects(b))
+            }
+        }
     }
 
     @Test func dispatcherRendersKanbanWithoutPlaceholder() {

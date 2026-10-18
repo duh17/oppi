@@ -279,7 +279,8 @@ struct MermaidTimelineConformanceTests {
     }
 
     @Test func periodsAreOrderedAlongSpineAndEventsStackBelow() {
-        let model = Self.renderLayout(Self.socialMedia)
+        let model = Self.renderLayout(Self.socialMedia, maxWidth: 800)
+        #expect(model.direction == .LR)
 
         let periods = model.sections.flatMap(\.periods)
         #expect(periods.count == 4)
@@ -306,7 +307,8 @@ struct MermaidTimelineConformanceTests {
     }
 
     @Test func namedSectionsGetDisjointColorBands() {
-        let model = Self.renderLayout(Self.industrialRevolution)
+        let model = Self.renderLayout(Self.industrialRevolution, maxWidth: 800)
+        #expect(model.direction == .LR)
 
         #expect(model.sections.count == 2)
         #expect(model.sections[0].name == "17th-20th century")
@@ -353,14 +355,21 @@ struct MermaidTimelineConformanceTests {
         #expect(box.frame.height > 0)
     }
 
-    @Test func wideTimelineMayExceedBubbleWidth() {
-        // Wide diagrams grow past `maxWidth`; the inline view scales to
-        // fit and fullscreen zoom is the inspection path.
+    @Test func timelineTooWideAcrossTurnsTopDownToFitMaxWidth() {
         let source = (1...10).map { "P\($0) : event \($0)" }.joined(separator: "\n")
-        let model = Self.renderLayout(source, maxWidth: 360)
-        #expect(model.size.width > 360)
-        let periods = model.sections.flatMap(\.periods)
+        let narrow = Self.renderLayout(source, maxWidth: 360)
+        #expect(narrow.direction == .TD)
+        #expect(narrow.size.width <= 360)
+        let periods = narrow.sections.flatMap(\.periods)
         #expect(periods.count == 10)
+        for (earlier, later) in zip(periods, periods.dropFirst()) {
+            #expect(earlier.centerY < later.centerY)
+        }
+
+        // With room for every column the same source stays left to right.
+        let wide = Self.renderLayout(source, maxWidth: 1400)
+        #expect(wide.direction == .LR)
+        #expect(wide.size.width <= 1400)
     }
 
     @Test func titleAndSectionHeadingsWrapWithinMaxWidth() {
@@ -399,11 +408,12 @@ struct MermaidTimelineConformanceTests {
         #expect(headingFrame.minX >= longModel.sections[0].bandFrame.minX - 0.5)
         #expect(wrappedName.contains("\n") || wrappedName.contains("…"))
         // Must not spill into the next section band.
-        #expect(headingFrame.maxX <= longModel.sections[1].bandFrame.minX + 0.5)
+        #expect(!headingFrame.intersects(longModel.sections[1].bandFrame))
     }
 
     @Test func spineContinuesAcrossSectionsWithDirectionalCue() {
-        let model = Self.renderLayout(Self.industrialRevolution)
+        let model = Self.renderLayout(Self.industrialRevolution, maxWidth: 800)
+        #expect(model.direction == .LR)
         #expect(model.sections.count == 2)
         guard let firstCenter = model.sections[0].periods.first?.centerX,
               let lastCenter = model.sections[1].periods.last?.centerX

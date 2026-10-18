@@ -629,7 +629,7 @@ struct MermaidSequenceRendererTests {
         """
 
     @Test(arguments: [5, 6])
-    func narrowParticipantHeadsStayDisjointWithoutCompressingBelowGap(count: Int) {
+    func narrowParticipantHeadsStayDisjoint(count: Int) {
         let names = ["Alice", "Bob", "Carol", "Dave", "Erin", "Frank"]
         let declared = names.prefix(count).map { "    participant \($0)" }.joined(separator: "\n")
         let source = """
@@ -648,9 +648,8 @@ struct MermaidSequenceRendererTests {
             displayMode: .inline
         )
         let facts = MermaidSequenceRenderer.layoutFacts(diagram, configuration: narrow)
-        let minGap = config.fontSize * 2.2
         #expect(facts.participants.count == count)
-        assertParticipantsReadable(facts, minGap: minGap)
+        assertParticipantsReadable(facts, minGap: config.fontSize * 0.5)
     }
 
     @Test func sequenceUsesAvailableWidthWithoutShrinkingBoxes() {
@@ -702,7 +701,66 @@ struct MermaidSequenceRendererTests {
         )
     }
 
-    @Test func narrowSequenceMayExceedViewportInsteadOfOverlapping() {
+    @Test func wideSequenceTightensToFitMaxWidthWithLabelsBetweenLifelines() {
+        let source = """
+            sequenceDiagram
+                autonumber
+                participant Client
+                participant Server
+                participant DB
+                participant LLM
+                Client->>Server: sendPrompt(text)
+                Server->>DB: createSession()
+                DB-->>Server: session
+                Server->>LLM: messages
+                LLM-->>Server: delta
+                Server->>DB: saveTranscript()
+                Server-->>Client: done
+            """
+        guard case .sequence(let diagram) = parser.parse(source) else {
+            Issue.record("Expected sequence")
+            return
+        }
+        func facts(maxWidth: CGFloat) -> SequenceLayoutFacts {
+            MermaidSequenceRenderer.layoutFacts(diagram, configuration: RenderConfiguration(
+                fontSize: config.fontSize, maxWidth: maxWidth, theme: config.theme, displayMode: .document
+            ))
+        }
+        let natural = facts(maxWidth: 2000)
+        let fitted = facts(maxWidth: 360)
+        #expect(natural.size.width > 360, "Fixture must need fitting, natural width \(natural.size.width)")
+        #expect(fitted.size.width <= 360.5, "Fitted width \(fitted.size.width)")
+        assertParticipantsReadable(fitted, minGap: config.fontSize * 0.5)
+
+        let centers = Dictionary(uniqueKeysWithValues: fitted.participants.map { ($0.id, $0.centerX) })
+        #expect(fitted.messages.count == diagram.messages.count)
+        for (message, placed) in zip(diagram.messages, fitted.messages) {
+            guard let from = centers[message.from], let to = centers[message.to] else { continue }
+            #expect(
+                placed.rect.width <= abs(to - from),
+                "\(message.text) label \(placed.rect.width) wider than its span \(abs(to - from))"
+            )
+        }
+    }
+
+    @Test func sequenceThatFitsIsUnchangedByMaxWidth() {
+        guard case .sequence(let diagram) = parser.parse("""
+            sequenceDiagram
+                Alice->>Bob: Hello Bob
+                Bob-->>Alice: Hi Alice
+            """) else {
+            Issue.record("Expected sequence")
+            return
+        }
+        func facts(maxWidth: CGFloat) -> SequenceLayoutFacts {
+            MermaidSequenceRenderer.layoutFacts(diagram, configuration: RenderConfiguration(
+                fontSize: config.fontSize, maxWidth: maxWidth, theme: config.theme, displayMode: .document
+            ))
+        }
+        #expect(facts(maxWidth: 360) == facts(maxWidth: 900))
+    }
+
+    @Test func tooNarrowViewportKeepsHeadsApartInsteadOfOverlapping() {
         let source = """
             sequenceDiagram
                 participant Alice
@@ -717,7 +775,6 @@ struct MermaidSequenceRendererTests {
             Issue.record("Expected sequence")
             return
         }
-        let minGap = config.fontSize * 2.2
         let narrow = RenderConfiguration(
             fontSize: config.fontSize,
             maxWidth: 200,
@@ -725,7 +782,7 @@ struct MermaidSequenceRendererTests {
             displayMode: .inline
         )
         let facts = MermaidSequenceRenderer.layoutFacts(diagram, configuration: narrow)
-        assertParticipantsReadable(facts, minGap: minGap)
+        assertParticipantsReadable(facts, minGap: config.fontSize * 0.5)
         #expect(
             facts.size.width > 200 + 0.5,
             "Too-narrow viewport must keep a wider natural canvas, got \(facts.size.width)"

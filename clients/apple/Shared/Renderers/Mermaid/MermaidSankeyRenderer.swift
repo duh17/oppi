@@ -417,20 +417,53 @@ enum MermaidSankeyRenderer {
         let points = ribbonCenterline(from: start, to: end)
         let c1 = points[1]
         let c2 = points[2]
-        ctx.setFillColor(color)
-        ctx.move(to: CGPoint(x: start.x, y: start.y - half))
-        ctx.addCurve(
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: start.x, y: start.y - half))
+        path.addCurve(
             to: CGPoint(x: end.x, y: end.y - half),
             control1: CGPoint(x: c1.x, y: start.y - half),
             control2: CGPoint(x: c2.x, y: end.y - half)
         )
-        ctx.addLine(to: CGPoint(x: end.x, y: end.y + half))
-        ctx.addCurve(
+        path.addLine(to: CGPoint(x: end.x, y: end.y + half))
+        path.addCurve(
             to: CGPoint(x: start.x, y: start.y + half),
             control1: CGPoint(x: c2.x, y: end.y + half),
             control2: CGPoint(x: c1.x, y: start.y + half)
         )
-        ctx.closePath()
-        ctx.fillPath()
+        path.closeSubpath()
+        ctx.setFillColor(color)
+        fillInBands(path, in: ctx)
+    }
+
+    /// Fills a path in horizontal bands. Core Graphics rasterizes a fill
+    /// over the path's whole bounding box, so one thin ribbon running
+    /// diagonally down a tall diagram costs as much as filling that box;
+    /// clipping to bands keeps each pass to its band's share. Band edges sit
+    /// on device pixel rows, so the cuts leave no antialiasing seams.
+    private static func fillInBands(_ path: CGPath, in ctx: CGContext) {
+        let box = path.boundingBoxOfPath
+        let device = ctx.userSpaceToDeviceSpaceTransform
+        let bandHeight: CGFloat = 48
+        // Rotated or skewed contexts, and short ribbons, fill in one pass.
+        guard box.height > bandHeight * 2, device.b == 0, device.c == 0, device.d != 0 else {
+            ctx.addPath(path)
+            ctx.fillPath()
+            return
+        }
+        var top = box.minY - 1
+        while top < box.maxY {
+            var bottom = top + bandHeight
+            if bottom >= box.maxY {
+                bottom = box.maxY + 1
+            } else {
+                bottom = ((device.d * bottom + device.ty).rounded() - device.ty) / device.d
+            }
+            ctx.saveGState()
+            ctx.clip(to: CGRect(x: box.minX - 1, y: top, width: box.width + 2, height: bottom - top))
+            ctx.addPath(path)
+            ctx.fillPath()
+            ctx.restoreGState()
+            top = bottom
+        }
     }
 }

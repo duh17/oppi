@@ -304,6 +304,55 @@ struct MermaidMindmapRendererTests {
         #expect((try #require(largeLayout.customSize)).height > (try #require(smallLayout.customSize)).height)
     }
 
+    private static let architectureMindmap = """
+        mindmap
+            root((Architecture))
+                Client
+                    iOS App
+                        SwiftUI
+                        UIKit
+                    Mac App
+                        AppKit
+                Server
+                    TypeScript
+                        Bun
+                        Node
+                    WebSocket
+                    Agent Runner
+                Infrastructure
+                    Tailscale
+                        WireGuard
+                        Mesh
+                    Docker
+                    SQLite
+        """
+
+    @Test func wideMindmapGrowsDownToFitMaxWidth() {
+        let parser = MermaidParser()
+        let renderer = MermaidRenderer()
+        let diagram = parser.parse(Self.architectureMindmap)
+        let natural = renderer.boundingBox(renderer.layout(diagram, configuration: .default(maxWidth: 5000)))
+        let fitted = renderer.boundingBox(renderer.layout(diagram, configuration: .default(maxWidth: 360)))
+        #expect(natural.width > 360, "Fixture must need fitting, natural width \(natural.width)")
+        #expect(fitted.width <= 360)
+        #expect(fitted.height > natural.height)
+    }
+
+    @Test func mindmapThatFitsIsUnchangedByMaxWidth() {
+        let parser = MermaidParser()
+        let renderer = MermaidRenderer()
+        let diagram = parser.parse("""
+            mindmap
+                root
+                    A
+                    B
+            """)
+        let atBubble = renderer.boundingBox(renderer.layout(diagram, configuration: .default(maxWidth: 360)))
+        let unbounded = renderer.boundingBox(renderer.layout(diagram, configuration: .default(maxWidth: 5000)))
+        #expect(atBubble.width <= 360)
+        #expect(atBubble == unbounded)
+    }
+
     @Test func singleNodeLayoutIsCompact() throws {
         let diagram = MindmapDiagram(root: MindmapNode(
             label: "Solo",

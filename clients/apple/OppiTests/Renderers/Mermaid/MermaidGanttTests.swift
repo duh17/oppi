@@ -325,6 +325,41 @@ struct MermaidGanttRendererTests {
         #expect((try #require(size)).height > 0)
     }
 
+    @Test func wideChartCompressesTimeScaleToFitMaxWidth() throws {
+        let diagram = parseGantt("""
+            gantt
+                section Build
+                Design         :a, 2024-01-01, 10d
+                Implementation :b, after a, 20d
+                Release        :c, after b, 5d
+            """)
+        let natural = try #require(
+            MermaidGanttRenderer.layout(diagram, configuration: .default(maxWidth: 5000)).customSize
+        )
+        let fitted = try #require(
+            MermaidGanttRenderer.layout(diagram, configuration: .default(maxWidth: 360)).customSize
+        )
+        #expect(natural.width > 360, "Fixture must need fitting, natural width \(natural.width)")
+        #expect(fitted.width <= 360)
+        // Fitting compresses the time axis; every task keeps its row.
+        #expect(fitted.height == natural.height)
+    }
+
+    @Test func chartThatFitsKeepsNaturalScale() throws {
+        let diagram = parseGantt("""
+            gantt
+                section Work
+                Task A :t1, 2024-01-01, 3d
+                Task B :t2, after t1, 2d
+            """)
+        let atBubble = try #require(MermaidGanttRenderer.layout(diagram, configuration: config).customSize)
+        let unbounded = try #require(
+            MermaidGanttRenderer.layout(diagram, configuration: .default(maxWidth: 5000)).customSize
+        )
+        #expect(atBubble.width <= 800)
+        #expect(atBubble == unbounded)
+    }
+
     @Test func emptyDiagramReturnsPlaceholder() {
         let diagram = GanttDiagram(
             title: nil,
