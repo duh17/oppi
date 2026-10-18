@@ -141,7 +141,7 @@ final class RouterNavigationController: UINavigationController, RouterModalConta
         animated: Bool
     ) {
         // The panel lost its title, Done, and search after a reader popped.
-        showNavigationBarForIncomingScreen(animated: animated)
+        applyNavigationBarForIncomingScreen(viewController, animated: animated)
     }
 
     override func updateProperties() {
@@ -171,21 +171,28 @@ final class RouterNavigationController: UINavigationController, RouterModalConta
     }
 }
 
+/// A screen that floats its own Back and actions and keeps the navigation
+/// bar hidden while it is on top (the SSH terminal).
+@MainActor
+protocol RouterHidesNavigationBar: UIViewController {}
+
 extension UINavigationController {
     /// Call from `navigationController(_:willShow:animated:)`. A pushed file
     /// reader hides the bar for its own chrome
     /// (`toolbarVisibility(.hidden, for: .navigationBar)`), and nothing shows
     /// it again when the reader pops: the screen below loses its Back button,
-    /// title, items, and search bar. Every screen starts with the bar; content
-    /// that hides it hides it again. A cancelled back swipe leaves the reader
-    /// on top, so its hidden bar comes back.
-    func showNavigationBarForIncomingScreen(animated: Bool) {
+    /// title, items, and search bar. Every screen starts with the bar, except
+    /// a `RouterHidesNavigationBar` screen, which starts without it; content
+    /// that hides it hides it again. A cancelled back swipe leaves the old
+    /// screen on top, so its bar state comes back.
+    func applyNavigationBarForIncomingScreen(_ incoming: UIViewController, animated: Bool) {
         let wasHidden = isNavigationBarHidden
-        guard wasHidden else { return }
-        setNavigationBarHidden(false, animated: animated)
+        let hidden = incoming is RouterHidesNavigationBar
+        guard wasHidden != hidden else { return }
+        setNavigationBarHidden(hidden, animated: animated)
         transitionCoordinator?.notifyWhenInteractionChanges { [weak self] context in
             guard context.isCancelled else { return }
-            self?.setNavigationBarHidden(true, animated: true)
+            self?.setNavigationBarHidden(wasHidden, animated: true)
         }
     }
 }

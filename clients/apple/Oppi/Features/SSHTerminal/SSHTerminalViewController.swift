@@ -1,9 +1,11 @@
 import UIKit
 
-/// Live SSH terminal: UIKit owns the screen, bar, grid, notices, lists, and
-/// chat bar (`ComposerBarController` in a terminal configuration).
+/// Live SSH terminal: UIKit owns the screen, floating controls, grid,
+/// notices, lists, and chat bar (`ComposerBarController` in a terminal
+/// configuration). The navigation bar stays hidden while this screen is on
+/// top; Back, status, Herdr, and the … menu float over the grid.
 @MainActor
-final class SSHTerminalViewController: UIViewController {
+final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBar {
     private(set) var channel: SSHTerminalChannel
     private let reconnect: () -> Void
     private let editHost: () -> Void
@@ -18,7 +20,7 @@ final class SSHTerminalViewController: UIViewController {
     private(set) var gridView: SSHTerminalGridView?
     private let overlay = SSHTerminalPassthroughView()
     private let topStack = UIStackView()
-    private let handle = SSHTerminalTopBarHandleView()
+    private let backPill = SSHTerminalBackPill()
     private let connectionBanner = SSHTerminalConnectionBannerView()
     private let inputBanner = SSHTerminalTextBannerView(identifier: "sshTerminal.inputNotice")
     private let pasteBanner = SSHTerminalTextBannerView(identifier: "sshTerminal.pasteNotice")
@@ -26,6 +28,8 @@ final class SSHTerminalViewController: UIViewController {
     private let copyNotice = SSHTerminalCopyNoticeView()
     private let backToLive = SSHTerminalBackToLiveButton()
     private let statusGlyph = SSHTerminalStatusGlyphButton()
+    private lazy var morePill = SSHTerminalMorePill(status: statusGlyph)
+    private var menuTitle: String?
     private var composerBar: ComposerBarController?
     private var composerSession: SSHTerminalComposerHost?
     private var composerKeyStrip: SSHTerminalKeyStripView?
@@ -53,9 +57,9 @@ final class SSHTerminalViewController: UIViewController {
     private var focusComposerAfterRaw = false
     private var composerFocusRequest = 0
     private var keyboardUp = false
-    private var temporaryReveal = false
-    /// Popped, swiped back, or covered by a push: the bar belongs to the
-    /// incoming screen and this screen's layout no longer sizes the shell.
+    private var controlsVisible = true
+    /// Popped, swiped back, or covered by a push: the navigation bar belongs
+    /// to the incoming screen and this screen's layout no longer sizes the shell.
     private var isLeaving = false
     private var keyboardTransition = 0
     private var resizeHoldTask: Task<Void, Never>?
@@ -104,7 +108,6 @@ final class SSHTerminalViewController: UIViewController {
         super.viewDidLoad()
         navigationItem.largeTitleDisplayMode = .inline
         buildLayout()
-        installOverflowMenu()
         defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: nil,
@@ -140,7 +143,9 @@ final class SSHTerminalViewController: UIViewController {
         isOnScreen = true
         isLeaving = false
         gridView?.releaseResize()
-        applyTopBarHidden(connected: channel.connected, animated: animated)
+        // Back and the actions float over the grid instead.
+        navigationController?.setNavigationBarHidden(true, animated: animated)
+        applyControlsVisibility(animation: nil)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -178,7 +183,8 @@ final class SSHTerminalViewController: UIViewController {
         resizeHoldTask?.cancel()
         gridView?.holdResize()
         channel.cancelPendingResize()
-        applyTopBarHidden(connected: channel.connected, animated: animated)
+        // The incoming screen needs its Back and title.
+        navigationController?.setNavigationBarHidden(false, animated: animated)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -288,8 +294,7 @@ final class SSHTerminalViewController: UIViewController {
 
         navigationItem.title = channel.title.isEmpty ? "SSH Terminal" : channel.title
         updatePolling()
-        updateBarItems(themeID: themeID)
-        applyTopBarHidden(connected: connected, animated: true)
+        updateFloatingControls(themeID: themeID)
         updateBanners(connecting: connecting, connected: connected, networkChanged: networkChanged, themeID: themeID)
         updateNotice(themeID: themeID)
         updateCopyAndLive(themeID: themeID)
@@ -318,10 +323,9 @@ final class SSHTerminalViewController: UIViewController {
         topStack.alignment = .center
         topStack.spacing = 8
         topStack.translatesAutoresizingMaskIntoConstraints = false
-        topStack.isLayoutMarginsRelativeArrangement = true
-        topStack.layoutMargins = UIEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
 
-        handle.onShow = { [weak self] in self?.revealTopBar() }
+        backPill.button.addAction(UIAction { [weak self] _ in self?.goBack() }, for: .touchUpInside)
+        morePill.herdr.addAction(UIAction { [weak self] _ in self?.showHerdr() }, for: .touchUpInside)
         connectionBanner.onReconnect = { [weak self] in self?.reconnect() }
         noticeCard.onDismiss = { [weak self] key in
             self?.attention.dismiss(key)
@@ -333,14 +337,12 @@ final class SSHTerminalViewController: UIViewController {
         }, for: .touchUpInside)
         statusGlyph.onOpen = { [weak self] in self?.showStatusDetail() }
 
-        handle.isHidden = true
         connectionBanner.isHidden = true
         inputBanner.isHidden = true
         pasteBanner.isHidden = true
         noticeCard.isHidden = true
         copyNotice.isHidden = true
         backToLive.isHidden = true
-        topStack.addArrangedSubview(handle)
         topStack.addArrangedSubview(connectionBanner)
         topStack.addArrangedSubview(inputBanner)
         topStack.addArrangedSubview(pasteBanner)
@@ -359,10 +361,14 @@ final class SSHTerminalViewController: UIViewController {
         overlay.addSubview(topStack)
         overlay.addSubview(copyNotice)
         overlay.addSubview(backToLive)
+        overlay.addSubview(backPill)
+        overlay.addSubview(morePill)
         copyNotice.translatesAutoresizingMaskIntoConstraints = false
         backToLive.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            topStack.topAnchor.constraint(equalTo: overlay.topAnchor),
+            backPill.topAnchor.constraint(equalTo: overlay.topAnchor, constant: 4),
+            morePill.topAnchor.constraint(equalTo: backPill.topAnchor),
+            topStack.topAnchor.constraint(equalTo: backPill.bottomAnchor, constant: 8),
             topStack.leadingAnchor.constraint(equalTo: overlay.leadingAnchor),
             topStack.trailingAnchor.constraint(equalTo: overlay.trailingAnchor),
             copyNotice.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
@@ -377,7 +383,12 @@ final class SSHTerminalViewController: UIViewController {
         view.addSubview(overlay)
         let keyboardBottom = grid.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
         gridBottomToKeyboard = keyboardBottom
+        let controlsInset: CGFloat = 12
         NSLayoutConstraint.activate([
+            // Clear of a landscape notch: the grid runs edge to edge, the
+            // controls stay inside the safe area.
+            backPill.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: controlsInset),
+            morePill.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -controlsInset),
             grid.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             grid.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             grid.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -432,7 +443,6 @@ final class SSHTerminalViewController: UIViewController {
         copyNoticeText = nil
         detached = false
         rawKeyboard = false
-        temporaryReveal = false
         sawClosedForBackground = false
         reconnectOnReturn = false
         channel = next
@@ -462,12 +472,19 @@ final class SSHTerminalViewController: UIViewController {
         overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
     }
 
-    // MARK: - Bar
+    // MARK: - Floating controls
 
-    private func installOverflowMenu() {
-        navigationItem.additionalOverflowItems = UIDeferredMenuElement.uncached { [weak self] completion in
-            completion(self?.overflowElements() ?? [])
-        }
+    /// The … menu's header names the screen: the shell's title when it
+    /// set one, else the host. The navigation bar that showed it is hidden.
+    private func installMenu(title: String) {
+        guard title != menuTitle else { return }
+        menuTitle = title
+        morePill.more.menu = UIMenu(
+            title: title,
+            children: [UIDeferredMenuElement.uncached { [weak self] completion in
+                completion(self?.overflowElements() ?? [])
+            }]
+        )
     }
 
     private func overflowElements() -> [UIMenuElement] {
@@ -485,9 +502,6 @@ final class SSHTerminalViewController: UIViewController {
             self?.editHost()
         })
         if channel.connected {
-            items.append(UIAction(title: "Hide Bar", image: UIImage(systemName: "chevron.up")) { [weak self] _ in
-                self?.userChoseHideBar()
-            })
             items.append(UIAction(
                 title: "Disconnect",
                 image: UIImage(systemName: "xmark"),
@@ -503,9 +517,9 @@ final class SSHTerminalViewController: UIViewController {
         return items
     }
 
-    private func updateBarItems(themeID: ThemeID) {
-        var items: [UIBarButtonItem] = []
-        if let rollup = programRollup, let headline = rollup.headline {
+    private func updateFloatingControls(themeID: ThemeID) {
+        let rollup = programRollup
+        if let rollup, let headline = rollup.headline {
             statusGlyph.apply(
                 status: headline,
                 summary: rollup.summaryText,
@@ -514,49 +528,54 @@ final class SSHTerminalViewController: UIViewController {
                 root: channel.programStatus.root.map { .init(state: $0.state, revision: $0.revision) }
             )
             attention.glyphFrame.rect = statusGlyph.glyphFrame.rect
-            let item = UIBarButtonItem(customView: statusGlyph)
-            item.accessibilityIdentifier = "sshTerminal.programStatus"
-            configureRail(item)
-            items.append(item)
         }
-        if herdr.available {
-            let count = herdr.snapshot?.needsAttention ?? 0
-            let title = count > 0 ? "Herdr agents (\(count))" : "Herdr agents"
-            let action = UIAction(title: title, image: UIImage(systemName: "square.grid.2x2")) { [weak self] _ in
-                self?.showHerdr()
-            }
-            let item = UIBarButtonItem(primaryAction: action)
-            item.accessibilityIdentifier = "sshTerminal.herdr"
-            item.accessibilityLabel = "Herdr agents"
-            item.accessibilityValue = herdr.snapshot.map { "\($0.needsAttention) need you" } ?? ""
-            if count > 0 { item.tintColor = UIColor(themeID.palette.orange) }
-            configureRail(item)
-            items.append(item)
-        }
-        navigationItem.rightBarButtonItems = items.reversed()
-    }
-
-    private func configureRail(_ item: UIBarButtonItem) {
-        if #available(iOS 27.0, *) {
-            item.visibilityPriority = .high
-        }
-        if #available(iOS 27.1, *) {
-            item.axisBehavior = .verticalPreferred
-        }
-    }
-
-    private func barShouldHide(connected: Bool) -> Bool {
-        SSHTerminalTopBarVisibility.hidden(
-            connected: connected,
-            leaving: isLeaving,
-            keyboardUp: keyboardUp,
-            rememberedHide: AppPreferences.SSHTerminal.hideBar,
-            temporaryReveal: temporaryReveal
+        morePill.apply(
+            themeID: themeID,
+            herdrAvailable: herdr.available,
+            herdrWaiting: herdr.snapshot?.needsAttention,
+            showsStatus: rollup?.headline != nil
         )
+        backPill.apply(themeID: themeID, attentionPending: attentionPending())
+        let shellTitle = channel.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        installMenu(title: shellTitle.isEmpty ? (hostLabel.isEmpty ? "SSH Terminal" : hostLabel) : shellTitle)
+        applyControlsVisibility(animation: .init(duration: 0.2, options: [.curveEaseInOut, .beginFromCurrentState]))
+    }
+
+    /// Fades the pills with the keyboard. Hidden pills take no touches and
+    /// leave the accessibility tree; edge-swipe back still works.
+    private func applyControlsVisibility(animation: SSHTerminalKeyboard.Animation?) {
+        let visible = SSHTerminalFloatingControls.visible(keyboardUp: keyboardUp, connected: channel.connected)
+        guard visible != controlsVisible || animation == nil else { return }
+        controlsVisible = visible
+        for pill in [backPill, morePill] as [UIView] {
+            pill.isUserInteractionEnabled = visible
+            pill.accessibilityElementsHidden = !visible
+        }
+        let apply = {
+            self.backPill.alpha = visible ? 1 : 0
+            self.morePill.alpha = visible ? 1 : 0
+        }
+        if let animation, isOnScreen, view.window != nil {
+            UIView.animate(withDuration: animation.duration, delay: 0, options: animation.options, animations: apply)
+        } else {
+            apply()
+        }
+        UIAccessibility.post(notification: .layoutChanged, argument: nil)
+    }
+
+    private func goBack() {
+        Router.finish(self)
+    }
+
+    /// VoiceOver's two-finger scrub goes back, as it would with a bar.
+    override func accessibilityPerformEscape() -> Bool {
+        guard navigationController.map({ $0.viewControllers.count > 1 }) ?? false else { return false }
+        goBack()
+        return true
     }
 
     private func attentionPending() -> Bool {
-        SSHTerminalTopBarAttention.pending(
+        SSHTerminalFloatingControls.attentionPending(
             herdrWaiting: herdr.snapshot?.needsAttention ?? 0,
             blockedProgram: SSHTerminalProgramStatusPresentation.blockedNotice(
                 store: channel.programStatus,
@@ -566,28 +585,16 @@ final class SSHTerminalViewController: UIViewController {
         )
     }
 
-    private func updateHandle(connected: Bool, themeID: ThemeID) {
-        let hide = barShouldHide(connected: connected)
-        handle.isHidden = !SSHTerminalTopBarVisibility.handleVisible(barHidden: hide, connected: connected)
-        handle.apply(themeID: themeID, attentionPending: hide && attentionPending())
-    }
-
-    private func applyTopBarHidden(connected: Bool, animated: Bool) {
-        let hide = barShouldHide(connected: connected)
-        updateHandle(connected: connected, themeID: lastThemeID ?? ThemeRuntimeState.currentThemeID())
-        guard isOnScreen, navigationController?.isNavigationBarHidden != hide else { return }
-        navigationController?.setNavigationBarHidden(hide, animated: animated)
-    }
-
     /// One resize per keyboard transition. Layout-driven resizes are held,
-    /// the bar's end state is laid out inside the keyboard's animation, and
-    /// the grid size the keyboard settles at is sent once. Layout passes in
-    /// between (the bar, the chat bar, and the keyboard guide move in
-    /// separate passes) are ignored until the transition ends; the release
-    /// sends the real size only if the prediction missed.
+    /// the chat bar's end state is laid out inside the keyboard's animation,
+    /// and the grid size the keyboard settles at is sent once. Layout passes
+    /// in between (the chat bar and the keyboard guide move in separate
+    /// passes) are ignored until the transition ends; the release sends the
+    /// real size only if the prediction missed. The floating controls fade in
+    /// the same motion and never change the grid.
     private func keyboardWillChange(endFrame: CGRect, screen: UIScreen?, duration: TimeInterval, curve: UInt) {
         guard let viewScreen = view.window?.windowScene?.screen,
-              let end = SSHTerminalTopBarKeyboard.endFrame(
+              let end = SSHTerminalKeyboard.endFrame(
                 endFrame,
                 keyboardScreen: screen,
                 viewScreen: viewScreen,
@@ -595,18 +602,12 @@ final class SSHTerminalViewController: UIViewController {
                 in: view
               )
         else { return }
-        let up = SSHTerminalTopBarKeyboard.isUp(endFrameInView: end, viewBounds: view.bounds)
-        if !up { temporaryReveal = false }
-        keyboardUp = up
-        let connected = channel.connected
-        guard isOnScreen, !isLeaving, let gridView else {
-            updateHandle(connected: connected, themeID: lastThemeID ?? ThemeRuntimeState.currentThemeID())
-            return
-        }
+        keyboardUp = SSHTerminalKeyboard.isUp(endFrameInView: end, viewBounds: view.bounds)
+        applyControlsVisibility(animation: SSHTerminalKeyboard.animation(duration: max(duration, 0.2), curve: curve))
+        guard isOnScreen, !isLeaving, let gridView else { return }
         keyboardTransition &+= 1
         let transition = keyboardTransition
         gridView.holdResize()
-        updateHandle(connected: connected, themeID: lastThemeID ?? ThemeRuntimeState.currentThemeID())
         resizeHoldTask?.cancel()
         resizeHoldTask = Task { [weak self, weak gridView] in
             // The chat bar's text view finishes editing after this
@@ -627,20 +628,15 @@ final class SSHTerminalViewController: UIViewController {
         duration: TimeInterval,
         curve: UInt
     ) {
-        let hide = barShouldHide(connected: channel.connected)
-        let animation = SSHTerminalTopBarKeyboard.animation(duration: duration, curve: curve)
+        let animation = SSHTerminalKeyboard.animation(duration: duration, curve: curve)
         UIView.animate(withDuration: animation.duration, delay: 0, options: animation.options) {
-            if self.navigationController?.isNavigationBarHidden != hide {
-                self.navigationController?.setNavigationBarHidden(hide, animated: false)
-            }
             self.updateComposerHeight()
-            self.navigationController?.view.layoutIfNeeded()
             self.view.layoutIfNeeded()
         }
-        let settled = SSHTerminalTopBarKeyboard.settledGridSize(
+        let settled = SSHTerminalKeyboard.settledGridSize(
             current: gridView.bounds.size,
             guideTop: view.keyboardLayoutGuide.layoutFrame.minY,
-            settledGuideTop: SSHTerminalTopBarKeyboard.settledGuideTop(
+            settledGuideTop: SSHTerminalKeyboard.settledGuideTop(
                 endFrameInView: end,
                 viewBounds: view.bounds,
                 bottomSafeArea: view.safeAreaInsets.bottom
@@ -1030,25 +1026,6 @@ final class SSHTerminalViewController: UIViewController {
         setNeedsUpdateProperties()
     }
 
-    private func userChoseHideBar() {
-        temporaryReveal = false
-        AppPreferences.SSHTerminal.setHideBar(true)
-        applyTopBarHidden(connected: channel.connected, animated: true)
-        setNeedsUpdateProperties()
-    }
-
-    /// Chevron handle: a remembered show when the keyboard is down; a
-    /// temporary peek while it is up, without overwriting Hide Bar.
-    private func revealTopBar() {
-        if keyboardUp {
-            temporaryReveal = true
-        } else {
-            AppPreferences.SSHTerminal.setHideBar(false)
-        }
-        applyTopBarHidden(connected: channel.connected, animated: true)
-        setNeedsUpdateProperties()
-    }
-
     // MARK: - Presentations
 
     private func showHerdr() {
@@ -1208,10 +1185,10 @@ final class SSHTerminalViewController: UIViewController {
     }
 }
 
-/// Back swipe while the bar is hidden. The navigation controller's own
-/// delegate filters touches through a private event check that refuses every
-/// touch while the bar is hidden, and this screen hides it for Hide Bar and
-/// for the keyboard. While the terminal is on top, this delegate answers with
+/// Back swipe with the bar hidden. The navigation controller's own delegate
+/// filters touches through a private event check that refuses every touch
+/// while the bar is hidden, and this screen always hides it. While the
+/// terminal is on top, this delegate answers with
 /// the navigation controller's public decisions only: same edge, same Back
 /// button exclusion, same begin rule.
 private final class SSHTerminalBackSwipe: NSObject, UIGestureRecognizerDelegate {

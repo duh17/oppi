@@ -1,63 +1,22 @@
 import CoreGraphics
 import UIKit
 
-/// Showing or hiding the navigation bar resizes the remote terminal, so a
-/// history drag must not do it. A pull counts only when it is long enough and
-/// mostly vertical. Finger down is show; finger up is hide. The reveal handle
-/// commits show only.
-enum SSHTerminalTopBarGesture {
-    /// Shorter than a nav-bar height. The old 24pt scroll threshold resized
-    /// the terminal on an ordinary history nudge.
-    static let minimumTravel: CGFloat = 44
-    static let dominanceRatio: CGFloat = 1.35
-
-    enum Action: Equatable {
-        case show
-        case hide
+/// The terminal has no navigation bar. Back sits in a glass pill at the top
+/// leading corner; status, Herdr, and the … menu share one at the trailing
+/// corner. They float over the grid, so showing or hiding them never resizes
+/// the remote terminal.
+enum SSHTerminalFloatingControls {
+    /// The pills step aside while a docked keyboard is up (typing) and come
+    /// back when it goes down. A broken connection keeps them: Back and
+    /// Reconnect must stay in reach.
+    static func visible(keyboardUp: Bool, connected: Bool) -> Bool {
+        !keyboardUp || !connected
     }
 
-    static func action(translation: CGSize) -> Action? {
-        let vertical = translation.height
-        guard abs(vertical) >= minimumTravel else { return nil }
-        guard abs(vertical) > abs(translation.width) * dominanceRatio else { return nil }
-        return vertical > 0 ? .show : .hide
-    }
-}
-
-/// Navigation bar visibility: remembered Hide Bar, keyboard auto-hide, and a
-/// temporary reveal from the chevron while the keyboard is up.
-///
-/// Temporary reveal stays until the keyboard goes down. It does not re-hide on
-/// a keystroke (that would resize the remote PTY again) and does not write the
-/// remembered Hide Bar choice.
-///
-/// A terminal that is leaving (popped, swiped back, or covered by a push)
-/// shows the shared bar: the incoming screen needs its Back and title, and
-/// the keyboard going down on the way out must not hide it again.
-enum SSHTerminalTopBarVisibility {
-    static func hidden(
-        connected: Bool,
-        leaving: Bool,
-        keyboardUp: Bool,
-        rememberedHide: Bool,
-        temporaryReveal: Bool
-    ) -> Bool {
-        guard connected, !leaving else { return false }
-        let wantsHide = rememberedHide || keyboardUp
-        let revealed = temporaryReveal && keyboardUp
-        return wantsHide && !revealed
-    }
-
-    static func handleVisible(barHidden: Bool, connected: Bool) -> Bool {
-        barHidden && connected
-    }
-}
-
-/// Dot on the Hide Bar handle: Herdr waiting, or a blocked program. Same
-/// signals as the Herdr attention tint and the waiting-program card. OSC 9
-/// notifications are not this.
-enum SSHTerminalTopBarAttention {
-    static func pending(herdrWaiting: Int, blockedProgram: Bool) -> Bool {
+    /// Dot on the Back pill: Herdr waiting, or a blocked program. Same
+    /// signals as the Herdr attention tint and the waiting-program card.
+    /// OSC 9 notifications are not this.
+    static func attentionPending(herdrWaiting: Int, blockedProgram: Bool) -> Bool {
         herdrWaiting > 0 || blockedProgram
     }
 }
@@ -66,7 +25,7 @@ enum SSHTerminalTopBarAttention {
 /// A floating iPad keyboard is not "up". A keyboard on the Duo's other
 /// display is ignored: the notification's object is the keyboard's screen,
 /// and its frame is in that screen's coordinate space.
-enum SSHTerminalTopBarKeyboard {
+enum SSHTerminalKeyboard {
     struct Animation {
         var duration: TimeInterval
         var options: UIView.AnimationOptions
@@ -102,9 +61,9 @@ enum SSHTerminalTopBarKeyboard {
         return min(endFrameInView.minY, safeBottom)
     }
 
-    /// The grid's size once the keyboard settles. The grid's top is already
-    /// final (the bar changed in this layout pass); its bottom moves with the
-    /// keyboard guide, with or without the chat bar between them.
+    /// The grid's size once the keyboard settles. Its top is fixed; its
+    /// bottom moves with the keyboard guide, with or without the chat bar's
+    /// resting height between them.
     static func settledGridSize(current: CGSize, guideTop: CGFloat, settledGuideTop: CGFloat) -> CGSize {
         CGSize(width: current.width, height: max(0, current.height + settledGuideTop - guideTop))
     }

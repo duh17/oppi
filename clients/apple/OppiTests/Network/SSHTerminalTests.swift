@@ -948,18 +948,6 @@ struct SSHTerminalTests {
         _ = banner
     }
 
-    @Test func navigationBarIgnoresOrdinaryScrollsAndNeedsADeliberatePull() {
-        // The old trigger was 24pt of finger travel in either direction.
-        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 0, height: 24)) == nil)
-        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 0, height: -24)) == nil)
-        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 0, height: 43)) == nil)
-        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 40, height: 44)) == nil)
-        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 0, height: 44)) == .show)
-        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 10, height: 80)) == .show)
-        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 0, height: -44)) == .hide)
-        #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: -8, height: -70)) == .hide)
-    }
-
     @Test func floatingNoticesDoNotResizeTheGrid() async throws {
         let channel = try SSHTerminalChannel()
         channel.opened(TerminalConnectionFixture())
@@ -1399,12 +1387,13 @@ struct SSHTerminalTests {
         channel.close(reason: "done")
     }
 
-    @Test func leavingWithTheKeyboardBarHiddenGivesTheScreenBelowItsBar() async throws {
+    @Test func floatingControlsReplaceTheBarAndStepAsideForTheKeyboard() async throws {
         let channel = try SSHTerminalChannel()
         channel.opened(TerminalConnectionFixture())
         let terminal = SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
         let root = UIViewController()
-        let nav = UINavigationController(rootViewController: root)
+        // The router's stack gives every incoming screen its bar back.
+        let nav = RouterNavigationController(rootViewController: root)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -1417,7 +1406,33 @@ struct SSHTerminalTests {
         }
         nav.pushViewController(terminal, animated: false)
         nav.view.layoutIfNeeded()
-        #expect(!nav.isNavigationBarHidden)
+        #expect(nav.isNavigationBarHidden, "the terminal never shows the navigation bar")
+        let grid = try #require(terminal.gridView)
+        let gridBefore = grid.bounds.size
+
+        func find(_ id: String, in view: UIView) -> UIView? {
+            if view.accessibilityIdentifier == id { return view }
+            return view.subviews.lazy.compactMap { find(id, in: $0) }.first
+        }
+        func control(_ id: String) throws -> UIView {
+            try #require(find(id, in: terminal.view))
+        }
+        func hiddenFromVoiceOver(_ id: String) throws -> Bool {
+            var view: UIView? = try control(id)
+            while let current = view {
+                if current.accessibilityElementsHidden || current.isHidden { return true }
+                view = current.superview
+            }
+            return false
+        }
+        /// What a finger at the control's center lands on.
+        func touched(_ id: String) throws -> UIView? {
+            let target = try control(id)
+            let point = target.convert(CGPoint(x: target.bounds.midX, y: target.bounds.midY), to: terminal.view)
+            return terminal.view.hitTest(point, with: nil)
+        }
+        #expect(try touched("sshTerminal.back") === control("sshTerminal.back"))
+        #expect(try touched("sshTerminal.more") === control("sshTerminal.more"))
 
         func keyboard(top: CGFloat) {
             let frame = window.convert(
@@ -1435,14 +1450,22 @@ struct SSHTerminalTests {
             )
         }
         keyboard(top: window.bounds.maxY - 336)
-        // The bar moves on the next main-actor turn, inside the keyboard's animation.
-        for _ in 0..<50 where !nav.isNavigationBarHidden {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        #expect(nav.isNavigationBarHidden, "a docked keyboard on this screen hides the bar")
+        #expect(try touched("sshTerminal.back")?.isDescendant(of: grid) == true, "a faded Back lets the touch reach the grid")
+        #expect(try touched("sshTerminal.more")?.isDescendant(of: grid) == true)
+        #expect(try hiddenFromVoiceOver("sshTerminal.back"))
 
+        keyboard(top: window.bounds.maxY)
+        #expect(try touched("sshTerminal.back") === control("sshTerminal.back"), "Back returns with the keyboard down")
+        #expect(try !hiddenFromVoiceOver("sshTerminal.back"))
+        // Settle past the transition's hold: the pills never took rows.
+        try await Task.sleep(for: .milliseconds(500))
+        nav.view.layoutIfNeeded()
+        #expect(grid.bounds.size == gridBefore)
+        #expect(nav.isNavigationBarHidden)
+
+        keyboard(top: window.bounds.maxY - 336)
         nav.popViewController(animated: false)
-        // The keyboard goes down on the way out; that must not re-hide the bar.
+        // The keyboard goes down on the way out.
         keyboard(top: window.bounds.maxY)
         try await Task.sleep(for: .milliseconds(100))
         nav.view.layoutIfNeeded()

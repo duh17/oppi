@@ -1,15 +1,15 @@
 import GhosttyVt
 import UIKit
 
-/// One program-status symbol for the terminal toolbar, the blocked card,
-/// Herdr rows, and the status list.
+/// One program-status symbol for the terminal's floating controls, the
+/// blocked card, Herdr rows, and the status list.
 ///
-/// The toolbar copy is a button that opens the record list. Settle timing for a
+/// The floating copy is a button that opens the record list. Settle timing for a
 /// just-finished root lives here, so the timer does not invalidate the terminal
 /// screen or resize the grid.
 final class SSHTerminalStatusMarkView: UIView {
     enum Style {
-        /// Navigation bar: entry effects, and variable colour while working.
+        /// Floating controls: entry effects, and variable colour while working.
         case toolbar
         /// Herdr agent rows: variable colour while working, nothing else.
         case row
@@ -40,8 +40,8 @@ final class SSHTerminalStatusMarkView: UIView {
         NSLayoutConstraint.activate([
             imageView.centerXAnchor.constraint(equalTo: centerXAnchor),
             imageView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            widthAnchor.constraint(greaterThanOrEqualToConstant: style == .toolbar ? 44 : 20),
-            heightAnchor.constraint(greaterThanOrEqualToConstant: style == .toolbar ? 44 : 20),
+            widthAnchor.constraint(greaterThanOrEqualToConstant: style == .toolbar ? SSHTerminalGlassPill.height : 20),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: style == .toolbar ? SSHTerminalGlassPill.height : 20),
         ])
         isAccessibilityElement = false
     }
@@ -126,7 +126,8 @@ final class SSHTerminalStatusMarkView: UIView {
     }
 }
 
-/// Toolbar control: 44 pt hit target, system bar-item press, opens the list.
+/// Status item in the trailing glass pill; opens the list. The pill widens
+/// its touch to 44 pt.
 final class SSHTerminalStatusGlyphButton: UIButton {
     let mark = SSHTerminalStatusMarkView(style: .toolbar)
     var onOpen: () -> Void = {}
@@ -138,9 +139,12 @@ final class SSHTerminalStatusGlyphButton: UIButton {
         addSubview(mark)
         mark.translatesAutoresizingMaskIntoConstraints = false
         mark.isUserInteractionEnabled = false
+        // Below required: hidden in the pill's stack, it collapses to zero.
+        let fixedWidth = widthAnchor.constraint(equalToConstant: SSHTerminalGlassPill.itemWidth)
+        fixedWidth.priority = .required - 1
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 44),
-            heightAnchor.constraint(equalToConstant: 44),
+            fixedWidth,
+            heightAnchor.constraint(equalToConstant: SSHTerminalGlassPill.height),
             mark.centerXAnchor.constraint(equalTo: centerXAnchor),
             mark.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
@@ -149,6 +153,8 @@ final class SSHTerminalStatusGlyphButton: UIButton {
         accessibilityLabel = "Program status"
         accessibilityHint = "Shows each program's status"
         showsMenuAsPrimaryAction = false
+        showsLargeContentViewer = true
+        largeContentTitle = "Program status"
     }
 
     @available(*, unavailable)
@@ -167,6 +173,7 @@ final class SSHTerminalStatusGlyphButton: UIButton {
         root: SSHTerminalStatusHold.Root?
     ) {
         mark.apply(status: status, themeID: themeID, reduceMotion: reduceMotion, root: root)
+        largeContentImage = UIImage(systemName: status.terminalSymbol)
         accessibilityValue = summary.isEmpty ? status.label : "\(status.label), \(summary)"
     }
 }
@@ -210,14 +217,14 @@ struct SSHTerminalStatusHold: Equatable {
     }
 }
 
-/// The toolbar glyph's frame, for the blocked card to collapse into. A plain
+/// The floating status glyph's frame, for the blocked card to collapse into. A plain
 /// class written from layout, so a frame change never refreshes a view.
 @MainActor
 final class SSHTerminalGlyphFrame {
     var rect: CGRect = .zero
 }
 
-/// The text the toolbar glyph keeps off the bar.
+/// The text the floating status glyph keeps off the screen.
 final class SSHTerminalStatusDetailController: UIViewController, RouterModalContainer,
     UICollectionViewDelegate {
     var onDismissed: (() -> Void)?

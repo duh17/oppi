@@ -8,91 +8,185 @@ final class SSHTerminalPassthroughView: UIView {
     }
 }
 
-/// The way back after Hide Bar. A tap shows the bar; a downward pull does too.
-/// It is not a scroll catcher: a short or sideways drag leaves the bar hidden.
-final class SSHTerminalTopBarHandleView: UIView {
-    var onShow: () -> Void = {}
+/// Glass capsule for the terminal's floating controls. The glass is 36 pt
+/// tall so it covers as little of the grid as it can; a touch up to 4 pt
+/// above or below it still reaches the nearest button, so each one answers
+/// a 44 pt target.
+class SSHTerminalGlassPill: UIView {
+    static let height: CGFloat = 36
+    static let itemWidth: CGFloat = 38
+    private static let touchOutset = (44 - height) / 2
 
+    let stack = UIStackView()
     private let glass = UIVisualEffectView(effect: {
         let effect = UIGlassEffect(style: .regular)
         effect.isInteractive = true
         return effect
     }())
-    private let chevron = UIImageView()
-    private let attentionDot = UIView()
-    private let button = UIButton(type: .custom)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         translatesAutoresizingMaskIntoConstraints = false
-
         glass.translatesAutoresizingMaskIntoConstraints = false
-        glass.layer.cornerRadius = 11
+        glass.layer.cornerRadius = Self.height / 2
         glass.clipsToBounds = true
         addSubview(glass)
-
-        chevron.translatesAutoresizingMaskIntoConstraints = false
-        chevron.image = UIImage(
-            systemName: "chevron.down",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .bold)
-        )
-        chevron.contentMode = .scaleAspectFit
-        glass.contentView.addSubview(chevron)
-
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.addAction(UIAction { [weak self] _ in self?.onShow() }, for: .touchUpInside)
-        button.accessibilityLabel = "Show terminal bar"
-        button.accessibilityHint = "Shows the host name, Herdr, and terminal actions"
-        button.accessibilityIdentifier = "sshTerminal.showBar"
-        addSubview(button)
-
-        attentionDot.translatesAutoresizingMaskIntoConstraints = false
-        attentionDot.isUserInteractionEnabled = false
-        attentionDot.isAccessibilityElement = false
-        attentionDot.isHidden = true
-        attentionDot.layer.cornerRadius = 4
-        addSubview(attentionDot)
-
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(pulled(_:)))
-        pan.minimumNumberOfTouches = 1
-        button.addGestureRecognizer(pan)
-
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 0
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        glass.contentView.addSubview(stack)
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 44),
-            heightAnchor.constraint(equalToConstant: 44),
-            glass.centerXAnchor.constraint(equalTo: centerXAnchor),
-            glass.centerYAnchor.constraint(equalTo: centerYAnchor),
-            glass.widthAnchor.constraint(equalToConstant: 52),
-            glass.heightAnchor.constraint(equalToConstant: 22),
-            chevron.centerXAnchor.constraint(equalTo: glass.contentView.centerXAnchor),
-            chevron.centerYAnchor.constraint(equalTo: glass.contentView.centerYAnchor),
-            button.topAnchor.constraint(equalTo: topAnchor),
-            button.bottomAnchor.constraint(equalTo: bottomAnchor),
-            button.leadingAnchor.constraint(equalTo: leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: trailingAnchor),
-            attentionDot.widthAnchor.constraint(equalToConstant: 8),
-            attentionDot.heightAnchor.constraint(equalToConstant: 8),
-            attentionDot.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: 2),
-            attentionDot.topAnchor.constraint(equalTo: glass.topAnchor, constant: -2),
+            heightAnchor.constraint(equalToConstant: Self.height),
+            glass.topAnchor.constraint(equalTo: topAnchor),
+            glass.bottomAnchor.constraint(equalTo: bottomAnchor),
+            glass.leadingAnchor.constraint(equalTo: leadingAnchor),
+            glass.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: glass.contentView.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor),
+        ])
+        addInteraction(UILargeContentViewerInteraction())
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: 0, dy: -Self.touchOutset).contains(point)
+    }
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard !isHidden, alpha > 0.01, isUserInteractionEnabled, self.point(inside: point, with: event) else {
+            return nil
+        }
+        if bounds.contains(point), let hit = super.hitTest(point, with: event), hit !== self { return hit }
+        // Above or below the glass: the button in that column.
+        let buttons = stack.arrangedSubviews.filter { !$0.isHidden && $0.isUserInteractionEnabled }
+        return buttons.min {
+            abs(convert($0.center, from: stack).x - point.x) < abs(convert($1.center, from: stack).x - point.x)
+        }
+    }
+}
+
+/// One symbol in a glass pill. Large Content Viewer shows it at accessibility
+/// text sizes, as bar buttons do.
+final class SSHTerminalPillButton: UIButton {
+    init(systemName: String, label: String, identifier: String, width: CGFloat = SSHTerminalGlassPill.itemWidth) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        var config = UIButton.Configuration.plain()
+        config.image = UIImage(systemName: systemName)
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        config.contentInsets = .zero
+        configuration = config
+        accessibilityLabel = label
+        accessibilityIdentifier = identifier
+        showsLargeContentViewer = true
+        largeContentTitle = label
+        largeContentImage = UIImage(systemName: systemName)
+        scalesLargeContentImage = true
+        // Below required: a hidden item in the pill's stack collapses to zero.
+        let fixedWidth = widthAnchor.constraint(equalToConstant: width)
+        fixedWidth.priority = .required - 1
+        NSLayoutConstraint.activate([
+            fixedWidth,
+            heightAnchor.constraint(equalToConstant: SSHTerminalGlassPill.height),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func apply(themeID: ThemeID, attentionPending: Bool = false) {
-        chevron.tintColor = UIColor(themeID.palette.fg)
+    func apply(tint: UIColor) {
+        configuration?.baseForegroundColor = tint
+    }
+}
+
+/// Back, top leading. It carries the attention dot while Herdr or a blocked
+/// program wants you.
+final class SSHTerminalBackPill: UIView {
+    let pill = SSHTerminalGlassPill()
+    /// A circle: the glass is as wide as it is tall.
+    let button = SSHTerminalPillButton(
+        systemName: "chevron.backward", label: "Back", identifier: "sshTerminal.back", width: SSHTerminalGlassPill.height
+    )
+    private let attentionDot = UIView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        addSubview(pill)
+        pill.stack.addArrangedSubview(button)
+
+        attentionDot.translatesAutoresizingMaskIntoConstraints = false
+        attentionDot.isUserInteractionEnabled = false
+        attentionDot.isAccessibilityElement = false
+        attentionDot.isHidden = true
+        attentionDot.layer.cornerRadius = 5
+        attentionDot.layer.borderWidth = 1.5
+        addSubview(attentionDot)
+
+        NSLayoutConstraint.activate([
+            pill.topAnchor.constraint(equalTo: topAnchor),
+            pill.bottomAnchor.constraint(equalTo: bottomAnchor),
+            pill.leadingAnchor.constraint(equalTo: leadingAnchor),
+            pill.trailingAnchor.constraint(equalTo: trailingAnchor),
+            attentionDot.widthAnchor.constraint(equalToConstant: 10),
+            attentionDot.heightAnchor.constraint(equalToConstant: 10),
+            attentionDot.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: 1),
+            attentionDot.topAnchor.constraint(equalTo: pill.topAnchor, constant: -1),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        pill.point(inside: convert(point, to: pill), with: event)
+    }
+
+    func apply(themeID: ThemeID, attentionPending: Bool) {
+        button.apply(tint: UIColor(themeID.palette.fg))
         attentionDot.backgroundColor = UIColor(themeID.palette.orange)
+        attentionDot.layer.borderColor = UIColor(themeID.palette.bg).cgColor
         attentionDot.isHidden = !attentionPending
         button.accessibilityValue = attentionPending ? "Attention pending" : nil
     }
+}
 
-    @objc private func pulled(_ gesture: UIPanGestureRecognizer) {
-        guard gesture.state == .ended else { return }
-        let translation = gesture.translation(in: self)
-        let size = CGSize(width: translation.x, height: translation.y)
-        guard SSHTerminalTopBarGesture.action(translation: size) == .show else { return }
-        onShow()
+/// Top trailing: the program-status symbol (while a program has reported),
+/// Herdr (when the host has it), and the … menu. Leading to trailing in
+/// that order, as the bar items were.
+final class SSHTerminalMorePill: SSHTerminalGlassPill {
+    let status: SSHTerminalStatusGlyphButton
+    let herdr = SSHTerminalPillButton(systemName: "square.grid.2x2", label: "Herdr agents", identifier: "sshTerminal.herdr")
+    let more = SSHTerminalPillButton(systemName: "ellipsis", label: "More", identifier: "sshTerminal.more")
+
+    init(status: SSHTerminalStatusGlyphButton) {
+        self.status = status
+        super.init(frame: .zero)
+        more.showsMenuAsPrimaryAction = true
+        status.isHidden = true
+        herdr.isHidden = true
+        stack.addArrangedSubview(status)
+        stack.addArrangedSubview(herdr)
+        stack.addArrangedSubview(more)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(themeID: ThemeID, herdrAvailable: Bool, herdrWaiting: Int?, showsStatus: Bool) {
+        let fg = UIColor(themeID.palette.fg)
+        status.isHidden = !showsStatus
+        herdr.isHidden = !herdrAvailable
+        let waiting = herdrWaiting ?? 0
+        herdr.apply(tint: waiting > 0 ? UIColor(themeID.palette.orange) : fg)
+        herdr.accessibilityValue = herdrWaiting.map { "\($0) need you" } ?? ""
+        herdr.largeContentTitle = waiting > 0 ? "Herdr agents (\(waiting))" : "Herdr agents"
+        more.apply(tint: fg)
     }
 }
 

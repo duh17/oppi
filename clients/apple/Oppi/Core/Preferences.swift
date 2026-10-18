@@ -79,24 +79,6 @@ enum AppPreferences {
         }
     }
 
-    // MARK: - SSH Terminal
-
-    /// Device-local terminal chrome. Hide Bar is how this iPhone or iPad
-    /// shows every terminal; it is not stored on a host.
-    enum SSHTerminal {
-        static let hideBarKey = "\(AppIdentifiers.subsystem).sshTerminal.hideBar"
-
-        /// Explicit Hide Bar from the … menu. Keyboard auto-hide does not write this.
-        static var hideBar: Bool {
-            UserDefaults.standard.bool(forKey: hideBarKey)
-        }
-
-        static func setHideBar(_ hidden: Bool) {
-            guard hideBar != hidden else { return }
-            UserDefaults.standard.set(hidden, forKey: hideBarKey)
-        }
-    }
-
     // MARK: - Session Rows
 
     /// Device-local session list display: one saved row appearance and the
