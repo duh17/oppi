@@ -63,12 +63,12 @@ export async function inferWorkspaceIdFromCwdForCli(
 ): Promise<string | undefined> {
   const currentPath = normalizeWorkspacePath(cwd);
   const workspaces = await listWorkspacesForCli(storage);
+  // Same order as the server's terminal mirror: a workspace folder containing cwd decides on its
+  // own; worktree lists are consulted only when no workspace folder contains cwd.
   const workspaceMatches = listWorkspacePathMatches(workspaces, currentPath);
-  const worktreeMatches = await listWorkspaceWorktreePathMatches(storage, workspaces, currentPath);
+  if (workspaceMatches.length > 0) return inferredWorkspaceIdFromPathMatches(workspaceMatches);
   return inferredWorkspaceIdFromPathMatches(
-    [...workspaceMatches, ...worktreeMatches].sort(
-      (left, right) => right.root.length - left.root.length,
-    ),
+    await listWorkspaceWorktreePathMatches(storage, workspaces, currentPath),
   );
 }
 
@@ -209,6 +209,9 @@ async function listWorkspaceWorktreePathMatches(
 ): Promise<WorkspacePathMatch[]> {
   const matches: WorkspacePathMatch[] = [];
   for (const workspace of workspaces) {
+    // The server refuses worktree lists for sandbox workspaces (409). Their only checkout is the
+    // hostMount, which the caller has already matched.
+    if (workspace.runtime === "sandbox") continue;
     const result = await localApiRequest<{ worktrees?: CliWorktree[] }>(
       storage,
       `/workspaces/${encodeURIComponent(workspace.id)}/worktrees`,

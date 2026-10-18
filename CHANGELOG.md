@@ -109,6 +109,7 @@ Example:
 
 ### Fixed
 
+- **Server:** `oppi session search` without `--workspace` or `--all` no longer fails with "Worktrees are not available for sandbox workspaces" when any sandbox workspace exists. It infers the workspace from the current directory again.
 - **Client:** An open chat whose session changed many files in a dirty checkout no longer keeps the phone's CPU busy. The changed-files bar above the chat matched files far too slowly, and every session update redrew it.
 - **Client:** In a long session that is still working, scrolling up loads earlier history all the way to the start, and Session Outline jumps to rows that are not loaded yet land on them. Before, older history stopped loading once new output arrived, a jump to an unloaded row did nothing and left later rows missing, and the chat could stop following new output.
 - **Server:** In a mirrored terminal session, a question, confirmation, or other prompt the agent opens while the mirror is reconnecting, such as during a server restart, now appears on the phone once the mirror reconnects. Before, it showed only in the terminal and the phone sat on "Waiting on you" with no way to answer.
