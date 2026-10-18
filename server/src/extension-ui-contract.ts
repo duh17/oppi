@@ -877,10 +877,23 @@ export function buildExtensionUINotificationMessage(
   return message;
 }
 
+/**
+ * Dialog timeouts are whole milliseconds on the wire. The Apple client decodes them as integers
+ * and drops the whole request frame for a value like `1.1 * 1000`. A positive value stays at
+ * least 1; anything else means no timeout.
+ */
+function wireMilliseconds(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.max(1, Math.round(value))
+    : undefined;
+}
+
 export function buildExtensionUIRequestMessage(
   sessionId: string,
   req: ExtensionUIProtocolRequest,
 ): ServerMessage {
+  const timeout = wireMilliseconds(req.timeout);
+  const timeoutAt = wireMilliseconds(req.timeoutAt);
   if (req.method === "ask") {
     return {
       type: "extension_ui_request",
@@ -889,8 +902,8 @@ export function buildExtensionUIRequestMessage(
       method: req.method,
       questions: sanitizeExtensionUIAskQuestions(req.questions),
       allowCustom: req.allowCustom,
-      timeout: req.timeout,
-      timeoutAt: req.timeoutAt,
+      timeout,
+      timeoutAt,
       extensionScopeId: sanitizeExtensionUIDisplayText(req.extensionScopeId),
       extensionDisplayName: sanitizeExtensionUIDisplayText(req.extensionDisplayName),
     };
@@ -906,8 +919,8 @@ export function buildExtensionUIRequestMessage(
     message: sanitizeExtensionUIDisplayText(req.message),
     placeholder: sanitizeExtensionUIDisplayText(req.placeholder),
     prefill: req.prefill,
-    timeout: req.timeout,
-    timeoutAt: req.timeoutAt,
+    timeout,
+    timeoutAt,
     extensionScopeId: sanitizeExtensionUIDisplayText(req.extensionScopeId),
     extensionDisplayName: sanitizeExtensionUIDisplayText(req.extensionDisplayName),
   };

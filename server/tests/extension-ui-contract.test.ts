@@ -220,6 +220,27 @@ describe("extension UI contract", () => {
     });
   });
 
+  it("sends dialog timeouts as whole milliseconds the Apple decoder accepts", () => {
+    // 1.1 * 1000 === 1100.0000000000002; Swift's Int decoding rejects it and drops the frame.
+    for (const method of ["confirm", "ask"] as const) {
+      const message = buildExtensionUIRequestMessage("sess-1", {
+        id: `ui-${method}`,
+        method,
+        timeout: 1.1 * 1000,
+        timeoutAt: 1_760_000_000_000.4,
+      });
+      expect(message).toMatchObject({ timeout: 1100, timeoutAt: 1_760_000_000_000 });
+    }
+    for (const timeout of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const message = buildExtensionUIRequestMessage("sess-1", {
+        id: "ui-none",
+        method: "confirm",
+        timeout,
+      });
+      expect(message).toMatchObject({ timeout: undefined });
+    }
+  });
+
   it("sanitizes display-facing dialog text while preserving response values", () => {
     expect(
       buildExtensionUIRequestMessage("sess-1", {
