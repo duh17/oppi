@@ -35,7 +35,6 @@ import {
 import * as worktrees from "../src/worktrees.js";
 
 const WORKTREE_REBIND_NOTICE = "Resuming on Main checkout. The worktree is gone.";
-const STALE_WORKTREE_WARNING = "Worktree was removed; continuing on Main checkout.";
 
 function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
@@ -1004,47 +1003,6 @@ describe("SessionLifecycleService", () => {
       }
     });
 
-    it("strips a stale worktree warning without emitting another rebind", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-stale-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-stale-data-"));
-      try {
-        const workspace = makeGitWorkspace(root);
-        const session = makeSession({
-          runtime: "oppi",
-          status: "stopped",
-          worktreeId: "main",
-          warnings: [
-            STALE_WORKTREE_WARNING,
-            "Configured Agent tool is unavailable and was dropped from this session: foo.",
-          ],
-        });
-        const started = makeSession({
-          ...session,
-          status: "ready",
-          warnings: [
-            "Configured Agent tool is unavailable and was dropped from this session: foo.",
-          ],
-        });
-        const { service, getPersistedSession } = makeService({
-          started,
-          storedSession: session,
-          dataDir,
-        });
-
-        const result = await service.resumeWorkspaceSession({ session, workspace });
-
-        expect(result.rebound).toBe(false);
-        expect(getPersistedSession("sess-1")?.warnings).toEqual([
-          "Configured Agent tool is unavailable and was dropped from this session: foo.",
-        ]);
-        expect(getPersistedSession("sess-1")?.warnings).not.toContain(STALE_WORKTREE_WARNING);
-        expect(getPersistedSession("sess-1")?.warnings).not.toContain(WORKTREE_REBIND_NOTICE);
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-        rmSync(dataDir, { recursive: true, force: true });
-      }
-    });
-
     it("does not treat a missing workspace checkout as a removed worktree", async () => {
       const session = makeSession({
         runtime: "oppi",
@@ -1950,8 +1908,7 @@ describe("SessionLifecycleService", () => {
           saveSession.mock.calls.some(
             ([saved]) =>
               saved.id === "fork-1" &&
-              (saved.warnings?.includes(STALE_WORKTREE_WARNING) ||
-                saved.warnings?.includes(WORKTREE_REBIND_NOTICE)),
+              saved.warnings?.includes(WORKTREE_REBIND_NOTICE),
           ),
         ).toBe(false);
         expect(startSession).toHaveBeenCalledWith(

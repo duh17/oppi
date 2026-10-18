@@ -70,18 +70,6 @@ export function takePendingWorktreeRebindNotice(sessionId: string): boolean {
   return pendingWorktreeRebindNotices.delete(sessionId);
 }
 
-const STALE_WORKTREE_REBIND_WARNINGS = new Set([
-  "Worktree was removed; continuing on Main checkout.",
-  WORKTREE_REBIND_NOTICE,
-]);
-
-function withoutWorktreeRebindNotice(warnings: string[] | undefined): string[] | undefined {
-  if (!warnings || warnings.length === 0) return warnings;
-  const next = warnings.filter((warning) => !STALE_WORKTREE_REBIND_WARNINGS.has(warning));
-  if (next.length === warnings.length) return warnings;
-  return next.length > 0 ? next : undefined;
-}
-
 type WorktreeBindingState =
   "main" | "available" | "unavailable" | "main-missing" | "inspection-failed" | "pending-removal";
 
@@ -820,9 +808,6 @@ export class SessionLifecycleService {
       const { worktreeId: _cleared, ...target } = next.launch.target;
       next.launch = { ...next.launch, target };
     }
-    const warnings = withoutWorktreeRebindNotice(next.warnings);
-    if (warnings) next.warnings = warnings;
-    else delete next.warnings;
     this.deps.storage.saveSession(next);
     stashWorktreeRebindNotice(next.id);
     if (!wasConnected) {
@@ -1043,8 +1028,7 @@ export class SessionLifecycleService {
   ): Promise<{ session: Session; rebound: boolean }> {
     const binding = await this.inspectWorktreeBinding(session, workspace);
     if (binding === "main" || binding === "available") {
-      const stripped = this.stripPersistedWorktreeRebindNotice(session);
-      return { session: stripped ?? session, rebound: false };
+      return { session, rebound: false };
     }
     if (binding === "pending-removal") {
       throw new SessionLifecycleError("Worktree removal is in progress", 409);
@@ -1059,18 +1043,6 @@ export class SessionLifecycleService {
       throw new SessionLifecycleError("Workspace main checkout is unavailable", 409);
     }
     return this.persistMainCheckoutRebind({ session, workspace });
-  }
-
-  private stripPersistedWorktreeRebindNotice(session: Session): Session | undefined {
-    const warnings = withoutWorktreeRebindNotice(session.warnings);
-    if (warnings === session.warnings) return undefined;
-    const next: Session = {
-      ...(this.deps.storage.getSession(session.id) ?? session),
-    };
-    if (warnings) next.warnings = warnings;
-    else delete next.warnings;
-    this.deps.storage.saveSession(next);
-    return next;
   }
 
   private prepareMirrorSessionForOpen(session: Session): { owner: OpenSessionOwner } {
