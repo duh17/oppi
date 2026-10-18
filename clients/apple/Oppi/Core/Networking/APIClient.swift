@@ -428,6 +428,13 @@ actor APIClient: ClientLogUploading {
         )
     }
 
+    /// A session that is never invalidated keeps its delegate and connection
+    /// pool until the app exits. Each route candidate and reconfigure makes a
+    /// new client; a request in flight holds its client, so nothing is cut off.
+    deinit {
+        session.finishTasksAndInvalidate()
+    }
+
     // MARK: - Health & Auth
 
     /// Check server reachability.

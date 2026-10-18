@@ -146,6 +146,12 @@ final class AppEventStreamClient {
         }
     }
 
+    /// A session that is never invalidated keeps its delegate and connection
+    /// pool until the app exits. Each stream restart replaces this client.
+    deinit {
+        urlSession.invalidateAndCancel()
+    }
+
     func connect() -> AsyncStream<AppEventMessage> {
         disconnect()
         connectionID &+= 1

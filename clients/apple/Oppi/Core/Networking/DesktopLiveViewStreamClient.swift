@@ -104,6 +104,12 @@ final class DesktopLiveViewStreamClient {
         }
     }
 
+    /// A session that is never invalidated keeps its delegate and connection
+    /// pool until the app exits. Each live view makes a new client.
+    deinit {
+        urlSession.invalidateAndCancel()
+    }
+
     func connect() -> AsyncStream<Event> {
         disconnect()
         didForceRefreshForConnection = false

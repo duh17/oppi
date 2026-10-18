@@ -116,6 +116,12 @@ final class DictationStreamClient: DictationTransport {
         }
     }
 
+    /// A session that is never invalidated keeps its delegate and connection
+    /// pool until the app exits. Each dictation take makes a new client.
+    deinit {
+        urlSession.invalidateAndCancel()
+    }
+
     func connect() -> AsyncStream<ServerMessage> {
         disconnect()
         status = .connecting

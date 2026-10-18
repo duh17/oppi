@@ -188,6 +188,12 @@ final class WebSocketClient {
         }
     }
 
+    /// A session that is never invalidated keeps its delegate and connection
+    /// pool until the app exits. Each reconfigure replaces this client.
+    deinit {
+        urlSession.invalidateAndCancel()
+    }
+
     // MARK: - Connect
 
     /// Connect to the configured session WebSocket endpoint.
