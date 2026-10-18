@@ -1,32 +1,6 @@
 import UIKit
 import UniformTypeIdentifiers
 
-/// Item-provider callbacks may arrive concurrently. All mutable state is
-/// protected by `lock`, which is why this reference can cross callback threads.
-private final class SharePayloadAccumulator: @unchecked Sendable {
-    private let lock = NSLock()
-    private var textParts: [String] = []
-    private var files: [ShareQuickSessionPayload.SharedFile] = []
-
-    func appendText(_ value: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        textParts.append(value)
-    }
-
-    func appendFile(_ file: ShareQuickSessionPayload.SharedFile) {
-        lock.lock()
-        defer { lock.unlock() }
-        files.append(file)
-    }
-
-    func snapshot() -> (textParts: [String], files: [ShareQuickSessionPayload.SharedFile]) {
-        lock.lock()
-        defer { lock.unlock() }
-        return (textParts, files)
-    }
-}
-
 final class ShareViewController: UIViewController {
     private var didStart = false
     private var composerController: ShareQuickSessionComposerViewController?
@@ -64,7 +38,7 @@ final class ShareViewController: UIViewController {
         let providers = extensionItems.flatMap { $0.attachments ?? [] }
         let group = DispatchGroup()
 
-        for provider in providers {
+        for (index, provider) in providers.enumerated() {
             if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
                 group.enter()
                 provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, _ in
@@ -78,7 +52,7 @@ final class ShareViewController: UIViewController {
                         value = nil
                     }
                     if let value, !value.isEmpty {
-                        accumulator.appendText(value)
+                        accumulator.setText(value, forItemAt: index)
                     }
                 }
                 continue
@@ -97,7 +71,7 @@ final class ShareViewController: UIViewController {
                         value = nil
                     }
                     if let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty {
-                        accumulator.appendText(trimmed)
+                        accumulator.setText(trimmed, forItemAt: index)
                     }
                 }
                 continue
@@ -137,7 +111,7 @@ final class ShareViewController: UIViewController {
                         relativePath: relativePath,
                         mimeType: mimeType
                     )
-                    accumulator.appendFile(file)
+                    accumulator.setFile(file, forItemAt: index)
                 } catch {
                     return
                 }

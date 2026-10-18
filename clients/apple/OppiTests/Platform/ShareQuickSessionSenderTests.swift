@@ -450,3 +450,25 @@ private actor ShareSenderStubTransport: ShareQuickSessionHTTPTransport {
         return (response.data, http)
     }
 }
+
+@Suite("Share payload order")
+struct SharePayloadAccumulatorTests {
+    /// "Compare the first and second screenshot" must not arrive with them swapped.
+    @Test func keepsTheSharedOrderWhenItemsLoadOutOfOrder() {
+        let accumulator = SharePayloadAccumulator()
+        func screenshot(_ index: Int) -> ShareQuickSessionPayload.SharedFile {
+            ShareQuickSessionPayload.SharedFile(
+                name: "shot-\(index).png", relativePath: "p/shot-\(index).png", mimeType: "image/png"
+            )
+        }
+        // Shared as: page title, URL, screenshot 2, screenshot 3. Loads finish in reverse.
+        accumulator.setFile(screenshot(3), forItemAt: 3)
+        accumulator.setFile(screenshot(2), forItemAt: 2)
+        accumulator.setText("https://example.com", forItemAt: 1)
+        accumulator.setText("Example page", forItemAt: 0)
+
+        let snapshot = accumulator.snapshot()
+        #expect(snapshot.textParts == ["Example page", "https://example.com"])
+        #expect(snapshot.files.map(\.name) == ["shot-2.png", "shot-3.png"])
+    }
+}

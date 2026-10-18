@@ -34,3 +34,34 @@ struct ShareQuickSessionPayload: Equatable, Sendable {
         try? FileManager.default.removeItem(at: url)
     }
 }
+
+/// What each shared item resolved to, for one share. Item-provider callbacks
+/// finish concurrently and in any order; the snapshot keeps the order the items
+/// were shared in, so "the first screenshot" stays first. All mutable state is
+/// protected by `lock`, which is why this reference can cross callback threads.
+final class SharePayloadAccumulator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var textParts: [Int: String] = [:]
+    private var files: [Int: ShareQuickSessionPayload.SharedFile] = [:]
+
+    func setText(_ value: String, forItemAt index: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        textParts[index] = value
+    }
+
+    func setFile(_ file: ShareQuickSessionPayload.SharedFile, forItemAt index: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        files[index] = file
+    }
+
+    func snapshot() -> (textParts: [String], files: [ShareQuickSessionPayload.SharedFile]) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (
+            textParts.sorted { $0.key < $1.key }.map(\.value),
+            files.sorted { $0.key < $1.key }.map(\.value)
+        )
+    }
+}
