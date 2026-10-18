@@ -262,12 +262,35 @@ final class AskOptionChoiceRowView: UIControl {
         }
         layer.cornerRadius = 12
         layer.cornerCurve = .continuous
-        addAction(UIAction { [weak self] _ in self?.onTap?() }, for: .touchUpInside)
+        addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            defer { self.releasedOutside = false }
+            guard !self.releasedOutside else { return }
+            self.onTap?()
+        }, for: .touchUpInside)
         isAccessibilityElement = true
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// UIControl counts a release up to ~70 pt outside as inside. A single
+    /// choice can send on tap, so a finger that slides off the row cancels,
+    /// as it does on a native list row.
+    private var releasedOutside = false
+
+    override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+        let keepsTracking = super.continueTracking(touch, with: event)
+        let inside = bounds.contains(touch.location(in: self))
+        if isHighlighted != inside { isHighlighted = inside }
+        return keepsTracking
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        releasedOutside = touches.first.map { !bounds.contains($0.location(in: self)) } ?? false
+        super.touchesEnded(touches, with: event)
+        releasedOutside = false
+    }
 
     override var isHighlighted: Bool {
         didSet { applyFill(animated: true) }
