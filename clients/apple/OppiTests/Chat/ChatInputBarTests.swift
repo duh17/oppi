@@ -2001,7 +2001,6 @@ private final class ComposerBarTestHost: ComposerBarHosting {
         suppressKeyboard: false,
         focusRequestID: 0,
         keyboardLanguage: nil,
-        askHeight: 0,
         keyStripHeight: 0,
         mediaImportEpoch: 0
     )

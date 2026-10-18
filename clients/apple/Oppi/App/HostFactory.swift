@@ -491,7 +491,11 @@ enum RouterScreen {
         update: @escaping (Controller) -> Void
     ) -> RouterScreen {
         .controller(make, update: { controller in
-            guard let controller = controller as? Controller else { return }
+            // The router passes back the controller `make` built, so a
+            // mismatch is a router bug that would silently freeze the modal.
+            guard let controller = controller as? Controller else {
+                preconditionFailure("RouterScreen.liveController got \(type(of: controller)), not \(Controller.self)")
+            }
             update(controller)
         })
     }

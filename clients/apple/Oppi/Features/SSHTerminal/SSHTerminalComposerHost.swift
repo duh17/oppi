@@ -88,7 +88,6 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
             suppressKeyboard: suppressKeyboard,
             focusRequestID: focusRequestID,
             keyboardLanguage: keyboardLanguage,
-            askHeight: 0,
             keyStripHeight: ComposerInputMetrics.controlDiameter,
             mediaImportEpoch: 0
         )

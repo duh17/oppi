@@ -39,7 +39,6 @@ struct ComposerBarContent {
     var suppressKeyboard: Bool
     var focusRequestID: Int
     var keyboardLanguage: String?
-    var askHeight: CGFloat
     var keyStripHeight: CGFloat
     var mediaImportEpoch: UInt64
 }

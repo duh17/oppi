@@ -705,7 +705,6 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
                 suppressKeyboard: parent.suppressKeyboard,
                 focusRequestID: parent.focusRequestID,
                 keyboardLanguage: parent.keyboardLanguage,
-                askHeight: 0,
                 keyStripHeight: 0,
                 mediaImportEpoch: parent.mediaImportGate?.epoch ?? 0
             )
