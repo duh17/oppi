@@ -3,7 +3,8 @@
  * at_, and staged dt_ retirement on ordinary HTTP/WS (migrate still works).
  */
 import { generateKeyPairSync } from "node:crypto";
-import { request as httpRequest } from "node:http";
+import { createServer, request as httpRequest, type Server as HttpServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { request as httpsRequest } from "node:https";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -82,10 +83,18 @@ class WsProbe {
     });
   }
 
-  async waitForFrame(type: string, timeoutMs = 10_000): Promise<Record<string, unknown>> {
+  async waitForFrame(
+    type: string,
+    fields: Record<string, unknown> = {},
+    timeoutMs = 10_000,
+  ): Promise<Record<string, unknown>> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const frame = this.frames.find((candidate) => candidate["type"] === type);
+      const frame = this.frames.find(
+        (candidate) =>
+          candidate["type"] === type &&
+          Object.entries(fields).every(([key, value]) => candidate[key] === value),
+      );
       if (frame) return frame;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
@@ -107,6 +116,7 @@ let baseUrl: string;
 let socketPath: string;
 let ownerToken: string;
 let probes: WsProbe[] = [];
+const sttServers: HttpServer[] = [];
 
 beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-auth-expiry-"));
@@ -128,6 +138,7 @@ afterEach(async () => {
     probe.ws.terminate();
   }
   probes = [];
+  for (const stt of sttServers.splice(0)) stt.close();
   await server.stop().catch(() => {});
   rmSync(dataDir, { recursive: true, force: true });
 }, 45_000);
@@ -224,8 +235,12 @@ function websocketUpgradeStatus(token: string): Promise<number> {
   });
 }
 
-async function connectStream(token: string): Promise<WsProbe> {
-  const wsUrl = `${baseUrl.replace(/^https:/, "wss:")}/app/events/stream`;
+async function connectStream(
+  token: string,
+  path = "/app/events/stream",
+  readyFrame = "app_events_connected",
+): Promise<WsProbe> {
+  const wsUrl = `${baseUrl.replace(/^https:/, "wss:")}${path}`;
   const probe = new WsProbe(
     new WebSocket(wsUrl, {
       headers: { Authorization: `Bearer ${token}` },
@@ -234,8 +249,22 @@ async function connectStream(token: string): Promise<WsProbe> {
   );
   probes.push(probe);
   await probe.opened;
-  await probe.waitForFrame("app_events_connected");
+  await probe.waitForFrame(readyFrame);
   return probe;
+}
+
+/** Streaming STT that accepts a session and hears nothing, enough for a Live Voice call to run. */
+async function silentStreamingStt(): Promise<string> {
+  const stt = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify(req.method === "POST" ? { session_id: "stt-1" } : { text: "" }));
+    });
+  });
+  sttServers.push(stt);
+  await new Promise<void>((resolve) => stt.listen(0, "127.0.0.1", resolve));
+  return `http://127.0.0.1:${(stt.address() as AddressInfo).port}`;
 }
 
 describe("access-token expiry and dt_ retirement", { timeout: 30_000 }, () => {
@@ -257,6 +286,49 @@ describe("access-token expiry and dt_ retirement", { timeout: 30_000 }, () => {
     const closed = await live.closed;
     expect(closed.code).toBe(4001);
     expect(closed.reason).toBe("auth_expired");
+  });
+
+  it("keeps a socket carrying a Live Voice call open past at_ expiry until the call ends", async () => {
+    // A reconnect restarts the call's voice backend, so the call outlives the token, and only that call.
+    storage.updateConfig({
+      asr: { sttEndpoint: await silentStreamingStt(), liveVoiceBackend: "yuwp" },
+    });
+    const device = enroll(storage);
+    const created = await networkPost("/voice-control-sessions", device.token, {
+      purpose: "voice-control",
+    });
+    const sessionId = (created.body as { session: { id: string } }).session.id;
+    shortenAccessTokens(storage, Date.now() - CLOCK_SKEW_MS + 2_000);
+
+    const call = await connectStream(
+      device.token,
+      `/control-sessions/${sessionId}/stream`,
+      "connected",
+    );
+    const plain = await connectStream(device.token);
+    call.ws.send(
+      JSON.stringify({ type: "voice_call_start", clientCallId: "call-1", requestId: "start-1" }),
+    );
+    const started = await call.waitForFrame("command_result", { requestId: "start-1" });
+    const { callId, controllerLeaseEpoch } = started["data"] as {
+      callId: string;
+      controllerLeaseEpoch: number;
+    };
+
+    expect((await plain.closed).code).toBe(4001);
+    // Past the first re-check: the live call still holds the socket.
+    await new Promise((resolve) => setTimeout(resolve, 5_500));
+    expect(call.ws.readyState).toBe(WebSocket.OPEN);
+
+    call.ws.send(
+      JSON.stringify({ type: "voice_call_start", clientCallId: "call-2", requestId: "start-2" }),
+    );
+    expect(await call.waitForFrame("command_result", { requestId: "start-2" })).toMatchObject({
+      success: false,
+    });
+
+    call.ws.send(JSON.stringify({ type: "voice_call_end", callId, controllerLeaseEpoch }));
+    expect((await call.closed).code).toBe(4001);
   });
 
   it("does not close an unrelated device socket when another token expires", async () => {

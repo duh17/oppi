@@ -115,6 +115,8 @@ interface PendingVoiceApproval {
 export class VoiceCallController {
   private readonly calls = new Map<string, MutableVoiceCall>();
   private readonly callsByClientIdentity = new Map<string, string>();
+  /** Frontend connections whose access token expired; they may finish a call but not take one. */
+  private readonly authExpiredConnections = new Set<string>();
   private readonly now: () => number;
   private readonly leaseDurationMs: number;
   private readonly retentionGraceMs: number;
@@ -155,6 +157,7 @@ export class VoiceCallController {
     assertIdentifier(input.controlSessionId, "controlSessionId");
     assertIdentifier(input.clientCallId, "clientCallId");
     validateFrontend(frontend);
+    this.assertConnectionAuthorized(frontend);
 
     const identityKey = clientIdentityKey(
       input.controlSessionId,
@@ -218,6 +221,7 @@ export class VoiceCallController {
     frontend: VoiceCallFrontendConnection,
   ): VoiceCallAttachResult {
     validateFrontend(frontend);
+    this.assertConnectionAuthorized(frontend);
     const call = this.requireActiveCall(input.callId);
     this.assertOwnerDevice(call, frontend.authenticatedDeviceId);
     const lastEventSeq = input.lastEventSeq;
@@ -289,7 +293,30 @@ export class VoiceCallController {
     return this.snapshot(call.callId);
   }
 
+  /**
+   * The connection's access token expired. A reconnect would restart the call's
+   * voice backend, so a connection that is the live controller of an active call
+   * stays open; it can no longer start or attach a call. Returns false once it
+   * holds no live call, and the caller closes it.
+   */
+  holdPastAuthExpiry(connectionId: string): boolean {
+    const now = this.now();
+    for (const call of this.calls.values()) {
+      if (
+        call.lifecycle === "active" &&
+        call.frontendConnection?.connectionId === connectionId &&
+        call.controllerLeaseExpiresAt > now
+      ) {
+        this.authExpiredConnections.add(connectionId);
+        return true;
+      }
+    }
+    this.authExpiredConnections.delete(connectionId);
+    return false;
+  }
+
   disconnectConnection(connectionId: string): void {
+    this.authExpiredConnections.delete(connectionId);
     let changed = false;
     for (const call of this.calls.values()) {
       if (call.lifecycle === "active" && call.frontendConnection?.connectionId === connectionId) {
@@ -704,6 +731,12 @@ export class VoiceCallController {
     const now = this.now();
     for (const [challengeId, pending] of call.pendingApprovals) {
       if (pending.challenge.expiresAt <= now) call.pendingApprovals.delete(challengeId);
+    }
+  }
+
+  private assertConnectionAuthorized(frontend: VoiceCallFrontendConnection): void {
+    if (this.authExpiredConnections.has(frontend.connectionId)) {
+      throw new Error("Access expired on this connection; reconnect to start a call");
     }
   }
 

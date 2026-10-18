@@ -187,6 +187,8 @@ function secureTokenEquals(expected: string, actual: string): boolean {
 const WS_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 const WS_CLOSE_GOING_AWAY = 1001;
 const WS_SHUTDOWN_GRACE_MS = 500;
+/** How soon a socket kept past its token for a Live Voice call closes after the call ends. */
+const LIVE_VOICE_EXPIRY_RECHECK_MS = 5_000;
 /** Longest shutdown waits for a post-restart resume start already in flight. */
 const RESTART_RESUME_DRAIN_MS = 10_000;
 const MIN_UPLOAD_GC_INTERVAL_MS = 5 * 60 * 1000;
@@ -1528,12 +1530,24 @@ export class Server {
       this.dictationStreamMux.markAuthExpired(ws);
       return;
     }
+    // Like a recording dictation socket, a socket that is the live controller of
+    // a Live Voice call closes when the call ends instead (a reconnect would
+    // restart the call's voice backend). It cannot start or attach another call.
+    // Revoking the device or rotating owner credentials still closes it at once.
+    const connectionId = this.boundSessionStreamMux.connectionIdFor(ws);
+    if (connectionId && this.voiceCallController.holdPastAuthExpiry(connectionId)) {
+      this.scheduleAccessExpiryCheck(ws, LIVE_VOICE_EXPIRY_RECHECK_MS);
+      return;
+    }
     ws.close(WS_CLOSE_AUTH_EXPIRED, WS_CLOSE_REASON_AUTH_EXPIRED);
   }
 
   private scheduleAccessTokenExpiry(ws: WebSocket, expiresAt: number): void {
+    this.scheduleAccessExpiryCheck(ws, Math.max(0, expiresAt + CLOCK_SKEW_MS - Date.now()));
+  }
+
+  private scheduleAccessExpiryCheck(ws: WebSocket, delay: number): void {
     this.clearAccessExpiryTimer(ws);
-    const delay = Math.max(0, expiresAt + CLOCK_SKEW_MS - Date.now());
     const timer = setTimeout(() => {
       this.accessExpiryTimers.delete(ws);
       this.closeSocketForAccessExpiry(ws);

@@ -240,6 +240,7 @@ export function startServerPing(
 export class BoundSessionStreamMux {
   private connectionSeq = 0;
   private liveSessionConnections = new Map<string, Set<(msg: ServerMessage) => void>>();
+  private readonly connectionIds = new WeakMap<WebSocket, string>();
   private readonly lifecycle: SessionLifecycleService;
 
   constructor(private ctx: StreamContext) {
@@ -254,6 +255,11 @@ export class BoundSessionStreamMux {
   private nextConnId(): string {
     this.connectionSeq += 1;
     return `bound_session_stream_${this.connectionSeq}`;
+  }
+
+  /** The id voice calls and handlers use for this socket's connection. */
+  connectionIdFor(ws: WebSocket): string | undefined {
+    return this.connectionIds.get(ws);
   }
 
   /** True while any client holds an open focused session stream. */
@@ -314,6 +320,7 @@ export class BoundSessionStreamMux {
     const metrics = this.ctx.metrics;
     const owner = this.ctx.storage.getOwnerName();
     const connId = this.nextConnId();
+    this.connectionIds.set(ws, connId);
     const path = workspaceId
       ? `/workspaces/${workspaceId}/sessions/${sessionId}/stream`
       : `/control-sessions/${sessionId}/stream`;

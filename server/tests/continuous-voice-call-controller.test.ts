@@ -67,6 +67,54 @@ function challenge(overrides: Partial<VoiceApprovalChallenge> = {}): VoiceApprov
 }
 
 describe("continuous voice call controller", () => {
+  it("holds an expired connection open only while it controls a live call", () => {
+    const { controller, frontend, setNow } = makeHarness();
+    const phone = frontend("connection-a");
+    const call = controller.startCall(
+      { controlSessionId: "voice-1", clientCallId: "client-1" },
+      phone.connection,
+    ).state;
+
+    expect(controller.holdPastAuthExpiry("connection-other")).toBe(false);
+    expect(controller.holdPastAuthExpiry("connection-a")).toBe(true);
+    // Past its token, the connection finishes this call but cannot take another.
+    expect(() =>
+      controller.startCall(
+        { controlSessionId: "voice-2", clientCallId: "client-2" },
+        phone.connection,
+      ),
+    ).toThrow("Access expired");
+    expect(() => controller.attachCall({ callId: call.callId }, phone.connection)).toThrow(
+      "Access expired",
+    );
+
+    // Keepalives keep the hold; a lapsed lease ends it.
+    setNow(20_000);
+    controller.keepAlive(call, phone.connection);
+    setNow(40_000);
+    expect(controller.holdPastAuthExpiry("connection-a")).toBe(true);
+    setNow(80_000);
+    expect(controller.holdPastAuthExpiry("connection-a")).toBe(false);
+  });
+
+  it("stops holding an expired connection once its call moves away or ends", () => {
+    const { controller, frontend } = makeHarness();
+    const first = frontend("connection-a");
+    const call = controller.startCall(
+      { controlSessionId: "voice-1", clientCallId: "client-1" },
+      first.connection,
+    ).state;
+    expect(controller.holdPastAuthExpiry("connection-a")).toBe(true);
+
+    const second = frontend("connection-b");
+    const moved = controller.attachCall({ callId: call.callId }, second.connection).state;
+    expect(controller.holdPastAuthExpiry("connection-a")).toBe(false);
+
+    expect(controller.holdPastAuthExpiry("connection-b")).toBe(true);
+    controller.endCall(moved, second.connection);
+    expect(controller.holdPastAuthExpiry("connection-b")).toBe(false);
+  });
+
   it("dispatches a committed utterance to the hidden voice-control session", () => {
     const dispatched: Array<{ sessionId: string; request: string }> = [];
     const controller = new VoiceCallController({
@@ -92,9 +140,7 @@ describe("continuous voice call controller", () => {
       delegationId: "delegation-1",
       request: "list open sessions",
     });
-    expect(dispatched).toEqual([
-      { sessionId: "voice-session-1", request: "list open sessions" },
-    ]);
+    expect(dispatched).toEqual([{ sessionId: "voice-session-1", request: "list open sessions" }]);
     expect(controller.snapshot(started.state.callId).delegations).toHaveLength(1);
     expect(controller.activeCallIdForControlSession("voice-session-1")).toBe("call-1");
   });
