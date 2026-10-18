@@ -35,6 +35,41 @@ describe("push registration signature", () => {
     ).toEqual(Buffer.from(message, "base64url"));
   });
 
+  function signedRegistration(body: Record<string, unknown> = {}) {
+    const keys = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const jwk = keys.publicKey.export({ format: "jwk" }) as { x: string; y: string };
+    const devicePublicKey: DevicePublicKey = { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y };
+    const { input } = vectors.registrationSignature;
+    const signature = sign(
+      "sha256",
+      pushRegistrationMessage({ ...input, publicKey: Buffer.from(input.publicKey, "base64url") }),
+      { key: keys.privateKey, dsaEncoding: "ieee-p1363" },
+    ).toString("base64url");
+    return checkPushRegistration({
+      body: { ...input, signature, ...body },
+      deviceId: input.deviceId,
+      devicePublicKey,
+      serverFingerprint: input.serverFingerprint,
+      primaryRelay: input.relay,
+      now: input.issuedAt,
+    });
+  }
+
+  it("keeps the events this server sends and ignores names it does not know", () => {
+    expect(
+      signedRegistration({ events: ["notify", "done", "blocked", "notify", "future_event"] }),
+    ).toMatchObject({ ok: true, events: ["notify", "blocked"] });
+  });
+
+  it("refuses a registration that does not list its events", () => {
+    expect(signedRegistration()).toMatchObject({ ok: false, status: 400 });
+    expect(signedRegistration({ events: "blocked" })).toMatchObject({ ok: false, status: 400 });
+    expect(signedRegistration({ events: ["blocked", 1] })).toMatchObject({
+      ok: false,
+      status: 400,
+    });
+  });
+
   it("rejects a stale issuedAt even when the device signed it", () => {
     const keys = generateKeyPairSync("ec", { namedCurve: "P-256" });
     const jwk = keys.publicKey.export({ format: "jwk" }) as { x: string; y: string };
@@ -50,7 +85,7 @@ describe("push registration signature", () => {
       }),
       { key: keys.privateKey, dsaEncoding: "ieee-p1363" },
     ).toString("base64url");
-    const body = { ...input, issuedAt, signature };
+    const body = { ...input, issuedAt, signature, events: ["blocked"] };
     const check = (now: number) =>
       checkPushRegistration({
         body,
@@ -90,7 +125,13 @@ describe("push registration storage", () => {
   }
 
   function register(deviceId: string, keyId = "kid-1", sendToken = "osp1.r.p.one") {
-    return storage.setPushRegistration({ deviceId, keyId, publicKey: "pk", sendToken });
+    return storage.setPushRegistration({
+      deviceId,
+      keyId,
+      publicKey: "pk",
+      sendToken,
+      events: ["blocked"],
+    });
   }
 
   it("revoking a device removes only its push registration", () => {

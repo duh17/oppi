@@ -459,7 +459,7 @@ export class DevicePairing {
     const push = this.deps.push;
     if (!push) return;
     const active = this.activeDeviceIds();
-    for (const registration of push.registrations()) {
+    for (const registration of push.registrations(notification.event)) {
       if (!active.has(registration.deviceId) || !include(registration.deviceId)) continue;
       void push.send(registration, notification).catch((error: unknown) => {
         log.warn("auth.pairing_push_failed", {

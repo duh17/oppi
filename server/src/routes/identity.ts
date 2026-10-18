@@ -553,6 +553,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       publicKey: check.publicKey,
       sendToken: check.sendToken,
       ...(check.liveActivity ? { liveActivity: true } : {}),
+      events: check.events,
     });
     if (replaced === false) {
       helpers.error(res, 403, "Unknown or revoked device");

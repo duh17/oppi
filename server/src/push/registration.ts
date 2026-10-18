@@ -6,15 +6,23 @@
 
 import { createHash } from "node:crypto";
 import { verifyDeviceSignature } from "../storage/device-auth.js";
-import type { DevicePublicKey, PushRegistrationRequest } from "../types.js";
+import type { DevicePublicKey, PushEvent, PushRegistrationRequest } from "../types.js";
 import { PUSH_PUBLIC_KEY_BYTES, pushKeyId } from "./envelope.js";
+import { parsePushEvents } from "./events.js";
 
 /** How far `issuedAt` may be from the server clock. */
 export const PUSH_REGISTRATION_MAX_SKEW_MS = 10 * 60 * 1000;
 const MAX_SEND_TOKEN_LENGTH = 512;
 
 export type PushRegistrationCheck =
-  | { ok: true; keyId: string; publicKey: string; sendToken: string; liveActivity: boolean }
+  | {
+      ok: true;
+      keyId: string;
+      publicKey: string;
+      sendToken: string;
+      liveActivity: boolean;
+      events: PushEvent[];
+    }
   | { ok: false; status: 400 | 401 | 409; error: string };
 
 /** The exact bytes the device key signs. */
@@ -54,6 +62,10 @@ export function checkPushRegistration(input: {
   const { keyId, publicKey, sendToken, relay, issuedAt, signature, liveActivity } = body;
   if (liveActivity !== undefined && typeof liveActivity !== "boolean") {
     return { ok: false, status: 400, error: "liveActivity must be a boolean" };
+  }
+  const events = parsePushEvents(body.events);
+  if (!events) {
+    return { ok: false, status: 400, error: "events must be an array of strings" };
   }
   if (
     typeof keyId !== "string" ||
@@ -103,14 +115,15 @@ export function checkPushRegistration(input: {
   if (relay !== input.primaryRelay) {
     return { ok: false, status: 409, error: "relay_mismatch" };
   }
-  // `liveActivity` is outside the signature on purpose: flipping it on gets refused at the
-  // relay, which holds the real tokens, and flipping it off only withholds the card, which a
-  // proxy could already do by dropping the request.
+  // `liveActivity` and `events` are outside the signature on purpose: flipping the card on
+  // gets refused at the relay, which holds the real tokens, and dropping the card or an event
+  // only withholds pushes, which a proxy could already do by dropping the request.
   return {
     ok: true,
     keyId,
     publicKey: publicKeyBytes.toString("base64url"),
     sendToken,
     liveActivity: liveActivity === true,
+    events,
   };
 }

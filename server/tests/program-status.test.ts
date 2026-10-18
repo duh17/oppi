@@ -125,6 +125,28 @@ describe("program status derivation", () => {
     expect(status(host)).toEqual({ state: "blocked", kind: "question", message });
   });
 
+  it.each(["confirm", "select"])(
+    "%s keeps only the first line of a title that carries the tool input below it",
+    (method) => {
+      const host = makeHost(makeSession({ status: "busy" }), [
+        {
+          method,
+          title:
+            "Protected path write\nWrites to .env\n```diff\n+OPENAI_API_KEY=sk-live-abc123\n```",
+          options: ["Allow once", "Deny"],
+        },
+      ]);
+      expect(status(host)).toMatchObject({ state: "blocked", message: "Protected path write" });
+    },
+  );
+
+  it.each(["\r", "\u2028", "\u2029"])("any line break ends a dialog title's first line", (brk) => {
+    const host = makeHost(makeSession({ status: "busy" }), [
+      { method: "confirm", title: `Run command${brk}export KEY=sk-live-abc123` },
+    ]);
+    expect(status(host)).toMatchObject({ state: "blocked", message: "Run command" });
+  });
+
   it("the most recent pending dialog wins", () => {
     const host = makeHost(makeSession({ status: "busy" }), [
       { method: "confirm", title: "First" },

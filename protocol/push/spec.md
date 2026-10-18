@@ -114,8 +114,8 @@ bytes `[0, 577)`. The signature covers the version, `kid`, `enc`, and `ct`.
 | `workspaceId` | Present when the session has a workspace |
 | `approvalId` | `pairing_approval` only: the pending approval (`pa_...`) |
 | `deviceId` | `device_enrolled` only: the newly paired device |
-| `title`, `body` | Display text; for `notify`, the agent's own words (title at most 80 code points, body at most 200) |
-| `subtitle` | Session name; the server shortens it until the JSON fits 510 bytes, and drops it when nothing else fits. A `notify` keeps it: the server caps the title and name by size and shortens the agent's body instead |
+| `title`, `body` | Display text. For `blocked`, the title is fixed ("Needs Approval", "Question", "Sign-in Needed") and the body is what the session waits on: the first line of the dialog title (lines below it often carry a command, diff, or tool input and never leave the server) or an `ask`'s first question, else the fixed body in 2.6. For `notify`, the agent's own words (title at most 80 code points, body at most 200) |
+| `subtitle` | Session name. Session events always keep it: the server caps the name at 40 code points and 96 JSON bytes and shortens the body, ending it in an ellipsis (U+2026), until the JSON fits 510 bytes. Pairing events have none |
 
 Pairing pushes carry no session:
 
@@ -137,7 +137,8 @@ paired device with a push registration after any device enrolls: title `New Devi
 body `<name> paired (<method>, <source>).`, and `ts` is the enrollment time. `method` is
 `invite`, `tailscale`, or `custom`; `source` is the client IP, the Tailscale login, or the
 custom approver's source, and the parenthesis holds only the method when there is none.
-Apps that predate these events show the fixed fallback for them.
+A phone receives only the events it listed when it registered (5), so it never gets a push
+it would have to show as the fixed fallback.
 
 Receivers ignore unknown fields. There is no sequence number: the server keeps no per-push
 state, and replay protection uses the envelope's `enc` (§2.5 step 7).
@@ -472,6 +473,8 @@ When the extension cannot verify and decrypt a push, or runs out of time, the us
 outer alert: title `Oppi`, body `You have a new notification.` The extension never shows
 any field from a push that failed a check. Without Apple's
 `com.apple.developer.usernotifications.filtering` entitlement, it cannot drop the push.
+Fallback alerts share one thread (`oppi.push.fallback`) so they stack together, and the app
+removes them from Notification Center when it becomes active: they open nothing.
 
 ## 5. Server behavior
 
@@ -489,7 +492,8 @@ any field from a push that failed a check. Without Apple's
   "relay": "<primary origin>",
   "issuedAt": 1760000000000,
   "signature": "<base64url 64-byte P-256 r||s>",
-  "liveActivity": true
+  "liveActivity": true,
+  "events": ["blocked", "error", "notify", "pairing_approval", "device_enrolled"]
 }
 ```
 
@@ -507,6 +511,12 @@ any field from a push that failed a check. Without Apple's
   `409 no_activity` from the relay, which follows the phone's own list (3.6), and one that
   clears it only withholds the card, as dropping the request would. The phone sends the same
   request again, with the send token the server already holds, when the setting changes.
+  `events` (required array of strings, `400` otherwise) lists the plaintext `event` values
+  the app can open. The server seals and sends no other event to that device, so the relay
+  never carries a push the phone could show only as the fallback. It ignores names it does
+  not know, and a stored registration without `events` is dropped until the phone registers
+  again. Like `liveActivity`, it is outside the signature: removing an event only withholds
+  pushes, as dropping them would.
 - **`DELETE /me/push-registration`** forgets the calling device's registration and asks
   the relay to delete its permission.
 - Revoking a device or rotating the owner token removes its registration in the same
@@ -517,7 +527,8 @@ any field from a push that failed a check. Without Apple's
   is kept for `blocked` and `pairing_approval`, which wait on the user. A relay `429` with
   `Retry-After` pauses that device's pushes until it passes.
 - Session events, at most once a minute per session and event. `blocked` (Needs you): any
-  session enters `blocked`, skipping devices that hold a live stream. `error` (Failed): a
+  session enters `blocked`, skipping devices that hold a live stream; the body names what it
+  waits on (2.4). `error` (Failed): a
   top-level session goes from `working` or `blocked` to `error`, with fixed text. A failed
   model call that an automatic retry recovers never leaves `working`, so it pushes nothing;
   a run that finishes or is stopped, and a session ending, push nothing. `notify` (Agent
@@ -598,10 +609,11 @@ practice.
    the device or turning push off ends it. A hostile relay is not bound by its own quotas, but
    it can already do worse (threat 1). Apple's `com.apple.developer.usernotifications.filtering` entitlement, if
    granted, would let the extension drop such pushes instead of showing the fallback (§4).
-3. **Agent-written text.** A `notify` alert carries words the session's model chose, and the
-   model may have read hostile content. The alert is genuinely from the server (signed) but
+3. **Agent-written text.** A `notify` alert carries words the session's model chose, and so
+   can a `blocked` alert's body (an `ask` question, or a dialog title an extension built from
+   the model's input); the model may have read hostile content. The alert is genuinely from the server (signed) but
    its text is not vetted: it can ask the user to do anything. It always names its session
-   (subtitle; the server shortens the agent's body rather than drop the name), the tap invariant above still holds (it only opens that session), and the
+   (subtitle; the server shortens the body rather than drop the name), the tap invariant above still holds (it only opens that session), and the
    per-session throttle and device budget bound how many there can be.
 4. **Lock Screen exposure.** Someone holding the phone can read a decrypted alert on the Lock
    Screen. App Lock and scoped locks remove the session name and an agent's words (§2.6); iOS **Settings →

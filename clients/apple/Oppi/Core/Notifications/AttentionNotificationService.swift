@@ -329,6 +329,32 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         }
     }
 
+    /// Oppi is in front: push fallbacks ("You have a new notification.") leave Notification
+    /// Center. They open nothing, and the app now shows whatever they stood for.
+    func removeFallbackNotifications() {
+        guard !_skipSchedulingForTesting else { return }
+        let center = UNUserNotificationCenter.current()
+        Task { @MainActor in
+            let identifiers = Self.fallbackNotificationIdentifiers(
+                in: await center.deliveredNotifications().map(\.request)
+            )
+            if !identifiers.isEmpty {
+                center.removeDeliveredNotifications(withIdentifiers: identifiers)
+            }
+        }
+    }
+
+    /// Matched by the fixed text, so this also covers the relay's outer alert shown when the
+    /// extension never ran.
+    nonisolated static func fallbackNotificationIdentifiers(in requests: [UNNotificationRequest]) -> [String] {
+        requests
+            .filter {
+                $0.content.title == PushAlertPresentation.fallbackTitle
+                    && $0.content.body == PushAlertPresentation.fallbackBody
+            }
+            .map(\.identifier)
+    }
+
     /// Cancel ask notification when the ask is answered or superseded.
     func cancelAskNotification(sessionId: String) {
         let identifier = AttentionNotificationPolicy.askRequestIdentifier(sessionId: sessionId)

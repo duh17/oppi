@@ -30,6 +30,7 @@ function target(name: string): PushRegistration {
     publicKey: "public-key",
     sendToken: `token-${name}`,
     registeredAt: 1,
+    events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
   };
 }
 
@@ -89,6 +90,14 @@ function change(
   };
 }
 
+/** What the phone decrypts: the plaintext after the envelope fits it into 510 bytes. */
+function sealed(notification: PushNotification | undefined) {
+  if (!notification) throw new Error("nothing sent");
+  return JSON.parse(
+    encodePushPlaintextJSON({ v: 1, ts: Date.now(), ...notification }).toString("utf8"),
+  ) as PushNotification;
+}
+
 const child = makeSession({
   id: "child",
   launch: { status: "created", requestedAt: 1, parentSessionId: "s1" },
@@ -100,30 +109,59 @@ describe("SessionPushNotifier", () => {
       ["permission", "Needs Approval", "Waiting for your approval."],
       ["question", "Question", "Waiting for your answer."],
       ["auth", "Sign-in Needed", "Waiting for you to sign in."],
-    ] as const)("pushes on entering blocked (%s) with fixed text", (kind, title, body) => {
+    ] as const)(
+      "pushes on entering blocked (%s) with what it waits on, else fixed text",
+      (kind, title, fixedBody) => {
+        const push = makePush(["phone"]);
+        const session = makeSession({ name: "Deploy" });
+        const notifier = makeNotifier(push, makeStorage(session));
+        const expected = (body: string) => ({
+          event: "blocked",
+          kind,
+          title,
+          body,
+          sessionId: "s1",
+          workspaceId: "w1",
+          subtitle: "Deploy",
+        });
+
+        notifier.handleProgramStatusChange(
+          session,
+          change({ state: "working" }, { state: "blocked", kind, message: "Push to main?" }),
+        );
+        expect(push.send).toHaveBeenLastCalledWith(target("phone"), expected("Push to main?"));
+
+        const later = makeNotifier(push, makeStorage(session));
+        later.handleProgramStatusChange(
+          session,
+          change({ state: "working" }, { state: "blocked", kind }),
+        );
+        expect(push.send).toHaveBeenLastCalledWith(target("phone"), expected(fixedBody));
+      },
+    );
+
+    it("keeps the session name and shortens a long question to fit", () => {
       const push = makePush(["phone"]);
-      const session = makeSession({ name: "Deploy" });
+      const session = makeSession({
+        id: "7f9c2d1e-4b3a-4c8d-9e2f-1a2b3c4d5e6f",
+        workspaceId: "8a7b6c5d-4e3f-4a1b-9c8d-7e6f5a4b3c2d",
+        name: "\u540d".repeat(60),
+      });
       const notifier = makeNotifier(push, makeStorage(session));
+      const question = "\u554f".repeat(512);
 
       notifier.handleProgramStatusChange(
         session,
-        change(
-          { state: "working" },
-          { state: "blocked", kind, message: "Allow rm -rf /Users/alice/secrets?" },
-        ),
+        change({ state: "working" }, { state: "blocked", kind: "question", message: question }),
       );
 
-      expect(push.send).toHaveBeenCalledWith(target("phone"), {
-        event: "blocked",
-        kind,
-        title,
-        body,
-        sessionId: "s1",
-        workspaceId: "w1",
-        subtitle: "Deploy",
-      });
-      // The dialog title lives in program status; v1 pushes never carry it.
-      expect(JSON.stringify(push.send.mock.calls)).not.toContain("alice");
+      const phone = sealed(push.send.mock.calls[0]?.[1]);
+      expect(phone.subtitle).toBe("\u540d".repeat(32));
+      expect(phone.body.endsWith("\u2026")).toBe(true);
+      expect(question.startsWith(phone.body.slice(0, -1))).toBe(true);
+      expect(phone.body.length).toBeGreaterThan(40);
+      // Already fits: the envelope cuts nothing more.
+      expect(phone).toMatchObject(push.send.mock.calls[0]?.[1] ?? {});
     });
 
     it("treats a blocked status without a kind as a question", () => {
@@ -325,14 +363,6 @@ describe("SessionPushNotifier", () => {
         subtitle: "Relay work",
       });
     });
-
-    /** What the phone decrypts: the plaintext after the envelope fits it into 510 bytes. */
-    function sealed(notification: PushNotification | undefined) {
-      if (!notification) throw new Error("nothing sent");
-      return JSON.parse(
-        encodePushPlaintextJSON({ v: 1, ts: Date.now(), ...notification }).toString("utf8"),
-      ) as PushNotification;
-    }
 
     it("fits plain text at the tool's limits whole, with the session name", async () => {
       const push = makePush(["phone"]);

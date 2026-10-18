@@ -124,6 +124,34 @@ struct AttentionNotificationServiceTests {
             sessionIds: ["s1"]
         ) == ["push-message", "push-blocked", "local-ask"])
     }
+
+    @Test func becomingActiveClearsOnlyFallbackAlerts() {
+        func notification(_ id: String, title: String, body: String, category: String = "") -> UNNotificationRequest {
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.categoryIdentifier = category
+            return UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        }
+        let fallback = PushAlertPresentation.fallback
+        let delivered = [
+            notification("fallback", title: fallback.title, body: fallback.body),
+            notification(
+                "agent-message",
+                title: "Oppi",
+                body: "Release notes are ready.",
+                category: AttentionNotificationPolicy.agentMessageCategoryId
+            ),
+            notification(
+                "question",
+                title: "Question",
+                body: fallback.body,
+                category: AttentionNotificationService.sessionBlockedCategoryId
+            ),
+        ]
+
+        #expect(AttentionNotificationService.fallbackNotificationIdentifiers(in: delivered) == ["fallback"])
+    }
 }
 
 @Suite("Invite pairing gate")

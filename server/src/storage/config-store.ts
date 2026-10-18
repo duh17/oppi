@@ -22,6 +22,7 @@ import {
   parsePublicUrl,
   parseTrustedPeers,
 } from "../proxy-config.js";
+import { parsePushEvents } from "../push/events.js";
 import { parseRelayOrigins } from "../push/relay-origin.js";
 import type {
   DevicePairingInfo,
@@ -137,6 +138,8 @@ function normalizePushRegistration(value: unknown): PushRegistration | undefined
     typeof value.registeredAt === "number" && Number.isFinite(value.registeredAt)
       ? value.registeredAt
       : 0;
+  const events = parsePushEvents(value.events);
+  if (!events) return undefined;
   return {
     deviceId: value.deviceId as string,
     keyId: value.keyId as string,
@@ -144,6 +147,7 @@ function normalizePushRegistration(value: unknown): PushRegistration | undefined
     sendToken: value.sendToken as string,
     registeredAt,
     ...(value.liveActivity === true ? { liveActivity: true } : {}),
+    events,
   };
 }
 

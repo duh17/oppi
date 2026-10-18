@@ -511,6 +511,7 @@ describe("new-device alerts", () => {
       keyId: vectors[which].keyId,
       publicKey: vectors[which].publicKey,
       sendToken,
+      events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
     });
   }
 

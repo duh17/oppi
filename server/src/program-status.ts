@@ -12,7 +12,7 @@
  *   means idle.
  * - `deriveProgramStatus` is the pure table: lifecycle status + tracker + pending dialogs.
  *
- * Privacy line (same as Pi): messages are the session name, a dialog title, the first question
+ * Privacy line (same as Pi): messages are the session name, a dialog title's first line, the first question
  * of an `ask`, or the first line of an error. Never prompts or model output.
  */
 
@@ -78,7 +78,7 @@ function oneLine(text: string | undefined): string | undefined {
 
 function firstLine(text: unknown): string | undefined {
   if (typeof text !== "string") return undefined;
-  return oneLine(text.split(/\r?\n/, 1)[0]);
+  return oneLine(text.split(/\r\n|[\r\n\u2028\u2029]/, 1)[0]);
 }
 
 function errorOutcome(text: unknown): RestingOutcome {
@@ -146,12 +146,17 @@ export function trackProgramRunEvent(tracker: ProgramRunTracker, event: ProgramR
   }
 }
 
+/**
+ * Only the first line of a dialog title: extensions put the command, diff, or tool input they
+ * ask about on the lines below (a permission gate's `select`), and this message reaches session
+ * rows and push alerts.
+ */
 function blockedFromDialog(dialog: ProgramStatusDialog): {
   kind: ProgramStatusKind;
   message?: string;
 } {
   if (dialog.method === "confirm") {
-    return { kind: "permission", message: oneLine(dialog.title) };
+    return { kind: "permission", message: firstLine(dialog.title) };
   }
   if (dialog.method === "ask" && Array.isArray(dialog.questions)) {
     const first = dialog.questions[0] as { question?: unknown } | undefined;
@@ -160,7 +165,7 @@ function blockedFromDialog(dialog: ProgramStatusDialog): {
       message: oneLine(typeof first?.question === "string" ? first.question : dialog.title),
     };
   }
-  return { kind: "question", message: oneLine(dialog.title) };
+  return { kind: "question", message: firstLine(dialog.title) };
 }
 
 function lifecycleErrorMessage(session: Session): string | undefined {

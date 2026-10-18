@@ -45,7 +45,9 @@ enum PushEnvelopeRejection: String, Error, Equatable, Sendable {
 
 /// Decrypted push content (spec §2.4).
 struct PushPlaintext: Decodable, Equatable, Sendable {
-    enum Event: String, Decodable, Sendable {
+    /// Every case is listed when the app registers (`PushRegistrationRequest.events`): the
+    /// server sends no other event, so a push this app cannot open never reaches it.
+    enum Event: String, CaseIterable, Decodable, Sendable {
         case blocked, error, notify
         case pairingApproval = "pairing_approval"
         case deviceEnrolled = "device_enrolled"

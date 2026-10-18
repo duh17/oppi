@@ -1812,6 +1812,7 @@ final class OppiApp {
             backgroundKeepAlive.end()
             SSHTerminalRegistry.shared.appDidBecomeActive()
             AppIconBadgeService.shared.appDidBecomeActive()
+            AttentionNotificationService.shared.removeFallbackNotifications()
 
             if shouldReconnect {
                 let reconnectInterval = lifecycleSignposter.beginInterval("foreground.reconnect")

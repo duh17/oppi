@@ -2602,6 +2602,7 @@ struct APIClientTests {
             #expect(json?["sendToken"] as? String == "osp1.r.p.s")
             #expect(json?["issuedAt"] as? Int64 == 1_760_000_000_000)
             #expect(json?["liveActivity"] as? Bool == true)
+            #expect(json?["events"] as? [String] == ["blocked", "notify"])
             return self.mockResponse(json: #"{"serverPublicKey":"spk","keyId":"kid"}"#)
         }
 
@@ -2612,7 +2613,8 @@ struct APIClientTests {
             relay: "https://push.example.test",
             issuedAt: 1_760_000_000_000,
             signature: "sig",
-            liveActivity: true
+            liveActivity: true,
+            events: ["blocked", "notify"]
         ))
         #expect(response == PushRegistrationResponse(serverPublicKey: "spk", keyId: "kid"))
     }

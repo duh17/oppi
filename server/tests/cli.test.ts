@@ -838,6 +838,7 @@ describe("oppi config", () => {
           publicKey: "config-display-public-key",
           sendToken: secrets.push,
           registeredAt: 1,
+          events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
         },
       ],
       runtimeEnv: { OPENAI_API_KEY: secrets.runtime },
@@ -2481,6 +2482,7 @@ describe("oppi init", () => {
         publicKey: "AAAA",
         sendToken: `send-${deviceId}`,
         registeredAt: 1,
+        events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
       });
       new Storage(initDir).updateConfig({
         push: { mode: "relay", relays: [`http://127.0.0.1:${port}`] },

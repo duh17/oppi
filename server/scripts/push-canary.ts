@@ -399,6 +399,7 @@ async function runCanary(
         keyId: vectors.recipient.keyId,
         publicKey: vectors.recipient.publicKey,
         sendToken: phone.sendToken,
+        events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
       });
       return phone;
     };

@@ -138,11 +138,13 @@ struct PushSendPermissionTests {
         private let lock = NSLock()
         private var _mints: [String] = []
         private var _sentTokens: [String] = []
+        private var _sentEvents: [[String]] = []
         private var _deletedPermissions: [String] = []
         let serverPublicKey = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
 
         var mints: [String] { lock.withLock { _mints } }
         var sentTokens: [String] { lock.withLock { _sentTokens } }
+        var sentEvents: [[String]] { lock.withLock { _sentEvents } }
         var deletedPermissions: [String] { lock.withLock { _deletedPermissions } }
 
         func handle(_ request: URLRequest) throws -> (Data, HTTPURLResponse) {
@@ -172,7 +174,11 @@ struct PushSendPermissionTests {
             } else if request.httpMethod == "PUT", path.hasSuffix("/me/push-registration") {
                 let json = try JSONSerialization.jsonObject(with: Self.body(of: request)) as? [String: Any]
                 let token = json?["sendToken"] as? String ?? ""
-                lock.withLock { _sentTokens.append(token) }
+                let events = json?["events"] as? [String] ?? []
+                lock.withLock {
+                    _sentTokens.append(token)
+                    _sentEvents.append(events)
+                }
                 body = ["serverPublicKey": serverPublicKey.base64URLEncodedString, "keyId": json?["keyId"] as? String ?? ""]
             } else {
                 status = 404
@@ -277,6 +283,16 @@ struct PushSendPermissionTests {
             #expect(backend.mints == ["r_A"])
             #expect(backend.sentTokens.count == 2)
             #expect(Set(backend.sentTokens) == ["osp1.r_A.p_1.secret"])
+        }
+    }
+
+    /// The server sends only these (spec section 5), so each must be one the extension opens.
+    @Test func registrationListsEveryAlertTheExtensionOpens() async throws {
+        try await withBackend {
+            try storeRelayRegistration("r_A")
+            try await connect()
+
+            #expect(backend.sentEvents == [["blocked", "error", "notify", "pairing_approval", "device_enrolled"]])
         }
     }
 

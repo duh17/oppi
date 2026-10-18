@@ -70,6 +70,7 @@ describe("PushSender", () => {
       keyId: vectors.recipient.keyId,
       publicKey: vectors.recipient.publicKey,
       sendToken: "osp1.r_a.p_a.secret-a",
+      events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
     });
   });
 
@@ -136,6 +137,26 @@ describe("PushSender", () => {
     expect(opened[0]).not.toHaveProperty("seq");
     // Replay protection needs no server state: sending writes nothing.
     expect(readFileSync(join(dataDir, "config.json"), "utf8")).toBe(configBefore);
+  });
+
+  it("seals and relays nothing for an event the phone did not list", async () => {
+    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+    const [registered] = storage.getPushRegistrations();
+    if (!registered) throw new Error("missing registration");
+    storage.setPushRegistration({ ...registered, events: ["blocked", "pairing_approval"] });
+    const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
+    const push = sender(fetchImpl);
+    const [registration] = push.registrations();
+    if (!registration) throw new Error("missing registration");
+
+    expect(push.registrations("notify")).toEqual([]);
+    expect(push.registrations("blocked")).toEqual([registration]);
+    expect(
+      await push.send(registration, { ...notification, event: "notify", kind: undefined }),
+    ).toBeNull();
+    expect(calls).toHaveLength(0);
+    expect(await push.send(registration, notification)).toEqual({ status: "delivered" });
+    expect(calls).toHaveLength(1);
   });
 
   it("sends nothing to a registration that was replaced after the caller listed it", async () => {
@@ -315,6 +336,7 @@ describe("PushSender", () => {
         publicKey: vectors.recipient.publicKey,
         sendToken: "osp1.r_a.p_a.secret-a",
         ...(liveActivity ? { liveActivity: true } : {}),
+        events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
       });
       return new PushSender(storage, {
         signingKey: signing.privateKey,

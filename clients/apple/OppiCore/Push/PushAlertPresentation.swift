@@ -52,6 +52,8 @@ struct PushAlertPresentation: Equatable, Sendable {
     /// Matches the relay's fixed outer alert (relay/src/core/apns.ts `FALLBACK_ALERT`).
     static let fallbackTitle = "Oppi"
     static let fallbackBody = "You have a new notification."
+    /// Fallbacks stack together, apart from every session's alerts (spec "Fallback").
+    static let fallbackThreadIdentifier = "oppi.push.fallback"
 
     /// Shown for anything that fails a check: nothing from the push itself.
     static let fallback = Self(
@@ -59,7 +61,7 @@ struct PushAlertPresentation: Equatable, Sendable {
         subtitle: "",
         body: fallbackBody,
         categoryIdentifier: "",
-        threadIdentifier: "",
+        threadIdentifier: fallbackThreadIdentifier,
         targetContentIdentifier: nil,
         userInfo: [:],
         interruption: .active,

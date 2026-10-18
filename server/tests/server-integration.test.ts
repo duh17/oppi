@@ -48,6 +48,7 @@ const pushOnlyRecord = {
   publicKey: "fixture-public-key",
   sendToken: pushOnlyToken,
   registeredAt: 1,
+  events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
 };
 const deviceKeys = generateKeyPairSync("ec", { namedCurve: "P-256" });
 
@@ -1344,6 +1345,7 @@ describe("push registration API", () => {
       relay: overrides.relay ?? relay,
       issuedAt,
       signature: signature.toString("base64url"),
+      events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
     };
   }
 

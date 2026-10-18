@@ -17,6 +17,7 @@ const phone: PushRegistration = {
   sendToken: "osp1.r.p.s",
   registeredAt: 0,
   liveActivity: true,
+  events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
 };
 
 function session(id: string, state: string, parentSessionId?: string): Session {

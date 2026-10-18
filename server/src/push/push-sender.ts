@@ -8,7 +8,7 @@ import { createHash, createHmac, type KeyObject } from "node:crypto";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
 import type { ServerMetricCollector } from "../server-metric-collector.js";
-import type { PushRegistration, ServerConfig } from "../types.js";
+import type { PushEvent, PushRegistration, ServerConfig } from "../types.js";
 import { type PushPlaintext, type PushSubject, sealPushEnvelope } from "./envelope.js";
 import {
   type LiveActivityPush,
@@ -269,21 +269,33 @@ export class PushSender {
     return activePushRelays(this.storage.getConfig());
   }
 
-  /** Registrations that can receive pushes now: none while push is off. */
-  registrations(): PushRegistration[] {
-    return this.relays() ? this.storage.getPushRegistrations() : [];
+  /**
+   * Registrations that can receive pushes now: none while push is off. With `event`, only the
+   * phones that listed it.
+   */
+  registrations(event?: PushEvent): PushRegistration[] {
+    if (!this.relays()) return [];
+    const registrations = this.storage.getPushRegistrations();
+    return event ? registrations.filter((entry) => entry.events.includes(event)) : registrations;
   }
 
   /**
    * Seal and send to one device within its budget. Prunes the registration when the primary
-   * relay answers `410`. Never throws.
+   * relay answers `410`. Never throws. Null, sending nothing, for a phone that did not list
+   * the event: it could show only the fixed fallback, so the relay never carries it.
    */
   async send(
     registration: PushRegistration,
     notification: PushNotification,
   ): Promise<RelaySendResult | { status: "failed" } | { status: "throttled" } | null> {
     const relays = this.relays();
-    if (!relays || !this.isCurrent(registration)) return null;
+    if (
+      !relays ||
+      !registration.events.includes(notification.event) ||
+      !this.isCurrent(registration)
+    ) {
+      return null;
+    }
     const startedAt = this.now();
     const waitsOnUser =
       notification.event === "blocked" || notification.event === "pairing_approval";

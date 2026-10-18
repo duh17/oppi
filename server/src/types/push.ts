@@ -3,6 +3,9 @@
 /** Session events that push (protocol/push/spec.md §5). Pairing events: `PushSubject`. */
 export type SessionPushEvent = "blocked" | "error" | "notify";
 
+/** Every alert event (spec §2.4). */
+export type PushEvent = SessionPushEvent | "pairing_approval" | "device_enrolled";
+
 /** `off`: no pushes (default). `relay`: end-to-end-encrypted pushes through a push relay. */
 export type PushMode = "off" | "relay";
 
@@ -30,6 +33,12 @@ export interface PushRegistrationRequest {
    * holds the real tokens and refuses when it has none.
    */
   liveActivity?: boolean;
+  /**
+   * The alert events this app can open. The server seals and sends no other: a push the
+   * phone cannot read would show only the fixed fallback. Outside the signature, like
+   * `liveActivity`: changing it only withholds alerts, which a proxy could do by dropping them.
+   */
+  events: string[];
 }
 
 /**
@@ -46,4 +55,6 @@ export interface PushRegistration {
   registeredAt: number;
   /** The phone accepts Live Activity pushes (`PushRegistrationRequest.liveActivity`). */
   liveActivity?: boolean;
+  /** The listed events this server sends (`PushRegistrationRequest.events`). */
+  events: PushEvent[];
 }

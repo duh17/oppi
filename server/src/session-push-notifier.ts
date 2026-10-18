@@ -17,6 +17,7 @@ const log = createLogger({ base: { component: "session_push_notifier" } });
 /** Shortest gap between two pushes of the same alert for one session. */
 const SESSION_PUSH_MIN_INTERVAL_MS = 60_000;
 
+/** Titles, and the body when the status names nothing to show. */
 const BLOCKED_PRESENTATION = {
   permission: { title: "Needs Approval", body: "Waiting for your approval." },
   question: { title: "Question", body: "Waiting for your answer." },
@@ -52,7 +53,9 @@ export interface SessionPushNotifierOptions {
  *
  * Automatic, from program status (OSC 7501) transitions:
  * - **Needs you** (`blocked`): any session starts waiting on an approval, question, or sign-in.
- *   Skips each device that is present: the open app shows the dialog or posts its own banner.
+ *   The body is what it waits on (the status message: a dialog title or an `ask`'s first
+ *   question), else fixed text. Skips each device that is present: the open app shows the
+ *   dialog or posts its own banner.
  * - **Failed** (`error`): a top-level session's run stops with an error, after any automatic
  *   retries. A failed model call that a retry recovers never leaves `working`. Delegated
  *   sessions report to their parent.
@@ -62,7 +65,9 @@ export interface SessionPushNotifierOptions {
  *
  * Failed and agent alerts go to every registered device, present or not: the app hides one
  * only while that session's chat is on screen. Each alert pushes at most once a minute per
- * session. Each device gets its own sealed envelope; a device without a push key gets nothing.
+ * session. Each device gets its own sealed envelope; a device without a push key, or that did
+ * not list the event, gets nothing. Every session alert names its session (subtitle): the
+ * name is capped and the body shortened to fit, never the other way round.
  */
 export class SessionPushNotifier implements SessionNotifyPort {
   private readonly lastPushAt = new Map<string, number>();
@@ -84,9 +89,10 @@ export class SessionPushNotifier implements SessionNotifyPort {
     let registrations: PushRegistration[];
     if (current.state === "blocked") {
       const kind = current.kind ?? "question";
-      content = { event: "blocked", kind, ...BLOCKED_PRESENTATION[kind] };
+      const fixed = BLOCKED_PRESENTATION[kind];
+      content = { event: "blocked", kind, title: fixed.title, body: current.message ?? fixed.body };
       registrations = this.push
-        .registrations()
+        .registrations("blocked")
         .filter((entry) => !this.options.isDevicePresent(entry.deviceId));
     } else if (
       current.state === "error" &&
@@ -94,14 +100,15 @@ export class SessionPushNotifier implements SessionNotifyPort {
       !session.launch?.parentSessionId
     ) {
       content = { event: "error", ...ERROR_PRESENTATION };
-      registrations = this.push.registrations();
+      registrations = this.push.registrations("error");
     } else {
       return;
     }
     if (registrations.length === 0 || this.throttledFor(session.id, content.event) > 0) return;
     this.startThrottle(session.id, content.event);
+    const notification = this.notification(session.id, content);
     for (const registration of registrations) {
-      void this.push.send(registration, this.notification(session.id, content)).catch((err) => {
+      void this.push.send(registration, notification).catch((err) => {
         log.warn("session_push.send_failed", {
           sessionId: session.id,
           event: content.event,
@@ -111,10 +118,10 @@ export class SessionPushNotifier implements SessionNotifyPort {
     }
   }
 
-  /** Top-level sessions, while some device registered for pushes. */
+  /** Top-level sessions, while some device registered for agent messages. */
   offersNotify(sessionId: string): boolean {
     return (
-      this.push.registrations().length > 0 &&
+      this.push.registrations("notify").length > 0 &&
       !this.storage.getSession(sessionId)?.launch?.parentSessionId
     );
   }
@@ -127,25 +134,11 @@ export class SessionPushNotifier implements SessionNotifyPort {
     const cleaned = input.body.replace(CONTROL_CHARACTERS, "").trim();
     const written = clip(cleaned, NOTIFY_BODY_MAX);
     if (!title || !written) throw new Error("notify needs a title and a body");
-    // The alert always names its session, so the body gives way, never the name: fit it here
-    // rather than let the envelope drop the subtitle first (spec §2.4).
-    const session = this.storage.getSession(sessionId);
-    const subtitle = session?.name
-      ? clip(oneLine(session.name), NOTIFY_SUBTITLE_MAX, NOTIFY_SUBTITLE_MAX_BYTES)
-      : undefined;
-    const fields = {
-      event: "notify" as const,
-      sessionId,
-      ...(session?.workspaceId ? { workspaceId: session.workspaceId } : {}),
-      title,
-      ...(subtitle ? { subtitle } : {}),
-    };
-    const body = fitPushBody(fields, written, "");
-    const notification: PushNotification = { ...fields, body };
+    const notification = this.notification(sessionId, { event: "notify", title, body: written });
     // Held while sending so a parallel call waits its turn; given back when nothing went out.
     const started = this.startThrottle(sessionId, "notify");
     const results = await Promise.all(
-      this.push.registrations().map((registration) =>
+      this.push.registrations("notify").map((registration) =>
         this.push.send(registration, notification).catch((err: unknown) => {
           log.warn("session_push.send_failed", {
             sessionId,
@@ -163,7 +156,7 @@ export class SessionPushNotifier implements SessionNotifyPort {
         this.lastPushAt.delete(`${sessionId}:notify`);
       return { status: "not_delivered" };
     }
-    return body === cleaned
+    return notification.body === cleaned
       ? { status: "sent", devices }
       : { status: "sent", devices, shortened: true };
   }
@@ -185,14 +178,25 @@ export class SessionPushNotifier implements SessionNotifyPort {
     return now;
   }
 
+  /**
+   * The alert always names its session, so the body gives way, never the name: fit it here
+   * rather than let the envelope drop the subtitle first (spec section 2.4).
+   */
   private notification(sessionId: string, content: PushEventContent): PushNotification {
     const session = this.storage.getSession(sessionId);
-    return {
-      ...content,
+    const subtitle = session?.name
+      ? clip(oneLine(session.name), SESSION_NAME_MAX, SESSION_NAME_MAX_BYTES)
+      : undefined;
+    const { body, ...rest } = content;
+    const fields = {
+      ...rest,
       sessionId,
       ...(session?.workspaceId ? { workspaceId: session.workspaceId } : {}),
-      ...(session?.name ? { subtitle: session.name } : {}),
+      ...(subtitle ? { subtitle } : {}),
     };
+    // A shortened body ends in an ellipsis, so a cut question or title never reads as whole.
+    const whole = fitPushBody(fields, body, "");
+    return { ...fields, body: whole === body ? body : fitPushBody(fields, body, "\u2026") };
   }
 }
 
@@ -206,13 +210,13 @@ function oneLine(text: string): string {
 }
 
 /**
- * Byte caps on the JSON-encoded title and session name. With the fixed fields of a `notify`
- * plaintext (about 170 bytes with UUID ids), they leave at least 80 bytes for the body, so the
- * title and name always fit and only the body is ever shortened.
+ * Byte caps on the JSON-encoded agent title and session name. With the fixed fields of a
+ * session plaintext (about 170 bytes with UUID ids), they leave at least 80 bytes for the body,
+ * so the title and name always fit and only the body is ever shortened.
  */
 const NOTIFY_TITLE_MAX_BYTES = 160;
-const NOTIFY_SUBTITLE_MAX = 40;
-const NOTIFY_SUBTITLE_MAX_BYTES = 96;
+const SESSION_NAME_MAX = 40;
+const SESSION_NAME_MAX_BYTES = 96;
 
 /**
  * The longest prefix within `maxCodePoints` whose JSON string encoding is at most `maxBytes`.

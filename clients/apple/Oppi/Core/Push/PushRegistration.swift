@@ -209,7 +209,8 @@ final class PushRegistration {
             relay: relay.absoluteString,
             issuedAt: issuedAt,
             signature: signature.base64URLEncodedString,
-            liveActivity: liveActivity
+            liveActivity: liveActivity,
+            events: PushPlaintext.Event.allCases.map(\.rawValue)
         ))
 
         // Pin: only the server whose identity this phone paired with may sign its pushes.
@@ -359,6 +360,9 @@ struct PushRegistrationRequest: Encodable, Equatable, Sendable {
     /// This server may drive the Live Activity while Oppi is closed. Outside the signature:
     /// the relay holds the real tokens and refuses without them.
     let liveActivity: Bool
+    /// The plaintext events this app can open; the server sends no other. Outside the signature:
+    /// leaving one out only withholds alerts.
+    let events: [String]
 }
 
 struct PushRegistrationResponse: Decodable, Equatable, Sendable {
