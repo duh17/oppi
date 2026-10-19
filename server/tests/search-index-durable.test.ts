@@ -15,6 +15,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { readDurableSearchTranscript, readDurableTipEntryId } from "../src/durable-history.js";
 import { SearchIndex, type DurableSearchSource } from "../src/search-index.js";
+import { DURABLE_STORE_MISSING } from "../src/session-runtime-capabilities.js";
 import { updateSearchIndexForSessionEvent } from "../src/session-search-indexing.js";
 import type { Session } from "../src/types.js";
 
@@ -34,7 +35,7 @@ function makeSession(conversationId: number, overrides: Partial<Session> = {}): 
     messageCount: 0,
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     cost: 0,
-    serverDurable: { conversationId },
+    serverDurable: { storeId: "root-1", conversationId },
     ...overrides,
   };
 }
@@ -189,7 +190,7 @@ describe("SearchIndex durable sessions", () => {
       // The server accepts traffic while the walk yields: the first turn binds
       // the conversation and agent_end indexes it before the walk reaches it.
       yieldToEventLoop: async () => {
-        shell.serverDurable = { conversationId: f.id };
+        shell.serverDurable = { storeId: "root-1", conversationId: f.id };
         await index.syncDurableSession(shell.id);
       },
     });
@@ -212,5 +213,75 @@ describe("SearchIndex durable sessions", () => {
     await index.syncDurableSession(session.id);
     expect(index.search("incognito")).toEqual([]);
     expect(f.readTranscript).not.toHaveBeenCalled();
+  });
+
+  describe("durable rows without a store", () => {
+    // Rows bound before per-tree stores (the shared harness.sqlite) carry a
+    // conversation id but no storeId. Nothing can read their transcript, and the
+    // server keeps the index rows they already have.
+    function legacySession() {
+      return makeSession(7, { id: "legacy-1", serverDurable: { conversationId: 7 } });
+    }
+
+    it("skips them without reading the Harness or logging an error", async () => {
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const readTip = vi.fn(async () => {
+        throw new Error(DURABLE_STORE_MISSING);
+      });
+      const readTranscript = vi.fn(async () => {
+        throw new Error(DURABLE_STORE_MISSING);
+      });
+      const session = legacySession();
+      const index = openIndex(() => session, { readTipEntryId: readTip, readTranscript });
+
+      expect(await index.startBackgroundSync([session])).toMatchObject({
+        added: 0,
+        cancelled: false,
+      });
+      await index.indexSession(session.id);
+      expect(await index.syncDurableSession(session.id)).toMatchObject({ skipped: 1 });
+
+      expect(readTip).not.toHaveBeenCalled();
+      expect(readTranscript).not.toHaveBeenCalled();
+      const logged = stderr.mock.calls.flat().join("\n");
+      stderr.mockRestore();
+      expect(logged).not.toContain("durable_index.failed");
+    });
+
+    it("keeps the index row written before the store was required", async () => {
+      const f = await durableFixture();
+      await f.turn("quokka prompt", "wombat reply");
+      const bound = makeSession(f.id, { id: "legacy-2" });
+      const sessions = new Map([[bound.id, bound]]);
+      const index = openIndex((id) => sessions.get(id), f.source);
+      await index.startBackgroundSync([bound]);
+      expect(index.search("quokka")).toHaveLength(1);
+
+      sessions.set(bound.id, { ...bound, serverDurable: { conversationId: f.id } });
+      await index.startBackgroundSync([sessions.get(bound.id)!]);
+      await index.indexSession(bound.id);
+
+      expect(index.search("quokka")).toHaveLength(1);
+      expect(index.search("wombat")).toHaveLength(1);
+    });
+
+    it("still reports a real read failure on a session that has a store", async () => {
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const session = makeSession(3);
+      const index = openIndex(() => session, {
+        readTipEntryId: async () => {
+          throw new Error("store exploded");
+        },
+        readTranscript: async () => {
+          throw new Error("store exploded");
+        },
+      });
+
+      await index.startBackgroundSync([session]);
+      const written = stderr.mock.calls.flat().join("\n");
+      stderr.mockRestore();
+      expect(written).toContain("search_index.durable_index.failed");
+      expect(written).toContain("store exploded");
+    });
   });
 });

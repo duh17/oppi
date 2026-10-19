@@ -20,7 +20,7 @@ import { open, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createLogger } from "./logger.js";
-import { isServerDurableSession } from "./session-runtime-capabilities.js";
+import { durableStoreId, isServerDurableSession } from "./session-runtime-capabilities.js";
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "./sqlite-compat.js";
 import {
   extractSearchTranscriptFromEntries,
@@ -565,6 +565,8 @@ export class SearchIndex {
    * a durable row, so it hands them to the durable pass instead.
    */
   private lateDurableSessionIds = new Set<string>();
+  /** Store-less durable sessions already noted at debug, so a pass logs each once. */
+  private storelessDurableLogged = new Set<string>();
 
   constructor(dataDir: string, getSession: (id: string) => Session | undefined) {
     this.getSession = getSession;
@@ -1557,6 +1559,18 @@ export class SearchIndex {
     if (!initial || initial.ephemeral) return this.removeIndexedSession(sessionId);
     const conversationId = initial.serverDurable?.conversationId;
     if (!this.isIndexedFromDurable(initial) || conversationId === undefined) return result;
+    if (durableStoreId(initial) === undefined) {
+      // Bound before per-tree stores, when conversations lived in the shared
+      // harness.sqlite that is no longer opened. The transcript is unreachable,
+      // so there is nothing to index and nothing to retry; the row indexed back
+      // then stays searchable. Expected for every such session on every pass.
+      if (!this.storelessDurableLogged.has(sessionId)) {
+        this.storelessDurableLogged.add(sessionId);
+        log.debug("search_index.durable_index.skipped_no_store", { sessionId });
+      }
+      result.skipped = 1;
+      return result;
+    }
 
     // Read the tip before the transcript: content may be newer than the stored
     // marker (one harmless extra reindex), never older.
