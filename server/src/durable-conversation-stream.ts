@@ -271,6 +271,12 @@ class ConversationRoom implements ToolPresenter {
         conversationId: this.conversationId,
         error: safeErrorMessage(error),
       });
+      // A half-applied publication leaves the room out of step with the store, and the
+      // next commit would build on that state. End the room like a failed presentation
+      // pass: each owner re-attaches from its cursor to a fresh room that loads from the
+      // store. Closing here is safe for a commit listener: it only runs the detaches and
+      // the subscribers' synchronous `lose()`, and the owner's re-attach is asynchronous.
+      this.close(true);
       return;
     }
     for (const subscriber of this.subscribers) subscriber.notify();

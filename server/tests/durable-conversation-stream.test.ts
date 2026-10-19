@@ -525,6 +525,50 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
     await expectConverged(f, resumed);
   });
 
+  it("ends the room when a commit cannot be applied, and a re-attach gets a fresh room", async () => {
+    const f = await fixture([fauxAssistantMessage("ack")]);
+    const id = f.conversation.id;
+    let lost = 0;
+    const client = new Client();
+    client.subscription = await attachConversationStream({
+      harness: f.harness,
+      conversationId: id,
+      renderers: new MobileRendererRegistry(),
+      send: (frame) => client.apply(wire(frame)),
+      onLost: () => (lost += 1),
+    });
+    subscriptions.add(client.subscription);
+    await prompt(f.conversation, "one");
+    await settle();
+    const before = client.frames.length;
+
+    // A published entry whose `model` is not a list: the room cannot apply it, so its
+    // state no longer matches the store.
+    await f.conversation.commit(async (tx) => {
+      await tx.appendEntry(id, { kind: "oppi.notice", model: "malformed" as never });
+    }, context);
+    await settle();
+
+    // The room ended and told its owner, instead of staying open with stale state.
+    expect(lost).toBe(1);
+    // The dead room sends its client nothing more, such as the reset.
+    // The store moves on: a reset leaves the malformed entry out of the active context.
+    await f.conversation.commit(async (tx) => {
+      await tx.appendEntry(id, {
+        kind: "pi.reset",
+        head: "self",
+        model: [{ role: "user", content: "fresh start", timestamp: 2 }],
+      });
+    }, context);
+    await settle();
+    expect(client.frames.length).toBe(before);
+
+    // Re-attaching from the cursor, as SessionHost does, opens a fresh room that has the store's state.
+    const resumed = await attach(f, client.tip, client);
+    expect(resumed.entries.map((entry) => entry.kind)).toEqual(["pi.reset"]);
+    await expectConverged(f, resumed);
+  });
+
   it("shows input and display cards like trace history, including card metadata that lands late", async () => {
     const f = await fixture([fauxAssistantMessage("ack one"), fauxAssistantMessage("ack two")]);
     const client = await attach(f);
