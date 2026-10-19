@@ -1388,7 +1388,11 @@ struct WorkspaceSidebarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(theme.bg.primary.ignoresSafeArea())
-        .routerModal(item: $createSheetContext, onDismiss: handleCreateSheetDismissed) { context in
+        .routerModal(
+            item: $createSheetContext,
+            presentation: .sheet.inNavigation(),
+            onDismiss: handleCreateSheetDismissed
+        ) { context in
             WorkspaceCreateView(
                 server: context.server,
                 presentation: context.presentation,

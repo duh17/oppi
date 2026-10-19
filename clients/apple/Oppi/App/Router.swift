@@ -38,8 +38,7 @@ struct ModalPresentation {
     var sheetCornerRadius: CGFloat?
     /// Non-nil wraps the screen in a `RouterNavigationController` with these
     /// bars for the root screen. The screen then gets a UIKit navigation bar
-    /// for its title and toolbar items, pushes with `ScreenNavigator.push`,
-    /// and needs no SwiftUI `NavigationStack` of its own.
+    /// for its title and toolbar items and pushes with `ScreenNavigator.push`.
     var navigation: ScreenBars?
     var permittedArrowDirections: UIPopoverArrowDirection = .any
     /// UIKit turns a popover into a sheet in compact width, as SwiftUI does.

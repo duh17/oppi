@@ -25,8 +25,7 @@ enum FullScreenViewerPresentationPolicy {
         }
     }
 
-    /// Presented document overlay that would hide workspace `NavigationStack`
-    /// pushes. Walks the presented chain only. The overlay is a
+    /// Presented document overlay that would hide workspace stack pushes. Walks the presented chain only. The overlay is a
     /// ``FullScreenCodeViewController`` or a presented host (SwiftUI
     /// sheet/fullScreenCover) that contains one in its children or navigation
     /// stack. Embedded pushed viewers are not selected.

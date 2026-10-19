@@ -53,18 +53,7 @@ const constructs: Construct[] = [
  * Disallowed constructs that may stay, per file: the construct and how many
  * uses. Every entry needs a reason; an entry nobody needs is deleted.
  */
-const allowed: { file: string; construct: string; count: number; reason: string }[] = [
-  // Removed by S7a: these sheets stop owning a NavigationStack once every
-  // caller presents them through the router. The entries stay valid after that
-  // (an allowance above the actual count passes) and are deleted with it.
-  ...[
-    "clients/apple/Oppi/Features/Chat/Composer/ExpandedComposerView.swift",
-    "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentStashSheet.swift",
-    "clients/apple/Oppi/Features/Chat/Support/ModelPickerSheet.swift",
-    "clients/apple/Oppi/Features/Icons/IconPickerView.swift",
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateView.swift",
-  ].map((file) => ({ file, construct: "NavigationStack", count: 1, reason: "removed by S7a" })),
-];
+const allowed: { file: string; construct: string; count: number; reason: string }[] = [];
 
 function walkSwiftFiles(root: string): string[] {
   if (!existsSync(root)) return [];

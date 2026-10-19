@@ -360,9 +360,8 @@ struct AgentNativeEditView: View {
             }
         }
         .interactiveDismissDisabled(isSaving)
-        .routerModal(isPresented: $isShowingModelPicker) {
-            // The picker keeps its own navigation stack; it gets this editor's
-            // server explicitly.
+        .routerModal(isPresented: $isShowingModelPicker, presentation: .sheet.inNavigation()) {
+            // The picker gets this editor's server explicitly.
             ModelPickerSheet(currentModel: model.managementNilIfBlank) { selected in
                 model = ModelSwitchPolicy.fullModelID(for: selected)
                 AppPreferences.RecentModels.record(model)

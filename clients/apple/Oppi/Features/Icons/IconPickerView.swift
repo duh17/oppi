@@ -347,11 +347,10 @@ private struct SymbolSearchField: UIViewRepresentable {
 }
 
 extension ModalPresentation {
-    /// How the router presents `UnifiedIconPickerView`, which keeps its own
-    /// navigation stack: full screen in compact width (iPhone), a large sheet
-    /// in compact height, otherwise a medium and large sheet with a grabber.
-    /// Same as the picker's own SwiftUI sheet modifiers, which a router
-    /// presentation does not read. Pass the presenting view's size classes.
+    /// How the router presents `UnifiedIconPickerView`, in its navigation:
+    /// full screen in compact width (iPhone), a large sheet in compact
+    /// height, otherwise a medium and large sheet with a grabber. Pass the
+    /// presenting view's size classes.
     ///
     /// Full screen is `.overFullScreen`: the picker saves into its presenter,
     /// and a presenter covered by `.fullScreen` left the window and dropped
@@ -361,12 +360,12 @@ extension ModalPresentation {
         verticalSizeClass: UserInterfaceSizeClass?
     ) -> ModalPresentation {
         if horizontalSizeClass == .compact {
-            return ModalPresentation(style: .overFullScreen)
+            return ModalPresentation(style: .overFullScreen).inNavigation()
         }
         if verticalSizeClass == .compact {
-            return .sheet.detents([.large()], grabber: true)
+            return .sheet.detents([.large()], grabber: true).inNavigation()
         }
-        return .sheet.detents([.medium(), .large()], grabber: true)
+        return .sheet.detents([.medium(), .large()], grabber: true).inNavigation()
     }
 }
 
@@ -374,8 +373,7 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
     typealias ValuePreview = (Value, CGFloat) -> AnyView
     typealias GenmojiPreview = (Data, String, CGFloat) -> AnyView
 
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.screenNavigator) private var navigator
 
     let purpose: IconPickerPurpose
     let builtinOptions: [IconPickerOption<Value>]
@@ -462,64 +460,53 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                // List order is also the baseline VoiceOver focus order.
-                builtinSection
-                customSection
-                symbolSection
-                operationSection
-            }
-            // Return advances this identity after UIKit has the final query,
-            // rebuilding the lazy result accessibility tree without replacing
-            // the active field on every typed character.
-            .id(symbolResultGeneration)
-            .listStyle(.insetGrouped)
-            .scrollDismissesKeyboard(.immediately)
-            .themedListSurface()
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if let errorMessage = model.errorMessage {
-                    saveErrorBanner(errorMessage)
-                }
-            }
-            .accessibilityIdentifier("\(accessibilityPrefix).list")
-            .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
-            .navigationTitle(purpose.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(role: .cancel) { dismiss() }
-                        .disabled(model.isSaving)
-                        .accessibilityIdentifier("\(accessibilityPrefix).cancel")
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if model.isSaving {
-                        ProgressView()
-                            .accessibilityLabel("Saving")
-                    } else {
-                        Button(role: .confirm) {
-                            Task { await save() }
-                        }
-                        .disabled(!model.canSave)
-                        .accessibilityLabel("Save")
-                        .accessibilityHint(
-                            model.validationMessage.map { "Fix custom input: \($0) Save is disabled." } ?? "Saves the selected icon"
-                        )
-                        .accessibilityIdentifier("\(accessibilityPrefix).save")
-                    }
-                }
-            }
-            .interactiveDismissDisabled(model.isSaving)
+        List {
+            // List order is also the baseline VoiceOver focus order.
+            builtinSection
+            customSection
+            symbolSection
+            operationSection
         }
-        // SwiftUI sheet presenters only; router presenters use
-        // `ModalPresentation.iconPicker(horizontalSizeClass:verticalSizeClass:)`.
-        .presentationDetents(usesExpandedPresentation ? [.large] : [.medium, .large])
-        .presentationCompactAdaptation(.fullScreenCover)
-        .presentationDragIndicator(.visible)
-    }
-
-    private var usesExpandedPresentation: Bool {
-        verticalSizeClass == .compact
+        // Return advances this identity after UIKit has the final query,
+        // rebuilding the lazy result accessibility tree without replacing
+        // the active field on every typed character.
+        .id(symbolResultGeneration)
+        .listStyle(.insetGrouped)
+        .scrollDismissesKeyboard(.immediately)
+        .themedListSurface()
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let errorMessage = model.errorMessage {
+                saveErrorBanner(errorMessage)
+            }
+        }
+        .accessibilityIdentifier("\(accessibilityPrefix).list")
+        .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
+        .navigationTitle(purpose.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(role: .cancel) { navigator.finish() }
+                    .disabled(model.isSaving)
+                    .accessibilityIdentifier("\(accessibilityPrefix).cancel")
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                if model.isSaving {
+                    ProgressView()
+                        .accessibilityLabel("Saving")
+                } else {
+                    Button(role: .confirm) {
+                        Task { await save() }
+                    }
+                    .disabled(!model.canSave)
+                    .accessibilityLabel("Save")
+                    .accessibilityHint(
+                        model.validationMessage.map { "Fix custom input: \($0) Save is disabled." } ?? "Saves the selected icon"
+                    )
+                    .accessibilityIdentifier("\(accessibilityPrefix).save")
+                }
+            }
+        }
+        .interactiveDismissDisabled(model.isSaving)
     }
 
     @ViewBuilder
@@ -799,7 +786,7 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
             commit: commit
         )
         if succeeded {
-            dismiss()
+            navigator.finish()
         } else if model.errorMessage != nil {
             await Task.yield()
             errorFocused = true

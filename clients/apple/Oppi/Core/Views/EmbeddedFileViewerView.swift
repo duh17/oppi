@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Lightweight NavigationPath / `navigationDestination(item:)` key.
-/// Large reader bodies stay in ``ChatReaderPayloadStore``, never in the path.
+/// Lightweight key of a pushed chat reader route.
+/// Large reader bodies stay in ``ChatReaderPayloadStore``, never in the route.
 struct ChatReaderNavTarget: Hashable, Identifiable {
     let id: UUID
 }
@@ -696,7 +696,7 @@ extension Binding where Value == FullScreenMarkdownViewportRestoreState {
     }
 }
 
-/// Embeds ``FullScreenCodeViewController`` inside a SwiftUI NavigationStack.
+/// Embeds ``FullScreenCodeViewController`` in a pushed screen.
 ///
 /// The UIKit view controller provides its own internal `UINavigationController`
 /// with Liquid Glass floating pills — identical chrome to the sheet presentation

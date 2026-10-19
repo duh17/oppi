@@ -1041,8 +1041,6 @@ private struct AgentDetailView: View {
                 verticalSizeClass: verticalSizeClass
             )
         ) {
-            // The shared picker keeps its own navigation stack and dismiss()
-            // until the workspace icon pickers move to the router too.
             if let agent {
                 AgentIconPickerView(agent: agent) { updated in
                     self.agent = updated

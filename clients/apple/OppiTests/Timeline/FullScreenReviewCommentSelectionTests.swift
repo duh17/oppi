@@ -2917,8 +2917,10 @@ struct FullScreenReviewCommentSelectionTests {
             fixture.controller.presentedViewController != nil
         }
         #expect(presented)
-        let host = try #require(fixture.controller.presentedViewController as? HostedScreenController)
-        #expect(host.modalPresentationStyle == .pageSheet)
+        // The stash sits at the root of a router navigation controller, whose bar holds its title and close.
+        let navigation = try #require(fixture.controller.presentedViewController as? RouterNavigationController)
+        #expect(navigation.viewControllers.first is HostedScreenController)
+        #expect(navigation.modalPresentationStyle == .pageSheet)
     }
 
     /// An embedded viewer is not the controller the router presents from: the
@@ -2942,7 +2944,7 @@ struct FullScreenReviewCommentSelectionTests {
 
         button.sendActions(for: .touchUpInside)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
-            guard let sheet = container.presentedViewController as? HostedScreenController else { return false }
+            guard let sheet = container.presentedViewController as? RouterNavigationController else { return false }
             return !sheet.isBeingPresented
         })
         let first = try #require(container.presentedViewController)
@@ -2950,7 +2952,7 @@ struct FullScreenReviewCommentSelectionTests {
 
         button.sendActions(for: .touchUpInside)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
-            guard let sheet = container.presentedViewController as? HostedScreenController else { return false }
+            guard let sheet = container.presentedViewController as? RouterNavigationController else { return false }
             return sheet !== first && !sheet.isBeingPresented
         })
         #expect(container.presentedViewController?.presentedViewController == nil)
@@ -2959,7 +2961,7 @@ struct FullScreenReviewCommentSelectionTests {
         container.dismiss(animated: false)
         button.sendActions(for: .touchUpInside)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
-            container.presentedViewController is HostedScreenController
+            container.presentedViewController is RouterNavigationController
         })
         #expect(container.presentedViewController?.presentedViewController == nil)
     }

@@ -389,7 +389,7 @@ struct QuickSessionSheet: View {
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .background(.clear)
-        .routerModal(isPresented: $showModelPicker) {
+        .routerModal(isPresented: $showModelPicker, presentation: .sheet.inNavigation()) {
             ModelPickerSheet(
                 currentModel: displayedModelId,
                 onSelect: selectModel,

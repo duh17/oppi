@@ -12,7 +12,7 @@ struct ModelPickerSheet: View {
 
     @Environment(\.apiClient) private var apiClient
     @Environment(ChatSessionState.self) private var chatState
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.themeID) private var themeID
 
@@ -84,73 +84,71 @@ struct ModelPickerSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if models.isEmpty && !chatState.modelsCacheReady && modelLoadError == nil {
-                    ProgressView("Loading models…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if models.isEmpty {
-                    ContentUnavailableView {
-                        Label(
-                            modelLoadError == nil ? "No Models Available" : "Models Unavailable",
-                            systemImage: modelLoadError == nil ? "cpu" : "wifi.exclamationmark"
-                        )
-                    } description: {
-                        Text(modelLoadError ?? "Server returned no models.")
-                    } actions: {
-                        if modelLoadError != nil, let apiClient {
-                            Button("Try Again") {
-                                Task { await loadModels(api: apiClient) }
-                            }
+        Group {
+            if models.isEmpty && !chatState.modelsCacheReady && modelLoadError == nil {
+                ProgressView("Loading models…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if models.isEmpty {
+                ContentUnavailableView {
+                    Label(
+                        modelLoadError == nil ? "No Models Available" : "Models Unavailable",
+                        systemImage: modelLoadError == nil ? "cpu" : "wifi.exclamationmark"
+                    )
+                } description: {
+                    Text(modelLoadError ?? "Server returned no models.")
+                } actions: {
+                    if modelLoadError != nil, let apiClient {
+                        Button("Try Again") {
+                            Task { await loadModels(api: apiClient) }
                         }
                     }
-                } else {
-                    modelList
-                        .disabled(isSavingDefault)
+                }
+            } else {
+                modelList
+                    .disabled(isSavingDefault)
+            }
+        }
+        .background(.themeBg)
+        .navigationTitle("Models")
+        .navigationBarTitleDisplayMode(.inline)
+        .routerSearchable(text: $searchText, prompt: "Search models…")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(role: .cancel) { navigator.finish() }
+                    .disabled(isSavingDefault)
+            }
+            if isSavingDefault {
+                ToolbarItem(placement: .status) {
+                    ProgressView()
+                        .accessibilityLabel("Saving default model")
                 }
             }
-            .background(.themeBg)
-            .navigationTitle("Models")
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, prompt: "Search models…")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(role: .cancel) { dismiss() }
-                        .disabled(isSavingDefault)
-                }
-                if isSavingDefault {
-                    ToolbarItem(placement: .status) {
-                        ProgressView()
-                            .accessibilityLabel("Saving default model")
-                    }
-                }
+        }
+        .interactiveDismissDisabled(isSavingDefault)
+        .alert("Couldn't Set Default Model", isPresented: Binding(
+            get: { defaultModelError != nil },
+            set: { if !$0 { defaultModelError = nil } }
+        )) {
+            Button("OK", role: .cancel) { defaultModelError = nil }
+        } message: {
+            Text(defaultModelError ?? "Please try again.")
+        }
+        .task(id: defaultAgentId) {
+            agentDefaultModelId = nil
+            guard let defaultAgentId, let apiClient else { return }
+            do {
+                let agent = try await apiClient.getAgent(defaultAgentId)
+                if !Task.isCancelled { agentDefaultModelId = agent.definition.sessionDefaults?.model }
+            } catch {
+                if !Task.isCancelled { defaultModelError = error.localizedDescription }
             }
-            .interactiveDismissDisabled(isSavingDefault)
-            .alert("Couldn't Set Default Model", isPresented: Binding(
-                get: { defaultModelError != nil },
-                set: { if !$0 { defaultModelError = nil } }
-            )) {
-                Button("OK", role: .cancel) { defaultModelError = nil }
-            } message: {
-                Text(defaultModelError ?? "Please try again.")
-            }
-            .task(id: defaultAgentId) {
-                agentDefaultModelId = nil
-                guard let defaultAgentId, let apiClient else { return }
-                do {
-                    let agent = try await apiClient.getAgent(defaultAgentId)
-                    if !Task.isCancelled { agentDefaultModelId = agent.definition.sessionDefaults?.model }
-                } catch {
-                    if !Task.isCancelled { defaultModelError = error.localizedDescription }
-                }
-            }
-            .task {
-                // Refresh once whenever the picker opens; cached models keep the initial UI instant.
-                if let api = apiClient {
-                    async let refresh: Void = loadModels(api: api)
-                    async let usage: Void = loadProviderQuotas(api: api)
-                    _ = await (refresh, usage)
-                }
+        }
+        .task {
+            // Refresh once whenever the picker opens; cached models keep the initial UI instant.
+            if let api = apiClient {
+                async let refresh: Void = loadModels(api: api)
+                async let usage: Void = loadProviderQuotas(api: api)
+                _ = await (refresh, usage)
             }
         }
     }
@@ -200,7 +198,7 @@ struct ModelPickerSheet: View {
             Button {
                 AppHaptics.selectionChanged()
                 onSelect(model)
-                dismiss()
+                navigator.finish()
             } label: {
                 ModelRow(model: model, isCurrent: isCurrent)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -222,7 +220,7 @@ struct ModelPickerSheet: View {
                             } else {
                                 piDefaultModelId = fullId(model)
                             }
-                            dismiss()
+                            navigator.finish()
                         } catch {
                             defaultModelError = error.localizedDescription
                         }

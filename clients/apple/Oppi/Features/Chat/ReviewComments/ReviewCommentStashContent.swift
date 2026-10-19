@@ -1,32 +1,13 @@
 import SwiftUI
 
-struct ReviewCommentStashSheet: View {
-    let comments: [ReviewComment]
-    let focusedCommentId: String?
-    var initialEditingComment: ReviewComment? = nil
-    let onEdit: (ReviewComment, String) -> Bool
-    let onDelete: (ReviewComment) -> Void
-    let onClose: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            ReviewCommentStashContent(
-                comments: comments,
-                focusedCommentId: focusedCommentId,
-                onEdit: onEdit,
-                onDelete: onDelete,
-                onClose: onClose,
-                initialEditingComment: initialEditingComment
-            )
-        }
-    }
-}
-
 enum ReviewCommentStashChrome {
     case sheet
     case drawer
 }
 
+/// The staged review comments: a sheet at the root of a router navigation
+/// controller (`.sheet` chrome, its title and close in that bar), or the
+/// chat's inline drawer.
 struct ReviewCommentStashContent: View {
     let comments: [ReviewComment]
     let focusedCommentId: String?

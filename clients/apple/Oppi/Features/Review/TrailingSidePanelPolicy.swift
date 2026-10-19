@@ -31,10 +31,6 @@ extension View {
     /// makes room for it: this screen's bar items and content stay beside
     /// the column. Content that ignores the trailing safe area runs under it.
     ///
-    /// The panel must not bring its own SwiftUI `NavigationStack`: the column
-    /// is a child controller, and a stack hosted there reset an enclosing
-    /// SwiftUI `NavigationStack` to its root.
-    ///
     /// The panel content runs in its own graph with the app root services.
     /// Presenter-local values (server scope, review scope, bindings into an
     /// `@Observable`) go on `content` explicitly. Close it through the
@@ -217,9 +213,8 @@ final class TrailingColumnController: UIViewController {
 
     /// The navigation controller that holds the hosted screen this column
     /// belongs to, so the column runs beside its bar; a screen outside one
-    /// hosts the column itself. Not a SwiftUI `NavigationStack`'s own
-    /// controller inside the screen: a column there reset the stack. A
-    /// harness with no hosted screen uses its top ancestor.
+    /// hosts the column itself. A harness with no hosted screen uses its top
+    /// ancestor.
     private var hostController: UIViewController? {
         var candidate = parent
         while let current = candidate {

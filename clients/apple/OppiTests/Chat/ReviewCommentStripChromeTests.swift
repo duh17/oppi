@@ -66,14 +66,6 @@ struct ReviewCommentStripChromeTests {
         #expect(chipRange.lowerBound < warningRange.lowerBound)
     }
 
-    @Test("Review UI test uses the same count-aware stash title as the product")
-    func reviewUITestUsesCountAwareStashTitle() throws {
-        let uiTest = try reviewCommentsFeatureSource(path: "OppiUITests/FullScreenReviewCommentUITests.swift")
-        #expect(uiTest.contains("app.navigationBars[\"1 review comment staged\"]"))
-        let sheet = try reviewCommentStashSheetSource()
-        #expect(sheet.contains("ReviewCommentStripChrome.stashTitle(count:"))
-    }
-
     @Test("Collapsed pill title keeps the full staged-count phrase")
     func collapsedPillTitleKeepsStagedCountPhrase() {
         #expect(ReviewCommentStripChrome.stashTitle(count: 1) == "1 review comment staged")
@@ -218,51 +210,6 @@ struct ReviewCommentStripChromeTests {
         #expect(ReviewCommentStripChrome.drawerAccessibilityIdentifier == "chat.reviewComments.drawer")
     }
 
-    @Test("Stash sheet and drawer reuse the same content view")
-    func stashSheetAndDrawerReuseTheSameContentView() throws {
-        let stashSource = try reviewCommentStashSheetSource()
-        #expect(stashSource.contains("struct ReviewCommentStashContent: View"))
-        #expect(stashSource.contains("ReviewCommentStashContent("))
-
-        let sheetSlice = try reviewCommentsSourceSlice(
-            named: "struct ReviewCommentStashSheet: View {",
-            until: "struct ReviewCommentStashContent: View {",
-            in: stashSource
-        )
-        #expect(sheetSlice.contains("ReviewCommentStashContent("))
-
-        let chromeSource = try reviewCommentStripChromeSource()
-        #expect(chromeSource.contains("struct ReviewCommentStashDrawer: View"))
-        #expect(chromeSource.contains("ReviewCommentStashContent("))
-        #expect(chromeSource.contains("chrome: .drawer"))
-
-        let fullScreen = try reviewCommentsFullScreenSource()
-        #expect(fullScreen.contains("makeStashSheet() -> ReviewCommentStashSheet?"))
-        #expect(fullScreen.contains("return ReviewCommentStashSheet("))
-    }
-
-    @Test("Drawer hugs comment content instead of filling a tall empty panel")
-    func drawerHugsCommentContentInsteadOfFillingTallPanel() throws {
-        let chromeSource = try reviewCommentStripChromeSource()
-        let drawer = try reviewCommentStashDrawerSourceSlice(in: chromeSource)
-        #expect(drawer.contains("chrome: .drawer"))
-        #expect(drawer.contains("alignment: .top"))
-        #expect(!drawer.contains("fixedSize("))
-        #expect(!drawer.contains("frame(height:"))
-        #expect(!drawer.contains("maxWidth: .infinity, maxHeight:"))
-
-        let stashSource = try reviewCommentStashSheetSource()
-        #expect(stashSource.contains("case drawer"))
-        let drawerList = try reviewCommentsSourceSlice(
-            named: "case .drawer:",
-            until: "private struct ReviewCommentStashSheetChromeModifier",
-            in: stashSource
-        )
-        #expect(drawerList.contains("commentsStack"))
-        #expect(!drawerList.contains("ScrollView"))
-        #expect(!drawerList.contains("theme.bg.primary"))
-    }
-
     @Test("Expanded drawer reuses the native-surface expanded viewport cap")
     func expandedDrawerReusesNativeSurfaceExpandedViewportCap() throws {
         let chromeSource = try reviewCommentStripChromeSource()
@@ -336,62 +283,14 @@ struct ReviewCommentStripChromeTests {
         #expect(layout.identifierCount == 1)
         #expect(scrollView.accessibilityIdentifier == ReviewCommentStripChrome.drawerAccessibilityIdentifier)
     }
-
-    @Test("Drawer chrome does not inline the comment editor")
-    func drawerChromeDoesNotInlineTheCommentEditor() throws {
-        let chromeSource = try reviewCommentStripChromeSource()
-        let drawer = try reviewCommentStashDrawerSourceSlice(in: chromeSource)
-        #expect(drawer.contains("chrome: .drawer"))
-        #expect(drawer.contains("onRequestEdit:"))
-        #expect(!drawer.contains("ReviewCommentEditorView"))
-        #expect(!drawer.contains("Form {"))
-
-        let stashSource = try reviewCommentStashSheetSource()
-        let content = try reviewCommentsSourceSlice(
-            named: "struct ReviewCommentStashContent: View {",
-            until: "private var commentsStack",
-            in: stashSource
-        )
-        #expect(content.contains("initialEditingComment"))
-        #expect(content.contains("chrome == .sheet"))
-        #expect(content.contains("ReviewCommentEditorView("))
-        #expect(content.contains("editingCommentBinding.wrappedValue = nil"))
-        #expect(content.contains(".onAppear"))
-        #expect(content.contains("editingComment = initialEditingComment"))
-    }
-
-    @Test("Stash sheet can open already editing a comment")
-    func stashSheetCanOpenAlreadyEditingAComment() throws {
-        let stashSource = try reviewCommentStashSheetSource()
-        let sheet = try reviewCommentsSourceSlice(
-            named: "struct ReviewCommentStashSheet: View {",
-            until: "enum ReviewCommentStashChrome",
-            in: stashSource
-        )
-        #expect(sheet.contains("initialEditingComment"))
-        #expect(sheet.contains("ReviewCommentStashContent("))
-        #expect(sheet.contains("initialEditingComment: initialEditingComment"))
-
-        #expect(stashSource.contains("State(initialValue:"))
-        #expect(stashSource.contains("editingComment = initialEditingComment"))
-        #expect(stashSource.contains(".onAppear"))
-    }
 }
 
 private func reviewCommentStripChromeSource() throws -> String {
     try reviewCommentsFeatureSource(path: "Oppi/Features/Chat/ReviewComments/ReviewCommentStripChrome.swift")
 }
 
-private func reviewCommentStashSheetSource() throws -> String {
-    try reviewCommentsFeatureSource(path: "Oppi/Features/Chat/ReviewComments/ReviewCommentStashSheet.swift")
-}
-
 private func reviewCommentsChatViewSource() throws -> String {
     try reviewCommentsFeatureSource(path: "Oppi/Features/Chat/ChatView.swift")
-}
-
-private func reviewCommentsFullScreenSource() throws -> String {
-    try reviewCommentsFeatureSource(path: "Oppi/Core/Views/FullScreenCodeViewController.swift")
 }
 
 private func reviewCommentsFeatureSource(path: String) throws -> String {

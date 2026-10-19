@@ -42,10 +42,10 @@ enum FileBrowserHostHomePath {
 
 /// Value-based navigation target for the file browser.
 ///
-/// Pushed onto the workspace's `NavigationPath` so each directory level
-/// is a real stack entry — preserving swipe-back between directories.
-/// The breadcrumb bar uses `NavigationPath.removeLast(_:)` to jump
-/// to any ancestor without intermediate pop animations.
+/// Pushed as a workspace route so each directory level is a real stack
+/// entry, preserving swipe-back between directories. The breadcrumb bar pops
+/// the routes above an ancestor to jump to it without intermediate pop
+/// animations.
 struct FileBrowserNavTarget: Hashable {
     let serverId: String
     let scope: FileBrowserScope

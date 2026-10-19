@@ -312,7 +312,11 @@ struct WorkspaceCreationIntakeModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .routerModal(item: $createSheetContext, onDismiss: handleCreateSheetDismissed) { context in
+            .routerModal(
+                item: $createSheetContext,
+                presentation: .sheet.inNavigation(),
+                onDismiss: handleCreateSheetDismissed
+            ) { context in
                 WorkspaceCreateView(
                     server: context.server,
                     presentation: context.presentation,

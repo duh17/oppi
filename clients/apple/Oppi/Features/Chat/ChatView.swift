@@ -894,9 +894,9 @@ struct ChatView: View {
             ) { chatModalScope(filePanelSheet) }
             .routerModal(
                 isPresented: $showModelPicker,
-                presentation: .sheet.detents([.medium(), .large()], selected: .large)
+                presentation: .sheet.detents([.medium(), .large()], selected: .large).inNavigation()
             ) { chatModalScope(modelPickerSheet) }
-            .routerModal(item: $reviewCommentStashPresentation) { presentation in
+            .routerModal(item: $reviewCommentStashPresentation, presentation: .sheet.inNavigation()) { presentation in
                 chatModalScope(reviewCommentStashSheet(presentation))
             }
             .chatAuxiliaryPresentation(
@@ -3025,17 +3025,17 @@ struct ChatView: View {
     ) -> some View {
         let commentsController = reviewComments
 
-        return ReviewCommentStashSheet(
+        return ReviewCommentStashContent(
             comments: commentsController.stagedComments,
             focusedCommentId: focusedReviewCommentId,
-            initialEditingComment: presentation.initialEditingComment,
             onEdit: { [commentsController] comment, body in
                 commentsController.update(comment, body: body) == nil
             },
             onDelete: { comment in
                 deleteReviewComment(comment)
             },
-            onClose: { reviewCommentStashPresentation = nil }
+            onClose: { reviewCommentStashPresentation = nil },
+            initialEditingComment: presentation.initialEditingComment
         )
     }
 

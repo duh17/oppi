@@ -1,9 +1,6 @@
 {
   "version": 1,
   "files": {
-    "clients/apple/Oppi/App/AppNavigation.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/App/AppRootEnvironment.swift": {
       "import SwiftUI": 1
     },
@@ -307,7 +304,7 @@
     "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentInlineDraftPresenter.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentStashSheet.swift": {
+    "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentStashContent.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentStripChrome.swift": {

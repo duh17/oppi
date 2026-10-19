@@ -61,7 +61,7 @@ struct WorkspaceListView: View {
                 .accessibilityIdentifier("server.workspace.create")
             }
         }
-        .routerModal(isPresented: $showCreate) {
+        .routerModal(isPresented: $showCreate, presentation: .sheet.inNavigation()) {
             WorkspaceCreateView(server: server)
         }
         .refreshable {

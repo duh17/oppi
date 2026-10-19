@@ -323,14 +323,13 @@ struct GuidedControlSessionComposer: View {
             }
         }
         .padding(.top, 8)
-        .routerModal(isPresented: $showModelPicker) {
-            // The picker keeps its own navigation stack; it gets this
-            // composer's server explicitly.
+        .routerModal(isPresented: $showModelPicker, presentation: .sheet.inNavigation()) {
+            // The picker gets this composer's server explicitly.
             ModelPickerSheet(currentModel: effectiveModelId, onSelect: selectModel)
                 .environment(\.apiClient, apiClient)
                 .environment(chatState)
         }
-        .routerModal(item: $reviewCommentStashPresentation) { presentation in
+        .routerModal(item: $reviewCommentStashPresentation, presentation: .sheet.inNavigation()) { presentation in
             reviewCommentStashSheet(presentation)
         }
         .onChange(of: reviewCommentPresentation.showsPill) { _, visible in
@@ -386,15 +385,15 @@ struct GuidedControlSessionComposer: View {
         _ presentation: ReviewCommentStripChrome.StashPresentation
     ) -> some View {
         if let stagedComments {
-            ReviewCommentStashSheet(
+            ReviewCommentStashContent(
                 comments: stagedComments.stagedComments,
                 focusedCommentId: nil,
-                initialEditingComment: presentation.initialEditingComment,
                 onEdit: { comment, body in
                     stagedComments.update(comment, body: body) == nil
                 },
                 onDelete: { stagedComments.delete($0) },
-                onClose: { reviewCommentStashPresentation = nil }
+                onClose: { reviewCommentStashPresentation = nil },
+                initialEditingComment: presentation.initialEditingComment
             )
         }
     }

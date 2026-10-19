@@ -42,7 +42,7 @@ struct WorkspaceCreateView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(AppNavigation.self) private var navigation
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -136,45 +136,43 @@ struct WorkspaceCreateView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                switch step {
-                case .pickProject:
-                    projectPickerView
-                case .configure:
-                    configureView
+        Group {
+            switch step {
+            case .pickProject:
+                projectPickerView
+            case .configure:
+                configureView
+            }
+        }
+        .settingsPage(navigationTitle)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                if isGuidedFirstWorkspace {
+                    Button("Not Now", systemImage: "xmark") { navigator.finish() }
+                } else {
+                    Button(role: .cancel) { navigator.finish() }
                 }
             }
-            .settingsPage(navigationTitle)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    if isGuidedFirstWorkspace {
-                        Button("Not Now", systemImage: "xmark") { dismiss() }
+            if step == .configure {
+                ToolbarItem(placement: .confirmationAction) {
+                    if isCreating {
+                        ProgressView()
+                            .accessibilityLabel("Creating")
                     } else {
-                        Button(role: .cancel) { dismiss() }
-                    }
-                }
-                if step == .configure {
-                    ToolbarItem(placement: .confirmationAction) {
-                        if isCreating {
-                            ProgressView()
-                                .accessibilityLabel("Creating")
-                        } else {
-                            Button(role: .confirm) {
-                                Task { await create() }
-                            }
-                            .disabled(!canCreate)
-                            .accessibilityLabel("Create")
-                            .accessibilityIdentifier("workspace.create.submit")
+                        Button(role: .confirm) {
+                            Task { await create() }
                         }
+                        .disabled(!canCreate)
+                        .accessibilityLabel("Create")
+                        .accessibilityIdentifier("workspace.create.submit")
                     }
                 }
             }
-            .task { await loadDirectories() }
-            .task(id: trimmedHostMount) { await loadSkills() }
-            .task(id: hostMountLookupKey) {
-                await validateAndCompleteHostMount()
-            }
+        }
+        .task { await loadDirectories() }
+        .task(id: trimmedHostMount) { await loadSkills() }
+        .task(id: hostMountLookupKey) {
+            await validateAndCompleteHostMount()
         }
         .routerModal(
             isPresented: $isShowingIconPicker,
@@ -303,7 +301,7 @@ struct WorkspaceCreateView: View {
                 prompt: ControlSessionStarterPrompt.make(domain: .workspaces, intent: .create)
             ))
             connection.sessionStore.cacheSessionForNavigation(response.session)
-            dismiss()
+            navigator.finish()
             await Task.yield()
             navigation.openWorkspaceSession(.init(
                 serverId: server.id,
@@ -787,7 +785,7 @@ struct WorkspaceCreateView: View {
             let targetConnection = coordinator.connection(for: server.id)
             (targetConnection?.workspaceStore ?? workspaceStore).upsert(workspace, serverId: server.id)
             onCreate?(workspace)
-            dismiss()
+            navigator.finish()
         } catch {
             self.error = error.localizedDescription
             isCreating = false

@@ -793,10 +793,8 @@ final class RouterModalPresenter {
         // Present after the presenter's SwiftUI update, not inside it:
         // `sync()` runs from the anchor's `updateUIViewController`, and a
         // hosting controller created during that update joined the
-        // presenter's graph. Its title and bar items moved into the
-        // presenter's `NavigationStack` bar and its own bar stayed empty, and
-        // a `NavigationStack` in it reset the presenter's own SwiftUI stack
-        // to its root (a chat in the workspace stack popped).
+        // presenter's graph, and its title and bar items moved into the
+        // presenter's bar while its own bar stayed empty.
         presentationScheduled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }

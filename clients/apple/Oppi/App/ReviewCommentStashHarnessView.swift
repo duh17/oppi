@@ -13,36 +13,43 @@ enum ReviewCommentStashHarnessConfig {
     }
 }
 
+/// The stash sheet at the root of a router navigation controller, as chat
+/// presents it. The screen is its own SwiftUI graph, so the comments it edits
+/// live in an observable model.
 struct ReviewCommentStashHarnessView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var comments = [Self.fixtureComment]
-    @State private var didSave = false
+    @State private var model = ReviewCommentStashHarnessModel()
 
     var body: some View {
-        ReviewCommentStashSheet(
-            comments: comments,
-            focusedCommentId: nil,
-            onEdit: { comment, body in
-                _ = dismiss
-                return updateComment(comment, body: body)
-            },
-            onDelete: { comment in
-                comments.removeAll { $0.id == comment.id }
-            },
-            onClose: {}
-        )
+        let model = model
+        RouterPreviewNavigation {
+            ReviewCommentStashContent(
+                comments: model.comments,
+                focusedCommentId: nil,
+                onEdit: { comment, body in model.update(comment, body: body) },
+                onDelete: { comment in
+                    model.comments.removeAll { $0.id == comment.id }
+                },
+                onClose: {}
+            )
+        }
+        .ignoresSafeArea()
         .overlay(alignment: .topLeading) {
-            Text(didSave ? "1" : "0")
+            Text(model.didSave ? "1" : "0")
                 .font(.system(size: 1))
                 .opacity(0.02)
                 .accessibilityLabel("Review comment save completed")
-                .accessibilityValue(didSave ? "1" : "0")
+                .accessibilityValue(model.didSave ? "1" : "0")
                 .accessibilityIdentifier("diag.reviewCommentStash.saved")
         }
     }
+}
 
-    private func updateComment(_ comment: ReviewComment, body: String) -> Bool {
+@MainActor @Observable
+private final class ReviewCommentStashHarnessModel {
+    var comments = [ReviewCommentStashHarnessModel.fixtureComment]
+    var didSave = false
+
+    func update(_ comment: ReviewComment, body: String) -> Bool {
         guard let index = comments.firstIndex(where: { $0.id == comment.id }) else {
             return false
         }

@@ -32,7 +32,7 @@ struct FullScreenReviewCommentStashOverlayHost<Content: View>: View {
                     }
                 )
             }
-            .routerModal(item: $stashPresentation) { presentation in
+            .routerModal(item: $stashPresentation, presentation: .sheet.inNavigation()) { presentation in
                 FullScreenReviewCommentStashSheetGate(
                     isEnabled: isEnabled,
                     presentation: presentation,
@@ -217,17 +217,17 @@ private struct FullScreenReviewCommentStashSheetHost: View {
     var onClose: () -> Void
 
     var body: some View {
-        ReviewCommentStashSheet(
+        ReviewCommentStashContent(
             comments: comments.stagedComments,
             focusedCommentId: nil,
-            initialEditingComment: presentation.initialEditingComment,
             onEdit: { comment, body in
                 comments.update(comment, body: body) == nil
             },
             onDelete: { comment in
                 comments.delete(comment)
             },
-            onClose: onClose
+            onClose: onClose,
+            initialEditingComment: presentation.initialEditingComment
         )
     }
 }

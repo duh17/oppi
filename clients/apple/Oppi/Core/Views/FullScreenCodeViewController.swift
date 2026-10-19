@@ -11,7 +11,7 @@ import UIKit
 /// Supports two presentation modes:
 /// - `.sheet`: standalone presentation with its own dismiss button (chevron.down).
 ///   Used by timeline full-screen and SwiftUI `.sheet`/`.fullScreenCover`.
-/// - `.embedded(onDismiss:)`: embedded in a SwiftUI NavigationStack. Shows a
+/// - `.embedded(onDismiss:)`: embedded in a pushed screen. Shows a
 ///   back button (chevron.backward) that calls the provided closure.
 /// - `.contentOnly`: embedded as pane content without internal navigation chrome.
 ///
@@ -24,7 +24,7 @@ final class FullScreenCodeViewController: UIViewController {
     enum PresentationMode {
         /// Standalone sheet/fullScreenCover — chevron.down + `dismiss(animated:)`.
         case sheet
-        /// Embedded inside a SwiftUI NavigationStack — chevron.backward + closure.
+        /// Embedded in a pushed screen — chevron.backward + closure.
         case embedded(onDismiss: @MainActor @Sendable () -> Void)
         /// Embedded pane content without a navigation bar or dismiss affordance.
         /// A parent can still provide a back-swipe action so content-only panes
@@ -1324,12 +1324,12 @@ final class FullScreenCodeViewController: UIViewController {
     private func presentReviewCommentStashSheet() {
         guard let sheet = makeStashSheet() else { return }
         openStashSheet?.dismiss(animated: false)
-        presentedStashSheet = Router.present(presentation: .pageSheet, from: self) { sheet }
+        presentedStashSheet = Router.present(presentation: .pageSheet.inNavigation(), from: self) { sheet }
     }
 
-    private func makeStashSheet() -> ReviewCommentStashSheet? {
+    private func makeStashSheet() -> ReviewCommentStashContent? {
         guard let stash = reviewCommentStash else { return nil }
-        return ReviewCommentStashSheet(
+        return ReviewCommentStashContent(
             comments: stash.stagedComments,
             focusedCommentId: nil,
             onEdit: { [weak self] comment, body in
@@ -1352,7 +1352,7 @@ final class FullScreenCodeViewController: UIViewController {
 
     private func dismissReviewCommentStashSheet() {
         if let open = openStashSheet {
-            Router.dismiss(open)
+            Router.finish(open)
         }
         presentedStashSheet = nil
     }
