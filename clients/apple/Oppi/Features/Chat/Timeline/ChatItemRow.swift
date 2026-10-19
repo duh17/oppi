@@ -1,4 +1,4 @@
-import SwiftUI
+import Foundation
 
 /// Shared expand/collapse motion profile for tool rows.
 ///

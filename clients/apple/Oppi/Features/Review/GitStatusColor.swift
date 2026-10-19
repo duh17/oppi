@@ -1,4 +1,4 @@
-import SwiftUI
+import Foundation
 
 enum GitStatusColor {
     /// Map a git status code to a pill tone so lists retint with the theme.

@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 
 /// A user-configurable shortcut shown inside the review-comment composer.
 struct QuickCommentTemplate: Codable, Identifiable, Equatable, Hashable {

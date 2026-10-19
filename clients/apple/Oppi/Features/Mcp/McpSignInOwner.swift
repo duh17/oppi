@@ -1,4 +1,5 @@
-import SwiftUI
+import Foundation
+import Observation
 
 /// The list owns the host-bound attempt, so popping a detail cannot lose its
 /// Continue/Cancel handle. Closing the sheet and backgrounding do not cancel it.

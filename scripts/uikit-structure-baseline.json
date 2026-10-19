@@ -151,9 +151,6 @@
     "clients/apple/Oppi/Core/Formatting/SyntaxHighlighter.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Models/QuickCommentTemplate.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Models/SlashCommand+SwiftUI.swift": {
       "import SwiftUI": 1
     },
@@ -316,9 +313,6 @@
     "clients/apple/Oppi/Features/Chat/Session/ChatActionHandler.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Session/ChatScrollController.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Support/ChatSubviews.swift": {
       "import SwiftUI": 1
     },
@@ -358,16 +352,10 @@
     "clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownAudioView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownImageView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownUSDZView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Timeline/ChatItemRow.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/ChatTimelineView.swift": {
@@ -496,9 +484,6 @@
     "clients/apple/Oppi/Features/Mcp/McpServersView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Mcp/McpSignInOwner.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Mcp/McpSignInSheet.swift": {
       "import SwiftUI": 1
     },
@@ -518,9 +503,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Review/CommitDetailView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Review/GitStatusColor.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Review/ReviewFileSummaryBar.swift": {
