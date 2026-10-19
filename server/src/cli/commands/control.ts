@@ -94,7 +94,7 @@ export async function cmdControl(
 
     const turnId = randomUUID();
     const result = await sendSessionInput(session.id, "prompt", text, call, turnId);
-    assertNoCommandError(result, true);
+    assertNoCommandError(result);
     output({ session_id: session.id, conversation_id: conversationId, turn_id: turnId }, () =>
       writeHumanLine(`prompt sent → ${session.id} (turn ${turnId})`),
     );

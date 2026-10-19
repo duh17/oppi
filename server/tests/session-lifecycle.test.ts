@@ -1594,31 +1594,28 @@ describe("SessionManager prompt", () => {
     expect(sdkBackend.prompt.mock.calls[0]?.[1]?.streamingBehavior).toBeUndefined();
   });
 
-  it("queues a followUp prompt behind a busy turn", async () => {
-    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
+  it.each([
+    ["steer", "steering"],
+    ["followUp", "followUp"],
+  ] as const)(
+    "forwards a busy %s prompt to the SDK and queues it",
+    async (streamingBehavior, queueName) => {
+      const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
 
-    await manager.sendPrompt("s1", "later", {
-      streamingBehavior: "followUp",
-      clientTurnId: "turn-follow",
-    });
+      await manager.sendPrompt("s1", "queued", {
+        streamingBehavior,
+        clientTurnId: `turn-${streamingBehavior}`,
+      });
 
-    expect(sdkBackend.prompt).toHaveBeenCalledWith(
-      "later",
-      expect.objectContaining({ streamingBehavior: "followUp" }),
-    );
-    expect(manager.getMessageQueue("s1").followUp.map((item) => item.message)).toEqual(["later"]);
-  });
-
-  it("forwards busy prompt streamingBehavior to SDK", async () => {
-    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
-
-    await manager.sendPrompt("s1", "interrupt", { streamingBehavior: "steer" });
-
-    expect(sdkBackend.prompt).toHaveBeenCalledWith(
-      "interrupt",
-      expect.objectContaining({ streamingBehavior: "steer" }),
-    );
-  });
+      expect(sdkBackend.prompt).toHaveBeenCalledWith(
+        "queued",
+        expect.objectContaining({ streamingBehavior }),
+      );
+      expect(manager.getMessageQueue("s1")[queueName].map((item) => item.message)).toEqual([
+        "queued",
+      ]);
+    },
+  );
 
   it("throws for nonexistent session", async () => {
     const { manager } = makeManagerHarness();

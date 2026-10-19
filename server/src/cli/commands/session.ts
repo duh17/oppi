@@ -173,7 +173,7 @@ export async function cmdSession(
       );
       const commandType = resolveSendStreamingKind(flags) ?? "prompt";
       const result = await sendSessionInput(id, commandType, text, call, flags["turn-id"]);
-      assertNoCommandError(result, commandType === "prompt");
+      assertNoCommandError(result);
       output({ session_id: id, command: commandType }, () =>
         printSessionNotice(`${commandType} sent → ${id}`),
       );

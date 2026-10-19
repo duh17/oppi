@@ -42,26 +42,18 @@ export async function sendSessionInput(
   /** Caller-chosen id of the turn; the server keeps it on the turn so a retry is the same turn. */
   turnId?: string,
 ): Promise<Record<string, unknown>> {
-  try {
-    return await call<Record<string, unknown>>(`/sessions/${encodeURIComponent(id)}/command`, {
-      method: "POST",
-      body: {
-        type: "prompt",
-        message: text,
-        ...(turnId ? { clientTurnId: turnId, requestId: turnId } : {}),
-        streamingBehavior: STREAMING_BEHAVIOR[commandType],
-      },
-    });
-  } catch (err) {
-    // Keep older or incompatible runtimes actionable if they reject the prompt-or-steer form.
-    if (commandType === "prompt" && err instanceof Error && /idle session/i.test(err.message)) {
-      err.message = `${err.message}. Retry with --steer to interrupt the current turn or --follow-up to queue after it.`;
-    }
-    throw err;
-  }
+  return call<Record<string, unknown>>(`/sessions/${encodeURIComponent(id)}/command`, {
+    method: "POST",
+    body: {
+      type: "prompt",
+      message: text,
+      ...(turnId ? { clientTurnId: turnId, requestId: turnId } : {}),
+      streamingBehavior: STREAMING_BEHAVIOR[commandType],
+    },
+  });
 }
 
-export function assertNoCommandError(result: Record<string, unknown>, hintSteering = false): void {
+export function assertNoCommandError(result: Record<string, unknown>): void {
   const messages = Array.isArray(result.messages) ? result.messages : [];
   for (const message of messages) {
     if (
@@ -70,11 +62,7 @@ export function assertNoCommandError(result: Record<string, unknown>, hintSteeri
       (message as { type?: unknown }).type === "error"
     ) {
       const errorText = (message as { error?: unknown }).error;
-      let detail = typeof errorText === "string" ? errorText : "Session command was rejected";
-      if (hintSteering && /idle session/i.test(detail)) {
-        detail = `${detail}. Retry with --steer to interrupt the current turn or --follow-up to queue after it.`;
-      }
-      throw new Error(detail);
+      throw new Error(typeof errorText === "string" ? errorText : "Session command was rejected");
     }
   }
 }

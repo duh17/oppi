@@ -660,32 +660,6 @@ describe("CLI app-state API boundary", () => {
     );
   });
 
-  it("hints at --steer/--follow-up when a plain prompt hits a busy session", async () => {
-    await withOrchApi(
-      (res) =>
-        sendJson(
-          res,
-          {
-            error:
-              "Prompt requires an idle session; use steer or follow_up while a turn is streaming",
-          },
-          500,
-        ),
-      async ({ dataDir }) => {
-        const { stdout, code } = await runCliResult(
-          ["session", "send", "sess-1", "--text", "hi", "--json"],
-          dataDir,
-        );
-        expect(code).toBe(1);
-        const envelope = JSON.parse(stdout) as { ok: boolean; error?: { message?: string } };
-        expect(envelope.ok).toBe(false);
-        expect(envelope.error?.message).toContain("idle session");
-        expect(envelope.error?.message).toContain("--steer");
-        expect(envelope.error?.message).toContain("--follow-up");
-      },
-    );
-  });
-
   it("treats command error messages as CLI failures", async () => {
     await withOrchApi(
       (res) =>
@@ -700,8 +674,7 @@ describe("CLI app-state API boundary", () => {
         expect(code).toBe(1);
         const envelope = JSON.parse(stdout) as { ok: boolean; error?: { message?: string } };
         expect(envelope.ok).toBe(false);
-        expect(envelope.error?.message).toContain("Prompt requires an idle session");
-        expect(envelope.error?.message).toContain("--steer");
+        expect(envelope.error?.message).toBe("Prompt requires an idle session");
       },
     );
   });
@@ -966,7 +939,18 @@ describe("CLI app-state API boundary", () => {
       },
       async ({ dataDir }) => {
         const { stdout, code } = await runCliResult(
-          ["session", "wait", "sess-1", "--for", "idle", "--poll", "20ms", "--timeout", "5s", "--json"],
+          [
+            "session",
+            "wait",
+            "sess-1",
+            "--for",
+            "idle",
+            "--poll",
+            "20ms",
+            "--timeout",
+            "5s",
+            "--json",
+          ],
           dataDir,
         );
         expect(code).toBe(0);
