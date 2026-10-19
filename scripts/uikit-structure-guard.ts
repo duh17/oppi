@@ -9,9 +9,11 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *
  * UIKit owns iOS app structure, modal presentation, and new views. Two rules:
  *
- *  - Navigation and presentation constructs (NavigationStack, .sheet(, ...)
- *    and UIHostingController( are disallowed in every file, debug previews and
- *    harnesses included. The only exceptions are the commented entries in
+ *  - Navigation and presentation constructs (NavigationStack, .sheet(, ...),
+ *    UIHostingController( calls, and UIHostingController<...> as a superclass
+ *    or type are disallowed in every file, debug previews and harnesses
+ *    included: SwiftUI reaches UIKit through HostFactory, which owns the only
+ *    hosting controllers. The only exceptions are the commented entries in
  *    `allowed` below.
  *  - `import SwiftUI` is a ratchet: a file's count fails the guard when it
  *    exceeds uikit-structure-baseline.json (files absent from the baseline
@@ -46,6 +48,8 @@ const constructs: Construct[] = [
   { name: ".popover(", pattern: /\.popover\s*\(/g, disallowed: true },
   { name: ".inspector(", pattern: /\.inspector\s*\(/g, disallowed: true },
   { name: "UIHostingController(", pattern: /\bUIHostingController\s*(?:<[^>(]*>)?\s*\(/g, disallowed: true },
+  // A subclass or stored type reaches a hosting controller without the call form.
+  { name: "UIHostingController<", pattern: /\bUIHostingController\s*</g, disallowed: true },
   { name: "import SwiftUI", pattern: /^[ \t]*(?:@\w+[ \t]+)*import[ \t]+SwiftUI\b/gm, disallowed: false },
 ];
 
@@ -53,7 +57,14 @@ const constructs: Construct[] = [
  * Disallowed constructs that may stay, per file: the construct and how many
  * uses. Every entry needs a reason; an entry nobody needs is deleted.
  */
-const allowed: { file: string; construct: string; count: number; reason: string }[] = [];
+const allowed: { file: string; construct: string; count: number; reason: string }[] = [
+  {
+    file: "clients/apple/Oppi/App/HostFactory.swift",
+    construct: "UIHostingController<",
+    count: 2,
+    reason: "HostedScreenController and HostedContentController are the hosting seam every other file goes through.",
+  },
+];
 
 function walkSwiftFiles(root: string): string[] {
   if (!existsSync(root)) return [];
@@ -154,8 +165,8 @@ harnesses included. Present and push through the router (routerModal,
 ScreenNavigator present/push/finish; previews host with RouterPreviewStack or
 RouterPreviewNavigation) and host SwiftUI only through HostFactory. See ${guide}.
 NavigationStack, NavigationSplitView, NavigationLink, .navigationDestination(,
-.sheet(, .fullScreenCover(, .popover(, .inspector(, and UIHostingController(
-have no baseline: an exception needs Chen's approval and a commented entry in
+.sheet(, .fullScreenCover(, .popover(, .inspector(, UIHostingController(, and
+UIHostingController< (a subclass or stored type) have no baseline: an exception needs Chen's approval and a commented entry in
 the guard's allowed list. A new \`import SwiftUI\` raises that file's baseline,
 which also needs approval; \`bun scripts/uikit-structure-guard.ts --update\`
 lowers it after a migration. After a rename or move, --update is fine when the

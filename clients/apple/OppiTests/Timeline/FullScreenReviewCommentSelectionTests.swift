@@ -2009,7 +2009,7 @@ struct FullScreenReviewCommentSelectionTests {
             abs(controller.view.bounds.maxY - buttonFrame.maxY - FullScreenFloatingControlChrome.bottomPadding) <= 0.5
         )
 
-        let options = try #require(controller.makeViewingOptionsControllerForTesting())
+        let options = try #require(controller.makeViewingOptionsControllerForTesting(root: makeTestAppRoot()))
         #expect(options.preferredContentSize.width == 340)
 
         let codeView = try #require(timelineAllTextViews(in: controller.view).first {

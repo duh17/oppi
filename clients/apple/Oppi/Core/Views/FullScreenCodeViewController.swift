@@ -1992,6 +1992,7 @@ final class FullScreenCodeViewController: UIViewController {
         }
 
         let options = FullScreenViewingOptionsController(
+            root: HostFactory.root(near: self),
             family: family,
             preferences: preferences,
             onTextScaleChanged: { [weak self] scale in
@@ -2331,7 +2332,14 @@ private final class FullScreenContentHostController: UIViewController {
 
 /// Text size, wrapping, and spacing for full-screen readers. Shared by
 /// `FullScreenCodeViewController` and the review diff reader (`DiffReaderView`).
-final class FullScreenViewingOptionsController: UIHostingController<FullScreenViewingOptionsPanel> {
+///
+/// A UIKit controller that owns the popover or sheet and embeds the SwiftUI
+/// panel through `HostFactory.content`, so the panel gets the app root like
+/// every other hosted view. `root` comes from `HostFactory.root(near:)` at the
+/// presenting view; the panel is hosted when the view loads.
+final class FullScreenViewingOptionsController: UIViewController {
+    private let root: AppRootEnvironment?
+    private var host: HostedContentController?
     private var family: FullScreenReaderContentFamily
     private var preferences: FullScreenReaderPreferences
     private let onTextScaleChanged: (CGFloat) -> Void
@@ -2349,6 +2357,7 @@ final class FullScreenViewingOptionsController: UIHostingController<FullScreenVi
     }
 
     init(
+        root: AppRootEnvironment?,
         family: FullScreenReaderContentFamily,
         preferences: FullScreenReaderPreferences,
         onTextScaleChanged: @escaping (CGFloat) -> Void,
@@ -2356,32 +2365,50 @@ final class FullScreenViewingOptionsController: UIHostingController<FullScreenVi
         onSpacingChanged: @escaping (FullScreenReaderSpacing) -> Void,
         onReset: @escaping () -> Void
     ) {
+        self.root = root
         self.family = family
         self.preferences = preferences
         self.onTextScaleChanged = onTextScaleChanged
         self.onWrappingChanged = onWrappingChanged
         self.onSpacingChanged = onSpacingChanged
         self.onReset = onReset
-        super.init(rootView: FullScreenViewingOptionsPanel(
-            family: family,
-            preferences: preferences,
-            onTextScaleChanged: onTextScaleChanged,
-            onWrappingChanged: onWrappingChanged,
-            onSpacingChanged: onSpacingChanged,
-            onReset: onReset
-        ))
+        super.init(nibName: nil, bundle: nil)
         preferredContentSize = CGSize(width: 340, height: preferredSheetHeight)
-        sizingOptions = [.preferredContentSize]
     }
 
     @available(*, unavailable)
-    @MainActor @preconcurrency
-    dynamic required init?(coder aDecoder: NSCoder) { nil }
+    required init?(coder aDecoder: NSCoder) { nil }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear
         view.isOpaque = false
+
+        let host = HostFactory.content(makePanel(), root: root)
+        host.sizingOptions = [.preferredContentSize]
+        host.view.backgroundColor = .clear
+        host.view.isOpaque = false
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        addChild(host)
+        view.addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.topAnchor.constraint(equalTo: view.topAnchor),
+            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        host.didMove(toParent: self)
+        self.host = host
+    }
+
+    /// The panel's own size drives the popover, as it did when this controller
+    /// was the hosting controller.
+    override func preferredContentSizeDidChange(forChildContentContainer container: any UIContentContainer) {
+        super.preferredContentSizeDidChange(forChildContentContainer: container)
+        let size = container.preferredContentSize
+        if size.width > 0, size.height > 0 {
+            preferredContentSize = size
+        }
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -2396,7 +2423,7 @@ final class FullScreenViewingOptionsController: UIHostingController<FullScreenVi
         self.family = family
         self.preferences = preferences
         preferredContentSize = CGSize(width: 340, height: preferredSheetHeight)
-        rootView = makePanel()
+        host?.setContent(makePanel())
     }
 
     private func makePanel() -> FullScreenViewingOptionsPanel {
@@ -2697,11 +2724,12 @@ extension FullScreenCodeViewController {
         return view.convert(button.frame, from: superview)
     }
 
-    func makeViewingOptionsControllerForTesting() -> UIViewController? {
+    func makeViewingOptionsControllerForTesting(root: AppRootEnvironment) -> UIViewController? {
         let presentation = makePresentation()
         guard let family = presentation.readerFamily,
               let preferences = presentation.readerPreferences else { return nil }
         let controller = FullScreenViewingOptionsController(
+            root: root,
             family: family,
             preferences: preferences,
             onTextScaleChanged: { [weak self] scale in
