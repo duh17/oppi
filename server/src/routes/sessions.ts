@@ -5,6 +5,7 @@ import {
   requiredModelLaunchFailureMessage,
 } from "../agent-launch-service.js";
 import { SessionLifecycleError, SessionLifecycleService } from "../session-lifecycle-service.js";
+import { durableStoreId } from "../session-runtime-capabilities.js";
 import {
   type ChatAttachmentRef,
   type ControlSessionDomain,
@@ -639,8 +640,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
   async function handleGetSessionThread(sessionId: string, res: ServerResponse): Promise<void> {
     // A durable session's thread is its Harness ownership tree; others keep launch edges.
+    // A store-less legacy row has no Harness tree to read, so it keeps launch edges too.
+    const stored = ctx.storage.getSession(sessionId);
     const owned =
-      ctx.storage.getSession(sessionId)?.serverDurable?.conversationId === undefined
+      stored?.serverDurable?.conversationId === undefined || durableStoreId(stored) === undefined
         ? undefined
         : await ctx.sessionRuntimes.getDurableThread(sessionId);
     const thread = buildSessionThread(

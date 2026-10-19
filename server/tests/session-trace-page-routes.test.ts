@@ -9,6 +9,7 @@ import { createRouteHelpers } from "../src/routes/http.js";
 import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext } from "../src/routes/types.js";
 import type { Session } from "../src/types.js";
+import { captureStderr, getRoute, legacyDurableRoutes } from "./harness/legacy-durable-routes.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 let tmpDir: string | undefined;
@@ -388,5 +389,45 @@ describe("workspace session trace page route", () => {
     expect(body.metrics.gzipBytes).toBeGreaterThan(0);
     expect(body.metrics.stringifyMs).toBeGreaterThanOrEqual(0);
     expect(body.metrics.gzipMs).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("trace routes for a durable session without a store", () => {
+  it.each([
+    ["trace-page", "/workspaces/ws-1/sessions/legacy/trace-page"],
+    ["full trace", "/sessions/legacy/trace"],
+  ])("%s answers 410 durable_store_missing without an error log", async (_name, path) => {
+    const readLog = captureStderr();
+    const res = await getRoute(legacyDurableRoutes(), path);
+    expect(res.statusCode).toBe(410);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "This durable session has no store",
+      code: "durable_store_missing",
+    });
+    const logged = readLog();
+    expect(logged).toContain("session.durable_store_missing");
+    expect(logged).not.toContain('"level":"error"');
+  });
+
+  it("answers a control conversation's trace-page the same way", async () => {
+    const readLog = captureStderr();
+    const dispatch = legacyDurableRoutes({
+      session: { workspaceId: undefined, serverDurable: { conversationId: 7, role: "control" } },
+    });
+    const res = await getRoute(dispatch, "/control-sessions/legacy/trace-page");
+    expect(res.statusCode).toBe(410);
+    expect(JSON.parse(res.body)).toMatchObject({ code: "durable_store_missing" });
+    expect(readLog()).not.toContain('"level":"error"');
+  });
+
+  it("lets any other read failure reach the 500 handler", async () => {
+    const dispatch = legacyDurableRoutes({
+      readFailure: () => {
+        throw new Error("sqlite: disk I/O error");
+      },
+    });
+    await expect(getRoute(dispatch, "/workspaces/ws-1/sessions/legacy/trace-page")).rejects.toThrow(
+      "sqlite: disk I/O error",
+    );
   });
 });

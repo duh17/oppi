@@ -59,6 +59,7 @@ function routes(
     live?: Record<string, ReturnType<RouteContext["sessionRuntimes"]["getPromptCacheRuntime"]>>;
   } = {},
   startSession = vi.fn(async (sessionId: string) => store.getSession(sessionId)!),
+  getDurableThread = vi.fn(async () => undefined),
 ) {
   const ctx = {
     sessions: { mobileRenderer: new MobileRendererRegistry(), startSession },
@@ -69,11 +70,17 @@ function routes(
       getActiveSessionIds: () => new Set<string>(),
       getActiveSession: () => undefined,
       getPromptCacheRuntime: (id: string) => cache.live?.[id],
+      getDurableThread,
     },
     ensureSessionContextWindow: (session: Session) => session,
     getModelPromptCache: (model: string | undefined) => (model ? cache.models?.[model] : undefined),
   } as unknown as RouteContext;
-  return { dispatch: createSessionRoutes(ctx, createRouteHelpers()), sendSteer, startSession };
+  return {
+    dispatch: createSessionRoutes(ctx, createRouteHelpers()),
+    sendSteer,
+    startSession,
+    getDurableThread,
+  };
 }
 
 function withCaller(req: IncomingMessage, callerId?: string): IncomingMessage {
@@ -409,6 +416,29 @@ describe("GET /sessions/:id/thread", () => {
 
     expect(thread.rootSessionId).toBe(child.id);
     expect(thread.sessions.map((s) => s.id)).toEqual([child.id, grandchild.id]);
+  });
+
+  it("keeps launch edges for a legacy durable session that has a conversation but no store", async () => {
+    const root = seed("Root", 1_000, undefined, "ready");
+    const legacy = seed("Legacy durable child", 2_000, root);
+    legacy.serverDurable = { conversationId: 7 };
+    store.saveSession(legacy);
+    const { dispatch, getDurableThread } = routes(
+      undefined,
+      undefined,
+      undefined,
+      vi.fn(async () => {
+        throw new Error("This durable session has no store");
+      }),
+    );
+
+    const res = await getThread(dispatch, legacy.id);
+
+    expect(res.statusCode).toBe(200);
+    expect(getDurableThread).not.toHaveBeenCalled();
+    const thread = JSON.parse(res.body) as SessionThreadResponse;
+    expect(thread.rootSessionId).toBe(root.id);
+    expect(thread.sessions.map((s) => s.id)).toEqual([root.id, legacy.id]);
   });
 
   it("returns 404 for an unknown session", async () => {
