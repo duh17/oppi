@@ -114,6 +114,7 @@ Example:
 
 ### Fixed
 
+- **Client:** Pairing by QR code or **Connect Manually** with a server you already paired, whose identity has since changed, now asks you to confirm a trust reset ("Server identity changed"), as invite links, Tailscale, and SSH pairing already did, instead of an ordinary trust prompt.
 - **Server:** With `asr.provider` set to `xai` but no xAI sign-in or API key, the app no longer offers server dictation that fails on every take.
 - **Client:** A message sent from Quick Session no longer comes back as the draft the next time you open Quick Session.
 - **Client:** Leaving a chat right after sending no longer marks the message as failed and puts it back in that chat's composer when it was delivered.

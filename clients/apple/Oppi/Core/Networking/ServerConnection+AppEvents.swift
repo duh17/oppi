@@ -144,12 +144,6 @@ extension ServerConnection {
         removePendingPairingApproval(id: approval.id)
     }
 
-    func denyPairingApproval(id: String) async throws {
-        guard let apiClient else { throw APIError.invalidResponse }
-        try await apiClient.denyPairingApproval(id: id)
-        removePendingPairingApproval(id: id)
-    }
-
     func respondToExtensionUI(
         workspaceId: String,
         sessionId: String,

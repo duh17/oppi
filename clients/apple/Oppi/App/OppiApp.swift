@@ -1574,69 +1574,25 @@ final class OppiApp {
         let isE2EInviteLaunch = ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil
             || ProcessInfo.processInfo.environment["OPPI_E2E_LAUNCH_INVITE"] != nil
 #endif
-        let attempt = coordinator.beginPairingAttempt()
-        let existingCredentials = credentials.normalizedServerFingerprint
-            .flatMap { serverStore.server(for: $0)?.credentials }
-            ?? serverStore.server(forHost: credentials.host, port: credentials.port)?.credentials
         do {
+            let enrollment: InviteEnrollment
 #if DEBUG
-            let bootstrap: InviteBootstrapResult
             if isE2EInviteLaunch {
-                if E2EAppAuthBootstrap.shouldReuseExistingPairing(
-                    existing: existingCredentials,
-                    invite: credentials
-                ), let existingCredentials {
-                    bootstrap = InviteBootstrapResult(
-                        effectiveCredentials: existingCredentials,
-                        sessions: []
-                    )
-                } else {
-                    bootstrap = try await E2EAppAuthBootstrap.pairInvite(credentials: credentials)
-                }
-            } else {
-                bootstrap = try await InviteBootstrapService.validateAndBootstrap(
+                enrollment = try await E2EAppAuthBootstrap.enroll(
                     credentials: credentials,
-                    existingCredentials: existingCredentials,
-                    confirmTrust: { reason in
-                        return await BiometricService.shared.authenticate(reason: reason)
-                    },
-                    onWaitingForApproval: { [self] expiresAt in
-                        guard invitePairingGate.shouldRun(generation) else { return }
-                        invitePairingWaitExpiresAt = expiresAt
-                    }
+                    serverStore: serverStore,
+                    coordinator: coordinator
                 )
+            } else {
+                enrollment = try await enrollInvite(credentials, generation: generation)
             }
 #else
-            let bootstrap = try await InviteBootstrapService.validateAndBootstrap(
-                credentials: credentials,
-                existingCredentials: existingCredentials,
-                confirmTrust: { reason in
-                    return await BiometricService.shared.authenticate(reason: reason)
-                },
-                onWaitingForApproval: { [self] expiresAt in
-                    guard invitePairingGate.shouldRun(generation) else { return }
-                    invitePairingWaitExpiresAt = expiresAt
-                }
-            )
+            enrollment = try await enrollInvite(credentials, generation: generation)
 #endif
-
-            // Add to ServerStore via coordinator (creates connection state for split streams)
+            // A newer invite only takes over the UI; this pairing is saved.
             guard invitePairingGate.shouldRun(generation), !Task.isCancelled else { return }
-            guard let pairedServer = PairedServer(
-                from: bootstrap.effectiveCredentials,
-                sortOrder: serverStore.servers.count
-            ) else {
-                throw InviteBootstrapError.message("Missing server fingerprint in invite credentials")
-            }
-            // Committed: the server enrolled this device and the wait (with its
-            // Cancel) has ended. A newer invite only takes over the UI below.
-            let pairingOutcome = await coordinator.addEnrolledServer(pairedServer, attempt: attempt)
-            guard invitePairingGate.shouldRun(generation), !Task.isCancelled else { return }
-            guard pairingOutcome != .failed else {
-                throw InviteBootstrapError.message("Connection blocked by server transport policy")
-            }
             // A newer selection owns the active connection; pairing still succeeded.
-            guard pairingOutcome == .selected else { return }
+            guard enrollment.selected else { return }
 
             // Reset the newly selected connection. The environment connection
             // can still point at the previous server during deep-link handling.
@@ -1646,7 +1602,7 @@ final class OppiApp {
             selectedConnection.sessionStore.activeSessionId = nil
 
             selectedConnection.sessionStore.markSyncStarted()
-            selectedConnection.sessionStore.applyServerSnapshot(bootstrap.sessions, preserveRecentWindow: 0)
+            selectedConnection.sessionStore.applyServerSnapshot(enrollment.sessions, preserveRecentWindow: 0)
             selectedConnection.sessionStore.markSyncSucceeded()
             selectedConnection.syncLiveActivityState()
             navigation.showOnboarding = false
@@ -1658,10 +1614,10 @@ final class OppiApp {
             }
 #if DEBUG
             if !isE2EInviteLaunch {
-                selectedConnection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.name)"
+                selectedConnection.extensionToast = "Connected to \(enrollment.name)"
             }
 #else
-            selectedConnection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.name)"
+            selectedConnection.extensionToast = "Connected to \(enrollment.name)"
 #endif
         } catch is CancellationError {
             guard invitePairingGate.shouldRun(generation) else { return }
@@ -1683,6 +1639,22 @@ final class OppiApp {
             }
             connection.extensionToast = "Invite link failed: \(error.localizedDescription)"
         }
+    }
+
+    @MainActor
+    private func enrollInvite(_ credentials: ServerCredentials, generation: UInt64) async throws -> InviteEnrollment {
+        try await InviteBootstrapService.enroll(
+            credentials: credentials,
+            serverStore: serverStore,
+            coordinator: coordinator,
+            onWaitingForApproval: { [self] expiresAt in
+                guard invitePairingGate.shouldRun(generation) else { return }
+                invitePairingWaitExpiresAt = expiresAt
+            },
+            confirmTrust: { reason in
+                await BiometricService.shared.authenticate(reason: reason)
+            }
+        )
     }
 
     @MainActor

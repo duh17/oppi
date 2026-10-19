@@ -373,6 +373,42 @@ struct InviteBootstrapServiceTests {
         #expect(staleSaved.deviceCredential?.accessToken == "at_stale")
     }
 
+    /// A saved host that answers with a new identity asks for a trust reset, and
+    /// declining it pairs nothing and keeps the saved server.
+    @Test func changedIdentityAtASavedHostAsksForTrustReset() async throws {
+        let saved = credentials(serverFingerprint: "sha256:identity-old")
+        let invite = credentials(serverFingerprint: "sha256:identity-new")
+        let coordinator = makeCoordinator(clearing: [saved, invite])
+        defer {
+            coordinator.serverStore.remove(id: "sha256:identity-old")
+            coordinator.serverStore.remove(id: "sha256:identity-new")
+        }
+        _ = try #require(coordinator.serverStore.addOrUpdate(from: saved))
+        var reasons: [String] = []
+        var factoryCalled = false
+
+        await #expect(throws: InviteBootstrapError.message("Trust confirmation cancelled")) {
+            _ = try await InviteBootstrapService.enroll(
+                credentials: invite,
+                serverStore: coordinator.serverStore,
+                coordinator: coordinator,
+                confirmTrust: { reason in
+                    reasons.append(reason)
+                    return false
+                },
+                apiFactory: { _, _, _ in
+                    factoryCalled = true
+                    return RecordingInviteBootstrapAPI(log: InviteBootstrapCallLog())
+                }
+            )
+        }
+
+        #expect(reasons == ["Server identity changed for pairing.example.test. Confirm trust reset."])
+        #expect(!factoryCalled)
+        #expect(coordinator.serverStore.server(for: "sha256:identity-new") == nil)
+        #expect(coordinator.serverStore.server(for: "sha256:identity-old") != nil)
+    }
+
     private func waitForCalls(_ log: InviteBootstrapCallLog, count: Int) async throws -> [String] {
         for _ in 0..<200 {
             let calls = await log.snapshot()

@@ -286,13 +286,10 @@ struct OnboardingView: View {
         connectionTest = .testing
 
         do {
-            let attempt = coordinator.beginPairingAttempt()
-            let bootstrap = try await InviteBootstrapService.validateAndBootstrap(
+            let enrollment = try await InviteBootstrapService.enroll(
                 credentials: credentials,
-                existingCredentials: nil,
-                confirmTrust: { reason in
-                    await BiometricService.shared.authenticate(reason: reason)
-                },
+                serverStore: serverStore,
+                coordinator: coordinator,
                 onWaitingForApproval: { expiresAt in
                     guard generation == pairingGeneration else { return }
                     if let expiresAt {
@@ -300,39 +297,22 @@ struct OnboardingView: View {
                     } else {
                         connectionTest = .testing
                     }
+                },
+                confirmTrust: { reason in
+                    await BiometricService.shared.authenticate(reason: reason)
                 }
             )
+            // A newer attempt only takes over the UI; this pairing is saved.
             guard generation == pairingGeneration, !Task.isCancelled else { return }
-
-            let effectiveCreds = bootstrap.effectiveCredentials
-
-            guard let pairedServer = PairedServer(
-                from: effectiveCreds,
-                sortOrder: serverStore.servers.count
-            ) else {
-                guard generation == pairingGeneration else { return }
-                connectionTest = .failed("Missing server fingerprint")
-                return
-            }
-
-            // The server enrolled this device at the 200, and the wait (with its
-            // Cancel) has ended, so the pairing is committed: save it. A newer
-            // attempt only takes over the UI below.
-            let pairingOutcome = await coordinator.addEnrolledServer(pairedServer, attempt: attempt)
-            guard generation == pairingGeneration, !Task.isCancelled else { return }
-            guard pairingOutcome != .failed else {
-                connectionTest = .failed("Connection blocked by server transport policy")
-                return
-            }
             // A newer picker selection owns navigation, even if this pairing succeeded.
-            guard pairingOutcome == .selected else { return }
+            guard enrollment.selected else { return }
 
             // Load sessions into the connection that was just selected. The
             // environment connection can still point at the previous server for
             // this render pass during add-server and deep-link onboarding.
             let selectedConnection = coordinator.activeConnection
             selectedConnection.sessionStore.markSyncStarted()
-            selectedConnection.sessionStore.applyServerSnapshot(bootstrap.sessions)
+            selectedConnection.sessionStore.applyServerSnapshot(enrollment.sessions)
             selectedConnection.sessionStore.markSyncSucceeded()
 
             connectionTest = .success
@@ -420,6 +400,15 @@ struct ManualEntryView: View {
 
 struct InviteBootstrapResult {
     let effectiveCredentials: ServerCredentials
+    let sessions: [Session]
+}
+
+/// A pairing the server committed and Oppi saved.
+struct InviteEnrollment {
+    let name: String
+    /// False when a newer pairing attempt or server pick took the selection.
+    let selected: Bool
+    /// The sessions read while pairing, for the caller to show when selected.
     let sessions: [Session]
 }
 
@@ -650,7 +639,7 @@ enum InviteBootstrapService {
         coordinator: ConnectionCoordinator,
         onWaitingForApproval: (@MainActor (Int64?) -> Void)? = nil,
         confirmTrust: @MainActor (String) async -> Bool
-    ) async throws -> (name: String, selected: Bool) {
+    ) async throws -> InviteEnrollment {
         guard let credentials = ServerCredentials.decodeInviteURLString(inviteURL) else {
             throw InviteBootstrapError.message(
                 "The pairing invite was not usable. Request a fresh one and try again."
@@ -665,7 +654,9 @@ enum InviteBootstrapService {
         )
     }
 
-    /// Pairs with decoded invite credentials. The seams exist for tests.
+    /// The one pair-then-save path: QR, manual entry, `oppi://` invite links,
+    /// Tailscale, and SSH all pair here, so each one warns when a known
+    /// server's identity changed. The seams exist for tests.
     @MainActor
     static func enroll(
         credentials: ServerCredentials,
@@ -679,32 +670,52 @@ enum InviteBootstrapService {
         deviceKeyProvider: @MainActor () throws -> any DeviceKey = {
             try DeviceKeyProvider.shared.loadOrCreate()
         }
-    ) async throws -> (name: String, selected: Bool) {
+    ) async throws -> InviteEnrollment {
+        try await save(credentials: credentials, serverStore: serverStore, coordinator: coordinator) { existing in
+            try await validateAndBootstrap(
+                credentials: credentials,
+                existingCredentials: existing,
+                confirmTrust: confirmTrust,
+                apiFactory: apiFactory,
+                deviceKeyProvider: deviceKeyProvider,
+                onWaitingForApproval: onWaitingForApproval
+            )
+        }
+    }
+
+    /// Pairs through `bootstrap`, given the saved credentials for this server
+    /// (by fingerprint, else host and port), then saves the result. Cancelling
+    /// the task before the save keeps the pairing out of the store.
+    @MainActor
+    fileprivate static func save(
+        credentials: ServerCredentials,
+        serverStore: ServerStore,
+        coordinator: ConnectionCoordinator,
+        bootstrap: @MainActor (_ existing: ServerCredentials?) async throws -> InviteBootstrapResult
+    ) async throws -> InviteEnrollment {
         let existing = credentials.normalizedServerFingerprint.flatMap {
             serverStore.server(for: $0)?.credentials
         } ?? serverStore.server(forHost: credentials.host, port: credentials.port)?.credentials
         let attempt = coordinator.beginPairingAttempt()
-        let bootstrap = try await validateAndBootstrap(
-            credentials: credentials,
-            existingCredentials: existing,
-            confirmTrust: confirmTrust,
-            apiFactory: apiFactory,
-            deviceKeyProvider: deviceKeyProvider,
-            onWaitingForApproval: onWaitingForApproval
-        )
+        let result = try await bootstrap(existing)
         if Task.isCancelled { throw PairingEnrollment.Failure.cancelled }
         guard let pairedServer = PairedServer(
-            from: bootstrap.effectiveCredentials,
+            from: result.effectiveCredentials,
             sortOrder: serverStore.servers.count
         ) else {
             throw InviteBootstrapError.message("Missing server fingerprint")
         }
-        // Committed: the server enrolled this device and the wait has ended.
+        // Committed: the server enrolled this device and the wait (with its
+        // Cancel) has ended. A newer attempt only takes the selection.
         let outcome = await coordinator.addEnrolledServer(pairedServer, attempt: attempt)
         guard outcome != .failed else {
             throw InviteBootstrapError.message("Connection blocked by server transport policy")
         }
-        return (pairedServer.name, outcome == .selected)
+        return InviteEnrollment(
+            name: pairedServer.name,
+            selected: outcome == .selected,
+            sessions: result.sessions
+        )
     }
 }
 
@@ -713,6 +724,25 @@ enum InviteBootstrapService {
 /// `at_` is for XCTest lab API only and cannot refresh inside the app.
 @MainActor
 enum E2EAppAuthBootstrap {
+    /// Launch-invite pairing for E2E: reuses a matching pairing, else pairs
+    /// without the trust prompt, then saves like every other path.
+    static func enroll(
+        credentials: ServerCredentials,
+        serverStore: ServerStore,
+        coordinator: ConnectionCoordinator
+    ) async throws -> InviteEnrollment {
+        try await InviteBootstrapService.save(
+            credentials: credentials,
+            serverStore: serverStore,
+            coordinator: coordinator
+        ) { existing in
+            if shouldReuseExistingPairing(existing: existing, invite: credentials), let existing {
+                return InviteBootstrapResult(effectiveCredentials: existing, sessions: [])
+            }
+            return try await pairInvite(credentials: credentials)
+        }
+    }
+
     static func shouldPreserveServer(_ server: PairedServer, matching invite: ServerCredentials) -> Bool {
         shouldReuseExistingPairing(existing: server.credentials, invite: invite)
     }
