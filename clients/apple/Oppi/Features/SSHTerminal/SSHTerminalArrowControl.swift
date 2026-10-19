@@ -34,6 +34,8 @@ final class SSHTerminalArrowButton: UIButton {
     private var origin = CGPoint.zero
     private var translation = CGSize.zero
     private var repeatTask: Task<Void, Never>?
+    /// True while a recognized hold owns the drag; the key row must not scroll then.
+    private(set) var isHolding = false
 
     init(label: String, key: GhosttyKey, id: String, send: @escaping (GhosttyKey) -> Bool) {
         heldKey = key
@@ -115,6 +117,7 @@ final class SSHTerminalArrowButton: UIButton {
         switch gesture.state {
         case .began:
             stopRepeating()
+            isHolding = true
             origin = gesture.location(in: window)
             translation = .zero
             repeatTask = Task { @MainActor [weak self] in
@@ -127,6 +130,7 @@ final class SSHTerminalArrowButton: UIButton {
             let point = gesture.location(in: window)
             translation = CGSize(width: point.x - origin.x, height: point.y - origin.y)
         case .ended, .cancelled, .failed:
+            isHolding = false
             stopRepeating()
         default: break
         }

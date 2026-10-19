@@ -41,7 +41,7 @@ final class SSHTerminalKeyStripView: UIView {
 
     private let glass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
     private let fill = UIView()
-    private let scroll = UIScrollView()
+    private let scroll = SSHTerminalKeyScrollView()
     private let rows = UIStackView()
     private let keys = UIStackView()
     /// The accessory's second row: Paste and program actions.
@@ -139,6 +139,9 @@ final class SSHTerminalKeyStripView: UIView {
         scroll.alwaysBounceHorizontal = false
         scroll.keyboardDismissMode = .none
         scroll.delaysContentTouches = false
+        scroll.blocksScrolling = { [weak self] in
+            self?.arrowButtons.contains(where: \.isHolding) ?? false
+        }
         rows.axis = .vertical
         rows.alignment = .leading
         rows.distribution = .fillEqually
@@ -373,6 +376,21 @@ final class SSHTerminalKeyStripView: UIView {
         paste.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         row.addArrangedSubview(paste)
         pasteControl = paste
+    }
+}
+
+/// The key row's scroller. Every key is a UIControl, and UIScrollView never
+/// cancels a touch on a control by default, so a swipe that starts on a key
+/// would press it instead of scrolling. Here a sideways swipe always wins,
+/// except while an arrow's hold owns the drag.
+final class SSHTerminalKeyScrollView: UIScrollView {
+    var blocksScrolling: () -> Bool = { false }
+
+    override func touchesShouldCancel(in view: UIView) -> Bool { true }
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === panGestureRecognizer, blocksScrolling() { return false }
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
     }
 }
 

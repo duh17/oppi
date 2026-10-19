@@ -917,6 +917,10 @@ struct SSHTerminalTests {
                 continue
             }
             #expect(scroll.contentSize.width > scroll.bounds.width, "\(first) row should overflow and scroll")
+            // A swipe that starts on a key scrolls instead of pressing it.
+            if let key = find(strip, first) {
+                #expect(scroll.touchesShouldCancel(in: key))
+            }
             // Swiping to the end moves the keys, never the dock.
             scroll.contentOffset.x = scroll.contentSize.width - scroll.bounds.width
             strip.layoutIfNeeded()
