@@ -450,7 +450,7 @@ describe("Storage config validation", () => {
     for (const [tts, error] of [
       [
         { provider: "openai", endpoint: "http://127.0.0.1:7938" },
-        "config.tts.provider: expected http or xai",
+        "config.tts.provider: expected http, yuwp, or xai",
       ],
       [{ endpoint: "127.0.0.1:7938" }, "config.tts.endpoint: expected http(s) URL"],
       [{ provider: "http" }, "config.tts.endpoint: required for provider http"],

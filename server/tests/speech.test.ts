@@ -9,6 +9,7 @@ import {
   decodeWavToPcm16,
   speakableText,
   speechPassages,
+  type SpeechBackendObserver,
   type TtsConfig,
 } from "../src/speech-synthesis.js";
 
@@ -68,10 +69,15 @@ function pcm16(values: number[]): Buffer {
   return out;
 }
 
-async function speechServer(tts: TtsConfig | undefined, xaiKey?: string): Promise<string> {
+async function speechServer(
+  tts: TtsConfig | undefined,
+  xaiKey?: string,
+  observer?: SpeechBackendObserver,
+): Promise<string> {
   const ctx = {
     storage: { getConfig: () => ({ tts }) },
     getProviderAuth: async () => (xaiKey ? { auth: { apiKey: xaiKey } } : undefined),
+    voiceBackendHealth: observer,
   } as unknown as RouteContext;
   const route = createSpeechRoutes(ctx, createRouteHelpers());
   return listen((req, res) => {
@@ -209,6 +215,89 @@ describe("POST /speech", () => {
         requests.map((_, index) => decodeWavToPcm16(float32Wav([(index + 1) / 10])).pcm),
       ),
     );
+  });
+
+  it("plays Yuwp audio as it streams, before the passage finishes synthesizing", async () => {
+    const requests: Record<string, unknown>[] = [];
+    let finishSynthesis!: () => void;
+    const synthesisFinished = new Promise<void>((resolve) => (finishSynthesis = resolve));
+    const line = (event: Record<string, unknown>): string => `${JSON.stringify(event)}\n`;
+    const backend = await listen(async (req, res) => {
+      requests.push(await readJson(req));
+      res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+      res.write(
+        line({
+          event: "metadata",
+          format: "pcm_s16le",
+          sample_rate: 24_000,
+          channels: 1,
+          encoding: "base64",
+        }),
+      );
+      res.write(line({ event: "audio", audio: pcm16([1, 2]).toString("base64") }));
+      await synthesisFinished;
+      res.write(line({ event: "audio", audio: pcm16([3]).toString("base64") }));
+      res.end(line({ event: "done" }));
+    });
+    const server = await speechServer({ provider: "yuwp", endpoint: backend, voice: "elena" });
+
+    const response = await fetch(`${server}/speech`, {
+      method: "POST",
+      body: JSON.stringify({ text: "Hello there." }),
+    });
+    const reader = response.body!.getReader();
+    const opening = await reader.read();
+    finishSynthesis();
+    const chunks = [Buffer.from(opening.value!)];
+    for (let next = await reader.read(); !next.done; next = await reader.read()) {
+      chunks.push(Buffer.from(next.value));
+    }
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-oppi-sample-rate")).toBe("24000");
+    expect(Buffer.from(opening.value!)).toEqual(pcm16([1, 2]));
+    expect(Buffer.concat(chunks)).toEqual(pcm16([1, 2, 3]));
+    expect(requests).toEqual([{ input: "Hello there.", voice: "elena", stream: true }]);
+  });
+
+  it("cuts a failed Yuwp stream short and keeps the spoken text out of health", async () => {
+    let failSynthesis!: () => void;
+    const synthesisFailed = new Promise<void>((resolve) => (failSynthesis = resolve));
+    const backend = await listen(async (req, res) => {
+      await readJson(req);
+      res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+      res.write(
+        `${JSON.stringify({ event: "metadata", format: "pcm_s16le", sample_rate: 24_000, channels: 1, encoding: "base64" })}\n`,
+      );
+      res.write(`${JSON.stringify({ event: "audio", audio: pcm16([1]).toString("base64") })}\n`);
+      await synthesisFailed;
+      res.end(`${JSON.stringify({ event: "error", error: "could not voice: Hello there." })}\n`);
+    });
+    const failures: string[] = [];
+    const server = await speechServer({ provider: "yuwp", endpoint: backend }, undefined, {
+      requestSucceeded: () => failures.push("succeeded"),
+      requestFailed: (_endpoint, message) => failures.push(message),
+      connectFailed: () => failures.push("unreachable"),
+    });
+
+    const response = await fetch(`${server}/speech`, {
+      method: "POST",
+      body: JSON.stringify({ text: "Hello there." }),
+    });
+
+    const reader = response.body!.getReader();
+    const opening = await reader.read();
+    failSynthesis();
+
+    expect(response.status).toBe(200);
+    expect(Buffer.from(opening.value!)).toEqual(pcm16([1]));
+    await expect(
+      (async () => {
+        while (!(await reader.read()).done);
+      })(),
+    ).rejects.toThrow();
+    // Health is shown on About This Server; the backend's error can echo what was read.
+    expect(failures).toEqual(["TTS backend could not synthesize"]);
   });
 
   it("reads with Grok voice using provider credentials", async () => {

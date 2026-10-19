@@ -66,19 +66,19 @@ Agents can inspect past sessions and add selected phrases with `oppi dictionary`
 
 ## Read aloud
 
-The speaker button under an assistant reply reads it aloud through the server; it turns into a stop button while that reply plays. It appears once `tts` is configured, the server restarts, and the backend is ready: an `http` backend must answer, and an `xai` provider needs an xAI credential (sign-in, stored API key, or `XAI_API_KEY`). See [Voice backend health](#voice-backend-health).
+The speaker button under an assistant reply reads it aloud through the server; it turns into a stop button while that reply plays. It appears once `tts` is configured, the server restarts, and the backend is ready: an `http` or `yuwp` backend must answer, and an `xai` provider needs an xAI credential (sign-in, stored API key, or `XAI_API_KEY`). See [Voice backend health](#voice-backend-health).
 
 | Key            | Value |
 | -------------- | ----- |
-| `tts.provider` | `http` (OpenAI-compatible `POST /v1/audio/speech` returning WAV, such as Yuwp) or `xai` (Grok voice). Omitted: `xai` for an `api.x.ai` endpoint, else `http`. |
-| `tts.endpoint` | Base URL. Required for `http`; `xai` defaults to `https://api.x.ai`. |
-| `tts.model`    | Model id sent to an `http` backend. Omitted lets the backend choose. |
+| `tts.provider` | `yuwp` (Yuwp's `POST /v1/audio/speech` with `stream: true`: audio starts about 0.1 s after the request instead of after the whole passage), `http` (OpenAI-compatible `POST /v1/audio/speech` returning WAV), or `xai` (Grok voice). Omitted: `xai` for an `api.x.ai` endpoint, else `http`. |
+| `tts.endpoint` | Base URL. Required for `http` and `yuwp`; `xai` defaults to `https://api.x.ai`. |
+| `tts.model`    | Model id sent to an `http` or `yuwp` backend. Omitted lets the backend choose. |
 | `tts.voice`    | Voice id, such as a saved Yuwp voice or a Grok voice like `eve`. Omitted uses the backend's default. |
 | `tts.language` | `xai` only: BCP-47 code or `auto` (default). |
 
 ```bash
 # Local Yuwp server, for example Fish Audio Drama 3
-oppi config set tts '{"provider":"http","endpoint":"http://127.0.0.1:7938","voice":"elena"}'
+oppi config set tts '{"provider":"yuwp","endpoint":"http://127.0.0.1:7938","voice":"elena"}'
 
 # Grok voice, using the xAI credentials already set up for models or dictation
 oppi config set tts '{"provider":"xai","voice":"eve"}'
@@ -86,7 +86,7 @@ oppi config set tts '{"provider":"xai","voice":"eve"}'
 oppi server restart
 ```
 
-Code blocks, images, and URLs are skipped; link labels and list items are read. The server synthesizes a short first passage and then paragraph-sized ones, so playback starts before the whole reply is ready.
+Code blocks, images, and URLs are skipped; link labels and list items are read. The server synthesizes a short first passage and then paragraph-sized ones, so playback starts before the whole reply is ready. With `yuwp`, each passage's audio also streams while it is synthesized.
 
 Live Voice on the local backend (`asr.liveVoiceBackend` `yuwp`) speaks with this same engine and voice. Without `tts`, a local call listens and shows the agent's replies on screen but stays silent.
 

@@ -193,11 +193,14 @@ export interface ServerConfig {
    * serves its loaded config, and apps read `capabilities.speech` on connect.
    */
   tts?: {
-    /** Vendor. Omitted means infer from endpoint: api.x.ai is xai, else http. */
-    provider?: "http" | "xai";
-    /** Base URL. http: OpenAI-compatible server. xai: defaults to https://api.x.ai. */
+    /**
+     * Vendor. Omitted means infer from endpoint: api.x.ai is xai, else http.
+     * yuwp streams audio as it is synthesized; http waits for each passage's WAV.
+     */
+    provider?: "http" | "yuwp" | "xai";
+    /** Base URL. http/yuwp: the speech server. xai: defaults to https://api.x.ai. */
     endpoint?: string;
-    /** Model id for the http backend. Omitted lets the backend choose. */
+    /** Model id for the http or yuwp backend. Omitted lets the backend choose. */
     model?: string;
     /** Voice id. Omitted lets the backend choose its default voice. */
     voice?: string;

@@ -97,9 +97,12 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
   "asr.sttEndpoint": { type: "string", desc: "STT backend base URL" },
   "asr.sttModel": { type: "string", desc: "STT model id" },
   tts: { type: "json", desc: "Read-aloud (TTS) config JSON object" },
-  "tts.provider": { type: "string", desc: "TTS provider: http or xai" },
-  "tts.endpoint": { type: "string", desc: "TTS base URL (http: OpenAI-compatible server)" },
-  "tts.model": { type: "string", desc: "TTS model id (http)" },
+  "tts.provider": { type: "string", desc: "TTS provider: http, yuwp, or xai" },
+  "tts.endpoint": {
+    type: "string",
+    desc: "TTS base URL (http: OpenAI-compatible server; yuwp: Yuwp TTS)",
+  },
+  "tts.model": { type: "string", desc: "TTS model id (http, yuwp)" },
   "tts.voice": { type: "string", desc: "TTS voice id" },
   "tts.language": { type: "string", desc: "TTS language for xai (BCP-47 or auto)" },
   "asr.liveVoiceBackend": {

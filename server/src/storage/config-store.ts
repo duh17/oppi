@@ -912,10 +912,10 @@ function normalizeConfig(
       const ttsConfig: NonNullable<ServerConfig["tts"]> = {};
       let validTts = true;
       if ("provider" in tts && tts.provider !== undefined) {
-        if (tts.provider === "http" || tts.provider === "xai") {
+        if (tts.provider === "http" || tts.provider === "yuwp" || tts.provider === "xai") {
           ttsConfig.provider = tts.provider;
         } else {
-          errors.push("config.tts.provider: expected http or xai");
+          errors.push("config.tts.provider: expected http, yuwp, or xai");
           changed = true;
           validTts = false;
         }
@@ -939,8 +939,8 @@ function normalizeConfig(
           validTts = false;
         }
       }
-      if (ttsConfig.provider === "http" && !ttsConfig.endpoint) {
-        errors.push("config.tts.endpoint: required for provider http");
+      if ((ttsConfig.provider === "http" || ttsConfig.provider === "yuwp") && !ttsConfig.endpoint) {
+        errors.push(`config.tts.endpoint: required for provider ${ttsConfig.provider}`);
         changed = true;
       }
       // An invalid provider or endpoint must not silently enable another backend.

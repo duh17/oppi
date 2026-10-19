@@ -2,8 +2,10 @@
  * Read-aloud synthesis for chat messages (`POST /speech`).
  *
  * `tts.provider` picks the backend:
+ *   yuwp — Yuwp's `POST {endpoint}/v1/audio/speech` with `stream: true`, so audio
+ *          arrives while the passage is still being synthesized.
  *   http — OpenAI-compatible `POST {endpoint}/v1/audio/speech` returning WAV
- *          (Yuwp, a local OpenAI-compatible server, and similar).
+ *          (a local OpenAI-compatible server and similar).
  *   xai  — Grok `POST {endpoint}/v1/tts` with raw PCM output.
  *          Docs: https://docs.x.ai/developers/model-capabilities/audio/text-to-speech
  *
@@ -44,7 +46,9 @@ export class SpeechError extends Error {
 }
 
 export function resolveTtsProvider(tts: TtsConfig | undefined): TtsProviderId | undefined {
-  if (tts?.provider === "http" || tts?.provider === "xai") return tts.provider;
+  if (tts?.provider === "http" || tts?.provider === "yuwp" || tts?.provider === "xai") {
+    return tts.provider;
+  }
   const endpoint = tts?.endpoint?.trim();
   if (!endpoint) return undefined;
   try {
@@ -62,7 +66,7 @@ export function resolveTtsProvider(tts: TtsConfig | undefined): TtsProviderId | 
 export function isSpeechEnabled(tts: TtsConfig | undefined): boolean {
   const provider = resolveTtsProvider(tts);
   if (provider === "xai") return true;
-  return provider === "http" && (tts?.endpoint?.trim().length ?? 0) > 0;
+  return (provider === "http" || provider === "yuwp") && (tts?.endpoint?.trim().length ?? 0) > 0;
 }
 
 // ─── Text ───
@@ -282,7 +286,8 @@ export interface SpeechDeps {
   observer?: SpeechBackendObserver;
 }
 
-type Synthesize = (text: string, signal: AbortSignal) => Promise<PcmAudio>;
+/** One passage's audio, in order, as the backend produces it. */
+type Synthesize = (text: string, signal: AbortSignal) => AsyncGenerator<PcmAudio>;
 
 function createSynthesizer(tts: TtsConfig | undefined, deps: SpeechDeps): Synthesize {
   const provider = resolveTtsProvider(tts);
@@ -293,7 +298,7 @@ function createSynthesizer(tts: TtsConfig | undefined, deps: SpeechDeps): Synthe
 
   if (provider === "xai") {
     const endpoint = (tts.endpoint?.trim() || DEFAULT_XAI_TTS_ENDPOINT).replace(/\/+$/, "");
-    return async (text, signal) => {
+    return async function* (text, signal) {
       const apiKey = (
         deps.resolveApiKey
           ? await deps.resolveApiKey("xai")
@@ -312,7 +317,7 @@ function createSynthesizer(tts: TtsConfig | undefined, deps: SpeechDeps): Synthe
         signal,
       });
       const body = await readOk(response, "xAI TTS");
-      return {
+      yield {
         sampleRate: XAI_PCM_SAMPLE_RATE,
         channels: 1,
         pcm: body.subarray(0, body.length - (body.length % 2)),
@@ -322,7 +327,8 @@ function createSynthesizer(tts: TtsConfig | undefined, deps: SpeechDeps): Synthe
 
   const endpoint = (tts.endpoint ?? "").trim().replace(/\/+$/, "");
   const observer = deps.observer;
-  return async (text, signal) => {
+  const streaming = provider === "yuwp";
+  return async function* (text, signal) {
     let response: Response;
     try {
       response = await fetchFn(`${endpoint}/v1/audio/speech`, {
@@ -332,7 +338,7 @@ function createSynthesizer(tts: TtsConfig | undefined, deps: SpeechDeps): Synthe
           ...(tts.model ? { model: tts.model } : {}),
           input: text,
           ...(tts.voice ? { voice: tts.voice } : {}),
-          response_format: "wav",
+          ...(streaming ? { stream: true } : { response_format: "wav" }),
         }),
         signal,
       });
@@ -342,20 +348,108 @@ function createSynthesizer(tts: TtsConfig | undefined, deps: SpeechDeps): Synthe
       throw new SpeechError(503, `Read aloud backend at ${endpoint} is not reachable`);
     }
     try {
-      const audio = decodeWavToPcm16(await readOk(response, "TTS backend"));
+      if (streaming && response.ok) {
+        if (!response.body) throw new SpeechError(502, "TTS backend returned no audio stream");
+        yield* yuwpSpeechStream(response.body);
+      } else {
+        yield decodeWavToPcm16(await readOk(response, "TTS backend"));
+      }
       observer?.requestSucceeded(endpoint);
-      return audio;
     } catch (error) {
       if (!signal.aborted && error instanceof SpeechError) {
-        // Status only for a refused request: the backend's error body can echo the text read.
+        // Our own message or the status: the backend's error text can echo the text read.
         observer?.requestFailed(
           endpoint,
-          response.ok ? error.message : `TTS backend returned ${response.status}`,
+          !response.ok
+            ? `TTS backend returned ${response.status}`
+            : error instanceof YuwpStreamError
+              ? "TTS backend could not synthesize"
+              : error.message,
         );
       }
       throw error;
     }
   };
+}
+
+/** The backend reported a synthesis failure inside a stream; its text can echo the input. */
+class YuwpStreamError extends SpeechError {}
+
+/**
+ * Yuwp's streamed speech (`stream: true`) is NDJSON: a `metadata` line with the PCM format,
+ * then `audio` lines of base64 16-bit PCM as the model makes them (~0.1 s to the first),
+ * then `done` or `error`. Format: yuwp `Sources/yuwp-tts/main.swift` `writeSpeechStream`.
+ */
+async function* yuwpSpeechStream(body: ReadableStream<Uint8Array>): AsyncGenerator<PcmAudio> {
+  let format: { sampleRate: number; channels: number } | undefined;
+  for await (const event of ndjsonLines(body)) {
+    switch (event.event) {
+      case "metadata": {
+        const { format: encoding, encoding: transport, sample_rate, channels } = event;
+        if (
+          encoding !== "pcm_s16le" ||
+          transport !== "base64" ||
+          typeof sample_rate !== "number" ||
+          typeof channels !== "number"
+        ) {
+          throw new SpeechError(502, "Unsupported TTS stream audio format");
+        }
+        format = { sampleRate: sample_rate, channels };
+        break;
+      }
+      case "audio":
+        if (!format) throw new SpeechError(502, "TTS stream sent audio before its format");
+        if (typeof event.audio !== "string") throw new SpeechError(502, "Malformed TTS stream");
+        yield { ...format, pcm: Buffer.from(event.audio, "base64") };
+        break;
+      case "done":
+        return;
+      case "error":
+        throw new YuwpStreamError(
+          502,
+          `TTS backend failed: ${String(event.error ?? "unknown error").slice(0, 300)}`,
+        );
+    }
+  }
+  throw new SpeechError(502, "TTS stream ended before it finished");
+}
+
+async function* ndjsonLines(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<Record<string, unknown>> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      pending += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      let newline: number;
+      while ((newline = pending.indexOf("\n")) >= 0) {
+        const line = pending.slice(0, newline).trim();
+        pending = pending.slice(newline + 1);
+        if (line) yield parseJsonLine(line);
+      }
+      if (done) break;
+    }
+    if (pending.trim()) yield parseJsonLine(pending);
+  } finally {
+    // Stops the download when the listener leaves early (barge-in, closed request).
+    void reader.cancel().catch(() => undefined);
+  }
+}
+
+function parseJsonLine(line: string): Record<string, unknown> {
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    throw new SpeechError(502, "Malformed TTS stream");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new SpeechError(502, "Malformed TTS stream");
+  }
+  return value as Record<string, unknown>;
 }
 
 async function readOk(response: Response, label: string): Promise<Buffer> {
@@ -373,16 +467,16 @@ async function readOk(response: Response, label: string): Promise<Buffer> {
 export interface SpeechStream {
   sampleRate: number;
   channels: number;
-  /** The first passage's audio, already synthesized. */
+  /** The first audio the backend produced: a streamed piece or the whole first passage. */
   first: Buffer;
-  /** Remaining passages' audio, synthesized one at a time as the caller pulls. */
+  /** The rest of the audio, synthesized passage by passage as the caller pulls. */
   rest: AsyncIterable<Buffer>;
 }
 
 /**
- * Start reading `markdown` aloud. Resolves once the first passage is
- * synthesized, so the caller can send headers with the real audio format;
- * later passages must match that format.
+ * Start reading `markdown` aloud. Resolves once the backend produces its first
+ * audio, so the caller can send headers with the real audio format; later audio
+ * must match that format.
  */
 export async function startSpeech(
   tts: TtsConfig | undefined,
@@ -395,16 +489,23 @@ export async function startSpeech(
   if (spoken.length > SPEECH_MAX_TEXT_CHARS) {
     throw new SpeechError(413, `Text to read is longer than ${SPEECH_MAX_TEXT_CHARS} characters`);
   }
-  const [firstPassage, ...laterPassages] = speechPassages(spoken);
-  if (!firstPassage) throw new SpeechError(400, "Nothing to read aloud");
+  const passages = speechPassages(spoken);
+  if (passages.length === 0) throw new SpeechError(400, "Nothing to read aloud");
   const synthesize = createSynthesizer(tts, deps);
-  const first = await synthesize(firstPassage, signal);
+  async function* everyPassage(): AsyncGenerator<PcmAudio> {
+    for (const passage of passages) yield* synthesize(passage, signal);
+  }
+  const audio = everyPassage();
+  const opening = await audio.next();
+  if (opening.done) throw new SpeechError(502, "TTS backend returned no audio");
+  const first = opening.value;
   if (
     first.channels < 1 ||
     first.channels > 2 ||
     first.sampleRate < 8_000 ||
     first.sampleRate > 48_000
   ) {
+    await audio.return(undefined);
     throw new SpeechError(
       502,
       `Unsupported TTS audio format (${first.sampleRate} Hz, ${first.channels} ch)`,
@@ -412,12 +513,11 @@ export async function startSpeech(
   }
 
   async function* rest(): AsyncGenerator<Buffer> {
-    for (const passage of laterPassages) {
-      const audio = await synthesize(passage, signal);
-      if (audio.sampleRate !== first.sampleRate || audio.channels !== first.channels) {
+    for await (const piece of audio) {
+      if (piece.sampleRate !== first.sampleRate || piece.channels !== first.channels) {
         throw new SpeechError(502, "TTS backend changed audio format mid-message");
       }
-      yield audio.pcm;
+      yield piece.pcm;
     }
   }
 

@@ -9,8 +9,8 @@ const log = createLogger({ base: { component: "speech" } });
  * configured `tts` provider.
  *
  * The response is raw 16-bit little-endian PCM (`audio/pcm; codecs=s16le`),
- * with `X-Oppi-Sample-Rate` and `X-Oppi-Channels` headers, written passage by
- * passage as each is synthesized. Headers wait for the first passage, so a
+ * with `X-Oppi-Sample-Rate` and `X-Oppi-Channels` headers, written as the
+ * backend produces it. Headers wait for the first audio, so a
  * provider failure before any audio is a JSON error. A failure later aborts the
  * connection, which the client sees as an incomplete stream rather than a clean
  * end. Closing the request stops synthesis.

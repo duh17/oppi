@@ -316,7 +316,7 @@ function httpAsrEndpoint(asr: VoiceConfig["asr"]): string | undefined {
 }
 
 function httpTtsEndpoint(tts: VoiceConfig["tts"]): string | undefined {
-  return resolveTtsProvider(tts) === "http" && isSpeechEnabled(tts) ? tts?.endpoint : undefined;
+  return resolveTtsProvider(tts) !== "xai" && isSpeechEnabled(tts) ? tts?.endpoint : undefined;
 }
 
 function originOf(endpoint: string | undefined): string | undefined {

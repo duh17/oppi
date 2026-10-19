@@ -358,9 +358,12 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "asr.provider", summary: "string; http or xai" },
       { name: "asr.sttEndpoint", summary: "string; STT backend base URL" },
       { name: "asr.sttModel", summary: "string; STT model id" },
-      { name: "tts.provider", summary: "string; read-aloud provider: http or xai" },
-      { name: "tts.endpoint", summary: "string; read-aloud base URL (http: OpenAI-compatible)" },
-      { name: "tts.model", summary: "string; read-aloud model id (http)" },
+      { name: "tts.provider", summary: "string; read-aloud provider: http, yuwp, or xai" },
+      {
+        name: "tts.endpoint",
+        summary: "string; read-aloud base URL (http: OpenAI-compatible; yuwp: Yuwp TTS)",
+      },
+      { name: "tts.model", summary: "string; read-aloud model id (http, yuwp)" },
       { name: "tts.voice", summary: "string; read-aloud voice id" },
       { name: "tts.language", summary: "string; xai language (BCP-47 or auto)" },
       {
