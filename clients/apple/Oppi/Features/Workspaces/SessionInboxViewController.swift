@@ -1420,3 +1420,39 @@ private extension SessionInboxViewController {
         let fitsVerticalRail: Bool
     }
 }
+
+enum SessionInboxTransportAvailability {
+    static func isUnavailable(hasAPIClient: Bool, isPreparing: Bool) -> Bool {
+        !hasAPIClient && !isPreparing
+    }
+}
+
+/// Inbox-local search and stopped-group expansion belong to the visible host.
+/// Compact host jobs stay mounted over inbox, so a host change must reset these
+/// without popping to All Sessions.
+enum SessionInboxHostChange {
+    @MainActor
+    static func reset(
+        searchText _: String,
+        expandedStoppedGroupIDs _: Set<String>,
+        collapsedStoppedGroupIDs _: Set<String>,
+        searchStore: SessionSearchStore
+    ) -> (searchText: String, expandedStoppedGroupIDs: Set<String>, collapsedStoppedGroupIDs: Set<String>) {
+        searchStore.clear()
+        return ("", [], [])
+    }
+}
+
+enum SessionInboxSessionRouting {
+    static func routeScope(for session: Session) -> SessionRouteScope? {
+        session.routeScope
+    }
+
+    static func allSessionsContext(for session: Session, workspaceName: String?) -> String? {
+        if session.isControlConversation { return "Oppi Control" }
+        return SessionRowPresentationBuilder.allSessionsWorkspaceContext(
+            for: session,
+            workspaceName: workspaceName
+        )
+    }
+}

@@ -32,7 +32,7 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
     func testIPadMainAndChatTimelineScreenshots() throws {
         try prepareIPadLandscapeCanvas()
 
-        let workspaceList = app.scrollViews["workspace.sidebar.scroll"]
+        let workspaceList = app.collectionViews["workspace.sidebar.scroll"]
         XCTAssertTrue(workspaceList.waitForExistence(timeout: 15), "Workspace sidebar not visible")
         dismissExtensionSheetIfNeeded(timeout: 3)
         workspaceList.swipeDown()
@@ -101,7 +101,7 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
     func testWorkspaceIconPickerPersistsSymbolSelection() throws {
         try prepareIPadLandscapeCanvas()
 
-        let workspaceList = app.scrollViews["workspace.sidebar.scroll"]
+        let workspaceList = app.collectionViews["workspace.sidebar.scroll"]
         XCTAssertTrue(workspaceList.waitForExistence(timeout: 15), "Workspace sidebar not visible")
         workspaceList.swipeDown()
         XCTAssertTrue(
@@ -182,7 +182,7 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
     func testIPadSidebarAgentsAndSchedulesNavigate() throws {
         try prepareIPadLandscapeCanvas()
 
-        let workspaceList = app.scrollViews["workspace.sidebar.scroll"]
+        let workspaceList = app.collectionViews["workspace.sidebar.scroll"]
         XCTAssertTrue(workspaceList.waitForExistence(timeout: 15), "Workspace sidebar not visible")
 
         let agentsButton = app.buttons["workspace.agents.open"]
@@ -242,7 +242,7 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         tap(cancelButton, named: "workspace create cancel button", timeout: 1)
 
         XCTAssertTrue(
-            app.scrollViews["workspace.sidebar.scroll"].waitForExistence(timeout: 10),
+            app.collectionViews["workspace.sidebar.scroll"].waitForExistence(timeout: 10),
             "Workspace sidebar did not return after dismissing create form"
         )
     }
@@ -394,7 +394,7 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
     }
 
     private func showWorkspaceHomeListIfNeeded() {
-        let workspaceList = app.scrollViews["workspace.sidebar.scroll"]
+        let workspaceList = app.collectionViews["workspace.sidebar.scroll"]
         for _ in 0..<4 {
             revealSplitDetailSidebarIfNeeded()
 
@@ -422,7 +422,7 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
     }
 
     private func revealSplitDetailSidebarIfNeeded() {
-        if app.scrollViews["workspace.sidebar.scroll"].waitForExistence(timeout: 1) {
+        if app.collectionViews["workspace.sidebar.scroll"].waitForExistence(timeout: 1) {
             return
         }
 

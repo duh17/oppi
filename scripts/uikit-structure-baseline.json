@@ -667,9 +667,6 @@
     "clients/apple/Oppi/Features/Workspaces/SessionInboxComposeChrome.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Workspaces/SessionInboxView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceComponents.swift": {
       "import SwiftUI": 1
     },

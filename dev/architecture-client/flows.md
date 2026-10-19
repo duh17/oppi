@@ -44,7 +44,7 @@ The Workspaces tab opens the global `SessionInboxView` for the active server. Th
 
 ```mermaid
 graph TD
-  Sidebar[WorkspaceSidebarView] --> CatalogAPI[APIClient.listWorkspaceCatalog]
+  Sidebar[WorkspaceSidebarViewController] --> CatalogAPI[APIClient.listWorkspaceCatalog]
   CatalogAPI --> WorkspaceStore[WorkspaceStore<br/>catalog + summaries]
 
   Inbox[Global SessionInboxView] --> Refresh[ConnectionCoordinator.refreshServer]

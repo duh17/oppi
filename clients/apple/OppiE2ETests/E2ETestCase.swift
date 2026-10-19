@@ -297,7 +297,7 @@ class E2ETestCase: XCTestCase {
     }
 
     private func workspaceListSurfaceExists(in application: XCUIApplication) -> Bool {
-        application.scrollViews["workspace.sidebar.scroll"].exists
+        application.collectionViews["workspace.sidebar.scroll"].exists
             || application.collectionViews["workspace.list"].exists
     }
 
@@ -314,7 +314,7 @@ class E2ETestCase: XCTestCase {
     }
 
     private func workspaceListElement(in application: XCUIApplication) -> XCUIElement {
-        let sidebarScroll = application.scrollViews["workspace.sidebar.scroll"]
+        let sidebarScroll = application.collectionViews["workspace.sidebar.scroll"]
         return sidebarScroll.exists ? sidebarScroll : application.collectionViews["workspace.list"]
     }
 

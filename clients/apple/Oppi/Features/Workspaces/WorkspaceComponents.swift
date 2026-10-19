@@ -352,3 +352,199 @@ struct WorkspaceServerStatusPresentation: Equatable, Sendable {
         )
     }
 }
+
+// MARK: - Workspace sidebar row
+
+struct WorkspaceSidebarRow: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
+
+    let workspace: Workspace
+    let status: WorkspaceSidebarSessionStatus
+    let gitSummary: WorkspaceSidebarGitSummary?
+    let isSelected: Bool
+    let lockBadge: ScopedLockState
+
+    init(
+        workspace: Workspace,
+        status: WorkspaceSidebarSessionStatus,
+        gitSummary: WorkspaceSidebarGitSummary? = nil,
+        isSelected: Bool,
+        lockBadge: ScopedLockState = .none
+    ) {
+        self.workspace = workspace
+        self.status = status
+        self.gitSummary = gitSummary
+        self.isSelected = isSelected
+        self.lockBadge = lockBadge
+    }
+
+    /// A locked workspace shows its name only.
+    private var hidesDetails: Bool { lockBadge == .locked }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            WorkspaceRuntimeIcon(workspace: workspace, size: 26, frameSize: 32)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(workspace.name)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.themeFg)
+                            .lineLimit(1)
+                        LockBadge(state: lockBadge)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if status.isVisible, !hidesDetails {
+                        WorkspaceSidebarSessionStatusIndicator(status: status)
+                    }
+                }
+
+                if !hidesDetails, let description = workspace.description, !description.isEmpty {
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if !hidesDetails, let gitSummary, gitSummary.isVisible {
+                    WorkspaceSidebarGitStatusLine(summary: gitSummary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
+        }
+        .frame(minHeight: 44)
+        .padding(.vertical, 5)
+        .padding(.horizontal, 8)
+        .background {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(theme.text.primary.opacity(0.08))
+            }
+        }
+        .contentShape(Rectangle())
+        .id(themeID)
+    }
+}
+
+struct WorkspaceSidebarGitStatusLine: View {
+    let summary: WorkspaceSidebarGitSummary
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            if summary.changedCount > 0 {
+                metric(
+                    text: "\(SessionFormatting.compactCount(summary.changedCount)) changes",
+                    symbol: "circle.fill",
+                    tint: .themeOrange,
+                    symbolScale: .small
+                )
+            }
+
+            if summary.aheadCount > 0 {
+                metric(
+                    text: "\(SessionFormatting.compactCount(summary.aheadCount))",
+                    symbol: "arrow.up",
+                    tint: .themeBlue
+                )
+            }
+
+            if summary.behindCount > 0 {
+                metric(
+                    text: "\(SessionFormatting.compactCount(summary.behindCount))",
+                    symbol: "arrow.down",
+                    tint: .themeOrange
+                )
+            }
+        }
+        .font(.caption2.weight(.medium))
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(summary.accessibilityValue)
+    }
+
+    private func metric(
+        text: String,
+        symbol: String,
+        tint: ThemeShapeStyle,
+        symbolScale: Image.Scale = .medium
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Image(systemName: symbol)
+                .imageScale(symbolScale)
+            Text(text)
+                .monospacedDigit()
+        }
+        .foregroundStyle(tint)
+    }
+}
+
+struct WorkspaceSidebarSessionStatusIndicator: View {
+    let status: WorkspaceSidebarSessionStatus
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 7) {
+            if status.attentionCount > 0 {
+                metric(
+                    symbol: "exclamationmark.triangle.fill",
+                    count: status.attentionCount,
+                    tint: status.errorCount > 0 ? .themeRed : .themeOrange
+                )
+            }
+
+            if status.workingCount > 0 {
+                metric(symbol: "bolt.fill", count: status.workingCount, tint: .themeBlue)
+            }
+
+            if status.showsDone {
+                metric(symbol: "checkmark", count: status.doneCount, tint: .themeGreen)
+            }
+        }
+        .font(.caption2.weight(.semibold))
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityHidden(true)
+    }
+
+    private func metric(symbol: String, count: Int, tint: ThemeShapeStyle) -> some View {
+        HStack(alignment: .center, spacing: 2) {
+            Image(systemName: symbol)
+                .imageScale(.small)
+
+            Text(SessionFormatting.compactCount(count))
+                .monospacedDigit()
+        }
+        .foregroundStyle(tint)
+        .lineLimit(1)
+    }
+}
+
+extension WorkspaceSidebarRow {
+    /// The row as cell content for the UIKit sidebar (`WorkspaceSidebarViewController`).
+    @MainActor
+    static func contentConfiguration(
+        root: AppRootEnvironment,
+        workspace: Workspace,
+        status: WorkspaceSidebarSessionStatus,
+        gitSummary: WorkspaceSidebarGitSummary?,
+        isSelected: Bool,
+        lockBadge: ScopedLockState
+    ) -> UIContentConfiguration {
+        UIHostingConfiguration {
+            WorkspaceSidebarRow(
+                workspace: workspace,
+                status: status,
+                gitSummary: gitSummary,
+                isSelected: isSelected,
+                lockBadge: lockBadge
+            )
+            .appRootEnvironment(root)
+        }
+        .margins(.all, 0)
+    }
+}

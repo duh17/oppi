@@ -245,7 +245,7 @@ final class WorkspaceHomeScreenshotLabE2ETests: E2ETestCase {
             return legacyList
         }
 
-        let sidebar = app.scrollViews["workspace.sidebar.scroll"]
+        let sidebar = app.collectionViews["workspace.sidebar.scroll"]
         if !sidebar.isHittable {
             tap(app.buttons["workspace.sidebar.open"], named: "workspace sidebar button")
         }

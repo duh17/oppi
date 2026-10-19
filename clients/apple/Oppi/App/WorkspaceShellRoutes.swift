@@ -2,9 +2,9 @@ import SwiftUI
 
 // The SwiftUI content of the workspace shell's routes. UIKit owns the stacks
 // (`ShellRouter.swift`, `WorkspaceShellController.swift`). Most routes are a
-// `ShellRouteView` hosted through `HostFactory`; All Sessions, a session's
-// chat (`ChatRouteViewController`), and SSH Terminal's host list are UIKit
-// screens.
+// `ShellRouteView` hosted through `HostFactory`; All Sessions, the workspace
+// sidebar, a session's chat (`ChatRouteViewController`), and SSH Terminal's
+// host list are UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -26,6 +26,9 @@ enum ShellRouteScreens {
             let screen = SSHTerminalHostListViewController(showsSidebarToggle: placement == .splitDetailRoot)
             screen.traitOverrides.appRootEnvironment = root
             return screen
+        }
+        if case .sidebar = route {
+            return WorkspaceSidebarViewController(root: root)
         }
         if case .session(let target) = route {
             return ChatRouteViewController(target: target, placement: placement, root: root)
@@ -55,6 +58,8 @@ enum ShellRouteScreens {
             chatRoute.placement = placement
             return
         }
+        // The sidebar reads its own state.
+        if screen is WorkspaceSidebarViewController { return }
         guard let screen = screen as? HostedScreenController else { return }
         screen.setContent {
             ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
@@ -63,7 +68,7 @@ enum ShellRouteScreens {
 
     /// The workspace list beneath the compact stack.
     static func drawerSidebar(root: AppRootEnvironment, onSelect: @escaping () -> Void) -> UIViewController {
-        HostFactory.content(WorkspaceSidebarView(onSelect: onSelect), root: root)
+        WorkspaceSidebarViewController(root: root, onSelect: onSelect)
     }
 
     static func serverLockCover(serverId: String, root: AppRootEnvironment) -> UIViewController {
@@ -131,7 +136,8 @@ struct ShellRouteView: View {
             // The shell hosts this route as SessionInboxViewController.
             EmptyView()
         case .sidebar:
-            WorkspaceSidebarView()
+            // The shell mounts this route as WorkspaceSidebarViewController.
+            EmptyView()
         case .workspace(let target):
             WorkspaceScopedDestinationView(target: target)
         case .session:

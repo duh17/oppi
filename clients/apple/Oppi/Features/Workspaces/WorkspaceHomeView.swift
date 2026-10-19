@@ -258,6 +258,26 @@ struct WorkspaceCreateSheetContext: Identifiable {
             prefillPath ?? ""
         ].joined(separator: "|")
     }
+
+    /// Presents `WorkspaceCreateView` in a sheet with a navigation bar, from a
+    /// UIKit screen (the workspace sidebar). `onDismiss` runs after any dismissal.
+    @MainActor
+    func present(root: AppRootEnvironment, from presenter: UIViewController, onDismiss: @escaping () -> Void) {
+        let context = self
+        Router.present(
+            root: root,
+            presentation: .sheet.inNavigation(),
+            from: presenter,
+            onDismiss: onDismiss
+        ) {
+            WorkspaceCreateView(
+                server: context.server,
+                presentation: context.presentation,
+                prefillName: context.prefillName,
+                prefillPath: context.prefillPath
+            )
+        }
+    }
 }
 
 struct WorkspaceScopedDestinationView: View {
