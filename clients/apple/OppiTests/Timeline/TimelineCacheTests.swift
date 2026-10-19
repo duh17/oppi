@@ -30,6 +30,38 @@ struct TimelineCacheTests {
         #expect(fileManager.fileExists(atPath: schemaMarkerURL(root).path))
     }
 
+    /// While the device is locked the marker exists but cannot be read. That is
+    /// not a missing marker: the cache survives and no new marker replaces it.
+    @Test func unreadableSchemaMarkerKeepsCacheAndMarker() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+        let marker = schemaMarkerURL(root)
+
+        defer {
+            try? fileManager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: marker.path)
+            try? fileManager.removeItem(at: base)
+        }
+
+        let first = TimelineCache(rootURL: root)
+        await first.saveTrace("session-1", events: [makeTraceEvent(id: "evt-1")])
+        let markerBytes = try Data(contentsOf: marker)
+        try fileManager.setAttributes([.posixPermissions: 0o000], ofItemAtPath: marker.path)
+        #expect((try? Data(contentsOf: marker)) == nil)
+
+        _ = TimelineCache(rootURL: root)
+
+        // An atomic rewrite would have replaced the unreadable file.
+        let permissions = try fileManager.attributesOfItem(atPath: marker.path)[.posixPermissions] as? Int
+        #expect(permissions == 0)
+        try fileManager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: marker.path)
+        #expect(try Data(contentsOf: marker) == markerBytes)
+
+        let unlocked = TimelineCache(rootURL: root)
+        let loaded = await unlocked.loadTrace("session-1")
+        #expect(loaded?.events.map(\.id) == ["evt-1"])
+    }
+
     @Test func olderSchemaGenerationDropsSessionKeyedCache() async throws {
         let fileManager = FileManager.default
         let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")

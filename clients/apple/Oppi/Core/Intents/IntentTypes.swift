@@ -5,12 +5,41 @@ private let intentCatalogLogger = Logger(
     subsystem: AppIdentifiers.subsystem,
     category: "IntentEntityQuery"
 )
+private let pairedServersLogger = Logger(
+    subsystem: AppIdentifiers.subsystem,
+    category: "IntentPairedServers"
+)
 
 /// Shortcuts and Siri list servers, workspaces, and Agents through these queries
 /// without showing Oppi; while Oppi is locked they list nothing and contact
 /// no server.
 private func intentQueriesAreLocked() async -> Bool {
     await MainActor.run { AppLockService.shared.requiresUnlock() }
+}
+
+/// Paired servers for Siri and Shortcuts. Their Keychain items need the device
+/// unlocked; an unreadable Keychain must not read as "no paired servers".
+enum IntentPairedServers {
+    static let unavailableDialog = "Unlock your device, then try again. Nothing was sent."
+
+    /// Thrown when the paired servers cannot be read, so queries tell the
+    /// user to unlock instead of listing nothing.
+    struct Unavailable: Error, CustomLocalizedStringResourceConvertible {
+        var localizedStringResource: LocalizedStringResource {
+            "Unlock your device to use your Oppi servers."
+        }
+    }
+
+    static func load() throws(Unavailable) -> [PairedServer] {
+        do {
+            return try KeychainService.loadServers()
+        } catch {
+            pairedServersLogger.error(
+                "Paired servers unavailable to intent: \(error.localizedDescription, privacy: .public)"
+            )
+            throw Unavailable()
+        }
+    }
 }
 
 /// Workspaces and Agents a saved Shortcut names, resolved from their ids without a server.
@@ -32,9 +61,9 @@ enum IntentSavedEntities {
         _ identifiers: [String],
         fallbackName: String,
         make: (Resolved) -> Entity
-    ) async -> [Entity] {
+    ) async throws -> [Entity] {
         let locked = await intentQueriesAreLocked()
-        let servers = KeychainService.loadServers()
+        let servers = try IntentPairedServers.load()
         let names = UserDefaults.standard.dictionary(forKey: namesKey) as? [String: String] ?? [:]
         return identifiers.compactMap { identifier in
             guard let decoded = ServerScopedEntityID.decode(identifier),
@@ -49,9 +78,9 @@ enum IntentSavedEntities {
         }
     }
 
-    /// Adds the names a full listing just returned; names from unpaired servers go.
-    static func rememberNames(_ namesById: [String: String]) {
-        let paired = Set(KeychainService.loadServers().map(\.id))
+    /// Adds the names a full listing just returned; names from servers not in `servers` go.
+    static func rememberNames(_ namesById: [String: String], servers: [PairedServer]) {
+        let paired = Set(servers.map(\.id))
         var names = UserDefaults.standard.dictionary(forKey: namesKey) as? [String: String] ?? [:]
         names.merge(namesById) { _, new in new }
         names = names.filter { id, _ in
@@ -104,17 +133,17 @@ struct PairedServerEntity: AppEntity {
 
 struct PairedServerEntityQuery: EntityQuery {
     func entities(for identifiers: [String]) async throws -> [PairedServerEntity] {
-        let all = await suggested()
+        let all = try await suggested()
         return all.filter { identifiers.contains($0.id) }
     }
 
     func suggestedEntities() async throws -> [PairedServerEntity] {
-        await suggested()
+        try await suggested()
     }
 
-    private func suggested() async -> [PairedServerEntity] {
+    private func suggested() async throws -> [PairedServerEntity] {
         guard await !intentQueriesAreLocked() else { return [] }
-        let servers = KeychainService.loadServers().map {
+        let servers = try IntentPairedServers.load().map {
             PairedServerEntity(id: $0.id, name: $0.name)
         }
         return IntentSessionRanking.rank(
@@ -171,7 +200,7 @@ struct WorkspaceEntityQuery: EntityQuery, EntityStringQuery {
     /// locked or a paired server is offline; the sheet checks the workspace after unlock.
     /// Only a bare workspace id (no server) needs the servers' lists to find its server.
     func entities(for identifiers: [String]) async throws -> [WorkspaceEntity] {
-        let saved = await IntentSavedEntities.resolve(identifiers, fallbackName: "Workspace") {
+        let saved = try await IntentSavedEntities.resolve(identifiers, fallbackName: "Workspace") {
             WorkspaceEntity(
                 serverId: $0.serverId,
                 workspaceId: $0.itemId,
@@ -182,7 +211,7 @@ struct WorkspaceEntityQuery: EntityQuery, EntityStringQuery {
         }
         let bare = identifiers.filter { ServerScopedEntityID.decode($0) == nil }
         guard !bare.isEmpty else { return saved }
-        let all = await fetchWorkspaces()
+        let all = try await fetchWorkspaces()
         return saved + bare.compactMap { identifier in
             let matches = all.filter { $0.workspaceId == identifier }
             return matches.count == 1 ? matches[0] : nil
@@ -190,12 +219,12 @@ struct WorkspaceEntityQuery: EntityQuery, EntityStringQuery {
     }
 
     func suggestedEntities() async throws -> [WorkspaceEntity] {
-        await fetchWorkspaces()
+        try await fetchWorkspaces()
     }
 
     func entities(matching string: String) async throws -> [WorkspaceEntity] {
         let needle = string.trimmingCharacters(in: .whitespacesAndNewlines)
-        let all = await fetchWorkspaces()
+        let all = try await fetchWorkspaces()
         guard !needle.isEmpty else { return all }
         let exact = all.filter {
             $0.name.compare(needle, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
@@ -206,11 +235,11 @@ struct WorkspaceEntityQuery: EntityQuery, EntityStringQuery {
         return all.filter { $0.name.localizedCaseInsensitiveContains(needle) }
     }
 
-    private func fetchWorkspaces() async -> [WorkspaceEntity] {
+    private func fetchWorkspaces() async throws -> [WorkspaceEntity] {
         guard await !intentQueriesAreLocked() else { return [] }
-        let snapshots = await IntentPairedWorkspaceCatalog.loadReachable()
-        let pairedCount = KeychainService.loadServers().count
-        let showSubtitle = pairedCount > 1
+        let servers = try IntentPairedServers.load()
+        let snapshots = await IntentPairedWorkspaceCatalog.loadReachable(servers: servers)
+        let showSubtitle = servers.count > 1
         let entities = snapshots.flatMap { snapshot in
             snapshot.workspaces.map { workspace in
                 WorkspaceEntity(
@@ -222,7 +251,10 @@ struct WorkspaceEntityQuery: EntityQuery, EntityStringQuery {
                 )
             }
         }
-        IntentSavedEntities.rememberNames(Dictionary(entities.map { ($0.id, $0.name) }) { first, _ in first })
+        IntentSavedEntities.rememberNames(
+            Dictionary(entities.map { ($0.id, $0.name) }) { first, _ in first },
+            servers: servers
+        )
         return IntentSessionRanking.rank(
             entities,
             id: \.workspaceId,
@@ -239,8 +271,8 @@ enum IntentPairedWorkspaceCatalog {
         let workspaces: [Workspace]
     }
 
-    static func loadReachable() async -> [Snapshot] {
-        await IntentPairedServerCatalog.loadReachable { api in
+    static func loadReachable(servers: [PairedServer]) async -> [Snapshot] {
+        await IntentPairedServerCatalog.loadReachable(servers: servers) { api in
             try await api.listWorkspaces()
         }.map { Snapshot(server: $0.server, workspaces: $0.value) }
     }
@@ -255,9 +287,9 @@ enum IntentPairedServerCatalog {
     }
 
     static func loadReachable<Value: Sendable>(
+        servers: [PairedServer],
         _ fetch: @escaping @Sendable (APIClient) async throws -> Value
     ) async -> [Entry<Value>] {
-        let servers = KeychainService.loadServers()
         guard !servers.isEmpty else { return [] }
 
         let entries = await withTaskGroup(of: Entry<Value>?.self) { group in
@@ -327,7 +359,7 @@ struct AgentEntityQuery: EntityQuery, EntityStringQuery {
     /// A saved Shortcut's Agent resolves from its id alone, so it runs while Oppi is locked
     /// or a paired server is offline; the sheet checks the Agent after unlock.
     func entities(for identifiers: [String]) async throws -> [AgentEntity] {
-        await IntentSavedEntities.resolve(identifiers, fallbackName: "Agent") {
+        try await IntentSavedEntities.resolve(identifiers, fallbackName: "Agent") {
             AgentEntity(
                 serverId: $0.serverId,
                 agentId: $0.itemId,
@@ -339,22 +371,23 @@ struct AgentEntityQuery: EntityQuery, EntityStringQuery {
     }
 
     func suggestedEntities() async throws -> [AgentEntity] {
-        await fetchAgents()
+        try await fetchAgents()
     }
 
     func entities(matching string: String) async throws -> [AgentEntity] {
         let needle = string.trimmingCharacters(in: .whitespacesAndNewlines)
-        let all = await fetchAgents()
+        let all = try await fetchAgents()
         guard !needle.isEmpty else { return all }
         return all.filter { $0.name.localizedCaseInsensitiveContains(needle) }
     }
 
-    private func fetchAgents() async -> [AgentEntity] {
+    private func fetchAgents() async throws -> [AgentEntity] {
         guard await !intentQueriesAreLocked() else { return [] }
-        let entries = await IntentPairedServerCatalog.loadReachable { api in
+        let servers = try IntentPairedServers.load()
+        let entries = await IntentPairedServerCatalog.loadReachable(servers: servers) { api in
             try await api.listAgents()
         }
-        let showSubtitle = KeychainService.loadServers().count > 1
+        let showSubtitle = servers.count > 1
         let entities = entries.flatMap { entry in
             entry.value.filter { $0.status == .active }.map { agent in
                 AgentEntity(
@@ -366,7 +399,10 @@ struct AgentEntityQuery: EntityQuery, EntityStringQuery {
                 )
             }
         }
-        IntentSavedEntities.rememberNames(Dictionary(entities.map { ($0.id, $0.name) }) { first, _ in first })
+        IntentSavedEntities.rememberNames(
+            Dictionary(entities.map { ($0.id, $0.name) }) { first, _ in first },
+            servers: servers
+        )
         return IntentSessionRanking.rank(
             entities,
             id: \.agentId,

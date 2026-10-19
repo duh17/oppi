@@ -449,6 +449,7 @@ struct InviteBootstrapServiceTests {
     /// A coordinator over the real store, without the servers these invites pair.
     private func makeCoordinator(clearing invites: [ServerCredentials]) -> ConnectionCoordinator {
         let store = ServerStore()
+        store.load()
         for invite in invites {
             if let id = invite.normalizedServerFingerprint { store.remove(id: id) }
         }

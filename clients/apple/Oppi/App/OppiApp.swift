@@ -112,6 +112,41 @@ struct LaunchRefreshTelemetryOutcome: Equatable, Sendable {
     }
 }
 
+/// Waits for data protection to unlock app files and Keychain items. iOS can
+/// launch Oppi in the background while the device is locked (a Live Activity
+/// push-to-start, a locked install); reads made then fail.
+@MainActor
+enum ProtectedDataAvailability {
+    /// Returns now when protected data is readable, else at the next unlock.
+    static func wait() async {
+        guard !UIApplication.shared.isProtectedDataAvailable else { return }
+        await nextAvailability()
+    }
+
+    /// Returns at the next `protectedDataDidBecomeAvailableNotification`.
+    static func nextAvailability() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let observer = ObserverToken()
+            observer.token = NotificationCenter.default.addObserver(
+                forName: UIApplication.protectedDataDidBecomeAvailableNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                MainActor.assumeIsolated {
+                    guard let token = observer.token else { return }
+                    observer.token = nil
+                    NotificationCenter.default.removeObserver(token)
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
+    @MainActor private final class ObserverToken {
+        var token: NSObjectProtocol?
+    }
+}
+
 /// The app: its scoped services, launch, scene phases, diagnostics, and
 /// memory. Every open (URLs, notification taps, Siri, controls, links) goes to
 /// the window's `AppOpener`; the UIKit scene (`SceneDelegate`) owns the window
@@ -136,6 +171,7 @@ final class OppiApp {
     @ObservationIgnored private var scenePhase: ScenePhase = .inactive
     @ObservationIgnored private var appEventObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var hasConnectedScene = false
+    @ObservationIgnored private var pairedServerLoad: Task<Void, Never>?
 
     init() {
 #if DEBUG
@@ -172,6 +208,9 @@ final class OppiApp {
             sessionRows: SessionRowDisplayStore(),
             opener: opener
         )
+        // An invite can arrive before launch has read the pairing list;
+        // enrolling against an unread store would fail or miss servers.
+        opener.awaitPairedServers = { [weak self] in await self?.loadPairedServers() }
     }
 
     /// The window's root: a debug harness chosen by launch arguments, else the app.
@@ -344,6 +383,26 @@ final class OppiApp {
         opener.launchDidFinish()
     }
 
+    /// Reads the pairing list once protected data is available. Launch and
+    /// invites share the one read. A read that still fails (the device
+    /// locked again in between) reads once more at each later unlock, so launch
+    /// stays on its blank canvas instead of showing onboarding.
+    @MainActor
+    private func loadPairedServers() async {
+        if pairedServerLoad == nil {
+            let store = serverStore
+            pairedServerLoad = Task { @MainActor in
+                await ProtectedDataAvailability.wait()
+                store.load()
+                while store.loadState != .loaded {
+                    await ProtectedDataAvailability.nextAvailability()
+                    store.load()
+                }
+            }
+        }
+        await pairedServerLoad?.value
+    }
+
     @MainActor
     private func performAppStartupWork() async {
         AppFont.rebuild()
@@ -353,6 +412,8 @@ final class OppiApp {
         mainThreadLagWatchdog.start()
         LocalDataProtection.upgradeStoredFilesIfNeeded()
         await composerDraftStore.load()
+        // Everything below reads paired servers or the timeline cache.
+        await loadPairedServers()
         coordinator.startLANDiscovery()
         coordinator.startNetworkPathMonitor()
         TailnetNodeController.shared.onRouteChange = { [coordinator] in
@@ -786,20 +847,25 @@ final class OppiApp {
 
         // 1. Load credentials — prefer restored server, then first server
         let restored = RestorationState.load()
-        let targetServer: PairedServer?
-        if let restoredServerId = restored?.activeServerId,
-           let server = serverStore.server(for: restoredServerId) {
-            targetServer = server
-        } else {
-            targetServer = serverStore.servers.first
-        }
+        let route = AppLaunchPairingPolicy.route(
+            loadState: serverStore.loadState,
+            pairedServerCount: serverStore.servers.count
+        )
+        let targetServer = restored?.activeServerId.flatMap { serverStore.server(for: $0) }
+            ?? serverStore.servers.first
 
-        guard let server = targetServer else {
-            launchOutcome = "no_credentials"
+        guard route == .pairedShell, let server = targetServer else {
             workspaceRefreshOutcome = "not_attempted"
             sessionRefreshOutcome = "not_attempted"
-            navigation.showOnboarding = true
-            navigation.launchPhase = .ready
+            if route == .onboarding {
+                launchOutcome = "no_credentials"
+                navigation.showOnboarding = true
+                navigation.launchPhase = .ready
+            } else {
+                // Never onboarding on an unread pairing list: the launch
+                // canvas stays blank.
+                launchOutcome = "credentials_unavailable"
+            }
             return
         }
 

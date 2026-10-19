@@ -526,38 +526,57 @@ actor TimelineCache {
         schemaMarkerURL: URL,
         schemaMarker: CacheSchemaMarker
     ) {
-        if shouldInvalidateRootForSchema(
+        switch schemaCheck(
             fileManager: fileManager,
             root: root,
             schemaMarkerURL: schemaMarkerURL,
             schemaMarker: schemaMarker
         ) {
+        case .current:
+            break
+        case .invalidate:
             invalidateRoot(fileManager: fileManager, root: root)
+        case .unreadable:
+            // Data protection: the device is locked. Deleting is never right
+            // here, and a fresh marker would bless whatever is left.
+            return
         }
 
         prepareStorageDirectories(fileManager: fileManager, root: root, tracesDir: tracesDir)
         writeSchemaMarker(fileManager: fileManager, schemaMarkerURL: schemaMarkerURL, schemaMarker: schemaMarker)
     }
 
-    private static func shouldInvalidateRootForSchema(
+    private enum SchemaCheck {
+        case current
+        case invalidate
+        /// The marker exists but cannot be read.
+        case unreadable
+    }
+
+    private static func schemaCheck(
         fileManager: FileManager,
         root: URL,
         schemaMarkerURL: URL,
         schemaMarker: CacheSchemaMarker
-    ) -> Bool {
-        guard fileManager.fileExists(atPath: root.path) else { return false }
-        guard let data = try? Data(contentsOf: schemaMarkerURL),
-              let stored = try? JSONDecoder().decode(CacheSchemaMarker.self, from: data) else {
+    ) -> SchemaCheck {
+        guard fileManager.fileExists(atPath: root.path) else { return .current }
+        guard fileManager.fileExists(atPath: schemaMarkerURL.path) else {
             logger.notice("Invalidating timeline cache: missing schema marker")
-            return true
+            return .invalidate
         }
-        guard stored == schemaMarker else {
-            logger.notice(
-                "Invalidating timeline cache: schema \(stored.generation, privacy: .public) -> \(schemaMarker.generation, privacy: .public)"
-            )
-            return true
+        let data: Data
+        do {
+            data = try Data(contentsOf: schemaMarkerURL)
+        } catch {
+            logger.notice("Keeping timeline cache: schema marker unreadable: \(error.localizedDescription, privacy: .public)")
+            return .unreadable
         }
-        return false
+        guard let stored = try? JSONDecoder().decode(CacheSchemaMarker.self, from: data),
+              stored == schemaMarker else {
+            logger.notice("Invalidating timeline cache: schema marker is not generation \(schemaMarker.generation, privacy: .public)")
+            return .invalidate
+        }
+        return .current
     }
 
     private static func invalidateRoot(fileManager: FileManager, root: URL) {

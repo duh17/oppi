@@ -1732,6 +1732,7 @@ struct ConnectionCoordinatorTests {
         UserDefaults.standard.removeObject(forKey: "pairedServerIds")
         KeychainService.deleteAllServers()
         let store = ServerStore()
+        store.load()
         let coordinator = ConnectionCoordinator(serverStore: store, lanDiscovery: lanDiscovery)
         coordinator.networkPathType = { "wifi" }
         coordinator._initialLANEndpointForTesting = { _ in nil }

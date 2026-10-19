@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 @testable import Oppi
 
@@ -180,16 +181,83 @@ struct ServerStoreTests {
         #expect(current.credentials.effectiveAccessToken == "dt_fresh_pair")
     }
 
+    // MARK: - Load state
+
+    /// A launch while the device is locked cannot read the Keychain. The store
+    /// reports that instead of an empty pairing list, and refuses every write
+    /// that would shrink the paired-server index.
+    @Test func unreadableKeychainLeavesStoreUnavailableAndIndexUntouched() throws {
+        let keptIds = ["sha256:locked-kept-a", "sha256:locked-kept-b"]
+        let newId = "sha256:locked-new"
+        let restoreIndex = replacePairedServerIndex(with: keptIds)
+        defer {
+            KeychainService.deleteServer(id: newId)
+            restoreIndex()
+        }
+
+        let store = ServerStore(loadServers: {
+            throw KeychainError.readFailed(errSecInteractionNotAllowed)
+        })
+        store.load()
+
+        #expect(store.loadState == .unavailable)
+        #expect(store.servers.isEmpty)
+
+        let server = try #require(PairedServer(from: makeTestCredentials(
+            host: "test-host", name: "test-host", fingerprint: newId
+        )))
+        #expect(throws: (any Error).self) { try store.persistServer(server) }
+        store.addOrUpdate(server)
+        store.remove(id: keptIds[0])
+
+        #expect(store.servers.isEmpty)
+        #expect(SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey) == keptIds)
+        #expect(UserDefaults.standard.stringArray(forKey: SharedConstants.pairedServerIdsKey) == keptIds)
+    }
+
+    @Test func storeLoadsAfterAnUnavailableRead() throws {
+        let server = try #require(PairedServer(from: makeTestCredentials(
+            host: "test-host", name: "test-host", fingerprint: "sha256:unlock-later"
+        )))
+        var keychainReadable = false
+        let store = ServerStore(loadServers: {
+            guard keychainReadable else {
+                throw KeychainError.readFailed(errSecInteractionNotAllowed)
+            }
+            return [server]
+        })
+
+        store.load()
+        #expect(store.loadState == .unavailable)
+
+        keychainReadable = true
+        store.load()
+        #expect(store.loadState == .loaded)
+        #expect(store.servers.map(\.id) == [server.id])
+    }
+
     // MARK: - Helpers
+
+    /// Sets both paired-server indexes; the returned closure restores them.
+    private func replacePairedServerIndex(with ids: [String]) -> () -> Void {
+        let key = SharedConstants.pairedServerIdsKey
+        let shared = SharedConstants.sharedDefaults.stringArray(forKey: key)
+        let standard = UserDefaults.standard.stringArray(forKey: key)
+        SharedConstants.sharedDefaults.set(ids, forKey: key)
+        UserDefaults.standard.set(ids, forKey: key)
+        return {
+            SharedConstants.sharedDefaults.set(shared, forKey: key)
+            UserDefaults.standard.set(standard, forKey: key)
+        }
+    }
 
     private func makeCleanStore() -> ServerStore {
         // Clear any leftover state from previous test runs.
-        // Must purge both UserDefaults index AND Keychain entries,
-        // otherwise the Keychain discovery fallback finds leaked
-        // entries from other test suites (ConnectionCoordinatorTests).
         UserDefaults.standard.removeObject(forKey: "pairedServerIds")
         KeychainService.deleteAllServers()
-        return ServerStore()
+        let store = ServerStore()
+        store.load()
+        return store
     }
 
     private func cleanupKeychain(_ store: ServerStore) {

@@ -19,6 +19,7 @@ struct WorkspaceNavigationServerScopeTests {
         }
 
         let serverStore = ServerStore()
+        serverStore.load()
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
         let navigation = AppNavigation()
 

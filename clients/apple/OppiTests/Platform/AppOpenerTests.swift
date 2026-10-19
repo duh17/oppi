@@ -1112,7 +1112,7 @@ private final class StubAuthenticator {
 
 @MainActor
 private final class OpenerHarness {
-    let serverStore = ServerStore()
+    let serverStore: ServerStore
     let coordinator: ConnectionCoordinator
     let navigation = AppNavigation()
     let composerDraftStore: ComposerDraftStore
@@ -1148,8 +1148,10 @@ private final class OpenerHarness {
         scopedLock = ScopedLockService(defaults: scopedDefaults, appLock: appLock, didLock: { _ in })
 
         // The Keychain may hold servers other suites paired; this fixture's
-        // list lives only in memory.
-        serverStore.replaceServersForPreview(servers)
+        // list is read from memory.
+        let serverStore = ServerStore(loadServers: { servers })
+        serverStore.load()
+        self.serverStore = serverStore
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
         self.coordinator = coordinator
         composerDraftStore = ComposerDraftStore(

@@ -56,7 +56,11 @@ enum NetworkPathRecoveryDecision {
 @MainActor @Observable
 final class ConnectionCoordinator {
     let serverStore: ServerStore
-    private let timelineCache: TimelineCache
+    /// nil uses `TimelineCache.shared`, resolved on first use: creating it
+    /// prepares the cache directory, which must wait for protected data, and
+    /// the app builds the coordinator at launch, possibly while locked.
+    private let injectedTimelineCache: TimelineCache?
+    private var timelineCache: TimelineCache { injectedTimelineCache ?? .shared }
     private let fileBrowserCache: FileBrowserCache
     /// Seen ledgers for each server's connection; nil keeps seen state in memory.
     private let seenStorage: SessionSeenLedgerStorage?
@@ -133,12 +137,12 @@ final class ConnectionCoordinator {
     init(
         serverStore: ServerStore,
         lanDiscovery: LANDiscovery = LANDiscovery(),
-        timelineCache: TimelineCache = .shared,
+        timelineCache: TimelineCache? = nil,
         fileBrowserCache: FileBrowserCache = .shared,
         seenStorage: SessionSeenLedgerStorage? = nil
     ) {
         self.serverStore = serverStore
-        self.timelineCache = timelineCache
+        injectedTimelineCache = timelineCache
         self.fileBrowserCache = fileBrowserCache
         self.seenStorage = seenStorage
         self.lanDiscovery = lanDiscovery

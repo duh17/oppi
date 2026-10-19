@@ -7,12 +7,35 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Serv
 ///
 /// Pure data store — no networking, no health checks.
 /// Persists via `KeychainService` (tokens) + UserDefaults (order/index).
+///
+/// The store does not read the Keychain when it is created: iOS can launch
+/// Oppi in the background while the device is locked, when paired-server items
+/// cannot be read. Launch calls `load()` once protected data is available.
 @MainActor @Observable
 final class ServerStore {
-    private(set) var servers: [PairedServer] = []
+    enum LoadState: Equatable, Sendable {
+        /// `load()` has not run.
+        case unloaded
+        /// The Keychain could not be read. `servers` is not the pairing list.
+        case unavailable
+        /// `servers` is the pairing list (possibly empty).
+        case loaded
+    }
 
-    init() {
-        load()
+    enum StoreError: LocalizedError, Equatable {
+        case notLoaded
+
+        var errorDescription: String? {
+            "Paired servers are not loaded"
+        }
+    }
+
+    private(set) var servers: [PairedServer] = []
+    private(set) var loadState: LoadState = .unloaded
+    @ObservationIgnored private let loadServers: () throws -> [PairedServer]
+
+    init(loadServers: @escaping () throws -> [PairedServer] = KeychainService.loadServers) {
+        self.loadServers = loadServers
     }
 
     #if DEBUG
@@ -21,6 +44,18 @@ final class ServerStore {
         self.servers = servers
     }
     #endif
+
+    /// Read the pairing list. A read failure leaves `servers` as it was and
+    /// marks the store `.unavailable`; it never stands in for "no servers".
+    func load() {
+        do {
+            servers = try loadServers().sorted { $0.sortOrder < $1.sortOrder }
+            loadState = .loaded
+        } catch {
+            loadState = .unavailable
+            logger.error("Paired servers unavailable: \(error.localizedDescription, privacy: .public)")
+        }
+    }
 
     // MARK: - CRUD
 
@@ -42,7 +77,8 @@ final class ServerStore {
         }
     }
 
-    /// Persist a paired server, throwing when the Keychain write fails.
+    /// Persist a paired server, throwing when the store is not loaded or the
+    /// Keychain write fails.
     ///
     /// The record is written through BEFORE the in-memory list is mutated, so a
     /// caller that catches the error observes the previous durable state (no
@@ -51,6 +87,7 @@ final class ServerStore {
         _ server: PairedServer,
         replacingStoredDeviceCredential: Bool = false
     ) throws {
+        try requireLoaded()
         let toSave: PairedServer
         if let idx = servers.firstIndex(where: { $0.id == server.id }) {
             var existing = servers[idx]
@@ -68,7 +105,7 @@ final class ServerStore {
         try save(toSave, replacingStoredDeviceCredential: replacingStoredDeviceCredential)
         // Adopt Keychain's merged credential so a stale writer cannot restore
         // older auth in memory. An explicit re-pair may replace the stored identity.
-        let persisted = KeychainService.loadServer(id: toSave.id) ?? toSave
+        let persisted = try KeychainService.loadServer(id: toSave.id) ?? toSave
 
         if let idx = servers.firstIndex(where: { $0.id == persisted.id }) {
             servers[idx] = persisted
@@ -93,6 +130,10 @@ final class ServerStore {
 
     /// Remove a paired server by ID.
     func remove(id: String) {
+        guard loadState == .loaded else {
+            logger.error("Refusing to remove server \(id.prefix(16), privacy: .public): paired servers not loaded")
+            return
+        }
         servers.removeAll { $0.id == id }
         KeychainService.deleteServer(id: id)
         saveIndex()
@@ -101,7 +142,8 @@ final class ServerStore {
 
     /// Update the badge icon for a server.
     func setBadgeIcon(id: String, to icon: ServerBadgeIcon) {
-        guard let idx = servers.firstIndex(where: { $0.id == id }) else { return }
+        guard loadState == .loaded,
+              let idx = servers.firstIndex(where: { $0.id == id }) else { return }
         servers[idx].badgeIcon = icon
         do {
             try save(servers[idx])
@@ -118,6 +160,7 @@ final class ServerStore {
         expectedDeviceId: String,
         result: DeviceAuthRefreshResult
     ) throws -> DeviceCredential {
+        try requireLoaded()
         guard servers.contains(where: { $0.id == id }) else {
             throw KeychainCredentialMergeError.itemNotFound
         }
@@ -147,9 +190,10 @@ final class ServerStore {
 
     // MARK: - Persistence
 
-    private func load() {
-        servers = KeychainService.loadServers()
-        servers.sort { $0.sortOrder < $1.sortOrder }
+    /// Writes from a store that never read the pairing list would replace the
+    /// durable index with a partial one and hide the other servers.
+    private func requireLoaded() throws {
+        guard loadState == .loaded else { throw StoreError.notLoaded }
     }
 
     private func save(
@@ -167,6 +211,7 @@ final class ServerStore {
     /// Shared suite: readable by widget extension for Live Activity intents.
     /// Standard: backward-compatible fallback.
     private func saveIndex() {
+        guard loadState == .loaded else { return }
         let ids = servers.map(\.id)
         SharedConstants.sharedDefaults.set(ids, forKey: SharedConstants.pairedServerIdsKey)
         UserDefaults.standard.set(ids, forKey: SharedConstants.pairedServerIdsKey)

@@ -60,15 +60,22 @@ struct StartOppiSessionIntent: AppIntent {
         let requestID = IntentSessionOpenTrigger.shared.issueRequestID()
         let launchKey = "ios-siri-start-\(UUID().uuidString)"
 
+        let pairedServers: [PairedServer]
+        do {
+            pairedServers = try IntentPairedServers.load()
+        } catch {
+            return .result(dialog: IntentDialog(stringLiteral: IntentPairedServers.unavailableDialog))
+        }
+
         let target: IntentSessionDisambiguation.WorkspaceHit
-        switch try await resolveTarget() {
+        switch try await resolveTarget(pairedServers: pairedServers) {
         case .resolved(let hit):
             target = hit
         case .dialog(let dialog):
             return .result(dialog: IntentDialog(stringLiteral: dialog))
         }
 
-        guard let paired = KeychainService.loadServers().first(where: { $0.id == target.serverId }) else {
+        guard let paired = pairedServers.first(where: { $0.id == target.serverId }) else {
             return .result(dialog: IntentDialog(stringLiteral: StartOppiSessionDialog.noServer))
         }
 
@@ -86,7 +93,7 @@ struct StartOppiSessionIntent: AppIntent {
                 prompt: confirmable,
                 workspaceName: target.workspaceName,
                 serverName: target.serverName,
-                pairedServerCount: KeychainService.loadServers().count,
+                pairedServerCount: pairedServers.count,
                 confirm: { dialog in
                     try await requestConfirmation(
                         actionName: .send,
@@ -169,11 +176,11 @@ struct StartOppiSessionIntent: AppIntent {
         return StartOppiSessionConfirmation.normalized(text).isEmpty ? nil : text
     }
 
-    private func resolveTarget() async throws -> TargetResolution {
+    private func resolveTarget(pairedServers: [PairedServer]) async throws -> TargetResolution {
         if let workspace {
             // A saved workspace resolves from its id alone (it may carry only a generic
             // name), so the confirmation names the server's current workspace instead.
-            guard let paired = KeychainService.loadServers().first(where: { $0.id == workspace.serverId }) else {
+            guard let paired = pairedServers.first(where: { $0.id == workspace.serverId }) else {
                 return .dialog(StartOppiSessionDialog.noServer)
             }
             let workspaces: [Workspace]
@@ -197,7 +204,6 @@ struct StartOppiSessionIntent: AppIntent {
             )
         }
 
-        let pairedServers = KeychainService.loadServers()
         if pairedServers.isEmpty {
             return .dialog(StartOppiSessionDialog.noServer)
         }
@@ -209,7 +215,7 @@ struct StartOppiSessionIntent: AppIntent {
         var catalogs: [IntentSessionDisambiguation.Catalog] = []
 
         func refreshCatalogs() async {
-            let snapshots = await IntentPairedWorkspaceCatalog.loadReachable()
+            let snapshots = await IntentPairedWorkspaceCatalog.loadReachable(servers: pairedServers)
             catalogs = snapshots.map { snapshot in
                 IntentSessionDisambiguation.Catalog(
                     serverId: snapshot.server.id,

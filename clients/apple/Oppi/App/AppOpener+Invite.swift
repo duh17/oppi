@@ -68,6 +68,9 @@ extension AppOpener {
     }
 
     func runInviteBootstrap(_ url: URL, attempt: UInt64) async {
+        // An invite that cold-launched the app arrives before launch has read
+        // the pairing list; enrolling against an unread store would fail.
+        await awaitPairedServers()
 #if DEBUG
         // The E2E launch passes its invite both through the environment and,
         // on a relaunch, as a URL. Pair once per process.
@@ -154,9 +157,10 @@ extension AppOpener {
                 return
             }
 #endif
-            if AppLaunchPairingPolicy.shouldShowOnboardingAfterInviteFailure(
+            if AppLaunchPairingPolicy.route(
+                loadState: serverStore.loadState,
                 pairedServerCount: serverStore.servers.count
-            ) {
+            ) == .onboarding {
                 navigation.showOnboarding = true
             }
             toast("Invite link failed: \(error.localizedDescription)")

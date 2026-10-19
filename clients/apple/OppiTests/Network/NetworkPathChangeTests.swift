@@ -545,6 +545,7 @@ struct ConnectionCoordinatorPathChangeTests {
         UserDefaults.standard.removeObject(forKey: "pairedServerIds")
         KeychainService.deleteAllServers()
         let store = ServerStore()
+        store.load()
         let coordinator = ConnectionCoordinator(serverStore: store)
         coordinator.networkPathType = { "wifi" }
         return (coordinator, store)

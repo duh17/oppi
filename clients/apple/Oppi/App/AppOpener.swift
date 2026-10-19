@@ -261,6 +261,9 @@ final class AppOpener {
     @ObservationIgnored var currentTask: Task<Void, Never>?
     @ObservationIgnored var invitePairingGate = InvitePairingGate()
     @ObservationIgnored var invitePairingTask: Task<Void, Never>?
+    /// Returns once launch has read the pairing list. The app sets it; an
+    /// invite waits on it before enrolling.
+    @ObservationIgnored var awaitPairedServers: @MainActor () async -> Void = {}
 #if DEBUG
     /// Replaces the network round trip for a server switch in unit tests.
     @ObservationIgnored var _serverReadyForTesting: (@MainActor (String) async -> Bool)?

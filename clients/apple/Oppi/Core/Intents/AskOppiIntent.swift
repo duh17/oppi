@@ -38,7 +38,13 @@ struct AskOppiIntent: AppIntent {
             return .result(dialog: IntentDialog(stringLiteral: AppLockIntentGate.lockedDialog))
         }
 
-        guard let server = loadPairedServer() else {
+        let servers: [PairedServer]
+        do {
+            servers = try IntentPairedServers.load()
+        } catch {
+            return .result(dialog: IntentDialog(stringLiteral: IntentPairedServers.unavailableDialog))
+        }
+        guard let server = pairedServer(in: servers) else {
             return .result(dialog: "No paired server found. Open Oppi to pair first.")
         }
 
@@ -157,9 +163,8 @@ struct AskOppiIntent: AppIntent {
         }
     }
 
-    /// Load the workspace's server when one is selected; otherwise the first paired server.
-    private func loadPairedServer() -> PairedServer? {
-        let servers = KeychainService.loadServers()
+    /// The workspace's server when one is selected; otherwise the first paired server.
+    private func pairedServer(in servers: [PairedServer]) -> PairedServer? {
         if let workspace {
             return servers.first(where: { $0.id == workspace.serverId })
         }

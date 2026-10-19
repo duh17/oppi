@@ -242,8 +242,10 @@ struct LocalCacheAtRestTests {
         KeychainService.deleteAllServers()
         let timeline = TimelineCache(rootURL: base.appending(path: "timeline"))
         let files = FileBrowserCache(root: base.appending(path: "files"))
+        let serverStore = ServerStore()
+        serverStore.load()
         let coordinator = ConnectionCoordinator(
-            serverStore: ServerStore(),
+            serverStore: serverStore,
             timelineCache: timeline,
             fileBrowserCache: files
         )

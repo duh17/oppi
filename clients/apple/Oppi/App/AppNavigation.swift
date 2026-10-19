@@ -18,9 +18,19 @@ enum PairedLaunchSequence {
     }
 }
 
+enum AppLaunchRoute: Equatable {
+    /// Paired servers are not known yet: keep the blank launch canvas.
+    case keepResolving
+    case onboarding
+    case pairedShell
+}
+
 enum AppLaunchPairingPolicy {
-    static func shouldShowOnboardingAfterInviteFailure(pairedServerCount: Int) -> Bool {
-        pairedServerCount == 0
+    /// Onboarding only after the pairing list was read and is empty. A store
+    /// that could not read the Keychain (device locked) is not an empty one.
+    static func route(loadState: ServerStore.LoadState, pairedServerCount: Int) -> AppLaunchRoute {
+        guard loadState == .loaded else { return .keepResolving }
+        return pairedServerCount == 0 ? .onboarding : .pairedShell
     }
 }
 

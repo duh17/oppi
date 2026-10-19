@@ -227,6 +227,7 @@ struct RestorationStateTests {
         RestorationState.clear()
 
         let serverStore = ServerStore()
+        serverStore.load()
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
 
         // Simulate switching to a server

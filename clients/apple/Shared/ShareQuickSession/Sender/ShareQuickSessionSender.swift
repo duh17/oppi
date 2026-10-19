@@ -133,8 +133,7 @@ enum ShareQuickSessionCredentialStore {
         }
 
         // The defaults index can be missing or stale after an upgrade. Discover
-        // only within the shared access group; app-only legacy credentials are
-        // migrated by KeychainService when the main app loads them.
+        // only within the shared access group.
         for server in discoverSharedServers() {
             serversByID[server.id] = server
         }

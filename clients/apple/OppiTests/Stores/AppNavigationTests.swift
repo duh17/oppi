@@ -110,13 +110,11 @@ struct AppNavigationShellRoutingTests {
         #expect(result == "ready")
     }
 
-    @Test func failedInviteCannotShowOnboardingWhenAnyPairingExists() {
-        #expect(!AppLaunchPairingPolicy.shouldShowOnboardingAfterInviteFailure(
-            pairedServerCount: 1
-        ))
-        #expect(AppLaunchPairingPolicy.shouldShowOnboardingAfterInviteFailure(
-            pairedServerCount: 0
-        ))
+    @Test func launchShowsOnboardingOnlyAfterAnEmptySuccessfulLoad() {
+        #expect(AppLaunchPairingPolicy.route(loadState: .loaded, pairedServerCount: 0) == .onboarding)
+        #expect(AppLaunchPairingPolicy.route(loadState: .unavailable, pairedServerCount: 0) == .keepResolving)
+        #expect(AppLaunchPairingPolicy.route(loadState: .unloaded, pairedServerCount: 0) == .keepResolving)
+        #expect(AppLaunchPairingPolicy.route(loadState: .loaded, pairedServerCount: 2) == .pairedShell)
     }
 
     @Test func inviteClaimPredicateClaimsOnlyConnectAndPairRoutes() throws {
