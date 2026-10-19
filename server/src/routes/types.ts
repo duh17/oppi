@@ -55,10 +55,9 @@ export interface RouteContext {
   getProviderAuth?: SttGetAuth;
   /**
    * Voice backend states behind `capabilities.dictationStream`/`speech`/`liveVoice` and
-   * `voiceBackends`; also told how each read-aloud request went. Optional so route tests can
-   * omit it; without it no voice feature is advertised.
+   * `voiceBackends`; also told how each read-aloud request went.
    */
-  voiceBackendHealth?: VoiceBackendHealth;
+  voiceBackendHealth: VoiceBackendHealth;
   searchIndex?: SearchIndex;
   appEvents?: AppEventEmitter;
   serverStartedAt: number;

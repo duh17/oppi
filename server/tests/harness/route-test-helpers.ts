@@ -1,10 +1,16 @@
 import type { IncomingMessage } from "node:http";
 import { PassThrough, Readable } from "node:stream";
 import { MobileRendererRegistry } from "../../src/mobile-renderer.js";
+import { VoiceBackendHealth } from "../../src/voice-backend-health.js";
 
 /** Mounted route fixtures need the same required registry contract as SessionManager. */
 export function makeRouteSessions(): { mobileRenderer: MobileRendererRegistry } {
   return { mobileRenderer: new MobileRendererRegistry() };
+}
+
+/** A real voice backend owner with no `asr` or `tts`: every feature `not_configured`, no probes. */
+export function makeUnconfiguredVoiceBackendHealth(): VoiceBackendHealth {
+  return new VoiceBackendHealth({ loadedConfig: () => ({}), voiceConfig: () => ({}) });
 }
 
 export interface MockResponse {

@@ -35,7 +35,7 @@ import {
   DESKTOP_VIEW_STREAM_PATH,
   DESKTOP_VIEW_WIRE_VERSION,
 } from "../src/types/protocol.js";
-import { makeResponse } from "./harness/route-test-helpers.js";
+import { makeResponse, makeUnconfiguredVoiceBackendHealth } from "./harness/route-test-helpers.js";
 
 const tempDirs: string[] = [];
 
@@ -799,6 +799,7 @@ async function getCapabilities(config: Record<string, unknown>): Promise<{
     sessionRuntimes: { getActiveSessionIds: () => new Set() },
     skillRegistry: { list: () => [] },
     getModelCatalog: () => [],
+    voiceBackendHealth: makeUnconfiguredVoiceBackendHealth(),
     serverStartedAt: Date.now(),
     serverVersion: "test",
     piVersion: "test",

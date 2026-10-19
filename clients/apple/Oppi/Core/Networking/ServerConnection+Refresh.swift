@@ -505,9 +505,14 @@ extension ServerConnection {
 
         // 1. Make capability discovery part of foreground recovery so a cold
         // workspace/session list can start the global app-event stream without
-        // first opening a focused chat stream. Reload loaded capabilities too: voice
-        // features follow whether their backend answers, which changes while the app is away.
-        await refreshStreamCapabilities()
+        // first opening a focused chat stream. Reload loaded capabilities too, without
+        // waiting: voice features follow whether their backend answers, which changes while
+        // the app is away, but the list and session refreshes below need only the snapshot.
+        if serverCapabilities == nil {
+            await refreshStreamCapabilities()
+        } else {
+            Task { await refreshStreamCapabilities() }
+        }
 
         // 2. Reopen the global app event stream when foreground recovery finds it stopped.
         if appEventStreamAvailable, !appEventStreamCoordinator.isRunning {

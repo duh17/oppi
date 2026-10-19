@@ -45,12 +45,18 @@ extension ChatTimelineController {
     }
 
     /// Read-aloud control for a finished assistant message. Nil when the server
-    /// does not offer read aloud. Playback state comes from the shared audio
-    /// player; its state notifications reconfigure this row.
+    /// does not offer read aloud, except on the reply whose read just failed: a failure
+    /// reloads capabilities, which can take the speaker away, and that reply keeps its
+    /// reason (without the speaker) until the next attempt or until it leaves the screen.
+    /// Playback state comes from the shared audio player; its state notifications
+    /// reconfigure this row.
     private func assistantSpeech(itemID: String, text: String) -> AssistantMessageSpeech? {
-        guard readAloudAvailable, let audioPlayer,
-              let read = sessionContent?.speechReader() else { return nil }
+        guard let audioPlayer else { return nil }
         let playbackID = AudioPlayerService.speechPlaybackItemID(forMessageID: itemID)
+        let failure = audioPlayer.playbackFailure.flatMap { $0.itemID == playbackID ? $0.reason : nil }
+        guard readAloudAvailable, let read = sessionContent?.speechReader() else {
+            return failure.map { AssistantMessageSpeech(state: .idle, failure: $0, toggle: nil) }
+        }
         let state: AssistantMessageSpeech.State = if audioPlayer.playingItemID == playbackID {
             .playing
         } else if audioPlayer.loadingItemID == playbackID {
@@ -58,7 +64,6 @@ extension ChatTimelineController {
         } else {
             .idle
         }
-        let failure = audioPlayer.playbackFailure.flatMap { $0.itemID == playbackID ? $0.reason : nil }
         return AssistantMessageSpeech(state: state, failure: failure) { [weak audioPlayer] in
             audioPlayer?.toggleSpeech(messageID: itemID) { try await read(text) }
         }

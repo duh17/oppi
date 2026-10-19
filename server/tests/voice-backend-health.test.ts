@@ -243,13 +243,30 @@ describe("voice backend health in GET /server/info", () => {
     expect(revived.requests()).toBe(0);
 
     now += 1;
-    // Stale: this read still serves the cached result and starts a probe.
+    // Stale: this read still serves the cached result and starts a probe in the background,
+    // so the app reads once more after the probe timeout (its voice backend follow-up).
     expect(feature(await serverInfo(owner), "speech").state).toBe("unreachable");
-    await owner.refresh();
+    await vi.waitFor(() => expect(revived.requests()).toBe(1));
+    await vi.waitFor(async () => {
+      expect(feature(await serverInfo(owner), "speech").state).toBe("ready");
+    });
     const back = await serverInfo(owner);
     expect(feature(back, "speech")).toMatchObject({ state: "ready", checkedAt: now });
     expect(back.capabilities.speech).toEqual({ version: 1 });
     expect(revived.requests()).toBe(1);
+  });
+
+  it("never echoes an endpoint that is not an http(s) URL", async () => {
+    const info = await serverInfo(
+      health({ loaded: { tts: { provider: "http", endpoint: "ws://user:token@voice.lan:7938" } } }),
+    );
+    expect(feature(info, "speech")).toEqual({
+      feature: "speech",
+      label: "Read aloud",
+      state: "unreachable",
+      detail: "Endpoint is not a valid http(s) URL",
+    });
+    expect(JSON.stringify(info)).not.toContain("token");
   });
 
   it("caches a ready backend for the TTL and reprobes once stale", async () => {
@@ -460,7 +477,8 @@ describe("voice backend health from real read-aloud requests", () => {
     const answered = await serverInfo(owner);
     expect(feature(answered, "speech")).toMatchObject({
       state: "ready",
-      detail: "Last request failed: TTS backend returned 404: not found",
+      // Status only: a backend's error body can echo the text being read.
+      detail: "Last request failed: TTS backend returned 404",
     });
     expect(answered.capabilities.speech).toEqual({ version: 1 });
 
@@ -474,6 +492,43 @@ describe("voice backend health from real read-aloud requests", () => {
     expect(recovered.detail).toBeUndefined();
     // Every flip came from a real request; nothing was probed after the first refresh.
     expect(revived.requests()).toBe(2);
+  });
+
+  it("keeps a failed connect over a probe that was in flight when it happened", async () => {
+    let answerProbe!: () => void;
+    const tts = await backend((_req, res) => {
+      answerProbe = () => res.end("ok");
+    });
+    const probes: Promise<Response>[] = [];
+    const owner = health(
+      { loaded: { tts: { provider: "http", endpoint: tts.url } } },
+      {
+        fetchFn: (input, init) => {
+          const probe = fetch(input, init);
+          probes.push(probe);
+          return probe;
+        },
+      },
+    );
+
+    expect(feature(await serverInfo(owner), "speech").state).toBe("checking");
+    await vi.waitFor(() => expect(tts.requests()).toBe(1));
+
+    // A read aloud fails to connect while the probe waits for its answer.
+    owner.connectFailed(
+      tts.url,
+      new TypeError("fetch failed", { cause: new Error("connect ECONNRESET") }),
+    );
+    answerProbe();
+    await probes[0];
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The probe started first; the request is the newer evidence.
+    expect(feature(await serverInfo(owner), "speech")).toMatchObject({
+      state: "unreachable",
+      detail: "connect ECONNRESET",
+    });
+    expect(probes).toHaveLength(1);
   });
 
   it("marks Live Voice unavailable when a call's reply cannot reach the voice", async () => {

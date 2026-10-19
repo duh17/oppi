@@ -46,7 +46,11 @@ import { createIdentityRoutes } from "../src/routes/identity.js";
 import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext } from "../src/routes/types.js";
 import type { ServerMessage, Session, SessionThreadResponse } from "../src/types.js";
-import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import {
+  makeRequest,
+  makeResponse,
+  makeUnconfiguredVoiceBackendHealth,
+} from "./harness/route-test-helpers.js";
 
 const managers: SessionManager[] = [];
 const gates: Array<() => void> = [];
@@ -1425,6 +1429,7 @@ describe("durable engine on create requests", () => {
               ...routeContext,
               skillRegistry: { list: () => [] },
               getModelCatalog: () => [],
+              voiceBackendHealth: makeUnconfiguredVoiceBackendHealth(),
               serverStartedAt: Date.now(),
               serverVersion: "test",
               piVersion: "test",

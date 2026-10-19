@@ -224,11 +224,8 @@ export class VoiceBackendHealth implements SpeechBackendObserver {
   private httpHealth(endpoint: string): BackendHealth {
     const origin = originOf(endpoint);
     if (!origin) {
-      return {
-        state: "unreachable",
-        target: endpoint.trim(),
-        detail: "Endpoint is not a valid URL",
-      };
+      // No target: an unparsed string may carry credentials (`ws://user:token@host`).
+      return { state: "unreachable", detail: "Endpoint is not a valid http(s) URL" };
     }
     void this.ensureFresh(origin);
     const result = this.results.get(origin);

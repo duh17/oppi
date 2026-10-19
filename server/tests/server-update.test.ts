@@ -28,7 +28,11 @@ import { Storage } from "../src/storage.js";
 import { SERVER_UPDATE_ERROR } from "../src/types/server-update.js";
 import type { ServerUpdateInfo } from "../src/types/server-update.js";
 import { getPackageInfo } from "../src/version.js";
-import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import {
+  makeRequest,
+  makeResponse,
+  makeUnconfiguredVoiceBackendHealth,
+} from "./harness/route-test-helpers.js";
 
 const originalPath = process.env.PATH;
 const originalFakeRoot = process.env.FAKE_NPM_ROOT;
@@ -203,6 +207,7 @@ function identityCtx(service: ServerUpdateService): RouteContext {
     sessionRuntimes: { getActiveSessionIds: () => new Set() },
     skillRegistry: { list: () => [] },
     getModelCatalog: () => [],
+    voiceBackendHealth: makeUnconfiguredVoiceBackendHealth(),
     serverStartedAt: Date.now(),
     serverVersion: getPackageInfo().version,
     piVersion: "0.0.0",

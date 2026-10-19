@@ -272,6 +272,67 @@ struct ChatTimelineCoordinatorTests {
         #expect(try apply(readAloud: false) == nil)
     }
 
+    /// A failed read aloud reloads capabilities, which can take the speaker away. The reply
+    /// that failed keeps its reason, without the speaker, until it leaves the screen; the
+    /// other replies lose the bar.
+    @MainActor
+    @Test func failedReplyKeepsItsReasonWhenTheSpeakerGoesAway() async throws {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        harness.connection.setAPIClientForTesting(APIClient(
+            baseURL: URL(string: "http://test.local:7749")!,
+            token: "sk_test"
+        ))
+        let replies: [ChatItem] = [
+            .assistantMessage(id: "assistant-1", text: "First.", timestamp: Date()),
+            .assistantMessage(id: "assistant-2", text: "Second.", timestamp: Date()),
+        ]
+        func speech(item: Int) throws -> AssistantMessageSpeech? {
+            let cell = try configuredTimelineCell(in: harness.collectionView, item: item)
+            return try #require(cell.contentConfiguration as? AssistantTimelineRowConfiguration).speech
+        }
+        func apply(readAloud: Bool) {
+            harness.coordinator.apply(
+                configuration: makeTimelineConfiguration(
+                    items: replies,
+                    sessionId: "session-a",
+                    reducer: harness.reducer,
+                    toolOutputStore: harness.toolOutputStore,
+                    toolArgsStore: harness.toolArgsStore,
+                    connection: harness.connection,
+                    scrollController: harness.scrollController,
+                    audioPlayer: harness.audioPlayer,
+                    readAloudAvailable: readAloud
+                ),
+                to: harness.collectionView
+            )
+        }
+
+        apply(readAloud: true)
+        harness.audioPlayer.toggleSpeech(messageID: "assistant-1") {
+            throw APIError.server(status: 503, message: "Read aloud backend is not reachable")
+        }
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run { harness.audioPlayer.playbackFailure != nil }
+        })
+
+        // The reload says the backend is gone.
+        apply(readAloud: false)
+        let failed = try #require(try speech(item: 0))
+        #expect(failed.failure != nil)
+        #expect(failed.toggle == nil)
+        #expect(try speech(item: 1) == nil)
+
+        // It scrolls away; back on screen it has no bar.
+        let cell = try configuredTimelineCell(in: harness.collectionView, item: 0)
+        harness.coordinator.collectionView(
+            harness.collectionView,
+            didEndDisplaying: cell,
+            forItemAt: IndexPath(item: 0, section: 0)
+        )
+        harness.coordinator.reconfigureItems(["assistant-1"], in: harness.collectionView)
+        #expect(try speech(item: 0) == nil)
+    }
+
     @MainActor
     @Test func assistantMarkdownRowsRenderNatively() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")

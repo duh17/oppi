@@ -147,25 +147,26 @@ struct ServerInfoTests {
         #expect(try JSONDecoder().decode(ServerInfo.self, from: info("")).voiceBackends == nil)
     }
 
-    /// About This Server → Voice: only `ready` reads as available; an unknown state
-    /// from a newer server reads as not available.
+    /// About This Server → Voice: only `ready` reads as available, states the owner can fix
+    /// read as needing attention, and an unknown state from a newer server reads as not
+    /// available. Each state has its own symbol.
     @Test func voiceBackendPresentationMapsEveryState() {
         func presentation(_ state: String) -> VoiceBackendPresentation {
             VoiceBackendPresentation(ServerInfo.VoiceBackend(feature: "f", label: "F", state: state).health)
         }
-        let cases: [(String, String, Bool)] = [
-            ("ready", "Ready", true),
-            ("checking", "Checking", false),
-            ("unreachable", "Not reachable", false),
-            ("needs_credentials", "Needs sign-in", false),
-            ("not_configured", "Not set up", false),
-            ("degraded", "Not available", false),
+        let cases: [(state: String, available: Bool, attention: Bool)] = [
+            ("ready", true, false),
+            ("checking", false, false),
+            ("unreachable", false, true),
+            ("needs_credentials", false, true),
+            ("not_configured", false, false),
+            ("degraded", false, false),
         ]
-        for (state, title, available) in cases {
-            #expect(presentation(state).title == title, "\(state)")
+        for (state, available, attention) in cases {
             #expect(presentation(state).isAvailable == available, "\(state)")
+            #expect(presentation(state).needsAttention == attention, "\(state)")
         }
-        #expect(Set(cases.map { presentation($0.0).symbol }).count == cases.count)
+        #expect(Set(cases.map { presentation($0.state).symbol }).count == cases.count)
     }
 
     @Test func requiredSplitStreamCapabilitiesIgnoreOptionalAudio() {

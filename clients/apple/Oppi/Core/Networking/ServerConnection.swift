@@ -160,6 +160,9 @@ final class ServerConnection {
     private var streamCapabilitiesRefreshFailed = false
     private var streamCapabilitiesRefreshTask: Task<Void, Never>?
     private var streamCapabilitiesGeneration: UInt64 = 0
+    /// The one `/server/info` read scheduled after a load found a voice backend still
+    /// `checking` or `unreachable` (`scheduleVoiceBackendFollowUpIfNeeded`).
+    private var voiceBackendFollowUpTask: Task<Void, Never>?
     private(set) var focusedSessionStreamEndpointKind = "none"
     private var focusedSessionStreamSessionId: String?
     private var focusedSessionStreamWorkspaceId: String?
@@ -418,6 +421,9 @@ final class ServerConnection {
 
     /// Test seam: shorten the bounded external-open claim window.
     var _externalSessionOpenClaimWindowForTesting: Duration?
+
+    /// Test seam: shorten the wait before the voice backend follow-up read.
+    var _voiceBackendFollowUpDelayForTesting: Duration?
 
     /// Test seam: replace compact sidebar Git summary HTTP fetches.
     var _getWorkspaceGitSummaryForTesting: ((String) async throws -> WorkspaceGitSummary)?
@@ -1011,6 +1017,8 @@ final class ServerConnection {
         disconnectAppEventStream()
         streamCapabilitiesRefreshTask?.cancel()
         streamCapabilitiesRefreshTask = nil
+        voiceBackendFollowUpTask?.cancel()
+        voiceBackendFollowUpTask = nil
         workspaceGitSummaryRefreshTasks.values.forEach { $0.cancel() }
         workspaceGitSummaryRefreshTasks.removeAll()
         workspaceGitSummaryRefreshGeneration.removeAll()
@@ -1376,7 +1384,9 @@ final class ServerConnection {
         await refreshStreamCapabilities()
     }
 
-    func refreshStreamCapabilities() async {
+    /// Single-flight `/server/info` load. A caller that joins a load in flight gets that
+    /// load's behavior; `schedulesVoiceBackendFollowUp` applies to a load this call starts.
+    func refreshStreamCapabilities(schedulesVoiceBackendFollowUp: Bool = true) async {
         guard let apiClient else { return }
         if let inFlight = streamCapabilitiesRefreshTask {
             await inFlight.value
@@ -1396,6 +1406,9 @@ final class ServerConnection {
                 // A reload of loaded capabilities (foreground, failed read aloud) leaves a
                 // running app-event stream alone; foreground recovery restarts a stopped one.
                 self.applyStreamCapabilities(info, startAppEventStream: !hadLoadedCapabilities)
+                if schedulesVoiceBackendFollowUp {
+                    self.scheduleVoiceBackendFollowUpIfNeeded(info.voiceBackends)
+                }
             } catch {
                 guard self.streamCapabilitiesGeneration == generation else { return }
                 // Do not let a transient handoff failure permanently poison stream
@@ -1421,6 +1434,30 @@ final class ServerConnection {
 
         streamCapabilitiesRefreshTask = task
         await task.value
+    }
+
+    static let voiceBackendFollowUpDelay: Duration = .seconds(2)
+
+    /// `/server/info` never waits for a voice backend probe: a read that finds a backend
+    /// `checking` or `unreachable` may only have started one (1.5 s timeout on the server).
+    /// Read once more after it settles, so a backend that came back shows its features on
+    /// this foreground rather than the next. The follow-up read schedules nothing, so a
+    /// backend that stays down costs one extra request, never a loop.
+    private func scheduleVoiceBackendFollowUpIfNeeded(_ backends: [ServerInfo.VoiceBackend]?) {
+        guard voiceBackendFollowUpTask == nil,
+              backends?.contains(where: { $0.health == .checking || $0.health == .unreachable }) == true
+        else { return }
+        let generation = streamCapabilitiesGeneration
+        let delay = _voiceBackendFollowUpDelayForTesting ?? Self.voiceBackendFollowUpDelay
+        voiceBackendFollowUpTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            // A transport reset cancels this task and bumps the generation.
+            guard let self, !Task.isCancelled, self.streamCapabilitiesGeneration == generation else {
+                return
+            }
+            self.voiceBackendFollowUpTask = nil
+            await self.refreshStreamCapabilities(schedulesVoiceBackendFollowUp: false)
+        }
     }
 
     func noteServerVersionAfterUpdate(_ version: String) {

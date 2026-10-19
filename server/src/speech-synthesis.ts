@@ -265,7 +265,10 @@ function toPcm16(data: Buffer, tag: number, bits: number): Buffer {
  */
 export interface SpeechBackendObserver {
   requestSucceeded(endpoint: string): void;
-  /** The backend answered with an error. It is reachable. */
+  /**
+   * The backend answered with an error. It is reachable. `message` is shown on About This
+   * Server, so it never carries the backend's response body.
+   */
   requestFailed(endpoint: string, message: string): void;
   /** The request never reached the backend (refused, DNS, reset before a response). */
   connectFailed(endpoint: string, error: unknown): void;
@@ -344,7 +347,11 @@ function createSynthesizer(tts: TtsConfig | undefined, deps: SpeechDeps): Synthe
       return audio;
     } catch (error) {
       if (!signal.aborted && error instanceof SpeechError) {
-        observer?.requestFailed(endpoint, error.message);
+        // Status only for a refused request: the backend's error body can echo the text read.
+        observer?.requestFailed(
+          endpoint,
+          response.ok ? error.message : `TTS backend returned ${response.status}`,
+        );
       }
       throw error;
     }

@@ -231,7 +231,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         contentStack.addArrangedSubview(markdownView)
         contentStack.addArrangedSubview(actionBar)
         contentStack.setCustomSpacing(-AssistantMessageActionBar.overlapAboveBar, after: markdownView)
-        actionBar.onToggleSpeech = { [weak self] in self?.currentConfiguration.speech?.toggle() }
+        actionBar.onToggleSpeech = { [weak self] in self?.currentConfiguration.speech?.toggle?() }
 
         addSubview(bubbleContainer)
         bubbleContainer.addSubview(iconBadge)
@@ -337,7 +337,9 @@ struct AssistantMessageSpeech {
     let state: State
     /// Why the last attempt failed, shown until the next attempt.
     let failure: String?
-    let toggle: () -> Void
+    /// Nil when the server no longer offers read aloud: the bar keeps only `failure`, so
+    /// the reply that just failed still says why after its speaker goes away.
+    let toggle: (() -> Void)?
 }
 
 /// Read-aloud control under a finished assistant message.
@@ -402,6 +404,7 @@ private final class AssistantMessageActionBar: UIView {
     /// Hidden while streaming or when the server offers no read aloud.
     func apply(itemID: String?, speech: AssistantMessageSpeech?, tint: UIColor) {
         isHidden = speech == nil
+        speechButton.isHidden = speech?.toggle == nil
         speechButton.tintColor = tint
         speechButton.accessibilityIdentifier = itemID.map { "chat.timeline.assistant.\($0).readAloud" }
         let state = speech?.state ?? .idle

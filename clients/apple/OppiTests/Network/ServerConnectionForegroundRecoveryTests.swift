@@ -209,64 +209,73 @@ struct ServerConnectionForegroundRecoveryTests {
     }
 
     /// Voice features follow their backend: foreground recovery reloads capabilities that are
-    /// already loaded, and a failed read aloud reloads them too, so the speaker goes away with
-    /// its backend and comes back with it.
+    /// already loaded (without waiting for them), and a failed read aloud reloads them too, so
+    /// the speaker goes away with its backend and comes back with it.
     @Test func voiceCapabilitiesReloadOnForegroundAndAfterFailedReadAloud() async throws {
-        let speechBackendUp = VoiceBackendSwitch()
-        VoiceCapabilityURLProtocol.handler = { request in
-            let url = try #require(request.url)
-            if url.path == "/server/info" {
-                let base = foregroundRecoveryServerInfo()
-                let info = ServerInfo(
-                    name: base.name, version: base.version, uptime: base.uptime, os: base.os,
-                    arch: base.arch, hostname: base.hostname, nodeVersion: base.nodeVersion,
-                    piVersion: base.piVersion, configVersion: base.configVersion,
-                    identity: nil, uploadProtocol: nil, images: nil,
-                    capabilities: .init(
-                        sessionStream: .init(version: 1),
-                        dictationStream: nil,
-                        appEventStream: nil,
-                        extensionNativeUI: nil,
-                        speech: speechBackendUp.isUp ? .init(version: 1) : nil
-                    ),
-                    stats: base.stats
-                )
-                return (try JSONEncoder().encode(info), 200)
-            }
-            if url.path == "/speech" {
-                return (Data(#"{"error":"Read aloud backend is not reachable"}"#.utf8), 503)
-            }
-            return (Data(#"{"error":"not found"}"#.utf8), 404)
-        }
-        defer { VoiceCapabilityURLProtocol.handler = nil }
+        let backend = VoiceBackendScript(host: "voice-reload.test", speechStates: ["ready"])
+        let conn = makeVoiceCapabilityConnection(backend)
+        defer { backend.unregister() }
+        conn.setSplitStreamCapabilitiesForTesting(speech: true)
 
+        // The backend stopped while the app was away.
+        backend.setSpeechStates(["unreachable"])
+        await conn.reconnectIfNeeded()
+        #expect(await waitForMainActorCondition { !conn.speechAvailable })
+
+        backend.setSpeechStates(["ready"])
+        await conn.reconnectIfNeeded()
+        #expect(await waitForMainActorCondition { conn.speechAvailable })
+
+        // It stops again; the next read aloud fails and takes the speaker with it.
+        backend.setSpeechStates(["unreachable"])
+        let read = try #require(conn.sessionContent.speechReader())
+        await #expect(throws: (any Error).self) { _ = try await read("Hello.") }
+        #expect(await waitForMainActorCondition { !conn.speechAvailable })
+    }
+
+    /// `/server/info` answers before a backend probe settles, so the first read after a
+    /// backend comes back can still say `unreachable`. The app reads once more after the
+    /// probe's timeout, and the speaker returns on that same foreground. A backend that
+    /// stays down costs that one extra read, never a loop.
+    @Test func voiceBackendNotReadyIsReadOnceMoreAfterItsProbe() async throws {
+        // Read 1 started the server's probe; read 2 sees its result.
+        let backend = VoiceBackendScript(
+            host: "voice-follow-up.test",
+            speechStates: ["unreachable", "ready"],
+            reportsVoiceBackends: true
+        )
+        let conn = makeVoiceCapabilityConnection(backend)
+        defer { backend.unregister() }
+        conn._voiceBackendFollowUpDelayForTesting = .milliseconds(50)
+        conn.setSplitStreamCapabilitiesForTesting(speech: false)
+
+        await conn.reconnectIfNeeded()
+        #expect(await waitForMainActorCondition { conn.speechAvailable })
+        #expect(backend.infoReads == 2)
+
+        backend.setSpeechStates(["unreachable"])
+        await conn.refreshStreamCapabilities()
+        #expect(!conn.speechAvailable)
+        #expect(await waitForMainActorCondition { backend.infoReads == 4 })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            backend.infoReads == 4
+        })
+        #expect(!conn.speechAvailable)
+    }
+
+    private func makeVoiceCapabilityConnection(_ backend: VoiceBackendScript) -> ServerConnection {
         let conn = ServerConnection()
         conn.configure(credentials: ServerCredentials(
-            host: "test.local", port: 7749, token: "sk_test", name: "Test"
+            host: backend.host, port: 7749, token: "sk_test", name: "Test"
         ))
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [VoiceCapabilityURLProtocol.self]
         conn.setAPIClientForTesting(APIClient(
-            baseURL: URL(string: "http://test.local:7749")!,
+            baseURL: URL(string: "http://\(backend.host):7749")!,
             token: "sk_test",
             configuration: config
         ))
-        conn.setSplitStreamCapabilitiesForTesting(speech: true)
-
-        // The backend stopped while the app was away.
-        speechBackendUp.isUp = false
-        await conn.reconnectIfNeeded()
-        #expect(!conn.speechAvailable)
-
-        speechBackendUp.isUp = true
-        await conn.reconnectIfNeeded()
-        #expect(conn.speechAvailable)
-
-        // It stops again; the next read aloud fails and takes the speaker with it.
-        speechBackendUp.isUp = false
-        let read = try #require(conn.sessionContent.speechReader())
-        await #expect(throws: (any Error).self) { _ = try await read("Hello.") }
-        #expect(await waitForMainActorCondition { !conn.speechAvailable })
+        return conn
     }
 
     private func makeForegroundRecoveryConnection() -> ServerConnection {
@@ -326,24 +335,89 @@ private func foregroundRecoveryServerInfo() -> ServerInfo {
     )
 }
 
-private final class VoiceBackendSwitch: @unchecked Sendable {
-    var isUp = true
+/// A server whose read-aloud backend state the test scripts, one `/server/info` read at a
+/// time. Registered by host so tests running side by side keep their own.
+private final class VoiceBackendScript: @unchecked Sendable {
+    let host: String
+    private let reportsVoiceBackends: Bool
+    private let lock = NSLock()
+    private var speechStates: [String]
+    private var reads = 0
+
+    nonisolated(unsafe) private static var registry: [String: VoiceBackendScript] = [:]
+    private static let registryLock = NSLock()
+
+    init(host: String, speechStates: [String], reportsVoiceBackends: Bool = false) {
+        self.host = host
+        self.speechStates = speechStates
+        self.reportsVoiceBackends = reportsVoiceBackends
+        Self.registryLock.withLock { Self.registry[host] = self }
+    }
+
+    static func script(for host: String?) -> VoiceBackendScript? {
+        registryLock.withLock { host.flatMap { registry[$0] } }
+    }
+
+    func unregister() {
+        Self.registryLock.withLock { _ = Self.registry.removeValue(forKey: host) }
+    }
+
+    /// States for the next reads, in order; the last one repeats.
+    func setSpeechStates(_ states: [String]) {
+        lock.withLock { speechStates = states }
+    }
+
+    var infoReads: Int { lock.withLock { reads } }
+
+    func respond(to url: URL) throws -> (Data, Int) {
+        switch url.path {
+        case "/server/info":
+            let state = lock.withLock {
+                reads += 1
+                return speechStates.count > 1 ? speechStates.removeFirst() : speechStates[0]
+            }
+            return (try JSONEncoder().encode(serverInfo(speechState: state)), 200)
+        case "/speech":
+            return (Data(#"{"error":"Read aloud backend is not reachable"}"#.utf8), 503)
+        default:
+            return (Data(#"{"error":"not found"}"#.utf8), 404)
+        }
+    }
+
+    private func serverInfo(speechState: String) -> ServerInfo {
+        let base = foregroundRecoveryServerInfo()
+        return ServerInfo(
+            name: base.name, version: base.version, uptime: base.uptime, os: base.os,
+            arch: base.arch, hostname: base.hostname, nodeVersion: base.nodeVersion,
+            piVersion: base.piVersion, configVersion: base.configVersion,
+            identity: nil, uploadProtocol: nil, images: nil,
+            capabilities: .init(
+                sessionStream: .init(version: 1),
+                dictationStream: nil,
+                appEventStream: nil,
+                extensionNativeUI: nil,
+                speech: speechState == "ready" ? .init(version: 1) : nil
+            ),
+            stats: base.stats,
+            voiceBackends: reportsVoiceBackends
+                ? [.init(feature: "speech", label: "Read aloud", state: speechState)]
+                : nil
+        )
+    }
 }
 
-/// Serves `/server/info` and `/speech` for the one test that installs a handler.
+/// Serves each request from the `VoiceBackendScript` registered for its host.
 private final class VoiceCapabilityURLProtocol: URLProtocol, @unchecked Sendable {
-    nonisolated(unsafe) static var handler: ((URLRequest) throws -> (Data, Int))?
-
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        guard let handler = Self.handler, let url = request.url else {
+        guard let url = request.url, let script = VoiceBackendScript.script(for: url.host) else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
             return
         }
         do {
-            let (data, status) = try handler(request)
+            let (data, status) = try script.respond(to: url)
             let response = HTTPURLResponse(
                 url: url,
                 statusCode: status,

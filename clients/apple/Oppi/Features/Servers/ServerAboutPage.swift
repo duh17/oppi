@@ -44,6 +44,10 @@ struct ServerAboutPage: View {
         }
         .settingsPage("About This Server")
         .accessibilityIdentifier("server.about.list")
+        // A pull reads the server again, so a `checking` or stale voice row can move on.
+        .refreshable {
+            await model.load()
+        }
         .confirmationDialog(
             ServerUpdatePresentation.confirmationTitle(model.info?.update),
             isPresented: $showUpdateConfirmation,
@@ -66,7 +70,7 @@ struct ServerAboutPage: View {
                 VStack(alignment: .leading, spacing: 2) {
                     LabeledContent(backend.label) {
                         Label(presentation.title, systemImage: presentation.symbol)
-                            .foregroundStyle(presentation.isAvailable ? .themeGreen : .themeFgDim)
+                            .foregroundStyle(presentation.tint)
                     }
                     if let target = backend.target, !target.isEmpty {
                         Text(target)
@@ -218,27 +222,35 @@ struct VoiceBackendPresentation: Equatable {
     let symbol: String
     /// The feature shows in chats.
     let isAvailable: Bool
+    /// Configured but blocked on something the owner can fix (start the backend, sign in).
+    let needsAttention: Bool
 
     init(_ health: ServerInfo.VoiceBackend.Health) {
         switch health {
         case .ready:
             self.init(title: "Ready", symbol: "checkmark.circle.fill", isAvailable: true)
         case .checking:
-            self.init(title: "Checking", symbol: "clock", isAvailable: false)
+            self.init(title: "Checking", symbol: "clock")
         case .unreachable:
-            self.init(title: "Not reachable", symbol: "exclamationmark.triangle", isAvailable: false)
+            self.init(title: "Not reachable", symbol: "exclamationmark.triangle", needsAttention: true)
         case .needsCredentials:
-            self.init(title: "Needs sign-in", symbol: "key", isAvailable: false)
+            self.init(title: "Needs sign-in", symbol: "key", needsAttention: true)
         case .notConfigured:
-            self.init(title: "Not set up", symbol: "minus.circle", isAvailable: false)
+            self.init(title: "Not set up", symbol: "minus.circle")
         case .unknown:
-            self.init(title: "Not available", symbol: "questionmark.circle", isAvailable: false)
+            self.init(title: "Not available", symbol: "questionmark.circle")
         }
     }
 
-    private init(title: String, symbol: String, isAvailable: Bool) {
+    private init(title: String, symbol: String, isAvailable: Bool = false, needsAttention: Bool = false) {
         self.title = title
         self.symbol = symbol
         self.isAvailable = isAvailable
+        self.needsAttention = needsAttention
+    }
+
+    var tint: ThemeShapeStyle {
+        if isAvailable { return .themeGreen }
+        return needsAttention ? .themeOrange : .themeFgDim
     }
 }

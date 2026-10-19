@@ -529,6 +529,17 @@ struct AssistantTimelineRowContentViewTests {
         let failed = row(.idle, failure: "Read aloud is not configured on this server")
         let labels = timelineAllViews(in: failed).compactMap { $0 as? UILabel }.filter { !$0.isHidden }
         #expect(labels.contains { $0.text == "Read aloud is not configured on this server" })
+
+        // The server stopped offering read aloud: the reason stays, the speaker goes.
+        let withdrawn = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
+            text: "Answer", isStreaming: false, canFork: false, onFork: nil, itemID: "a1",
+            speech: AssistantMessageSpeech(state: .idle, failure: "Backend is not reachable", toggle: nil)
+        ))
+        let withdrawnButton = try #require(actionButton("readAloud", in: withdrawn))
+        #expect(!isShown(withdrawnButton, in: withdrawn))
+        #expect(timelineAllViews(in: withdrawn).contains {
+            ($0 as? UILabel)?.text == "Backend is not reachable" && isShown($0, in: withdrawn)
+        })
     }
 
     // MARK: - Code Block Horizontal Scroll Regression

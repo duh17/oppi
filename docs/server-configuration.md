@@ -113,13 +113,15 @@ How the server decides:
 - **xAI** backends are cloud services. A credential makes them `ready`; the server does not probe them.
 - **HTTP** backends get one `GET` to the endpoint origin. Any HTTP response counts as reachable, so a wrong path (404) looks `ready` and a wrong port reads `unreachable`. Results are cached per origin for 15 seconds; dictation and local Live Voice share the `asr.sttEndpoint` result.
 - `/server/info` never waits for a probe. It answers from the cache and, when an origin's result is missing or older than 15 seconds, starts one background probe that concurrent requests share. The server probes every configured origin once at start and runs no timer.
-- Read aloud and Live Voice replies report back. A request that cannot connect marks its origin `unreachable` at once. A successful request marks it `ready`. An HTTP error from a backend that answered keeps it `ready` and sets `detail` to the failure (for example `Last request failed: TTS backend returned 404: ...`) until a request succeeds.
+- Read aloud and Live Voice replies report back. A request that cannot connect marks its origin `unreachable` at once. A successful request marks it `ready`. An HTTP error from a backend that answered keeps it `ready` and sets `detail` to the failure's status (for example `Last request failed: TTS backend returned 404`, without the backend's error body) until a request succeeds.
 - Local Live Voice (`yuwp`, the default) needs `asr.sttEndpoint` reachable. When `tts` is configured, the voice must also be ready, and `detail` names the voice backend when it is not. Without `tts`, a call runs silent, so only `asr` counts. `grok-voice` needs an xAI credential.
 - A read aloud that cannot reach its backend returns `Read aloud backend at <endpoint> is not reachable`.
 
 What the app does:
 
-- It reads `/server/info` when it connects, each time it returns to the foreground, and after a read aloud fails. The speaker disappears after a failure and comes back once the backend answers again and the app reloads.
+- It reads `/server/info` when it connects, each time it returns to the foreground, and after a read aloud fails. Because `/server/info` does not wait for a probe, the read that starts one can still say `checking` or `unreachable`; when any `voiceBackends` entry says so, the app reads once more 2 seconds later, after the probe has settled. That follow-up read never schedules another, so a backend that stays down costs one extra request. A backend that comes back therefore shows its features on the same foreground.
+- The speaker disappears after a failure. The reply whose read failed keeps the reason, without the speaker, until the next read aloud or until it scrolls off screen.
+- An endpoint that is not an `http` or `https` URL reads `unreachable` with no `target`, so a string with credentials in it is never shown.
 - The mic always works. With Engine set to Server, a take uses server dictation only while `dictationStream` is advertised; otherwise it records with on-device dictation. `stream_connected.serverDictationAvailable` only says dictation is configured; the app does not route by it.
 - **Server Settings → About This Server → Voice** lists each `voiceBackends` entry with its label, state, target, and detail. The section is hidden for a server that sends no `voiceBackends`. A server that omits a capability, such as one older than 0.53.0, shows no matching control.
 

@@ -9,7 +9,12 @@ import { createIdentityRoutes } from "../src/routes/identity.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { markLocalRequest } from "../src/request-trust.js";
 import { Storage } from "../src/storage.js";
-import { makeRawRequest, makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import {
+  makeRawRequest,
+  makeRequest,
+  makeResponse,
+  makeUnconfiguredVoiceBackendHealth,
+} from "./harness/route-test-helpers.js";
 
 describe("identity module", () => {
   it("handles GET /me in isolation", async () => {
@@ -362,6 +367,7 @@ describe("identity module", () => {
         list: vi.fn(() => []),
       },
       getModelCatalog: vi.fn(() => []),
+      voiceBackendHealth: makeUnconfiguredVoiceBackendHealth(),
       serverStartedAt: Date.now(),
       serverVersion: "test",
       piVersion: "test",
@@ -423,6 +429,7 @@ describe("identity module", () => {
         sessionRuntimes: { getActiveSessionIds: vi.fn(() => new Set()) },
         skillRegistry: { list: vi.fn(() => []) },
         getModelCatalog: vi.fn(() => []),
+        voiceBackendHealth: makeUnconfiguredVoiceBackendHealth(),
         serverStartedAt: Date.now(),
         serverVersion: "test",
         piVersion: "test",
@@ -473,6 +480,7 @@ describe("identity module", () => {
         list: vi.fn(() => []),
       },
       getModelCatalog: vi.fn(() => []),
+      voiceBackendHealth: makeUnconfiguredVoiceBackendHealth(),
       serverStartedAt: Date.now(),
       serverVersion: "0.48.0",
       piVersion: "0.85.0",
@@ -516,6 +524,7 @@ describe("identity module", () => {
           list: vi.fn(() => []),
         },
         getModelCatalog: vi.fn(() => []),
+        voiceBackendHealth: makeUnconfiguredVoiceBackendHealth(),
         serverStartedAt: Date.now(),
         serverVersion: "0.48.0",
         piVersion: "0.85.0",

@@ -638,6 +638,11 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         "speech-\(messageID)"
     }
 
+    /// Forget `itemID`'s failure without stopping anything: its row left the screen.
+    func dismissPlaybackFailure(itemID: String) {
+        if playbackFailure?.itemID == itemID { playbackFailure = nil }
+    }
+
     nonisolated static func messageID(fromSpeechPlaybackItemID itemID: String) -> String? {
         let prefix = "speech-"
         guard itemID.hasPrefix(prefix) else { return nil }

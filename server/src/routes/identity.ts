@@ -427,8 +427,8 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const update = ctx.serverUpdate?.infoSnapshot();
     // A voice control appears only while its backend is `ready` (configured, credentialed,
     // and answering). Cached state: this never waits on a probe.
-    const voiceBackends = await ctx.voiceBackendHealth?.entries();
-    const voiceReady = readyVoiceFeatures(voiceBackends ?? []);
+    const voiceBackends = await ctx.voiceBackendHealth.entries();
+    const voiceReady = readyVoiceFeatures(voiceBackends);
     helpers.json(res, {
       name: hostname(),
       version: ctx.serverVersion,
@@ -478,7 +478,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         pushNotifications: pushRelayCapability(),
       },
       // Each voice feature's backend state, for About This Server → Voice.
-      ...(voiceBackends ? { voiceBackends } : {}),
+      voiceBackends,
       stats: {
         workspaceCount: workspaces.length,
         activeSessionCount: activeSessions.length,

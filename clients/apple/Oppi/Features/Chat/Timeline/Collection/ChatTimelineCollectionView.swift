@@ -1579,10 +1579,17 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         didEndDisplaying cell: UICollectionViewCell,
         forItemAt indexPath: IndexPath
     ) {
-        Self.firstSubview(
+        let assistantRow = Self.firstSubview(
             ofType: AssistantTimelineRowContentView.self,
             in: cell.contentView
-        )?.setMarkdownVideoPlaybackVisible(false)
+        )
+        assistantRow?.setMarkdownVideoPlaybackVisible(false)
+        // A reply's read-aloud failure lasts while the reply is on screen.
+        if let messageID = (assistantRow?.configuration as? AssistantTimelineRowConfiguration)?.itemID {
+            audioPlayer?.dismissPlaybackFailure(
+                itemID: AudioPlayerService.speechPlaybackItemID(forMessageID: messageID)
+            )
+        }
         publishVisibleAudioStripItemIDs(in: collectionView)
     }
 
