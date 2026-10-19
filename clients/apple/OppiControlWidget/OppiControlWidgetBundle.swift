@@ -5,5 +5,6 @@ import WidgetKit
 struct OppiControlWidgetBundle: WidgetBundle {
     var body: some Widget {
         QuickSessionControl()
+        LiveVoiceControl()
     }
 }

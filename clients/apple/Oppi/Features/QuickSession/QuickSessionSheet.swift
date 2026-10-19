@@ -192,6 +192,12 @@ struct QuickSessionSheet: View {
     @State private var isCreating = false
     /// The message a successful launch sent. The closing sheet must not save it back as a draft.
     @State private var launchedDraftPayload: ComposerDraftPayload?
+    /// This sheet neither loads nor saves the Quick Session draft (a Live Voice start,
+    /// until it stops with an error).
+    @State private var keepsStoredDraft = false
+    /// A Live Voice start's workspace is the one it asked for, or Quick Session's own
+    /// remembered pick, not a fallback.
+    @State private var liveVoicePickIsRequested = false
     @State private var agentSubmitAttempt: AgentQuickSessionSubmitAttempt?
     @State private var error: String?
     @State private var launchFailure: AgentLaunchFailureResponse?
@@ -493,6 +499,9 @@ struct QuickSessionSheet: View {
         }
         .onChange(of: text) { _, _ in
             persistQuickSessionDraft()
+        }
+        .onChange(of: error) { _, newError in
+            if newError != nil { restoreStoredDraftAfterLiveVoiceStart() }
         }
         .onChange(of: pendingAttachments.map(\.id)) { _, _ in
             persistQuickSessionDraft()
@@ -1082,13 +1091,20 @@ struct QuickSessionSheet: View {
     // MARK: - Actions
 
     private func setupInitialState() async {
-        // Snapshot before any await so a draft load cannot lose the All Sessions mic.
-        let pendingDictation = navigation.pendingQuickSessionStartDictation
-        navigation.pendingQuickSessionStartDictation = false
+        // Snapshot before any await so a draft load cannot lose the start.
+        let start = navigation.pendingQuickSessionStart ?? QuickSessionStart()
+        navigation.pendingQuickSessionStart = nil
+        let launchContext = start.context
+        let startsLiveVoice = start.mode == .liveVoice
+        // A requested call launches by itself, so it must not send a draft left from an
+        // earlier Quick Session: that draft stays saved, untouched, for next time.
+        keepsStoredDraft = startsLiveVoice
 
         if let composerDraftStore {
             await composerDraftStore.load()
             if Task.isCancelled { return }
+        }
+        if let composerDraftStore, !keepsStoredDraft {
             let payload = composerDraftStore.quickSessionDraftPayload
             text = payload.text
             pendingRepoPointers = payload.repoPointers.map(PendingFileReference.init(composerDraftPointer:))
@@ -1102,8 +1118,11 @@ struct QuickSessionSheet: View {
             }
         }
 
-        let launchContext = navigation.pendingQuickSessionLaunchContext
-        navigation.pendingQuickSessionLaunchContext = nil
+        if startsLiveVoice {
+            await awaitServerCatalog(serverId: launchContext?.serverId ?? coordinator.activeServerId)
+            if Task.isCancelled { return }
+        }
+
         shouldRememberAgentSelection = launchContext?.agentId == nil
         threadParent = launchContext?.threadParent
 
@@ -1116,11 +1135,17 @@ struct QuickSessionSheet: View {
                 name: $0.workspace.name
             )
         }
-        if let pick = QuickSessionLaunchSelection.initialWorkspace(
+        let pick = QuickSessionLaunchSelection.initialWorkspace(
             launchContext: launchContext,
             workspaces: candidates,
             preferred: nil
-        ) {
+        )
+        liveVoicePickIsRequested = QuickSessionLaunchSelection.isRequestedTarget(
+            pick,
+            launchContext: launchContext,
+            workspaces: candidates
+        )
+        if let pick {
             if let worktreeId = pick.worktreeId {
                 selectedWorktreeId = QuickSessionWorktreePickerPolicy.normalizedLaunchWorktreeId(worktreeId)
             }
@@ -1141,8 +1166,8 @@ struct QuickSessionSheet: View {
         if Task.isCancelled { return }
         configureVoiceInputForSelectedServer(manager)
 
-        if let pendingPayload = QuickSessionTrigger.shared.consumePendingPayload() {
-            applyInitialPayload(pendingPayload)
+        if let payload = start.payload {
+            applyInitialPayload(payload)
         }
         agentResolution = pendingAgentResolution(requestedAgentId: launchContext?.agentId)
         isInitialized = true
@@ -1150,7 +1175,7 @@ struct QuickSessionSheet: View {
         if Task.isCancelled { return }
 
         let readyAction = QuickSessionDictationLaunch.afterComposerReady(
-            pendingStart: pendingDictation
+            pendingStart: start.mode == .dictation
         )
         // ChatInputBar owns startVoiceInput (suppress keyboard, then record).
         // Starting from the sheet raced the bar and left the keyboard up.
@@ -1160,7 +1185,8 @@ struct QuickSessionSheet: View {
 
         await loadAgentsForSelectedServer(requestedAgentId: launchContext?.agentId)
 
-        if readyAction == .focusForTyping {
+        // A call takes over the composer; raising the keyboard first would only flash it.
+        if readyAction == .focusForTyping, !startsLiveVoice {
             composerFocusRequestID += 1
             await moveAccessibilityFocusToComposer()
         }
@@ -1168,6 +1194,84 @@ struct QuickSessionSheet: View {
         if let api = selectedServerConnection()?.apiClient {
             await selectedChatState.refreshModelCache(api: api)
         }
+        if Task.isCancelled { return }
+
+        if startsLiveVoice {
+            startRequestedLiveVoice(requestedAgentId: launchContext?.agentId)
+        }
+    }
+
+    /// A Live Voice start (the Live Voice control, a Shortcut) launches as soon as the sheet
+    /// has its target, exactly as if the user had tapped Live Voice. Anything that keeps it
+    /// from launching stays on screen as the sheet's error, with the sheet open to fix it.
+    private func startRequestedLiveVoice(requestedAgentId: String?) {
+        // The call starts unattended, so it starts only where it was asked to: never in a
+        // fallback workspace or with another Agent the user did not see picked.
+        guard liveVoicePickIsRequested, selectedWorkspace != nil else {
+            error = "Choose a workspace for Live Voice."
+            return
+        }
+        if let requestedAgentId, selectedAgentId != requestedAgentId {
+            if error == nil { error = "Live Voice didn't start with that Agent. Pick one, then tap Live Voice." }
+            return
+        }
+        guard let liveVoiceEntry else {
+            error = selectedServerConnection()?.serverCapabilities == nil
+                ? "Oppi couldn't reach the server to start Live Voice."
+                : "Live Voice isn't set up on this server."
+            return
+        }
+        liveVoiceEntry()
+    }
+
+    /// A Live Voice start that stopped with an error leaves an ordinary Quick Session: the
+    /// stored draft comes back ahead of the start's own text and saves again from here on.
+    private func restoreStoredDraftAfterLiveVoiceStart() {
+        // An Agent launch that may have reached the server keeps its composer as is, so a
+        // retry reuses the same launch key and resumes that session instead of making a
+        // second one. The stored draft stays saved, untouched, meanwhile.
+        guard keepsStoredDraft, agentSubmitAttempt == nil else { return }
+        keepsStoredDraft = false
+        guard let composerDraftStore else { return }
+        let stored = composerDraftStore.quickSessionDraftPayload
+        let attachmentData = composerDraftStore.quickSessionDraftAttachmentData()
+        let storedAttachments = stored.attachments.compactMap { attachment in
+            PendingAttachment(
+                composerDraftAttachment: attachment,
+                data: attachmentData[attachment.id],
+                fileURL: composerDraftStore.quickSessionDraftAttachmentFileURL(attachmentID: attachment.id)
+            )
+        }
+        text = quickSessionText(stored.text, appending: text)
+        pendingRepoPointers = stored.repoPointers.map(PendingFileReference.init(composerDraftPointer:))
+            + pendingRepoPointers
+        pendingAttachments = storedAttachments + pendingAttachments
+        persistQuickSessionDraft()
+    }
+
+    /// A Live Voice start picks its workspace and checks the server's voice backend right
+    /// away, so on a cold launch it first waits, briefly, for the server's capabilities and
+    /// workspace list.
+    private func awaitServerCatalog(serverId: String?) async {
+        guard let serverId, let connection = coordinator.connection(for: serverId) else { return }
+        let ready: @MainActor @Sendable () -> Bool = {
+            connection.serverCapabilities != nil && connection.workspaceStore.isLoaded
+        }
+        guard !ready() else { return }
+        let observer = Task { @MainActor in
+            for await isReady in Observations(ready) where isReady { return }
+        }
+        let deadline = Task {
+            try? await Task.sleep(for: .seconds(10))
+            observer.cancel()
+        }
+        // Closing the sheet during the wait ends it at once.
+        await withTaskCancellationHandler {
+            await observer.value
+        } onCancel: {
+            observer.cancel()
+        }
+        deadline.cancel()
     }
 
     private func moveAccessibilityFocusToComposer() async {
@@ -1212,6 +1316,7 @@ struct QuickSessionSheet: View {
 
     @discardableResult
     private func persistQuickSessionDraft() -> ComposerDraftRecord? {
+        guard !keepsStoredDraft else { return nil }
         let payload = currentDraftPayload
         // A text view echo while the sheet closes would resurrect the sent message.
         if let launchedDraftPayload, launchedDraftPayload == payload { return nil }
@@ -1541,7 +1646,8 @@ struct QuickSessionSheet: View {
                 agentId: selectedAgentId,
                 prompt: transportText,
                 hasAttachments: !pendingAttachments.isEmpty,
-                hasRepoReferences: !pendingRepoPointers.isEmpty
+                hasRepoReferences: !pendingRepoPointers.isEmpty,
+                startsLiveVoice: startsLiveVoice
             )
         )
 
@@ -1597,6 +1703,7 @@ struct QuickSessionSheet: View {
                 .workspace(serverId: serverId, workspaceId: workspace.id)
             ) else {
                 isCreating = false
+                restoreStoredDraftAfterLiveVoiceStart()
                 return
             }
             do {
@@ -1710,16 +1817,20 @@ struct QuickSessionSheet: View {
                         attempt.uploadedAttachments = uploaded
                         agentSubmitAttempt = attempt
                     }
-                    try await api.sendWorkspaceSessionCommand(
-                        workspaceId: workspace.id,
-                        sessionId: launchedSessionId,
-                        message: .prompt(
-                            message: plan.prompt,
-                            attachments: uploaded.isEmpty ? nil : uploaded,
-                            requestId: attempt.clientTurnId,
-                            clientTurnId: attempt.clientTurnId
+                    // An Agent started into a Live Voice call may have nothing typed: the
+                    // caller's first words are its first message.
+                    if !plan.prompt.isEmpty || !uploaded.isEmpty {
+                        try await api.sendWorkspaceSessionCommand(
+                            workspaceId: workspace.id,
+                            sessionId: launchedSessionId,
+                            message: .prompt(
+                                message: plan.prompt,
+                                attachments: uploaded.isEmpty ? nil : uploaded,
+                                requestId: attempt.clientTurnId,
+                                clientTurnId: attempt.clientTurnId
+                            )
                         )
-                    )
+                    }
                     session = try await api.getSession(scope: scope, sessionId: launchedSessionId).session
                     agentSubmitAttempt = nil
                     autoSendMessage = nil

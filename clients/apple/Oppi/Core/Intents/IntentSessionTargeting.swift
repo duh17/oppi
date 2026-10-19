@@ -1,20 +1,21 @@
 import Foundation
 
-/// Composite identity for a workspace on a specific paired server.
-enum WorkspaceEntityID {
+/// Composite identity for a workspace or saved Agent on a specific paired server, so the
+/// same id on two servers stays two entities.
+enum ServerScopedEntityID {
     private static let separator: Character = "\u{1F}"
 
-    static func encode(serverId: String, workspaceId: String) -> String {
-        "\(serverId)\(separator)\(workspaceId)"
+    static func encode(serverId: String, itemId: String) -> String {
+        "\(serverId)\(separator)\(itemId)"
     }
 
-    static func decode(_ id: String) -> (serverId: String, workspaceId: String)? {
+    static func decode(_ id: String) -> (serverId: String, itemId: String)? {
         let parts = id.split(separator: separator, maxSplits: 1, omittingEmptySubsequences: false)
         guard parts.count == 2 else { return nil }
         let serverId = String(parts[0])
-        let workspaceId = String(parts[1])
-        guard !serverId.isEmpty, !workspaceId.isEmpty else { return nil }
-        return (serverId, workspaceId)
+        let itemId = String(parts[1])
+        guard !serverId.isEmpty, !itemId.isEmpty else { return nil }
+        return (serverId, itemId)
     }
 }
 

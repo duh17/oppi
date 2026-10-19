@@ -235,8 +235,9 @@ final class AppNavigation {
     /// When set, the Quick Session sheet is presented over the current view.
     var showQuickSession: Bool = false
 
-    /// Consume-once: All Sessions mic asked Quick Session to start dictation.
-    var pendingQuickSessionStartDictation = false
+    /// Consume-once start of the presented Quick Session: target, mode, and initial
+    /// content. Set by `presentQuickSession`; the sheet takes it as it sets up.
+    var pendingQuickSessionStart: QuickSessionStart?
 
     /// True while native AVKit fullscreen is covering the workspace shell.
     private(set) var isMediaOverlayActive = false
@@ -340,19 +341,24 @@ final class AppNavigation {
         )
     }
 
-    /// Present Quick Session and record which control opened it. The screen is
-    /// captured before the flag flips, because the diagnostic label then becomes
-    /// `quick_session`.
-    func presentQuickSession(from source: QuickSessionPresentationSource) {
+    /// Present Quick Session with `start` and record which control opened it. The
+    /// screen is captured before the flag flips, because the diagnostic label then
+    /// becomes `quick_session`.
+    func presentQuickSession(
+        _ start: QuickSessionStart = QuickSessionStart(),
+        from source: QuickSessionPresentationSource
+    ) {
         guard !showQuickSession else { return }
         let screen = diagnosticScreenLabel()
         let presentation = workspaceNavigationPresentation.telemetryLabel
+        pendingQuickSessionStart = start
         showQuickSession = true
         ClientLog.info(
             "Navigation",
             "Quick Session presented",
             metadata: [
                 "source": source.rawValue,
+                "mode": start.mode.rawValue,
                 "screen": screen,
                 "presentation": presentation,
             ],
@@ -1168,10 +1174,6 @@ final class AppNavigation {
     // 3. AppRootLayer's dismiss reads nav, extracts message/images, opens the session
     // 4. ChatViewController reads message/images on appear, auto-sends
 
-    /// One-shot source context for opening Quick Session from an Agent detail.
-    /// QuickSessionSheet consumes it before resolving its initial workspace and Agent.
-    var pendingQuickSessionLaunchContext: QuickSessionLaunchContext?
-
     /// Atomic navigation intent from QuickSessionSheet.
     /// Bundles target workspace, session ID, and optional auto-send data.
     /// Set before dismiss; consumed when AppRootLayer dismisses Quick Session.
@@ -1577,20 +1579,17 @@ struct QuickSessionLaunchContext: Equatable, Sendable {
     /// Thread launch: the new session becomes a child of this session.
     let threadParent: QuickSessionThreadParent?
 
-    /// Agent management launch. Workspace still follows last-used / default.
-    init(serverId: String, agentId: String) {
+    /// A missing workspace follows last-used / default on `serverId`; a missing Agent
+    /// follows Quick Session's remembered pick. A thread launch names the parent session.
+    init(
+        serverId: String,
+        agentId: String? = nil,
+        workspaceId: String? = nil,
+        worktreeId: String? = nil,
+        threadParent: QuickSessionThreadParent? = nil
+    ) {
         self.serverId = serverId
         self.agentId = agentId
-        self.workspaceId = nil
-        self.worktreeId = nil
-        self.threadParent = nil
-    }
-
-    /// Session-list launch. Pre-focuses Quick Session to this workspace and
-    /// checkout; a thread launch also names the parent session.
-    init(serverId: String, workspaceId: String, worktreeId: String?, threadParent: QuickSessionThreadParent? = nil) {
-        self.serverId = serverId
-        self.agentId = nil
         self.workspaceId = workspaceId
         self.worktreeId = worktreeId
         self.threadParent = threadParent

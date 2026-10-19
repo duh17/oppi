@@ -1,17 +1,26 @@
 import AppIntents
 import UIKit
 
-/// Destination opened from Oppi's system control.
-enum QuickSessionOpenTarget: String, AppEnum {
-    case quickSession
+/// How a new session starts: in the composer, dictating, or in a Live Voice call.
+///
+/// Shared by Oppi's system controls (`QuickSessionOpenIntent`) and the New Session
+/// shortcut (`StartQuickSessionIntent`), so a control, the Action Button, Siri, and a
+/// Shortcut all name the same three starts.
+enum QuickSessionMode: String, AppEnum {
+    /// Raw value kept from the original single-target control.
+    case message = "quickSession"
+    case dictation
+    case liveVoice
 
-    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Oppi Screen"
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Mode"
     static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-        .quickSession: "New Session",
+        .message: DisplayRepresentation(title: "Message", image: .init(systemName: "plus.message")),
+        .dictation: DisplayRepresentation(title: "Dictation", image: .init(systemName: "mic")),
+        .liveVoice: DisplayRepresentation(title: "Live Voice", image: .init(systemName: "waveform")),
     ]
 }
 
-/// Opens Oppi and routes the receiving scene to the Quick Session composer.
+/// Opens Oppi and routes the receiving scene to a new session in `target`'s mode.
 ///
 /// Apple requires an `OpenIntent` used by a control to belong to both the main
 /// app and WidgetKit extension targets. As a `UISceneAppIntent` it reaches the
@@ -25,10 +34,14 @@ struct QuickSessionOpenIntent: OpenIntent, UISceneAppIntent {
     static var allowedExecutionTargets: IntentExecutionTargets { .main }
 #endif
 
-    @Parameter(title: "Target")
-    var target: QuickSessionOpenTarget
+    @Parameter(title: "Mode")
+    var target: QuickSessionMode
 
     init() {
-        target = .quickSession
+        target = .message
+    }
+
+    init(target: QuickSessionMode) {
+        self.target = target
     }
 }

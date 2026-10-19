@@ -46,7 +46,7 @@ The Workspaces tab opens **All Sessions** for the active server. It keeps **Your
 
 The create and edit sheets for Agents, schedules, workspaces, and Skills can open a **Pi Control** session. Pi Control is ordinary Pi with global settings, tools, Skills, Extensions, `SYSTEM.md`, and `APPEND_SYSTEM.md`. It runs with the server host user's permissions and can use the installed `oppi` CLI through `bash`. You can also use the native forms in the same sheets.
 
-**Quick Session** starts a session without opening a workspace first. Launch it from Oppi, Control Center, the Action Button, Spotlight, Siri, or Shortcuts. The Shortcuts **New Session** action can add optional text and one image to the composer.
+**Quick Session** starts a session without opening a workspace first. Launch it from Oppi, Control Center, the Action Button, Spotlight, Siri, or Shortcuts. The **Live Voice** control starts a new session straight into a Live Voice call, and the Shortcuts **New Session** action picks the mode (Message, Dictation, Live Voice), Agent, workspace, text, and image.
 
 The iOS share extension accepts text, URLs, images, and files. Choose a paired-server workspace in its Quick Session composer, then start the session from the share sheet.
 

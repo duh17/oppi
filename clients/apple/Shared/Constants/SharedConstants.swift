@@ -32,4 +32,7 @@ enum SharedConstants {
 
     /// ControlWidget kind identifier for the Quick Session button.
     static let quickSessionControlKind = "dev.chenda.Oppi.QuickSessionControl"
+
+    /// ControlWidget kind identifier for the Live Voice button.
+    static let liveVoiceControlKind = "dev.chenda.Oppi.LiveVoiceControl"
 }

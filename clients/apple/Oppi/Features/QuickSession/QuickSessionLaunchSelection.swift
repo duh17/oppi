@@ -45,6 +45,30 @@ enum QuickSessionLaunchSelection {
         return pickPreferred(in: workspaces, preferred: preferred)
     }
 
+    /// Whether `pick` is what the start asked for, so a session may start without the user
+    /// seeing the choice: the named workspace, or, when none was named, the remembered
+    /// (last-used or default) workspace on the requested server. A first-available fallback
+    /// counts only as the only workspace on a requested server; with no server requested,
+    /// the remembered workspace may sit on a server that has not loaded yet.
+    static func isRequestedTarget(
+        _ pick: WorkspacePick?,
+        launchContext: QuickSessionLaunchContext?,
+        workspaces: [Candidate]
+    ) -> Bool {
+        guard let pick else { return false }
+        if let launchContext {
+            guard pick.serverId == launchContext.serverId else { return false }
+            if let workspaceId = launchContext.workspaceId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !workspaceId.isEmpty {
+                return pick.workspaceId == workspaceId
+            }
+        }
+        if pick.source == "first_available" {
+            return launchContext != nil && workspaces.filter { $0.serverId == pick.serverId }.count == 1
+        }
+        return true
+    }
+
     private static func pickPreferred(
         in workspaces: [Candidate],
         preferred: AppPreferences.QuickSession.PreferredWorkspaceSelection?

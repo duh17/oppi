@@ -14,6 +14,8 @@ struct AppRootLayer: View {
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.composerDraftStore) private var composerDraftStore
     @State private var quickSessionTrigger = QuickSessionTrigger.shared
+    /// Last external Quick Session request presented or dropped; each is handled at most once.
+    @State private var handledQuickSessionRequestID = 0
     @State private var quickSessionLaunchAccessibilityElement: AnyObject?
 
     var body: some View {
@@ -145,11 +147,20 @@ struct AppRootLayer: View {
     }
 
     private func presentQuickSessionIfPossible(requestID: Int) {
-        guard requestID > 0 else { return }
+        guard requestID > handledQuickSessionRequestID else { return }
         guard navigation.launchPhase == .ready, !navigation.showOnboarding else { return }
-        guard !navigation.showQuickSession else { return }
+        handledQuickSessionRequestID = requestID
+        // A Quick Session the user already opened wins. Drop the request, so a start
+        // (possibly a Live Voice call) never opens later on its own.
+        guard !navigation.showQuickSession else {
+            _ = QuickSessionTrigger.shared.consumePendingStart()
+            return
+        }
         QuickSessionTrigger.shared.isPresented = true
-        navigation.presentQuickSession(from: .intent)
+        navigation.presentQuickSession(
+            QuickSessionTrigger.shared.consumePendingStart() ?? QuickSessionStart(),
+            from: .intent
+        )
     }
 
     private func dismissQuickSession() {
@@ -159,8 +170,7 @@ struct AppRootLayer: View {
             : nil
         quickSessionLaunchAccessibilityElement = nil
         composerDraftStore?.saveQuickSessionLifecycleFallback()
-        navigation.pendingQuickSessionLaunchContext = nil
-        navigation.pendingQuickSessionStartDictation = false
+        navigation.pendingQuickSessionStart = nil
         navigation.showQuickSession = false
         QuickSessionTrigger.shared.isPresented = false
         Task { @MainActor in

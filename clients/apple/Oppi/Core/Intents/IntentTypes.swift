@@ -1,16 +1,64 @@
 import AppIntents
 import OSLog
 
-private let workspaceEntityLogger = Logger(
+private let intentCatalogLogger = Logger(
     subsystem: AppIdentifiers.subsystem,
-    category: "WorkspaceEntityQuery"
+    category: "IntentEntityQuery"
 )
 
-/// Shortcuts and Siri list servers and workspaces through these queries
+/// Shortcuts and Siri list servers, workspaces, and Agents through these queries
 /// without showing Oppi; while Oppi is locked they list nothing and contact
 /// no server.
 private func intentQueriesAreLocked() async -> Bool {
     await MainActor.run { AppLockService.shared.requiresUnlock() }
+}
+
+/// Workspaces and Agents a saved Shortcut names, resolved from their ids without a server.
+///
+/// The name is the one Shortcuts last listed. While Oppi is locked, entities show only a
+/// generic name and no server, like the empty lists: a locked Oppi names nothing.
+enum IntentSavedEntities {
+    struct Resolved {
+        let serverId: String
+        let itemId: String
+        let name: String
+        let serverName: String
+        let showsServerSubtitle: Bool
+    }
+
+    private static let namesKey = "\(AppIdentifiers.subsystem).intentEntityNames"
+
+    static func resolve<Entity>(
+        _ identifiers: [String],
+        fallbackName: String,
+        make: (Resolved) -> Entity
+    ) async -> [Entity] {
+        let locked = await intentQueriesAreLocked()
+        let servers = KeychainService.loadServers()
+        let names = UserDefaults.standard.dictionary(forKey: namesKey) as? [String: String] ?? [:]
+        return identifiers.compactMap { identifier in
+            guard let decoded = ServerScopedEntityID.decode(identifier),
+                  let server = servers.first(where: { $0.id == decoded.serverId }) else { return nil }
+            return make(Resolved(
+                serverId: decoded.serverId,
+                itemId: decoded.itemId,
+                name: locked ? fallbackName : names[identifier] ?? fallbackName,
+                serverName: server.name,
+                showsServerSubtitle: !locked && servers.count > 1
+            ))
+        }
+    }
+
+    /// Adds the names a full listing just returned; names from unpaired servers go.
+    static func rememberNames(_ namesById: [String: String]) {
+        let paired = Set(KeychainService.loadServers().map(\.id))
+        var names = UserDefaults.standard.dictionary(forKey: namesKey) as? [String: String] ?? [:]
+        names.merge(namesById) { _, new in new }
+        names = names.filter { id, _ in
+            ServerScopedEntityID.decode(id).map { paired.contains($0.serverId) } ?? false
+        }
+        UserDefaults.standard.set(names, forKey: namesKey)
+    }
 }
 
 // MARK: - Thinking Level
@@ -100,7 +148,7 @@ struct WorkspaceEntity: AppEntity {
         serverName: String,
         showsServerSubtitle: Bool
     ) {
-        self.id = WorkspaceEntityID.encode(serverId: serverId, workspaceId: workspaceId)
+        self.id = ServerScopedEntityID.encode(serverId: serverId, itemId: workspaceId)
         self.serverId = serverId
         self.workspaceId = workspaceId
         self.name = name
@@ -119,14 +167,23 @@ struct WorkspaceEntity: AppEntity {
 
 /// Fetches workspaces from every paired server. One unreachable host does not empty the picker.
 struct WorkspaceEntityQuery: EntityQuery, EntityStringQuery {
+    /// A saved Shortcut's workspace resolves from its id alone, so it runs while Oppi is
+    /// locked or a paired server is offline; the sheet checks the workspace after unlock.
+    /// Only a bare workspace id (no server) needs the servers' lists to find its server.
     func entities(for identifiers: [String]) async throws -> [WorkspaceEntity] {
+        let saved = await IntentSavedEntities.resolve(identifiers, fallbackName: "Workspace") {
+            WorkspaceEntity(
+                serverId: $0.serverId,
+                workspaceId: $0.itemId,
+                name: $0.name,
+                serverName: $0.serverName,
+                showsServerSubtitle: $0.showsServerSubtitle
+            )
+        }
+        let bare = identifiers.filter { ServerScopedEntityID.decode($0) == nil }
+        guard !bare.isEmpty else { return saved }
         let all = await fetchWorkspaces()
-        return identifiers.compactMap { identifier in
-            if let decoded = WorkspaceEntityID.decode(identifier) {
-                return all.first {
-                    $0.serverId == decoded.serverId && $0.workspaceId == decoded.workspaceId
-                }
-            }
+        return saved + bare.compactMap { identifier in
             let matches = all.filter { $0.workspaceId == identifier }
             return matches.count == 1 ? matches[0] : nil
         }
@@ -165,6 +222,7 @@ struct WorkspaceEntityQuery: EntityQuery, EntityStringQuery {
                 )
             }
         }
+        IntentSavedEntities.rememberNames(Dictionary(entities.map { ($0.id, $0.name) }) { first, _ in first })
         return IntentSessionRanking.rank(
             entities,
             id: \.workspaceId,
@@ -182,37 +240,139 @@ enum IntentPairedWorkspaceCatalog {
     }
 
     static func loadReachable() async -> [Snapshot] {
+        await IntentPairedServerCatalog.loadReachable { api in
+            try await api.listWorkspaces()
+        }.map { Snapshot(server: $0.server, workspaces: $0.value) }
+    }
+}
+
+/// Reads one list from every paired server at once, in pairing order. An unreachable
+/// server is skipped, so one offline host does not empty a Shortcuts picker.
+enum IntentPairedServerCatalog {
+    struct Entry<Value: Sendable>: Sendable {
+        let server: PairedServer
+        let value: Value
+    }
+
+    static func loadReachable<Value: Sendable>(
+        _ fetch: @escaping @Sendable (APIClient) async throws -> Value
+    ) async -> [Entry<Value>] {
         let servers = KeychainService.loadServers()
         guard !servers.isEmpty else { return [] }
 
-        let snapshots = await withTaskGroup(of: Snapshot?.self) { group in
+        let entries = await withTaskGroup(of: Entry<Value>?.self) { group in
             for server in servers {
                 group.addTask {
                     do {
-                        let workspaces = try await ServerTransportAPIClient.withClient(for: server) { api in
-                            try await api.listWorkspaces()
-                        }
-                        return Snapshot(server: server, workspaces: workspaces)
+                        let value = try await ServerTransportAPIClient.withClient(for: server, operation: fetch)
+                        return Entry(server: server, value: value)
                     } catch {
-                        workspaceEntityLogger.error(
+                        intentCatalogLogger.error(
                             "Skipping unreachable server \(server.name, privacy: .public): \(error.localizedDescription, privacy: .public)"
                         )
                         return nil
                     }
                 }
             }
-            var collected: [Snapshot] = []
-            for await snapshot in group {
-                if let snapshot {
-                    collected.append(snapshot)
+            var collected: [Entry<Value>] = []
+            for await entry in group {
+                if let entry {
+                    collected.append(entry)
                 }
             }
             return collected
         }
 
         let order = Dictionary(uniqueKeysWithValues: servers.enumerated().map { ($0.element.id, $0.offset) })
-        return snapshots.sorted {
+        return entries.sorted {
             (order[$0.server.id] ?? .max) < (order[$1.server.id] ?? .max)
         }
+    }
+}
+
+// MARK: - Agent Entity
+
+/// Saved Agent on a specific paired server. `id` is `(serverId, agentId)`.
+struct AgentEntity: AppEntity {
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Agent"
+    static let defaultQuery = AgentEntityQuery()
+
+    var id: String
+    var serverId: String
+    var agentId: String
+    var name: String
+    var serverName: String
+    var showsServerSubtitle: Bool
+
+    init(serverId: String, agentId: String, name: String, serverName: String, showsServerSubtitle: Bool) {
+        self.id = ServerScopedEntityID.encode(serverId: serverId, itemId: agentId)
+        self.serverId = serverId
+        self.agentId = agentId
+        self.name = name
+        self.serverName = serverName
+        self.showsServerSubtitle = showsServerSubtitle
+    }
+
+    var displayRepresentation: DisplayRepresentation {
+        if showsServerSubtitle {
+            DisplayRepresentation(title: "\(name)", subtitle: "\(serverName)")
+        } else {
+            DisplayRepresentation(title: "\(name)")
+        }
+    }
+}
+
+/// Active saved Agents from every paired server, last Quick Session pick first.
+struct AgentEntityQuery: EntityQuery, EntityStringQuery {
+    /// A saved Shortcut's Agent resolves from its id alone, so it runs while Oppi is locked
+    /// or a paired server is offline; the sheet checks the Agent after unlock.
+    func entities(for identifiers: [String]) async throws -> [AgentEntity] {
+        await IntentSavedEntities.resolve(identifiers, fallbackName: "Agent") {
+            AgentEntity(
+                serverId: $0.serverId,
+                agentId: $0.itemId,
+                name: $0.name,
+                serverName: $0.serverName,
+                showsServerSubtitle: $0.showsServerSubtitle
+            )
+        }
+    }
+
+    func suggestedEntities() async throws -> [AgentEntity] {
+        await fetchAgents()
+    }
+
+    func entities(matching string: String) async throws -> [AgentEntity] {
+        let needle = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        let all = await fetchAgents()
+        guard !needle.isEmpty else { return all }
+        return all.filter { $0.name.localizedCaseInsensitiveContains(needle) }
+    }
+
+    private func fetchAgents() async -> [AgentEntity] {
+        guard await !intentQueriesAreLocked() else { return [] }
+        let entries = await IntentPairedServerCatalog.loadReachable { api in
+            try await api.listAgents()
+        }
+        let showSubtitle = KeychainService.loadServers().count > 1
+        let entities = entries.flatMap { entry in
+            entry.value.filter { $0.status == .active }.map { agent in
+                AgentEntity(
+                    serverId: entry.server.id,
+                    agentId: agent.id,
+                    name: agent.name,
+                    serverName: entry.server.name,
+                    showsServerSubtitle: showSubtitle
+                )
+            }
+        }
+        IntentSavedEntities.rememberNames(Dictionary(entities.map { ($0.id, $0.name) }) { first, _ in first })
+        return IntentSessionRanking.rank(
+            entities,
+            id: \.agentId,
+            name: \.name,
+            lastUsedId: AppPreferences.QuickSession.lastAgentId,
+            defaultId: nil
+        )
     }
 }

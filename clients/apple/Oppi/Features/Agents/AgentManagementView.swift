@@ -1302,11 +1302,10 @@ private struct AgentDetailView: View {
 
     private func startQuickSession(with agent: StoredAgentDefinition) {
         guard let serverId = connection.currentServerId else { return }
-        navigation.pendingQuickSessionLaunchContext = QuickSessionLaunchContext(
-            serverId: serverId,
-            agentId: agent.id
+        navigation.presentQuickSession(
+            QuickSessionStart(context: QuickSessionLaunchContext(serverId: serverId, agentId: agent.id)),
+            from: .agents
         )
-        navigation.presentQuickSession(from: .agents)
     }
 
     @MainActor

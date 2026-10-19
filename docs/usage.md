@@ -57,7 +57,20 @@ When the composer is empty during a busy turn, the primary action is **Stop**.
 
 **Siri** starts a session with a prompt and opens that live chat. Say "Start a session in Oppi", "Open a session in Oppi", or "New session in Oppi", and optionally "in <workspace>". If you don't give a prompt, Siri asks "What should Pi do?". Before anything is sent, Siri and Shortcuts ask you to confirm the exact prompt and the workspace (plus the server when you have more than one paired). Invisible formatting characters are removed from the prompt first, so what you confirm is what is sent. Cancel creates no session and sends nothing. The same confirmation applies when the prompt comes from another Shortcut action. Prompts over 280 characters or 12 lines are too long to confirm this way; Siri asks you to open Oppi and send them from the app.
 
-**Quick Session** opens the composer without creating a session yet. Launch it from Oppi, Control Center, the Action Button, or the Shortcuts **New Session** action. That action can add optional text and one image to the composer.
+**Quick Session** opens the composer without creating a session yet. Launch it from Oppi, Control Center, the Action Button, or the Shortcuts **New Session** action.
+
+**Live Voice from the Action Button.** Oppi has two controls for Control Center, the Lock Screen, and the Action Button: **New Session** opens the composer, and **Live Voice** starts a new session straight into a Live Voice call in the workspace and Agent Quick Session last used. Say "Talk to Oppi" or "Call Oppi" for the same call from Siri. The call keeps going with the screen locked or in another app. A draft left in Quick Session stays saved and is not sent into the call. The call starts on its own only in the workspace and Agent it asked for, or the ones Quick Session remembers; otherwise (the workspace or Agent is gone, the server's voice backend is down) Quick Session stays open, says why, and brings the draft back.
+
+**The Shortcuts New Session action** reads "Open *Agent* in *Mode* mode". Every field is optional, and an empty one follows Quick Session's own choice:
+
+| Field | Values | Empty |
+|---|---|---|
+| Mode | Message, Dictation, Live Voice | Message |
+| Agent | Any active saved Agent on a paired server | The Agent Quick Session last used, or Pi |
+| Workspace | Any workspace on a paired server | The workspace Quick Session last used on the Agent's server |
+| Text, Image | Composer text and one image | None |
+
+In Live Voice mode, text and an image are the call's first message, and an Agent starts without one: what you say first is its first message. The Agent and the workspace must be on the same server. Set the Action Button to **Shortcut** and pick this action to put a voice assistant Agent, with its own model, tools, and extensions, one press away.
 
 **Incognito:** tap the eye-slash pill beside the workspace in Quick Session to start that one session Incognito. The Pi session lives in server memory only, with no transcript, search entry, or restart resume, and leaving its chat ends it: the server stops and deletes it, so it shows in no list afterwards. Opening Files, a reader, or a fork from the chat, switching tabs, or App Lock locking the app does not end it. The pill is not offered with a saved Agent selected.
 

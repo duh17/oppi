@@ -5,13 +5,16 @@ import UniformTypeIdentifiers
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "StartQuickSessionIntent")
 
-enum QuickSessionIntentPayloadError: LocalizedError, Equatable {
+enum QuickSessionIntentError: LocalizedError, Equatable {
     case unsupportedImage
     case emptyImage
     case imageTooLarge
+    case agentOnOtherServer
 
     var errorDescription: String? {
         switch self {
+        case .agentOnOtherServer:
+            return "The Agent and the workspace are on different servers."
         case .unsupportedImage:
             return "The supplied file is not a supported image."
         case .emptyImage:
@@ -22,24 +25,48 @@ enum QuickSessionIntentPayloadError: LocalizedError, Equatable {
     }
 }
 
-/// App Intent that opens Oppi and presents the Quick Session sheet.
+/// App Intent that opens Oppi into a new session: in the composer, dictating, or in a
+/// Live Voice call, with an optional Agent, workspace, text, and image.
 ///
-/// Triggered from:
-/// - Action Button (via ControlWidget assignment)
-/// - Control Center (via ControlWidget)
-/// - Lock Screen (via ControlWidget)
-/// - Spotlight search
-/// - Siri voice command
-/// - Shortcuts app
+/// Every parameter is optional. Left empty, each follows what Quick Session would pick
+/// on its own: Message mode, the last-used workspace, and the last-used Agent or Pi.
+/// Text and an image start in the composer; in a Live Voice call they are the call's
+/// first message.
+///
+/// Triggered from Spotlight, Siri, the Shortcuts app, and the Action Button set to a
+/// Shortcut. The Action Button's controls use `QuickSessionOpenIntent`.
 struct StartQuickSessionIntent: AppIntent {
     static let title: LocalizedStringResource = "New Session"
     // periphery:ignore
-    static let description: IntentDescription = "Start a new Pi session in Oppi"
+    static let description: IntentDescription = "Start a new Pi session in Oppi: type, dictate, or talk to an Agent in a Live Voice call."
     static var supportedModes: IntentModes { .foreground(.immediate) }
 #if compiler(>=6.4)
     @available(iOS 27.0, *)
     static var allowedExecutionTargets: IntentExecutionTargets { .main }
 #endif
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Open \(\.$agent) in \(\.$mode) mode") {
+            \.$workspace
+            \.$text
+            \.$image
+        }
+    }
+
+    @Parameter(title: "Mode", default: .message)
+    var mode: QuickSessionMode
+
+    @Parameter(
+        title: "Agent",
+        description: "Saved Agent to start. Empty: the one Quick Session last used, or Pi."
+    )
+    var agent: AgentEntity?
+
+    @Parameter(
+        title: "Workspace",
+        description: "Empty: the Agent's server and the workspace Quick Session last used."
+    )
+    var workspace: WorkspaceEntity?
 
     @Parameter(title: "Text", inputConnectionBehavior: .connectToPreviousIntentResult)
     var text: String?
@@ -51,13 +78,45 @@ struct StartQuickSessionIntent: AppIntent {
     )
     var image: IntentFile?
 
+    init() {}
+
+    init(mode: QuickSessionMode) {
+        self.mode = mode
+    }
+
     func perform() async throws -> some IntentResult {
-        let initialPayload = try await QuickSessionIntentPayloadBuilder.initialPayload(
-            text: text,
-            image: image
-        )
-        await QuickSessionTrigger.shared.requestPresentation(initialPayload: initialPayload)
+        let start = try await start()
+        await QuickSessionTrigger.shared.requestPresentation(start)
         return .result()
+    }
+
+    /// The Quick Session start these parameters describe; throws for a bad image or an
+    /// Agent and workspace on different servers, before anything opens.
+    func start() async throws -> QuickSessionStart {
+        QuickSessionStart(
+            context: try Self.launchContext(agent: agent, workspace: workspace),
+            mode: mode,
+            payload: try await QuickSessionIntentPayloadBuilder.initialPayload(
+                text: text,
+                image: image
+            )
+        )
+    }
+
+    /// Where the chosen Agent and workspace point Quick Session; nil when neither is set.
+    static func launchContext(
+        agent: AgentEntity?,
+        workspace: WorkspaceEntity?
+    ) throws -> QuickSessionLaunchContext? {
+        if let agent, let workspace, agent.serverId != workspace.serverId {
+            throw QuickSessionIntentError.agentOnOtherServer
+        }
+        guard let serverId = agent?.serverId ?? workspace?.serverId else { return nil }
+        return QuickSessionLaunchContext(
+            serverId: serverId,
+            agentId: agent?.agentId,
+            workspaceId: workspace?.workspaceId
+        )
     }
 }
 
@@ -88,7 +147,7 @@ private enum QuickSessionIntentPayloadBuilder {
     ) async throws -> QuickSessionInitialPayload.Attachment {
         guard let contentType = preferredImageType(for: file) else {
             logger.warning("Shortcut supplied a file without an image representation")
-            throw QuickSessionIntentPayloadError.unsupportedImage
+            throw QuickSessionIntentError.unsupportedImage
         }
 
         let data: Data
@@ -107,7 +166,7 @@ private enum QuickSessionIntentPayloadBuilder {
         }
         guard !data.isEmpty else {
             logger.warning("Shortcut supplied an empty image file")
-            throw QuickSessionIntentPayloadError.emptyImage
+            throw QuickSessionIntentError.emptyImage
         }
 
         return QuickSessionInitialPayload.Attachment(
@@ -131,7 +190,7 @@ private enum QuickSessionIntentPayloadBuilder {
             data.append(chunk)
         }
 
-        throw QuickSessionIntentPayloadError.imageTooLarge
+        throw QuickSessionIntentError.imageTooLarge
     }
 
     private static func preferredImageType(for file: IntentFile) -> UTType? {

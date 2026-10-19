@@ -108,20 +108,20 @@ struct IntentSessionRankingTests {
 @Suite("WorkspaceEntity identity")
 struct WorkspaceEntityIdentityTests {
     @Test func compositeIdRoundTrips() {
-        let encoded = WorkspaceEntityID.encode(serverId: "server-a", workspaceId: "ws-1")
-        let decoded = WorkspaceEntityID.decode(encoded)
+        let encoded = ServerScopedEntityID.encode(serverId: "server-a", itemId: "ws-1")
+        let decoded = ServerScopedEntityID.decode(encoded)
 
         #expect(decoded?.serverId == "server-a")
-        #expect(decoded?.workspaceId == "ws-1")
+        #expect(decoded?.itemId == "ws-1")
     }
 
     @Test func sameWorkspaceIdOnTwoServersIsUnique() {
-        let left = WorkspaceEntityID.encode(serverId: "server-a", workspaceId: "ws-shared")
-        let right = WorkspaceEntityID.encode(serverId: "server-b", workspaceId: "ws-shared")
+        let left = ServerScopedEntityID.encode(serverId: "server-a", itemId: "ws-shared")
+        let right = ServerScopedEntityID.encode(serverId: "server-b", itemId: "ws-shared")
 
         #expect(left != right)
-        #expect(WorkspaceEntityID.decode(left)?.serverId == "server-a")
-        #expect(WorkspaceEntityID.decode(right)?.serverId == "server-b")
+        #expect(ServerScopedEntityID.decode(left)?.serverId == "server-a")
+        #expect(ServerScopedEntityID.decode(right)?.serverId == "server-b")
     }
 
     @Test func entityIdUsesCompositeIdentity() {
@@ -133,12 +133,12 @@ struct WorkspaceEntityIdentityTests {
             showsServerSubtitle: true
         )
 
-        #expect(entity.id == WorkspaceEntityID.encode(serverId: "server-a", workspaceId: "ws-1"))
+        #expect(entity.id == ServerScopedEntityID.encode(serverId: "server-a", itemId: "ws-1"))
         #expect(entity.displayRepresentation.subtitle != nil)
     }
 
     @Test func plainWorkspaceIdDoesNotDecodeAsComposite() {
-        #expect(WorkspaceEntityID.decode("ws-1") == nil)
+        #expect(ServerScopedEntityID.decode("ws-1") == nil)
     }
 }
 

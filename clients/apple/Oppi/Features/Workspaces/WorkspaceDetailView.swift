@@ -935,15 +935,17 @@ struct WorkspaceDetailView: View {
 
     private func startQuickSession(dictate: Bool) {
         guard let currentServerId else { return }
-        if dictate {
-            navigation.pendingQuickSessionStartDictation = true
-        }
-        navigation.pendingQuickSessionLaunchContext = QuickSessionLaunchContext(
-            serverId: currentServerId,
-            workspaceId: workspace.id,
-            worktreeId: selectedWorktreeId
+        navigation.presentQuickSession(
+            QuickSessionStart(
+                context: QuickSessionLaunchContext(
+                    serverId: currentServerId,
+                    workspaceId: workspace.id,
+                    worktreeId: selectedWorktreeId
+                ),
+                mode: dictate ? .dictation : .message
+            ),
+            from: .workspaceBar
         )
-        navigation.presentQuickSession(from: .workspaceBar)
     }
 
     private var workspaceConfigurationButton: some View {

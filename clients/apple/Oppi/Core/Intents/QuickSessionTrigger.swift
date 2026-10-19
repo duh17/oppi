@@ -12,13 +12,22 @@ struct QuickSessionInitialPayload: Equatable, Sendable {
     let attachments: [Attachment]
 }
 
+/// Everything one Quick Session presentation starts with: where (server, workspace, Agent,
+/// thread), how (composer, dictation, or a Live Voice call), and any text or image to put
+/// in it. In-app buttons, system controls, and Shortcuts all describe a start this way.
+struct QuickSessionStart: Equatable, Sendable {
+    var context: QuickSessionLaunchContext?
+    var mode: QuickSessionMode = .message
+    var payload: QuickSessionInitialPayload?
+}
+
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "QuickSessionTrigger")
 
 /// Lightweight trigger that bridges external intake with SwiftUI presentation.
 ///
-/// Control and main-app App Intents request presentation directly and may
-/// include an initial composer payload. The share extension sends directly and
-/// never hands a draft to the main app.
+/// Control and main-app App Intents request presentation directly with a
+/// `QuickSessionStart`. The share extension sends directly and never hands a
+/// draft to the main app.
 @MainActor @Observable
 final class QuickSessionTrigger {
     static let shared = QuickSessionTrigger()
@@ -31,47 +40,41 @@ final class QuickSessionTrigger {
     /// Prevents duplicate presentations from rapid intent firings.
     var isPresented: Bool = false
 
-    /// Input owned by the latest accepted presentation request. Keeping the
-    /// payload and request in one slot prevents separate intake paths from
+    /// Start owned by the latest accepted presentation request. Keeping the
+    /// start and request in one slot prevents separate intake paths from
     /// merging unrelated content into the same draft.
-    private var pendingPayload: QuickSessionInitialPayload?
+    private var pendingStart: QuickSessionStart?
 
     private init() {}
 
-    /// Called by presentation sources that do not carry initial content.
-    func requestPresentation() {
-        requestPresentation(initialPayload: nil)
-    }
-
-    /// Routes a system control's resolved destination into SwiftUI presentation.
+    /// Routes a system control's mode into presentation.
     func requestPresentation(for intent: QuickSessionOpenIntent) {
-        switch intent.target {
-        case .quickSession:
-            requestPresentation()
-        }
+        requestPresentation(QuickSessionStart(mode: intent.target))
     }
 
     /// While Oppi is locked the sheet waits for unlock, so it never opens
     /// behind the lock cover.
-    func requestPresentation(initialPayload: QuickSessionInitialPayload?) {
+    func requestPresentation(_ start: QuickSessionStart = QuickSessionStart()) {
         AppLockService.shared.performWhenUnlocked { [self] in
-            present(initialPayload: initialPayload)
+            present(start)
         }
     }
 
-    private func present(initialPayload: QuickSessionInitialPayload?) {
+    private func present(_ start: QuickSessionStart) {
         guard !isPresented else {
             logger.debug("Quick session sheet already presented, ignoring duplicate request")
             return
         }
-        pendingPayload = initialPayload
+        pendingStart = start
         presentationRequestID += 1
-        logger.notice("Quick session presentation requested (id=\(self.presentationRequestID, privacy: .public))")
+        logger.notice(
+            "Quick session presentation requested (id=\(self.presentationRequestID, privacy: .public) mode=\(start.mode.rawValue, privacy: .public))"
+        )
     }
 
-    func consumePendingPayload() -> QuickSessionInitialPayload? {
-        defer { pendingPayload = nil }
-        return pendingPayload
+    func consumePendingStart() -> QuickSessionStart? {
+        defer { pendingStart = nil }
+        return pendingStart
     }
 
 }

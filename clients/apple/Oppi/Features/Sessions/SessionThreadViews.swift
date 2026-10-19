@@ -834,20 +834,22 @@ private struct SessionThreadDetailContentView: View {
 
     private func startThreadSession(root: Session, dictate: Bool) {
         guard let workspaceId = root.workspaceId else { return }
-        if dictate {
-            navigation.pendingQuickSessionStartDictation = true
-        }
-        navigation.pendingQuickSessionLaunchContext = QuickSessionLaunchContext(
-            serverId: target.serverId,
-            workspaceId: workspaceId,
-            worktreeId: root.worktreeId,
-            threadParent: QuickSessionThreadParent(
-                serverId: target.serverId,
-                sessionId: root.id,
-                title: root.displayTitle
-            )
+        navigation.presentQuickSession(
+            QuickSessionStart(
+                context: QuickSessionLaunchContext(
+                    serverId: target.serverId,
+                    workspaceId: workspaceId,
+                    worktreeId: root.worktreeId,
+                    threadParent: QuickSessionThreadParent(
+                        serverId: target.serverId,
+                        sessionId: root.id,
+                        title: root.displayTitle
+                    )
+                ),
+                mode: dictate ? .dictation : .message
+            ),
+            from: .threadBar
         )
-        navigation.presentQuickSession(from: .threadBar)
     }
 
     // MARK: Header

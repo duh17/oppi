@@ -174,6 +174,23 @@ struct QuickSessionLaunchRoutingTests {
         #expect(result == .failure(.agentRequiresPrompt))
     }
 
+    /// A Live Voice call speaks the Agent's first message, so nothing has to be typed.
+    @Test func agentStartedIntoLiveVoiceNeedsNoPrompt() throws {
+        let plan = try QuickSessionLaunchRouting.plan(
+            for: .init(
+                workspaceId: "ws-1",
+                agentId: "voice",
+                prompt: "",
+                hasAttachments: false,
+                hasRepoReferences: false,
+                startsLiveVoice: true
+            )
+        ).get()
+
+        #expect(plan.mode == .agent(agentId: "voice"))
+        #expect(plan.prompt.isEmpty)
+    }
+
     @Test func agentAllowsAttachmentsAndRepoReferences() throws {
         let withAttachment = try QuickSessionLaunchRouting.plan(
             for: .init(
@@ -401,6 +418,67 @@ struct QuickSessionLaunchSelectionTests {
         #expect(context.agentId == "agent-1")
         #expect(context.workspaceId == nil)
         #expect(context.worktreeId == nil)
+    }
+}
+
+/// A Live Voice start launches by itself, so it may only use the workspace it asked for.
+@Suite("Quick Session unattended start target")
+struct QuickSessionRequestedTargetTests {
+    private let workspaces: [QuickSessionLaunchSelection.Candidate] = [
+        .init(serverId: "s1", workspaceId: "ws-1", name: "One"),
+        .init(serverId: "s1", workspaceId: "ws-2", name: "Two"),
+        .init(serverId: "s2", workspaceId: "ws-3", name: "Three"),
+    ]
+
+    private func pick(
+        _ serverId: String,
+        _ workspaceId: String,
+        _ source: String
+    ) -> QuickSessionLaunchSelection.WorkspacePick {
+        .init(serverId: serverId, workspaceId: workspaceId, source: source, worktreeId: nil)
+    }
+
+    @Test func namedWorkspaceMustBeThePick() {
+        let context = QuickSessionLaunchContext(serverId: "s1", workspaceId: "ws-2")
+        #expect(QuickSessionLaunchSelection.isRequestedTarget(
+            pick("s1", "ws-2", "inbox_workspace"), launchContext: context, workspaces: workspaces
+        ))
+        // The named workspace was missing, so the pick fell back to another one.
+        #expect(!QuickSessionLaunchSelection.isRequestedTarget(
+            pick("s1", "ws-1", "last_used"), launchContext: context, workspaces: workspaces
+        ))
+    }
+
+    @Test func agentServerMustBeThePickServer() {
+        let context = QuickSessionLaunchContext(serverId: "s2", agentId: "voice")
+        #expect(!QuickSessionLaunchSelection.isRequestedTarget(
+            pick("s1", "ws-1", "last_used"), launchContext: context, workspaces: workspaces
+        ))
+        #expect(QuickSessionLaunchSelection.isRequestedTarget(
+            pick("s2", "ws-3", "last_used"), launchContext: context, workspaces: workspaces
+        ))
+    }
+
+    @Test func firstAvailableCountsOnlyAsARequestedServersOnlyWorkspace() {
+        #expect(!QuickSessionLaunchSelection.isRequestedTarget(
+            pick("s1", "ws-1", "first_available"), launchContext: nil, workspaces: workspaces
+        ))
+        // With nothing requested, the remembered workspace may be on a server still loading.
+        #expect(!QuickSessionLaunchSelection.isRequestedTarget(
+            pick("s2", "ws-3", "first_available"), launchContext: nil, workspaces: workspaces
+        ))
+        #expect(QuickSessionLaunchSelection.isRequestedTarget(
+            pick("s2", "ws-3", "first_available"),
+            launchContext: QuickSessionLaunchContext(serverId: "s2", agentId: "voice"),
+            workspaces: workspaces
+        ))
+    }
+
+    @Test func rememberedWorkspaceIsRequestedWithoutContext() {
+        #expect(QuickSessionLaunchSelection.isRequestedTarget(
+            pick("s1", "ws-2", "default"), launchContext: nil, workspaces: workspaces
+        ))
+        #expect(!QuickSessionLaunchSelection.isRequestedTarget(nil, launchContext: nil, workspaces: workspaces))
     }
 }
 

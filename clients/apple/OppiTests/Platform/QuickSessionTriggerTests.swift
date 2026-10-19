@@ -15,7 +15,7 @@ struct QuickSessionTriggerTests {
         let trigger = QuickSessionTrigger.shared
         // Reset to known state for test isolation
         trigger.isPresented = false
-        _ = trigger.consumePendingPayload()
+        _ = trigger.consumePendingStart()
 
         // presentationRequestID starts at some value (may have been bumped by prior tests),
         // but isPresented should be controllable
@@ -82,10 +82,10 @@ struct QuickSessionTriggerTests {
         trigger.isPresented = false
     }
 
-    @Test func requestPresentationStoresInitialPayload() {
+    @Test func requestPresentationStoresStart() {
         let trigger = QuickSessionTrigger.shared
         trigger.isPresented = false
-        _ = trigger.consumePendingPayload()
+        _ = trigger.consumePendingStart()
 
         let payload = QuickSessionInitialPayload(
             text: "Describe this screenshot",
@@ -97,53 +97,68 @@ struct QuickSessionTriggerTests {
                 )
             ]
         )
+        let start = QuickSessionStart(
+            context: QuickSessionLaunchContext(serverId: "server-a", agentId: "voice"),
+            mode: .liveVoice,
+            payload: payload
+        )
         let before = trigger.presentationRequestID
 
-        trigger.requestPresentation(initialPayload: payload)
+        trigger.requestPresentation(start)
 
         #expect(trigger.presentationRequestID == before + 1)
-        #expect(trigger.consumePendingPayload() == payload)
-        #expect(trigger.consumePendingPayload() == nil)
+        #expect(trigger.consumePendingStart() == start)
+        #expect(trigger.consumePendingStart() == nil)
         trigger.isPresented = false
     }
 
-    @Test func latestRequestWithoutPayloadClearsPendingPayload() {
+    @Test func latestPlainRequestClearsEarlierStart() {
         let trigger = QuickSessionTrigger.shared
         trigger.isPresented = false
-        let payload = QuickSessionInitialPayload(text: "Replace me", attachments: [])
-        trigger.requestPresentation(initialPayload: payload)
+        trigger.requestPresentation(
+            QuickSessionStart(
+                mode: .liveVoice,
+                payload: QuickSessionInitialPayload(text: "Replace me", attachments: [])
+            )
+        )
 
-        trigger.requestPresentation(initialPayload: nil)
+        trigger.requestPresentation()
 
-        #expect(trigger.consumePendingPayload() == nil)
+        #expect(trigger.consumePendingStart() == QuickSessionStart())
         trigger.isPresented = false
     }
 
-    @Test func latestRequestReplacesPendingPayload() {
+    @Test func latestRequestReplacesPendingStart() {
         let trigger = QuickSessionTrigger.shared
         trigger.isPresented = false
-        let first = QuickSessionInitialPayload(text: "First", attachments: [])
-        let second = QuickSessionInitialPayload(text: "Second", attachments: [])
-        trigger.requestPresentation(initialPayload: first)
+        let first = QuickSessionStart(payload: QuickSessionInitialPayload(text: "First", attachments: []))
+        let second = QuickSessionStart(
+            mode: .dictation,
+            payload: QuickSessionInitialPayload(text: "Second", attachments: [])
+        )
+        trigger.requestPresentation(first)
 
-        trigger.requestPresentation(initialPayload: second)
+        trigger.requestPresentation(second)
 
-        #expect(trigger.consumePendingPayload() == second)
+        #expect(trigger.consumePendingStart() == second)
         trigger.isPresented = false
     }
 
-    @Test func ignoredPresentationDoesNotQueueInitialPayload() {
+    @Test func ignoredPresentationDoesNotQueueStart() {
         let trigger = QuickSessionTrigger.shared
-        _ = trigger.consumePendingPayload()
+        _ = trigger.consumePendingStart()
         trigger.isPresented = true
         let before = trigger.presentationRequestID
 
         trigger.requestPresentation(
-            initialPayload: QuickSessionInitialPayload(text: "Do not keep me", attachments: [])
+            QuickSessionStart(
+                mode: .liveVoice,
+                payload: QuickSessionInitialPayload(text: "Do not keep me", attachments: [])
+            )
         )
 
         #expect(trigger.presentationRequestID == before)
-        #expect(trigger.consumePendingPayload() == nil)
+        #expect(trigger.consumePendingStart() == nil)
         trigger.isPresented = false
     }
 
@@ -151,26 +166,30 @@ struct QuickSessionTriggerTests {
 
 // MARK: - Quick session control intent
 
+// Nested in the serialized trigger suite: both drive the shared `QuickSessionTrigger`.
+extension QuickSessionTriggerTests {
 @Suite("QuickSessionOpenIntent")
 @MainActor
 struct QuickSessionOpenIntentTests {
 
-    @Test func defaultsToQuickSessionTarget() {
-        #expect(QuickSessionOpenIntent().target == .quickSession)
+    @Test func defaultsToMessageMode() {
+        #expect(QuickSessionOpenIntent().target == .message)
     }
 
-    @Test func targetHasDisplayRepresentation() {
-        #expect(QuickSessionOpenTarget.caseDisplayRepresentations[.quickSession] != nil)
+    /// A control placed before modes existed stored the original single target.
+    @Test func originalControlTargetStillDecodesAsMessage() {
+        #expect(QuickSessionMode(rawValue: "quickSession") == .message)
     }
 
-    @Test func routesIntentToPresentationRequest() {
+    @Test func routesControlModeToPresentationRequest() {
         let trigger = QuickSessionTrigger.shared
         trigger.isPresented = false
         let before = trigger.presentationRequestID
 
-        trigger.requestPresentation(for: QuickSessionOpenIntent())
+        trigger.requestPresentation(for: QuickSessionOpenIntent(target: .liveVoice))
 
         #expect(trigger.presentationRequestID == before + 1)
+        #expect(trigger.consumePendingStart() == QuickSessionStart(mode: .liveVoice))
         trigger.isPresented = false
     }
 
@@ -180,6 +199,7 @@ struct QuickSessionOpenIntentTests {
         #expect(QuickSessionOpenIntent.allowedExecutionTargets == .main)
     }
 #endif
+}
 }
 
 // MARK: - ThinkingLevelEnum (Intent type)
@@ -251,7 +271,7 @@ struct WorkspaceEntityTests {
         #expect(entity.serverId == "server-a")
         #expect(entity.workspaceId == "ws-123")
         #expect(entity.name == "My Workspace")
-        #expect(entity.id == WorkspaceEntityID.encode(serverId: "server-a", workspaceId: "ws-123"))
+        #expect(entity.id == ServerScopedEntityID.encode(serverId: "server-a", itemId: "ws-123"))
     }
 
     @Test func displayRepresentationShowsName() {
@@ -397,7 +417,9 @@ struct QuickSessionTests {
 
 // MARK: - StartQuickSessionIntent (static properties)
 
-@Suite("StartQuickSessionIntent", .serialized)
+// The test host's app root presents and consumes trigger requests as they arrive, so
+// these check the start an intent describes, not what the trigger still holds.
+@Suite("StartQuickSessionIntent")
 @MainActor
 struct StartQuickSessionIntentTests {
 
@@ -405,10 +427,56 @@ struct StartQuickSessionIntentTests {
         #expect(StartQuickSessionIntent.supportedModes == .foreground(.immediate))
     }
 
-    @Test func inputParametersDefaultToNil() {
-        let intent = StartQuickSessionIntent()
-        #expect(intent.text == nil)
-        #expect(intent.image == nil)
+    @Test func startCarriesModeAgentAndWorkspace() async throws {
+        let intent = StartQuickSessionIntent(mode: .liveVoice)
+        intent.agent = AgentEntity(
+            serverId: "server-a",
+            agentId: "voice",
+            name: "Voice",
+            serverName: "Studio",
+            showsServerSubtitle: false
+        )
+        intent.workspace = WorkspaceEntity(
+            serverId: "server-a",
+            workspaceId: "ws-1",
+            name: "oppi",
+            serverName: "Studio",
+            showsServerSubtitle: false
+        )
+
+        #expect(
+            try await intent.start()
+                == QuickSessionStart(
+                    context: QuickSessionLaunchContext(serverId: "server-a", agentId: "voice", workspaceId: "ws-1"),
+                    mode: .liveVoice
+                )
+        )
+    }
+
+    @Test func emptyIntentStartsWithoutTarget() async throws {
+        #expect(try await StartQuickSessionIntent().start() == QuickSessionStart())
+    }
+
+    @Test func rejectsAgentAndWorkspaceOnDifferentServers() async throws {
+        let intent = StartQuickSessionIntent(mode: .liveVoice)
+        intent.agent = AgentEntity(
+            serverId: "server-a",
+            agentId: "voice",
+            name: "Voice",
+            serverName: "Studio",
+            showsServerSubtitle: true
+        )
+        intent.workspace = WorkspaceEntity(
+            serverId: "server-b",
+            workspaceId: "ws-1",
+            name: "oppi",
+            serverName: "Laptop",
+            showsServerSubtitle: true
+        )
+
+        await #expect(throws: QuickSessionIntentError.agentOnOtherServer) {
+            _ = try await intent.start()
+        }
     }
 
 #if compiler(>=6.4)
@@ -418,35 +486,26 @@ struct StartQuickSessionIntentTests {
     }
 #endif
 
-    @Test func performTrimsAndQueuesText() async throws {
-        let trigger = QuickSessionTrigger.shared
-        trigger.isPresented = false
-        _ = trigger.consumePendingPayload()
+    @Test func startTrimsText() async throws {
         let intent = StartQuickSessionIntent()
         intent.text = "  Describe this workspace  \n"
 
-        _ = try await intent.perform()
-
         #expect(
-            trigger.consumePendingPayload()
-                == QuickSessionInitialPayload(text: "Describe this workspace", attachments: [])
+            try await intent.start()
+                == QuickSessionStart(
+                    payload: QuickSessionInitialPayload(text: "Describe this workspace", attachments: [])
+                )
         )
-        trigger.isPresented = false
     }
 
-    @Test func performQueuesImageWithMatchingMetadata() async throws {
-        let trigger = QuickSessionTrigger.shared
-        trigger.isPresented = false
-        _ = trigger.consumePendingPayload()
+    @Test func startCarriesImageWithMatchingMetadata() async throws {
         let imageData = try #require(Data(base64Encoded:
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
         ))
         let intent = StartQuickSessionIntent()
         intent.image = IntentFile(data: imageData, filename: "shortcut-image", type: .png)
 
-        _ = try await intent.perform()
-
-        let payload = try #require(trigger.consumePendingPayload())
+        let payload = try #require(try await intent.start().payload)
         #expect(payload.text == nil)
         #expect(payload.attachments == [
             QuickSessionInitialPayload.Attachment(
@@ -455,13 +514,9 @@ struct StartQuickSessionIntentTests {
                 mimeType: "image/png"
             ),
         ])
-        trigger.isPresented = false
     }
 
-    @Test func performRejectsNonImageFile() async throws {
-        let trigger = QuickSessionTrigger.shared
-        trigger.isPresented = false
-        _ = trigger.consumePendingPayload()
+    @Test func rejectsNonImageFile() async throws {
         let intent = StartQuickSessionIntent()
         intent.image = IntentFile(
             data: Data([0x00, 0x01, 0x02, 0x03]),
@@ -469,17 +524,12 @@ struct StartQuickSessionIntentTests {
             type: .data
         )
 
-        await #expect(throws: QuickSessionIntentPayloadError.unsupportedImage) {
-            _ = try await intent.perform()
+        await #expect(throws: QuickSessionIntentError.unsupportedImage) {
+            _ = try await intent.start()
         }
-        #expect(trigger.consumePendingPayload() == nil)
-        trigger.isPresented = false
     }
 
-    @Test func performRejectsImageOverComposerUploadLimit() async throws {
-        let trigger = QuickSessionTrigger.shared
-        trigger.isPresented = false
-        _ = trigger.consumePendingPayload()
+    @Test func rejectsImageOverComposerUploadLimit() async throws {
         let intent = StartQuickSessionIntent()
         intent.image = IntentFile(
             data: Data(repeating: 0x00, count: PendingImage.autoResizeMaxDataBytes + 1),
@@ -487,11 +537,9 @@ struct StartQuickSessionIntentTests {
             type: .png
         )
 
-        await #expect(throws: QuickSessionIntentPayloadError.imageTooLarge) {
-            _ = try await intent.perform()
+        await #expect(throws: QuickSessionIntentError.imageTooLarge) {
+            _ = try await intent.start()
         }
-        #expect(trigger.consumePendingPayload() == nil)
-        trigger.isPresented = false
     }
 }
 

@@ -42,7 +42,6 @@ struct SessionInboxComposeChromeTests {
         #expect(inbox.contains("compactQuickSessionBar"))
         #expect(inbox.contains("SessionInboxComposeLauncher"))
         #expect(inbox.contains("inboxFolderButton"))
-        #expect(inbox.contains("pendingQuickSessionStartDictation = true"))
         #expect(workspace.contains("compactQuickSessionBar"))
         #expect(workspace.contains("SessionInboxComposeLauncher"))
         #expect(workspace.contains("SessionInboxFolderToolbarButton"))
@@ -66,9 +65,6 @@ struct SessionInboxComposeChromeTests {
         #expect(sheet.contains("afterComposerReady"))
         #expect(!sheet.contains("startInboxDictation"))
         #expect(!sheet.contains(".constant("))
-        let pendingRange = try #require(sheet.range(of: "let pendingDictation = navigation.pendingQuickSessionStartDictation"))
-        let loadRange = try #require(sheet.range(of: "await composerDraftStore.load()"))
-        #expect(pendingRange.lowerBound < loadRange.lowerBound)
         let bar = try appleSource("Oppi/Features/Chat/Composer/ChatInputBar.swift")
         #expect(bar.contains(".task(id: externalDictationRequestID)"))
         #expect(bar.contains("startExternalDictationIfRequested"))
@@ -79,23 +75,6 @@ struct SessionInboxComposeChromeTests {
         let control = try appleSource("Oppi/Features/ControlSessions/GuidedControlSessionComposer.swift")
         #expect(control.contains("VoiceInputManager.shared"))
         #expect(!control.contains("VoiceInputManager()"))
-    }
-
-    @Test func workspaceStartQuickSessionPassesSelectedWorktreeIdIntoLaunchContext() throws {
-        let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
-        let start = try sourceSlice(
-            workspace,
-            start: "private func startQuickSession(dictate: Bool) {",
-            end: "private var workspaceConfigurationButton"
-        )
-        let context = try sourceSlice(
-            start,
-            start: "QuickSessionLaunchContext(",
-            end: "navigation.presentQuickSession"
-        )
-        #expect(context.contains("worktreeId: selectedWorktreeId"))
-        #expect(!context.contains("worktreeId: nil"))
-        #expect(!start.contains("worktreeId: nil"))
     }
 
     @Test func disabledFolderUsesUnavailableForegroundInTheSameCapsule() throws {

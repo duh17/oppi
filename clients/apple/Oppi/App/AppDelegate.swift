@@ -143,7 +143,7 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate, @preconcurrency AppI
         app?.sceneDidEnterBackground()
     }
 
-    /// The system control's Open intent routes here: show Quick Session.
+    /// A system control's Open intent routes here: show Quick Session in its mode.
     private func perform(_ intent: any UISceneAppIntent) {
         guard let intent = intent as? QuickSessionOpenIntent else { return }
         QuickSessionTrigger.shared.requestPresentation(for: intent)

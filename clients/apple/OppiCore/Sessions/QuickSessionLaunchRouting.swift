@@ -135,6 +135,8 @@ struct QuickSessionLaunchRequest: Equatable, Sendable {
     var prompt: String
     var hasAttachments: Bool
     var hasRepoReferences: Bool
+    /// The session opens into a Live Voice call, whose speech supplies the first message.
+    var startsLiveVoice = false
 }
 
 struct QuickSessionLaunchPlan: Equatable, Sendable {
@@ -183,7 +185,7 @@ enum QuickSessionLaunchRouting {
         let worktreeId = QuickSessionWorktreePickerPolicy.normalizedLaunchWorktreeId(request.worktreeId)
 
         if let agentId, !agentId.isEmpty {
-            if prompt.isEmpty {
+            if prompt.isEmpty, !request.startsLiveVoice {
                 return .failure(.agentRequiresPrompt)
             }
             return .success(

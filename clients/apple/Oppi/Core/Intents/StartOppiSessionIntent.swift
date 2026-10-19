@@ -161,12 +161,28 @@ struct StartOppiSessionIntent: AppIntent {
 
     private func resolveTarget() async throws -> TargetResolution {
         if let workspace {
+            // A saved workspace resolves from its id alone (it may carry only a generic
+            // name), so the confirmation names the server's current workspace instead.
+            guard let paired = KeychainService.loadServers().first(where: { $0.id == workspace.serverId }) else {
+                return .dialog(StartOppiSessionDialog.noServer)
+            }
+            let workspaces: [Workspace]
+            do {
+                workspaces = try await ServerTransportAPIClient.withClient(for: paired) { api in
+                    try await api.listWorkspaces()
+                }
+            } catch {
+                return .dialog(StartOppiSessionDialog.cannotConnect)
+            }
+            guard let current = workspaces.first(where: { $0.id == workspace.workspaceId }) else {
+                return .dialog("Couldn't find that workspace.")
+            }
             return .resolved(
                 IntentSessionDisambiguation.WorkspaceHit(
-                    serverId: workspace.serverId,
-                    serverName: workspace.serverName,
-                    workspaceId: workspace.workspaceId,
-                    workspaceName: workspace.name
+                    serverId: paired.id,
+                    serverName: paired.name,
+                    workspaceId: current.id,
+                    workspaceName: current.name
                 )
             )
         }
