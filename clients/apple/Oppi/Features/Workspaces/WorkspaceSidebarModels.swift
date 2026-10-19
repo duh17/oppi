@@ -42,7 +42,6 @@ struct WorkspaceSidebarPrimaryUtilityItem: Equatable {
     let systemImage: String
     let accessibilityLabel: String
     let accessibilityIdentifier: String
-    let minimumHitHeight: CGFloat
     let accessibilityHint: String?
 }
 
@@ -54,7 +53,6 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "person.crop.circle",
             accessibilityLabel: "Agents",
             accessibilityIdentifier: "workspace.agents.open",
-            minimumHitHeight: 44,
             accessibilityHint: nil
         ),
         .init(
@@ -63,7 +61,6 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "clock",
             accessibilityLabel: "Schedules",
             accessibilityIdentifier: "workspace.schedules.open",
-            minimumHitHeight: 44,
             accessibilityHint: nil
         ),
         .init(
@@ -72,7 +69,6 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "sparkles.rectangle.stack",
             accessibilityLabel: "Open Skills",
             accessibilityIdentifier: "workspace.skills.open",
-            minimumHitHeight: 44,
             accessibilityHint: nil
         ),
         .init(
@@ -81,7 +77,6 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "shippingbox",
             accessibilityLabel: "Open Extensions",
             accessibilityIdentifier: "workspace.extensions.open",
-            minimumHitHeight: 44,
             accessibilityHint: nil
         ),
         .init(
@@ -90,7 +85,6 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "network",
             accessibilityLabel: "Open MCP Servers",
             accessibilityIdentifier: "workspace.mcpServers.open",
-            minimumHitHeight: 44,
             accessibilityHint: nil
         ),
     ]
@@ -101,7 +95,6 @@ enum WorkspaceSidebarPrimaryUtilities {
         systemImage: "macwindow",
         accessibilityLabel: "Remote Screen",
         accessibilityIdentifier: "workspace.desktopStill.open",
-        minimumHitHeight: 44,
         accessibilityHint: "Inspect the current remote screen"
     )
 
@@ -112,7 +105,6 @@ enum WorkspaceSidebarPrimaryUtilities {
         systemImage: "gear",
         accessibilityLabel: "App Settings",
         accessibilityIdentifier: "workspace.settings.open",
-        minimumHitHeight: 44,
         accessibilityHint: nil
     )
 
@@ -129,7 +121,7 @@ enum WorkspaceSidebarPrimaryUtilities {
             result.append(.init(
                 target: .sshTerminal, title: "Terminal", systemImage: "terminal",
                 accessibilityLabel: "Open SSH Terminal", accessibilityIdentifier: "workspace.terminal.open",
-                minimumHitHeight: 44, accessibilityHint: "Opens your saved SSH hosts"
+                accessibilityHint: "Opens your saved SSH hosts"
             ))
         }
         if idiom == .phone, ReleaseFeatures.desktopStillEnabled || desktopLiveViewAvailable {

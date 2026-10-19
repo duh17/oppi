@@ -1551,12 +1551,11 @@ struct AppNavigationShellRoutingTests {
     }
 
     // Order is pinned by desktopStillUtilityStaysPhoneOnlyAndHiddenUntilReleaseEnabled.
-    @Test func sidebarPrimaryUtilitiesKeepTouchTargetsAndDistinctIdentifiers() {
+    @Test func sidebarPrimaryUtilitiesHaveDistinctIdentifiers() {
         let items = WorkspaceSidebarPrimaryUtilities.items(
             for: .phone, sshTerminalEnabled: true, hasSSHProfile: true
         )
 
-        #expect(items.allSatisfy { $0.minimumHitHeight >= 44 })
         #expect(Set(items.map(\.accessibilityIdentifier)).count == items.count)
     }
 

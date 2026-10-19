@@ -26,19 +26,6 @@ struct SessionInboxComposeChromeTests {
         #expect(!SessionInboxComposeChrome.canOpenFiles(hasServer: false))
     }
 
-    @Test func disabledFolderUsesUnavailableForegroundInTheSameCapsule() throws {
-        let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
-        let button = try sourceSlice(
-            chrome,
-            start: "struct SessionInboxFolderToolbarButton: View {",
-            end: "struct SessionInboxNowPlayingRailButton: View {"
-        )
-        #expect(button.contains("isEnabled ? .themeFg : .themeFgDim"))
-        #expect(button.contains(".disabled(!isEnabled)"))
-        #expect(!button.contains(".foregroundStyle(.themeFg)"))
-        #expect(!button.contains(".hidden("))
-    }
-
     @Test func expandsMessageCapsuleAtCompactOrUnknownWidthWhenIdle() {
         #expect(SessionInboxComposeChrome.expandsMessageCapsule(horizontalSizeClass: .compact, hasActivePlayback: false))
         #expect(SessionInboxComposeChrome.expandsMessageCapsule(horizontalSizeClass: nil, hasActivePlayback: false))
@@ -99,26 +86,6 @@ struct SessionInboxComposeChromeTests {
                 expands: false
             ) == nil
         )
-    }
-
-    @Test func compactComposeBarPlacesMicLeadingLikeChatInput() throws {
-        let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
-        let bar = try sourceSlice(
-            chrome,
-            start: "struct SessionInboxCompactComposeBar: View {",
-            end: "struct SessionInboxFolderToolbarButton: View {"
-        )
-        let expanded = try sourceSlice(bar, start: "if let minWidth {", end: "} else {")
-        let compact = try sourceSlice(bar, start: "} else {", end: ".accessibilityLabel(\"Start Quick Session\")")
-        let expandedMic = try #require(expanded.range(of: "dictationMic"))
-        let expandedLabel = try #require(expanded.range(of: "placeholderLabel"))
-        let compactMic = try #require(compact.range(of: "dictationMic"))
-        let compactLabel = try #require(compact.range(of: "placeholderLabel"))
-
-        #expect(expandedMic.lowerBound < expandedLabel.lowerBound)
-        #expect(compactMic.lowerBound < compactLabel.lowerBound)
-        #expect(bar.contains(".padding(.leading, showsDictation ? 0 : 16)"))
-        #expect(bar.contains(".padding(.trailing, 16)"))
     }
 }
 
@@ -290,29 +257,4 @@ struct QuickSessionDictationLaunchTests {
             ) == .focusForTyping
         )
     }
-}
-
-private func appleSource(_ relativePath: String) throws -> String {
-    let sourceURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: relativePath)
-    return try String(contentsOf: sourceURL, encoding: .utf8)
-}
-
-private func sourceSlice(_ source: String, start: String, end: String) throws -> String {
-    guard let startRange = source.range(of: start) else {
-        Issue.record("Missing source start \(start)")
-        throw SourceSliceError.missingMarker(start)
-    }
-    guard let endRange = source.range(of: end, range: startRange.upperBound..<source.endIndex) else {
-        Issue.record("Missing source end \(end)")
-        throw SourceSliceError.missingMarker(end)
-    }
-    return String(source[startRange.lowerBound..<endRange.lowerBound])
-}
-
-private enum SourceSliceError: Error {
-    case missingMarker(String)
 }

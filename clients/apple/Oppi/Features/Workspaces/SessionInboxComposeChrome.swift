@@ -142,98 +142,6 @@ struct SessionInboxCompactComposeBar: View {
     }
 }
 
-/// Rail compose has no room for the capsule's mic. Long-press keeps Dictate;
-/// the accessibility action stays for Voice Control.
-private struct SessionInboxRailComposeMenu: ViewModifier {
-    let showsDictation: Bool
-    let onDictate: () -> Void
-
-    func body(content: Content) -> some View {
-        if showsDictation {
-            content.contextMenu {
-                Button("Dictate", systemImage: "mic", action: onDictate)
-            }
-        } else {
-            content
-        }
-    }
-}
-
-/// Session-list compose control shared by All Sessions and workspace lists.
-///
-/// The Message capsule is a wide launcher, not a text field: tap opens Quick
-/// Session. A side rail cannot hold that field, and a bottom bar would spend
-/// the short Duo outer display the rail exists to free. On the rail the same
-/// launcher is a labeled compose symbol. Off the rail the capsule stays, so a
-/// regular iPhone and iPad keep the current bottom bar.
-struct SessionInboxComposeLauncher: View {
-    var joinsVerticalRail: Bool
-    var showsDictation: Bool
-    var hasActivePlayback: Bool = false
-    var columnWidth: CGFloat = 0
-    var trailingReserve: CGFloat = SessionInboxComposeChrome.messageCapsuleFolderReserve
-    var placeholder: String = SessionInboxComposeChrome.compactBarPlaceholder
-    let onStart: () -> Void
-    let onDictate: () -> Void
-
-    var body: some View {
-        if joinsVerticalRail {
-            railButton
-        } else {
-            SessionInboxCompactComposeBar(
-                showsDictation: showsDictation,
-                hasActivePlayback: hasActivePlayback,
-                columnWidth: columnWidth,
-                trailingReserve: trailingReserve,
-                placeholder: placeholder,
-                onStart: onStart,
-                onDictate: onDictate
-            )
-        }
-    }
-
-    private var railButton: some View {
-        Button("Message", systemImage: "square.and.pencil", action: onStart)
-            .foregroundStyle(.themeFg)
-            .accessibilityLabel("Start Quick Session")
-            .accessibilityIdentifier("workspace.quickSession.start")
-            .accessibilityAction(named: "Dictate Quick Session", onDictate)
-            .modifier(
-                SessionInboxRailComposeMenu(
-                    showsDictation: showsDictation,
-                    onDictate: onDictate
-                )
-            )
-    }
-}
-
-/// Folder control for the trailing bottom-bar capsule. Keep this a single
-/// toolbar Button — do not wrap it in nested toolbar Buttons or a custom
-/// glass effect. On the rail, `railTitle` makes it a labeled symbol so the
-/// system can show the folder and keep "Files" for overflow.
-struct SessionInboxFolderToolbarButton: View {
-    let isEnabled: Bool
-    let accessibilityLabel: String
-    var railTitle: String? = nil
-    let onOpen: () -> Void
-
-    var body: some View {
-        Group {
-            if let railTitle {
-                Button(railTitle, systemImage: "folder", action: onOpen)
-            } else {
-                Button(action: onOpen) {
-                    Image(systemName: "folder")
-                }
-            }
-        }
-        .foregroundStyle(isEnabled ? .themeFg : .themeFgDim)
-        .disabled(!isEnabled)
-        .accessibilityIdentifier("workspace.files.open")
-        .accessibilityLabel(accessibilityLabel)
-    }
-}
-
 /// Which screen owns a Message launcher.
 enum QuickSessionLauncherSurface: Equatable {
     case allSessions
@@ -328,19 +236,6 @@ enum QuickSessionLauncherCoverage {
     }
 }
 
-/// Now Playing is a wide pill. On the rail it is a labeled symbol that opens
-/// the same player, so playback does not keep a horizontal bottom bar.
-struct SessionInboxNowPlayingRailButton: View {
-    let onOpen: () -> Void
-
-    var body: some View {
-        Button("Playing", systemImage: "waveform", action: onOpen)
-            .foregroundStyle(.themeFg)
-            .accessibilityLabel("Now Playing")
-            .accessibilityIdentifier("sessionList.nowPlaying.rail")
-    }
-}
-
 /// SwiftUI bar controls and the now-playing player for UIKit session lists.
 /// Each control returns its host so the list updates it in place (`updating`)
 /// instead of rebuilding the bar item.
@@ -356,8 +251,7 @@ enum SessionListHostedChrome {
         onStart: @escaping () -> Void,
         onDictate: @escaping () -> Void
     ) -> HostedContentController {
-        let content = SessionInboxComposeLauncher(
-            joinsVerticalRail: false,
+        let content = SessionInboxCompactComposeBar(
             showsDictation: showsDictation,
             hasActivePlayback: hasActivePlayback,
             columnWidth: columnWidth,

@@ -299,7 +299,6 @@ struct DesktopCurrentStillViewerModelTests {
         #expect(livePhone.last?.title == "Remote Screen")
         #expect(livePhone.last?.systemImage == "macwindow")
         #expect(livePhone.last?.accessibilityIdentifier == "workspace.desktopStill.open")
-        #expect(livePhone.last?.minimumHitHeight == 44)
         #expect(livePhone.last?.accessibilityHint == "Inspect the current remote screen")
 
         let pad = WorkspaceSidebarPrimaryUtilities.items(for: .pad, sshTerminalEnabled: false, hasSSHProfile: false)
