@@ -364,11 +364,47 @@ struct WorkspaceReviewDiffSpan: Codable, Sendable, Equatable {
     let start: Int
     let end: Int
     let kind: Kind
+
+    /// Word highlights as painted. Spans stay the minimal word edit (server
+    /// and client agree on them), but two spans separated only by spaces or
+    /// tabs paint as one run, so `, keepsLineStart: Bool = false` reads as one
+    /// edit instead of a box per word.
+    static func paintRuns(_ spans: [WorkspaceReviewDiffSpan], in text: String) -> [NSRange] {
+        let units = Array(text.utf16)
+        var runs: [NSRange] = []
+        for span in spans.sorted(by: { $0.start < $1.start }) {
+            guard span.start >= 0, span.end > span.start, span.end <= units.count else { continue }
+            if let last = runs.last, NSMaxRange(last) <= span.start,
+               units[NSMaxRange(last)..<span.start].allSatisfy({ $0 == 0x20 || $0 == 0x09 }) {
+                runs[runs.count - 1].length = span.end - last.location
+            } else {
+                runs.append(NSRange(location: span.start, length: span.end - span.start))
+            }
+        }
+        return runs
+    }
 }
 
 enum WorkspaceReviewDiffHunkBuilder {
     private static let contextLines = 3
+    // Word-span pairing mirrors server `workspace-review-diff.ts`, so a diff
+    // the client builds (tool calls, conflict review) marks the same words as
+    // a server review diff.
+
+    /// A removed and an added line are the same line edited only when at least
+    /// half of their combined non-whitespace text is shared. Below that, word
+    /// spans mark almost every token of two unrelated lines: noise, not a diff.
+    private static let wordPairMinSimilarity = 0.5
+    /// How many added lines past the previous pair a removed line may look for its edit.
+    private static let wordPairLookahead = 8
+    /// Most changed places per side for a positional pair that is not similar.
+    private static let wordFallbackMaxRegions = 3
+    /// Token-LCS cells for one similar pair.
     private static let maxTokenDiffCells = 40_000
+    /// Token-LCS cells for one positional fallback pair: a few dozen token edits.
+    private static let wordFallbackMaxCells = 4_096
+    /// Token-LCS cells for one whole diff; past it, remaining lines stay line-level.
+    private static let wordDiffMaxCells = 4_000_000
 
     /// Build hunks from diff lines with word-level change spans.
     ///
@@ -476,10 +512,16 @@ enum WorkspaceReviewDiffHunkBuilder {
 
     // MARK: - Word-Level Span Computation
 
-    /// Walk change groups (contiguous removed+added runs) and compute word-level
-    /// spans for each removed/added pair using token LCS.
+    /// Word spans within each change block, in two passes that keep both sides
+    /// in order:
+    /// 1. Each removed line pairs with the first similar added line at or after
+    ///    the previous pair (within `wordPairLookahead`).
+    /// 2. Lines left between two pairs pair by position when the word diff
+    ///    stays small (`fewChangeWordSpans`).
+    /// Lines that pair with nothing stay line-level.
     private static func applyWordLevelHighlights(_ lines: inout [WorkspaceReviewDiffLine]) {
         var index = 0
+        var budget = wordDiffMaxCells
 
         while index < lines.count {
             guard lines[index].kind != .context else {
@@ -498,18 +540,44 @@ enum WorkspaceReviewDiffHunkBuilder {
                 cursor += 1
             }
 
-            // Pair removed/added lines and compute word spans
-            let pairCount = min(removed.count, added.count)
-            for pairIndex in 0..<pairCount {
-                let ri = removed[pairIndex]
-                let ai = added[pairIndex]
-                let spans = computeWordSpans(oldText: lines[ri].text, newText: lines[ai].text)
-
-                if !spans.old.isEmpty {
-                    lines[ri] = lines[ri].withSpans(spans.old)
+            if !removed.isEmpty, !added.isEmpty {
+                let removedWords = removed.map { WordLine(lines[$0].text) }
+                let addedWords = added.map { WordLine(lines[$0].text) }
+                func apply(_ spans: WordSpans, removed removedIndex: Int, added addedIndex: Int) {
+                    if !spans.old.isEmpty { lines[removed[removedIndex]] = lines[removed[removedIndex]].withSpans(spans.old) }
+                    if !spans.new.isEmpty { lines[added[addedIndex]] = lines[added[addedIndex]].withSpans(spans.new) }
                 }
-                if !spans.new.isEmpty {
-                    lines[ai] = lines[ai].withSpans(spans.new)
+
+                var pairs: [(removed: Int, added: Int)] = []
+                var nextAdded = 0
+                for removedIndex in removed.indices {
+                    let searchEnd = min(added.count, nextAdded + wordPairLookahead)
+                    for candidate in nextAdded..<max(nextAdded, searchEnd) {
+                        guard let spans = similarLineWordSpans(removedWords[removedIndex], addedWords[candidate], budget: &budget) else {
+                            continue
+                        }
+                        apply(spans, removed: removedIndex, added: candidate)
+                        pairs.append((removedIndex, candidate))
+                        nextAdded = candidate + 1
+                        break
+                    }
+                }
+
+                var previousRemoved = -1
+                var previousAdded = -1
+                for pair in pairs + [(removed.count, added.count)] {
+                    let gap = min(pair.removed - previousRemoved, pair.added - previousAdded) - 1
+                    if gap > 0 {
+                        for offset in 1...gap {
+                            let removedIndex = previousRemoved + offset
+                            let addedIndex = previousAdded + offset
+                            if let spans = fewChangeWordSpans(removedWords[removedIndex], addedWords[addedIndex], budget: &budget) {
+                                apply(spans, removed: removedIndex, added: addedIndex)
+                            }
+                        }
+                    }
+                    previousRemoved = pair.removed
+                    previousAdded = pair.added
                 }
             }
 
@@ -523,7 +591,22 @@ enum WorkspaceReviewDiffHunkBuilder {
         let value: String
         let start: Int
         let end: Int
+
+        var isSpace: Bool { value.unicodeScalars.first?.properties.isWhitespace ?? false }
     }
+
+    /// Tokenized line text with its non-whitespace length, the unit of similarity.
+    private struct WordLine {
+        let tokens: [Token]
+        let contentChars: Int
+
+        init(_ text: String) {
+            tokens = WorkspaceReviewDiffHunkBuilder.tokenize(text)
+            contentChars = tokens.reduce(0) { $0 + ($1.isSpace ? 0 : $1.end - $1.start) }
+        }
+    }
+
+    private typealias WordSpans = (old: [WorkspaceReviewDiffSpan], new: [WorkspaceReviewDiffSpan])
 
     /// Tokenize text into words, whitespace runs, and punctuation groups.
     /// Token offsets are UTF-16 code units so spans can be applied directly as
@@ -600,26 +683,67 @@ enum WorkspaceReviewDiffHunkBuilder {
         return text.utf16.distance(from: text.utf16.startIndex, to: utf16Index)
     }
 
-    /// Compute word-level change spans between two lines using token LCS.
-    private static func computeWordSpans(
-        oldText: String,
-        newText: String
-    ) -> (old: [WorkspaceReviewDiffSpan], new: [WorkspaceReviewDiffSpan]) {
-        guard oldText != newText else { return ([], []) }
-
-        let oldTokens = tokenize(oldText)
-        let newTokens = tokenize(newText)
-
-        let cellCount = oldTokens.count * newTokens.count
-        if cellCount > maxTokenDiffCells {
-            return (
-                old: fullLineSpan(oldText),
-                new: fullLineSpan(newText)
-            )
+    /// Word spans for a removed/added pair, or nil when the lines are not the
+    /// same line edited. Spans mark the tokens outside a longest common token
+    /// subsequence. Pairs sharing under `wordPairMinSimilarity` of their
+    /// non-whitespace text are unrelated rewrites and stay line-level. The two
+    /// cheap bounds reject most unrelated pairs before the LCS runs.
+    private static func similarLineWordSpans(_ old: WordLine, _ new: WordLine, budget: inout Int) -> WordSpans? {
+        let total = Double(old.contentChars + new.contentChars)
+        func similar(_ shared: Int) -> Bool { total == 0 || 2 * Double(shared) / total >= wordPairMinSimilarity }
+        // At most the shorter side can be shared.
+        guard similar(min(old.contentChars, new.contentChars)) else { return nil }
+        // Nor more than the multiset intersection of their tokens.
+        var counts: [String: Int] = [:]
+        for token in old.tokens where !token.isSpace { counts[token.value, default: 0] += 1 }
+        var bound = 0
+        for token in new.tokens where !token.isSpace {
+            guard let available = counts[token.value], available > 0 else { continue }
+            counts[token.value] = available - 1
+            bound += token.end - token.start
         }
+        guard similar(bound),
+              let match = matchTokens(old.tokens, new.tokens, maxCells: maxTokenDiffCells, budget: &budget) else { return nil }
+        var shared = 0
+        for (index, token) in old.tokens.enumerated() where match.old[index] && !token.isSpace {
+            shared += token.end - token.start
+        }
+        guard similar(shared) else { return nil }
+        return (unmatchedSpans(old.tokens, match.old), unmatchedSpans(new.tokens, match.new))
+    }
 
+    /// Word spans for a positional pair that failed the similarity test, kept
+    /// only when at most `wordFallbackMaxRegions` places change per side.
+    /// Short edits such as `foo()` -> `bar()` share little text yet read best
+    /// with words marked; unrelated lines change many places and stay line-level.
+    private static func fewChangeWordSpans(_ old: WordLine, _ new: WordLine, budget: inout Int) -> WordSpans? {
+        guard let match = matchTokens(old.tokens, new.tokens, maxCells: wordFallbackMaxCells, budget: &budget) else {
+            return nil
+        }
+        let spans = (unmatchedSpans(old.tokens, match.old), unmatchedSpans(new.tokens, match.new))
+        guard spans.0.count <= wordFallbackMaxRegions, spans.1.count <= wordFallbackMaxRegions else { return nil }
+        return spans
+    }
+
+    private static func unmatchedSpans(_ tokens: [Token], _ matched: [Bool]) -> [WorkspaceReviewDiffSpan] {
+        mergeSpans(tokens.indices.compactMap { index in
+            matched[index] ? nil : WorkspaceReviewDiffSpan(start: tokens[index].start, end: tokens[index].end, kind: .changed)
+        })
+    }
+
+    /// Token LCS. Which tokens of each side are in the common subsequence, or
+    /// nil when the table would exceed `maxCells` or the diff's remaining budget.
+    private static func matchTokens(
+        _ oldTokens: [Token],
+        _ newTokens: [Token],
+        maxCells: Int,
+        budget: inout Int
+    ) -> (old: [Bool], new: [Bool])? {
         let m = oldTokens.count
         let n = newTokens.count
+        let cells = m * n
+        guard cells <= maxCells, cells <= budget else { return nil }
+        budget -= cells
 
         // Build LCS table
         var dp = Array(repeating: Array(repeating: 0, count: n + 1), count: m + 1)
@@ -633,39 +757,23 @@ enum WorkspaceReviewDiffHunkBuilder {
             }
         }
 
-        // Backtrace to find non-matching tokens
-        var oldSpans: [WorkspaceReviewDiffSpan] = []
-        var newSpans: [WorkspaceReviewDiffSpan] = []
+        // Backtrace, marking matched tokens.
+        var oldMatched = Array(repeating: false, count: m)
+        var newMatched = Array(repeating: false, count: n)
         var i = m, j = n
 
-        while i > 0 || j > 0 {
-            if i > 0, j > 0, oldTokens[i - 1].value == newTokens[j - 1].value {
+        while i > 0, j > 0 {
+            if oldTokens[i - 1].value == newTokens[j - 1].value {
+                oldMatched[i - 1] = true
+                newMatched[j - 1] = true
                 i -= 1; j -= 1
-                continue
-            }
-
-            let left = j > 0 ? dp[i][j - 1] : 0
-            let up = i > 0 ? dp[i - 1][j] : 0
-
-            if j > 0, i == 0 || left >= up {
-                let token = newTokens[j - 1]
-                newSpans.append(WorkspaceReviewDiffSpan(start: token.start, end: token.end, kind: .changed))
+            } else if dp[i][j - 1] >= dp[i - 1][j] {
                 j -= 1
             } else {
-                let token = oldTokens[i - 1]
-                oldSpans.append(WorkspaceReviewDiffSpan(start: token.start, end: token.end, kind: .changed))
                 i -= 1
             }
         }
-
-        return (
-            old: mergeSpans(oldSpans.reversed()),
-            new: mergeSpans(newSpans.reversed())
-        )
-    }
-
-    private static func fullLineSpan(_ text: String) -> [WorkspaceReviewDiffSpan] {
-        text.isEmpty ? [] : [WorkspaceReviewDiffSpan(start: 0, end: text.utf16.count, kind: .changed)]
+        return (oldMatched, newMatched)
     }
 
     private static func mergeSpans(_ spans: [WorkspaceReviewDiffSpan]) -> [WorkspaceReviewDiffSpan] {

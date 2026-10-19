@@ -241,7 +241,8 @@ enum DiffAttributedStringBuilder {
         let rowEnd: Int
         let lineNumber: Int?
         let kind: WorkspaceReviewDiffLine.Kind
-        let spans: [WorkspaceReviewDiffSpan]?
+        /// Word-highlight runs in code coordinates (`WorkspaceReviewDiffSpan.paintRuns`).
+        let wordRuns: [NSRange]
     }
 
     /// Old and new source projections for one contiguous hunk.
@@ -448,7 +449,7 @@ enum DiffAttributedStringBuilder {
                     rowEnd: rowEnd,
                     lineNumber: displayLineNumber,
                     kind: line.kind,
-                    spans: line.spans
+                    wordRuns: line.spans.map { WorkspaceReviewDiffSpan.paintRuns($0, in: codeText) } ?? []
                 ))
 
                 if language != .unknown {
@@ -507,15 +508,10 @@ enum DiffAttributedStringBuilder {
             }
         }
 
-        for info in lineInfos {
-            guard let spans = info.spans, !spans.isEmpty else { continue }
+        for info in lineInfos where !info.wordRuns.isEmpty {
             let wordBg = rows.wordBackground(for: info.kind)
-            for span in spans {
-                let length = span.end - span.start
-                guard span.start >= 0, length > 0 else { continue }
-                let spanStart = info.codeStart + span.start
-                guard spanStart + length <= info.codeStart + info.codeLen else { continue }
-                result.addAttribute(.backgroundColor, value: wordBg, range: NSRange(location: spanStart, length: length))
+            for run in info.wordRuns where NSMaxRange(run) <= info.codeLen {
+                result.addAttribute(.backgroundColor, value: wordBg, range: NSRange(location: info.codeStart + run.location, length: run.length))
             }
         }
 
@@ -823,11 +819,8 @@ enum DiffAttributedStringBuilder {
         }
         if let spans = row.line.spans, !spans.isEmpty {
             let background = rows.wordBackground(for: row.line.kind)
-            for span in spans {
-                let length = span.end - span.start
-                guard span.start >= 0, length > 0, span.end <= code.utf16.count else { continue }
-                let range = NSRange(location: codeStart + span.start, length: length)
-                result.addAttribute(.backgroundColor, value: background, range: range)
+            for run in WorkspaceReviewDiffSpan.paintRuns(spans, in: code) {
+                result.addAttribute(.backgroundColor, value: background, range: NSRange(location: codeStart + run.location, length: run.length))
             }
         }
     }
