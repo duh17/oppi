@@ -176,6 +176,10 @@ struct QuickSessionSheet: View {
     @AppStorage(AppPreferences.Experiments.durableSessionsDefaultKey) private var durableByDefault = false
     /// The engine the user picked with the pill for this one launch; `nil` follows the default.
     @State private var chosenEngine: SessionEngine?
+    /// The Incognito pill's choice for this one launch. Applies to plain Pi only:
+    /// a saved Agent launch has to resume its created session, which an
+    /// incognito session refuses.
+    @State private var incognitoChosen = false
     /// Whether the launch context's or remembered Agent has been applied. A launch is
     /// blocked while it is not, so a saved Agent's launch never goes out as a plain session.
     @State private var agentResolution: DurableSessions.AgentResolution = .resolved
@@ -234,9 +238,19 @@ struct QuickSessionSheet: View {
             serverOffersDurable: selectedServerConnection()?.durableSessionsAvailable == true,
             durableByDefault: durableByDefault,
             savedAgentSelected: selectedAgentId != nil,
+            incognito: launchesIncognito,
             chosenEngine: chosenEngine,
             agentResolution: agentResolution
         )
+    }
+
+    /// The Incognito pill shows, and its choice applies, only for a plain Pi launch.
+    private var offersIncognito: Bool {
+        selectedAgentId == nil
+    }
+
+    private var launchesIncognito: Bool {
+        incognitoChosen && offersIncognito
     }
 
     private var engine: SessionEngine {
@@ -576,6 +590,9 @@ struct QuickSessionSheet: View {
                 }
                 if engineDecision.showsPill {
                     enginePill
+                }
+                if offersIncognito {
+                    incognitoPill
                 }
             }
             .padding(.horizontal, 16)
@@ -934,6 +951,39 @@ struct QuickSessionSheet: View {
         .glassEffect(.regular, in: Capsule())
         .frame(minHeight: ComposerInputMetrics.controlDiameter)
         .contentShape(Rectangle())
+    }
+
+    /// Incognito for this launch: the session keeps no history and is deleted
+    /// when its chat closes. Off it is only the symbol, so it costs the
+    /// destination row little width; on it spells itself out.
+    private var incognitoPill: some View {
+        Button {
+            incognitoChosen.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: incognitoChosen ? "eye.slash.fill" : "eye.slash")
+                if incognitoChosen {
+                    Text("Incognito")
+                        .lineLimit(1)
+                }
+            }
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(incognitoChosen ? .themePurple : .themeComment)
+            .frame(minHeight: 17)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(incognitoChosen ? Color.themePurple.opacity(0.14) : .clear, in: Capsule())
+            .glassEffect(.regular, in: Capsule())
+            .frame(minHeight: ComposerInputMetrics.controlDiameter)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .accessibilityLabel("Incognito")
+        .accessibilityValue(incognitoChosen ? "On" : "Off")
+        .accessibilityHint("An incognito session keeps no history and is deleted when you leave it")
+        .accessibilityAddTraits(.isToggle)
+        .accessibilityIdentifier("quickSession.incognito")
     }
 
     /// Parent id for a launch on `serverId`; a session id only means something on its own server.
@@ -1520,6 +1570,7 @@ struct QuickSessionSheet: View {
             "has_agent": selectedAgentId == nil ? "0" : "1",
             "worktree": plan.worktreeId == WorkspaceWorktree.mainId ? "main" : "other",
             "engine": engine.rawValue,
+            "incognito": launchesIncognito ? "1" : "0",
         ]
 
         // Capture references before dismiss invalidates environment
@@ -1528,6 +1579,7 @@ struct QuickSessionSheet: View {
         let attachments = pendingAttachments
         let parentSessionId = threadParentSessionId(onServer: serverId)
         let launchEngine = self.engine
+        let incognito = launchesIncognito
 
         Task { @MainActor in
             // A locked server or workspace asks before anything is created or
@@ -1556,11 +1608,16 @@ struct QuickSessionSheet: View {
                         workspaceId: workspace.id,
                         model: modelId,
                         thinking: thinking.rawValue,
+                        ephemeral: incognito ? true : nil,
                         worktreeId: plan.worktreeId,
                         parentSessionId: parentSessionId,
                         engine: launchEngine
                     )
                     session = response.session
+                    if incognito {
+                        // The creator opens a new Incognito session without being asked.
+                        ScopedLockService.shared.noteCreated(.session(session, serverId: serverId))
+                    }
                     autoSendMessage = plan.shouldAutoSend ? transportText : nil
                     autoSendAttachments = plan.shouldAutoSend ? attachments : nil
                     AppPreferences.QuickSession.saveThinkingLevel(thinking)

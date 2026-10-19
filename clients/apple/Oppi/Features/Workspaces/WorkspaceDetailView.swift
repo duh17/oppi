@@ -577,7 +577,7 @@ struct WorkspaceDetailView: View {
                         ContentUnavailableView(
                             "No Sessions",
                             systemImage: "terminal",
-                            description: Text("Tap Message to compose a Quick Session in this worktree. Long press for incognito.")
+                            description: Text("Tap Message to compose a Quick Session in this worktree.")
                         )
                         .themedListRowBackground()
                     }
@@ -922,9 +922,6 @@ struct WorkspaceDetailView: View {
             ),
             hasActivePlayback: connection.audioPlayer.hasActivePlayback,
             columnWidth: composeBarColumnWidth,
-            onIncognito: {
-                Task { await createSession(ephemeral: true) }
-            },
             onStart: {
                 startQuickSession(dictate: false)
             },
@@ -1065,7 +1062,7 @@ struct WorkspaceDetailView: View {
         await createSession()
     }
 
-    private func createSession(ephemeral: Bool = false) async {
+    private func createSession() async {
         guard let api = apiClient else {
             error = "Server is offline — reconnecting in background"
             return
@@ -1076,7 +1073,6 @@ struct WorkspaceDetailView: View {
         do {
             let response = try await api.createWorkspaceSession(
                 workspaceId: workspace.id,
-                ephemeral: ephemeral ? true : nil,
                 worktreeId: selectedWorktreeId
             )
             sessionStore.upsert(response.session)

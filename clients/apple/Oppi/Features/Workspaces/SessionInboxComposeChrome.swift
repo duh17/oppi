@@ -6,7 +6,6 @@ import SwiftUI
 /// mic plus placeholder — matching the chat composer. Tapping the capsule
 /// presents Quick Session; tapping the mic starts dictation there. The trailing
 /// capsule is folder only so Files opens from the same side the browser pushes.
-/// Workspace lists keep Incognito on a context menu.
 enum SessionInboxComposeChrome {
     static let compactBarPlaceholder = "Message"
     static let compactBarMicWidth: CGFloat = 44
@@ -73,7 +72,6 @@ struct SessionInboxCompactComposeBar: View {
     /// Width kept free beside the capsule: the folder capsule by default.
     var trailingReserve: CGFloat = SessionInboxComposeChrome.messageCapsuleFolderReserve
     var placeholder: String = SessionInboxComposeChrome.compactBarPlaceholder
-    var onIncognito: (() -> Void)? = nil
     let onStart: () -> Void
     let onDictate: () -> Void
 
@@ -118,7 +116,6 @@ struct SessionInboxCompactComposeBar: View {
         .accessibilityLabel("Start Quick Session")
         .accessibilityIdentifier("workspace.quickSession.start")
         .accessibilityAction(named: "Dictate Quick Session", onDictate)
-        .modifier(SessionInboxIncognitoContextMenu(onIncognito: onIncognito))
     }
 
     private var placeholderLabel: some View {
@@ -145,40 +142,16 @@ struct SessionInboxCompactComposeBar: View {
     }
 }
 
-private struct SessionInboxIncognitoContextMenu: ViewModifier {
-    let onIncognito: (() -> Void)?
-
-    func body(content: Content) -> some View {
-        if let onIncognito {
-            content.contextMenu {
-                Button(action: onIncognito) {
-                    Label("Incognito Session", systemImage: "eye.slash")
-                }
-            }
-        } else {
-            content
-        }
-    }
-}
-
-/// Rail compose has no room for the capsule's mic. Long-press keeps Dictate
-/// and Incognito; the accessibility action stays for Voice Control.
+/// Rail compose has no room for the capsule's mic. Long-press keeps Dictate;
+/// the accessibility action stays for Voice Control.
 private struct SessionInboxRailComposeMenu: ViewModifier {
     let showsDictation: Bool
     let onDictate: () -> Void
-    let onIncognito: (() -> Void)?
 
     func body(content: Content) -> some View {
-        if showsDictation || onIncognito != nil {
+        if showsDictation {
             content.contextMenu {
-                if showsDictation {
-                    Button("Dictate", systemImage: "mic", action: onDictate)
-                }
-                if let onIncognito {
-                    Button(action: onIncognito) {
-                        Label("Incognito Session", systemImage: "eye.slash")
-                    }
-                }
+                Button("Dictate", systemImage: "mic", action: onDictate)
             }
         } else {
             content
@@ -200,7 +173,6 @@ struct SessionInboxComposeLauncher: View {
     var columnWidth: CGFloat = 0
     var trailingReserve: CGFloat = SessionInboxComposeChrome.messageCapsuleFolderReserve
     var placeholder: String = SessionInboxComposeChrome.compactBarPlaceholder
-    var onIncognito: (() -> Void)? = nil
     let onStart: () -> Void
     let onDictate: () -> Void
 
@@ -214,7 +186,6 @@ struct SessionInboxComposeLauncher: View {
                 columnWidth: columnWidth,
                 trailingReserve: trailingReserve,
                 placeholder: placeholder,
-                onIncognito: onIncognito,
                 onStart: onStart,
                 onDictate: onDictate
             )
@@ -230,8 +201,7 @@ struct SessionInboxComposeLauncher: View {
             .modifier(
                 SessionInboxRailComposeMenu(
                     showsDictation: showsDictation,
-                    onDictate: onDictate,
-                    onIncognito: onIncognito
+                    onDictate: onDictate
                 )
             )
     }

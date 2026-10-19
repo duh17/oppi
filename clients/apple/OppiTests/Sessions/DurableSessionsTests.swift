@@ -9,6 +9,7 @@ struct DurableSessionsTests {
         offered: Bool,
         durableDefault: Bool = false,
         savedAgent: Bool = false,
+        incognito: Bool = false,
         chose engine: SessionEngine? = nil,
         agent resolution: DurableSessions.AgentResolution = .resolved
     ) -> DurableSessions.LaunchDecision {
@@ -17,6 +18,7 @@ struct DurableSessionsTests {
             serverOffersDurable: offered,
             durableByDefault: durableDefault,
             savedAgentSelected: savedAgent,
+            incognito: incognito,
             chosenEngine: engine,
             agentResolution: resolution
         )
@@ -62,6 +64,16 @@ struct DurableSessionsTests {
             #expect(agent.showsPill)
             #expect(!agent.canToggle)
             #expect(agent.classicReason == DurableSessions.savedAgentClassicReason)
+        }
+    }
+
+    @Test func incognitoLaunchRunsClassicWithAReasonEvenWhenDurableWasChosen() {
+        for chose in [nil, SessionEngine.durable] {
+            let incognito = decide(experiment: true, offered: true, durableDefault: true, incognito: true, chose: chose)
+            #expect(incognito.engine == .classic)
+            #expect(incognito.showsPill)
+            #expect(!incognito.canToggle)
+            #expect(incognito.classicReason == DurableSessions.incognitoClassicReason)
         }
     }
 

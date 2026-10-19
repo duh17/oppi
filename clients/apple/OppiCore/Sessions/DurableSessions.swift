@@ -28,8 +28,10 @@ enum DurableSessions {
 
     /// The server refuses a saved Agent launch with the durable engine
     /// (`routes/agents.ts`), so such a launch runs Classic instead of failing.
-    /// Incognito sessions are not decided here: they never come from the composer.
     static let savedAgentClassicReason = "Saved Agents"
+    /// The server refuses an incognito session on the durable engine
+    /// (`durableUnsupportedFeature`), so an incognito launch runs Classic.
+    static let incognitoClassicReason = "Incognito"
 
     /// Whether the saved Agent a launch should use (a launch context's, or the remembered
     /// one) has been applied. Until it is, the composer cannot tell a plain launch from an
@@ -57,6 +59,7 @@ enum DurableSessions {
         serverOffersDurable: Bool,
         durableByDefault: Bool,
         savedAgentSelected: Bool,
+        incognito: Bool = false,
         chosenEngine: SessionEngine?,
         agentResolution: AgentResolution = .resolved
     ) -> LaunchDecision {
@@ -69,6 +72,11 @@ enum DurableSessions {
         if savedAgentSelected {
             return LaunchDecision(
                 engine: .classic, showsPill: true, classicReason: savedAgentClassicReason, blocksLaunch: false
+            )
+        }
+        if incognito {
+            return LaunchDecision(
+                engine: .classic, showsPill: true, classicReason: incognitoClassicReason, blocksLaunch: false
             )
         }
         return LaunchDecision(

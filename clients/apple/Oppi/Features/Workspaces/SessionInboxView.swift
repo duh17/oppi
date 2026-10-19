@@ -1111,7 +1111,6 @@ struct SessionInboxView: View {
             hasActivePlayback: sessionListHasActivePlayback,
             columnWidth: composeBarColumnWidth,
             trailingReserve: SessionInboxComposeChrome.messageCapsuleFolderReserve,
-            onIncognito: nil,
             onStart: {
                 startQuickSession(dictate: false)
             },

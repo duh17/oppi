@@ -888,7 +888,9 @@ final class ChatViewController: UIViewController {
         // A sheet over the chat keeps it in the window; only leaving the
         // window (a push, a full-screen cover, a pop) is a disappearance.
         guard viewIfLoaded?.window == nil || isMovingFromParent || screen.isMovingFromParent else { return }
-        handleDisappear()
+        // Popped, dismissed, or replaced; a push above the chat or a tab
+        // switch leaves it in its stack.
+        handleDisappear(leftStack: isMovingFromParent || screen.isMovingFromParent || screen.isBeingDismissed)
     }
 
     override func viewDidLayoutSubviews() {
@@ -1317,7 +1319,7 @@ final class ChatViewController: UIViewController {
         sendPrompt()
     }
 
-    private func handleDisappear() {
+    private func handleDisappear(leftStack: Bool) {
         hasAppeared = false
         sessionEntryTask?.cancel()
         sessionEntryTask = nil
@@ -1354,12 +1356,52 @@ final class ChatViewController: UIViewController {
         let composerDraftStore = root?.composerDraftStore
         let sessionManager = sessionManager
         let connection = connection
+        // Leaving an incognito chat ends it. A shell swap remounts the same
+        // chat in the other shell, so it has not left.
+        let incognitoScope = leftStack && !shellSwapRemount && session?.ephemeral == true
+            ? focusedRouteScope
+            : nil
+        if incognitoScope != nil {
+            sessionStore.remove(id: sessionId)
+        }
         Task {
             await liveVoiceController.leave()
             if let composerDraftStore {
                 await composerDraftStore.flush()
             }
             await sessionManager.flushSnapshotIfNeeded(connection: connection, force: true)
+            if let incognitoScope {
+                await self.deleteIncognitoSession(scope: incognitoScope)
+            }
+        }
+    }
+
+    /// The server stops and deletes the session, and this device drops its
+    /// cached trace and lock, so it shows in no list afterwards. A failed
+    /// delete leaves the session on the server; the next list sync shows it.
+    private func deleteIncognitoSession(scope: SessionRouteScope) async {
+        let sessionId = sessionId
+        let serverId = resolvedServerId
+        if let serverId {
+            await TimelineCache.shared.removeTrace(sessionId, serverId: serverId)
+        } else {
+            await TimelineCache.shared.removeTrace(sessionId)
+        }
+        guard let apiClient else {
+            ClientLog.warning("Navigation", "Incognito session not deleted: no server", metadata: ["sessionId": sessionId])
+            return
+        }
+        do {
+            try await apiClient.deleteSession(scope: scope, sessionId: sessionId)
+            if let serverId {
+                ScopedLockService.shared.forgetSession(serverId: serverId, sessionId: sessionId)
+            }
+        } catch {
+            ClientLog.warning(
+                "Navigation",
+                "Incognito session delete failed",
+                metadata: ["sessionId": sessionId, "error": error.localizedDescription]
+            )
         }
     }
 

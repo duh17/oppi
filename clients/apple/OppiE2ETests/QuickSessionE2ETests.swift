@@ -198,6 +198,45 @@ final class QuickSessionE2ETests: E2ETestCase {
         dismissQuickSession()
     }
 
+    /// The Incognito pill starts an in-memory session, and leaving its chat
+    /// deletes it on the server and from the list.
+    @MainActor
+    func testIncognitoQuickSessionIsDeletedWhenItsChatCloses() throws {
+        let sessionList = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(waitForElementToExist(sessionList, timeout: 20), "Sessions inbox did not appear")
+
+        openQuickSession()
+        let incognito = app.buttons["quickSession.incognito"]
+        tap(incognito, named: "incognito pill", timeout: 5)
+        XCTAssertEqual(incognito.value as? String, "On", "Incognito pill did not turn on")
+
+        let marker = "E2E_QS_INCOGNITO \(UUID().uuidString.prefix(8))"
+        replaceText(in: app.textViews["chat.input"], with: marker)
+        tap(app.buttons["chat.send"], named: "quick session send", timeout: 5)
+        let sessionId = waitForFocusedSessionId(timeout: 30)
+        XCTAssertTrue(waitForTimelineTextContaining(marker, timeout: 30), "Incognito prompt did not reach the new chat")
+        XCTAssertEqual(try e2eSession(sessionId: sessionId)["ephemeral"] as? Bool, true, "Session was not created incognito")
+
+        tap(app.buttons["chat.toolbar.back"], named: "chat back button", timeout: 5)
+        XCTAssertTrue(
+            waitForElementToExist(app.buttons["workspace.quickSession.start"], timeout: 10),
+            "Did not return to the session list"
+        )
+
+        let deadline = Date().addingTimeInterval(20)
+        var status = 0
+        while Date() < deadline {
+            status = try e2eLabAPIBytes(method: "GET", path: "/sessions/\(sessionId)").statusCode
+            if status == 404 { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        XCTAssertEqual(status, 404, "Incognito session still exists on the server after its chat closed")
+        XCTAssertFalse(
+            app.descendants(matching: .any)["session.nav.\(sessionId)"].exists,
+            "Incognito session row is still listed after its chat closed"
+        )
+    }
+
     /// Sends `text` through Quick Session, waits for the new chat, and goes back
     /// to the session list the Quick Session opened from.
     @MainActor
