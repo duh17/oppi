@@ -11,6 +11,11 @@ final class ToolArgsStore {
     private var displays: [String: ToolDisplay] = [:]
     private var outputs: [String: ToolOutputPresentation] = [:]
     private var availability: [String: ToolOutputAvailability] = [:]
+    /// Moves each time a call's arguments are stored. A call's `ChatItem` keeps
+    /// only a short argument summary, so a streamed argument that grows past it
+    /// (a write's content) leaves the item unchanged; the timeline compares this
+    /// to reconfigure the running row and its live reader.
+    @ObservationIgnored private var argsRevisions: [String: UInt64] = [:]
 
     func setOutputPresentation(_ value: ToolOutputPresentation, for id: String) { outputs[id] = value }
     func outputPresentation(for id: String) -> ToolOutputPresentation? { outputs[id] }
@@ -26,19 +31,32 @@ final class ToolArgsStore {
     static let maxPreviewStringBytes = 256 * 1024
 
     func set(_ args: [String: JSONValue], for id: String) {
-        store[id] = args
+        record(args, for: id)
     }
 
     func setPreview(_ args: [String: JSONValue], for id: String) {
-        store[id] = Self.previewArgs(args)
+        record(Self.previewArgs(args), for: id)
+    }
+
+    /// A replayed update, or a capped preview that no longer grows, stores the
+    /// same arguments and keeps the revision.
+    private func record(_ args: [String: JSONValue], for id: String) {
+        guard store[id] != args else { return }
+        store[id] = args
+        argsRevisions[id, default: 0] &+= 1
     }
 
     func args(for id: String) -> [String: JSONValue]? {
         store[id]
     }
 
+    func argsRevision(for id: String) -> UInt64 {
+        argsRevisions[id] ?? 0
+    }
+
     func clearAll() {
         store.removeAll()
+        argsRevisions.removeAll()
         presentations.removeAll()
         displays.removeAll()
         outputs.removeAll()

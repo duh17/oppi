@@ -536,6 +536,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     private var previousWorkLineByID: [String: QuietTimelineWorkLine] = [:]
     private var workLineReplacementIDByPreviousID: [String: String] = [:]
     private var previousItemByID: [String: ChatItem] = [:]
+    /// The arguments revision each running tool row was last configured with.
+    private var appliedToolArgsRevisions: [String: UInt64] = [:]
     private var previousStreamingAssistantID: String?
     private(set) var previousHiddenCount = 0
     private var previousHasOlderServerPage = false
@@ -1101,6 +1103,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             }
         }
 
+        let toolArgsChangedIDs = runningToolRowsWithNewArgs(in: configuration.items)
+
         // Streaming fast path: when the rendered row list is structurally
         // unchanged, skip the full plan build. Quiet mode folds tools into
         // synthetic work lines, so ChatItem count alone is not the structure
@@ -1156,7 +1160,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                     || TimelineSnapshotApplier.isStreamingMutableItem(prevItem) else {
                     continue
                 }
-                if let prev = prevItem, prev != item {
+                if let prev = prevItem, prev != item || toolArgsChangedIDs.contains(id) {
                     currentItemByID[id] = item
                     previousItemByID[id] = item
                     reconfigureIDs.append(id)
@@ -1224,7 +1228,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                     || TimelineSnapshotApplier.isStreamingMutableItem(prev) else {
                     continue
                 }
-                if prev != item {
+                if prev != item || toolArgsChangedIDs.contains(id) {
                     mutableChanged = true
                     break
                 }
@@ -1269,7 +1273,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                     || TimelineSnapshotApplier.isStreamingMutableItem(prev) else {
                     continue
                 }
-                if let prev, prev != item {
+                if let prev, prev != item || toolArgsChangedIDs.contains(id) {
                     currentItemByID[id] = item
                     previousItemByID[id] = item
                     reconfigureIDs.append(id)
@@ -1361,7 +1365,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         currentIDs = applyPlan.nextIDs
         currentItemByID = applyPlan.nextItemByID
 
-        var forceReconfigureIDs: [String] = []
+        var forceReconfigureIDs = Array(toolArgsChangedIDs)
         if agentPresentationChanged {
             forceReconfigureIDs.append(contentsOf:
                 TimelineSnapshotApplier.assistantPresentationItemIDs(
@@ -2048,6 +2052,30 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                 }
             }
         }
+    }
+
+    /// Running tool rows whose arguments were stored again since the row was
+    /// configured. A streamed argument (a write's content) can grow past the
+    /// row's `ChatItem` summary without changing the item, and the expanded
+    /// row and its live reader stream are built from the full arguments.
+    /// A row seen for the first time is not reported: its insert configures it.
+    private func runningToolRowsWithNewArgs(in items: [ChatItem]) -> Set<String> {
+        guard let toolArgsStore else {
+            appliedToolArgsRevisions.removeAll()
+            return []
+        }
+        var revisions: [String: UInt64] = [:]
+        var changed: Set<String> = []
+        for item in items {
+            guard case .toolCall(let id, _, _, _, _, _, false) = item else { continue }
+            let revision = toolArgsStore.argsRevision(for: id)
+            revisions[id] = revision
+            if let applied = appliedToolArgsRevisions[id], applied != revision {
+                changed.insert(id)
+            }
+        }
+        appliedToolArgsRevisions = revisions
+        return changed
     }
 
     func reconfigureItems(_ itemIDs: [String], in collectionView: UICollectionView) {

@@ -29,6 +29,64 @@ struct ChatTimelineOwnedClockTests {
         })
     }
 
+    /// A write's `ChatItem` keeps an 80-character argument summary, so its
+    /// streamed content grows without changing the item. The expanded row and
+    /// the live reader opened from it (which takes the chat off screen) must
+    /// still follow every chunk.
+    @Test func streamingWriteKeepsRowAndOpenReaderLive() async throws {
+        var opened: [ChatReaderPayload] = []
+        let fixture = makeHostedOwnedTimeline(isBusy: true) { opened.append($0) }
+        defer { fixture.tearDown() }
+        let sessionId = fixture.sessionId
+        let (input, output) = try #require(ToolFileFactsFixture.facts("write"))
+        func stream(_ content: String) {
+            fixture.reducer.processBatch([.toolUpdate(
+                sessionId: sessionId, toolEventId: "write-live", tool: "write",
+                args: ["path": .string("docs/plan.md"), "content": .string(content)],
+                inputPresentation: input, outputPresentation: output
+            )])
+        }
+        func rowMarkdown() -> String? {
+            fixture.host.view.layoutIfNeeded()
+            let row = timelineAllViews(in: fixture.host.view)
+                .compactMap { $0 as? ToolTimelineRowContentView }
+                .first { ($0.configuration as? ToolTimelineRowConfiguration)?.itemID == "write-live" }
+            guard case .markdown(let text, _) = (row?.configuration as? ToolTimelineRowConfiguration)?.expandedContent
+            else { return nil }
+            return text
+        }
+
+        let first = "# Plan\n\n" + String(repeating: "first chunk ", count: 20)
+        let second = first + "\n\n## Next\n\n" + String(repeating: "second chunk ", count: 20)
+        let third = second + "\n\n## Last\n\n" + String(repeating: "third chunk ", count: 20)
+        fixture.reducer.expandedItemIDs.insert("write-live")
+        fixture.reducer.processBatch([.agentStart(sessionId: sessionId)])
+        stream(first)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in rowMarkdown() == first })
+
+        stream(second)
+        #expect(
+            await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in rowMarkdown() == second },
+            "expanded write row stopped at its first chunk"
+        )
+
+        let row = try #require(timelineAllViews(in: fixture.host.view).compactMap { $0 as? ToolTimelineRowContentView }.first)
+        row.showFullScreenContent()
+        guard case .liveSource(_, let readerStream) = try #require(opened.last).content else {
+            Issue.record("a running write did not open a live reader")
+            return
+        }
+        #expect(readerStream.snapshot.text == second)
+
+        // The pushed reader takes the chat out of the window.
+        fixture.host.view.removeFromSuperview()
+        stream(third)
+        #expect(
+            await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in readerStream.snapshot.text == third },
+            "open reader stopped following the streaming write"
+        )
+    }
+
     private static func containsTerminalText(_ text: String, in view: UIView) -> Bool {
         if let output = view as? UITextView, output.textStorage.string.contains(text) { return true }
         return view.subviews.contains { containsTerminalText(text, in: $0) }
@@ -855,7 +913,10 @@ private struct HostedOwnedTimelineFixture {
 }
 
 @MainActor
-private func makeHostedOwnedTimeline(isBusy: Bool) -> HostedOwnedTimelineFixture {
+private func makeHostedOwnedTimeline(
+    isBusy: Bool,
+    onOpenChatReader: ((ChatReaderPayload) -> Void)? = nil
+) -> HostedOwnedTimelineFixture {
     let sessionId = "owned-hosted-\(UUID().uuidString)"
     let reducer = TimelineReducer()
     let connection = ServerConnection()
@@ -871,7 +932,8 @@ private func makeHostedOwnedTimeline(isBusy: Bool) -> HostedOwnedTimelineFixture
         audioPlayer: audioPlayer,
         isBusy: isBusy,
         serverId: "server-test",
-        workspaceId: "ws-test"
+        workspaceId: "ws-test",
+        onOpenChatReader: onOpenChatReader
     ))
     host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
     let window = UIWindow(frame: host.view.frame)

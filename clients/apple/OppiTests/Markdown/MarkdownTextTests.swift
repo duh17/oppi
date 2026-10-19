@@ -4777,6 +4777,26 @@ struct NativeMermaidBlockViewTests {
         #expect(image.size.width <= 360, "raster \(image.size) is wider than the bubble")
     }
 
+    /// A 40-step top-down chain lays out thousands of points tall, past the
+    /// inline raster budget at 2x. It still shows as a diagram, rasterized at
+    /// a lower scale, instead of falling back to its Mermaid source.
+    @Test func diagramTallerThanTheRasterBudgetStillRenders() throws {
+        let source = "flowchart TD\n" + (1..<40).map { "    N\($0)[Step \($0)] --> N\($0 + 1)[Step \($0 + 1)]" }
+            .joined(separator: "\n")
+        let view = makeDiagramView()
+        view.layoutIfNeeded()
+        view.applyAsDiagramSync(code: source, palette: ThemeID.dark.palette, availableWidth: 360)
+
+        #expect(view.isDisplayingRenderedDiagram, "an over-budget diagram fell back to source")
+        let image = try #require(view.debugRenderedImageForTesting)
+        let budget = DocumentRenderPipeline.naturalRasterBudget
+        #expect(!budget.permits(pointSize: image.size, scale: 2), "diagram no longer exceeds the 2x budget")
+        let pixelWidth = image.size.width * image.scale
+        let pixelHeight = image.size.height * image.scale
+        #expect(max(pixelWidth, pixelHeight) <= CGFloat(budget.maxPixelDimension))
+        #expect(pixelWidth * pixelHeight <= CGFloat(budget.maxPixelCount))
+    }
+
     /// A clipped diagram's container owns the tap, including areas outside the
     /// backing bitmap. Locate the rendered control, not a tappable UIImageView.
     private func renderedDiagramTapTarget(in root: UIView) -> UIView? {
@@ -5130,7 +5150,7 @@ struct NativeMermaidBlockViewTests {
         )
     }
 
-    @Test func overBudgetClosedFenceStaysExactSourceWithoutReservedBox() async throws {
+    @Test func overBudgetClosedFenceReservesHeightThenShowsDiagram() async throws {
         let availableWidth: CGFloat = 360
         let palette = ThemeID.dark.palette
         let source = try #require(overBudgetMermaidSource(theme: palette.renderTheme))
@@ -5141,19 +5161,21 @@ struct NativeMermaidBlockViewTests {
         view.applyAsCode(language: "mermaid", code: source, palette: palette, isOpen: true)
         view.applyAsDiagram(code: source, palette: palette, availableWidth: availableWidth)
 
-        #expect(!view.debugDiagramHeightConstraintIsActiveForTesting, "over-budget mermaid reserved a blank box")
-        #expect(!view.debugIsShowingDiagramForTesting)
-        #expect(view.debugRenderedImageForTesting == nil)
-        #expect(visibleExactSource(in: view).contains("graph TD"))
+        #expect(view.debugDiagramHeightConstraintIsActiveForTesting, "over-budget mermaid did not reserve its height")
+        let reservedHeight = view.debugDiagramHeightConstantForTesting
 
-        let reservedOrRasteredLater = await waitForTimelineCondition(timeoutMs: 600) { @MainActor in
-            view.debugDiagramHeightConstraintIsActiveForTesting
-                || view.debugIsShowingDiagramForTesting
-                || view.debugRenderedImageForTesting != nil
+        let rendered = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            view.debugRenderedImageForTesting != nil
         }
-        #expect(!reservedOrRasteredLater, "over-budget mermaid later reserved or collapsed from a blank box")
-        #expect(visibleExactSource(in: view).contains("graph TD"))
-        #expect(!view.debugDiagramHeightConstraintIsActiveForTesting)
+        #expect(rendered, "over-budget mermaid never rasterized")
+        let image = try #require(view.debugRenderedImageForTesting)
+        #expect(
+            !DocumentRenderPipeline.naturalRasterBudget.permits(pointSize: image.size, scale: 2),
+            "fixture no longer exceeds the 2x budget at the view's layout"
+        )
+        #expect(view.debugIsShowingDiagramForTesting)
+        #expect(view.debugDiagramHeightConstantForTesting == reservedHeight, "raster changed the reserved height")
+        #expect(!visibleExactSource(in: view).contains("graph TD"), "over-budget mermaid fell back to source")
     }
 
     @Test func applyAsDiagramSyncRastersPendingReservationOfSameIdentity() async throws {

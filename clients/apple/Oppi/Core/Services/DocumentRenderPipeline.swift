@@ -47,6 +47,36 @@ enum DocumentRenderPipeline {
             guard pixels <= CGFloat(maxPixelCount) else { return false }
             return pixels * 4 <= CGFloat(maxBytes)
         }
+
+        /// The largest raster scale up to `preferredScale` whose bitmap fits
+        /// the pixel, pixel-count, and byte ceilings. Only pixels cost memory,
+        /// so a layout larger than `maxPointDimension` still rasterizes, at a
+        /// lower scale. Nil for an empty or non-finite size.
+        func fittingScale(pointSize: CGSize, preferredScale: CGFloat) -> CGFloat? {
+            guard pointSize.width.isFinite, pointSize.height.isFinite,
+                  pointSize.width > 0, pointSize.height > 0,
+                  preferredScale.isFinite, preferredScale > 0 else {
+                return nil
+            }
+            let width = pointSize.width
+            let height = pointSize.height
+            // ceil(x) <= n exactly when x <= n for a whole n.
+            let dimensionScale = CGFloat(maxPixelDimension) / max(width, height)
+            // Each side rounds up by under one pixel, so (w·s + 1)(h·s + 1)
+            // <= limit bounds the pixel count: solve w·h·s² + (w + h)·s + 1 = limit.
+            let pixelLimit = min(CGFloat(maxPixelCount), CGFloat(maxBytes) / 4)
+            let area = width * height
+            let perimeter = width + height
+            let discriminant = perimeter * perimeter + 4 * area * (pixelLimit - 1)
+            let countScale = (discriminant.squareRoot() - perimeter) / (2 * area)
+            let scale = min(preferredScale, dimensionScale, countScale)
+            guard scale.isFinite, scale > 0,
+                  ceil(pointSize.width * scale) >= 1,
+                  ceil(pointSize.height * scale) >= 1 else {
+                return nil
+            }
+            return scale
+        }
     }
 
     static let naturalRasterBudget = NaturalRasterBudget(
@@ -487,12 +517,19 @@ enum DocumentRenderPipeline {
                 text: text,
                 config: config
             )
-            guard naturalRasterBudget.permits(pointSize: layout.size, scale: scale) else {
+            // A diagram too large for `scale` rasterizes at a lower one rather
+            // than falling back to source. Inline display is capped at the
+            // surface width and height, so the reduced raster still has more
+            // pixels than the screen shows; fullscreen draws vectors.
+            guard let rasterScale = naturalRasterBudget.fittingScale(
+                pointSize: layout.size,
+                preferredScale: scale
+            ) else {
                 return CachedGraphicalRender(image: nil, size: layout.size)
             }
 
             let format = UIGraphicsImageRendererFormat()
-            format.scale = scale
+            format.scale = rasterScale
             let imageRenderer = UIGraphicsImageRenderer(size: layout.size, format: format)
             let image = imageRenderer.image { ctx in
                 layout.draw(ctx.cgContext, .zero)

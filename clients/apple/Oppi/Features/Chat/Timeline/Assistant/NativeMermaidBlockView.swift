@@ -568,11 +568,10 @@ final class NativeMermaidBlockView: UIView {
             text: code,
             config: Self.configuration(theme: theme, availableWidth: availableWidth)
         )
-        guard layout.size.width > 0, layout.size.height > 0,
-              DocumentRenderPipeline.naturalRasterBudget.permits(
+        guard DocumentRenderPipeline.naturalRasterBudget.fittingScale(
                 pointSize: layout.size,
-                scale: 2
-              ) else {
+                preferredScale: 2
+              ) != nil else {
             return false
         }
 

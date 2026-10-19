@@ -780,7 +780,8 @@ func makeOwnedTimelineConfiguration(
     serverId: String? = nil,
     workspaceId: String? = nil,
     quietModeEnabled: Bool = false,
-    topOverlap: CGFloat = 0
+    topOverlap: CGFloat = 0,
+    onOpenChatReader: ((ChatReaderPayload) -> Void)? = nil
 ) -> ChatTimelineConfiguration {
     ChatTimelineConfiguration(
         items: [],
@@ -794,6 +795,7 @@ func makeOwnedTimelineConfiguration(
         workspaceId: workspaceId,
         onFork: { _ in },
         onOpenCurrentFile: { _ in },
+        onOpenChatReader: onOpenChatReader,
         onBackSwipe: {},
         onShowEarlier: {},
         scrollController: scrollController,
