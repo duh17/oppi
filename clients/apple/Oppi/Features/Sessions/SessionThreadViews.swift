@@ -806,9 +806,8 @@ private struct SessionThreadDetailContentView: View {
     private var isQuickSessionLauncherCovered: Bool {
         QuickSessionLauncherCoverage.isCovered(
             presentation: navigation.workspaceNavigationPresentation,
-            surface: .thread(target),
+            thread: target,
             workspaceStack: navigation.workspaceStackRouteElements,
-            splitDetailTarget: navigation.splitDetailTarget,
             splitDetailElements: navigation.splitDetailPathElements
         )
     }

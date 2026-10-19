@@ -442,7 +442,7 @@ final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
             "Chat did not open from \(source)"
         )
         let launcher = app.buttons["workspace.quickSession.start"]
-        XCTAssertFalse(launcher.exists, "Message launcher installed while chat from \(source) is pushed")
+        XCTAssertFalse(launcher.exists, "Message launcher visible while chat from \(source) is pushed")
         XCTAssertFalse(app.buttons["quickSession.overlay"].exists, "Quick Session opened with the chat from \(source)")
     }
 
@@ -471,7 +471,7 @@ final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
         )
         XCTAssertFalse(
             app.buttons["workspace.quickSession.start"].exists,
-            "Message launcher installed while chat from \(source) stayed pushed"
+            "Message launcher visible while chat from \(source) stayed pushed"
         )
     }
 

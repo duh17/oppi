@@ -290,14 +290,7 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             } ?? false,
             isSyncing: (activeServerId.map { coordinator.preparingServerIds.contains($0) } ?? false)
                 || connection?.workspaceStore.isSyncing == true
-                || connection?.sessionStore.isSyncing == true,
-            isLauncherCovered: QuickSessionLauncherCoverage.isCovered(
-                presentation: navigation.workspaceNavigationPresentation,
-                surface: .allSessions,
-                workspaceStack: navigation.workspaceStackRouteElements,
-                splitDetailTarget: navigation.splitDetailTarget,
-                splitDetailElements: navigation.splitDetailPathElements
-            )
+                || connection?.sessionStore.isSyncing == true
         )
     }
 
@@ -1141,13 +1134,19 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
 
     /// Rail and compact bars. Items rebuild when their set changes; the
     /// SwiftUI controls inside them update in place.
+    ///
+    /// Message stays installed while a chat is pushed over this list. Bar
+    /// items belong to this controller, and the chat shows its own (none,
+    /// with the toolbar hidden), so the capsule never sits on the chat's
+    /// composer. Kept installed, it slides in with the pop instead of
+    /// appearing after it, when the shell's routes catch up.
     private func syncBars(_ state: InboxState) {
         let joinsRail = SessionListBarItems.joinsRail(traitCollection)
         let palette = root.themeStore.activeThemeID.palette
         let showsDictation = SessionInboxComposeChrome.showsDictationShortcut(hasActivePlayback: state.hasActivePlayback)
         let player = state.connection?.audioPlayer
 
-        if !joinsRail, !state.isLauncherCovered {
+        if !joinsRail {
             let params = ComposeParams(
                 showsDictation: showsDictation,
                 hasActivePlayback: state.hasActivePlayback,
@@ -1195,7 +1194,6 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             joinsRail: joinsRail,
             showsSidebarOpen: onOpenSidebar != nil,
             showsSidebarToggle: showsSidebarToggle,
-            showsCompose: !state.isLauncherCovered,
             hasServer: state.selectedServer != nil,
             showsNowPlaying: state.toolbar.showsNowPlayingPill && player != nil,
             parksNowPlayingNextToCompose: state.toolbar.parksNowPlayingNextToCompose,
@@ -1228,14 +1226,12 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             if bars.showsSidebarOpen {
                 trailing.append(SessionListBarItems.sidebarOpen(joinsRail: true, tint: railTint, action: openSidebar))
             }
-            if bars.showsCompose {
-                trailing.append(SessionListBarItems.railCompose(
-                    showsDictation: showsDictation,
-                    tint: railTint,
-                    onStart: { [weak self] in self?.startQuickSession(dictate: false) },
-                    onDictate: { [weak self] in self?.startQuickSession(dictate: true) }
-                ))
-            }
+            trailing.append(SessionListBarItems.railCompose(
+                showsDictation: showsDictation,
+                tint: railTint,
+                onStart: { [weak self] in self?.startQuickSession(dictate: false) },
+                onDictate: { [weak self] in self?.startQuickSession(dictate: true) }
+            ))
             if bars.hasServer, let switcherHost {
                 pinned.append(SessionListBarItems.railItem(SessionListBarItems.hosted(switcherHost), priority: .keep))
             }
@@ -1259,7 +1255,7 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             if bars.hasServer, let switcherHost {
                 trailing.append(SessionListBarItems.hosted(switcherHost))
             }
-            if bars.showsCompose, let composeHost {
+            if let composeHost {
                 bottom.append(SessionListBarItems.hosted(composeHost))
             }
             if bars.showsNowPlaying, let pillHost {
@@ -1334,10 +1330,6 @@ private extension SessionInboxViewController {
         let refreshFailed: Bool
         let transportUnavailable: Bool
         let isSyncing: Bool
-        /// Message is not installed while a destination is pushed over this
-        /// list: the pushed chat hides the bottom bar, but an interactive pop
-        /// still reveals an installed capsule at the composer.
-        let isLauncherCovered: Bool
     }
 
     struct Observed: Equatable {
@@ -1414,7 +1406,6 @@ private extension SessionInboxViewController {
         let joinsRail: Bool
         let showsSidebarOpen: Bool
         let showsSidebarToggle: Bool
-        let showsCompose: Bool
         let hasServer: Bool
         let showsNowPlaying: Bool
         let parksNowPlayingNextToCompose: Bool

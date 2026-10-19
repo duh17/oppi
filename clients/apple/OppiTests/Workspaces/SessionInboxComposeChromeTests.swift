@@ -97,21 +97,16 @@ struct QuickSessionLauncherCoverageTests {
     /// A chat after the owning route hides Message. Removing that chat shows it.
     /// A missing owner stays covered: the live path count is not the depth.
     @Test func routeElementsCoverTheLauncherUntilTheChatIsRemoved() {
-        let stackCases: [(String, [WorkspaceStackRouteElement], QuickSessionLauncherSurface)] = [
-            ("thread + chat", [.sessionThread(thread), .session(chat)], .thread(thread)),
-            (
-                "utility + thread + chat",
-                [.utility(.agents), .sessionThread(thread), .session(chat)],
-                .thread(thread)
-            ),
+        let stackCases: [(String, [WorkspaceStackRouteElement])] = [
+            ("thread + chat", [.sessionThread(thread), .session(chat)]),
+            ("utility + thread + chat", [.utility(.agents), .sessionThread(thread), .session(chat)]),
         ]
-        for (name, covered, surface) in stackCases {
-            expectCovered(name, presentation: .stack, stack: covered, surface: surface, covered: true)
+        for (name, covered) in stackCases {
+            expectCovered(name, presentation: .stack, stack: covered, covered: true)
             expectCovered(
                 "\(name) without chat",
                 presentation: .stack,
                 stack: Array(covered.dropLast()),
-                surface: surface,
                 covered: false
             )
         }
@@ -119,88 +114,26 @@ struct QuickSessionLauncherCoverageTests {
             "split thread + chat",
             presentation: .split,
             path: [.sessionThread(thread), .session(chat)],
-            surface: .thread(thread),
             covered: true
         )
-        expectCovered(
-            "split thread",
-            presentation: .split,
-            path: [.sessionThread(thread)],
-            surface: .thread(thread),
-            covered: false
-        )
-        expectCovered(
-            "split utility + thread + chat",
-            presentation: .split,
-            detail: .utility(.agents),
-            path: [.sessionThread(thread), .session(chat)],
-            surface: .thread(thread),
-            covered: true
-        )
-        expectCovered(
-            "split utility + thread",
-            presentation: .split,
-            detail: .utility(.agents),
-            path: [.sessionThread(thread)],
-            surface: .thread(thread),
-            covered: false
-        )
+        expectCovered("split thread", presentation: .split, path: [.sessionThread(thread)], covered: false)
 
-        expectCovered(
-            "missing thread",
-            presentation: .stack,
-            stack: [.session(chat)],
-            surface: .thread(thread),
-            covered: true
-        )
-        expectCovered(
-            "missing split thread",
-            presentation: .split,
-            path: [.session(chat)],
-            surface: .thread(thread),
-            covered: true
-        )
-
-        expectCovered("all sessions", presentation: .stack, stack: [], surface: .allSessions, covered: false)
-        expectCovered(
-            "all sessions + chat",
-            presentation: .stack,
-            stack: [.session(chat)],
-            surface: .allSessions,
-            covered: true
-        )
-        expectCovered(
-            "all sessions replaced in split",
-            presentation: .split,
-            detail: .session(chat),
-            path: [],
-            surface: .allSessions,
-            covered: true
-        )
-        expectCovered(
-            "all sessions split root",
-            presentation: .split,
-            path: [],
-            surface: .allSessions,
-            covered: false
-        )
+        expectCovered("missing thread", presentation: .stack, stack: [.session(chat)], covered: true)
+        expectCovered("missing split thread", presentation: .split, path: [.session(chat)], covered: true)
     }
 
     private func expectCovered(
         _ name: String,
         presentation: WorkspaceNavigationPresentation,
         stack: [WorkspaceStackRouteElement] = [],
-        detail: WorkspaceSplitDetailTarget? = nil,
         path: [WorkspaceSplitDetailPathElement] = [],
-        surface: QuickSessionLauncherSurface,
         covered: Bool
     ) {
         #expect(
             QuickSessionLauncherCoverage.isCovered(
                 presentation: presentation,
-                surface: surface,
+                thread: thread,
                 workspaceStack: stack,
-                splitDetailTarget: detail,
                 splitDetailElements: path
             ) == covered,
             "\(name)"

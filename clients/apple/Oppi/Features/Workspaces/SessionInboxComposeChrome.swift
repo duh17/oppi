@@ -142,20 +142,15 @@ struct SessionInboxCompactComposeBar: View {
     }
 }
 
-/// Which screen owns a Message launcher.
-enum QuickSessionLauncherSurface: Equatable {
-    case allSessions
-    case thread(SessionThreadNavTarget)
-}
-
-/// Whether a Message launcher's surface still has a destination pushed over it.
+/// Whether the SwiftUI thread detail still has a destination pushed over it,
+/// so its Message launcher stays out of the toolbar. (The UIKit session lists
+/// keep their launcher installed: their bar items never show over a chat.)
 ///
 /// Depth is the route that owns the screen, evaluated every time. A size-class
 /// change rebuilds `[thread, chat]` in one shot; a path
 /// count captured on appear would treat that covered count as the surface.
 ///
-/// All Sessions is the stack root (depth 0) and is replaced in split only when
-/// a detail target is set. A thread is the index of its `SessionThreadNavTarget` in the active path
+/// A thread is the index of its `SessionThreadNavTarget` in the active path
 /// (`workspaceStackRouteElements`, or the split detail path) plus one.
 ///
 /// A missing owner is covered. Falling back to the live path count would report
@@ -163,55 +158,17 @@ enum QuickSessionLauncherSurface: Equatable {
 enum QuickSessionLauncherCoverage {
     static func isCovered(
         presentation: WorkspaceNavigationPresentation,
-        surface: QuickSessionLauncherSurface,
+        thread target: SessionThreadNavTarget,
         workspaceStack: [WorkspaceStackRouteElement],
-        splitDetailTarget: WorkspaceSplitDetailTarget?,
         splitDetailElements: [WorkspaceSplitDetailPathElement]
     ) -> Bool {
         switch presentation {
         case .split:
-            if surface == .allSessions, splitDetailTarget != nil {
-                return true
-            }
-            guard let depth = depth(
-                presentation: .split,
-                surface: surface,
-                workspaceStack: workspaceStack,
-                splitDetailElements: splitDetailElements
-            ) else {
-                return true
-            }
-            return splitDetailElements.count > depth
+            guard let index = index(of: target, in: splitDetailElements) else { return true }
+            return splitDetailElements.count > index + 1
         case .stack:
-            guard let depth = depth(
-                presentation: .stack,
-                surface: surface,
-                workspaceStack: workspaceStack,
-                splitDetailElements: splitDetailElements
-            ) else {
-                return true
-            }
-            return workspaceStack.count > depth
-        }
-    }
-
-    /// `nil` when this surface's route is not in the active path.
-    private static func depth(
-        presentation: WorkspaceNavigationPresentation,
-        surface: QuickSessionLauncherSurface,
-        workspaceStack: [WorkspaceStackRouteElement],
-        splitDetailElements: [WorkspaceSplitDetailPathElement]
-    ) -> Int? {
-        switch surface {
-        case .allSessions:
-            return 0
-        case .thread(let target):
-            switch presentation {
-            case .split:
-                return index(of: target, in: splitDetailElements).map { $0 + 1 }
-            case .stack:
-                return index(of: target, in: workspaceStack).map { $0 + 1 }
-            }
+            guard let index = index(of: target, in: workspaceStack) else { return true }
+            return workspaceStack.count > index + 1
         }
     }
 
