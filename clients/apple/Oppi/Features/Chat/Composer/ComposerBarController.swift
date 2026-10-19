@@ -2370,14 +2370,3 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         applyChrome()
     }
 }
-
-private extension UIView {
-    /// Chrome updates run on every host change, including inside a rotation's
-    /// animation. Under an animation, a stack view takes a repeated
-    /// `isHidden = true` on an arranged subview for a new animated hide and
-    /// finishes it later over whatever the view shows by then, which left the
-    /// action row and key strip hidden while the draft was focused.
-    func setHiddenIfChanged(_ hidden: Bool) {
-        if isHidden != hidden { isHidden = hidden }
-    }
-}

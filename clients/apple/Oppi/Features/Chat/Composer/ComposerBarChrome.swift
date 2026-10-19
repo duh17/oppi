@@ -927,22 +927,22 @@ final class ComposerSendProgressView: UIView {
 
     func apply(text: String?, isSending: Bool, colors: ComposerThemeColors) {
         guard let text else {
-            isHidden = true
+            setHiddenIfChanged(true)
             spinner.stopAnimating()
             return
         }
-        isHidden = false
+        setHiddenIfChanged(false)
         label.text = text
         label.textColor = colors.comment
         spinner.color = colors.comment
         if isSending {
             spinner.startAnimating()
-            checkView.isHidden = true
-            spinner.isHidden = false
+            checkView.setHiddenIfChanged(true)
+            spinner.setHiddenIfChanged(false)
         } else {
             spinner.stopAnimating()
-            spinner.isHidden = true
-            checkView.isHidden = false
+            spinner.setHiddenIfChanged(true)
+            checkView.setHiddenIfChanged(false)
             let config = UIImage.SymbolConfiguration(pointSize: 11, weight: .regular)
             checkView.image = UIImage(systemName: "checkmark.circle", withConfiguration: config)
             checkView.tintColor = colors.comment
@@ -978,6 +978,16 @@ final class ComposerForceStopButton: UIButton {
         }
         configuration = config
         isEnabled = !isInFlight
+    }
+}
+
+extension UIView {
+    /// Under an animation, each `isHidden = true` on an already hidden arranged
+    /// subview adds a hide that a later `false` write must cancel one for one,
+    /// so repeated chrome updates during a rotation left the row hidden when
+    /// focus showed it.
+    func setHiddenIfChanged(_ hidden: Bool) {
+        if isHidden != hidden { isHidden = hidden }
     }
 }
 

@@ -42,6 +42,34 @@ struct ChatInputBarTests {
         #expect(chat.liveVoiceEntry == nil)
     }
 
+    /// Chrome updates run inside a rotation's animation. Empty updates that
+    /// hide an already hidden panel must not keep it hidden once it has rows.
+    @Test("Suggestion panel shows on the first update after animated empty updates")
+    func suggestionPanelShowsAfterAnimatedEmptyUpdates() async throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let host = UIViewController()
+        let panel = ComposerSuggestionPanelView()
+        let stack = UIStackView(arrangedSubviews: [panel])
+        stack.axis = .vertical
+        stack.frame = window.bounds
+        host.view.addSubview(stack)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        let colors = ComposerThemeColors(palette: ThemeRuntimeState.currentThemeID().palette)
+        panel.apply(content: .empty, colors: colors)
+        for _ in 0..<2 {
+            UIView.animate(withDuration: 0.3) { panel.apply(content: .empty, colors: colors) }
+            try await Task.sleep(for: .milliseconds(600))
+        }
+        let command = SlashCommand(name: "compact", description: "Compact the session", source: .extension)
+        panel.apply(content: .slash([command]), colors: colors)
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(!panel.isHidden, "the first update with rows shows the panel")
+    }
+
     @Test("Tap-to-type remains enabled while voice is active")
     func tapToTypeRemainsEnabledDuringVoiceStates() {
         #expect(ChatInputBar.allowKeyboardRestoreOnTap(voiceState: .recording))

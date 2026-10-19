@@ -83,7 +83,7 @@ final class ComposerSuggestionPanelView: UIView, UICollectionViewDataSource, UIC
         case .empty: count = 0
         }
         collectionView.showsVerticalScrollIndicator = count > 5
-        isHidden = count == 0
+        setHiddenIfChanged(count == 0)
         collectionView.collectionViewLayout.invalidateLayout()
         collectionView.layoutIfNeeded()
         let contentHeight = collectionView.collectionViewLayout.collectionViewContentSize.height
