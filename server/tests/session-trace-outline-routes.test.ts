@@ -9,7 +9,6 @@ import { createRouteHelpers } from "../src/routes/http.js";
 import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext } from "../src/routes/types.js";
 import type { Session } from "../src/types.js";
-import { captureStderr, getRoute, legacyDurableRoutes } from "./harness/legacy-durable-routes.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 let tmpDir: string | undefined;
@@ -52,12 +51,7 @@ function writeCanonicalTraceFiles(dataDir: string, workspaceId: string, sessionI
         role: "assistant",
         content: [
           { type: "text", text: "first answer" },
-          {
-            type: "toolCall",
-            id: "tc-1",
-            name: "read",
-            arguments: { path: "server/src/trace.ts" },
-          },
+          { type: "toolCall", id: "tc-1", name: "read", arguments: { path: "server/src/trace.ts" } },
         ],
       },
     },
@@ -138,30 +132,9 @@ describe("workspace session trace outline route", () => {
     expect(body.session.id).toBe("s1");
     expect(body.outline.itemCount).toBe(3);
     expect(body.outline.entries.map((entry) => entry.id)).toEqual(["u1", "a1-text-0", "tc-1"]);
-    expect(body.outline.entries[2]).toMatchObject({
-      kind: "tool",
-      summary: "read server/src/trace.ts",
-    });
+    expect(body.outline.entries[2]).toMatchObject({ kind: "tool", summary: "read server/src/trace.ts" });
     expect(JSON.stringify(body.outline)).not.toContain("large output");
     expect(body.metrics.jsonBytes).toBeGreaterThan(0);
     expect(body.metrics.gzipBytes).toBeGreaterThan(0);
-  });
-});
-
-describe("trace outline route for a durable session without a store", () => {
-  it("answers 410 durable_store_missing without an error log", async () => {
-    const readLog = captureStderr();
-    const res = await getRoute(
-      legacyDurableRoutes(),
-      "/workspaces/ws-1/sessions/legacy/trace-outline",
-    );
-    expect(res.statusCode).toBe(410);
-    expect(JSON.parse(res.body)).toEqual({
-      error: "This durable session has no store",
-      code: "durable_store_missing",
-    });
-    const logged = readLog();
-    expect(logged).toContain("session.durable_store_missing");
-    expect(logged).not.toContain('"level":"error"');
   });
 });

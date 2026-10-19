@@ -20,25 +20,8 @@ export function hasServerDurableBinding<T extends Pick<Session, "runtime" | "ser
   return isServerDurableSession(session) && session.serverDurable?.conversationId !== undefined;
 }
 
-/** Human message when a durable row is opened without a per-tree store. */
+/** Plain error when a durable row is opened without a per-tree store. */
 export const DURABLE_STORE_MISSING = "This durable session has no store";
-
-/** Stable `code` in the 410 body that trace routes return for such a session. */
-export const DURABLE_STORE_MISSING_CODE = "durable_store_missing";
-
-/**
- * A legacy durable row (bound to a conversation, created before per-tree stores) has no
- * transcript to read. Permanent for that session, so routes answer it with `statusCode`
- * (410) instead of letting it reach the 500 handler.
- */
-export class DurableStoreMissingError extends Error {
-  readonly code = DURABLE_STORE_MISSING_CODE;
-  readonly statusCode = 410;
-  constructor() {
-    super(DURABLE_STORE_MISSING);
-    this.name = "DurableStoreMissingError";
-  }
-}
 
 export function durableStoreId(session: Pick<Session, "serverDurable">): string | undefined {
   const storeId = session.serverDurable?.storeId;
@@ -47,7 +30,7 @@ export function durableStoreId(session: Pick<Session, "serverDurable">): string 
 
 export function requireDurableStoreId(session: Pick<Session, "serverDurable">): string {
   const storeId = durableStoreId(session);
-  if (storeId === undefined) throw new DurableStoreMissingError();
+  if (storeId === undefined) throw new Error(DURABLE_STORE_MISSING);
   return storeId;
 }
 

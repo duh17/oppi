@@ -6,13 +6,9 @@ import { admitSessionRoute } from "../session-route-scope.js";
 import type { Session, SessionEventsResponse } from "../types.js";
 import { getSessionAttachment, streamSessionAttachment } from "../session-attachments.js";
 import { streamFullToolOutputSidecar } from "../tool-output-sidecar.js";
-import { createLogger } from "../logger.js";
 import { pendingDialogSnapshots } from "../session-attention.js";
-import { DurableStoreMissingError } from "../session-runtime-capabilities.js";
 import { createSessionFileHandlers } from "./session-files.js";
 import type { RouteContext, RouteHelpers } from "./types.js";
-
-const log = createLogger({ base: { component: "route_session_trace" } });
 
 function decodeToolCallId(toolCallId: string): string {
   try {
@@ -92,27 +88,6 @@ export function createSessionTraceRouteHandlers(
   });
   const sessionFileHandlers = createSessionFileHandlers(ctx, helpers, traceService);
 
-  /**
-   * Runs a transcript read. A store-less legacy durable session answers 410 with a stable
-   * code (clients must not treat it as 404/409, which falls back to a read that fails the same
-   * way) and logs at info; any other failure still reaches the 500 handler. Undefined means
-   * the response was written.
-   */
-  async function readDurableTranscript<T>(
-    session: Session,
-    res: ServerResponse,
-    read: () => Promise<T>,
-  ): Promise<T | undefined> {
-    try {
-      return await read();
-    } catch (error: unknown) {
-      if (!(error instanceof DurableStoreMissingError)) throw error;
-      log.info("session.durable_store_missing", { session: session.id, status: error.statusCode });
-      helpers.json(res, { error: error.message, code: error.code }, error.statusCode);
-      return undefined;
-    }
-  }
-
   function requireSession(sessionId: string, res: ServerResponse): Session | null {
     const result = admitSessionRoute(ctx.storage, { scope: "generic", sessionId });
     if (result.kind === "ok") return result.session;
@@ -125,10 +100,10 @@ export function createSessionTraceRouteHandlers(
     entryId: string,
     res: ServerResponse,
   ): Promise<void> {
-    const result = await readDurableTranscript(session, res, () =>
-      ctx.sessionRuntimes.getServerDurableInputCardOutput(session.id, decodeToolCallId(entryId)),
+    const result = await ctx.sessionRuntimes.getServerDurableInputCardOutput(
+      session.id,
+      decodeToolCallId(entryId),
     );
-    if (result === undefined) return;
     if (!result) {
       helpers.error(res, 404, "Card output not found");
       return;
@@ -302,14 +277,11 @@ export function createSessionTraceRouteHandlers(
     url: URL,
     res: ServerResponse,
   ): Promise<void> {
-    const result = await readDurableTranscript(session, res, () =>
-      traceService.getSessionWithTrace({
-        session,
-        traceView: resolveTraceView(url),
-        includePresentationSegments: true,
-      }),
-    );
-    if (!result) return;
+    const result = await traceService.getSessionWithTrace({
+      session,
+      traceView: resolveTraceView(url),
+      includePresentationSegments: true,
+    });
     helpers.compressedJson(req, res, result);
   }
 
@@ -361,17 +333,14 @@ export function createSessionTraceRouteHandlers(
       return;
     }
 
-    const result = await readDurableTranscript(session, res, () =>
-      traceService.getSessionTracePage({
-        session,
-        cursor: url.searchParams.get("cursor") ?? undefined,
-        aroundEntryId: url.searchParams.get("aroundEntryId") ?? undefined,
-        targetEvents: targetEvents.value,
-        previewBytes: previewBytes.value,
-        includePresentationSegments: url.searchParams.get("presentation") === "mobile",
-      }),
-    );
-    if (result === undefined) return;
+    const result = await traceService.getSessionTracePage({
+      session,
+      cursor: url.searchParams.get("cursor") ?? undefined,
+      aroundEntryId: url.searchParams.get("aroundEntryId") ?? undefined,
+      targetEvents: targetEvents.value,
+      previewBytes: previewBytes.value,
+      includePresentationSegments: url.searchParams.get("presentation") === "mobile",
+    });
     if (!result) {
       helpers.error(res, 404, "Session trace not found");
       return;
@@ -388,10 +357,7 @@ export function createSessionTraceRouteHandlers(
     session: Session,
     res: ServerResponse,
   ): Promise<void> {
-    const result = await readDurableTranscript(session, res, () =>
-      traceService.getSessionTraceOutline({ session }),
-    );
-    if (!result) return;
+    const result = await traceService.getSessionTraceOutline({ session });
     helpers.compressedJson(req, res, attachTracePageResponseMetrics(result));
   }
 
@@ -486,10 +452,7 @@ export function createSessionTraceRouteHandlers(
       return;
     }
 
-    const result = await readDurableTranscript(session, res, () =>
-      traceService.getSessionWithTrace({ session, traceView: "full" }),
-    );
-    if (!result) return;
+    const result = await traceService.getSessionWithTrace({ session, traceView: "full" });
     const includedTrace = filterTraceByInclude(result.trace, include.parts);
     const trace =
       tail.tail === undefined

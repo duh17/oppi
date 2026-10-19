@@ -1,6 +1,5 @@
 import { CONTROL_CONVERSATION_LAUNCH_KEY, isControlConversation } from "./control-session.js";
 import { mintSessionId } from "./id.js";
-import { durableStoreId } from "./session-runtime-capabilities.js";
 import type { SessionLifecycleService } from "./session-lifecycle-service.js";
 import type { Storage } from "./storage.js";
 import type { Session } from "./types.js";
@@ -42,11 +41,6 @@ export interface ControlConversationOpenResult {
  * first calls in this process queue behind each other: one row, one conversation. The
  * conversation id is stored on the row (`serverDurable.conversationId`), so a server restart
  * resumes the same conversation.
- *
- * A row from before per-session stores has no store id and can never start. It is not
- * migrated: its row is deleted and a fresh one is created with its own store, in the same
- * synchronous step. A crash between the delete and the save leaves no row, which the next
- * call creates. The old conversation stays in the shared harness, untouched.
  */
 export class ControlConversationService {
   private tail: Promise<unknown> = Promise.resolve();
@@ -92,7 +86,7 @@ export class ControlConversationService {
 
 /** Create the control-conversation row if this data directory has none. */
 export function ensureControlConversationSession(
-  storage: Pick<Storage, "deleteSession" | "findSessionByLaunchIdempotencyKey" | "saveSession">,
+  storage: Pick<Storage, "findSessionByLaunchIdempotencyKey" | "saveSession">,
   options: { model?: string; thinking?: string } = {},
 ): { session: Session; created: boolean } {
   const existing = storage.findSessionByLaunchIdempotencyKey(CONTROL_CONVERSATION_LAUNCH_KEY);
@@ -102,9 +96,7 @@ export function ensureControlConversationSession(
       409,
     );
   }
-  if (existing && durableStoreId(existing) !== undefined)
-    return { session: existing, created: false };
-  if (existing) storage.deleteSession(existing.id);
+  if (existing) return { session: existing, created: false };
   const now = Date.now();
   const id = mintSessionId();
   const session: Session = {
