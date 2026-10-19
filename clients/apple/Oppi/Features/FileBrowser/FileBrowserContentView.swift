@@ -451,6 +451,7 @@ struct FileBrowserContentView: View {
             session: session,
             isShowingPreview: isShowingEditPreview,
             replacementText: editorReplacement,
+            onDone: endEditing,
             makePreview: { text in
                 HostFactory.content(
                     EmbeddedFileViewerView(

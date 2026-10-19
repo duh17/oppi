@@ -525,7 +525,7 @@ enum TreeSitterHighlighter {
             return nil
         }
 
-        return scanWithQuery(query: query, tree: mutableTree, source: source)
+        return scanWithQuery(query: query, tree: mutableTree, source: source as NSString, range: nil)
     }
 
     // MARK: - Query-Based Scanning
@@ -539,19 +539,23 @@ enum TreeSitterHighlighter {
     /// Captures are already sorted by position and specificity by tree-sitter.
     /// More specific captures (deeper patterns) come after broader ones,
     /// which is exactly what we want for last-write-wins in NSAttributedString.
-    private static func scanWithQuery(
+    ///
+    /// `range` (UTF-16) limits captures to nodes that overlap it; the code
+    /// editor queries only the rows near its viewport.
+    static func scanWithQuery(
         query: Query,
         tree: MutableTree,
-        source: String
+        source nsSource: NSString,
+        range: NSRange?
     ) -> [SyntaxTokenRange] {
         let cursor = query.execute(in: tree)
+        if let range { cursor.setRange(range) }
         var ranges: [SyntaxTokenRange] = []
         ranges.reserveCapacity(256)
 
         // Use predicate-aware iteration. Some highlights.scm patterns
         // use predicates like (#match? @name "^[A-Z]") which need the
         // source text to evaluate.
-        let nsSource = source as NSString
         let context = Predicate.Context(textProvider: { range, _ in
             guard range.location >= 0, range.location + range.length <= nsSource.length else {
                 return nil

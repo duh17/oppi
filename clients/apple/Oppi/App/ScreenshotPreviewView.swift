@@ -213,10 +213,127 @@ struct ScreenshotPreviewView: View {
             MetalOrbScreenshotPreview()
         case "workspace-shell":
             WorkspaceShellScreenshotPreview()
+        case "workspace-file-editor", "workspace-file-editor-markdown", "workspace-file-editor-vim":
+            WorkspaceFileEditorScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
+                .ignoresSafeArea()
         default:
             Text("Unknown screen: \(ScreenshotPreviewConfig.screen)")
         }
     }
+}
+
+/// The production workspace code editor over an offline session, focused so
+/// its key bar and status line show: `workspace-file-editor` (Swift),
+/// `-markdown` (Markdown source), `-vim` (Swift in Vim Normal mode). Editor
+/// settings go in the volatile argument domain, never the simulator's defaults.
+/// `SCREENSHOT_EDITOR_KEYS` types its characters after focus, through the same
+/// `insertText` path as the keyboard (in `-vim`, e.g. `Vj` shows Visual Line).
+/// Run with `ui-validate --screen workspace-file-editor[-markdown|-vim]`.
+private struct WorkspaceFileEditorScreenshotPreview: UIViewControllerRepresentable {
+    let screen: String
+
+    func makeUIViewController(context: Context) -> UINavigationController {
+        let markdown = screen.hasSuffix("-markdown")
+        ScreenshotVolatileDefaults.apply([
+            "\(AppIdentifiers.subsystem).editor.keybindings": screen.hasSuffix("-vim") ? "vim" : "standard",
+        ])
+        let themeID: ThemeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" ? .light : .dark
+        ThemeRuntimeState.setThemeID(themeID)
+        let text = markdown ? Self.markdownSample : Self.swiftSample
+        let store = WorkspaceFileDraftStore(
+            directory: FileManager.default.temporaryDirectory.appendingPathComponent("editor-preview-\(UUID().uuidString)")
+        )
+        guard let session = WorkspaceFileEditSession(
+            identity: WorkspaceFileEditIdentity(
+                serverId: "preview", workspaceId: "preview", worktreeId: nil,
+                path: markdown ? "docs/notes.md" : "Sources/App/Greeter.swift"
+            ),
+            disk: WorkspaceFileDiskSnapshot(bytes: Data(text.utf8), etag: "\"sha256-\(String(repeating: "0", count: 64))\""),
+            maxBytes: 1_048_576,
+            transport: WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _, _ in .notSent }),
+            draftStore: store,
+            idleDelay: .seconds(3_600)
+        ) else { return UINavigationController() }
+        let editor = FocusedEditorController(session: session, themeID: themeID)
+        editor.title = markdown ? "notes.md" : "Greeter.swift"
+        let navigation = UINavigationController(rootViewController: editor)
+        navigation.overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
+        navigation.view.accessibilityIdentifier = "screenshot.ready"
+        return navigation
+    }
+
+    func updateUIViewController(_ uiViewController: UINavigationController, context: Context) {}
+
+    /// Hosts the editor and puts the caret in it once it is on screen.
+    private final class FocusedEditorController: UIViewController {
+        private let editor: WorkspaceFileEditorViewController
+
+        init(session: WorkspaceFileEditSession, themeID: ThemeID) {
+            editor = WorkspaceFileEditorViewController(session: session, themeID: themeID) { _ in UIViewController() }
+            super.init(nibName: nil, bundle: nil)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { nil }
+
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            addChild(editor)
+            editor.view.frame = view.bounds
+            editor.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            view.addSubview(editor.view)
+            editor.didMove(toParent: self)
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            let textView = editor.textView
+            textView.becomeFirstResponder()
+            textView.selectedRange = NSRange(location: (textView.text as NSString).range(of: "return").location, length: 0)
+            for character in ProcessInfo.processInfo.environment["SCREENSHOT_EDITOR_KEYS"] ?? "" {
+                textView.insertText(String(character))
+            }
+        }
+    }
+
+    private static let swiftSample = """
+    import Foundation
+
+    /// Greets people by name, politely.
+    struct Greeter {
+        let greeting: String
+        var count = 0
+
+        mutating func greet(_ name: String, times: Int = 1) -> String {
+            count += times
+            let line = "\\(greeting), \\(name)!"
+            // Repeat for emphasis.
+            return Array(repeating: line, count: times).joined(separator: " ")
+        }
+    }
+
+    let greeter = Greeter(greeting: "Hello")
+    print(greeter.greeting.count, 42, true)
+    """
+
+    private static let markdownSample = """
+    ---
+    title: Weekly notes
+    ---
+    # Weekly notes
+
+    Shipped the **code editor** with _Vim_ keys, `syntax` color, and [docs](https://oppi.dev/docs).
+
+    ## Next
+    - [x] Line numbers
+    - [ ] Folding
+    1. Review the [[design]] page
+    > Keep it fast on a 1 MiB file.
+
+    ```swift
+    func greet() { return print("hi") }
+    ```
+    """
 }
 
 /// The production inline review-comment composer opened over text near the

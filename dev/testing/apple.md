@@ -409,6 +409,8 @@ Post-run UI checks belong here or on a `sim-lab` scenario, not in a new XCUITest
 
 Artifacts: `.pi/ui-validate/<timestamp>-<screen>/{tree.md,audit.md,screen.png,manifest.json}` from `XCUIElement.snapshot()` and `performAccessibilityAudit`. Review those files. Do not add another preview test method just to look at a screen; add a fixture to an existing named preview instead.
 
+The workspace code editor has `workspace-file-editor` (Swift), `workspace-file-editor-markdown`, and `workspace-file-editor-vim`: the production editor over an offline session, focused so the key bar and status line show. `TEST_RUNNER_SCREENSHOT_EDITOR_KEYS=wVj` (xcodebuild strips the prefix) types keys through the keyboard's `insertText` path first, so the Vim screen can show Visual Line or any other state.
+
 Live Voice in the chat input bar has no simulator microphone path, so its visuals use a synthetic meter: `live-voice-composer` walks a whole call for a recording, and `live-voice-composer-{connecting,listening,talking,speaking,muted,restored}` hold one step. `SCREENSHOT_DICTATION_STYLE=ring|breathing|composing` picks the indicator.
 
 ### Duplication and Apple guardrail check

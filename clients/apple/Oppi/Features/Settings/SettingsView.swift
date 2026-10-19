@@ -49,6 +49,13 @@ struct SettingsView: View {
                     SettingsTextPage()
                 }
                 .accessibilityIdentifier("settings.row.text")
+                SettingsIndexActionRow(value: CodeEditorPreferences.shared.keybindings.label) {
+                    navigator.push(SettingsEditorViewController())
+                } label: {
+                    SettingsRowLabel("Editor", systemImage: "chevron.left.forwardslash.chevron.right")
+                }
+                .accessibilityLabel("Editor")
+                .accessibilityIdentifier("settings.row.editor")
                 SettingsIndexRow("Chat", systemImage: "bubble.left.and.text.bubble.right") {
                     SettingsChatPage()
                 }

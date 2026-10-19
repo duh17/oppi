@@ -117,31 +117,62 @@ enum WorkspaceFileEditRecovery {
     }
 }
 
-/// One continuous `UITextView` for a workspace text file.
+/// The workspace code editor: one continuous `CodeEditorTextView` for a
+/// workspace text file, with syntax color, a line-number gutter, a status
+/// line, a configurable key bar, Mac-style editor shortcuts, and optional Vim
+/// keybindings (`CodeEditorPreferences`).
 ///
 /// The text view owns input, selection, marked text, and undo for the whole
-/// edit. Theme changes recolor it in place; Preview hides it behind a reader
-/// built from the current draft and shows the same instance again. Nothing in
-/// this controller replaces the text view or its undo stack, except Use Disk
-/// Version, which the user chose explicitly.
-final class WorkspaceFileEditorViewController: UIViewController, UITextViewDelegate {
+/// edit. Every editor command is one `replace` of the text view, so it is one
+/// undo step and reaches the session like typing. Theme changes recolor it in
+/// place; Preview hides it behind a reader built from the current draft and
+/// shows the same instance again. Nothing in this controller replaces the
+/// text view or its undo stack, except Use Disk Version, which the user chose
+/// explicitly.
+final class WorkspaceFileEditorViewController: UIViewController, UITextViewDelegate, CodeEditorTextViewInputHandler, VimBuffer {
     let session: WorkspaceFileEditSession
-    let textView = UITextView(usingTextLayoutManager: true)
-    private let continuesMarkdownLists: Bool
+    let textView = CodeEditorTextView()
+    let vim = VimEngine()
+    private let statusBar = CodeEditorStatusBar()
+    private let keyBar = CodeEditorKeyBar()
+    private let preferences: CodeEditorPreferences
+    private let isMarkdown: Bool
+    private let grammar: CodeEditorHighlightEngine.Grammar
+    private let languageName: String
+    private let onDone: () -> Void
     private let makePreview: (String) -> UIViewController
+    private var highlighter: CodeEditorHighlighter?
     private var previewController: UIViewController?
     private var appliedThemeID: ThemeID
+    private var detectedIndentation: CodeIndentation?
+    private var appliedKeybindings: CodeEditorKeybindings?
+    private var appliedTabWidth: Int?
+    private var keyCommandCache: (key: String, commands: [UIKeyCommand])?
+    /// Set while this controller moves the selection, so the change is not
+    /// reported back to Vim as a tap.
+    private var isApplyingSelection = false
     private(set) var isShowingPreview = false
     private var isFinished = false
 
     init(
         session: WorkspaceFileEditSession,
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
+        preferences: CodeEditorPreferences = .shared,
+        onDone: @escaping () -> Void = {},
         makePreview: @escaping (String) -> UIViewController
     ) {
         self.session = session
-        self.continuesMarkdownLists = FileType.detect(from: session.identity.path) == .markdown
+        let path = session.identity.path
+        self.isMarkdown = FileType.detect(from: path) == .markdown
+        self.grammar = CodeEditorHighlightEngine.grammar(forPath: path)
+        self.languageName = switch grammar {
+        case .markdown: "Markdown"
+        case .treeSitter(let language), .scanner(let language): language.displayName
+        case .plain: String(localized: "Plain Text")
+        }
+        self.preferences = preferences
         self.appliedThemeID = themeID
+        self.onDone = onDone
         self.makePreview = makePreview
         super.init(nibName: nil, bundle: nil)
     }
@@ -153,33 +184,70 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         NotificationCenter.default.removeObserver(self)
     }
 
+    private var vimEnabled: Bool { preferences.keybindings == .vim }
+
+    /// Indentation for Tab, Return, `>`, and the status line.
+    private var indentation: CodeIndentation {
+        preferences.detectsIndentation ? (detectedIndentation ?? preferences.indentation) : preferences.indentation
+    }
+
+    private var editorFont: UIFont {
+        FontPreferences.scaledCodeFont(baseSize: 13, textStyle: .body)
+    }
+
+    private var highlightStyle: CodeEditorHighlighter.Style {
+        .make(themeID: appliedThemeID, font: editorFont, tabWidth: indentation.width)
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.accessibilityIdentifier = "workspace-file-editor.text"
-        textView.font = UIFontMetrics(forTextStyle: .body)
-            .scaledFont(for: UIFont.monospacedSystemFont(ofSize: 15, weight: .regular))
+        textView.font = editorFont
         textView.adjustsFontForContentSizeCategory = true
         textView.alwaysBounceVertical = true
         textView.keyboardDismissMode = .interactive
-        textView.textContainerInset = UIEdgeInsets(top: 12, left: 8, bottom: 24, right: 8)
-        // Source text: no smart punctuation, autocorrect, or capitalization.
+        // Source text: no smart punctuation, autocorrect, capitalization, or predictions.
         textView.autocorrectionType = .no
         textView.autocapitalizationType = .none
         textView.spellCheckingType = .no
         textView.smartQuotesType = .no
         textView.smartDashesType = .no
         textView.smartInsertDeleteType = .no
+        textView.inlinePredictionType = .no
         textView.dataDetectorTypes = []
+        textView.isFindInteractionEnabled = true
         textView.text = session.currentText
         textView.delegate = self
+        textView.inputHandler = self
+        detectedIndentation = CodeIndentation.detect(in: textView.textStorage.mutableString, fallback: preferences.indentation)
+
+        statusBar.translatesAutoresizingMaskIntoConstraints = false
+        statusBar.onCommand = { [weak self] prompt, entry in self?.runCommandLine(prompt, entry) }
+        statusBar.onCommandEnded = { [weak self] in self?.textView.becomeFirstResponder() }
+        statusBar.onGoToLine = { [weak self] in self?.presentGoToLine() }
+        keyBar.onKey = { [weak self] key in self?.press(key) }
+        keyBar.onHideKeyboard = { [weak self] in self?.textView.resignFirstResponder() }
+        vim.buffer = self
+        vim.onYank = { text in UIPasteboard.general.string = text }
+
         view.addSubview(textView)
+        view.addSubview(statusBar)
         NSLayoutConstraint.activate([
             textView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             textView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             textView.topAnchor.constraint(equalTo: view.topAnchor),
-            textView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+            textView.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+            statusBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            statusBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            statusBar.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
         ])
+        highlighter = CodeEditorHighlighter(
+            textView: textView,
+            grammar: grammar,
+            style: highlightStyle,
+            isEnabled: preferences.highlightsSyntax
+        )
         applyColors()
         session.attachEditor { [weak textView] in textView?.text ?? "" }
         NotificationCenter.default.addObserver(
@@ -188,6 +256,47 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
             name: .oppiThemeDidChange,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(fontDidChange),
+            name: FontPreferences.didChangeNotification,
+            object: nil
+        )
+        setNeedsUpdateProperties()
+    }
+
+    /// Preferences are observable: any change in Settings or the toolbar menu
+    /// lands here while the editor is open.
+    override func updateProperties() {
+        super.updateProperties()
+        textView.showsLineNumbers = preferences.showsLineNumbers
+        textView.highlightsCurrentLine = preferences.highlightsCurrentLine
+        textView.wrapsLines = preferences.wrapsLines
+        highlighter?.isEnabled = preferences.highlightsSyntax
+        _ = preferences.closesBrackets
+        if indentation.width != appliedTabWidth {
+            appliedTabWidth = indentation.width
+            highlighter?.restyle(highlightStyle)
+        }
+
+        let keybindings = preferences.keybindings
+        if keybindings != appliedKeybindings {
+            appliedKeybindings = keybindings
+            keyCommandCache = nil
+            if keybindings == .vim {
+                vim.reset(to: .normal)
+            }
+            vimStateDidChange()
+        }
+
+        let keys = preferences.keyBarKeys.filter { $0 != .escape || keybindings == .vim }
+        keyBar.apply(keys: keys, foreground: UIColor(appliedThemeID.palette.fg), background: UIColor(appliedThemeID.palette.bg))
+        let accessory: UIView? = preferences.showsKeyBar ? keyBar : nil
+        if textView.inputAccessoryView !== accessory {
+            textView.inputAccessoryView = accessory
+            if textView.isFirstResponder { textView.reloadInputViews() }
+        }
+        refreshStatus()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -196,27 +305,412 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         if !isFinished { session.flush() }
     }
 
+    // MARK: - Text view delegate
+
     func textViewDidChange(_ textView: UITextView) {
-        session.noteEdit()
+        textDidChange()
     }
 
-    /// Markdown Return at a collapsed caret continues the list item as one
-    /// undoable replace. IME composition and other files keep the plain newline.
-    func textView(
-        _ textView: UITextView,
-        shouldChangeTextIn range: NSRange,
-        replacementText text: String
-    ) -> Bool {
-        guard continuesMarkdownLists,
-              text == "\n",
-              range.length == 0,
-              textView.markedTextRange == nil,
-              let edit = MarkdownListContinuation.edit(in: textView.text as NSString, caret: range.location),
-              let start = textView.position(from: textView.beginningOfDocument, offset: edit.range.location),
-              let end = textView.position(from: start, offset: edit.range.length),
-              let replaceRange = textView.textRange(from: start, to: end) else { return true }
-        textView.replace(replaceRange, withText: edit.replacement)
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        if vimEnabled, !isApplyingSelection {
+            vim.selectionDidChange()
+            vimStateDidChange(scrolls: false)
+        }
+        self.textView.selectionDidMove()
+        refreshStatus()
+    }
+
+    func textViewDidBeginEditing(_ textView: UITextView) {
+        self.textView.selectionDidMove()
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        highlighter?.viewportDidChange()
+    }
+
+    private func textDidChange() {
+        session.noteEdit()
+        highlighter?.textDidChange()
+        refreshStatus()
+    }
+
+    // MARK: - Buffer edits
+
+    /// One undoable replace through the text view, reported like typing.
+    private func replace(_ range: NSRange, with text: String) {
+        guard let start = textView.position(from: textView.beginningOfDocument, offset: range.location),
+              let end = textView.position(from: start, offset: range.length),
+              let textRange = textView.textRange(from: start, to: end) else { return }
+        textView.replace(textRange, withText: text)
+        textDidChange()
+    }
+
+    private func select(_ range: NSRange) {
+        isApplyingSelection = true
+        textView.selectedRange = range
+        isApplyingSelection = false
+    }
+
+    private func apply(_ edit: CodeTextEdit) {
+        isApplyingSelection = true
+        replace(edit.range, with: edit.replacement)
+        textView.selectedRange = edit.selection
+        isApplyingSelection = false
+        textView.scrollRangeToVisible(edit.selection)
+        if vimEnabled { vim.selectionDidChange() }
+    }
+
+    // MARK: - Input
+
+    func codeEditor(_ textView: CodeEditorTextView, handleInsert text: String) -> Bool {
+        if vimEnabled, vim.mode != .insert {
+            for key in VimKey.keys(for: text) { handleVim(key) }
+            return true
+        }
+        let buffer = textView.textStorage.mutableString
+        let selection = textView.selectedRange
+        switch text {
+        case "\n":
+            if isMarkdown, selection.length == 0,
+               let edit = MarkdownListContinuation.edit(in: buffer, caret: selection.location) {
+                let caret = edit.range.location + (edit.replacement as NSString).length
+                apply(CodeTextEdit(range: edit.range, replacement: edit.replacement, selection: NSRange(location: caret, length: 0)))
+                return true
+            }
+            let colonBlocks: Bool = switch grammar {
+            case .treeSitter(let language), .scanner(let language): language == .python || language == .yaml
+            default: false
+            }
+            apply(CodeTextEditing.newline(buffer, selection: selection, indentation: indentation, colonOpensBlock: colonBlocks))
+            return true
+        case "\t":
+            apply(CodeTextEditing.insertTab(buffer, selection: selection, indentation: indentation))
+            return true
+        default:
+            guard preferences.closesBrackets, grammar != .plain,
+                  let edit = CodeTextEditing.pairedInsertion(buffer, selection: selection, typed: text, pairsQuotes: !isMarkdown) else {
+                return false
+            }
+            apply(edit)
+            return true
+        }
+    }
+
+    func codeEditorHandleDeleteBackward(_ textView: CodeEditorTextView) -> Bool {
+        if vimEnabled, vim.mode != .insert {
+            handleVim(.backspace)
+            return true
+        }
+        let selection = textView.selectedRange
+        guard selection.length == 0 else { return false }
+        let buffer = textView.textStorage.mutableString
+        if preferences.closesBrackets, grammar != .plain,
+           let edit = CodeTextEditing.pairDeletion(buffer, caret: selection.location) {
+            apply(edit)
+            return true
+        }
+        if let edit = CodeTextEditing.softTabDeletion(buffer, caret: selection.location, indentation: indentation) {
+            apply(edit)
+            return true
+        }
         return false
+    }
+
+    // MARK: - Vim
+
+    private func handleVim(_ key: VimKey) {
+        isApplyingSelection = true
+        let requests = vim.handle(key)
+        isApplyingSelection = false
+        perform(requests)
+        vimStateDidChange()
+    }
+
+    private func runCommandLine(_ prompt: Character, _ entry: String) {
+        isApplyingSelection = true
+        let requests = vim.runCommandLine(prompt, entry)
+        isApplyingSelection = false
+        perform(requests)
+        vimStateDidChange()
+    }
+
+    private func perform(_ requests: [VimHostRequest]) {
+        for request in requests {
+            switch request {
+            case .save:
+                session.flush()
+            case .quit, .saveAndQuit:
+                onDone()
+            case .commandLine(let prompt):
+                statusBar.beginCommand(prompt)
+            case .scrollCaret(let position):
+                scrollCaret(to: position)
+            }
+        }
+    }
+
+    private func vimStateDidChange(scrolls: Bool = true) {
+        // Normal mode draws its own block; the system caret would sit beside it.
+        let block = vimEnabled && vim.mode == .normal
+        textView.usesBlockCaret = block
+        textView.tintColor = block ? .clear : UIColor(appliedThemeID.palette.blue)
+        if keyCommandCache?.key != keyCommandKey { keyCommandCache = nil }
+        if scrolls { textView.scrollRangeToVisible(textView.selectedRange) }
+        refreshStatus()
+    }
+
+    private func scrollCaret(to position: VimScrollPosition) {
+        guard let caret = textView.position(from: textView.beginningOfDocument, offset: textView.selectedRange.location) else { return }
+        let rect = textView.caretRect(for: caret)
+        let visible = textView.bounds.height - textView.adjustedContentInset.top - textView.adjustedContentInset.bottom
+        let target: CGFloat = switch position {
+        case .top: rect.minY - textView.adjustedContentInset.top
+        case .center: rect.midY - visible / 2 - textView.adjustedContentInset.top
+        case .bottom: rect.maxY - visible - textView.adjustedContentInset.top
+        }
+        let maxY = max(-textView.adjustedContentInset.top, textView.contentSize.height - visible - textView.adjustedContentInset.top)
+        textView.setContentOffset(CGPoint(x: textView.contentOffset.x, y: min(max(-textView.adjustedContentInset.top, target), maxY)), animated: false)
+    }
+
+    // MARK: VimBuffer
+
+    var vimText: NSString { textView.textStorage.mutableString }
+    var vimSelection: NSRange { textView.selectedRange }
+    var vimVisibleLineCount: Int { max(1, Int(textView.bounds.height / max(1, editorFont.lineHeight))) }
+    var vimIndentation: CodeIndentation { indentation }
+    func vimSelect(_ range: NSRange) { select(range) }
+    func vimReplace(_ range: NSRange, with text: String) { replace(range, with: text) }
+
+    func vimUndo() -> Bool {
+        guard let undoManager = textView.undoManager, undoManager.canUndo else { return false }
+        undoManager.undo()
+        return true
+    }
+
+    func vimRedo() -> Bool {
+        guard let undoManager = textView.undoManager, undoManager.canRedo else { return false }
+        undoManager.redo()
+        return true
+    }
+
+    // MARK: - Key commands
+
+    private var keyCommandKey: String {
+        "\(vimEnabled)|\(vimEnabled ? vim.mode.label : "")|\(isMarkdown)"
+    }
+
+    func codeEditorKeyCommands(_ textView: CodeEditorTextView) -> [UIKeyCommand] {
+        let key = keyCommandKey
+        if let keyCommandCache, keyCommandCache.key == key { return keyCommandCache.commands }
+        let commands = makeKeyCommands()
+        keyCommandCache = (key, commands)
+        return commands
+    }
+
+    private func makeKeyCommands() -> [UIKeyCommand] {
+        func command(_ title: String, _ input: String, _ flags: UIKeyModifierFlags, _ id: String, hidden: Bool = false) -> UIKeyCommand {
+            let command = UIKeyCommand(
+                title: title,
+                action: #selector(CodeEditorTextView.performEditorKeyCommand(_:)),
+                input: input,
+                modifierFlags: flags,
+                propertyList: id
+            )
+            command.wantsPriorityOverSystemBehavior = true
+            if hidden { command.attributes = .hidden }
+            return command
+        }
+        var commands = [
+            command(String(localized: "Save"), "s", .command, "save"),
+            command(String(localized: "Go to Line…"), "l", .command, "goToLine"),
+            command(String(localized: "Toggle Comment"), "/", .command, "comment"),
+            command(String(localized: "Indent"), "]", .command, "indent"),
+            command(String(localized: "Outdent"), "[", .command, "outdent"),
+            command(String(localized: "Outdent"), "\t", .shift, "outdent", hidden: true),
+            command(String(localized: "Move Line Up"), "[", [.command, .alternate], "moveUp"),
+            command(String(localized: "Move Line Down"), "]", [.command, .alternate], "moveDown"),
+            command(String(localized: "Duplicate Line"), "d", .command, "duplicate"),
+            command(String(localized: "Delete Line"), "k", [.command, .shift], "deleteLine"),
+            command(String(localized: "Insert Line Below"), "\r", .command, "lineBelow"),
+            command(String(localized: "Insert Line Above"), "\r", [.command, .shift], "lineAbove"),
+        ]
+        if isMarkdown {
+            commands += [
+                command(String(localized: "Bold"), "b", .command, "bold"),
+                command(String(localized: "Italic"), "i", .command, "italic"),
+            ]
+        }
+        guard vimEnabled else {
+            commands.append(command(String(localized: "Indent"), "\t", [], "tab", hidden: true))
+            return commands
+        }
+        commands += [
+            command(String(localized: "Normal Mode"), UIKeyCommand.inputEscape, [], "vim.escape"),
+            command("", "[", .control, "vim.escape", hidden: true),
+            command("", "c", .control, "vim.escape", hidden: true),
+        ]
+        if vim.mode == .insert {
+            commands.append(command(String(localized: "Indent"), "\t", [], "tab", hidden: true))
+            return commands
+        }
+        for (input, id) in [
+            (UIKeyCommand.inputLeftArrow, "vim.left"), (UIKeyCommand.inputRightArrow, "vim.right"),
+            (UIKeyCommand.inputUpArrow, "vim.up"), (UIKeyCommand.inputDownArrow, "vim.down"),
+            ("\t", "vim.tab"), ("\r", "vim.enter"),
+        ] {
+            commands.append(command("", input, [], id, hidden: true))
+        }
+        for letter in "rdufbnpeyo" {
+            commands.append(command("", String(letter), .control, "vim.ctrl.\(letter)", hidden: true))
+        }
+        return commands
+    }
+
+    func codeEditor(_ textView: CodeEditorTextView, perform command: String) {
+        let buffer = textView.textStorage.mutableString
+        let selection = textView.selectedRange
+        switch command {
+        case "save": session.flush()
+        case "goToLine": presentGoToLine()
+        case "comment": toggleComment()
+        case "indent": apply(CodeTextEditing.indent(buffer, selection: selection, indentation: indentation))
+        case "outdent":
+            if let edit = CodeTextEditing.outdent(buffer, selection: selection, indentation: indentation) { apply(edit) }
+        case "tab": apply(CodeTextEditing.insertTab(buffer, selection: selection, indentation: indentation))
+        case "moveUp":
+            if let edit = CodeTextEditing.moveLines(buffer, selection: selection, up: true) { apply(edit) }
+        case "moveDown":
+            if let edit = CodeTextEditing.moveLines(buffer, selection: selection, up: false) { apply(edit) }
+        case "duplicate": apply(CodeTextEditing.duplicateLines(buffer, selection: selection))
+        case "deleteLine": apply(CodeTextEditing.deleteLines(buffer, selection: selection))
+        case "lineBelow": apply(CodeTextEditing.insertLine(buffer, selection: selection, below: true))
+        case "lineAbove": apply(CodeTextEditing.insertLine(buffer, selection: selection, below: false))
+        case "bold": apply(CodeTextEditing.toggleWrap(buffer, selection: selection, marker: "**"))
+        case "italic": apply(CodeTextEditing.toggleWrap(buffer, selection: selection, marker: "_"))
+        case "vim.escape": handleVim(.escape)
+        case "vim.left": handleVim(.left)
+        case "vim.right": handleVim(.right)
+        case "vim.up": handleVim(.up)
+        case "vim.down": handleVim(.down)
+        case "vim.tab": handleVim(.tab)
+        case "vim.enter": handleVim(.enter)
+        default:
+            if command.hasPrefix("vim.ctrl."), let letter = command.last { handleVim(.ctrl(letter)) }
+        }
+    }
+
+    private func toggleComment() {
+        let buffer = textView.textStorage.mutableString
+        let selection = textView.selectedRange
+        let edit: CodeTextEdit?
+        switch grammar {
+        case .markdown, .treeSitter(.html), .scanner(.html), .scanner(.xml):
+            edit = CodeTextEditing.toggleBlockComment(buffer, selection: selection, open: "<!--", close: "-->")
+        case .treeSitter(let language), .scanner(let language):
+            edit = language.lineCommentPrefix.flatMap { CodeTextEditing.toggleLineComment(buffer, selection: selection, prefix: String($0)) }
+        case .plain:
+            edit = nil
+        }
+        if let edit { apply(edit) }
+    }
+
+    // MARK: - Key bar
+
+    private func press(_ key: CodeEditorBarKey) {
+        let modal = vimEnabled && vim.mode != .insert
+        switch key {
+        case .escape: if vimEnabled { handleVim(.escape) }
+        case .tab: textView.insertText("\t")
+        case .outdent: codeEditor(textView, perform: "outdent")
+        case .comment: toggleComment()
+        case .find: textView.findInteraction?.presentFindNavigator(showingReplace: false)
+        case .undo: modal ? handleVim(.char("u")) : textView.undoManager?.undo()
+        case .redo: modal ? handleVim(.ctrl("r")) : textView.undoManager?.redo()
+        case .left: modal ? handleVim(.left) : moveCaret(.left)
+        case .right: modal ? handleVim(.right) : moveCaret(.right)
+        case .up: modal ? handleVim(.up) : moveCaret(.up)
+        case .down: modal ? handleVim(.down) : moveCaret(.down)
+        case .lineStart: modal ? handleVim(.char("^")) : moveToLineEdge(end: false)
+        case .lineEnd: modal ? handleVim(.char("$")) : moveToLineEdge(end: true)
+        case .symbol(let text): textView.insertText(text)
+        }
+    }
+
+    private func moveCaret(_ direction: UITextLayoutDirection) {
+        guard let range = textView.selectedTextRange else { return }
+        let origin = direction == .left || direction == .up ? range.start : range.end
+        guard let target = textView.position(from: origin, in: direction, offset: 1)
+            ?? (range.isEmpty ? nil : origin) else { return }
+        textView.selectedTextRange = textView.textRange(from: target, to: target)
+        textView.scrollRangeToVisible(textView.selectedRange)
+    }
+
+    /// Line Start goes to the first non-blank, then to column 0.
+    private func moveToLineEdge(end: Bool) {
+        let buffer = textView.textStorage.mutableString
+        let caret = textView.selectedRange.location
+        var lineStart = 0
+        var contentsEnd = 0
+        buffer.getLineStart(&lineStart, end: nil, contentsEnd: &contentsEnd, for: NSRange(location: caret, length: 0))
+        let target: Int
+        if end {
+            target = contentsEnd
+        } else {
+            let firstText = NSMaxRange(CodeTextEditing.leadingWhitespace(
+                buffer,
+                line: NSRange(location: lineStart, length: contentsEnd - lineStart)
+            ))
+            target = caret == firstText ? lineStart : firstText
+        }
+        textView.selectedRange = NSRange(location: target, length: 0)
+        textView.scrollRangeToVisible(textView.selectedRange)
+    }
+
+    // MARK: - Status and Go to Line
+
+    private func refreshStatus() {
+        guard isViewLoaded else { return }
+        let position = vimEnabled && vim.mode.isVisual
+            ? textView.lineAndColumn(at: vim.cursorOffset)
+            : textView.caretLineAndColumn
+        let indent = indentation.usesTabs ? String(localized: "Tabs") : String(localized: "Spaces: \(indentation.width)")
+        statusBar.update(
+            mode: vimEnabled ? vim.mode : nil,
+            pending: vimEnabled ? vim.pendingDisplay : "",
+            message: vimEnabled ? vim.message : nil,
+            line: position.line,
+            column: position.column,
+            detail: "\(indent) · \(languageName)"
+        )
+    }
+
+    private func presentGoToLine() {
+        let lineCount = textView.lineIndex.lineCount
+        let alert = UIAlertController(
+            title: String(localized: "Go to Line"),
+            message: String(localized: "1–\(lineCount)"),
+            preferredStyle: .alert
+        )
+        let currentLine = textView.caretLineAndColumn.line + 1
+        alert.addTextField { field in
+            field.keyboardType = .numberPad
+            field.placeholder = String(currentLine)
+            field.accessibilityIdentifier = "workspace-file-editor.go-to-line.field"
+        }
+        alert.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel) { [weak self] _ in
+            self?.textView.becomeFirstResponder()
+        })
+        alert.addAction(UIAlertAction(title: String(localized: "Go"), style: .default) { [weak self, weak alert] _ in
+            guard let self, let text = alert?.textFields?.first?.text, let number = Int(text) else { return }
+            let index = self.textView.lineIndex
+            let line = min(max(1, number), index.lineCount) - 1
+            self.textView.becomeFirstResponder()
+            self.select(NSRange(location: index.starts[line], length: 0))
+            if self.vimEnabled { self.vim.selectionDidChange() }
+            self.scrollCaret(to: .center)
+            self.refreshStatus()
+        })
+        present(alert, animated: true)
     }
 
     /// Done, Back, or teardown. Hands the final buffer to the session.
@@ -231,19 +725,25 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
     func replaceText(_ text: String) {
         textView.text = text
         textView.undoManager?.removeAllActions()
+        highlighter?.restyle(highlightStyle)
+        if vimEnabled { vim.reset(to: .normal) }
         if isShowingPreview { installPreview() }
+        refreshStatus()
     }
 
     func setShowingPreview(_ showing: Bool) {
         guard showing != isShowingPreview, isViewLoaded else { return }
         isShowingPreview = showing
         if showing {
+            statusBar.endCommand()
             textView.resignFirstResponder()
             installPreview()
             textView.isHidden = true
+            statusBar.isHidden = true
         } else {
             removePreview()
             textView.isHidden = false
+            statusBar.isHidden = false
         }
     }
 
@@ -259,15 +759,45 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         applyThemeIfNeeded(ThemeRuntimeState.currentThemeID())
     }
 
+    @objc private func fontDidChange() {
+        textView.font = editorFont
+        highlighter?.restyle(highlightStyle)
+    }
+
     /// Recolor in place. Text view identity, selection, and undo survive.
     private func applyColors() {
         let palette = appliedThemeID.palette
         overrideUserInterfaceStyle = appliedThemeID.preferredColorScheme == .light ? .light : .dark
-        view.backgroundColor = UIColor(palette.bgDark)
-        textView.backgroundColor = UIColor(palette.bgDark)
-        textView.textColor = UIColor(palette.fg)
-        textView.tintColor = UIColor(palette.blue)
+        let background = UIColor(palette.bgDark)
+        let foreground = UIColor(palette.fg)
+        let dim = UIColor(palette.comment)
+        let divider = foreground.withAlphaComponent(0.08)
+        view.backgroundColor = background
+        textView.backgroundColor = background
+        textView.textColor = foreground
         textView.keyboardAppearance = appliedThemeID.preferredColorScheme == .light ? .light : .dark
+        textView.chrome = CodeEditorTextView.Chrome(
+            gutterBackground: background,
+            number: dim.withAlphaComponent(0.7),
+            currentNumber: foreground,
+            currentLine: foreground.withAlphaComponent(0.05),
+            divider: divider,
+            blockCursor: UIColor(palette.blue).withAlphaComponent(0.5)
+        )
+        statusBar.applyColors(
+            background: UIColor(palette.bg),
+            foreground: foreground,
+            dim: dim,
+            accent: UIColor(palette.blue),
+            divider: divider
+        )
+        keyBar.apply(
+            keys: preferences.keyBarKeys.filter { $0 != .escape || vimEnabled },
+            foreground: foreground,
+            background: UIColor(palette.bg)
+        )
+        highlighter?.restyle(highlightStyle)
+        vimStateDidChange(scrolls: false)
     }
 
     private func installPreview() {
@@ -302,6 +832,8 @@ struct WorkspaceFileEditorView: UIViewControllerRepresentable {
     let session: WorkspaceFileEditSession
     let isShowingPreview: Bool
     let replacementText: WorkspaceFileEditorReplacement?
+    /// Vim `:q` and `:wq`, the same as tapping Done.
+    let onDone: () -> Void
     let makePreview: (String) -> UIViewController
 
     @Environment(\.themeID) private var themeID
@@ -317,6 +849,7 @@ struct WorkspaceFileEditorView: UIViewControllerRepresentable {
         return WorkspaceFileEditorViewController(
             session: session,
             themeID: themeID,
+            onDone: onDone,
             makePreview: makePreview
         )
     }

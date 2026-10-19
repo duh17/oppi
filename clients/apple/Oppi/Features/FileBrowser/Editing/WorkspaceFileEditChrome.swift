@@ -93,6 +93,9 @@ struct WorkspaceFileEditToolbar: ToolbarContent {
         }
         ToolbarSpacer(.fixed, placement: .topBarTrailing)
         ToolbarItem(placement: .topBarTrailing) {
+            WorkspaceFileEditorOptionsMenu()
+        }
+        ToolbarItem(placement: .topBarTrailing) {
             Button(
                 isShowingPreview ? String(localized: "Source") : String(localized: "Preview"),
                 systemImage: isShowingPreview ? "doc.text" : "eye"
@@ -105,6 +108,31 @@ struct WorkspaceFileEditToolbar: ToolbarContent {
             Button(role: .confirm, action: onDone)
                 .accessibilityIdentifier("workspace-file-editor.done")
         }
+    }
+}
+
+/// Quick editor settings while editing; the same values as Settings > Editor.
+struct WorkspaceFileEditorOptionsMenu: View {
+    @Bindable var preferences: CodeEditorPreferences = .shared
+
+    var body: some View {
+        Menu {
+            Picker(String(localized: "Keybindings"), selection: $preferences.keybindings) {
+                ForEach(CodeEditorKeybindings.allCases, id: \.self) { keybindings in
+                    Text(keybindings.label).tag(keybindings)
+                }
+            }
+            .pickerStyle(.inline)
+            Section {
+                Toggle(String(localized: "Syntax Highlighting"), isOn: $preferences.highlightsSyntax)
+                Toggle(String(localized: "Line Numbers"), isOn: $preferences.showsLineNumbers)
+                Toggle(String(localized: "Wrap Lines"), isOn: $preferences.wrapsLines)
+                Toggle(String(localized: "Keyboard Bar"), isOn: $preferences.showsKeyBar)
+            }
+        } label: {
+            Label(String(localized: "Editor Options"), systemImage: "slider.horizontal.3")
+        }
+        .accessibilityIdentifier("workspace-file-editor.options")
     }
 }
 

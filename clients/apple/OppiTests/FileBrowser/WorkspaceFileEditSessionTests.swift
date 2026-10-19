@@ -903,7 +903,8 @@ struct WorkspaceFileEditorListContinuationTests {
         textView.selectedRange = NSRange(location: (textView.text as NSString).length, length: 0)
         let generation = controller.session.editGeneration
 
-        returnKey(in: textView, delegate: controller)
+        // The keyboard's Return arrives as `insertText`.
+        textView.insertText("\n")
 
         #expect(textView.text == "# T\r\n- item\r\n- ")
         #expect(textView.selectedRange == NSRange(location: (textView.text as NSString).length, length: 0))
@@ -930,8 +931,8 @@ struct WorkspaceFileEditorListContinuationTests {
         textView.selectedRange = NSRange(location: 6, length: 0)
         textView.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
         #expect(textView.markedTextRange != nil)
-        let caret = textView.selectedRange.location
-        #expect(markdown.textView(textView, shouldChangeTextIn: NSRange(location: caret, length: 0), replacementText: "\n"))
+        textView.insertText("\n")
+        #expect(!textView.text.contains("\n- "), "composition keeps the plain newline")
         textView.unmarkText()
 
         let (plain, plainWindow) = makeController(
@@ -943,16 +944,8 @@ struct WorkspaceFileEditorListContinuationTests {
         defer { plainWindow.isHidden = true }
         plain.textView.becomeFirstResponder()
         plain.textView.selectedRange = NSRange(location: 6, length: 0)
-        returnKey(in: plain.textView, delegate: plain)
+        plain.textView.insertText("\n")
         #expect(plain.textView.text == "- item\n")
-    }
-
-    /// The keyboard's Return: ask the delegate, then insert only if allowed.
-    private func returnKey(in textView: UITextView, delegate: UITextViewDelegate) {
-        let range = textView.selectedRange
-        if delegate.textView?(textView, shouldChangeTextIn: range, replacementText: "\n") ?? true {
-            textView.insertText("\n")
-        }
     }
 }
 
