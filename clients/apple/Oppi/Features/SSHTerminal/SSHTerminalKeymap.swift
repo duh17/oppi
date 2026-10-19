@@ -127,8 +127,9 @@ enum SSHTerminalKeymap {
         .init(id: "right", label: "→", stroke: stroke(GHOSTTY_KEY_ARROW_RIGHT, label: "→")),
     ]
 
-    /// One chat-bar page. Exit is last so a miss on the open page cannot
-    /// interrupt or close the program.
+    /// One group in the chat-bar key row. Exit is last so it starts off
+    /// screen, and a miss on the visible keys cannot interrupt or close the
+    /// program.
     struct ComposerPage: Equatable, Identifiable, Sendable {
         enum ID: String, Equatable, Sendable {
             case agent, move, exit
@@ -145,7 +146,7 @@ enum SSHTerminalKeymap {
         let items: [ComposerKey]
     }
 
-    /// A key on a chat-bar page. `send` writes its strokes immediately.
+    /// A key in a chat-bar group. `send` writes its strokes immediately.
     /// Arrows keep the hold-and-drag control. Neither kind arms a latch.
     struct ComposerKey: Equatable, Identifiable, Sendable {
         enum Kind: Equatable, Sendable {
@@ -160,9 +161,9 @@ enum SSHTerminalKeymap {
         var hint: String { strokes.map(\.label).joined(separator: " ") }
     }
 
-    /// Page 1 is Thinking, Cycle, and Model, then any other program actions
-    /// that are not themselves exit chords. Page 2 is the arrows. Page 3 is
-    /// Esc, Tab, Ctrl+C, and Ctrl+D, sent as those keys rather than latches.
+    /// The agent group is Thinking, Cycle, and Model, then any other program
+    /// actions that are not themselves exit chords. The move group is the
+    /// arrows. The exit group is Esc, Tab, Ctrl+C, and Ctrl+D, sent as those keys rather than latches.
     /// A slot whose own binding is an exit chord is omitted. It is not given
     /// a different key under the same label. Shift+Tab is not an exit chord.
     static func composerPages(for profile: Profile?, userFile: String?) -> [ComposerPage] {

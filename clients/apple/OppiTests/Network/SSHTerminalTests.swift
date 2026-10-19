@@ -825,20 +825,12 @@ struct SSHTerminalTests {
             for child in root.subviews { found.append(contentsOf: collectArrows(child)) }
             return found
         }
-        #expect(find(composer, "sshTerminal.composer.page") != nil)
+        // One scrolling row: agent keys, arrows, and exit chords together.
+        #expect(find(composer, "sshTerminal.composer.page") == nil)
         #expect(find(composer, "sshTerminal.composer.rawKeyboard") != nil)
-        if let page = find(composer, "sshTerminal.composer.page") as? UIButton {
-            page.sendActions(for: .touchUpInside)
-            composer.layoutIfNeeded()
-        }
         #expect(findType(composer) { $0 is SSHTerminalArrowButton } != nil)
         let composerArrows = collectArrows(composer)
         #expect(Set(composerArrows.compactMap { $0.configuration?.title }) == ["\u{2190}", "\u{2193}", "\u{2191}", "\u{2192}"])
-        if let page = find(composer, "sshTerminal.composer.page") as? UIButton {
-            #expect(page.titleLabel?.numberOfLines == 1)
-            page.sendActions(for: .touchUpInside)
-            composer.layoutIfNeeded()
-        }
         #expect(find(composer, "sshTerminal.composer.escape") != nil)
         #expect(find(composer, "sshTerminal.composer.tab") != nil)
         #expect(find(composer, "sshTerminal.composer.ctrl-c") != nil)
@@ -876,20 +868,7 @@ struct SSHTerminalTests {
         #expect(SSHTerminalPastedImage(data: Data(), type: .image).fileExtension == "png")
     }
 
-    @Test func phoneWidthAccessoryKeepsHideAndChatInReachAndPagesTheKeys() {
-        let accessory = SSHTerminalKeyStripView(role: .accessory, handlers: .init())
-        accessory.apply(
-            profile: SSHTerminalKeymap.profile(for: "claude"),
-            userFile: nil,
-            actions: SSHTerminalKeymap.actions(for: SSHTerminalKeymap.profile(for: "claude")!, userFile: nil),
-            colors: .placeholder,
-            foreground: .label,
-            background: .black
-        )
-        accessory.frame = CGRect(x: 0, y: 0, width: 390, height: 48)
-        // Pages come from the keys' laid-out frames; showing the page button
-        // asks for one more pass.
-        for _ in 0..<3 { accessory.layoutIfNeeded() }
+    @Test func phoneWidthStripsScrollTheKeysAndKeepTheDockInReach() {
         func find(_ root: UIView, _ id: String) -> UIView? {
             if root.accessibilityIdentifier == id { return root }
             for child in root.subviews {
@@ -897,27 +876,60 @@ struct SSHTerminalTests {
             }
             return nil
         }
-        for id in ["sshTerminal.hideKeyboard", "sshTerminal.useChatBar", "sshTerminal.page"] {
-            guard let control = find(accessory, id) else {
-                Issue.record("missing \(id)")
+        let claude = SSHTerminalKeymap.profile(for: "claude")!
+        let accessory = SSHTerminalKeyStripView(role: .accessory, handlers: .init())
+        accessory.apply(
+            profile: claude,
+            userFile: nil,
+            actions: SSHTerminalKeymap.actions(for: claude, userFile: nil),
+            colors: .placeholder,
+            foreground: .label,
+            background: .black
+        )
+        accessory.frame = CGRect(x: 0, y: 0, width: 390, height: accessory.intrinsicContentSize.height)
+        let composer = SSHTerminalKeyStripView(role: .composer, handlers: .init())
+        composer.apply(profile: claude, userFile: nil, colors: .placeholder, foreground: .label, background: .black)
+        composer.frame = CGRect(x: 0, y: 0, width: 320, height: 44)
+
+        // The accessory is two rows: fixed keys over Paste and program actions.
+        accessory.layoutIfNeeded()
+        if let escape = find(accessory, "sshTerminal.escape"), let paste = find(accessory, "sshTerminal.paste") {
+            #expect(paste.convert(paste.bounds, to: accessory).minY >= escape.convert(escape.bounds, to: accessory).maxY)
+        } else {
+            Issue.record("missing Esc or Paste")
+        }
+        if let chat = find(accessory, "sshTerminal.useChatBar"), let hide = find(accessory, "sshTerminal.hideKeyboard") {
+            #expect(hide.convert(hide.bounds, to: accessory).minY >= chat.convert(chat.bounds, to: accessory).maxY)
+        }
+
+        let strips: [(SSHTerminalKeyStripView, first: String, pinned: [String])] = [
+            (accessory, "sshTerminal.escape", ["sshTerminal.useChatBar", "sshTerminal.hideKeyboard"]),
+            (composer, "sshTerminal.composer.escape", ["sshTerminal.composer.rawKeyboard"]),
+        ]
+        for (strip, first, pinned) in strips {
+            strip.layoutIfNeeded()
+            #expect(find(strip, "sshTerminal.page") == nil)
+            #expect(find(strip, "sshTerminal.composer.page") == nil)
+            var ancestor = find(strip, first)?.superview
+            while let view = ancestor, !(view is UIScrollView) { ancestor = view.superview }
+            guard let scroll = ancestor as? UIScrollView else {
+                Issue.record("missing key row for \(first)")
                 continue
             }
-            #expect(!control.isHidden)
-            let frame = control.convert(control.bounds, to: accessory)
-            #expect(accessory.bounds.contains(frame), "\(id) at \(frame)")
+            #expect(scroll.contentSize.width > scroll.bounds.width, "\(first) row should overflow and scroll")
+            // Swiping to the end moves the keys, never the dock.
+            scroll.contentOffset.x = scroll.contentSize.width - scroll.bounds.width
+            strip.layoutIfNeeded()
+            for id in pinned {
+                guard let control = find(strip, id) else {
+                    Issue.record("missing \(id)")
+                    continue
+                }
+                #expect(!scroll.isDescendant(of: control) && !control.isDescendant(of: scroll), "\(id) scrolls")
+                let frame = control.convert(control.bounds, to: strip)
+                #expect(strip.bounds.contains(frame), "\(id) at \(frame)")
+            }
         }
-        guard let page = find(accessory, "sshTerminal.page") as? UIButton,
-              let scroll = find(accessory, "sshTerminal.escape")?.superview?.superview as? UIScrollView else {
-            Issue.record("missing page button or key row")
-            return
-        }
-        #expect(page.configuration?.title?.hasPrefix("1/") == true)
-        page.sendActions(for: .touchUpInside)
-        let deadline = Date().addingTimeInterval(1)
-        while scroll.contentOffset.x == 0, Date() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
-        }
-        #expect(scroll.contentOffset.x > 0)
     }
 
     @Test func terminalDictationWritesTheLiveDraftAndKeepsItAfterLeavingTheBar() async throws {

@@ -2,12 +2,16 @@ import GhosttyVt
 import UIKit
 import UniformTypeIdentifiers
 
-/// One key strip for the chat bar and the raw-keyboard accessory.
-/// Composer pages stay paged (agent / move / exit); the accessory keeps Ctrl/Alt
-/// latches, Paste, and program actions in one scrolling row, with its page,
-/// chat, and hide controls pinned at the trailing edge so a phone-width bar
-/// can always reach them. Buttons, arrows, spacing, and press treatment are shared.
-final class SSHTerminalKeyStripView: UIView, UIScrollViewDelegate {
+/// One key strip for the chat bar and the raw-keyboard accessory. Each scrolls
+/// its keys sideways beside a pinned dock at the trailing edge, tinted so it
+/// reads apart from the keys that scroll. The composer row runs agent keys,
+/// arrows, then exit chords, so exit stays off screen until you swipe to it;
+/// its dock holds the raw-keyboard switch. The accessory is two rows that
+/// scroll together: Esc, the Ctrl/Alt latches, Tab, and arrows on top, then
+/// Paste and program actions. Its dock stacks chat over hide, so a
+/// phone-width bar can always reach them. Buttons, arrows, spacing, and press
+/// treatment are shared.
+final class SSHTerminalKeyStripView: UIView {
     enum Role {
         case composer
         case accessory
@@ -31,7 +35,6 @@ final class SSHTerminalKeyStripView: UIView, UIScrollViewDelegate {
     private var profile: SSHTerminalKeymap.Profile?
     private var userFile: String?
     private var programActions: [SSHTerminalKeyAction] = []
-    private var keyPage = 0
     private var foreground = UIColor.label
     private var barBackground = UIColor.systemBackground
     private var colors = ComposerThemeColors.placeholder
@@ -39,20 +42,24 @@ final class SSHTerminalKeyStripView: UIView, UIScrollViewDelegate {
     private let glass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
     private let fill = UIView()
     private let scroll = UIScrollView()
+    private let rows = UIStackView()
     private let keys = UIStackView()
+    /// The accessory's second row: Paste and program actions.
+    private let programRow = UIStackView()
     private let trailing = UIStackView()
+    private let dock = UIView()
     private var modifierButtons: [(button: UIButton, modifier: GhosttyMods, label: String)] = []
     private var arrowButtons: [SSHTerminalArrowButton] = []
     private var pasteControl: UIPasteControl?
-    private var pageButton: SSHTerminalKeyButton?
     private var appliedSignature = ""
-    private var accessoryPageTitle = ""
+
+    /// Two 46pt rows; each key keeps its 44pt target.
+    private static let accessoryHeight: CGFloat = 92
 
     init(role: Role, handlers: Handlers) {
         self.role = role
         self.handlers = handlers
-        let accessoryHeight: CGFloat = 48
-        super.init(frame: role == .accessory ? CGRect(x: 0, y: 0, width: 400, height: accessoryHeight) : .zero)
+        super.init(frame: role == .accessory ? CGRect(x: 0, y: 0, width: 400, height: Self.accessoryHeight) : .zero)
         if role == .accessory {
             autoresizingMask = [.flexibleWidth]
         } else {
@@ -68,7 +75,7 @@ final class SSHTerminalKeyStripView: UIView, UIScrollViewDelegate {
     override var intrinsicContentSize: CGSize {
         CGSize(
             width: UIView.noIntrinsicMetric,
-            height: role == .accessory ? 48 : ComposerInputMetrics.controlDiameter
+            height: role == .accessory ? Self.accessoryHeight : ComposerInputMetrics.controlDiameter
         )
     }
 
@@ -90,6 +97,7 @@ final class SSHTerminalKeyStripView: UIView, UIScrollViewDelegate {
         tintColor = foreground
         fill.backgroundColor = role == .accessory ? background.withAlphaComponent(0.55) : .clear
         backgroundColor = .clear
+        dock.backgroundColor = colors.fg.withAlphaComponent(0.1)
         guard signature != appliedSignature else {
             showModifiers()
             return
@@ -131,27 +139,40 @@ final class SSHTerminalKeyStripView: UIView, UIScrollViewDelegate {
         scroll.alwaysBounceHorizontal = false
         scroll.keyboardDismissMode = .none
         scroll.delaysContentTouches = false
-        scroll.delegate = self
-        keys.axis = .horizontal
-        keys.alignment = .center
-        keys.spacing = 4
-        trailing.axis = .horizontal
+        rows.axis = .vertical
+        rows.alignment = .leading
+        rows.distribution = .fillEqually
+        for row in [keys, programRow] {
+            row.axis = .horizontal
+            row.alignment = .center
+            row.spacing = 4
+        }
+        rows.addArrangedSubview(keys)
+        if role == .accessory { rows.addArrangedSubview(programRow) }
+        trailing.axis = role == .accessory ? .vertical : .horizontal
         trailing.alignment = .center
-        trailing.spacing = 4
+        trailing.distribution = role == .accessory ? .fillEqually : .fill
+        trailing.spacing = role == .accessory ? 0 : 4
         trailing.setContentHuggingPriority(.required, for: .horizontal)
         trailing.setContentCompressionResistancePriority(.required, for: .horizontal)
+        trailing.isLayoutMarginsRelativeArrangement = true
+        trailing.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 2)
+        dock.isUserInteractionEnabled = false
+        dock.layer.cornerRadius = 20
+        dock.layer.cornerCurve = .continuous
 
-        for view in [glass, fill, scroll, trailing] {
+        for view in [glass, fill, scroll, dock, trailing] {
             view.translatesAutoresizingMaskIntoConstraints = false
         }
-        keys.translatesAutoresizingMaskIntoConstraints = false
+        rows.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glass)
         addSubview(fill)
         addSubview(scroll)
-        scroll.addSubview(keys)
+        scroll.addSubview(rows)
+        addSubview(dock)
         addSubview(trailing)
 
-        let stripHeight = role == .accessory ? 48 : ComposerInputMetrics.controlDiameter
+        let stripHeight = role == .accessory ? Self.accessoryHeight : ComposerInputMetrics.controlDiameter
         NSLayoutConstraint.activate([
             glass.leadingAnchor.constraint(equalTo: leadingAnchor),
             glass.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -168,32 +189,27 @@ final class SSHTerminalKeyStripView: UIView, UIScrollViewDelegate {
             trailing.trailingAnchor.constraint(equalTo: trailingAnchor, constant: role == .accessory ? -4 : 0),
             trailing.topAnchor.constraint(equalTo: topAnchor),
             trailing.bottomAnchor.constraint(equalTo: bottomAnchor),
-            keys.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
-            keys.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
-            keys.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
-            keys.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
-            keys.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
+            dock.leadingAnchor.constraint(equalTo: trailing.leadingAnchor),
+            dock.trailingAnchor.constraint(equalTo: trailing.trailingAnchor),
+            dock.topAnchor.constraint(equalTo: trailing.topAnchor, constant: 2),
+            dock.bottomAnchor.constraint(equalTo: trailing.bottomAnchor, constant: -2),
+            rows.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            rows.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            rows.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            rows.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            rows.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
             heightAnchor.constraint(equalToConstant: stripHeight),
         ])
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        if role == .accessory { showAccessoryPage() }
-    }
-
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        if role == .accessory { showAccessoryPage() }
     }
 
     private func rebuild() {
         stopRepeating()
         keys.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        programRow.arrangedSubviews.forEach { $0.removeFromSuperview() }
         trailing.arrangedSubviews.forEach { $0.removeFromSuperview() }
         modifierButtons = []
         arrowButtons = []
         pasteControl = nil
-        pageButton = nil
         switch role {
         case .composer: rebuildComposer()
         case .accessory: rebuildAccessory()
@@ -203,46 +219,34 @@ final class SSHTerminalKeyStripView: UIView, UIScrollViewDelegate {
 
     private func rebuildComposer() {
         let pages = SSHTerminalKeymap.composerPages(for: profile, userFile: userFile)
-        guard !pages.isEmpty else { return }
-        let index = min(max(keyPage, 0), pages.count - 1)
-        keyPage = index
-        let page = pages[index]
-        let next = pages[(index + 1) % pages.count]
-        for item in page.items {
-            if item.kind == .arrow, let stroke = item.strokes.first {
-                addArrow(label: item.label, key: stroke.key, id: "sshTerminal.composer.\(item.id)")
-            } else {
-                addKey(
-                    title: item.label,
-                    id: "sshTerminal.composer.\(item.id)",
-                    accessibilityLabel: item.accessibilityLabel,
-                    hint: "Sends \(item.hint)"
-                ) { [weak self] in
-                    self?.handlers.sendStrokes(item.strokes)
+        for (index, page) in pages.enumerated() {
+            if index > 0 { addGroupDivider() }
+            for item in page.items {
+                if item.kind == .arrow, let stroke = item.strokes.first {
+                    addArrow(label: item.label, key: stroke.key, id: "sshTerminal.composer.\(item.id)")
+                } else {
+                    addKey(
+                        title: item.label,
+                        id: "sshTerminal.composer.\(item.id)",
+                        accessibilityLabel: item.accessibilityLabel,
+                        hint: "Sends \(item.hint)"
+                    ) { [weak self] in
+                        self?.handlers.sendStrokes(item.strokes)
+                    }
                 }
             }
         }
-        let pageButton = SSHTerminalKeyButton()
-        pageButton.apply(title: "\(index + 1)/\(pages.count)", colors: colors, compactTitle: true)
-        pageButton.accessibilityIdentifier = "sshTerminal.composer.page"
-        pageButton.accessibilityLabel = "Key page \(index + 1) of \(pages.count), \(page.title)"
-        pageButton.accessibilityHint = "Shows \(next.title)"
-        pageButton.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
-            self.keyPage = (index + 1) % pages.count
-            self.rebuild()
-        }, for: .touchUpInside)
-        trailing.addArrangedSubview(pageButton)
-        self.pageButton = pageButton
-
-        let keyboard = SSHTerminalKeyButton()
-        keyboard.apply(title: nil, systemImage: "keyboard", colors: colors)
-        keyboard.accessibilityIdentifier = "sshTerminal.composer.rawKeyboard"
-        keyboard.accessibilityLabel = "Type directly into the terminal"
-        keyboard.addAction(UIAction { [weak self] _ in
+        addKey(
+            title: nil,
+            systemImage: "keyboard",
+            id: "sshTerminal.composer.rawKeyboard",
+            accessibilityLabel: "Type directly into the terminal",
+            hint: nil,
+            in: trailing
+        ) { [weak self] in
             self?.handlers.showRawKeyboard()
-        }, for: .touchUpInside)
-        trailing.addArrangedSubview(keyboard)
+        }
+        scroll.contentOffset = .zero
     }
 
     private func rebuildAccessory() {
@@ -274,27 +278,18 @@ final class SSHTerminalKeyStripView: UIView, UIScrollViewDelegate {
                 }
             }
         }
-        installPasteControl()
+        installPasteControl(in: programRow)
         for action in programActions {
             addKey(
                 title: action.title,
                 id: "sshTerminal.action.\(action.id)",
                 accessibilityLabel: action.title,
-                hint: "Sends \(action.keyLabel)"
+                hint: "Sends \(action.keyLabel)",
+                in: programRow
             ) { [weak self] in
                 self?.handlers.sendStrokes(action.strokes)
             }
         }
-        let pageButton = SSHTerminalKeyButton()
-        pageButton.accessibilityIdentifier = "sshTerminal.page"
-        pageButton.accessibilityHint = "Shows the next keys"
-        pageButton.isHidden = true
-        pageButton.addAction(UIAction { [weak self] _ in
-            self?.showNextAccessoryPage()
-        }, for: .touchUpInside)
-        trailing.addArrangedSubview(pageButton)
-        self.pageButton = pageButton
-        accessoryPageTitle = ""
         addKey(
             title: nil,
             systemImage: "text.bubble",
@@ -317,52 +312,18 @@ final class SSHTerminalKeyStripView: UIView, UIScrollViewDelegate {
         scroll.contentOffset = .zero
     }
 
-    // MARK: - Accessory pages
-
-    /// Scroll offsets where each accessory page starts: a page starts at the
-    /// first key that does not fit whole on the page before it, so paging
-    /// never cuts a key in half. Swiping the row still works.
-    private func accessoryPageStarts() -> [CGFloat] {
-        let width = scroll.bounds.width
-        let maxOffset = max(0, scroll.contentSize.width - width)
-        guard width > 0, maxOffset > 0.5 else { return [0] }
-        var starts: [CGFloat] = [0]
-        for key in keys.arrangedSubviews where key.frame.maxX > starts[starts.count - 1] + width + 0.5 {
-            starts.append(min(key.frame.minX, maxOffset))
-        }
-        return starts
-    }
-
-    private func currentAccessoryPage(_ starts: [CGFloat]) -> Int {
-        let offset = scroll.contentOffset.x
-        let maxOffset = max(0, scroll.contentSize.width - scroll.bounds.width)
-        if offset >= maxOffset - 0.5 { return starts.count - 1 }
-        return starts.lastIndex { $0 <= offset + 0.5 } ?? 0
-    }
-
-    /// The page button shows only while the keys overflow. Hiding it only
-    /// widens the row, so the choice cannot flip back and forth.
-    private func showAccessoryPage() {
-        guard let pageButton else { return }
-        let starts = accessoryPageStarts()
-        let page = currentAccessoryPage(starts)
-        let title = starts.count > 1 ? "\(page + 1)/\(starts.count)" : ""
-        guard title != accessoryPageTitle else { return }
-        accessoryPageTitle = title
-        if pageButton.isHidden != title.isEmpty {
-            pageButton.isHidden = title.isEmpty
-            setNeedsLayout()
-        }
-        pageButton.apply(title: title, colors: colors, compactTitle: true)
-        pageButton.accessibilityLabel = "Key page \(page + 1) of \(starts.count)"
-    }
-
-    private func showNextAccessoryPage() {
-        let starts = accessoryPageStarts()
-        guard starts.count > 1 else { return }
-        let next = (currentAccessoryPage(starts) + 1) % starts.count
-        stopRepeating()
-        scroll.setContentOffset(CGPoint(x: starts[next], y: 0), animated: !UIAccessibility.isReduceMotionEnabled)
+    /// A hairline between the composer's agent, move, and exit groups.
+    private func addGroupDivider() {
+        let divider = UIView()
+        divider.isUserInteractionEnabled = false
+        divider.isAccessibilityElement = false
+        divider.backgroundColor = colors.fg.withAlphaComponent(0.2)
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            divider.widthAnchor.constraint(equalToConstant: 1 / max(1, traitCollection.displayScale)),
+            divider.heightAnchor.constraint(equalToConstant: 20),
+        ])
+        keys.addArrangedSubview(divider)
     }
 
     @discardableResult
@@ -399,7 +360,7 @@ final class SSHTerminalKeyStripView: UIView, UIScrollViewDelegate {
         arrowButtons.append(arrow)
     }
 
-    private func installPasteControl() {
+    private func installPasteControl(in row: UIStackView) {
         let style = UIPasteControl.Configuration()
         style.displayMode = .labelOnly
         style.cornerStyle = .capsule
@@ -410,7 +371,7 @@ final class SSHTerminalKeyStripView: UIView, UIScrollViewDelegate {
         paste.accessibilityIdentifier = "sshTerminal.paste"
         paste.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         paste.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-        keys.addArrangedSubview(paste)
+        row.addArrangedSubview(paste)
         pasteControl = paste
     }
 }
