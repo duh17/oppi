@@ -67,6 +67,60 @@ struct ChatCoveredLifetimeTests {
         #expect(!navigation.routeContainsSession("session-1"))
     }
 
+    /// A sidebar pick or notification can replace a stack whose incognito chat
+    /// is covered, without the chat ever appearing again: the route watch ends it.
+    @Test func coveredIncognitoChatEndsWhenALaterRouteChangeDropsItsSession() async {
+        let navigation = AppNavigation()
+        navigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "incognito", workspaceId: "workspace-1")
+        )
+        navigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        let store = SessionStore()
+        store.switchServer(to: "server-1")
+        store.upsert(makeTestSession(id: "incognito"))
+        let end = IncognitoSessionEnd(
+            sessionId: "incognito", serverId: nil, scope: nil, apiClient: nil,
+            sessionStore: store, navigation: navigation
+        )
+        let cancelled = IncognitoRouteWatch()
+        cancelled.cancel()
+        end.endWhenRouteDrops(cancelled)
+        end.endWhenRouteDrops(IncognitoRouteWatch())
+
+        navigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        await Self.settle()
+        #expect(store.sessions.contains { $0.id == "incognito" }, "Another cover keeps the session")
+
+        navigation.setWorkspaceSessionPath(serverId: "server-1", sessionId: "other", workspaceId: "workspace-1")
+        await Self.settle()
+        #expect(!store.sessions.contains { $0.id == "incognito" }, "Replacing the stack ends the covered incognito session")
+    }
+
+    @Test func cancelledIncognitoRouteWatchKeepsTheSession() async {
+        let navigation = AppNavigation()
+        navigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "incognito", workspaceId: "workspace-1")
+        )
+        let store = SessionStore()
+        store.switchServer(to: "server-1")
+        store.upsert(makeTestSession(id: "incognito"))
+        let watch = IncognitoRouteWatch()
+        IncognitoSessionEnd(
+            sessionId: "incognito", serverId: nil, scope: nil, apiClient: nil,
+            sessionStore: store, navigation: navigation
+        ).endWhenRouteDrops(watch)
+        // The chat showed again before the route changed.
+        watch.cancel()
+
+        navigation.popWorkspaceStack(toDepth: 0)
+        await Self.settle()
+        #expect(store.sessions.contains { $0.id == "incognito" })
+    }
+
+    private static func settle() async {
+        for _ in 0..<10 { await Task.yield() }
+    }
+
     @Test func containsChatReaderTracksStackedAndPoppedTargets() {
         let navigation = AppNavigation()
         navigation.openWorkspaceSession(

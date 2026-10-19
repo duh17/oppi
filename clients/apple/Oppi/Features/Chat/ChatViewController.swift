@@ -183,6 +183,9 @@ final class ChatViewController: UIViewController {
     /// such a chat can tell from `AppNavigation` that it was left; one pushed
     /// straight onto a stack (`pushChat`) never ends an incognito session.
     private var isRouteManaged = false
+    /// Watches the route for an incognito chat hidden while still in it, so a
+    /// later change that drops the session ends it. Cancelled when the chat shows again.
+    private var incognitoRouteWatch: IncognitoRouteWatch?
     nonisolated(unsafe) private var notificationObservers: [NSObjectProtocol] = []
     private var cachedReviewCommentRouter: (templates: [UUID], router: ReviewCommentSelectionRouter)?
 #if DEBUG
@@ -1193,6 +1196,8 @@ final class ChatViewController: UIViewController {
         // position the same chat had in the other shell before history lands.
         mountedPresentation = appNavigation.workspaceNavigationPresentation
         isRouteManaged = appNavigation.routeContainsSession(sessionId)
+        incognitoRouteWatch?.cancel()
+        incognitoRouteWatch = nil
         let shellSwapRemount = ChatScrollShellSwapHandoff.shared.chatDidAppear(
             sessionId: sessionId,
             controller: scrollController,
@@ -1349,16 +1354,6 @@ final class ChatViewController: UIViewController {
             mountedPresentation: mountedPresentation,
             currentPresentation: appNavigation.workspaceNavigationPresentation
         )
-        guard !appNavigation.isCoveringChat(sessionId: sessionId) else { return }
-        connection.extensionNotifyChipStore.collapseForHiddenChat(sessionId: sessionId)
-        actionHandler.cleanup()
-        // Releases this runtime's focus claim only; a newer chat for the
-        // same session keeps its stream (late or repeated cleanup is a no-op).
-        sessionManager.cleanup()
-        let liveVoiceController = liveVoiceController
-        let composerDraftStore = root?.composerDraftStore
-        let sessionManager = sessionManager
-        let connection = connection
         let incognitoEnd = isRouteManaged && session?.ephemeral == true
             ? IncognitoSessionEnd(
                 sessionId: sessionId,
@@ -1369,11 +1364,34 @@ final class ChatViewController: UIViewController {
                 navigation: appNavigation
             )
             : nil
+        let incognitoRouteWatch = incognitoEnd.map { _ in IncognitoRouteWatch() }
+        self.incognitoRouteWatch?.cancel()
+        self.incognitoRouteWatch = incognitoRouteWatch
+        guard !appNavigation.isCoveringChat(sessionId: sessionId) else {
+            if let incognitoEnd, let incognitoRouteWatch {
+                incognitoEnd.endWhenRouteDrops(incognitoRouteWatch)
+            }
+            return
+        }
+        connection.extensionNotifyChipStore.collapseForHiddenChat(sessionId: sessionId)
+        actionHandler.cleanup()
+        // Releases this runtime's focus claim only; a newer chat for the
+        // same session keeps its stream (late or repeated cleanup is a no-op).
+        sessionManager.cleanup()
+        let liveVoiceController = liveVoiceController
+        let composerDraftStore = root?.composerDraftStore
+        let sessionManager = sessionManager
+        let connection = connection
         Task {
             // Runs once this navigation change settles: a pop reaches
             // AppNavigation in the stack's `didShow`, after this disappearance.
+            // A chat still in the route (another tab, a page pushed above it)
+            // ends when a later route change drops it.
             let endedIncognito = incognitoEnd.flatMap { $0.chatWasLeft() ? $0 : nil }
             endedIncognito?.forgetLocally()
+            if endedIncognito == nil, let incognitoEnd, let incognitoRouteWatch {
+                incognitoEnd.endWhenRouteDrops(incognitoRouteWatch)
+            }
             await liveVoiceController.leave()
             if let composerDraftStore {
                 await composerDraftStore.flush()
@@ -2629,8 +2647,18 @@ private struct ChatTimelineChromeKey: Equatable {
 /// deletes it, and this device drops its row, cached trace, and lock, so it
 /// shows in no list. A failed delete leaves it on the server, and the next
 /// list sync shows it again.
+/// Cancelled when its chat shows again, so the session it watches stays.
 @MainActor
-private struct IncognitoSessionEnd {
+final class IncognitoRouteWatch {
+    private(set) var isCancelled = false
+
+    func cancel() {
+        isCancelled = true
+    }
+}
+
+@MainActor
+struct IncognitoSessionEnd: Sendable {
     let sessionId: String
     let serverId: String?
     let scope: SessionRouteScope?
@@ -2647,6 +2675,24 @@ private struct IncognitoSessionEnd {
 
     func forgetLocally() {
         sessionStore.remove(id: sessionId)
+    }
+
+    /// The chat is hidden but its session is still in the route. The chat
+    /// may never show again (a sidebar pick or a notification replaces the
+    /// whole stack without appearance callbacks), so the route decides.
+    func endWhenRouteDrops(_ watch: IncognitoRouteWatch) {
+        guard !watch.isCancelled else { return }
+        if chatWasLeft() {
+            forgetLocally()
+            Task { await deleteSession() }
+            return
+        }
+        withObservationTracking {
+            _ = chatWasLeft()
+        } onChange: {
+            // `onChange` runs before the change lands; check on the next turn.
+            Task { @MainActor in endWhenRouteDrops(watch) }
+        }
     }
 
     func deleteSession() async {
