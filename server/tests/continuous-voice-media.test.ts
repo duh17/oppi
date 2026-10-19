@@ -16,6 +16,8 @@ import {
 import {
   StreamingSttProvider,
   type SttProvider,
+  type SttSpeechState,
+  type SttStartResult,
   type SttTranscriptUpdate,
 } from "../src/stt-provider.js";
 import {
@@ -47,10 +49,20 @@ class ScriptedSttProvider implements SttProvider {
   fed: Buffer[] = [];
   startError?: Error;
   private tokenCb?: (update: SttTranscriptUpdate) => void;
+  private speechCb?: (state: SttSpeechState) => void;
 
-  async start(): Promise<void> {
+  async start(): Promise<SttStartResult> {
     if (this.startError) throw this.startError;
     this.started = true;
+    return { contextApplied: false };
+  }
+
+  onSpeechState(cb: (state: SttSpeechState) => void): void {
+    this.speechCb = cb;
+  }
+
+  speech(state: SttSpeechState): void {
+    this.speechCb?.(state);
   }
 
   feedAudio(pcm: Buffer): void {
@@ -219,6 +231,133 @@ describe("continuous voice media", () => {
     );
     await coordinator.detach("connection-1");
     expect(calls.snapshot(started.state.callId).delegations).toHaveLength(2);
+  });
+
+  it("ends a turn on the audio when the backend reports speech, not on a stalled transcript", async () => {
+    const stt = new ScriptedSttProvider();
+    const adapter = localAdapter(stt, { turnEndPauseMs: 100 });
+    const committed: string[] = [];
+    await adapter.start((event) => {
+      if (event.type === "user_utterance_committed") committed.push(event.text);
+    });
+
+    // Recognition stalls mid-sentence while the user keeps talking (a speaking report with
+    // every feed, ~200 ms apart in production): no cut-off, however long the text stalls.
+    stt.emit({ text: "帮我看一下现在有几个会话" });
+    for (let i = 0; i < 8; i++) {
+      stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    expect(committed).toEqual([]);
+
+    // A mid-sentence pause long enough for the backend's end of speech: the turn does not
+    // read as finished, so it waits for the user to go on.
+    stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
+    await Promise.resolve();
+    expect(committed).toEqual([]);
+
+    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+    await turnEnd();
+    expect(committed).toEqual([]);
+    stt.emit({ text: "帮我看一下现在有几个会话在跑了吗？" });
+    stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
+    await Promise.resolve();
+    expect(committed).toEqual(["帮我看一下现在有几个会话在跑了吗？"]);
+
+    // An end of speech with nothing new to hand over is a no-op.
+    stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
+    await Promise.resolve();
+    expect(committed).toHaveLength(1);
+  });
+
+  it("ends the turn when speech reports stop arriving, as on mute or a stalled upload", async () => {
+    const stt = new ScriptedSttProvider();
+    const adapter = localAdapter(stt);
+    const committed: string[] = [];
+    await adapter.start((event) => {
+      if (event.type === "user_utterance_committed") committed.push(event.text);
+    });
+
+    // The last report said speaking, then the feeds stopped (the user muted mid-word).
+    stt.emit({ text: "run the server" });
+    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+    await turnEnd();
+
+    expect(committed).toEqual(["run the server"]);
+  });
+
+  it("hands over an unpunctuated turn once the silence is long enough", async () => {
+    const stt = new ScriptedSttProvider();
+    const adapter = localAdapter(stt, { turnEndPauseMs: 60_000 });
+    const committed: string[] = [];
+    await adapter.start((event) => {
+      if (event.type === "user_utterance_committed") committed.push(event.text);
+    });
+
+    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+    stt.emit({ text: "then run the server tests" });
+    stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
+    stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 1_000 });
+    await Promise.resolve();
+    expect(committed).toEqual([]);
+
+    stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 1_200 });
+    await Promise.resolve();
+    expect(committed).toEqual(["then run the server tests"]);
+  });
+
+  it("hands over a finished sentence after a short silence, before the backend calls it", async () => {
+    const stt = new ScriptedSttProvider();
+    const adapter = localAdapter(stt, { turnEndPauseMs: 60_000 });
+    const committed: string[] = [];
+    await adapter.start((event) => {
+      if (event.type === "user_utterance_committed") committed.push(event.text);
+    });
+
+    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+    stt.emit({ text: "Run the server tests." });
+    stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 200 });
+    await Promise.resolve();
+    expect(committed).toEqual([]);
+
+    stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 450 });
+    await Promise.resolve();
+    expect(committed).toEqual(["Run the server tests."]);
+  });
+
+  it("ends a turn whose silent reports never measure silence, as when the detector heard no speech", async () => {
+    const stt = new ScriptedSttProvider();
+    const adapter = localAdapter(stt, { turnEndPauseMs: 100 });
+    const committed: string[] = [];
+    await adapter.start((event) => {
+      if (event.type === "user_utterance_committed") committed.push(event.text);
+    });
+
+    // Recognized text the detector never counted as speech: silent reports keep arriving
+    // with no trailing silence, and must not hold the turn open.
+    stt.emit({ text: "run the tests" });
+    for (let i = 0; i < 6; i++) {
+      stt.speech({ speechActive: false, speechFinal: false });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+
+    expect(committed).toEqual(["run the tests"]);
+  });
+
+  it("still ends a silent turn when the backend never marks the end of speech", async () => {
+    const stt = new ScriptedSttProvider();
+    const adapter = localAdapter(stt);
+    const committed: string[] = [];
+    await adapter.start((event) => {
+      if (event.type === "user_utterance_committed") committed.push(event.text);
+    });
+
+    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+    stt.emit({ text: "list open sessions" });
+    stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 200 });
+    await turnEnd();
+
+    expect(committed).toEqual(["list open sessions"]);
   });
 
   it("hands Pi each Chinese turn, which has no spaces between words", async () => {

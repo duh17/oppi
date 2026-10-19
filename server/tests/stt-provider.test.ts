@@ -4,6 +4,7 @@ import type { DictationServerMessage } from "../src/dictation-types.js";
 import {
   SttSessionCreateError,
   StreamingSttProvider,
+  type SttSpeechState,
   type SttTranscriptUpdate,
 } from "../src/stt-provider.js";
 
@@ -263,6 +264,129 @@ describe("StreamingSttProvider", () => {
     const result = await provider.stop();
     expect(result.text).toBe("");
     expect(calls).toHaveLength(0);
+  });
+
+  it("asks for endpointing only when configured, and reports speech state on every feed", async () => {
+    const feeds = [
+      { text: "hello", speech_active: true, speech_final: false, trailing_silence_ms: 0 },
+      // Same text: the transcript callback stays quiet, the speech state still arrives.
+      { text: "hello", speech_active: false, speech_final: false, trailing_silence_ms: 400 },
+      { text: "hello", speech_active: false, speech_final: true, trailing_silence_ms: 700 },
+    ];
+    const { fetchFn, calls } = createMockFetch([
+      {
+        match: isCreate,
+        response: jsonResponse({ session_id: "s1", endpointing_applied: true }),
+      },
+      { match: isFeed, response: () => jsonResponse(feeds.shift() ?? { text: "hello" })() },
+      { match: isDelete, response: jsonResponse({ text: "hello" }) },
+    ]);
+    const provider = new StreamingSttProvider(
+      { endpoint: BASE, model: "test-model", endpointingMs: 700 },
+      fetchFn,
+      100,
+    );
+    const texts: string[] = [];
+    const speech: SttSpeechState[] = [];
+    provider.onToken((update) => texts.push(update.text));
+    provider.onSpeechState((state) => speech.push(state));
+
+    const started = await provider.start({ contextualStrings: ["Yuwp"] });
+    for (let i = 0; i < 3; i++) {
+      provider.feedAudio(Buffer.from([i, i]));
+      vi.advanceTimersByTime(100);
+      await flush();
+    }
+
+    expect(started).toEqual({ contextApplied: false });
+    expect(createBodies(calls)).toEqual([
+      {
+        model: "test-model",
+        stream_config: { contextual_strings: ["Yuwp"], endpointing_ms: 700 },
+      },
+    ]);
+    expect(texts).toEqual(["hello"]);
+    expect(speech).toEqual([
+      { speechActive: true, speechFinal: false, trailingSilenceMs: 0 },
+      { speechActive: false, speechFinal: false, trailingSilenceMs: 400 },
+      { speechActive: false, speechFinal: true, trailingSilenceMs: 700 },
+    ]);
+    await provider.stop();
+  });
+
+  it("reports no speech state when the backend does not apply endpointing", async () => {
+    const { fetchFn, calls } = createMockFetch([
+      { match: isCreate, response: jsonResponse({ session_id: "s1" }) },
+      {
+        match: isFeed,
+        response: jsonResponse({ text: "hello", speech_active: true, speech_final: true }),
+      },
+      { match: isDelete, response: jsonResponse({ text: "hello" }) },
+    ]);
+    const provider = makeProvider(fetchFn);
+    const speech: SttSpeechState[] = [];
+    provider.onSpeechState((state) => speech.push(state));
+
+    await provider.start();
+    provider.feedAudio(Buffer.from([1, 2]));
+    vi.advanceTimersByTime(100);
+    await flush();
+
+    // Dictation's create body is unchanged.
+    expect(createBodies(calls)).toEqual([{ model: "test-model" }]);
+    expect(speech).toEqual([]);
+    await provider.stop();
+  });
+
+  it("asks a recreated session for endpointing again and releases speech when it is lost", async () => {
+    let created = 0;
+    let feedStatus = 200;
+    const { fetchFn, calls } = createMockFetch([
+      {
+        match: isCreate,
+        response: () =>
+          jsonResponse(
+            // The first session runs voice activity detection; the recreated one does not.
+            ++created === 1
+              ? { session_id: "s1", endpointing_applied: true }
+              : { session_id: "s2" },
+          )(),
+      },
+      {
+        match: isFeed,
+        response: () =>
+          feedStatus === 404
+            ? errorResponse(404)()
+            : jsonResponse({ text: "hello", speech_active: true, speech_final: false })(),
+      },
+      { match: isDelete, response: jsonResponse({ text: "hello" }) },
+    ]);
+    const provider = new StreamingSttProvider(
+      { endpoint: BASE, model: "test-model", endpointingMs: 700 },
+      fetchFn,
+      100,
+    );
+    const speech: SttSpeechState[] = [];
+    provider.onSpeechState((state) => speech.push(state));
+    await provider.start();
+
+    for (const status of [200, 404, 200]) {
+      feedStatus = status;
+      provider.feedAudio(Buffer.from([1, 2]));
+      vi.advanceTimersByTime(100);
+      await flush();
+    }
+
+    expect(createBodies(calls)).toEqual([
+      { model: "test-model", stream_config: { endpointing_ms: 700 } },
+      { model: "test-model", stream_config: { endpointing_ms: 700 } },
+    ]);
+    // Speaking, then released when the new session cannot report speech; nothing after.
+    expect(speech).toEqual([
+      { speechActive: true, speechFinal: false },
+      { speechActive: false, speechFinal: false },
+    ]);
+    await provider.stop();
   });
 
   it("handles 404 on feed by recreating session with the same take context", async () => {

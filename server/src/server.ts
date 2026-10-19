@@ -45,6 +45,7 @@ import { JsonlMetricWriter } from "./server-metric-writer.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
 import { authenticatedVoiceDeviceId, VoiceCallController } from "./continuous-voice-call.js";
 import {
+  LIVE_VOICE_ENDPOINTING_MS,
   ReadAloudLiveVoiceTts,
   selectLiveVoiceMediaAdapter,
   VoiceCallMediaCoordinator,
@@ -1456,7 +1457,12 @@ export class Server {
       liveVoiceBackend: asr?.liveVoiceBackend,
       sttEndpoint: endpoint,
       createStt: endpoint
-        ? () => new StreamingSttProvider({ endpoint, model }, globalThis.fetch)
+        ? () =>
+            new StreamingSttProvider(
+              // Only a call asks for endpointing; dictation's create body stays as it was.
+              { endpoint, model, endpointingMs: LIVE_VOICE_ENDPOINTING_MS },
+              globalThis.fetch,
+            )
         : undefined,
       // Local calls speak like read aloud: same engine, same voice.
       tts: tts && isSpeechEnabled(tts) ? new ReadAloudLiveVoiceTts(tts, { getAuth }) : undefined,

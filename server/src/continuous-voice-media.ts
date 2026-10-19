@@ -6,7 +6,7 @@ import type {
   VoiceFrontendEventHandler,
   VoiceFrontendSemanticEvent,
 } from "./continuous-voice.js";
-import type { SttProvider, SttTranscriptUpdate } from "./stt-provider.js";
+import type { SttProvider, SttSpeechState, SttTranscriptUpdate } from "./stt-provider.js";
 import { createLogger } from "./logger.js";
 import { startSpeech, type SpeechDeps, type TtsConfig } from "./speech-synthesis.js";
 import { parseVoiceApprovalDecision } from "./voice-approval-bridge.js";
@@ -61,6 +61,17 @@ export interface VoiceCallMediaAttachInput {
   frontend: VoiceCallFrontendConnection;
 }
 
+/** Trailing silence after which a Live Voice call asks the ASR backend to mark speech ended. */
+export const LIVE_VOICE_ENDPOINTING_MS = 700;
+/** Silence after which a turn that already ends a sentence is handed over without waiting for endpointing. */
+const SENTENCE_END_SILENCE_MS = 450;
+/**
+ * Silence after which an unfinished-looking turn is handed over anyway. The backend's end of
+ * speech also fires on mid-sentence pauses, so it ends only turns that read as finished.
+ */
+const UNFINISHED_SILENCE_MS = 1_200;
+const SENTENCE_END = /[。？！?.!]$/;
+
 /**
  * Local Live Voice: streaming ASR in, read-aloud TTS out, the session's agent does the work.
  *
@@ -68,6 +79,15 @@ export interface VoiceCallMediaAttachInput {
  * locks in text every few hundred milliseconds, so a commit is a stable prefix,
  * not the end of what the user is saying. The transcript is cumulative for the
  * call; a turn is the words after the ones already sent to the session.
+ *
+ * When the backend reports speech state (endpointing), the audio decides the pause: a
+ * turn that ends a sentence is handed over at the backend's end of speech or after a short
+ * silence; one that does not waits for a longer silence, since people pause mid-sentence.
+ * Either way, a turn ends once nothing new (text or speech state) has arrived for
+ * `turnEndPauseMs`: while the user talks, reports arrive with every feed and keep it from
+ * firing, and when they stop (mute, a stalled upload, a backend error) the turn still ends.
+ * Without endpointing that is the only rule, and it can fire mid-sentence when recognition
+ * lags.
  */
 export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   private handler: VoiceFrontendEventHandler | undefined;
@@ -104,6 +124,9 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     this.handler = handler;
     this.stt.onToken((update) => {
       this.handleTranscript(update);
+    });
+    this.stt.onSpeechState?.((state) => {
+      this.handleSpeechState(state);
     });
     await this.stt.start();
     await handler({ type: "connected" });
@@ -203,6 +226,25 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     this.outputSpeaking = false;
     const handler = this.handler;
     if (handler) void handler({ type: "assistant_speech_stopped" });
+  }
+
+  private handleSpeechState(state: SttSpeechState): void {
+    // While the user talks a speaking report arrives with every feed and restarts the
+    // watchdog, so the turn cannot end however long the text stalls. Silent reports leave
+    // it running: the silence rules below or the watchdog end the turn.
+    if (state.speechActive) {
+      this.scheduleTurnEnd();
+      return;
+    }
+    const turn = this.pendingTurnText();
+    if (!turn) return;
+    const silence = state.trailingSilenceMs ?? 0;
+    const finished =
+      SENTENCE_END.test(turn) && (state.speechFinal || silence >= SENTENCE_END_SILENCE_MS);
+    if (finished || silence >= UNFINISHED_SILENCE_MS) {
+      this.clearTurnEnd();
+      void this.commitTurn();
+    }
   }
 
   private scheduleTurnEnd(): void {
