@@ -85,10 +85,11 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
             "idle autosave did not reach disk"
         )
         XCTAssertTrue(waitForStatus("Saved", timeout: 10), "status did not settle on Saved")
+        // The fixture uses CRLF, so every Return writes CRLF too.
         XCTAssertEqual(
             try diskString(),
-            Self.original + "\n- one\n- two",
-            "Return in a list item did not continue the list"
+            Self.original + "\r\n- one\r\n- two",
+            "Return did not continue the list in the file's CRLF line ending"
         )
     }
 

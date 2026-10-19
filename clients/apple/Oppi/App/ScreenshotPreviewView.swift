@@ -306,7 +306,7 @@ private struct WorkspaceFileEditorScreenshotPreview: UIViewControllerRepresentab
 
         mutating func greet(_ name: String, times: Int = 1) -> String {
             count += times
-            let line = "\\(greeting), \\(name)!"
+            let line = "\\(greeting), \\(name)."
             // Repeat for emphasis.
             return Array(repeating: line, count: times).joined(separator: " ")
         }
