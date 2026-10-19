@@ -1273,7 +1273,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             showExpanded: showExpanded,
             showCommand: showCommand,
             showOutput: showOutput,
-            isExpandingTransition: isExpandingTransition,
             wasExpandedVisible: wasExpandedVisible,
             wasCommandVisible: wasCommandVisible,
             wasOutputVisible: wasOutputVisible,
@@ -1544,7 +1543,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         showExpanded: Bool,
         showCommand: Bool,
         showOutput: Bool,
-        isExpandingTransition: Bool,
         wasExpandedVisible: Bool,
         wasCommandVisible: Bool,
         wasOutputVisible: Bool,
@@ -1553,22 +1551,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         if !showExpanded {
             hideExpandedContainer(outputColor: outputColor)
         }
-        ToolTimelineRowDisplayState.applyContainerVisibility(
-            expandedContainer,
-            shouldShow: showExpanded,
-            isExpandingTransition: isExpandingTransition,
-            wasVisible: wasExpandedVisible
-        )
+        expandedContainer.isHidden = !showExpanded
 
         if !showCommand {
             bashToolRowView.resetCommandState()
         }
-        ToolTimelineRowDisplayState.applyContainerVisibility(
-            bashToolRowView.commandContainer,
-            shouldShow: showCommand,
-            isExpandingTransition: isExpandingTransition,
-            wasVisible: wasCommandVisible
-        )
+        bashToolRowView.commandContainer.isHidden = !showCommand
 
         if !showOutput {
             bashToolRowView.resetOutputState(outputColor: outputColor)
@@ -1577,12 +1565,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             bashToolRowView.setOutputVerticalLockEnabled(false)
         }
         bashToolRowView.isHidden = !showCommand && !showOutput
-        ToolTimelineRowDisplayState.applyContainerVisibility(
-            bashToolRowView.outputContainer,
-            shouldShow: showOutput,
-            isExpandingTransition: isExpandingTransition,
-            wasVisible: wasOutputVisible
-        )
+        bashToolRowView.outputContainer.isHidden = !showOutput
 
         let containerVisibilityChanged = wasExpandedVisible != showExpanded
             || wasCommandVisible != showCommand

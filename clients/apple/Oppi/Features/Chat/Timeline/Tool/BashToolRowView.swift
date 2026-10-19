@@ -179,8 +179,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     /// Render bash content.
     ///
     /// Returns which surfaces should be visible. The parent is responsible
-    /// for showing/hiding `commandContainer` and `outputContainer` (via
-    /// `ToolTimelineRowDisplayState.applyContainerVisibility`), then calling
+    /// for showing/hiding `commandContainer` and `outputContainer`, then calling
     /// `flushFollowTail()` once both are visible with valid bounds.
     func apply(
         input: BashRenderInput,

@@ -192,23 +192,6 @@ enum ToolTimelineRowDisplayState {
         return showPreview
     }
 
-    static func applyContainerVisibility(
-        _ container: UIView,
-        shouldShow: Bool,
-        isExpandingTransition: Bool,
-        wasVisible: Bool
-    ) {
-        container.isHidden = !shouldShow
-        if shouldShow {
-            ToolTimelineRowPresentationHelpers.animateInPlaceReveal(
-                container,
-                shouldAnimate: isExpandingTransition && !wasVisible
-            )
-        } else {
-            ToolTimelineRowPresentationHelpers.resetRevealAppearance(container)
-        }
-    }
-
     static func applyElapsed(
         startedAt: Date?,
         elapsedSeconds: Int?,

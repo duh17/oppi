@@ -445,7 +445,7 @@ final class AnchoredCollectionView: UICollectionView {
         defer { layoutSubviewsDepth -= 1 }
 
         if isApplyingAnchorCorrection {
-            super.layoutSubviews()
+            TimelineRowMotion.layout { super.layoutSubviews() }
             return
         }
 
@@ -472,7 +472,8 @@ final class AnchoredCollectionView: UICollectionView {
             didCaptureAnchorForTesting?()
         #endif
 
-        super.layoutSubviews()
+        // Row resizes, including self-sizing settles, apply instantly.
+        TimelineRowMotion.layout { super.layoutSubviews() }
 
         #if DEBUG
             let _restoreStart = DispatchTime.now().uptimeNanoseconds

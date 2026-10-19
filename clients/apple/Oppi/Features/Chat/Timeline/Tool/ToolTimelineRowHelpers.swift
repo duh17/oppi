@@ -116,32 +116,6 @@ enum ToolTimelineRowPresentationHelpers {
         }
     }
 
-    static func animateInPlaceReveal(_ view: UIView, shouldAnimate: Bool) {
-        guard shouldAnimate else {
-            resetRevealAppearance(view)
-            return
-        }
-
-        view.layer.removeAnimation(forKey: "tool.reveal")
-        // Keep reveal almost imperceptible: tiny in-place opacity settle only.
-        view.alpha = 0.97
-
-        UIView.animate(
-            withDuration: ToolRowExpansionAnimation.contentRevealDuration,
-            delay: ToolRowExpansionAnimation.contentRevealDelay,
-            options: [.allowUserInteraction, .curveLinear, .beginFromCurrentState]
-        ) {
-            // Pure in-place fade (no transform/translation), so panels feel
-            // like they open within the row rather than slide in.
-            view.alpha = 1
-        }
-    }
-
-    static func resetRevealAppearance(_ view: UIView) {
-        view.layer.removeAnimation(forKey: "tool.reveal")
-        view.alpha = 1
-    }
-
     static func presentFullScreenContent(
         _ content: FullScreenCodeContent,
         from sourceView: UIView,
@@ -720,7 +694,7 @@ enum ToolTimelineRowPresentationHelpers {
             ? captureAttachedLayoutTail(in: collectionView)
             : nil
         defer { endSynchronousLayoutInvalidation(for: collectionView) }
-        UIView.performWithoutAnimation {
+        TimelineRowMotion.layout {
 #if DEBUG
             timelineWideInvalidationCountsForTesting[
                 ObjectIdentifier(collectionView),
