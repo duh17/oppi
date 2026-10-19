@@ -193,7 +193,11 @@ describe("Grok Voice media", () => {
       },
       output: { format: { type: "audio/pcm", rate: 24_000 }, transport: "binary" },
     });
-    expect(update.session.turn_detection).toEqual({ type: "server_vad" });
+    // xAI's default silence cuts a ~1.2 s pause mid-thought into several turns.
+    expect(update.session.turn_detection).toEqual({
+      type: "server_vad",
+      silence_duration_ms: 1500,
+    });
     expect(update.session.tools.map((tool: { name: string }) => tool.name)).toEqual([
       "delegate_to_pi",
     ]);
@@ -283,6 +287,114 @@ describe("Grok Voice media", () => {
     socket.server({ type: "response.done" });
     await flush();
     expect(socket.sentTypes()).not.toContain("response.create");
+  });
+
+  describe("xAI repeating earlier turns in a new item's transcript", () => {
+    /** The adapter alone, with what it tells the call recorded in order. */
+    async function direct() {
+      const events: Array<{ type: string; text?: string }> = [];
+      let socket!: FakeXaiSocket;
+      const adapter = new GrokVoiceMediaAdapter({
+        resolveApiKey: async () => "xai-token",
+        createSocket: (url, headers) => (socket = new FakeXaiSocket(url, headers)),
+      });
+      const starting = adapter.start(async (event) => {
+        events.push(event as { type: string; text?: string });
+      });
+      await flush();
+      socket.server({ type: "session.created" });
+      socket.server({ type: "session.updated" });
+      await starting;
+      events.length = 0;
+
+      let call = 0;
+      return {
+        adapter,
+        socket,
+        /** What reached the call for text-bearing events, e.g. `final: hello`. */
+        heard: () =>
+          events
+            .filter((e) => e.text !== undefined && e.text !== "…" && e.text !== "")
+            .map((e) => `${e.type.replace(/^(user_transcript_|delegation_)/, "")}: ${e.text}`),
+        /** One user turn; xAI's transcripts are cumulative, as in the live logs. */
+        async turn(item: string, transcripts: string[]) {
+          socket.server({ type: "input_audio_buffer.speech_started", item_id: item });
+          for (const transcript of transcripts) {
+            socket.server({
+              type: "conversation.item.input_audio_transcription.updated",
+              item_id: item,
+              transcript,
+            });
+          }
+          socket.server({ type: "input_audio_buffer.speech_stopped", item_id: item });
+          socket.server({ type: "input_audio_buffer.committed", item_id: item });
+          socket.server({ type: "response.created" });
+          await flush();
+        },
+        /** Grok calls delegate_to_pi with what xAI transcribed. */
+        async delegate(request: string) {
+          socket.server({
+            type: "response.function_call_arguments.done",
+            call_id: `fc-${++call}`,
+            name: "delegate_to_pi",
+            arguments: JSON.stringify({ request }),
+          });
+          socket.server({ type: "response.done" });
+          await flush();
+        },
+      };
+    }
+
+    it("hands Pi, the captions, and approval each turn's own words, and starts over once Grok speaks", async () => {
+      const h = await direct();
+      await h.turn("item-1", ["Look at the server tests."]);
+      await h.delegate("Look at the server tests.");
+      expect(h.heard()).toEqual([
+        "partial: Look at the server tests.",
+        "final: Look at the server tests.",
+        "requested: Look at the server tests.",
+      ]);
+
+      // Same words again, re-cased and re-punctuated, then the new ones.
+      await h.turn("item-2", [
+        "look at the server tests,",
+        "Look at the server tests, then run lint.",
+      ]);
+      await h.delegate("Look at the server tests. Then run lint.");
+      expect(h.heard().slice(3)).toEqual([
+        "partial: then run lint.", // the repeated-only partial showed nothing
+        "final: then run lint.",
+        "requested: Then run lint.",
+      ]);
+
+      // Grok speaks (a reply, or a Pi update): xAI's next transcript starts over, so the
+      // user repeating themselves is new speech, not a copy of what came before.
+      h.socket.serverAudio(Buffer.alloc(960));
+      await h.turn("item-3", ["Look at the server tests, then run lint."]);
+      await h.delegate("Look at the server tests, then run lint.");
+      expect(h.heard().slice(6)).toEqual([
+        "partial: Look at the server tests, then run lint.",
+        "final: Look at the server tests, then run lint.",
+        "requested: Look at the server tests, then run lint.",
+      ]);
+      await h.adapter.stop();
+    });
+
+    it("works for languages written without spaces, and keeps a delegation that is only old words", async () => {
+      const h = await direct();
+      await h.turn("item-1", ["把测试跑一下。"]);
+      await h.turn("item-2", ["把测试跑一下 然后看看日志。"]);
+      // Grok restates the first turn only: the user's words are not dropped.
+      await h.delegate("把测试跑一下。");
+      expect(h.heard()).toEqual([
+        "partial: 把测试跑一下。",
+        "final: 把测试跑一下。",
+        "partial: 然后看看日志。",
+        "final: 然后看看日志。",
+        "requested: 把测试跑一下。",
+      ]);
+      await h.adapter.stop();
+    });
   });
 
   it("tells Grok when a delegation could not start so it can say so", async () => {

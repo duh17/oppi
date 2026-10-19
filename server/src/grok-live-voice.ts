@@ -42,6 +42,11 @@ const OWN_RESPONSE_SOURCE = "pi_update";
 const RESPONSE_ID_KEY = "oppi_response";
 /** How long to wait for xAI's reply to a user turn, or to our own create, before moving on. */
 const TURN_REPLY_WAIT_MS = 5_000;
+/**
+ * Silence that ends a user turn. xAI's default cuts a ~1.2 s pause mid-thought, turning one
+ * request into several turns and delegations. Not in xAI's docs, but it accepts and echoes it.
+ */
+const TURN_SILENCE_MS = 1_500;
 
 export const GROK_VOICE_INSTRUCTIONS = [
   "You are the voice of Pi, the user's coding agent, on a phone call. Pi does the thinking and the work; you are its ears and mouth.",
@@ -111,7 +116,16 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   private responseTimer: ReturnType<typeof setTimeout> | undefined;
   /** When audio already sent to the phone should finish playing. */
   private playbackEndsAt = 0;
+  /** xAI's latest transcript per item, as received (cumulative; see `withoutEarlierTurns`). */
   private readonly transcripts = new Map<string, string>();
+  /**
+   * xAI prefixes an item's transcript with the transcripts of the turns committed since Grok
+   * last spoke. Per item: the last committed item when it first appeared, whose transcript
+   * is the text to strip. Undefined when none (the first turn, or Grok spoke since).
+   */
+  private readonly earlierItems = new Map<string, string | undefined>();
+  /** The latest committed item since Grok last spoke; a spoken reply resets xAI's transcript. */
+  private lastCommittedItem: string | undefined;
   private readonly committedItems = new Set<string>();
   /** Items whose final transcript went out. Later corrections never reach approval. */
   private readonly finalItems = new Set<string>();
@@ -297,7 +311,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         session: {
           instructions: GROK_VOICE_INSTRUCTIONS,
           voice: this.options.voice ?? GROK_VOICE_DEFAULT_VOICE,
-          turn_detection: { type: "server_vad" },
+          turn_detection: { type: "server_vad", silence_duration_ms: TURN_SILENCE_MS },
           audio: {
             input: {
               format: { type: "audio/pcm", rate: INPUT_SAMPLE_RATE },
@@ -363,16 +377,20 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
       case "conversation.item.input_audio_transcription.completed": {
         const text = event.transcript?.trim();
         if (!text || !event.item_id) return;
+        this.noteItem(event.item_id);
         this.transcripts.set(event.item_id, text);
         if (this.committedItems.has(event.item_id)) {
           await this.emitFinal(event.item_id, text);
           return;
         }
-        await handler({ type: "user_transcript_partial", text });
+        const fresh = this.newWords(event.item_id, text);
+        if (fresh) await handler({ type: "user_transcript_partial", text: fresh });
         return;
       }
       case "input_audio_buffer.committed": {
         if (!event.item_id) return;
+        this.noteItem(event.item_id);
+        this.lastCommittedItem = event.item_id;
         this.committedItems.add(event.item_id);
         this.itemTurns.set(event.item_id, this.turn);
         this.userSpeaking = false;
@@ -437,6 +455,8 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
 
   private handleOutputAudio(pcm: Buffer): void {
     if (pcm.length === 0 || this.stopped) return;
+    // Grok speaking resets what xAI repeats in the next transcript.
+    this.lastCommittedItem = undefined;
     if (!this.assistantSpeaking) {
       this.assistantSpeaking = true;
       this.handler?.({ type: "assistant_speech_started" })?.catch((error: unknown) =>
@@ -475,7 +495,8 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
     } else if (event.name !== DELEGATE_TOOL) {
       output = { status: "error", message: `Unknown tool ${event.name ?? ""}`.trim() };
     } else {
-      const request = parseDelegateRequest(event.arguments);
+      const asked = parseDelegateRequest(event.arguments);
+      const request = asked && this.delegatedWords(asked);
       if (!request) {
         output = { status: "error", message: "request must be a non-empty string" };
       } else {
@@ -553,13 +574,42 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   }
 
   /** One final per user turn: a later, corrected transcript must not answer a second challenge. */
-  private async emitFinal(itemId: string, text: string): Promise<void> {
+  private async emitFinal(itemId: string, raw: string): Promise<void> {
     if (this.finalItems.has(itemId)) return;
     // Words from an earlier turn arriving after the user spoke again: the coordinator's
     // "heard before speaking" set belongs to the newer turn, so fail closed.
     if (this.itemTurns.get(itemId) !== this.turn) return;
+    // Nothing new said: earlier words must not stand in for this turn (approval reads this).
+    const text = this.newWords(itemId, raw);
+    if (!text) return;
     this.finalItems.add(itemId);
     await this.handler?.({ type: "user_transcript_final", text });
+  }
+
+  /** Remembers which earlier turns xAI will repeat in this item's transcript. */
+  private noteItem(itemId: string): void {
+    if (!this.earlierItems.has(itemId)) this.earlierItems.set(itemId, this.lastCommittedItem);
+  }
+
+  private earlierWords(itemId: string): string | undefined {
+    const earlier = this.earlierItems.get(itemId);
+    return earlier ? this.transcripts.get(earlier) : undefined;
+  }
+
+  /** The item's transcript without the earlier turns xAI repeats; empty when nothing is new. */
+  private newWords(itemId: string, raw: string): string {
+    const earlier = this.earlierWords(itemId);
+    return (earlier ? withoutEarlierTurns(raw, earlier) : undefined) ?? raw;
+  }
+
+  /**
+   * Grok copies the cumulative transcript into `delegate_to_pi`. Strip the earlier turns
+   * from the latest committed item; a request that is only old words stays as Grok wrote it.
+   */
+  private delegatedWords(request: string): string {
+    const item = this.lastCommittedItem;
+    const earlier = item ? this.earlierWords(item) : undefined;
+    return (earlier ? withoutEarlierTurns(request, earlier) : undefined) || request;
   }
 
   private awaitTurnReply(): void {
@@ -644,6 +694,32 @@ function parseEvent(data: Buffer): XaiEvent | undefined {
   } catch {
     return undefined;
   }
+}
+
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+/**
+ * `text` without a leading copy of `earlier`, or undefined when `text` does not start with
+ * all of it. Case, punctuation, and whitespace do not count, and the match is per character
+ * so languages written without spaces work. xAI re-punctuates and re-cases earlier turns,
+ * and Grok retypes them, so an exact prefix match would miss. Empty when nothing follows.
+ */
+function withoutEarlierTurns(text: string, earlier: string): string | undefined {
+  let target = "";
+  for (const ch of earlier) if (WORD_CHAR.test(ch)) target += ch.toLowerCase();
+  if (!target) return undefined;
+  let matched = 0;
+  let end = 0;
+  for (const ch of text) {
+    if (matched === target.length) break;
+    end += ch.length;
+    if (!WORD_CHAR.test(ch)) continue;
+    const lower = ch.toLowerCase();
+    if (!target.startsWith(lower, matched)) return undefined;
+    matched += lower.length;
+  }
+  if (matched < target.length) return undefined;
+  return text.slice(end).replace(/^[^\p{L}\p{N}]+/u, "");
 }
 
 function parseDelegateRequest(args: string | undefined): string | undefined {
