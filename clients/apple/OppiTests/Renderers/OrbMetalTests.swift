@@ -780,7 +780,7 @@ struct WorkingIndicatorMetalSizeTests {
         AppPreferenceStore.Appearance.setSpinnerStyle(.working)
         let view = WorkingIndicatorTimelineRowConfiguration(
             modelId: nil,
-            workingState: nil
+            surface: nil
         ).makeContentView()
         view.frame = CGRect(x: 0, y: 0, width: 320, height: 44)
         view.setNeedsLayout()
@@ -804,12 +804,14 @@ struct WorkingIndicatorMetalSizeTests {
             }
         }
         AppPreferenceStore.Appearance.setSpinnerStyle(.working)
+        let surface = SessionExtensionSurface()
+        surface.replace(with: ExtensionSurfaceState(working: ExtensionWorkingState(
+            message: "Waiting for tools",
+            indicator: ExtensionUIWorkingIndicator(frames: [], intervalMs: nil)
+        )))
         let view = WorkingIndicatorTimelineRowConfiguration(
             modelId: nil,
-            workingState: ExtensionWorkingState(
-                message: "Waiting for tools",
-                indicator: ExtensionUIWorkingIndicator(frames: [], intervalMs: nil)
-            )
+            surface: surface
         ).makeContentView()
         view.frame = CGRect(x: 0, y: 0, width: 320, height: 44)
         view.setNeedsLayout()

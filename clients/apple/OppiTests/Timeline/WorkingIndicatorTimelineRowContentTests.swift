@@ -61,11 +61,39 @@ struct WorkingIndicatorTimelineRowContentTests {
         #expect(indicatorLabel.text == "A")
     }
 
+    /// The row follows its session's working text without a reconfigure, and
+    /// a text tick leaves the running custom indicator where it is.
+    @Test func workingTextTickUpdatesInPlaceWithoutRestartingTheIndicator() {
+        let surface = SessionExtensionSurface()
+        surface.replace(with: ExtensionSurfaceState(working: ExtensionWorkingState(
+            message: "Busy · 1s",
+            indicator: ExtensionUIWorkingIndicator(frames: ["A", "B"], intervalMs: 120)
+        )))
+        let view = makeView(surface: surface)
+        guard let indicatorLabel = firstVisibleLabel(withText: "A", in: view) else {
+            Issue.record("expected custom indicator label")
+            return
+        }
+        indicatorLabel.text = "B"
+
+        var next = surface.state
+        next.working?.message = "Busy · 2s"
+        surface.replace(with: next)
+        view.updatePropertiesIfNeeded()
+
+        #expect(visibleLabelTexts(in: view).contains("Busy · 2s"))
+        #expect(view.accessibilityLabel == "Busy · 2s")
+        #expect(indicatorLabel.text == "B")
+    }
+
     private func makeView(workingState: ExtensionWorkingState?) -> UIView {
-        let configuration = WorkingIndicatorTimelineRowConfiguration(
-            modelId: nil,
-            workingState: workingState
-        )
+        let surface = SessionExtensionSurface()
+        surface.replace(with: ExtensionSurfaceState(working: workingState))
+        return makeView(surface: surface)
+    }
+
+    private func makeView(surface: SessionExtensionSurface) -> UIView {
+        let configuration = WorkingIndicatorTimelineRowConfiguration(modelId: nil, surface: surface)
         let contentView = configuration.makeContentView()
         let view = contentView as UIView
         view.frame = CGRect(x: 0, y: 0, width: 320, height: 44)

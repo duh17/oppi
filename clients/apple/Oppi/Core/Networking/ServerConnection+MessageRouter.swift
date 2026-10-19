@@ -193,9 +193,7 @@ extension ServerConnection {
              "setWorkingIndicator",
              "setHiddenThinkingLabel",
              "setToolsExpanded":
-            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
-            ExtensionSurfaceReducer.apply(notification, to: &surface)
-            storeExtensionSurface(surface, for: sessionId)
+            extensionSurfaces.apply(notification, sessionId: sessionId)
 
         default:
             return
@@ -250,16 +248,8 @@ extension ServerConnection {
         )
     }
 
-    func storeExtensionSurface(_ surface: ExtensionSurfaceState, for sessionId: String) {
-        if surface.hasRetainedContent {
-            extensionSurfaceBySession[sessionId] = surface
-        } else {
-            extensionSurfaceBySession.removeValue(forKey: sessionId)
-        }
-    }
-
     func clearExtensionSurface(for sessionId: String) {
-        extensionSurfaceBySession.removeValue(forKey: sessionId)
+        extensionSurfaces.clear(sessionId: sessionId)
         clearExtensionDialog(for: sessionId)
     }
 

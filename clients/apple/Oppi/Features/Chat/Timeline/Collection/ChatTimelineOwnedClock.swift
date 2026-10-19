@@ -330,7 +330,6 @@ extension ChatTimelineController {
             || previous.quietModeEnabled != next.quietModeEnabled
             || previous.workStripStyle != next.workStripStyle
             || previous.chromeStyle != next.chromeStyle
-            || previous.extensionWorkingState != next.extensionWorkingState
             || previous.extensionHiddenThinkingLabel != next.extensionHiddenThinkingLabel
             || previous.agentId != next.agentId
             || previous.agentIcon != next.agentIcon

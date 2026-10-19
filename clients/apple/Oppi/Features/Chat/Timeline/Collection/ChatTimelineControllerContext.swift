@@ -25,7 +25,7 @@ final class ChatTimelineControllerContext {
     var iconAssetCache: IconAssetCache?
     var openDestination: ChatTimelineOpenDestination?
     var currentModel: String?
-    var extensionWorkingState: ExtensionWorkingState?
+    var extensionSurface: SessionExtensionSurface?
     var extensionHiddenThinkingLabel: String?
     var audioLifecycleCoordinator: AudioLifecycleCoordinator?
     let interactionContext = TimelineInteractionContext()
@@ -74,7 +74,7 @@ final class ChatTimelineControllerContext {
         iconAssetCache = configuration.iconAssetCache
         openDestination = configuration.openDestination
         currentModel = configuration.currentModel
-        extensionWorkingState = configuration.extensionWorkingState
+        extensionSurface = configuration.extensionSurface
         extensionHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
         audioLifecycleCoordinator = configuration.audioLifecycleCoordinator
         interactionContext.reviewCommentSelectionRouter = configuration.reviewCommentSelectionRouter

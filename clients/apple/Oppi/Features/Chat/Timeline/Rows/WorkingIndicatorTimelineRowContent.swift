@@ -2,7 +2,9 @@ import UIKit
 
 struct WorkingIndicatorTimelineRowConfiguration: UIContentConfiguration {
     let modelId: String?
-    let workingState: ExtensionWorkingState?
+    /// The row observes the working text and indicator here itself, so an
+    /// extension's per-second elapsed text never reaches the timeline.
+    let surface: SessionExtensionSurface?
 
     func makeContentView() -> any UIView & UIContentView {
         WorkingIndicatorTimelineRowContentView(configuration: self)
@@ -34,6 +36,15 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
     private var customFrames: [String] = []
     private var customFrameIndex = 0
     private var customInterval = defaultCustomInterval
+    /// The indicator last rendered, so a text-only change keeps the custom
+    /// animation running instead of restarting it every tick.
+    private var renderedIndicator: RenderedIndicator?
+
+    private struct RenderedIndicator: Equatable {
+        let indicator: ExtensionUIWorkingIndicator?
+        let modelId: String?
+        let style: SpinnerStyle
+    }
 
     init(configuration: WorkingIndicatorTimelineRowConfiguration) {
         self.currentConfiguration = configuration
@@ -70,6 +81,22 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
             guard let config = newValue as? WorkingIndicatorTimelineRowConfiguration else { return }
             apply(configuration: config)
         }
+    }
+
+    /// UIKit tracks the surface reads here and reruns this when they change.
+    override func updateProperties() {
+        super.updateProperties()
+        let working = currentConfiguration.surface?.layout.working
+        let indicator = RenderedIndicator(
+            indicator: working?.indicator,
+            modelId: currentConfiguration.modelId,
+            style: SpinnerStyle.current
+        )
+        if indicator != renderedIndicator {
+            renderedIndicator = indicator
+            renderIndicator(indicator)
+        }
+        showWorkingText(currentConfiguration.surface?.workingMessage ?? "Working...")
     }
 
     override func didMoveToWindow() {
@@ -147,15 +174,37 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
 
     private func apply(configuration: WorkingIndicatorTimelineRowConfiguration) {
         currentConfiguration = configuration
+        renderedIndicator = nil
+        setNeedsUpdateProperties()
+        // A fresh or reused cell is measured right after this, so render now.
+        updatePropertiesIfNeeded()
+    }
 
+    /// A text that wraps to another line count changes the row's height, which
+    /// the timeline caches; only then ask it to measure the row again.
+    private func showWorkingText(_ text: String) {
+        guard workingLabel.text != text else { return }
+        let width = workingLabel.bounds.width
+        let heightBefore = width > 0 ? workingLabel.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height : 0
+        workingLabel.text = text
+        accessibilityLabel = text
+        guard width > 0 else { return }
+        let heightAfter = workingLabel.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        if heightAfter != heightBefore {
+            ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(startingAt: self)
+        }
+    }
+
+    private func renderIndicator(_ rendered: RenderedIndicator) {
+        let indicator = rendered.indicator
         let palette = ThemeRuntimeState.currentPalette()
-        let providerColor = UIColor(ProviderColor.color(for: configuration.modelId, palette: palette))
-        let rawCustomFrames = configuration.workingState?.indicator?.frames
+        let providerColor = UIColor(ProviderColor.color(for: rendered.modelId, palette: palette))
+        let rawCustomFrames = indicator?.frames
         let customFrames = Self.displayableCustomFrames(rawCustomFrames)
         let hidesIndicator = rawCustomFrames?.isEmpty == true
         let showsCustomIndicator = customFrames?.isEmpty == false
 
-        let style = SpinnerStyle.current
+        let style = rendered.style
         let showsMetal = style.orbStyle != nil
         brailleView.isHidden = hidesIndicator || showsCustomIndicator || style != .brailleDots
         golView.isHidden = hidesIndicator || showsCustomIndicator || style != .gameOfLife
@@ -178,12 +227,10 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         metalView.isAnimationEnabled = !metalView.isHidden
         customIndicatorLabel.textColor = providerColor
         workingLabel.textColor = UIColor(palette.comment).withAlphaComponent(0.6)
-        workingLabel.text = configuration.workingState?.message ?? "Working..."
-        accessibilityLabel = workingLabel.text
 
         configureCustomIndicator(
             frames: showsCustomIndicator ? customFrames : nil,
-            intervalMs: configuration.workingState?.indicator?.intervalMs
+            intervalMs: indicator?.intervalMs
         )
     }
 

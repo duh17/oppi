@@ -64,7 +64,8 @@ struct ChatTimelineConfiguration {
     /// already bound. The timeline decides when to call it; nil means no remote paging.
     let loadOlderPage: (@MainActor () async -> Bool)?
     let currentModel: String?
-    let extensionWorkingState: ExtensionWorkingState?
+    /// Read by the working row itself; the timeline never diffs it.
+    let extensionSurface: SessionExtensionSurface?
     let extensionHiddenThinkingLabel: String?
     let audioPlayer: AudioPlayerService
     let audioLifecycleCoordinator: AudioLifecycleCoordinator?
@@ -121,7 +122,7 @@ struct ChatTimelineConfiguration {
         openDestination: ChatTimelineOpenDestination? = nil,
         loadOlderPage: (@MainActor () async -> Bool)? = nil,
         currentModel: String? = nil,
-        extensionWorkingState: ExtensionWorkingState? = nil,
+        extensionSurface: SessionExtensionSurface? = nil,
         extensionHiddenThinkingLabel: String? = nil,
         audioPlayer: AudioPlayerService,
         audioLifecycleCoordinator: AudioLifecycleCoordinator? = nil,
@@ -174,7 +175,7 @@ struct ChatTimelineConfiguration {
         self.openDestination = openDestination
         self.loadOlderPage = loadOlderPage
         self.currentModel = currentModel
-        self.extensionWorkingState = extensionWorkingState
+        self.extensionSurface = extensionSurface
         self.extensionHiddenThinkingLabel = extensionHiddenThinkingLabel
         self.audioPlayer = audioPlayer
         self.audioLifecycleCoordinator = audioLifecycleCoordinator
@@ -464,9 +465,9 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         set { context.currentModel = newValue }
     }
 
-    var currentExtensionWorkingState: ExtensionWorkingState? {
-        get { context.extensionWorkingState }
-        set { context.extensionWorkingState = newValue }
+    var currentExtensionSurface: SessionExtensionSurface? {
+        get { context.extensionSurface }
+        set { context.extensionSurface = newValue }
     }
 
     var currentExtensionHiddenThinkingLabel: String? {
@@ -550,7 +551,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     private var previousHasOlderServerPage = false
     private var previousItemCount = 0
     private var previousShowsWorkingIndicator = false
-    private var previousExtensionWorkingState: ExtensionWorkingState?
     private var previousHiddenThinkingLabel: String?
     private var previousThemeID: ThemeID?
     var speakerIncreasedContrast = false
@@ -1134,7 +1134,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             && configuration.hasOlderServerPage == previousHasOlderServerPage
             && configuration.workLineByID == previousWorkLineByID
             && !appearanceChanged
-            && configuration.extensionWorkingState == previousExtensionWorkingState
             && configuration.extensionHiddenThinkingLabel == previousHiddenThinkingLabel
 
         if structurallyUnchanged,
@@ -1195,7 +1194,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             previousItemCount = configuration.items.count
             previousThemeID = currentThemeID
             previousShowsWorkingIndicator = configuration.showsWorkingIndicator
-            previousExtensionWorkingState = configuration.extensionWorkingState
             previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
             isTimelineBusy = configuration.isBusy
 
@@ -1251,7 +1249,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                 previousItemCount = configuration.items.count
                 previousThemeID = currentThemeID
                 previousShowsWorkingIndicator = configuration.showsWorkingIndicator
-                previousExtensionWorkingState = configuration.extensionWorkingState
                 previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
                 isTimelineBusy = configuration.isBusy
                 let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
@@ -1308,7 +1305,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             previousItemCount = configuration.items.count
             previousThemeID = currentThemeID
             previousShowsWorkingIndicator = configuration.showsWorkingIndicator
-            previousExtensionWorkingState = configuration.extensionWorkingState
             previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
             isTimelineBusy = configuration.isBusy
 
@@ -1389,10 +1385,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             // non-streaming layout instead of retaining a blank tail.
             forceReconfigureIDs.append(finalAssistantID)
         }
-        if configuration.showsWorkingIndicator,
-           configuration.extensionWorkingState != previousExtensionWorkingState {
-            forceReconfigureIDs.append(ChatTimelineController.workingIndicatorID)
-        }
         forceReconfigureIDs.append(
             contentsOf: ChatTimelineApplyPlan.workLineReconfigureIDs(
                 previous: previousWorkLineByID,
@@ -1430,7 +1422,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         previousItemCount = configuration.items.count
         previousThemeID = currentThemeID
         previousShowsWorkingIndicator = configuration.showsWorkingIndicator
-        previousExtensionWorkingState = configuration.extensionWorkingState
         previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
         isTimelineBusy = configuration.isBusy
 

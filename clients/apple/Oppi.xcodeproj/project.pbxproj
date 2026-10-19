@@ -517,6 +517,7 @@
 		3E39A9A43D2A9509AAA51887 /* ChatScrollController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D1C1CD6E2F8B86E6C8CAD9D /* ChatScrollController.swift */; };
 		3E3CDA4C213AC75B0F0F05F1 /* ChatTimelineCollectionView+Keybinding.swift in Sources */ = {isa = PBXBuildFile; fileRef = A07551E96DF56608E48380DE /* ChatTimelineCollectionView+Keybinding.swift */; };
 		3E40E8E4A5BD17F1B4BF14E0 /* BiometricServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8F55D5B231319462EC8F1B8 /* BiometricServiceTests.swift */; };
+		3E487E89A725996953F2A3ED /* ExtensionSurfaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A628DBFABDABE8A97B609CC /* ExtensionSurfaceStore.swift */; };
 		3E48E6406890AA40F04DD048 /* NetworkPathTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B01425F686C0A0C54AE7DD6 /* NetworkPathTelemetry.swift */; };
 		3E856A7B4B5512AC67DF8AF3 /* StreamingApplyPerfBench.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF0CEFBB1251B28049C48C05 /* StreamingApplyPerfBench.swift */; };
 		3EA96818E6F92034FF8EAEB9 /* OppiDictationProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54C0DCA21DB0E138E4989245 /* OppiDictationProviderTests.swift */; };
@@ -2449,6 +2450,7 @@
 		19DF6B26AFB30174BDB64DEE /* InAppBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InAppBrowserView.swift; sourceTree = "<group>"; };
 		1A115EFD70539A8D0DFDE2B6 /* MacServerHealthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacServerHealthView.swift; sourceTree = "<group>"; };
 		1A1274DDD1127FF0B0D38668 /* FileType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileType.swift; sourceTree = "<group>"; };
+		1A628DBFABDABE8A97B609CC /* ExtensionSurfaceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionSurfaceStore.swift; sourceTree = "<group>"; };
 		1A6D27114F920780B88B58E6 /* ModelSwitchPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelSwitchPolicyTests.swift; sourceTree = "<group>"; };
 		1A6EE44430C95A2FB1C358BB /* ToolDetailsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolDetailsStore.swift; sourceTree = "<group>"; };
 		1A7BC87F8942462332A46113 /* MacSessionPaneDeckView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionPaneDeckView.swift; sourceTree = "<group>"; };
@@ -5539,6 +5541,7 @@
 				55434FC9365D6B57F7DEE530 /* DesktopLiveViewStreamClient.swift */,
 				620673961F94D2666E3D7BEB /* DictationStreamClient.swift */,
 				FD0BA81311FF2E87958A035A /* DictationTransport.swift */,
+				1A628DBFABDABE8A97B609CC /* ExtensionSurfaceStore.swift */,
 				4E10D0BC63408DE0048DCA84 /* IOSChatSessionRuntimeAdapter.swift */,
 				B31A172424752AE059AF0DEF /* LANEndpointSelection.swift */,
 				798A4FA283A530A34D954D31 /* MessageSender.swift */,
@@ -9127,6 +9130,7 @@
 				E4236BFDBA95943D45CE666D /* ExtensionSurfacePanel.swift in Sources */,
 				10551AF5DF1F8005AD57DB45 /* ExtensionSurfacePreview.swift in Sources */,
 				A6184B5838A0A0931528F237 /* ExtensionSurfaceState.swift in Sources */,
+				3E487E89A725996953F2A3ED /* ExtensionSurfaceStore.swift in Sources */,
 				BE9410F2AC20682C3B6DCCAA /* ExtensionUINativeSurface.swift in Sources */,
 				712F90360FAD98A3BBDCF5F3 /* ExtensionUIRequest+Presentation.swift in Sources */,
 				37C9471280D59B9367C60B34 /* ExtensionUIWireDecoding.swift in Sources */,

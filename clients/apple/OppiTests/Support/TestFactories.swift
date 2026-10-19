@@ -65,6 +65,14 @@ func makeTestAppRoot(
     )
 }
 
+extension ExtensionSurfaceStore {
+    /// The session's whole surface, or nil when it shows nothing.
+    func state(for sessionId: String) -> ExtensionSurfaceState? {
+        let state = surface(for: sessionId).state
+        return state.hasRetainedContent ? state : nil
+    }
+}
+
 @MainActor
 func makeTestConnection(sessionId: String = "s1") -> (conn: ServerConnection, pipe: TestEventPipeline) {
     let connection = ServerConnection()

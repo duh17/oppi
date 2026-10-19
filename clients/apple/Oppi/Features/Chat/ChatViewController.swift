@@ -483,8 +483,15 @@ final class ChatViewController: UIViewController {
         )
     }
 
-    var extensionSurfaceState: ExtensionSurfaceState? {
-        connection.extensionSurfaceBySession[sessionId]
+    /// The session's extension surfaces without the working text. The working
+    /// row observes that text itself; reading it here would rerun this screen's
+    /// `updateProperties()` on every elapsed-time tick.
+    var extensionSurfaceState: ExtensionSurfaceState {
+        extensionSurface.layout
+    }
+
+    var extensionSurface: SessionExtensionSurface {
+        connection.extensionSurfaces.surface(for: sessionId)
     }
 
     var activeComposerAskRequest: AskRequest? {
@@ -946,13 +953,13 @@ final class ChatViewController: UIViewController {
 
     private func makeTimelineConfiguration() -> ChatTimelineConfiguration {
         let isBusy = isBusy
-        let extensionSurface = extensionSurfaceState
+        let extensionLayout = extensionSurfaceState
         return ChatTimelineConfiguration(
             items: [],
             hiddenCount: 0,
             renderWindowStep: TimelineRenderWindowPolicy.renderWindowStep,
             isBusy: isBusy,
-            showsWorkingIndicator: isBusy && (extensionSurface?.working?.visible ?? true),
+            showsWorkingIndicator: isBusy && (extensionLayout.working?.visible ?? true),
             streamingAssistantID: nil,
             sessionId: sessionId,
             serverId: resolvedServerId,
@@ -977,8 +984,8 @@ final class ChatViewController: UIViewController {
             openDestination: timelineDestinationAction,
             loadOlderPage: olderTimelinePageAction,
             currentModel: session?.model,
-            extensionWorkingState: extensionSurface?.working,
-            extensionHiddenThinkingLabel: extensionSurface?.hiddenThinkingLabel,
+            extensionSurface: extensionSurface,
+            extensionHiddenThinkingLabel: extensionLayout.hiddenThinkingLabel,
             audioPlayer: audioPlayer,
             audioLifecycleCoordinator: audioLifecycleCoordinator,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
@@ -1002,12 +1009,11 @@ final class ChatViewController: UIViewController {
     /// never reads `reducer.items`.
     private func updateTimelineChrome() {
         guard let timelineView else { return }
-        let extensionSurface = extensionSurfaceState
+        let extensionLayout = extensionSurfaceState
         let key = ChatTimelineChromeKey(
             isBusy: isBusy,
-            workingVisible: extensionSurface?.working?.visible,
-            extensionWorkingState: extensionSurface?.working,
-            hiddenThinkingLabel: extensionSurface?.hiddenThinkingLabel,
+            workingVisible: extensionLayout.working?.visible,
+            hiddenThinkingLabel: extensionLayout.hiddenThinkingLabel,
             serverId: resolvedServerId,
             workspaceId: timelineWorkspaceId,
             agentId: session?.launch?.agentId,
@@ -1039,7 +1045,7 @@ final class ChatViewController: UIViewController {
             sessionStatus: session?.status,
             entryState: sessionManager.entryState,
             askRequestID: activeComposerAskRequest?.id,
-            toolsExpanded: extensionSurfaceState?.toolsExpanded,
+            toolsExpanded: extensionSurfaceState.toolsExpanded,
             editorTextRevision: chatState.extensionEditorTextUpdate?.revision,
             jumpToBottomVisible: scrollController.isJumpToBottomHintVisible,
             showsNowPlayingPill: showsNowPlayingPill,
@@ -1481,7 +1487,7 @@ final class ChatViewController: UIViewController {
     }
 
     private func applyExtensionToolsExpandedState() {
-        guard let toolsExpanded = extensionSurfaceState?.toolsExpanded else { return }
+        guard let toolsExpanded = extensionSurfaceState.toolsExpanded else { return }
         reducer.applyExtensionToolsExpanded(toolsExpanded)
     }
 
@@ -2631,7 +2637,6 @@ private struct ChatDraftAttachmentKey: Equatable {
 private struct ChatTimelineChromeKey: Equatable {
     let isBusy: Bool
     let workingVisible: Bool?
-    let extensionWorkingState: ExtensionWorkingState?
     let hiddenThinkingLabel: String?
     let serverId: String?
     let workspaceId: String?

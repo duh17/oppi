@@ -496,7 +496,7 @@ extension ChatTimelineController {
             let modelId = self.currentModel
             cell.contentConfiguration = WorkingIndicatorTimelineRowConfiguration(
                 modelId: modelId,
-                workingState: self.currentExtensionWorkingState
+                surface: self.currentExtensionSurface
             )
             cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
             cell.contentView.clipsToBounds = true

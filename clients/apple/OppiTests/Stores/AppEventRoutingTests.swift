@@ -245,7 +245,7 @@ struct AppEventRoutingTests {
 
         #expect(connection.askRequestStore.pending(for: "s1") == nil)
         #expect(connection.pendingExtensionDialogQueues["s1"] == nil)
-        #expect(connection.extensionSurfaceBySession["s1"]?.widgets["goal"]?.lines == ["Keep going"])
+        #expect(connection.extensionSurfaces.state(for: "s1")?.widgets["goal"]?.lines == ["Keep going"])
         #expect(connection.messageQueueStore.queue(for: "s1").steering.first?.id == "q1")
     }
 
@@ -464,11 +464,11 @@ private func seedSessionScopedState(_ connection: ServerConnection, sessionId: S
     connection.pendingExtensionDialogQueues[sessionId] = [
         ExtensionUIRequest(id: "dlg-\(sessionId)", sessionId: sessionId, method: "editor", title: "Edit")
     ]
-    connection.extensionSurfaceBySession[sessionId] = ExtensionSurfaceState(
+    connection.extensionSurfaces.surface(for: sessionId).replace(with: ExtensionSurfaceState(
         widgets: [
             "goal": ExtensionWidgetState(key: "goal", lines: ["Keep going"], placement: "aboveEditor")
         ]
-    )
+    ))
     connection.messageQueueStore.apply(
         MessageQueueState(
             version: 1,
@@ -487,7 +487,7 @@ private func seedSessionScopedState(_ connection: ServerConnection, sessionId: S
 private func expectAppEventSessionScopedUICleared(_ connection: ServerConnection) {
     #expect(connection.askRequestStore.pending(for: "s2") == nil)
     #expect(connection.pendingExtensionDialogQueues["s2"] == nil)
-    #expect(connection.extensionSurfaceBySession["s2"] == nil)
+    #expect(connection.extensionSurfaces.state(for: "s2") == nil)
     #expect(connection.messageQueueStore.queue(for: "s2") == .empty)
 }
 
@@ -495,6 +495,6 @@ private func expectAppEventSessionScopedUICleared(_ connection: ServerConnection
 private func expectAppEventSessionScopedUIPreserved(_ connection: ServerConnection) {
     #expect(connection.askRequestStore.pending(for: "s2")?.id == "ask-s2")
     #expect(connection.pendingExtensionDialogQueues["s2"]?.first?.id == "dlg-s2")
-    #expect(connection.extensionSurfaceBySession["s2"]?.widgets["goal"]?.lines == ["Keep going"])
+    #expect(connection.extensionSurfaces.state(for: "s2")?.widgets["goal"]?.lines == ["Keep going"])
     #expect(connection.messageQueueStore.queue(for: "s2").steering.first?.id == "q1")
 }

@@ -907,7 +907,7 @@ private struct ExtensionSurfaceDrawer: View {
     private func liveSurfaceLookup(id: String) -> (@MainActor () -> ExtensionUINativeSurface?)? {
         guard let sessionID = linkContext.sessionID else { return nil }
         return { [weak connection] in
-            connection?.extensionSurfaceBySession[sessionID]?.nativeSurfaces[id]?.surface
+            connection?.extensionSurfaces.surface(for: sessionID).layout.nativeSurfaces[id]?.surface
         }
     }
 

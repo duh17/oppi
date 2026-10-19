@@ -107,7 +107,7 @@ struct ExtensionNotifyChipStoreTests {
             )
         )
 
-        #expect(conn.extensionSurfaceBySession["s1"] == nil)
+        #expect(conn.extensionSurfaces.state(for: "s1") == nil)
         #expect(conn.extensionNotifyChipStore.state(for: "s1") == nil)
     }
 

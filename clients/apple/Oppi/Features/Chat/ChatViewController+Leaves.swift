@@ -384,7 +384,7 @@ private struct ChatFooterAboveLeaf: View {
 
     @ViewBuilder
     private func content(_ chat: ChatViewController) -> some View {
-        let surface = chat.extensionSurfaceState ?? ExtensionSurfaceState()
+        let surface = chat.extensionSurfaceState
         let showsReviewCommentPill = chat.showsReviewCommentPill
         let showsNowPlayingPill = chat.showsNowPlayingPill
         let showsMessageQueue = chat.showsMessageQueue
@@ -538,10 +538,9 @@ private struct ChatFooterBelowLeaf: View {
 
     var body: some View {
         if let chat = context.chat, !chat.isStopped, !chat.hasBlockingExtensionInput,
-           let surface = chat.extensionSurfaceState,
-           surface.hasVisibleContent(in: .belowEditor) {
+           chat.extensionSurfaceState.hasVisibleContent(in: .belowEditor) {
             ExtensionSurfacePanel(
-                surface: surface,
+                surface: chat.extensionSurfaceState,
                 placement: .belowEditor,
                 linkContext: chat.extensionSurfaceLinkContext,
                 onOpenURL: { [weak chat] in chat?.openExtensionSurfaceURL($0) ?? false },

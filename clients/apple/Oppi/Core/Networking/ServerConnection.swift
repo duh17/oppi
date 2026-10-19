@@ -466,7 +466,8 @@ final class ServerConnection {
     var extensionToast: String?
     /// Per-session extension `notify` chip. App-originated `extensionToast` stays a sheet.
     let extensionNotifyChipStore = ExtensionNotifyChipStore()
-    var extensionSurfaceBySession: [String: ExtensionSurfaceState] = [:]
+    /// Observed per session, not as one value: see `SessionExtensionSurface`.
+    let extensionSurfaces = ExtensionSurfaceStore()
     /// Server, workspace, and session locks: hide ask text, forget deleted sessions.
     @ObservationIgnored var scopedLocks: ScopedLockService = .shared
 

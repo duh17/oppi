@@ -331,7 +331,7 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        #expect(conn.extensionSurfaceBySession["s1"]?.statuses["review"]?.text == "running")
+        #expect(conn.extensionSurfaces.state(for: "s1")?.statuses["review"]?.text == "running")
     }
 
     @Test func routeExtensionSetStatusClearsEmptyText() {
@@ -372,7 +372,7 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        #expect(conn.extensionSurfaceBySession["s1"]?.statuses["working-words"] == nil)
+        #expect(conn.extensionSurfaces.state(for: "s1")?.statuses["working-words"] == nil)
     }
 
     @Test func routeExtensionWorkingNotificationsStoreTimelineState() {
@@ -432,11 +432,44 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        let working = conn.extensionSurfaceBySession["s1"]?.working
+        let working = conn.extensionSurfaces.state(for: "s1")?.working
         #expect(working?.message == "Running checks")
         #expect(working?.visible == false)
         #expect(working?.indicator?.frames == ["●"])
         #expect(working?.indicator?.intervalMs == 250)
+    }
+
+    /// The chat screen reads `layout`; an elapsed-time tick must not rerun it.
+    @Test func workingTextTickLeavesTheChatLayoutUntouched() {
+        let (conn, pipe) = makeTestConnection()
+        let surface = conn.extensionSurfaces.surface(for: "s1")
+        func notification(_ method: String, message: String? = nil, statusText: String? = nil) -> ServerMessage {
+            .extensionUINotification(ExtensionUINotification(
+                method: method,
+                message: message,
+                notifyType: nil,
+                statusKey: statusText == nil ? nil : "review",
+                statusText: statusText,
+                title: nil,
+                text: nil,
+                widgetKey: nil,
+                widgetLines: nil,
+                widgetPlacement: nil
+            ))
+        }
+        func layoutChanges(_ message: ServerMessage) -> Bool {
+            // onChange runs synchronously inside the mutating handle call.
+            nonisolated(unsafe) var changed = false
+            withObservationTracking { _ = surface.layout } onChange: { changed = true }
+            pipe.handle(message, sessionId: "s1")
+            return changed
+        }
+
+        #expect(layoutChanges(notification("setWorkingMessage", message: "Busy \u{00B7} 1s")) == false)
+        #expect(layoutChanges(notification("setWorkingMessage", message: "Busy \u{00B7} 2s")) == false)
+        #expect(surface.workingMessage == "Busy \u{00B7} 2s")
+        #expect(surface.state.working?.message == "Busy \u{00B7} 2s")
+        #expect(layoutChanges(notification("setStatus", statusText: "running")) == true)
     }
 
     @Test func routeExtensionHiddenThinkingLabelStoresAndClearsTimelineState() {
@@ -461,7 +494,7 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        #expect(conn.extensionSurfaceBySession["s1"]?.hiddenThinkingLabel == "Private reasoning")
+        #expect(conn.extensionSurfaces.state(for: "s1")?.hiddenThinkingLabel == "Private reasoning")
 
         pipe.handle(
             .extensionUINotification(
@@ -481,7 +514,7 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        #expect(conn.extensionSurfaceBySession["s1"] == nil)
+        #expect(conn.extensionSurfaces.state(for: "s1") == nil)
     }
 
     @Test func routeExtensionToolsExpandedStoresTimelineState() {
@@ -506,7 +539,7 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        #expect(conn.extensionSurfaceBySession["s1"]?.toolsExpanded == true)
+        #expect(conn.extensionSurfaces.state(for: "s1")?.toolsExpanded == true)
 
         pipe.handle(
             .extensionUINotification(
@@ -527,7 +560,7 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        #expect(conn.extensionSurfaceBySession["s1"]?.toolsExpanded == false)
+        #expect(conn.extensionSurfaces.state(for: "s1")?.toolsExpanded == false)
     }
 
     @Test func routeExtensionNativeWidgetStoresPlacement() {
@@ -576,10 +609,10 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        let stored = conn.extensionSurfaceBySession["s1"]?.nativeSurfaces["widget:below"]
+        let stored = conn.extensionSurfaces.state(for: "s1")?.nativeSurfaces["widget:below"]
         #expect(stored?.surface.id == "widget:below")
         #expect(stored?.placement == "belowEditor")
-        #expect(conn.extensionSurfaceBySession["s1"]?.widgets["below"] == nil)
+        #expect(conn.extensionSurfaces.state(for: "s1")?.widgets["below"] == nil)
     }
 
     @Test func routeMixedNativeAndTextWidgetsPreservesPiTUIOrder() throws {
@@ -638,7 +671,7 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        let surface = try #require(conn.extensionSurfaceBySession["s1"])
+        let surface = try #require(conn.extensionSurfaces.state(for: "s1"))
         #expect(surface.nativeSurfaces["widget:jobs"]?.key == "jobs")
         #expect(surface.nativeSurfaces["widget:jobs"]?.order == 1)
         #expect(surface.widgets["goal"]?.order == 2)
@@ -708,7 +741,7 @@ struct ServerConnectionTests {
             pipe.handle(.extensionUINotification(notification), sessionId: "s1")
         }
 
-        let surface = try #require(conn.extensionSurfaceBySession["s1"])
+        let surface = try #require(conn.extensionSurfaces.state(for: "s1"))
         #expect(surface.nativeSurfaces["widget:jobs"]?.order == 3)
         #expect(surface.widgets["goal"]?.order == 2)
         #expect(surface.widgetEntries(in: .aboveEditor).map(\.id) == ["widget:goal", "native:jobs"])
@@ -752,7 +785,7 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        let surface = try #require(conn.extensionSurfaceBySession["s1"])
+        let surface = try #require(conn.extensionSurfaces.state(for: "s1"))
         #expect(surface.hasVisibleMetadata(in: .aboveEditor))
         #expect(surface.widgetEntries(in: .aboveEditor).map(\.id) == ["widget:goal"])
     }
@@ -865,7 +898,7 @@ struct ServerConnectionTests {
 
     @Test func routeDefocusedTerminalStateKeepsFocusedExtensionSurface() {
         let (conn, pipe) = makeTestConnection(sessionId: "focused")
-        conn.extensionSurfaceBySession["focused"] = ExtensionSurfaceState(
+        conn.extensionSurfaces.surface(for: "focused").replace(with: ExtensionSurfaceState(
             widgets: [
                 "goal": ExtensionWidgetState(
                     key: "goal",
@@ -873,17 +906,17 @@ struct ServerConnectionTests {
                     placement: "aboveEditor"
                 )
             ]
-        )
+        ))
         let other = makeTestSession(id: "other", status: .stopped)
 
         pipe.handle(.state(session: other), sessionId: "focused")
 
-        #expect(conn.extensionSurfaceBySession["focused"]?.widgets["goal"]?.lines == ["Goal: Pursuing goal"])
+        #expect(conn.extensionSurfaces.state(for: "focused")?.widgets["goal"]?.lines == ["Goal: Pursuing goal"])
     }
 
     @Test func routeReadyStateKeepsPersistentExtensionSurface() {
         let (conn, pipe) = makeTestConnection(sessionId: "s1")
-        conn.extensionSurfaceBySession["s1"] = ExtensionSurfaceState(
+        conn.extensionSurfaces.surface(for: "s1").replace(with: ExtensionSurfaceState(
             widgets: [
                 "goal": ExtensionWidgetState(
                     key: "goal",
@@ -891,11 +924,11 @@ struct ServerConnectionTests {
                     placement: "aboveEditor"
                 )
             ]
-        )
+        ))
 
         pipe.handle(.state(session: makeTestSession(id: "s1", status: .ready)), sessionId: "s1")
 
-        #expect(conn.extensionSurfaceBySession["s1"]?.widgets["goal"]?.lines == ["Goal: Pursuing goal"])
+        #expect(conn.extensionSurfaces.state(for: "s1")?.widgets["goal"]?.lines == ["Goal: Pursuing goal"])
     }
 
     @Test func routeExtensionStatusWithAnyKeyStoresChatSurfaceEntry() {
@@ -919,16 +952,16 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        #expect(conn.extensionSurfaceBySession["s1"]?.statuses["extension-status"]?.text == "live")
+        #expect(conn.extensionSurfaces.state(for: "s1")?.statuses["extension-status"]?.text == "live")
     }
 
     @Test func routeExtensionStatusWithAnyKeyUpdatesExistingChatSurfaceEntry() {
         let (conn, pipe) = makeTestConnection()
-        conn.extensionSurfaceBySession["s1"] = ExtensionSurfaceState(
+        conn.extensionSurfaces.surface(for: "s1").replace(with: ExtensionSurfaceState(
             statuses: [
                 "extension-status": ExtensionStatusState(key: "extension-status", text: "live"),
             ]
-        )
+        ))
 
         pipe.handle(
             .extensionUINotification(
@@ -948,7 +981,7 @@ struct ServerConnectionTests {
             sessionId: "s1"
         )
 
-        #expect(conn.extensionSurfaceBySession["s1"]?.statuses["extension-status"]?.text == "updated")
+        #expect(conn.extensionSurfaces.state(for: "s1")?.statuses["extension-status"]?.text == "updated")
     }
 
     @Test func routeExtensionSetEditorTextUpdatesComposerState() {
