@@ -721,6 +721,33 @@ extension Binding where Value == FullScreenMarkdownViewportRestoreState {
 ///     .toolbarVisibility(.hidden, for: .navigationBar)
 /// } label: { ... }
 /// ```
+/// The host navigation bar of a screen that shows the reader's own chrome
+/// for some content (`hidesBar` true) and the host bar for the rest. Settled
+/// content asks for `.visible`, not `.automatic`: in a screen hosted on a
+/// UIKit stack, `.automatic` leaves a bar the reader hid hidden, so editing
+/// or a media page would have no title, Done, or Share. While content loads
+/// (`hidesBar` nil) the bar stays as the last settled content left it, so
+/// next/previous between two text files never slides the bar in and out.
+struct ReaderHostNavigationBarVisibility: ViewModifier {
+    let hidesBar: Bool?
+    @State private var settledHidesBar = false
+
+    func body(content: Content) -> some View {
+        content
+            .toolbarVisibility((hidesBar ?? settledHidesBar) ? .hidden : .visible, for: .navigationBar)
+            .onChange(of: hidesBar, initial: true) { _, hides in
+                if let hides { settledHidesBar = hides }
+            }
+    }
+}
+
+extension View {
+    /// See `ReaderHostNavigationBarVisibility`; nil while content loads.
+    func readerHostNavigationBar(hidesBar: Bool?) -> some View {
+        modifier(ReaderHostNavigationBarVisibility(hidesBar: hidesBar))
+    }
+}
+
 struct EmbeddedFileViewerView: UIViewControllerRepresentable {
     let content: FullScreenCodeContent
     var reviewCommentSelectionContext: ReviewCommentSelectionContext?

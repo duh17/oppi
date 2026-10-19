@@ -70,6 +70,11 @@ struct SessionTouchedFileContentView: View {
     @State private var makeTimedTextSidecar: TimedTextSidecarProvider?
 
     /// Whether the UIKit file viewer is active (text content loaded).
+    private var isLoadingPhase: Bool {
+        if case .loading = phase { return true }
+        return false
+    }
+
     private var isUsingFileViewer: Bool {
         if case .text = phase { return true }
         return false
@@ -158,7 +163,7 @@ struct SessionTouchedFileContentView: View {
                 )
         )
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarVisibility(isUsingFileViewer ? .hidden : .automatic, for: .navigationBar)
+        .readerHostNavigationBar(hidesBar: isLoadingPhase ? nil : isUsingFileViewer)
         .toolbar {
             if !isUsingFileViewer {
                 if let shareable = shareableContent() {

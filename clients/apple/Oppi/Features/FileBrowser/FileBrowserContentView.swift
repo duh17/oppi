@@ -241,6 +241,11 @@ struct FileBrowserContentView: View {
         shouldShowEmbeddedNavigationChrome && isUsingFileViewer
     }
 
+    private var isLoadingContent: Bool {
+        if case .loading = content { return true }
+        return false
+    }
+
     private var isEditingText: Bool {
         if case .text = content { return isEditing && editSession != nil }
         return false
@@ -307,10 +312,7 @@ struct FileBrowserContentView: View {
             .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
         .navigationTitle(shouldHideHostNavigationBar ? "" : viewerTitle)
         .navigationBarTitleDisplayMode(.inline)
-        // `.visible`, not `.automatic`: in a screen pushed onto a UIKit stack
-        // (the chat Files sheet), `.automatic` leaves the bar the reader hid
-        // hidden, so Edit would show no Done or Preview.
-        .toolbarVisibility(shouldHideHostNavigationBar ? .hidden : .visible, for: .navigationBar)
+        .readerHostNavigationBar(hidesBar: isLoadingContent ? nil : shouldHideHostNavigationBar)
         .toolbar {
             if isEditingText, let editSession {
                 WorkspaceFileEditToolbar(
