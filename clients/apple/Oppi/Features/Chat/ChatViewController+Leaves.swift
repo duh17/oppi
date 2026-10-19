@@ -83,6 +83,10 @@ extension ChatViewController {
     }
 
     /// The Files panel, as a sheet or in the trailing column.
+    ///
+    /// Hosted content closures run inside the hosted screen's SwiftUI body
+    /// (`ScreenContentView`), so an observed change can re-run one while the
+    /// modal outlives a closed chat: those draw nothing instead of trapping.
     func filePanelScreen() -> RouterScreen {
         .hosted { [weak self] in
             guard let self else { return AnyView(EmptyView()) }
@@ -179,7 +183,7 @@ extension ChatViewController: ChatComposerSource {
         return ComposerBarContent(
             text: composerDraftController.text,
             textBeforeRecording: model.composerTextBeforeRecording,
-            pendingAttachments: model.pendingAttachments,
+            pendingAttachments: composerVisibleAttachments,
             pendingRepoPointers: composerDraftController.repoPointers,
             isBusy: isBusy,
             busyStreamingBehavior: model.busyStreamingBehavior,
@@ -320,7 +324,7 @@ extension ChatViewController: ChatComposerSource {
         return ExpandedComposerLiveState(
             text: composerDraftController.text,
             textBeforeRecording: model.composerTextBeforeRecording,
-            pendingAttachments: model.pendingAttachments,
+            pendingAttachments: composerVisibleAttachments,
             pendingRepoPointers: composerDraftController.repoPointers,
             isBusy: isBusy,
             busyStreamingBehavior: model.busyStreamingBehavior,

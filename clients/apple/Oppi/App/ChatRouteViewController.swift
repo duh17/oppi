@@ -29,6 +29,8 @@ final class ChatRouteViewController: UIViewController {
     private var shown: Content?
     private var scopedConnection: ServerConnection?
     private var connectTask: Task<Void, Never>?
+    /// Set on each appearance; the unlocked route spends it on one connect.
+    private var connectsOnUnlock = false
     private lazy var sidebarToggle = makeSidebarToggle()
 
     init(target: WorkspaceSessionNavTarget, placement: ShellRoutePlacement, root: AppRootEnvironment) {
@@ -46,8 +48,23 @@ final class ChatRouteViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setToolbarHidden(true, animated: animated)
-        // As the SwiftUI route did on every appearance: make this session's
-        // server the active one, then use its connection.
+        connectsOnUnlock = true
+        setNeedsUpdateProperties()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        connectsOnUnlock = false
+        connectTask?.cancel()
+        connectTask = nil
+    }
+
+    /// On every appearance of the unlocked route: make this session's server
+    /// the active one, then use its connection. A locked session connects
+    /// nothing until it unlocks.
+    private func connectIfAppearing() {
+        guard connectsOnUnlock else { return }
+        connectsOnUnlock = false
         connectTask?.cancel()
         let coordinator = root.coordinator
         let serverId = target.serverId
@@ -57,12 +74,6 @@ final class ChatRouteViewController: UIViewController {
             self?.scopedConnection = coordinator.connection(for: serverId)
             self?.setNeedsUpdateProperties()
         }
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        connectTask?.cancel()
-        connectTask = nil
     }
 
     override func viewDidLoad() {
@@ -97,10 +108,13 @@ final class ChatRouteViewController: UIViewController {
                     root: root
                 )
             }
-        } else if let connection {
-            showChat(connection: connection)
         } else {
-            show(.connecting) { ShellRouteScreens.connecting(root: root) }
+            connectIfAppearing()
+            if let connection {
+                showChat(connection: connection)
+            } else {
+                show(.connecting) { ShellRouteScreens.connecting(root: root) }
+            }
         }
 
         let prefix = placement == .splitDetailRoot ? [sidebarToggle] : []

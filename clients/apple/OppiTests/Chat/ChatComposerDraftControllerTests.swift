@@ -693,13 +693,9 @@ struct ChatComposerDraftControllerTests {
         controller.attach(store: store, key: try fixture.key(), isEphemeral: false)
         controller.setMode(.ask)
 
-        let accepted = ChatViewController.applyPendingAttachments(
-            [video],
-            draftController: controller,
-            current: []
-        )
+        let accepted = controller.setPendingAttachments([video])
 
-        #expect(accepted == nil)
+        #expect(!accepted)
         #expect(controller.pendingAttachments.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: draftURL.path))
     }

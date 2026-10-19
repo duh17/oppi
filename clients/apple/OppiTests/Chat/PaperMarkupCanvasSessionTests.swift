@@ -61,16 +61,14 @@ struct PaperMarkupCanvasSessionTests {
         #expect(coverAttachments.count == 1)
 
         let draft = ChatComposerDraftController(initialText: "existing prompt")
-        var destinationPending: [PendingAttachment] = []
         let delivered = ChatViewController.deliverCanvasToComposer(
             attachment: attachment,
             recognizedText: "login box",
-            draftController: draft,
-            pendingAttachments: &destinationPending
+            draftController: draft
         )
         #expect(delivered)
         #expect(draft.text == "existing prompt")
-        #expect(destinationPending.count == 1)
+        #expect(draft.pendingAttachments.count == 1)
     }
 
     @Test("Add to Chat leaves composer text unchanged when recognized text is empty")
@@ -463,13 +461,11 @@ struct PaperMarkupCanvasSessionTests {
 
             let destinationDraft = ChatComposerDraftController(initialText: "keep me")
             destinationDraft.setMode(mode)
-            var destinationPending: [PendingAttachment] = []
             let destination = ComposerCanvasDestination(sessionId: "session-origin") { received, recognized in
                 ChatViewController.deliverCanvasToComposer(
                     attachment: received,
                     recognizedText: recognized,
-                    draftController: destinationDraft,
-                    pendingAttachments: &destinationPending
+                    draftController: destinationDraft
                 )
             }
             let destinationHost = PaperMarkupCanvasHostController(
@@ -487,7 +483,6 @@ struct PaperMarkupCanvasSessionTests {
                 destinationHost.lastFailureMessageForTesting
                     == PaperMarkupCanvasSession.AddToChatFailure.destinationRejectedMessage
             )
-            #expect(destinationPending.isEmpty)
             #expect(destinationDraft.pendingAttachments.isEmpty)
             #expect(destinationDraft.text != "note")
             destinationDraft.setMode(.message)
@@ -495,15 +490,13 @@ struct PaperMarkupCanvasSessionTests {
 
             let callbackDraft = ChatComposerDraftController(initialText: "keep me")
             callbackDraft.setMode(mode)
-            var callbackPending: [PendingAttachment] = []
             let callbackHost = PaperMarkupCanvasHostController(
                 background: .blank,
                 onAddToChat: { received, recognized in
                     ChatViewController.deliverCanvasToComposer(
                         attachment: received,
                         recognizedText: recognized,
-                        draftController: callbackDraft,
-                        pendingAttachments: &callbackPending
+                        draftController: callbackDraft
                     )
                 }
             )
@@ -518,7 +511,6 @@ struct PaperMarkupCanvasSessionTests {
                 callbackHost.lastFailureMessageForTesting
                     == PaperMarkupCanvasSession.AddToChatFailure.destinationRejectedMessage
             )
-            #expect(callbackPending.isEmpty)
             #expect(callbackDraft.pendingAttachments.isEmpty)
             #expect(callbackDraft.text != "note")
             callbackDraft.setMode(.message)

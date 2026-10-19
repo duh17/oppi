@@ -51,7 +51,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     private(set) var items: [ChatItem] = []
 
-    /// Incremented on timeline mutations so ChatView can react to row content
+    /// Incremented on timeline mutations so the chat timeline can react to row content
     /// updates (not only item insert/remove).
     private(set) var renderVersion: Int = 0
 

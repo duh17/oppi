@@ -244,18 +244,10 @@ struct PhotoLibraryMediaImporterTests {
         let controller = ChatComposerDraftController()
         controller.attach(store: store, key: try fixture.key(), isEphemeral: false)
         controller.setMode(.ask)
-        var pending: [PendingAttachment] = []
         var importError: String?
         let binding = Binding(
-            get: { pending },
-            set: { newValue in
-                guard let accepted = ChatViewController.applyPendingAttachments(
-                    newValue,
-                    draftController: controller,
-                    current: pending
-                ) else { return }
-                pending = accepted
-            }
+            get: { controller.pendingAttachments },
+            set: { controller.setPendingAttachments($0) }
         )
 
         let rejected = ComposerShared.commitImportedAttachments([attachment], into: binding)
@@ -264,7 +256,6 @@ struct PhotoLibraryMediaImporterTests {
             importError = ComposerShared.photoLibraryImportRefusedMessage
         }
 
-        #expect(pending.isEmpty)
         #expect(controller.pendingAttachments.isEmpty)
         #expect(rejected.map(\.id) == [attachment.id])
         #expect(!FileManager.default.fileExists(atPath: imported.path))

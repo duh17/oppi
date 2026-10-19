@@ -70,7 +70,6 @@ enum ChatSessionWarningChrome {
 /// pushing to the other.
 @MainActor @Observable
 final class ChatScreenModel {
-    var pendingAttachments: [PendingAttachment] = []
     var composerTextBeforeRecording: String?
     var busyStreamingBehavior: StreamingBehavior = .steer
     var isPreparingAttachments = false
@@ -226,7 +225,14 @@ final class ChatViewController: UIViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit {
+    /// Leaving for good, exactly once: a covered chat can be destroyed without
+    /// a second disappearance (stack rebuilds, stack↔split, a lock). Inline
+    /// video stops here; fullscreen and Picture in Picture hold its player
+    /// past the cell, so a closed chat kept playing.
+    isolated deinit {
+        if let timelineView {
+            timeline.dismantle(timelineView)
+        }
         for observer in notificationObservers {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -341,39 +347,20 @@ final class ChatViewController: UIViewController {
         return .message
     }
 
-    /// Apply a composer attachment-bar update. Message mode stores it; a refused
-    /// non-message update discards any unreferenced draft files.
-    @discardableResult
-    static func applyPendingAttachments(
-        _ newAttachments: [PendingAttachment],
-        draftController: ChatComposerDraftController,
-        current: [PendingAttachment]
-    ) -> [PendingAttachment]? {
-        guard draftController.setPendingAttachments(newAttachments) else {
-            return nil
-        }
-        return newAttachments
-    }
-
     /// Shared by the viewer destination and composer callback.
     /// Accept only if the message-mode draft actually stored the attachment.
     @discardableResult
     static func deliverCanvasToComposer(
         attachment: PendingAttachment,
         recognizedText _: String,
-        draftController: ChatComposerDraftController,
-        pendingAttachments: inout [PendingAttachment]
+        draftController: ChatComposerDraftController
     ) -> Bool {
-        var nextAttachments = pendingAttachments
+        var nextAttachments = draftController.pendingAttachments
         if !nextAttachments.contains(where: { $0.id == attachment.id }) {
             nextAttachments.append(attachment)
         }
-        guard draftController.setPendingAttachments(nextAttachments),
-              draftController.pendingAttachments.contains(where: { $0.id == attachment.id }) else {
-            return false
-        }
-        pendingAttachments = draftController.pendingAttachments
-        return true
+        return draftController.setPendingAttachments(nextAttachments)
+            && draftController.pendingAttachments.contains(where: { $0.id == attachment.id })
     }
 
     static func resolvedComposerAskRequest(
@@ -411,13 +398,16 @@ final class ChatViewController: UIViewController {
         composerDraftController.updateVisibleText(newText, for: mode)
     }
 
+    /// Message mode stores an attachment-bar update; a refused non-message
+    /// update discards any unreferenced draft files.
     func setComposerPendingAttachments(_ newAttachments: [PendingAttachment]) {
-        guard let accepted = Self.applyPendingAttachments(
-            newAttachments,
-            draftController: composerDraftController,
-            current: model.pendingAttachments
-        ) else { return }
-        model.pendingAttachments = accepted
+        composerDraftController.setPendingAttachments(newAttachments)
+    }
+
+    /// The bar shows the message draft's attachments; an Ask answer or a
+    /// review comment carries none.
+    var composerVisibleAttachments: [PendingAttachment] {
+        composerDraftController.mode == .message ? composerDraftController.pendingAttachments : []
     }
 
     var availableSlashCommands: [SlashCommand] {
@@ -1307,7 +1297,6 @@ final class ChatViewController: UIViewController {
             text: message,
             pendingAttachments: attachments
         )
-        model.pendingAttachments = attachments
 
         // Wait for the session stream to be established AND the WebSocket
         // to be connected. The stream can briefly reach .streaming then
@@ -1485,9 +1474,9 @@ final class ChatViewController: UIViewController {
             localFileData: nil,
             localMimeType: nil
         )
-        if !model.pendingAttachments.contains(where: { $0.id == attachment.id }) {
-            model.pendingAttachments.append(attachment)
-            composerDraftController.setPendingAttachments(model.pendingAttachments)
+        let current = composerDraftController.pendingAttachments
+        if !current.contains(where: { $0.id == attachment.id }) {
+            composerDraftController.setPendingAttachments(current + [attachment])
         }
     }
 
@@ -1648,7 +1637,6 @@ final class ChatViewController: UIViewController {
         model.activeReviewCommentRequest = request
         composerDraftController.setMode(.reviewComment, resetTransientInput: true)
         model.composerTextBeforeRecording = nil
-        model.pendingAttachments = []
         composer.requestFocus()
         if request.startsDictation { composer.requestDictation(owner: .reviewCommentMenu) }
         model.contextBarCollapseToken &+= 1
@@ -1722,10 +1710,9 @@ final class ChatViewController: UIViewController {
         guard let plan = MessageQueueComposerRestore.plan(
             queue: withdrawn,
             currentText: composerDraftController.text,
-            currentPendingAttachments: model.pendingAttachments
+            currentPendingAttachments: composerDraftController.pendingAttachments
         ) else { return }
         composerDraftController.replaceMessage(text: plan.text, pendingAttachments: plan.pendingAttachments)
-        model.pendingAttachments = plan.pendingAttachments
         model.composerTextBeforeRecording = nil
         if !model.showComposer { composer.requestFocus() }
     }
@@ -1816,7 +1803,6 @@ final class ChatViewController: UIViewController {
             key: composerDraftKey,
             isEphemeral: composerDraftIsMemoryOnly
         )
-        model.pendingAttachments = composerDraftController.pendingAttachments
         synchronizeComposerMode()
     }
 
@@ -1829,11 +1815,6 @@ final class ChatViewController: UIViewController {
             model.showComposer = false
         }
         composerDraftController.setMode(mode)
-        if mode == .message {
-            model.pendingAttachments = composerDraftController.pendingAttachments
-        } else {
-            model.pendingAttachments = []
-        }
     }
 
     @discardableResult
@@ -1841,8 +1822,7 @@ final class ChatViewController: UIViewController {
         Self.deliverCanvasToComposer(
             attachment: attachment,
             recognizedText: recognizedText,
-            draftController: composerDraftController,
-            pendingAttachments: &model.pendingAttachments
+            draftController: composerDraftController
         )
     }
 
@@ -1914,7 +1894,7 @@ final class ChatViewController: UIViewController {
               composerDraftController.mode == .message,
               composerDraftController.text.isEmpty,
               composerDraftController.repoPointers.isEmpty,
-              model.pendingAttachments.isEmpty,
+              composerDraftController.pendingAttachments.isEmpty,
               model.composerTextBeforeRecording == nil else {
             return
         }
@@ -2062,7 +2042,6 @@ final class ChatViewController: UIViewController {
     /// Production send path for inline and expanded composers. Uploads the
     /// captured submission's Class B draft files, then the caller dispatches.
     struct ComposerPromptSendState {
-        var pendingAttachments: [PendingAttachment]
         var isPreparingAttachments: Bool
     }
 
@@ -2074,7 +2053,6 @@ final class ChatViewController: UIViewController {
         upload: ([PendingAttachment]) async throws -> [ChatAttachmentRef]
     ) async -> (ComposerPromptSendOutcome, ComposerPromptSendState) {
         var state = state
-        draftController.setPendingAttachments(state.pendingAttachments)
         guard let submission = beginComposerSubmission(
             draftController: draftController,
             draftClearance: draftClearance,
@@ -2082,9 +2060,6 @@ final class ChatViewController: UIViewController {
             actionIsSending: actionIsSending
         ) else {
             return (.ignored, state)
-        }
-        if draftClearance == .immediately {
-            state.pendingAttachments = []
         }
 
         let sourceAttachments = submission.pendingAttachments
@@ -2103,9 +2078,6 @@ final class ChatViewController: UIViewController {
         } catch {
             state.isPreparingAttachments = false
             draftController.failSubmission(submission)
-            state.pendingAttachments = draftClearance == .afterSuccess
-                ? draftController.pendingAttachments
-                : sourceAttachments
             return (.failed(error), state)
         }
     }
@@ -2121,28 +2093,6 @@ final class ChatViewController: UIViewController {
         )
     }
 
-    private func completeComposerSubmission(
-        _ submission: ChatComposerDraftController.SubmissionSnapshot,
-        draftClearance: ChatComposerDraftController.SubmissionDraftClearance
-    ) {
-        let didClearSubmittedDraft = composerDraftController.completeSubmission(submission)
-        if draftClearance == .afterSuccess {
-            model.pendingAttachments = didClearSubmittedDraft
-                ? []
-                : composerDraftController.pendingAttachments
-        }
-    }
-
-    private func failComposerSubmission(
-        _ submission: ChatComposerDraftController.SubmissionSnapshot,
-        draftClearance: ChatComposerDraftController.SubmissionDraftClearance,
-        originalPendingAttachments: [PendingAttachment]
-    ) {
-        composerDraftController.failSubmission(submission)
-        model.pendingAttachments = draftClearance == .afterSuccess
-            ? composerDraftController.pendingAttachments
-            : originalPendingAttachments
-    }
 
     // swiftlint:disable:next function_body_length
     func sendPrompt(
@@ -2152,39 +2102,25 @@ final class ChatViewController: UIViewController {
 
         let rawTrimmedInput = composerDraftController.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if Self.localSlashCommand(for: rawTrimmedInput) == .compact {
-            let originalPendingAttachments = model.pendingAttachments
-            composerDraftController.setPendingAttachments(originalPendingAttachments)
             guard let submission = beginComposerSubmission(draftClearance: draftClearance) else { return }
-            if draftClearance == .immediately {
-                model.pendingAttachments = []
-            }
             model.composerTextBeforeRecording = nil
             actionHandler.compact(
                 connection: connection,
                 reducer: reducer,
                 sessionId: sessionId,
                 onSendSucceeded: { [weak self] in
-                    self?.completeComposerSubmission(submission, draftClearance: draftClearance)
+                    self?.composerDraftController.completeSubmission(submission)
                     self?.dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
                 },
                 onAsyncFailure: { [weak self] in
-                    self?.failComposerSubmission(
-                        submission,
-                        draftClearance: draftClearance,
-                        originalPendingAttachments: originalPendingAttachments
-                    )
+                    self?.composerDraftController.failSubmission(submission)
                 }
             )
             return
         }
 
         if rawTrimmedInput.caseInsensitiveCompare("/reload") == .orderedSame {
-            let originalPendingAttachments = model.pendingAttachments
-            composerDraftController.setPendingAttachments(originalPendingAttachments)
             guard let submission = beginComposerSubmission(draftClearance: draftClearance) else { return }
-            if draftClearance == .immediately {
-                model.pendingAttachments = []
-            }
             model.composerTextBeforeRecording = nil
             actionHandler.reloadResources(
                 connection: connection,
@@ -2192,15 +2128,11 @@ final class ChatViewController: UIViewController {
                 sessionStore: sessionStore,
                 sessionId: sessionId,
                 onSendSucceeded: { [weak self] in
-                    self?.completeComposerSubmission(submission, draftClearance: draftClearance)
+                    self?.composerDraftController.completeSubmission(submission)
                     self?.dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
                 },
                 onAsyncFailure: { [weak self] in
-                    self?.failComposerSubmission(
-                        submission,
-                        draftClearance: draftClearance,
-                        originalPendingAttachments: originalPendingAttachments
-                    )
+                    self?.composerDraftController.failSubmission(submission)
                 }
             )
             return
@@ -2213,7 +2145,6 @@ final class ChatViewController: UIViewController {
 
         if rawTrimmedInput.caseInsensitiveCompare("/review-comments") == .orderedSame {
             composerDraftController.clearMessage()
-            model.pendingAttachments = []
             model.composerTextBeforeRecording = nil
             connection.extensionToast = "Review comments use compact inline selection now."
             dismissKeyboard()
@@ -2239,10 +2170,7 @@ final class ChatViewController: UIViewController {
             guard let self else { return }
             let (outcome, nextState) = await Self.sendPrompt(
                 draftController: self.composerDraftController,
-                state: ComposerPromptSendState(
-                    pendingAttachments: self.model.pendingAttachments,
-                    isPreparingAttachments: self.model.isPreparingAttachments
-                ),
+                state: ComposerPromptSendState(isPreparingAttachments: self.model.isPreparingAttachments),
                 draftClearance: draftClearance,
                 actionIsSending: self.actionHandler.isSending,
                 upload: { [weak self] sourceAttachments in
@@ -2254,7 +2182,6 @@ final class ChatViewController: UIViewController {
                     return try await self.uploadPendingLocalAttachments(sourceAttachments)
                 }
             )
-            self.model.pendingAttachments = nextState.pendingAttachments
             self.model.isPreparingAttachments = nextState.isPreparingAttachments
             self.model.attachmentPreparationText = nil
             switch outcome {
@@ -2296,9 +2223,6 @@ final class ChatViewController: UIViewController {
                         // agent was already working on it.
                         self.composerDraftController.clearVisibleTextForDispatchedSubmission(submission)
                         self.model.composerTextBeforeRecording = nil
-                        if draftClearance == .immediately {
-                            self.model.pendingAttachments = []
-                        }
 
                         // Scroll after the optimistic row is in the collection.
                         // The draft clear above must not wait for that turn.
@@ -2307,27 +2231,19 @@ final class ChatViewController: UIViewController {
                         }
                     },
                     onSendSucceeded: { [weak self] in
-                        self?.completeComposerSubmission(submission, draftClearance: draftClearance)
+                        self?.composerDraftController.completeSubmission(submission)
                         self?.clearSentReviewComments(ids: stagedReviewCommentIds)
                         self?.dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
                     },
                     onAsyncFailure: { [weak self] _, _ in
-                        self?.failComposerSubmission(
-                            submission,
-                            draftClearance: draftClearance,
-                            originalPendingAttachments: sourceAttachments
-                        )
+                        self?.composerDraftController.failSubmission(submission)
                     },
                     onNeedsReconnect: {
                         sessionManagerRef.reconnect()
                     }
                 )
                 if !restored.isEmpty {
-                    self.failComposerSubmission(
-                        submission,
-                        draftClearance: draftClearance,
-                        originalPendingAttachments: sourceAttachments
-                    )
+                    self.composerDraftController.failSubmission(submission)
                 }
             }
         }
@@ -2425,10 +2341,8 @@ final class ChatViewController: UIViewController {
 
         let sessionManagerRef = sessionManager
         let policy = AppPreferences.Share.redactionPolicy
-        let originalPendingAttachments = model.pendingAttachments
         let submission: ChatComposerDraftController.SubmissionSnapshot?
         if clearComposer {
-            composerDraftController.setPendingAttachments(originalPendingAttachments)
             guard let startedSubmission = beginComposerSubmission(
                 draftClearance: draftClearance
             ) else { return }
@@ -2442,23 +2356,15 @@ final class ChatViewController: UIViewController {
             reducer: reducer,
             sessionId: sessionId,
             redactionPolicy: policy,
-            onDispatchStarted: { [weak self] in
-                guard clearComposer, draftClearance == .immediately else { return }
-                self?.model.pendingAttachments = []
-            },
             onSendSucceeded: { [weak self] in
                 if let submission {
-                    self?.completeComposerSubmission(submission, draftClearance: draftClearance)
+                    self?.composerDraftController.completeSubmission(submission)
                     self?.dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
                 }
             },
             onAsyncFailure: { [weak self] in
                 if let submission {
-                    self?.failComposerSubmission(
-                        submission,
-                        draftClearance: draftClearance,
-                        originalPendingAttachments: originalPendingAttachments
-                    )
+                    self?.composerDraftController.failSubmission(submission)
                 }
             },
             onNeedsReconnect: {
@@ -2579,9 +2485,9 @@ final class ChatViewController: UIViewController {
         scrollController.scrollTargetID = viewUpdate.scrollTargetID
         composerDraftController.replaceMessage(
             text: viewUpdate.inputText,
-            repoPointers: []
+            repoPointers: [],
+            pendingAttachments: []
         )
-        model.pendingAttachments = []
 
         if viewUpdate.shouldFocusComposer {
             composer.requestFocus()

@@ -94,7 +94,7 @@ extension ChatViewController {
             presentation: auxiliary,
             root: root,
             clear: { [weak self] in self?.model.showOutline = false },
-            screen: { .controller({ [weak self] in self?.makeOutlineController() ?? UIViewController() }) }
+            screen: outlineScreen
         )
         update(
             modals.files,
@@ -110,7 +110,7 @@ extension ChatViewController {
             presentation: auxiliary,
             root: root,
             clear: { [weak self] in self?.model.showContextInspector = false },
-            screen: { .controller({ [weak self] in self?.makeContextController() ?? UIViewController() }) }
+            screen: contextScreen
         )
         update(
             modals.share,
@@ -136,7 +136,10 @@ extension ChatViewController {
             presentation: .sheet.inNavigation(),
             root: root,
             clear: { [weak self] in self?.model.reviewCommentStashPresentation = nil },
-            screen: { stash.map(reviewCommentStashScreen) ?? .controller({ UIViewController() }) }
+            screen: {
+                guard let stash else { preconditionFailure("The stash sheet presents only with its presentation") }
+                return reviewCommentStashScreen(stash)
+            }
         )
     }
 
@@ -172,9 +175,23 @@ extension ChatViewController {
     private func sidePanelScreen(_ panel: ChatSidePanel) -> RouterScreen {
         switch panel {
         case .files: filePanelScreen()
-        case .outline: .controller({ [weak self] in self?.makeOutlineController() ?? UIViewController() })
-        case .context: .controller({ [weak self] in self?.makeContextController() ?? UIViewController() })
+        case .outline: outlineScreen()
+        case .context: contextScreen()
         }
+    }
+
+    private func outlineScreen() -> RouterScreen {
+        .controller({ [weak self] in
+            guard let self else { preconditionFailure("The outline presents only while its chat is alive") }
+            return self.makeOutlineController()
+        })
+    }
+
+    private func contextScreen() -> RouterScreen {
+        .controller({ [weak self] in
+            guard let self else { preconditionFailure("The context panel presents only while its chat is alive") }
+            return self.makeContextController()
+        })
     }
 
     func closeChatFilePanel() {

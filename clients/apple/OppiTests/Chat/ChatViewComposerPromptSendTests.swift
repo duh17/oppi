@@ -31,10 +31,7 @@ struct ChatViewComposerPromptSendTests {
 
         let (failed, _) = await ChatViewController.sendPrompt(
             draftController: afterReopen,
-            state: ChatViewController.ComposerPromptSendState(
-                pendingAttachments: afterReopen.pendingAttachments,
-                isPreparingAttachments: false
-            ),
+            state: ChatViewController.ComposerPromptSendState(isPreparingAttachments: false),
             draftClearance: .afterSuccess,
             actionIsSending: false,
             upload: { attachments in
@@ -61,10 +58,7 @@ struct ChatViewComposerPromptSendTests {
 
         let (succeeded, _) = await ChatViewController.sendPrompt(
             draftController: afterFailureReopen,
-            state: ChatViewController.ComposerPromptSendState(
-                pendingAttachments: afterFailureReopen.pendingAttachments,
-                isPreparingAttachments: false
-            ),
+            state: ChatViewController.ComposerPromptSendState(isPreparingAttachments: false),
             draftClearance: .afterSuccess,
             actionIsSending: false,
             upload: { attachments in
@@ -103,10 +97,7 @@ struct ChatViewComposerPromptSendTests {
 
         let (outcome, _) = await ChatViewController.sendPrompt(
             draftController: controller,
-            state: ChatViewController.ComposerPromptSendState(
-                pendingAttachments: controller.pendingAttachments,
-                isPreparingAttachments: false
-            ),
+            state: ChatViewController.ComposerPromptSendState(isPreparingAttachments: false),
             draftClearance: .afterSuccess,
             actionIsSending: false,
             upload: { attachments in
@@ -144,10 +135,7 @@ struct ChatViewComposerPromptSendTests {
 
         let (outcome, _) = await ChatViewController.sendPrompt(
             draftController: controller,
-            state: ChatViewController.ComposerPromptSendState(
-                pendingAttachments: controller.pendingAttachments,
-                isPreparingAttachments: false
-            ),
+            state: ChatViewController.ComposerPromptSendState(isPreparingAttachments: false),
             draftClearance: .afterSuccess,
             actionIsSending: false,
             upload: { attachments in

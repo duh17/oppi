@@ -8,7 +8,7 @@ private let log = Logger(
 
 /// Owns connection lifecycle, history loading, and state reconciliation for a chat session.
 ///
-/// Extracted from ChatView to keep the view focused on composition.
+/// The chat screen (`ChatViewController`) owns one per session and stays focused on composition.
 /// Uses structured concurrency — the caller drives the connection loop
 /// via `connect()`, which runs until cancelled or disconnected.
 @MainActor @Observable
@@ -99,7 +99,7 @@ final class ChatSessionManager {
     private var wantsAutoReconnect = true
     /// Ownership claim on the shared focused stream. Release only ever passes
     /// this claim, so a stale or superseded runtime for the same session (an
-    /// old ChatView released late) cannot tear down a newer owner's stream.
+    /// old ChatViewController released late) cannot tear down a newer owner's stream.
     private var focusClaim: FocusedSessionContext?
     /// Single in-flight pre-send readiness pass shared by concurrent senders.
     private var sendReadinessPass: Task<Void, Error>?
@@ -570,7 +570,7 @@ final class ChatSessionManager {
     }
 
     /// Start the manager-owned connect loop if it is not already running.
-    /// ChatView `.task` must call this and return; cancelling that task must
+    /// The chat's session-entry task must call this and return; cancelling that task must
     /// not cancel the loop. Only `cleanup()` and `reconnect()` cancel it.
     func ensureConnected() {
         if isConnectLoopLive {
@@ -773,7 +773,7 @@ final class ChatSessionManager {
         let generation = connectionGeneration
 
         // A notification / deep-link open owns the focused session until its own
-        // view binds the stream. A ChatView still mounted for another session
+        // view binds the stream. A chat still mounted for another session
         // must not reclaim the active session, focus, or the shared transport —
         // its timeline stays as-is instead of being reset behind the tap.
         guard !focusedStreamPort.externalOpenClaimBlocks(sessionId: sessionId) else {

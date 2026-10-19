@@ -287,6 +287,81 @@ struct MarkdownInlineVideoNativePlayTests {
         #expect(store.debugGenerationCountForTesting == videoCount)
         target.prepareForRemoval()
     }
+
+    /// A playing inline video keeps its player when AVKit owns it (fullscreen,
+    /// PiP), so closing the chat must stop it rather than leave it to the cell.
+    @MainActor
+    @Test("closing a chat stops the inline video playing in it")
+    func closingChatStopsItsInlineVideo() async throws {
+        let body = try Data(contentsOf: try knownGoodH264URL())
+        let server = try AuthenticatedRangeHTTPServer(body: body, token: "Bearer sk_test")
+        defer { server.stop() }
+        let base = try #require(URL(string: "http://127.0.0.1:\(server.url.port ?? 0)"))
+
+        let previousStore = InlineVideoStillFrameStore.shared
+        InlineVideoStillFrameStore.installForTesting(InlineVideoStillFrameStore())
+        defer { InlineVideoStillFrameStore.installForTesting(previousStore) }
+
+        let sessionId = "s-video-close-\(UUID().uuidString)"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        // The media server is the chat's server: it answers the history fetch with
+        // the clip, which fails to decode, so the timeline keeps what this test adds.
+        connection.setAPIClientForTesting(APIClient(baseURL: base, token: "sk_test", configuration: .ephemeral))
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .stopped))
+
+        let window = makeSceneWindow()
+        window.traitOverrides.appRootEnvironment = makeTestAppRoot()
+        weak var closedChat: ChatViewController?
+        do {
+            let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: AppNavigation())
+            closedChat = chat
+            window.rootViewController = UINavigationController(rootViewController: chat)
+        }
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        // Only the stack holds the chat, so closing it releases it.
+        let settled = await waitUntil(timeout: .seconds(5)) {
+            window.layoutIfNeeded()
+            return closedChat?.timeline.isObservingOwnedTimelineForTesting == true
+                && closedChat?.sessionManager.entryState == .stopped(historyLoaded: true)
+        }
+        #expect(settled, "chat never settled on its stopped session: \(String(describing: closedChat?.sessionManager.entryState))")
+
+        try #require(closedChat).reducer.processBatch([
+            .agentStart(sessionId: sessionId),
+            .textDelta(sessionId: sessionId, delta: "Clip\n\n![[clip.mp4]]\n\nafter"),
+            .agentEnd(sessionId: sessionId),
+        ])
+
+        var mounted: NativeMarkdownVideoView?
+        let rendered = await waitUntil(timeout: .seconds(5)) {
+            window.layoutIfNeeded()
+            mounted = timelineAllViews(in: window)
+                .compactMap { $0 as? NativeMarkdownVideoView }
+                .first { timelineViewIsVisible($0) }
+            return mounted != nil
+        }
+        #expect(rendered, "assistant video never rendered in the chat timeline (\(closedChat?.reducer.items.count ?? -1) items)")
+        let video = try #require(mounted)
+        let model = video.debugPlaybackModelForTesting
+        video.debugTapPlayForTesting()
+        let playing = await waitUntil(timeout: .seconds(10)) {
+            model.player?.timeControlStatus == .playing
+        }
+        #expect(playing, "tap did not reach playing: \(model.debugPlaybackProbeForTesting)")
+
+        // Close the chat: its stack leaves the window and nothing keeps it.
+        window.rootViewController = UIViewController()
+        window.layoutIfNeeded()
+        let released = await waitUntil(timeout: .seconds(2)) { closedChat == nil }
+        #expect(released, "closed chat stayed alive")
+        #expect(model.player == nil, "closed chat's video still has a player: \(model.debugPlaybackProbeForTesting)")
+    }
 }
 
 @MainActor

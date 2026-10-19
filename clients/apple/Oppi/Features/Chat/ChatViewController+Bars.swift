@@ -450,6 +450,9 @@ extension ChatViewController {
 
     func presentRenameAlert() {
         let alert = UIAlertController(title: "Rename Session", message: nil, preferredStyle: .alert)
+        // The theme's accent, as SwiftUI alerts get from the app root's `.tint(.themeBlue)`.
+        let palette = root?.themeStore.activeThemeID.palette ?? ThemeRuntimeState.currentPalette()
+        alert.view.tintColor = ComposerThemeColors(palette: palette).blue
         let currentName = session?.name ?? ""
         alert.addTextField { field in
             field.placeholder = "Session name"

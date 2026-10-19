@@ -68,7 +68,7 @@ struct WorkspaceQuickActionSessionResponse: Codable, Sendable, Equatable {
 }
 
 /// Navigation destination for a launched session.
-/// Carries optional repo file pointers so the destination ChatView can populate review-file context.
+/// Carries optional repo file pointers so the destination chat can populate review-file context.
 /// `commitSha`/`commitMessage` attach a git commit instead of changed-file paths.
 struct QuickActionSessionNavDestination: Identifiable, Hashable {
     let id: String
