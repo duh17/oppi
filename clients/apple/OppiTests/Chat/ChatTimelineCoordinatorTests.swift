@@ -3,7 +3,7 @@ import Testing
 import UIKit
 @testable import Oppi
 
-@Suite("ChatTimelineCollectionHost.Controller")
+@Suite("ChatTimelineController")
 @MainActor
 struct ChatTimelineCoordinatorTests {
 
@@ -13,7 +13,7 @@ struct ChatTimelineCoordinatorTests {
         let middle = ChatItem.error(id: "middle", message: "middle")
         let second = ChatItem.systemEvent(id: "dup", message: "second")
 
-        let result = ChatTimelineCollectionHost.Controller.uniqueItemsKeepingLast([first, middle, second])
+        let result = ChatTimelineController.uniqueItemsKeepingLast([first, middle, second])
 
         #expect(result.orderedIDs == ["middle", "dup"])
         #expect(result.itemByID["dup"] == second)
@@ -22,7 +22,7 @@ struct ChatTimelineCoordinatorTests {
 
     @MainActor
     @Test func syntheticWorkLineMapsToAndFromItsSourceChatItemIDs() {
-        let controller = ChatTimelineCollectionHost.Controller()
+        let controller = ChatTimelineController()
         controller.currentIDs = ["u1", "quiet-work-line:u1", "assistant-1"]
         let workLine = QuietTimelineWorkLine(
             id: "quiet-work-line:u1",
@@ -44,8 +44,8 @@ struct ChatTimelineCoordinatorTests {
     @MainActor
     @Test func applyConfigurationWiresBackSwipeCallbackOntoCollectionController() {
         let harness = makeTimelineHarness(sessionId: "session-back")
-        let controller = ChatTimelineCollectionHost.Controller()
-        let collectionView = UICollectionView(frame: .zero, collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout())
+        let controller = ChatTimelineController()
+        let collectionView = UICollectionView(frame: .zero, collectionViewLayout: ChatTimelineController.makeTestLayout())
         var callbackCount = 0
         let config = makeTimelineConfiguration(
             items: [],
@@ -69,9 +69,9 @@ struct ChatTimelineCoordinatorTests {
     @Test func toolRowsKeepDeferredAttachmentFetchersBeforeAPIClientIsReady() async throws {
         let collectionView = UICollectionView(
             frame: CGRect(x: 0, y: 0, width: 390, height: 844),
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
-        let controller = ChatTimelineCollectionHost.Controller()
+        let controller = ChatTimelineController()
         controller.configureDataSource(collectionView: collectionView)
 
         let reducer = TimelineReducer()
@@ -128,9 +128,9 @@ struct ChatTimelineCoordinatorTests {
     @Test func toolRowsUseSessionRawMediaSourceForExternalVideoPaths() async throws {
         let collectionView = UICollectionView(
             frame: CGRect(x: 0, y: 0, width: 390, height: 844),
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
-        let controller = ChatTimelineCollectionHost.Controller()
+        let controller = ChatTimelineController()
         controller.configureDataSource(collectionView: collectionView)
         let connection = ServerConnection()
         #expect(connection.apiClient == nil)
@@ -188,7 +188,7 @@ struct ChatTimelineCoordinatorTests {
     @MainActor
     @Test func toolOutputCompletionDispositionGuardsStaleAndCanceledStates() {
         #expect(
-            ChatTimelineCollectionHost.Controller.toolOutputCompletionDisposition(
+            ChatTimelineController.toolOutputCompletionDisposition(
                 output: "ok",
                 isTaskCancelled: false,
                 activeSessionID: "s1",
@@ -198,7 +198,7 @@ struct ChatTimelineCoordinatorTests {
         )
 
         #expect(
-            ChatTimelineCollectionHost.Controller.toolOutputCompletionDisposition(
+            ChatTimelineController.toolOutputCompletionDisposition(
                 output: "ok",
                 isTaskCancelled: true,
                 activeSessionID: "s1",
@@ -208,7 +208,7 @@ struct ChatTimelineCoordinatorTests {
         )
 
         #expect(
-            ChatTimelineCollectionHost.Controller.toolOutputCompletionDisposition(
+            ChatTimelineController.toolOutputCompletionDisposition(
                 output: "ok",
                 isTaskCancelled: false,
                 activeSessionID: "s1",
@@ -218,7 +218,7 @@ struct ChatTimelineCoordinatorTests {
         )
 
         #expect(
-            ChatTimelineCollectionHost.Controller.toolOutputCompletionDisposition(
+            ChatTimelineController.toolOutputCompletionDisposition(
                 output: "ok",
                 isTaskCancelled: false,
                 activeSessionID: "s1",
@@ -228,7 +228,7 @@ struct ChatTimelineCoordinatorTests {
         )
 
         #expect(
-            ChatTimelineCollectionHost.Controller.toolOutputCompletionDisposition(
+            ChatTimelineController.toolOutputCompletionDisposition(
                 output: "",
                 isTaskCancelled: false,
                 activeSessionID: "s1",
@@ -463,7 +463,7 @@ struct ChatTimelineCoordinatorTests {
         let expandedSize = fittedTimelineSize(for: expandedView, width: 338)
         #expect(expandedSize.height > collapsedSize.height)
         #expect(expandedSize.height < ToolTimelineRowContentView.maxOutputViewportHeight + 160)
-        let terminal = try #require(ChatTimelineCollectionHost.Controller.firstSubview(
+        let terminal = try #require(ChatTimelineController.firstSubview(
             ofType: BashToolRowView.self, in: expandedView
         ))
         #expect(!terminal.isHidden)
@@ -501,7 +501,7 @@ struct ChatTimelineCoordinatorTests {
         view.bounds = CGRect(x: 0, y: 0, width: 338, height: 400)
         view.layoutIfNeeded()
         let button = try #require(
-            ChatTimelineCollectionHost.Controller.firstSubview(ofType: UIButton.self, in: view)
+            ChatTimelineController.firstSubview(ofType: UIButton.self, in: view)
         )
         #expect(button.accessibilityIdentifier == "custom.terminal")
         button.sendActions(for: .touchUpInside)
@@ -816,11 +816,11 @@ struct ChatTimelineCoordinatorTests {
         let playerChrome = UIView()
         video.addSubview(playerChrome)
 
-        #expect(!ChatTimelineCollectionHost.Controller.shouldReceiveTimelineGestureTouch(from: button))
-        #expect(!ChatTimelineCollectionHost.Controller.shouldReceiveTimelineGestureTouch(from: textField))
-        #expect(ChatTimelineCollectionHost.Controller.shouldReceiveTimelineGestureTouch(from: label))
-        #expect(!ChatTimelineCollectionHost.Controller.shouldReceiveTimelineGestureTouch(from: video))
-        #expect(!ChatTimelineCollectionHost.Controller.shouldReceiveTimelineGestureTouch(from: playerChrome))
+        #expect(!ChatTimelineController.shouldReceiveTimelineGestureTouch(from: button))
+        #expect(!ChatTimelineController.shouldReceiveTimelineGestureTouch(from: textField))
+        #expect(ChatTimelineController.shouldReceiveTimelineGestureTouch(from: label))
+        #expect(!ChatTimelineController.shouldReceiveTimelineGestureTouch(from: video))
+        #expect(!ChatTimelineController.shouldReceiveTimelineGestureTouch(from: playerChrome))
     }
 
     @MainActor

@@ -271,11 +271,11 @@ struct ReviewableControlMarkdownTests {
         ]))
         #expect(block.contains("`\(launchPath)`:1 (file)"))
         #expect(block.contains("`\(checklistPath)`:1 (file)"))
-        #expect(ChatView.reviewCommentPathFormattingPolicy(controlDomain: .skills) == .verbatim)
+        #expect(ChatViewController.reviewCommentPathFormattingPolicy(controlDomain: .skills) == .verbatim)
         for domain in [ControlSessionDomain.agents, .schedules, .workspaces] {
-            #expect(ChatView.reviewCommentPathFormattingPolicy(controlDomain: domain) == .normalizedDisplay)
+            #expect(ChatViewController.reviewCommentPathFormattingPolicy(controlDomain: domain) == .normalizedDisplay)
         }
-        #expect(ChatView.reviewCommentPathFormattingPolicy(controlDomain: nil) == .normalizedDisplay)
+        #expect(ChatViewController.reviewCommentPathFormattingPolicy(controlDomain: nil) == .normalizedDisplay)
     }
 
     @Test func missingServerNavigationKeepsTargetDraftComments() throws {

@@ -30,8 +30,8 @@ private func firstVisibleTimelineItemID(in windowed: WindowedTimelineHarness) ->
     )
     return windowed.coordinator.currentIDs.enumerated()
         .compactMap { index, itemID -> (id: String, minY: CGFloat)? in
-            guard itemID != ChatTimelineCollectionHost.loadMoreID,
-                  itemID != ChatTimelineCollectionHost.workingIndicatorID,
+            guard itemID != ChatTimelineController.loadMoreID,
+                  itemID != ChatTimelineController.workingIndicatorID,
                   let attrs = collectionView.layoutAttributesForItem(
                     at: IndexPath(item: index, section: 0)
                   ),
@@ -544,7 +544,7 @@ struct ScrollToBottomTests {
         }
 
         applyWindowedTail()
-        #expect(windowed.coordinator.currentIDs.first == ChatTimelineCollectionHost.loadMoreID)
+        #expect(windowed.coordinator.currentIDs.first == ChatTimelineController.loadMoreID)
 
         collectionView.setContentOffset(
             CGPoint(x: 0, y: -collectionView.adjustedContentInset.top),
@@ -564,7 +564,7 @@ struct ScrollToBottomTests {
             firstVisibleTimelineItemID(in: windowed),
             "first visible stable item must not be the load-more row"
         )
-        #expect(readingItemID != ChatTimelineCollectionHost.loadMoreID)
+        #expect(readingItemID != ChatTimelineController.loadMoreID)
         let readingScreenY = try timelineItemScreenY(readingItemID, in: windowed)
 
         // Grow the live tail in place so the suffix window does not evict the
@@ -982,7 +982,7 @@ struct ScrollToBottomTests {
         #expect(windowed.scrollController.isCurrentlyNearBottom)
         #expect(!windowed.scrollController.isJumpToBottomHintVisible)
 
-        // 4. Issue scroll command (this is what ChatTimelineView.onChange does)
+        // 4. Issue scroll command (what the owned clock does on a scroll-to-bottom request)
         let scrollCmd = ChatTimelineScrollCommand(
             id: "msg-39",
             anchor: .bottom,

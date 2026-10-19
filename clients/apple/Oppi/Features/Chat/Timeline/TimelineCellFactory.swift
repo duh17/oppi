@@ -27,11 +27,11 @@ enum TimelineCellFactory {
         registrations: Registrations,
         isCompactionMessage: (String) -> Bool
     ) -> UICollectionViewCell {
-        if itemID == ChatTimelineCollectionHost.loadMoreID {
+        if itemID == ChatTimelineController.loadMoreID {
             return registrations.loadMore(collectionView, indexPath, itemID)
         }
 
-        if itemID == ChatTimelineCollectionHost.workingIndicatorID {
+        if itemID == ChatTimelineController.workingIndicatorID {
             return registrations.working(collectionView, indexPath, itemID)
         }
 

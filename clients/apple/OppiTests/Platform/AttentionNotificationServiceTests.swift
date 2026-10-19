@@ -349,7 +349,7 @@ struct SessionNotificationOpenPathTests {
         #expect(connection.sessionStore.session(id: "child")?.status == .busy)
         #expect(connection.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/child/stream")
         #expect(streamConnects == 1)
-        #expect(ChatView.resolvedComposerAskRequest(
+        #expect(ChatViewController.resolvedComposerAskRequest(
             connection.askRequestStore.pending(for: "child"),
             hasReviewComment: false
         )?.id == "ask-live")

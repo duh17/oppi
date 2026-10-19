@@ -748,7 +748,7 @@ final class AppNavigation {
     }
 
     /// True when this session is still under a pushed reader or same-session
-    /// linked file. ChatView uses this to skip teardown on a covering disappear.
+    /// linked file. ChatViewController uses this to skip teardown on a covering disappear.
     func isCoveringChat(sessionId: String) -> Bool {
         switch workspaceNavigationPresentation {
         case .stack:
@@ -1141,13 +1141,13 @@ final class AppNavigation {
     // MARK: - Quick Session Handoff
     //
     // These properties form a produce-once / consume-once handoff between
-    // QuickSessionSheet (producer) and AppRootLayer + ChatView (consumers).
+    // QuickSessionSheet (producer) and AppRootLayer + ChatViewController (consumers).
     //
     // Flow:
     // 1. QuickSessionSheet sets `pendingQuickSessionNav` (atomic intent)
     // 2. QuickSessionSheet calls dismiss()
     // 3. AppRootLayer's dismiss reads nav, extracts message/images, opens the session
-    // 4. ChatView.task(id: sessionId) reads message/images, auto-sends
+    // 4. ChatViewController reads message/images on appear, auto-sends
 
     /// One-shot source context for opening Quick Session from an Agent detail.
     /// QuickSessionSheet consumes it before resolving its initial workspace and Agent.
@@ -1158,9 +1158,9 @@ final class AppNavigation {
     /// Set before dismiss; consumed when AppRootLayer dismisses Quick Session.
     var pendingQuickSessionNav: QuickSessionNav?
 
-    /// Message to auto-send when the quick session's ChatView opens.
+    /// Message to auto-send when the quick session's ChatViewController opens.
     /// Extracted from `pendingQuickSessionNav` when Quick Session dismisses.
-    /// Consumed once by ChatView, then cleared.
+    /// Consumed once by ChatViewController, then cleared.
     var pendingQuickSessionMessage: String?
 
     /// Attachments to auto-send when the quick session message opens.
@@ -1168,7 +1168,7 @@ final class AppNavigation {
     var pendingQuickSessionAttachments: [PendingAttachment]?
 
     /// Session whose chat starts Live Voice when it opens (a quick voice session).
-    /// Consumed once by that session's ChatView, then cleared.
+    /// Consumed once by that session's ChatViewController, then cleared.
     var pendingLiveVoiceSessionId: String?
 
     // MARK: - Legacy Shell Routing

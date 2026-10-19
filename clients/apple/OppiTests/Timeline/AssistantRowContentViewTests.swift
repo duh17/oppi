@@ -345,9 +345,9 @@ struct AssistantTimelineRowContentViewTests {
         ThemeRuntimeState.setThemeID(.light)
         let collectionView = UICollectionView(
             frame: CGRect(x: 0, y: 0, width: 390, height: 844),
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
-        let controller = ChatTimelineCollectionHost.Controller()
+        let controller = ChatTimelineController()
         controller.configureDataSource(collectionView: collectionView)
         let harness = makeTimelineHarness(sessionId: "session-theme")
         let config = makeTimelineConfiguration(

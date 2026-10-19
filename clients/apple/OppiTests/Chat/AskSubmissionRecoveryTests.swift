@@ -132,7 +132,7 @@ struct AskSubmissionRecoveryTests {
         }
         tap()
         var events: [String] = []
-        let failure = await ChatView.deliverAskResponse(
+        let failure = await ChatViewController.deliverAskResponse(
             send: { events.append("send"); throw DeliveryFailure.offline },
             reconcile: {
                 events.append("reconcile")
@@ -147,7 +147,7 @@ struct AskSubmissionRecoveryTests {
         #expect(card.phase == .failed("ask"))
         #expect(composer.phase == .failed("ask"))
         tap()
-        let success = await ChatView.deliverAskResponse(
+        let success = await ChatViewController.deliverAskResponse(
             send: { events.append("retry") },
             reconcile: { Issue.record("Success must not hydrate dialogs") },
             isPending: { true },
@@ -164,7 +164,7 @@ struct AskSubmissionRecoveryTests {
         var done: AskResponseSubmission.Completion?
         var pending = true
         submission.submit(requestID: "ask") { done = $0 }
-        let result = await ChatView.deliverAskResponse(
+        let result = await ChatViewController.deliverAskResponse(
             send: { throw DeliveryFailure.offline },
             reconcile: { pending = false },
             isPending: { pending },
@@ -176,7 +176,7 @@ struct AskSubmissionRecoveryTests {
     }
 
     @Test func unavailableReconciliationKeepsSameIdentityRetryable() async {
-        let result = await ChatView.deliverAskResponse(
+        let result = await ChatViewController.deliverAskResponse(
             send: { throw DeliveryFailure.offline },
             reconcile: { /* Existing hydration leaves the pending projection unchanged on failure. */ },
             isPending: { true },
@@ -204,7 +204,7 @@ struct AskSubmissionRecoveryTests {
         var complete: AskResponseSubmission.Completion?
         submission.submit(requestID: "A") { complete = $0 }
         let delivery = Task {
-            let result = await ChatView.deliverAskResponse(
+            let result = await ChatViewController.deliverAskResponse(
                 send: { throw DeliveryFailure.offline },
                 reconcile: { await connection.hydrateSessionDialogs(sessionId: "s") },
                 isPending: { connection.askRequestStore.pending(for: "s")?.id == "A" },
@@ -231,7 +231,7 @@ struct AskSubmissionRecoveryTests {
     }
 
     @Test func settledBeforeFailureDoesNotStartHydration() async {
-        let result = await ChatView.deliverAskResponse(
+        let result = await ChatViewController.deliverAskResponse(
             send: { throw DeliveryFailure.offline },
             reconcile: { Issue.record("An obsolete response must not start snapshot repair") },
             isPending: { false },

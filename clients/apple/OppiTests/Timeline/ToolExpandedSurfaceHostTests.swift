@@ -504,7 +504,7 @@ struct ToolExpandedSurfaceHostTests {
             return await gate.fetch()
         }
 
-        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let layout = ChatTimelineController.makeTestLayout()
         let collectionView = AnchoredCollectionView(
             frame: CGRect(origin: .zero, size: hostSize),
             collectionViewLayout: layout
@@ -669,7 +669,7 @@ struct ToolExpandedSurfaceHostTests {
 
         let collectionView = AnchoredCollectionView(
             frame: CGRect(origin: .zero, size: hostSize),
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         let hostController = UIViewController()
         hostController.view.frame = CGRect(origin: .zero, size: hostSize)
@@ -681,7 +681,7 @@ struct ToolExpandedSurfaceHostTests {
         defer { window.isHidden = true }
 
         let ids = (0..<6).map { "tool-context-\($0)" } + ["tool-image", "tool-after"]
-        let coordinator = ChatTimelineCollectionHost.Controller()
+        let coordinator = ChatTimelineController()
         let scrollController = ChatScrollController()
         coordinator.collectionView = collectionView
         coordinator.currentIDs = ids
@@ -837,7 +837,7 @@ struct ToolExpandedSurfaceHostTests {
             isExpanded: true
         )
 
-        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let layout = ChatTimelineController.makeTestLayout()
         let collectionView = AnchoredCollectionView(
             frame: CGRect(origin: .zero, size: hostSize),
             collectionViewLayout: layout
@@ -1024,7 +1024,7 @@ struct ToolExpandedSurfaceHostTests {
 
     @Test func svgReadMediaAttachmentReflowsTimelineAfterAsyncDecodeWithoutDimensionMetadata() async throws {
         let hostSize = CGSize(width: 393, height: 852)
-        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let layout = ChatTimelineController.makeTestLayout()
         let collectionView = UICollectionView(
             frame: CGRect(origin: .zero, size: hostSize),
             collectionViewLayout: layout
@@ -1248,7 +1248,7 @@ struct ToolExpandedSurfaceHostTests {
 
         let collectionView = UICollectionView(
             frame: CGRect(origin: .zero, size: hostSize),
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         collectionView.backgroundColor = Self.readMediaViewportLetterboxProbeColor
         collectionView.contentInsetAdjustmentBehavior = .never
@@ -1450,7 +1450,7 @@ struct ToolExpandedSurfaceHostTests {
             toolNamePrefix: "read",
             isExpanded: true
         )
-        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let layout = ChatTimelineController.makeTestLayout()
         let collectionView = UICollectionView(
             frame: CGRect(origin: .zero, size: hostSize),
             collectionViewLayout: layout

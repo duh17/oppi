@@ -34,7 +34,7 @@ enum TimelineBubbleStyle {
 }
 
 /// Row chrome for one chat timeline. Every row in a timeline uses the same
-/// style; ChatView picks it from the Chat style setting
+/// style; ChatViewController picks it from the Chat style setting
 /// (`ChatTimelineChromeStyle.for`).
 ///
 /// This is the one owner of chrome that differs between the styles: rows

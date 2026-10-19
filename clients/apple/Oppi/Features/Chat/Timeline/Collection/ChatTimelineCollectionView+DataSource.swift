@@ -322,7 +322,7 @@ private final class NavigationArrivalDriver: NSObject {
 
 // MARK: - Data Source Configuration
 
-extension ChatTimelineCollectionHost.Controller {
+extension ChatTimelineController {
     func configureDataSource(collectionView: UICollectionView) {
         self.collectionView = collectionView
         collectionView.delegate = self

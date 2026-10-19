@@ -70,7 +70,7 @@ graph TD
 
 ## Focused session flow
 
-`ChatView` creates or receives a `ChatSessionManager` for a session. The manager owns the per-session reducer, coalescer, and tool-call correlator.
+`ChatViewController` creates a `ChatSessionManager` for a session. The manager owns the per-session reducer, coalescer, and tool-call correlator.
 
 ```mermaid
 graph TD

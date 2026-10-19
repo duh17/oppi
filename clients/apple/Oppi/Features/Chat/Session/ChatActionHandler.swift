@@ -7,7 +7,7 @@ private let log = Logger(subsystem: AppIdentifiers.subsystem, category: "Action"
 /// Handles user actions in the chat: sending prompts, stopping the agent,
 /// model/thinking changes, and session management.
 ///
-/// Extracted from ChatView to keep the view focused on composition.
+/// Extracted from the chat screen to keep it focused on composition.
 /// Owns the stop/force-stop state machine and action dispatch.
 @MainActor @Observable
 final class ChatActionHandler {
@@ -875,7 +875,7 @@ final class ChatActionHandler {
     /// for it when needed. Returns the error when it never became ready; nothing
     /// was sent in that case.
     ///
-    /// `sessionManager` stayed optional: ChatView, the only production sender,
+    /// `sessionManager` stayed optional: ChatViewController, the only production sender,
     /// always passes its runtime. With no runtime there is no focus claim to
     /// validate, so the send relies on the transport's own pre-dispatch checks
     /// (no focused session or socket fails fast as never dispatched). That keeps

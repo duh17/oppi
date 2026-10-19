@@ -18,10 +18,10 @@ struct ChatTimelineApplyPlanTests {
         )
 
         #expect(plan.nextIDs == [
-            ChatTimelineCollectionHost.loadMoreID,
+            ChatTimelineController.loadMoreID,
             "middle",
             "dup",
-            ChatTimelineCollectionHost.workingIndicatorID,
+            ChatTimelineController.workingIndicatorID,
         ])
         #expect(plan.nextItemByID["dup"] == second)
         #expect(plan.nextItemByID["middle"] == middle)
@@ -37,7 +37,7 @@ struct ChatTimelineApplyPlanTests {
         )
 
         #expect(plan.nextIDs == [
-            ChatTimelineCollectionHost.loadMoreID,
+            ChatTimelineController.loadMoreID,
             "assistant-1",
         ])
     }
@@ -52,7 +52,7 @@ struct ChatTimelineApplyPlanTests {
 
         #expect(plan.nextIDs == [
             "assistant-1",
-            ChatTimelineCollectionHost.workingIndicatorID,
+            ChatTimelineController.workingIndicatorID,
         ])
     }
 
@@ -84,10 +84,10 @@ struct ChatTimelineApplyPlanTests {
         ])
 
         #expect(plan.nextIDs == [
-            ChatTimelineCollectionHost.loadMoreID,
+            ChatTimelineController.loadMoreID,
             "quiet-work-line:u1",
             "assistant-1",
-            ChatTimelineCollectionHost.workingIndicatorID,
+            ChatTimelineController.workingIndicatorID,
         ])
         #expect(plan.nextWorkLineByID[workLine.id] == workLine)
         #expect(plan.removedIDs == Set(["quiet-work-line:old"]))

@@ -2,7 +2,7 @@ import Foundation
 
 /// Isolated collaborator for loading expanded tool output + retry scheduling.
 ///
-/// Keeps task/retry bookkeeping out of `ChatTimelineCollectionHost.Controller`
+/// Keeps task/retry bookkeeping out of `ChatTimelineController`
 /// while preserving the same externally observed behavior.
 @MainActor
 final class ExpandedToolOutputLoader {

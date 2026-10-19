@@ -22,14 +22,14 @@ enum ToolTimelineRowPresentationHelpers {
     @MainActor
     private final class DetachedLayoutViewportAnchor {
         private weak var collectionView: UICollectionView?
-        private weak var controller: ChatTimelineCollectionHost.Controller?
+        private weak var controller: ChatTimelineController?
         private let itemID: String?
         private let indexPath: IndexPath
         private let relativeY: CGFloat
 
         init(
             collectionView: UICollectionView,
-            controller: ChatTimelineCollectionHost.Controller?,
+            controller: ChatTimelineController?,
             itemID: String?,
             indexPath: IndexPath,
             relativeY: CGFloat
@@ -77,11 +77,11 @@ enum ToolTimelineRowPresentationHelpers {
     @MainActor
     private final class AttachedLayoutTail {
         private weak var collectionView: UICollectionView?
-        private weak var controller: ChatTimelineCollectionHost.Controller?
+        private weak var controller: ChatTimelineController?
 
         init(
             collectionView: UICollectionView,
-            controller: ChatTimelineCollectionHost.Controller?
+            controller: ChatTimelineController?
         ) {
             self.collectionView = collectionView
             self.controller = controller
@@ -612,7 +612,7 @@ enum ToolTimelineRowPresentationHelpers {
         scrollController: ChatScrollController? = nil
     ) -> Bool {
         let resolvedScrollController = scrollController
-            ?? (collectionView.delegate as? ChatTimelineCollectionHost.Controller)?.scrollController
+            ?? (collectionView.delegate as? ChatTimelineController)?.scrollController
         return resolvedScrollController?.isUserInteracting == true
             || collectionView.isTracking
             || collectionView.isDragging
@@ -655,7 +655,7 @@ enum ToolTimelineRowPresentationHelpers {
         anchoredCollectionView.expireExpandCollapseAnchorIfIdentityMissing()
         let generation = anchoredCollectionView.expandCollapseAnchorGeneration
         guard let itemID = anchoredCollectionView.expandCollapseAnchorItemID,
-              let controller = collectionView.delegate as? ChatTimelineCollectionHost.Controller,
+              let controller = collectionView.delegate as? ChatTimelineController,
               let itemIndex = controller.currentIDs.firstIndex(of: itemID),
               let cell = collectionView.cellForItem(
                   at: IndexPath(item: itemIndex, section: 0)
@@ -741,7 +741,7 @@ enum ToolTimelineRowPresentationHelpers {
         in collectionView: UICollectionView
     ) -> AttachedLayoutTail? {
         guard collectionView.window != nil else { return nil }
-        let controller = collectionView.delegate as? ChatTimelineCollectionHost.Controller
+        let controller = collectionView.delegate as? ChatTimelineController
         let isAttached: Bool
         if let scrollController = controller?.scrollController {
             isAttached = scrollController.isCurrentlyNearBottom
@@ -767,7 +767,7 @@ enum ToolTimelineRowPresentationHelpers {
         in collectionView: UICollectionView,
         excluding sourceView: UIView?
     ) -> DetachedLayoutViewportAnchor? {
-        let controller = collectionView.delegate as? ChatTimelineCollectionHost.Controller
+        let controller = collectionView.delegate as? ChatTimelineController
         let isDetached: Bool
         if let scrollController = controller?.scrollController {
             isDetached = !scrollController.isCurrentlyNearBottom

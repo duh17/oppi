@@ -40,7 +40,7 @@ final class NativeMarkdownVideoView: UIView {
     private var isPlayRequested = false
     private var displayWidth: CGFloat = 320
     private var heightConstraint: NSLayoutConstraint?
-    /// Slot-sized parent so AVKit chrome follows the cell, not ChatView.
+    /// Slot-sized parent so AVKit chrome follows the cell, not ChatViewController.
     private var slotController: InlineVideoSlotController?
     private var playerController: AVPlayerViewController?
     private var playerDelegate: InlineVideoPlayerDelegate?
@@ -759,7 +759,7 @@ private final class InlineVideoPlayButton: UIControl {
 
 /// AVKit lays out playback chrome against its parent view controller.
 /// That parent must be this slot, whose view lives in the timeline cell.
-/// Parenting `AVPlayerViewController` to ChatView pins the picture to the
+/// Parenting `AVPlayerViewController` to ChatViewController pins the picture to the
 /// screen while the bubble scrolls.
 private final class InlineVideoSlotController: UIViewController {
     override func loadView() {

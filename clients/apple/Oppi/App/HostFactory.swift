@@ -312,6 +312,76 @@ private struct ScreenContentView: View {
     }
 }
 
+extension HostFactory {
+    /// SwiftUI leaf content in a UIKit layout at its natural height for the
+    /// width it gets: the chat's footer rows and context bar. The content
+    /// reports its height, so a leaf that grows (a drawer opening) resizes
+    /// its slot. Add `host` as a child of the embedding controller and pin
+    /// `view`'s top or bottom and sides; the leaf owns its height.
+    static func leaf<Content: View>(_ content: Content, root: AppRootEnvironment) -> HostedLeaf {
+        let measured = HostedLeafHeight()
+        let host = HostedContentController(
+            content: HostedLeafContent(content: content, height: measured),
+            root: root
+        )
+        // Leaves sit inside the screen's safe area already; the hosting view
+        // adding its own put home-indicator padding under the footer.
+        host.safeAreaRegions = []
+        host.view.backgroundColor = .clear
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        let leaf = HostedLeaf(host: host)
+        measured.leaf = leaf
+        return leaf
+    }
+}
+
+/// SwiftUI leaf content hosted in a UIKit layout (`HostFactory.leaf`).
+@MainActor
+final class HostedLeaf {
+    let host: HostedContentController
+    var view: UIView { host.view }
+    /// Runs after the content's height changed and the slot followed.
+    var onHeightChange: (() -> Void)?
+    private let heightConstraint: NSLayoutConstraint
+
+    var height: CGFloat { heightConstraint.constant }
+
+    fileprivate init(host: HostedContentController) {
+        self.host = host
+        heightConstraint = host.view.heightAnchor.constraint(equalToConstant: 0)
+        heightConstraint.isActive = true
+    }
+
+    fileprivate func report(_ height: CGFloat) {
+        let next = max(0, ceil(height))
+        guard abs(heightConstraint.constant - next) > 0.5 else { return }
+        heightConstraint.constant = next
+        view.superview?.setNeedsLayout()
+        onHeightChange?()
+    }
+}
+
+@MainActor
+private final class HostedLeafHeight {
+    weak var leaf: HostedLeaf?
+}
+
+/// Measures the leaf at its natural height for the width it is given.
+private struct HostedLeafContent<Content: View>: View {
+    let content: Content
+    let height: HostedLeafHeight
+
+    var body: some View {
+        content
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .top)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { value in
+                height.leaf?.report(value)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
 /// SwiftUI content embedded in UIKit. Created only by `HostFactory.content`
 /// and, without a root, `HostFactory.appLockCover`.
 final class HostedContentController: UIHostingController<AnyView> {
@@ -350,7 +420,9 @@ final class ScreenNavigator {
     /// The default outside a hosted screen. Every call fails an assertion.
     static let unattached = ScreenNavigator(root: nil)
 
-    fileprivate weak var controller: HostedScreenController?
+    /// The screen this navigator acts for: a hosted screen, or a UIKit
+    /// screen whose SwiftUI leaves push and present through it.
+    fileprivate weak var controller: UIViewController?
     private let root: AppRootEnvironment?
     private var search: ScreenSearchController?
     /// The search anchors attached to this screen, newest last. Swapping one
@@ -361,6 +433,16 @@ final class ScreenNavigator {
 
     fileprivate init(root: AppRootEnvironment?) {
         self.root = root
+    }
+
+    /// A navigator for a UIKit screen, for the SwiftUI leaf content it hosts
+    /// with `HostFactory.content` or `HostFactory.leaf` (the chat's context
+    /// bar opens a quick-action chat with `push`). The leaf gets it with
+    /// `.environment(\.screenNavigator, navigator)`.
+    static func forUIKitScreen(_ screen: UIViewController, root: AppRootEnvironment) -> ScreenNavigator {
+        let navigator = ScreenNavigator(root: root)
+        navigator.controller = screen
+        return navigator
     }
 
     /// Presents a modal screen above this one. `content` runs in the new
@@ -398,10 +480,16 @@ final class ScreenNavigator {
         return screen
     }
 
-    /// Pushes a UIKit screen onto the same stack. The SSH terminal is one:
-    /// it owns its `navigationItem` and does not go through `HostFactory.screen`.
+    /// Pushes a UIKit screen onto the same stack. The SSH terminal and the
+    /// chat are UIKit screens: they own their `navigationItem` and do not go
+    /// through `HostFactory.screen`. The screen gets this screen's app root
+    /// as a trait, as a hosted screen does, so it finds the root before it
+    /// is in a window that publishes one.
     func push(_ screen: UIViewController) {
         guard let controller else { return unattached("push") }
+        if let root, screen.traitOverrides.appRootEnvironment == nil {
+            screen.traitOverrides.appRootEnvironment = root
+        }
         Router.push(screen, from: controller)
     }
 

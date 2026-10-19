@@ -3,7 +3,7 @@ import SwiftUI
 /// Chrome policy for workspace session navigation.
 ///
 /// Toolbar visibility is owned by the active surface. The workspace session
-/// list keeps its bottom toolbar automatic; `ChatView` hides the bottom bar
+/// list keeps its bottom toolbar automatic; `ChatViewController` hides the bottom bar
 /// when it becomes the active destination.
 enum WorkspaceSessionNavigationChromePolicy {
     enum Surface {

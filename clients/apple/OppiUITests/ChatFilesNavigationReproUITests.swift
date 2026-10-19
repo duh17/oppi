@@ -46,7 +46,7 @@ final class ChatFilesNavigationReproUITests: XCTestCase {
 
         let filesButton = app.buttons["chat.toolbar.files"]
         let backButton = app.buttons["chat.toolbar.back"]
-        XCTAssertTrue(filesButton.waitForExistence(timeout: 8), "Real ChatView repro did not reach the chat surface")
+        XCTAssertTrue(filesButton.waitForExistence(timeout: 8), "Real ChatViewController repro did not reach the chat surface")
         XCTAssertTrue(backButton.exists, "Chat should use one leading pill with Back and Files")
         XCTAssertLessThan(filesButton.frame.midX, app.frame.midX, "Files control should live on the leading side of chat navigation")
         XCTAssertLessThan(backButton.frame.maxX, filesButton.frame.minX + 2, "Back and Files controls should be adjacent in the leading pill")
@@ -56,7 +56,7 @@ final class ChatFilesNavigationReproUITests: XCTestCase {
 
         XCTAssertTrue(
             app.staticTexts["Files"].waitForExistence(timeout: 2),
-            "Production ChatView top Files control should open the in-chat panel"
+            "Production ChatViewController top Files control should open the in-chat panel"
         )
         XCTAssertTrue(
             app.buttons["Done"].waitForExistence(timeout: 2),
@@ -68,7 +68,7 @@ final class ChatFilesNavigationReproUITests: XCTestCase {
         )
         XCTAssertFalse(
             app.collectionViews["navChrome.repro.root"].exists,
-            "Tapping production ChatView top Files should not reveal the workspace list"
+            "Tapping production ChatViewController top Files should not reveal the workspace list"
         )
     }
 
@@ -85,14 +85,14 @@ final class ChatFilesNavigationReproUITests: XCTestCase {
         app.buttons["navChrome.repro.openLocalChat"].tap()
 
         let backButton = app.buttons["chat.toolbar.back"]
-        XCTAssertTrue(backButton.waitForExistence(timeout: 8), "Local ChatView should expose the chat Back control")
+        XCTAssertTrue(backButton.waitForExistence(timeout: 8), "Local ChatViewController should expose the chat Back control")
         XCTAssertEqual(app.staticTexts["navChrome.repro.pathCount"].label, "1", "Opening local chat must not add a workspace route")
 
         backButton.tap()
 
         XCTAssertTrue(
             workspace.waitForExistence(timeout: 2),
-            "Chat Back should dismiss the local ChatView and reveal the workspace detail"
+            "Chat Back should dismiss the local ChatViewController and reveal the workspace detail"
         )
         XCTAssertEqual(
             app.staticTexts["navChrome.repro.pathCount"].label,

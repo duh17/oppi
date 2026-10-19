@@ -1187,11 +1187,13 @@ struct WorkspaceDetailView: View {
             let connection = connection
             let apiClient = apiClient
             let navigation = navigation
-            navigator.push {
-                ChatView(sessionId: sessionId, workspaceIdHint: workspaceId)
-                    .id(sessionId)
-                    .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
-            }
+            navigator.push(ChatViewController(
+                sessionId: sessionId,
+                connection: connection,
+                navigation: navigation,
+                apiClient: apiClient,
+                workspaceIdHint: workspaceId
+            ))
             return
         }
 

@@ -277,7 +277,7 @@
     "clients/apple/Oppi/Features/Chat/ChatTimelineDestinationPresenter.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/ChatView.swift": {
+    "clients/apple/Oppi/Features/Chat/ChatViewController+Leaves.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Composer/ChatInputBar.swift": {
@@ -314,9 +314,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/ChatSubviews.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Support/ContextUsageViews.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift": {
@@ -358,7 +355,7 @@
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownUSDZView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Timeline/ChatTimelineView.swift": {
+    "clients/apple/Oppi/Features/Chat/Timeline/ChatTimelineChrome.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Collection/ChatTimelineCollectionView+DataSource.swift": {

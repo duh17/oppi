@@ -2,7 +2,7 @@
 import SwiftUI
 import UIKit
 
-/// Deterministic, serverless ChatView toolbar/outline harness.
+/// Deterministic, serverless chat toolbar/outline harness.
 ///
 /// Launch with `--chat-outline-cold-harness` or `PI_CHAT_OUTLINE_COLD_HARNESS=1`.
 enum ChatOutlineColdHarnessConfig {
@@ -31,22 +31,6 @@ private final class ChatOutlineColdHarnessSession {
     var id = ChatOutlineColdHarnessConfig.sessionA
 }
 
-private struct ChatOutlineColdHarnessChat: View {
-    let session: ChatOutlineColdHarnessSession
-    let workspaceId: String
-    let connection: ServerConnection
-    let navigation: AppNavigation
-    let quickCommentTemplateStore: QuickCommentTemplateStore
-
-    var body: some View {
-        ChatView(sessionId: session.id, workspaceIdHint: workspaceId)
-            .withServerScopedEnvironment(connection)
-            .environment(navigation)
-            .environment(quickCommentTemplateStore)
-            .id(session.id)
-    }
-}
-
 struct ChatOutlineColdHarnessView: View {
     private static let workspace = Workspace(
         id: "cold-outline-workspace",
@@ -66,7 +50,6 @@ struct ChatOutlineColdHarnessView: View {
 
     @State private var navigation = AppNavigation()
     @State private var connection = Self.makeConnection()
-    @State private var quickCommentTemplateStore = QuickCommentTemplateStore(templates: [])
     @State private var session = ChatOutlineColdHarnessSession()
     @State private var probe = ChatOutlineColdHarnessProbeState()
     @State private var pendingSeedSessionId: String?
@@ -77,15 +60,14 @@ struct ChatOutlineColdHarnessView: View {
     private var sessionId: String { session.id }
 
     var body: some View {
-        // The production chat at the root of a router stack. Rebinding swaps
-        // the session through the model: the screen is its own graph.
-        RouterPreviewNavigation {
-            ChatOutlineColdHarnessChat(
-                session: session,
-                workspaceId: Self.workspace.id,
+        // The production chat at the root of a router stack. Rebinding builds
+        // a new chat for the other session, as the shell does.
+        RouterPreviewControllerNavigation(id: session.id) { [session, connection, navigation] in
+            ChatViewController(
+                sessionId: session.id,
                 connection: connection,
                 navigation: navigation,
-                quickCommentTemplateStore: quickCommentTemplateStore
+                workspaceIdHint: Self.workspace.id
             )
         }
         .ignoresSafeArea()
@@ -219,8 +201,8 @@ struct ChatOutlineColdHarnessView: View {
         return nil
     }
 
-    private func timelineController() -> ChatTimelineCollectionHost.Controller? {
-        timelineCollectionView()?.delegate as? ChatTimelineCollectionHost.Controller
+    private func timelineController() -> ChatTimelineController? {
+        timelineCollectionView()?.delegate as? ChatTimelineController
     }
 
     private func firstTimelineCollectionView(in view: UIView) -> UICollectionView? {
@@ -261,7 +243,7 @@ struct ChatOutlineColdHarnessView: View {
     }
 
     private func highlightedItemId(
-        controller: ChatTimelineCollectionHost.Controller?,
+        controller: ChatTimelineController?,
         collectionView: UICollectionView?
     ) -> String {
         guard let controller, let collectionView else { return "" }
@@ -420,7 +402,7 @@ private final class ChatOutlineColdHarnessProbeState {
 
 // MARK: - Chat routes harness
 
-/// Every router modal and side panel chat owns, on the production `ChatView`
+/// Every router modal and side panel chat owns, on the production `ChatViewController`
 /// with fixture services and an in-process stub server
 /// (`SCREENSHOT_SCREEN=chat-routes`). The chat is a router screen at the root
 /// of a `RouterNavigationController`. The timeline carries a user message with
@@ -436,21 +418,17 @@ private final class ChatOutlineColdHarnessProbeState {
 struct ChatRoutesHarnessView: View {
     @State private var connection = ChatRoutesFixture.connection
     @State private var navigation = AppNavigation()
-    @State private var quickCommentTemplateStore = QuickCommentTemplateStore(
-        templates: QuickCommentTemplate.builtInDefaults
-    )
     @State private var stub = ChatRoutesStubRecord.shared
     @State private var landing = ""
 
     var body: some View {
-        RouterPreviewNavigation {
-            ChatView(
+        RouterPreviewControllerNavigation(id: ChatRoutesFixture.sessionId) { [connection, navigation] in
+            ChatViewController(
                 sessionId: ChatRoutesFixture.sessionId,
+                connection: connection,
+                navigation: navigation,
                 workspaceIdHint: ChatRoutesFixture.workspace.id
             )
-            .withServerScopedEnvironment(connection)
-            .environment(navigation)
-            .environment(quickCommentTemplateStore)
         }
         .ignoresSafeArea()
         .overlay(alignment: .leading) {
@@ -857,7 +835,7 @@ private enum ChatRoutesFixture {
     /// last row seen arriving after a jump.
     @MainActor static func landingProbe() -> String {
         guard let collection = timelineCollectionInWindows(),
-              let controller = collection.delegate as? ChatTimelineCollectionHost.Controller else { return "" }
+              let controller = collection.delegate as? ChatTimelineController else { return "" }
         let insetTop = collection.adjustedContentInset.top
         var top = ""
         var topY = CGFloat.greatestFiniteMagnitude
@@ -926,7 +904,7 @@ private enum ChatRoutesFixture {
     }
 
     @MainActor private static func timelineReducer() -> TimelineReducer? {
-        guard let controller = timelineCollectionInWindows()?.delegate as? ChatTimelineCollectionHost.Controller,
+        guard let controller = timelineCollectionInWindows()?.delegate as? ChatTimelineController,
               let configuration = controller.ownedClock.lastConfiguration,
               configuration.sessionId == sessionId else { return nil }
         return configuration.reducer

@@ -448,7 +448,7 @@ struct ScrollPropertyTestHarness {
     let metricsView: TimelineScrollMetricsCollectionView
 
     var sessionId: String { baseHarness.sessionId }
-    var coordinator: ChatTimelineCollectionHost.Controller { baseHarness.coordinator }
+    var coordinator: ChatTimelineController { baseHarness.coordinator }
     var scrollController: ChatScrollController { baseHarness.scrollController }
     var reducer: TimelineReducer { baseHarness.reducer }
     var toolOutputStore: ToolOutputStore { baseHarness.toolOutputStore }

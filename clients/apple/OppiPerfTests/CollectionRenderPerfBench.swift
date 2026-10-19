@@ -339,7 +339,7 @@ struct CollectionRenderPerfBench {
         let items = Self.realisticTimeline(turnCount: 20)
 
         let us = Self.measureMedianUs {
-            _ = ChatTimelineCollectionHost.Controller.uniqueItemsKeepingLast(items)
+            _ = ChatTimelineController.uniqueItemsKeepingLast(items)
         }
 
         print("METRIC unique_items_no_dup_us=\(String(format: "%.1f", us))")
@@ -352,7 +352,7 @@ struct CollectionRenderPerfBench {
     func reconfigureItemIDsDetection() {
         let items = Self.realisticTimeline(turnCount: 10)
         let (nextIDs, nextItemByID) = {
-            let deduped = ChatTimelineCollectionHost.Controller.uniqueItemsKeepingLast(items)
+            let deduped = ChatTimelineController.uniqueItemsKeepingLast(items)
             return (deduped.orderedIDs, deduped.itemByID)
         }()
         let nextIDSet = Set(nextIDs)
@@ -364,7 +364,7 @@ struct CollectionRenderPerfBench {
                 prevItems[i] = .assistantMessage(id: id, text: text + "x", timestamp: ts)
             }
         }
-        let prevDeduped = ChatTimelineCollectionHost.Controller.uniqueItemsKeepingLast(prevItems)
+        let prevDeduped = ChatTimelineController.uniqueItemsKeepingLast(prevItems)
 
         let us = Self.measureMedianUs {
             _ = TimelineSnapshotApplier.reconfigureItemIDs(
@@ -634,11 +634,11 @@ struct CollectionRenderPerfBench {
 
         // 7. uniqueItemsKeepingLast
         let uniqueUs = Self.measureMedianUs {
-            _ = ChatTimelineCollectionHost.Controller.uniqueItemsKeepingLast(items20)
+            _ = ChatTimelineController.uniqueItemsKeepingLast(items20)
         }
 
         // 8. reconfigureItemIDs
-        let deduped20 = ChatTimelineCollectionHost.Controller.uniqueItemsKeepingLast(items20)
+        let deduped20 = ChatTimelineController.uniqueItemsKeepingLast(items20)
         let nextIDSet20 = Set(deduped20.orderedIDs)
         var prevItems20 = items20
         for i in stride(from: 0, to: min(prevItems20.count, 10), by: 2) {
@@ -646,7 +646,7 @@ struct CollectionRenderPerfBench {
                 prevItems20[i] = .assistantMessage(id: id, text: text + "x", timestamp: ts)
             }
         }
-        let prevDeduped20 = ChatTimelineCollectionHost.Controller.uniqueItemsKeepingLast(prevItems20)
+        let prevDeduped20 = ChatTimelineController.uniqueItemsKeepingLast(prevItems20)
         let detectUs = Self.measureMedianUs {
             _ = TimelineSnapshotApplier.reconfigureItemIDs(
                 nextIDs: deduped20.orderedIDs,

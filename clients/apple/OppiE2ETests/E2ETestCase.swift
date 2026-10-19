@@ -180,8 +180,16 @@ class E2ETestCase: XCTestCase {
             return
         }
 
-        if workspaceDetailSurfaceExists(in: application) || chatSessionSurfaceExists(in: application) {
-            return
+        // The launch hints open the workspace and can push its auto-created
+        // chat right after. For a moment during that push neither surface is
+        // queryable; a single check there sent launch down the workspace-list
+        // path while the chat was arriving.
+        let surfaceDeadline = Date().addingTimeInterval(3)
+        while Date() < surfaceDeadline {
+            if workspaceDetailSurfaceExists(in: application) || chatSessionSurfaceExists(in: application) {
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
 
         // Find and open the e2e-workspace. The row body expands previews; the

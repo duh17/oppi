@@ -954,7 +954,7 @@ Apple implementations:
 - `clients/apple/Oppi/Core/Models/ExtensionUIRequest+Presentation.swift`
 - `clients/apple/Oppi/Features/Chat/Composer/AskCard.swift`
 - `clients/apple/Oppi/Features/Chat/Composer/AskCardExpanded.swift`
-- `clients/apple/Oppi/Features/Chat/ChatView.swift`
+- `clients/apple/Oppi/Features/Chat/ChatViewController.swift`
 - `clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift`
 - `clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift`
 - `clients/apple/OppiCore/Runtime/ExtensionNativeBlockPresentation.swift`

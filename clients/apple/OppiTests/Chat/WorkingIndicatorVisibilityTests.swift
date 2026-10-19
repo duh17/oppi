@@ -10,7 +10,7 @@ import Testing
 @Suite("Working indicator visibility")
 @MainActor
 struct WorkingIndicatorVisibilityTests {
-    private let workingID = ChatTimelineCollectionHost.workingIndicatorID
+    private let workingID = ChatTimelineController.workingIndicatorID
     private let sid = "test-session"
 
     // MARK: - Indicator should be PRESENT

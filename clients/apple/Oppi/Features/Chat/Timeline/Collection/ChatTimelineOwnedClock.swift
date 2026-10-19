@@ -9,9 +9,9 @@ final class ChatTimelineOutlineAvailability {
     var isAvailable = false
 }
 
-/// Presentation state the collection controller owns so SwiftUI is not the
-/// streaming clock. `ChatTimelineView` still pushes chrome through
-/// `updateUIView`; reducer tokens apply here.
+/// Presentation state the collection controller owns so the chat screen is
+/// not the streaming clock. `ChatViewController` pushes chrome through
+/// `update(configuration:collectionView:)`; reducer tokens apply here.
 @MainActor
 final class ChatTimelineOwnedClockState {
     var isObserving = false
@@ -22,7 +22,7 @@ final class ChatTimelineOwnedClockState {
     var pendingScrollCommand: ChatTimelineScrollCommand?
     var scrollCommandNonce = 0
     var lastScrollToBottomNonce: UInt = 0
-    var lastConfiguration: ChatTimelineCollectionHost.Configuration?
+    var lastConfiguration: ChatTimelineConfiguration?
     var emptyOverlayController: UIViewController?
     /// Bumped on session bind and dismantle so deferred chrome publishes cannot
     /// land on a stale reducer.
@@ -46,9 +46,9 @@ final class ChatTimelineOwnedClockState {
     }
 }
 
-extension ChatTimelineCollectionHost.Controller {
+extension ChatTimelineController {
     func updateHostChrome(
-        configuration: ChatTimelineCollectionHost.Configuration,
+        configuration: ChatTimelineConfiguration,
         to collectionView: UICollectionView
     ) {
         let previous = ownedClock.lastConfiguration
@@ -131,7 +131,7 @@ extension ChatTimelineCollectionHost.Controller {
         var visibleRows = projection.rows(forRenderedItemIDs: renderedItemIDs)
         let bottomItemID: String? = {
             if config.showsWorkingIndicator {
-                return ChatTimelineCollectionHost.workingIndicatorID
+                return ChatTimelineController.workingIndicatorID
             }
             return visibleRows.last?.id
         }()
@@ -216,7 +216,7 @@ extension ChatTimelineCollectionHost.Controller {
     #endif
 }
 
-extension ChatTimelineCollectionHost.Controller {
+extension ChatTimelineController {
     private func startOwnedTimelineObservationIfNeeded() {
         guard ownedClock.lastConfiguration?.ownsTimelineProjection == true else { return }
         if !ownedClock.isObserving {
@@ -321,8 +321,8 @@ extension ChatTimelineCollectionHost.Controller {
     }
 
     private func ownedProjectionChromeChanged(
-        from previous: ChatTimelineCollectionHost.Configuration?,
-        to next: ChatTimelineCollectionHost.Configuration
+        from previous: ChatTimelineConfiguration?,
+        to next: ChatTimelineConfiguration
     ) -> Bool {
         guard let previous else { return true }
         return previous.isBusy != next.isBusy
@@ -341,7 +341,7 @@ extension ChatTimelineCollectionHost.Controller {
 
     private func makeOwnedProjection(
         reducer: TimelineReducer,
-        configuration: ChatTimelineCollectionHost.Configuration
+        configuration: ChatTimelineConfiguration
     ) -> QuietTimelineProjection {
         QuietTimelineProjection.make(
             items: reducer.items,

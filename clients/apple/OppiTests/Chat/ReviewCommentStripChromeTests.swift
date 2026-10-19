@@ -7,47 +7,25 @@ import UIKit
 @Suite("Review comment strip chrome")
 @MainActor
 struct ReviewCommentStripChromeTests {
-    @Test("Opening review clears both extension drawers; either extension placement closes review")
-    func reviewAndExtensionDrawersAreExclusiveInBothDirections() throws {
-        let chat = try reviewCommentsChatViewSource()
-        let toggle = try reviewCommentsSourceSlice(
-            named: "private func toggleReviewCommentDrawer", until: "private var timelineTopOverlap", in: chat
-        )
-        #expect(toggle.contains("extensionDrawerCollapseRequestID &+= 1"))
-        #expect(chat.components(separatedBy: "collapseRequestID: extensionDrawerCollapseRequestID").count - 1 == 2)
-        #expect(chat.components(separatedBy: "onExpandedEntryChange: handleExtensionDrawerExpansion").count - 1 == 2)
-        let panel = try reviewCommentsFeatureSource(path: "Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift")
-        #expect(panel.contains(".onChange(of: collapseRequestID)"))
-        let collapse = try reviewCommentsSourceSlice(
-            named: ".onChange(of: collapseRequestID)", until: ".onChange(of: stripEntries", in: panel
-        )
-        #expect(collapse.contains("collapseActiveEntry()"))
-    }
+    @Test("Opening review closes now playing and collapses extension drawers; an extension drawer closes review")
+    func reviewAndExtensionDrawersAreExclusive() {
+        let (connection, _) = makeTestConnection(sessionId: "drawers")
+        let chat = ChatViewController(sessionId: "drawers", connection: connection, navigation: AppNavigation())
+        chat.model.nowPlayingDrawerExpanded = true
+        let collapseRequest = chat.model.extensionDrawerCollapseRequestID
 
-    @Test("Notify chip and other strip drawers are exclusive")
-    func notifyChipAndOtherStripDrawersAreExclusive() throws {
-        let chat = try reviewCommentsChatViewSource()
-        let toggleNotify = try reviewCommentsSourceSlice(
-            named: "private func toggleNotifyChip", until: "private func collapseNotifyChip", in: chat
-        )
-        #expect(toggleNotify.contains("extensionDrawerCollapseRequestID &+= 1"))
-        #expect(toggleNotify.contains("reviewCommentDrawerExpanded = false"))
-        #expect(toggleNotify.contains("nowPlayingDrawerExpanded = false"))
+        chat.toggleReviewCommentDrawer()
+        #expect(chat.model.reviewCommentDrawerExpanded)
+        #expect(!chat.model.nowPlayingDrawerExpanded)
+        #expect(chat.model.extensionDrawerCollapseRequestID == collapseRequest + 1)
 
-        let handle = try reviewCommentsSourceSlice(
-            named: "private func handleExtensionDrawerExpansion", until: "private func toggleNotifyChip", in: chat
-        )
-        #expect(handle.contains("collapseNotifyChip()"))
+        chat.handleExtensionDrawerExpansion(true)
+        #expect(!chat.model.reviewCommentDrawerExpanded)
 
-        let toggleReview = try reviewCommentsSourceSlice(
-            named: "private func toggleReviewCommentDrawer", until: "private func handleExtensionDrawerExpansion", in: chat
-        )
-        #expect(toggleReview.contains("collapseNotifyChip()"))
-
-        let toggleNowPlaying = try reviewCommentsSourceSlice(
-            named: "private func toggleNowPlayingDrawer", until: "private func toggleReviewCommentDrawer", in: chat
-        )
-        #expect(toggleNowPlaying.contains("collapseNotifyChip()"))
+        chat.toggleNowPlayingDrawer()
+        #expect(chat.model.nowPlayingDrawerExpanded)
+        chat.toggleReviewCommentDrawer()
+        #expect(!chat.model.nowPlayingDrawerExpanded)
     }
 
     @Test("Collapsed pill title keeps the full staged-count phrase")
@@ -271,10 +249,6 @@ struct ReviewCommentStripChromeTests {
 
 private func reviewCommentStripChromeSource() throws -> String {
     try reviewCommentsFeatureSource(path: "Oppi/Features/Chat/ReviewComments/ReviewCommentStripChrome.swift")
-}
-
-private func reviewCommentsChatViewSource() throws -> String {
-    try reviewCommentsFeatureSource(path: "Oppi/Features/Chat/ChatView.swift")
 }
 
 private func reviewCommentsFeatureSource(path: String) throws -> String {

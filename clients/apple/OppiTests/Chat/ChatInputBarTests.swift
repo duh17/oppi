@@ -379,46 +379,6 @@ struct ChatInputBarTests {
         #expect(!start.contains("layoutRevision"))
     }
 
-    @Test("Stashing a review comment plays the same success haptic as full-screen save")
-    func reviewCommentSavePlaysSuccessHaptic() throws {
-        let chatViewURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appending(path: "Oppi/Features/Chat/ChatView.swift")
-        let chatView = try String(contentsOf: chatViewURL, encoding: .utf8)
-        let saveSlice = try chatInputBarSourceSlice(
-            named: "private func saveReviewComment(body: String, request: ReviewCommentSelectionRequest) -> Bool {",
-            until: "private func deleteReviewComment(_ comment: ReviewComment) {",
-            in: chatView
-        )
-        let presenterURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appending(path: "Oppi/Features/Chat/ReviewComments/ReviewCommentInlineDraftPresenter.swift")
-        let presenter = try String(contentsOf: presenterURL, encoding: .utf8)
-        let presenterSave = try chatInputBarSourceSlice(
-            named: "private func saveCurrentBody() {",
-            until: "private func updateSaveButton() {",
-            in: presenter
-        )
-
-        #expect(saveSlice.contains("AppHaptics.success()"))
-        #expect(!presenterSave.contains("AppHaptics.success()"))
-
-        let hapticsURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appending(path: "Oppi/Core/Services/AppHaptics.swift")
-        let haptics = try String(contentsOf: hapticsURL, encoding: .utf8)
-        let activation = try chatInputBarSourceSlice(
-            named: "static func dictationActivated() {", until: "static func selectionChanged() {", in: haptics
-        )
-        #expect(activation.contains("success()"), "Dictation must use the same feedback as comment saving")
-        #expect(!activation.contains("impact(style:"))
-        #expect(activation.contains("setAllowHapticsAndSystemSoundsDuringRecording(true)"))
-    }
-
     @Test("ComposerShared cancels owned dictation without committing transcript")
     func cancelOwnedVoiceInputClearsRecordingStateWithoutCommittingTranscript() async throws {
         AppPreferences.Voice.setEngineMode(.onDevice)

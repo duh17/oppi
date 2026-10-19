@@ -10,7 +10,7 @@ struct TimelineSnapshotApplierTests {
 
     @Test func largeTimelineReconfigureIDsAreStableAndVisibleOnly() {
         let timelineIDs = (0..<620).map { "item-\($0)" }
-        let nextIDs = [ChatTimelineCollectionHost.loadMoreID] + timelineIDs
+        let nextIDs = [ChatTimelineController.loadMoreID] + timelineIDs
 
         var nextItemByID: [String: ChatItem] = [:]
         var previousItemByID: [String: ChatItem] = [:]

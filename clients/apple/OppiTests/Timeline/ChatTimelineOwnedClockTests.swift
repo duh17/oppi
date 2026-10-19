@@ -518,13 +518,13 @@ struct ChatTimelineOwnedClockTests {
         windowed.collectionView.layoutIfNeeded()
 
         #expect(windowed.coordinator.ownedTimelineRenderWindowForTesting == TimelineRenderWindowPolicy.standardWindow)
-        #expect(windowed.coordinator.currentIDs.first == ChatTimelineCollectionHost.loadMoreID)
+        #expect(windowed.coordinator.currentIDs.first == ChatTimelineController.loadMoreID)
 
         windowed.coordinator.onShowEarlier?()
         windowed.collectionView.layoutIfNeeded()
 
         #expect(windowed.coordinator.ownedTimelineRenderWindowForTesting == 90)
-        #expect(windowed.coordinator.currentIDs.first != ChatTimelineCollectionHost.loadMoreID)
+        #expect(windowed.coordinator.currentIDs.first != ChatTimelineController.loadMoreID)
     }
 
     @Test func ownedShowEarlierPagesThroughOlderPageActionOnlyAfterLocalRowsAreShown() async {
@@ -697,7 +697,7 @@ struct ChatTimelineOwnedClockTests {
         let collectionView = try #require(windowed.collectionView as? AnchoredCollectionView)
         let coordinator = windowed.coordinator
         #expect(coordinator.ownedTimelineRenderWindowForTesting == TimelineRenderWindowPolicy.standardWindow)
-        #expect(coordinator.currentIDs.first == ChatTimelineCollectionHost.loadMoreID)
+        #expect(coordinator.currentIDs.first == ChatTimelineController.loadMoreID)
         if quietModeEnabled {
             let topRow = try #require(coordinator.currentIDs.dropFirst().first)
             #expect(topRow.hasPrefix("quiet-work-line:"), "fixture must start the window inside a folded turn, got \(topRow)")
@@ -710,7 +710,7 @@ struct ChatTimelineOwnedClockTests {
             let row = try #require(collectionView.indexPathsForVisibleItems
                 .compactMap { indexPath -> (String, CGFloat)? in
                     let id = coordinator.currentIDs[indexPath.item]
-                    guard id != ChatTimelineCollectionHost.loadMoreID,
+                    guard id != ChatTimelineController.loadMoreID,
                           let frame = collectionView.layoutAttributesForItem(at: indexPath)?.frame,
                           frame.minY >= readingTop else { return nil }
                     return (id, frame.minY)
@@ -732,7 +732,7 @@ struct ChatTimelineOwnedClockTests {
         collectionView.testIsDragging = true
         coordinator.scrollViewWillBeginDragging(collectionView)
         var revealedWindows: [Int] = []
-        for _ in 0..<400 where coordinator.currentIDs.first == ChatTimelineCollectionHost.loadMoreID {
+        for _ in 0..<400 where coordinator.currentIDs.first == ChatTimelineController.loadMoreID {
             let windowBefore = coordinator.ownedTimelineRenderWindowForTesting
             collectionView.contentOffset.y -= 150
             collectionView.layoutIfNeeded()
@@ -757,7 +757,7 @@ struct ChatTimelineOwnedClockTests {
         collectionView.testIsTracking = false
         collectionView.testIsDragging = false
 
-        #expect(coordinator.currentIDs.first != ChatTimelineCollectionHost.loadMoreID)
+        #expect(coordinator.currentIDs.first != ChatTimelineController.loadMoreID)
         return revealedWindows
     }
 
@@ -778,10 +778,7 @@ struct ChatTimelineOwnedClockTests {
         windowed.coordinator.updateHostChrome(configuration: config, to: windowed.collectionView)
         #expect(windowed.coordinator.isObservingOwnedTimelineForTesting)
 
-        ChatTimelineCollectionHost.dismantleUIView(
-            windowed.collectionView,
-            coordinator: windowed.coordinator
-        )
+        windowed.coordinator.dismantle(windowed.collectionView)
         #expect(!windowed.coordinator.isObservingOwnedTimelineForTesting)
 
         ChatTimelinePerf.reset()
@@ -797,7 +794,7 @@ struct ChatTimelineOwnedClockTests {
 
 @MainActor
 private func waitForOutlinePublication(
-    on controller: ChatTimelineCollectionHost.Controller,
+    on controller: ChatTimelineController,
     after generation: UInt64
 ) async -> Bool {
     await waitForTimelineCondition(timeoutMs: 1_000) {
@@ -809,7 +806,7 @@ private func waitForOutlinePublication(
 
 @MainActor
 private func waitForOwnedSourceChanges(
-    on controller: ChatTimelineCollectionHost.Controller,
+    on controller: ChatTimelineController,
     after generation: UInt64,
     count: UInt64 = 1
 ) async -> Bool {
@@ -840,15 +837,15 @@ private final class AvailabilityNotificationRecorder: @unchecked Sendable {
 @MainActor
 private struct HostedOwnedTimelineFixture {
     let window: UIWindow
-    let host: UIHostingController<AnyView>
+    let host: UIViewController
     let reducer: TimelineReducer
     let sessionId: String
 
-    var hostedController: ChatTimelineCollectionHost.Controller? {
+    var hostedController: ChatTimelineController? {
         guard let collectionView = timelineFirstView(ofType: UICollectionView.self, in: host.view) else {
             return nil
         }
-        return collectionView.delegate as? ChatTimelineCollectionHost.Controller
+        return collectionView.delegate as? ChatTimelineController
     }
 
     func tearDown() {
@@ -866,34 +863,16 @@ private func makeHostedOwnedTimeline(isBusy: Bool) -> HostedOwnedTimelineFixture
     let scrollController = ChatScrollController()
     let sessionManager = ChatSessionManager(sessionId: sessionId)
 
-    let root = AnyView(
-        ChatTimelineView(
-            sessionId: sessionId,
-            serverId: "server-test",
-            workspaceId: "ws-test",
-            isBusy: isBusy,
-            extensionWorkingState: nil,
-            extensionHiddenThinkingLabel: nil,
-            currentModel: nil,
-            sessionContent: connection.sessionContent,
-            iconAssetCache: nil,
-            openDestination: nil,
-            loadOlderPage: nil,
-            scrollController: scrollController,
-            sessionManager: sessionManager,
-            audioLifecycleCoordinator: nil,
-            onFork: { _ in },
-            onOpenCurrentFile: { _ in },
-            onBackSwipe: {},
-            reviewCommentSelectionRouter: nil,
-            topOverlap: 0,
-            bottomOverlap: 0
-        )
-        .environment(reducer)
-        .environment(audioPlayer)
-    )
-
-    let host = UIHostingController(rootView: root)
+    let host = OwnedTimelineHostController(configuration: makeOwnedTimelineConfiguration(
+        sessionManager: sessionManager,
+        reducer: reducer,
+        scrollController: scrollController,
+        connection: connection,
+        audioPlayer: audioPlayer,
+        isBusy: isBusy,
+        serverId: "server-test",
+        workspaceId: "ws-test"
+    ))
     host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
     let window = UIWindow(frame: host.view.frame)
     window.rootViewController = host

@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -8,7 +7,7 @@ import UIKit
 ///
 /// Bug shape:
 /// - `ChatSessionManager.connect()` can preload `reducer.items` and set
-///   `needsInitialScroll = true` before `ChatTimelineView` attaches its
+///   `needsInitialScroll = true` before the timeline attaches its
 ///   `.onChange` handlers.
 /// - `.onChange(of: sessionManager.needsInitialScroll)` does not fire for the
 ///   initial value that already exists at mount time.
@@ -154,35 +153,16 @@ struct ReadySessionScrollToBottomTests {
             scrollController.updateContentOffsetY(0)
         }
 
-        let root = AnyView(
-            ChatTimelineView(
-                sessionId: sessionManager.sessionId,
-                serverId: "server-test",
-                workspaceId: "ws-test",
-                isBusy: isBusy,
-                extensionWorkingState: nil,
-                extensionHiddenThinkingLabel: nil,
-                currentModel: nil,
-                sessionContent: connection.sessionContent,
-                iconAssetCache: nil,
-                openDestination: nil,
-                loadOlderPage: nil,
-                scrollController: scrollController,
-                sessionManager: sessionManager,
-                audioLifecycleCoordinator: nil,
-                onFork: { _ in },
-                onOpenCurrentFile: { _ in },
-                onBackSwipe: {},
-                reviewCommentSelectionRouter: nil,
-                topOverlap: 0,
-                bottomOverlap: 0
-            )
-            .environment(reducer)
-            .environment(audioPlayer)
-            .environment(connection)
-        )
-
-        let controller = UIHostingController(rootView: root)
+        let controller = OwnedTimelineHostController(configuration: makeOwnedTimelineConfiguration(
+            sessionManager: sessionManager,
+            reducer: reducer,
+            scrollController: scrollController,
+            connection: connection,
+            audioPlayer: audioPlayer,
+            isBusy: isBusy,
+            serverId: "server-test",
+            workspaceId: "ws-test"
+        ))
         controller.loadViewIfNeeded()
         controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
 
@@ -198,7 +178,7 @@ struct ReadySessionScrollToBottomTests {
                 timelineFirstView(ofType: UICollectionView.self, in: controller.view) != nil
             }
         }
-        #expect(collectionViewReady, "Expected hosted ChatTimelineView to create UICollectionView")
+        #expect(collectionViewReady, "Expected the hosted timeline to create its UICollectionView")
 
         let collectionView = try #require(timelineFirstView(ofType: UICollectionView.self, in: controller.view))
         return HostedTimelineFixture(
@@ -260,7 +240,7 @@ struct ReadySessionScrollToBottomTests {
 
 private struct HostedTimelineFixture {
     let window: UIWindow
-    let controller: UIHostingController<AnyView>
+    let controller: UIViewController
     let collectionView: UICollectionView
     let reducer: TimelineReducer
     let sessionManager: ChatSessionManager

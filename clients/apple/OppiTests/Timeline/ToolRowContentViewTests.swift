@@ -48,7 +48,7 @@ struct ToolHeaderAccessibilityTests {
         config.onHeaderActivate = { activations += 1; return true }
         let cell = SafeSizingCell(frame: CGRect(x: 0, y: 0, width: 350, height: 80))
         cell.contentConfiguration = CollapsedToolTimelineRowConfiguration(chrome: config)
-        let view = try #require(ChatTimelineCollectionHost.Controller.firstSubview(
+        let view = try #require(ChatTimelineController.firstSubview(
             ofType: CollapsedToolTimelineRowContentView.self, in: cell.contentView
         ))
         let border = try #require(view.subviews.first)

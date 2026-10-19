@@ -23,7 +23,7 @@ struct QuietTimelineScrollTests {
         applyQuiet(items, to: windowed, isBusy: true, streamingID: assistantID)
         expectAttachedTail(
             windowed,
-            mustContain: ["quiet-work-line:think-1", ChatTimelineCollectionHost.workingIndicatorID],
+            mustContain: ["quiet-work-line:think-1", ChatTimelineController.workingIndicatorID],
             label: "live work strip insert"
         )
 
@@ -55,7 +55,7 @@ struct QuietTimelineScrollTests {
         applyQuiet(items, to: windowed, isBusy: true, streamingID: assistantID)
         expectAttachedTail(
             windowed,
-            mustContain: ["quiet-work-line:think-1", ChatTimelineCollectionHost.workingIndicatorID],
+            mustContain: ["quiet-work-line:think-1", ChatTimelineController.workingIndicatorID],
             label: "quiet tool fold"
         )
         #expect(windowed.collectionView.contentOffset.y >= previousOffsetY - 4)

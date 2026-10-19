@@ -885,8 +885,8 @@ private struct UIHangHarnessContent: View {
                 ))
             }
 
-            ChatTimelineCollectionHost(
-                configuration: .init(
+            UIHangHarnessTimeline(
+                configuration: ChatTimelineConfiguration(
                     items: visibleItems,
                     hiddenCount: hiddenCount,
                     renderWindowStep: Self.renderWindowStep,
@@ -1256,7 +1256,7 @@ private struct UIHangHarnessContent: View {
         scrollController.itemCount = visible.count
 
         // Busy streaming follow is intentionally owned by
-        // ChatTimelineCollectionHost after layout settles. The harness should
+        // the timeline after layout settles. The harness should
         // exercise the same ambient tail governor as production rather than
         // emitting scrollToItem commands on every token.
     }
@@ -2036,6 +2036,31 @@ final class HarnessFrameIntervalMonitor: NSObject {
         let deltaMs = max(0, Int(((timestamp - previousTimestamp) * 1_000).rounded()))
         self.previousTimestamp = timestamp
         recorder.record(deltaMs)
+    }
+}
+
+// The one SwiftUI host of the timeline outside the chat: this test harness
+// lays the timeline out among its own SwiftUI controls and state, and moving
+// it to UIKit is out of the chat screen's migration.
+private struct UIHangHarnessTimeline: UIViewRepresentable {
+    let configuration: ChatTimelineConfiguration
+    @Environment(\.appRootEnvironment) private var root
+
+    func makeCoordinator() -> ChatTimelineController {
+        ChatTimelineController()
+    }
+
+    func makeUIView(context: Context) -> UICollectionView {
+        context.coordinator.makeCollectionView(configuration: configuration, contentRoot: root)
+    }
+
+    func updateUIView(_ collectionView: UICollectionView, context: Context) {
+        context.coordinator.contentRoot = root
+        context.coordinator.update(configuration: configuration, collectionView: collectionView)
+    }
+
+    static func dismantleUIView(_ collectionView: UICollectionView, coordinator: ChatTimelineController) {
+        coordinator.dismantle(collectionView)
     }
 }
 

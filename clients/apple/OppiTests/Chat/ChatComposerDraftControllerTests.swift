@@ -7,14 +7,14 @@ import Testing
 @MainActor
 struct ChatComposerDraftControllerTests {
     @Test func unknownSessionMetadataAndIncognitoSessionsStayMemoryOnly() {
-        #expect(ChatView.composerDraftIsMemoryOnly(hasSessionMetadata: false, isEphemeral: nil))
-        #expect(ChatView.composerDraftIsMemoryOnly(hasSessionMetadata: true, isEphemeral: true))
-        #expect(!ChatView.composerDraftIsMemoryOnly(hasSessionMetadata: true, isEphemeral: false))
-        #expect(!ChatView.composerDraftIsMemoryOnly(hasSessionMetadata: true, isEphemeral: nil))
+        #expect(ChatViewController.composerDraftIsMemoryOnly(hasSessionMetadata: false, isEphemeral: nil))
+        #expect(ChatViewController.composerDraftIsMemoryOnly(hasSessionMetadata: true, isEphemeral: true))
+        #expect(!ChatViewController.composerDraftIsMemoryOnly(hasSessionMetadata: true, isEphemeral: false))
+        #expect(!ChatViewController.composerDraftIsMemoryOnly(hasSessionMetadata: true, isEphemeral: nil))
     }
 
     @Test func localCompactAppearsWhenServerDoesNotReturnIt() {
-        let commands = ChatView.availableSlashCommands(from: [])
+        let commands = ChatViewController.availableSlashCommands(from: [])
 
         #expect(commands.map(\.name) == ["compact"])
         #expect(commands.first?.description == "Compact context")
@@ -28,28 +28,28 @@ struct ChatComposerDraftControllerTests {
             source: .extension
         )
 
-        let commands = ChatView.availableSlashCommands(from: [serverCompact])
+        let commands = ChatViewController.availableSlashCommands(from: [serverCompact])
 
         #expect(commands == [serverCompact])
     }
 
     @Test func exactCompactSlashCommandUsesTheLocalCompactAction() {
-        #expect(ChatView.localSlashCommand(for: "/compact") == .compact)
-        #expect(ChatView.localSlashCommand(for: "  /COMPACT\n") == .compact)
-        #expect(ChatView.localSlashCommand(for: "/compact keep recent work") == nil)
-        #expect(ChatView.localSlashCommand(for: "please /compact") == nil)
+        #expect(ChatViewController.localSlashCommand(for: "/compact") == .compact)
+        #expect(ChatViewController.localSlashCommand(for: "  /COMPACT\n") == .compact)
+        #expect(ChatViewController.localSlashCommand(for: "/compact keep recent work") == nil)
+        #expect(ChatViewController.localSlashCommand(for: "please /compact") == nil)
     }
 
     @Test func controlRouteResolvesCommentScopeBeforeSessionMetadataLoads() {
         #expect(
-            ChatView.reviewCommentLocalScopeId(routeScope: .control)
+            ChatViewController.reviewCommentLocalScopeId(routeScope: .control)
                 == SessionRouteScope.control.composerDraftScopeID
         )
         #expect(
-            ChatView.reviewCommentLocalScopeId(routeScope: .workspace("workspace-1"))
+            ChatViewController.reviewCommentLocalScopeId(routeScope: .workspace("workspace-1"))
                 == "workspace-1"
         )
-        #expect(ChatView.reviewCommentLocalScopeId(routeScope: nil) == nil)
+        #expect(ChatViewController.reviewCommentLocalScopeId(routeScope: nil) == nil)
     }
 
     @Test func endingReviewModeReturnsToPendingAskBeforeMessageMode() {
@@ -68,23 +68,23 @@ struct ChatComposerDraftControllerTests {
             timeout: nil
         )
 
-        #expect(ChatView.resolvedComposerMode(
+        #expect(ChatViewController.resolvedComposerMode(
             hasReviewComment: true,
             hasAskRequest: true
         ) == .reviewComment)
-        #expect(ChatView.resolvedComposerAskRequest(
+        #expect(ChatViewController.resolvedComposerAskRequest(
             ask,
             hasReviewComment: true
         ) == nil)
-        #expect(ChatView.resolvedComposerMode(
+        #expect(ChatViewController.resolvedComposerMode(
             hasReviewComment: false,
             hasAskRequest: true
         ) == .ask)
-        #expect(ChatView.resolvedComposerAskRequest(
+        #expect(ChatViewController.resolvedComposerAskRequest(
             ask,
             hasReviewComment: false
         )?.id == ask.id)
-        #expect(ChatView.resolvedComposerMode(
+        #expect(ChatViewController.resolvedComposerMode(
             hasReviewComment: false,
             hasAskRequest: false
         ) == .message)
@@ -283,7 +283,7 @@ struct ChatComposerDraftControllerTests {
         controller.attach(store: store, key: key, isEphemeral: false)
 
         let submission = try #require(controller.beginSubmission(draftClearance: .immediately))
-        controller.setPendingAttachments([]) // ChatView's dispatch cleanup
+        controller.setPendingAttachments([]) // ChatViewController's dispatch cleanup
 
         #expect(store.record(for: key) == nil)
         #expect(submission.payload.text == "send this")
@@ -484,24 +484,24 @@ struct ChatComposerDraftControllerTests {
         let controller = ChatComposerDraftController(initialText: "send once")
         controller.attach(store: store, key: key, isEphemeral: false)
 
-        #expect(!ChatView.composerSendIsInFlight(
+        #expect(!ChatViewController.composerSendIsInFlight(
             isPreparingAttachments: false,
             actionIsSending: false,
             draftSubmissionIsInFlight: controller.isSubmissionInFlight
         ))
 
-        let firstSubmission = try #require(ChatView.beginComposerSubmission(
+        let firstSubmission = try #require(ChatViewController.beginComposerSubmission(
             draftController: controller,
             draftClearance: .afterSuccess,
             isPreparingAttachments: false,
             actionIsSending: false
         ))
-        #expect(ChatView.composerSendIsInFlight(
+        #expect(ChatViewController.composerSendIsInFlight(
             isPreparingAttachments: false,
             actionIsSending: false,
             draftSubmissionIsInFlight: controller.isSubmissionInFlight
         ))
-        let secondSubmission = ChatView.beginComposerSubmission(
+        let secondSubmission = ChatViewController.beginComposerSubmission(
             draftController: controller,
             draftClearance: .afterSuccess,
             isPreparingAttachments: false,
@@ -693,7 +693,7 @@ struct ChatComposerDraftControllerTests {
         controller.attach(store: store, key: try fixture.key(), isEphemeral: false)
         controller.setMode(.ask)
 
-        let accepted = ChatView.applyPendingAttachments(
+        let accepted = ChatViewController.applyPendingAttachments(
             [video],
             draftController: controller,
             current: []

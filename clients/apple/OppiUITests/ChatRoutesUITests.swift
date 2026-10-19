@@ -1,7 +1,7 @@
 import XCTest
 
 /// Taps through every router modal and side panel chat owns, on the
-/// production ChatView with fixture services (`SCREENSHOT_SCREEN=chat-routes`).
+/// production ChatViewController with fixture services (`SCREENSHOT_SCREEN=chat-routes`).
 /// Each modal opens, any push inside it is tapped through and popped, it closes
 /// by its own control and, where it is a sheet, by swipe-down, and the app is
 /// still running after every step: a hosted page that lost a presenter-local

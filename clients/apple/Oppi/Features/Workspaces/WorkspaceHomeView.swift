@@ -291,57 +291,6 @@ struct WorkspaceScopedDestinationView: View {
     }
 }
 
-struct WorkspaceSessionScopedDestinationView: View {
-    @Environment(ConnectionCoordinator.self) private var coordinator
-    let target: WorkspaceSessionNavTarget
-
-    @State private var scopedConnection: ServerConnection?
-    @State private var locks = ScopedLockService.shared
-
-    var body: some View {
-        ScopedLockGate(
-            target: locks.sessionTarget(
-                serverId: target.serverId,
-                sessionId: target.sessionId,
-                workspaceId: target.workspaceId
-            ),
-            title: locks.sessionLookup(target.serverId, target.sessionId)?.displayTitle
-                ?? String(localized: "Session")
-        ) {
-            unlockedBody
-        }
-    }
-
-    private var unlockedBody: some View {
-        Group {
-            if let connection = resolvedConnection {
-                ChatView(
-                    sessionId: target.sessionId,
-                    serverIdHint: target.serverId,
-                    workspaceIdHint: target.workspaceId,
-                    routeScope: target.routeScope,
-                    isShellRoute: true
-                )
-                .id(target.sessionId)
-                .withServerScopedEnvironment(connection)
-            } else {
-                ProgressView("Connecting…")
-            }
-        }
-        .task(id: target.serverId) {
-            guard await coordinator.switchToServerReady(target.serverId) else { return }
-            scopedConnection = coordinator.connection(for: target.serverId)
-        }
-    }
-
-    /// Notification/deep-link open already awaited `switchToServerReady`.
-    /// Reuse that connection immediately so ChatView can bind the normal
-    /// session stream instead of sitting on "Connecting…".
-    private var resolvedConnection: ServerConnection? {
-        scopedConnection ?? coordinator.connection(for: target.serverId)
-    }
-}
-
 struct WorkspaceFileBrowserDestinationView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     let target: FileBrowserNavTarget

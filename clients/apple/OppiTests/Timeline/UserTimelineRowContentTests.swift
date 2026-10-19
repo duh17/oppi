@@ -1521,7 +1521,7 @@ private final class ImagePreviewTimelineFixture {
     let fullTimelineItemIDs: [String]
 
     var collectionView: UICollectionView { windowed.collectionView }
-    var coordinator: ChatTimelineCollectionHost.Controller { windowed.coordinator }
+    var coordinator: ChatTimelineController { windowed.coordinator }
     var scrollController: ChatScrollController { windowed.scrollController }
 
     init(
@@ -1630,16 +1630,16 @@ private final class ImagePreviewTimelineFixture {
         fullTimelineItemIDs replacementFullTimelineItemIDs: [String]? = nil
     ) -> (
         collectionView: UICollectionView,
-        coordinator: ChatTimelineCollectionHost.Controller
+        coordinator: ChatTimelineController
     ) {
         let replacement = AnchoredCollectionView(
             frame: host.view.bounds,
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         replacement.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         replacement.accessibilityIdentifier = "chat.timeline"
 
-        let replacementCoordinator = ChatTimelineCollectionHost.Controller()
+        let replacementCoordinator = ChatTimelineController()
         replacementCoordinator.configureDataSource(collectionView: replacement)
         replacement.delegate = replacementCoordinator
         host.view.insertSubview(replacement, belowSubview: sourceView)
@@ -1715,7 +1715,7 @@ private final class ImagePreviewTimelineFixture {
     func assertReadingAnchor(
         _ anchor: ReadingAnchor,
         collectionView: UICollectionView? = nil,
-        coordinator: ChatTimelineCollectionHost.Controller? = nil
+        coordinator: ChatTimelineController? = nil
     ) {
         let targetCollectionView = collectionView ?? self.collectionView
         let targetCoordinator = coordinator ?? self.coordinator

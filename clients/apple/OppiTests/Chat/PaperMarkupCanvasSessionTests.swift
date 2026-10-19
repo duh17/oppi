@@ -62,7 +62,7 @@ struct PaperMarkupCanvasSessionTests {
 
         let draft = ChatComposerDraftController(initialText: "existing prompt")
         var destinationPending: [PendingAttachment] = []
-        let delivered = ChatView.deliverCanvasToComposer(
+        let delivered = ChatViewController.deliverCanvasToComposer(
             attachment: attachment,
             recognizedText: "login box",
             draftController: draft,
@@ -465,7 +465,7 @@ struct PaperMarkupCanvasSessionTests {
             destinationDraft.setMode(mode)
             var destinationPending: [PendingAttachment] = []
             let destination = ComposerCanvasDestination(sessionId: "session-origin") { received, recognized in
-                ChatView.deliverCanvasToComposer(
+                ChatViewController.deliverCanvasToComposer(
                     attachment: received,
                     recognizedText: recognized,
                     draftController: destinationDraft,
@@ -499,7 +499,7 @@ struct PaperMarkupCanvasSessionTests {
             let callbackHost = PaperMarkupCanvasHostController(
                 background: .blank,
                 onAddToChat: { received, recognized in
-                    ChatView.deliverCanvasToComposer(
+                    ChatViewController.deliverCanvasToComposer(
                         attachment: received,
                         recognizedText: recognized,
                         draftController: callbackDraft,

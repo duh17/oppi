@@ -12,6 +12,19 @@ enum TrailingSidePanelPolicy {
     static func usesTrailingColumn(horizontalSizeClass: UserInterfaceSizeClass?) -> Bool {
         horizontalSizeClass == .regular
     }
+
+    static func usesTrailingColumn(horizontalSizeClass: UIUserInterfaceSizeClass) -> Bool {
+        horizontalSizeClass == .regular
+    }
+}
+
+/// A UIKit screen that shows a trailing column itself (the chat): it adds a
+/// `TrailingColumnController(screen:)` as a child and calls `show`. While the
+/// column is up, the column turns `followsKeyboard` off when a field in its
+/// panel has the keyboard, so the screen's own inputs stay where they are.
+@MainActor
+protocol TrailingColumnKeyboardScreen: UIViewController {
+    var followsKeyboard: Bool { get set }
 }
 
 extension View {
@@ -124,9 +137,20 @@ final class TrailingColumnController: UIViewController {
     /// trailing inset this column added to it.
     private weak var host: UIViewController?
     private var hostInset: CGFloat = 0
-    /// The hosted screen beside the column while it is attached.
-    private weak var screen: HostedScreenController?
+    /// The screen beside the column while it is attached.
+    private weak var screen: UIViewController?
+    /// The UIKit screen that owns this column, when one does
+    /// (`TrailingColumnKeyboardScreen`); otherwise the hosted screen above it.
+    private weak var explicitScreen: UIViewController?
     private var isOnScreen = false
+
+    init(screen: UIViewController? = nil) {
+        explicitScreen = screen
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 
     override func loadView() {
         let view = UIView(frame: .zero)
@@ -238,8 +262,10 @@ final class TrailingColumnController: UIViewController {
         return top === self ? nil : top
     }
 
-    /// The hosted screen that asked for this column.
-    private var owningScreen: HostedScreenController? {
+    /// The screen that asked for this column: the UIKit screen that owns it,
+    /// or the hosted screen above it.
+    private var owningScreen: UIViewController? {
+        if let explicitScreen { return explicitScreen }
         var candidate = parent
         while let current = candidate {
             if let screen = current as? HostedScreenController { return screen }
@@ -300,7 +326,11 @@ final class TrailingColumnController: UIViewController {
     }
 
     private func screenFollowsKeyboard(_ follows: Bool) {
-        guard let screen else { return }
+        if let screen = screen as? TrailingColumnKeyboardScreen {
+            screen.followsKeyboard = follows
+            return
+        }
+        guard let screen = screen as? HostedScreenController else { return }
         let regions: SafeAreaRegions = follows ? .all : .container
         if screen.safeAreaRegions != regions {
             screen.safeAreaRegions = regions

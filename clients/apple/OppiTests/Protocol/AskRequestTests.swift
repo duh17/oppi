@@ -970,7 +970,7 @@ struct AskRequestTests {
         #expect(prepared == ["s2"])
         #expect(conn.focusedSessionId == "s2")
         #expect(conn.sessionStore.activeSessionId == "s2")
-        #expect(ChatView.resolvedComposerAskRequest(
+        #expect(ChatViewController.resolvedComposerAskRequest(
             conn.askRequestStore.pending(for: "s2"),
             hasReviewComment: false
         )?.id == "ask-open")
@@ -1015,7 +1015,7 @@ struct AskRequestTests {
         #expect(conn.sessionStore.session(id: "child")?.status == .busy)
         #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/child/stream")
         #expect(streamConnects == 1)
-        #expect(ChatView.resolvedComposerAskRequest(
+        #expect(ChatViewController.resolvedComposerAskRequest(
             conn.askRequestStore.pending(for: "child"),
             hasReviewComment: false
         )?.id == "ask-live")

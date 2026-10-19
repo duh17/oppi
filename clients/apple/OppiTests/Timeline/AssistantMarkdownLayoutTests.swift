@@ -52,7 +52,7 @@ struct AssistantMarkdownLayoutTests {
     }
 
     @Test func collectionViewCellsDoNotOverlap() throws {
-        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let layout = ChatTimelineController.makeTestLayout()
         let collectionView = UICollectionView(
             frame: CGRect(x: 0, y: 0, width: 393, height: 852),
             collectionViewLayout: layout
@@ -98,7 +98,7 @@ struct AssistantMarkdownLayoutTests {
     /// image cut off until another interaction. Size changes must force-invalidate.
     @Test func asyncPNGImageGrowsWhileDetachedFromBottom() async throws {
         let hostSize = CGSize(width: 393, height: 852)
-        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let layout = ChatTimelineController.makeTestLayout()
         let collectionView = AnchoredCollectionView(
             frame: CGRect(origin: .zero, size: hostSize),
             collectionViewLayout: layout
@@ -220,7 +220,7 @@ struct AssistantMarkdownLayoutTests {
     /// assistant row is first measured. If the enclosing collection view layout
     /// is not invalidated when the image appears, following rows can overlap it.
     @Test func asyncSVGImageRenderReflowsTimelineWithoutUserTouch() async throws {
-        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let layout = ChatTimelineController.makeTestLayout()
         let collectionView = UICollectionView(
             frame: CGRect(x: 0, y: 0, width: 393, height: 852),
             collectionViewLayout: layout
@@ -1442,20 +1442,20 @@ struct AssistantMarkdownLayoutTests {
         // exercises the actual SafeSizingCell (which is private to the
         // DataSource file). We set up the coordinator through the public
         // makeUIView → configureDataSource path.
-        let layout = ChatTimelineCollectionHost.makeTestLayout()
+        let layout = ChatTimelineController.makeTestLayout()
         let collectionView = UICollectionView(
             frame: CGRect(x: 0, y: 0, width: 393, height: 852),
             collectionViewLayout: layout
         )
 
-        let controller = ChatTimelineCollectionHost.Controller()
+        let controller = ChatTimelineController()
         controller.configureDataSource(collectionView: collectionView)
 
         let items: [ChatItem] = [
             .assistantMessage(id: "a1", text: "Test content.", timestamp: Date()),
         ]
 
-        let (orderedIDs, itemByID) = ChatTimelineCollectionHost.Controller.uniqueItemsKeepingLast(items)
+        let (orderedIDs, itemByID) = ChatTimelineController.uniqueItemsKeepingLast(items)
         controller.currentIDs = orderedIDs
         controller.currentItemByID = itemByID
 

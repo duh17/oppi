@@ -637,16 +637,15 @@ struct WorkspaceReviewFileDetailView: View {
         let connection = connection
         let apiClient = apiClient
         let appNavigation = appNavigation
-        navigator.push {
-            ChatView(
-                sessionId: destination.id,
-                workspaceIdHint: workspaceId,
-                initialInputText: destination.inputText,
-                initialPendingFiles: destination.pendingFileReferences
-            )
-            .id(destination.id)
-            .presenterScope(connection: connection, apiClient: apiClient, navigation: appNavigation)
-        }
+        navigator.push(ChatViewController(
+            sessionId: destination.id,
+            connection: connection,
+            navigation: appNavigation,
+            apiClient: apiClient,
+            workspaceIdHint: workspaceId,
+            initialInputText: destination.inputText,
+            initialPendingFiles: destination.pendingFileReferences
+        ))
     }
 
     // MARK: - File Navigation

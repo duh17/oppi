@@ -9,7 +9,7 @@ enum TimelineScrollCoordinator {
     final class ImagePreviewViewportRestoration {
         private weak var window: UIWindow?
         private weak var collectionView: UICollectionView?
-        private weak var controller: ChatTimelineCollectionHost.Controller?
+        private weak var controller: ChatTimelineController?
         private weak var scrollController: ChatScrollController?
         private let sessionId: String
         private let snapshot: TimelineViewportSnapshot?
@@ -21,7 +21,7 @@ enum TimelineScrollCoordinator {
         fileprivate init(
             window: UIWindow,
             collectionView: UICollectionView,
-            controller: ChatTimelineCollectionHost.Controller,
+            controller: ChatTimelineController,
             scrollController: ChatScrollController,
             sessionId: String,
             snapshot: TimelineViewportSnapshot?,
@@ -146,7 +146,7 @@ enum TimelineScrollCoordinator {
 
         private func resolveCurrentTimeline() -> (
             UICollectionView,
-            ChatTimelineCollectionHost.Controller,
+            ChatTimelineController,
             ChatScrollController
         )? {
             if let collectionView,
@@ -160,7 +160,7 @@ enum TimelineScrollCoordinator {
 
             guard let window,
                   let collectionView = TimelineScrollCoordinator.visibleTimelineCollectionView(in: window),
-                  let controller = collectionView.delegate as? ChatTimelineCollectionHost.Controller,
+                  let controller = collectionView.delegate as? ChatTimelineController,
                   let scrollController = controller.scrollController,
                   controller.sessionId == sessionId else {
                 return nil
@@ -173,7 +173,7 @@ enum TimelineScrollCoordinator {
 
         private func restoreAttachedTail(
             collectionView: UICollectionView,
-            controller: ChatTimelineCollectionHost.Controller,
+            controller: ChatTimelineController,
             scrollController: ChatScrollController,
             deferredPasses: Int,
             completion: (@MainActor () -> Void)? = nil
@@ -244,7 +244,7 @@ enum TimelineScrollCoordinator {
         guard let window = presenter.view.window,
               let collectionView = visibleTimelineCollectionView(in: presenter.view)
                 ?? visibleTimelineCollectionView(in: window),
-              let controller = collectionView.delegate as? ChatTimelineCollectionHost.Controller,
+              let controller = collectionView.delegate as? ChatTimelineController,
               let scrollController = controller.scrollController else {
             return nil
         }
@@ -387,8 +387,8 @@ enum TimelineScrollCoordinator {
             .compactMap { indexPath -> (indexPath: IndexPath, attributes: UICollectionViewLayoutAttributes)? in
                 guard indexPath.item < currentIDs.count else { return nil }
                 let id = currentIDs[indexPath.item]
-                guard id != ChatTimelineCollectionHost.loadMoreID,
-                      id != ChatTimelineCollectionHost.workingIndicatorID,
+                guard id != ChatTimelineController.loadMoreID,
+                      id != ChatTimelineController.workingIndicatorID,
                       let attributes = collectionView.layoutAttributesForItem(at: indexPath),
                       attributes.frame.intersects(visibleRect) else {
                     return nil

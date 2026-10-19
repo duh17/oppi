@@ -1023,7 +1023,7 @@ struct ChatActionHandlerTests {
     }
 
     @Test func sendPromptAutoTitleUsesFirstMessageNotCurrentPrompt() async {
-        // Regression: when the ChatView is recreated (navigation away/back),
+        // Regression: when the ChatViewController is recreated (navigation away/back),
         // the auto-title guard state is lost. A second prompt send would
         // re-trigger title generation. The title must always be derived from
         // session.firstMessage, not whatever the user typed on later turns.
@@ -1268,7 +1268,7 @@ struct ChatActionHandlerTests {
     @Test func regressionCleanupDoesNotCancelPendingAutoTitleTask() async {
         // Verifies that cleanup() lets pending auto-title tasks finish.
         // The old code cancelled them, causing the title to never be set
-        // after navigation away from ChatView.
+        // after navigation away from ChatViewController.
         UserDefaults.standard.set("onDevice", forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
         defer {
             UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
@@ -1455,7 +1455,7 @@ struct ChatActionHandlerTests {
             }
         }
 
-        // New handler (simulates ChatView recreation)
+        // New handler (simulates ChatViewController recreation)
         let handler = ChatActionHandler()
         var titleGenCalls = 0
         handler._generateSessionTitleForTesting = { _ in

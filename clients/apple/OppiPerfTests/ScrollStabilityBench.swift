@@ -262,7 +262,7 @@ struct ScrollStabilityBench {
     private final class BenchHarness {
         let window: UIWindow
         let collectionView: AnchoredCollectionView
-        let coordinator: ChatTimelineCollectionHost.Controller
+        let coordinator: ChatTimelineController
         let scrollController: ChatScrollController
         let reducer: TimelineReducer
         let toolOutputStore: ToolOutputStore
@@ -275,7 +275,7 @@ struct ScrollStabilityBench {
         init(
             window: UIWindow,
             collectionView: AnchoredCollectionView,
-            coordinator: ChatTimelineCollectionHost.Controller,
+            coordinator: ChatTimelineController,
             items: [ChatItem]
         ) {
             self.window = window
@@ -329,12 +329,12 @@ struct ScrollStabilityBench {
 
         let collectionView = AnchoredCollectionView(
             frame: window.bounds,
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
 
-        let coordinator = ChatTimelineCollectionHost.Controller()
+        let coordinator = ChatTimelineController()
         coordinator.configureDataSource(collectionView: collectionView)
         collectionView.delegate = coordinator
 

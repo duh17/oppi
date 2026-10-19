@@ -373,7 +373,7 @@ final class SessionStore {
 
     /// Cache a session for direct navigation without broadening the cold list projection.
     ///
-    /// Archive rows need enough full-session context for `ChatView` resolution, but
+    /// Archive rows need enough full-session context for `ChatViewController` resolution, but
     /// opening an old row must not make it appear in the hot workspace list.
     @discardableResult
     func cacheSessionForNavigation(_ session: Session) -> Bool {

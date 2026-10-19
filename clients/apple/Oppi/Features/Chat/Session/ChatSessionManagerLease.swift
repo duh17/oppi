@@ -1,8 +1,8 @@
 import Foundation
 
-/// Owns a ``ChatSessionManager`` for the lifetime of a ChatView identity.
+/// Owns a ``ChatSessionManager`` for the lifetime of a ChatViewController identity.
 ///
-/// Covered ChatView can skip `onDisappear` cleanup and then be destroyed
+/// A covered chat can skip its disappearance cleanup and then be destroyed
 /// without a second disappear (iPad stack recreation, stack↔split, leave).
 /// Releasing this lease still cancels the connect loop and releases still-owned focus.
 @MainActor

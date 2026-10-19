@@ -54,7 +54,7 @@ struct ChatReaderOpenLookupDestinationTests {
         for content in contents {
             var opened: ChatReaderPayload?
             let openChatReader = ChatReaderOpenAction { payload in
-                opened = ChatView.stampedTimelineReaderPayload(
+                opened = ChatViewController.stampedTimelineReaderPayload(
                     payload,
                     sessionId: "chat-origin",
                     composerDestination: destination
@@ -83,7 +83,7 @@ struct ChatReaderOpenLookupDestinationTests {
         let composerA = ComposerCanvasDestination(sessionId: "chat-a") { _, _ in true }
         ComposerCanvasActiveDestination.push(activeA)
 
-        let stamped = ChatView.stampedTimelineReaderPayload(
+        let stamped = ChatViewController.stampedTimelineReaderPayload(
             .document(content: .html(content: "<p>hello</p>", filePath: "note.html")),
             sessionId: "chat-a",
             composerDestination: composerA
@@ -102,7 +102,7 @@ struct ChatReaderOpenLookupDestinationTests {
             ComposerCanvasDestination(sessionId: "chat-b") { _, _ in true }
         )
 
-        let stamped = ChatView.stampedTimelineReaderPayload(
+        let stamped = ChatViewController.stampedTimelineReaderPayload(
             .document(content: .html(content: "<p>hello</p>", filePath: "note.html")),
             sessionId: "chat-a",
             composerDestination: composerA
@@ -123,7 +123,7 @@ struct ChatReaderOpenLookupDestinationTests {
             destination: other
         )
 
-        let stamped = ChatView.stampedTimelineReaderPayload(
+        let stamped = ChatViewController.stampedTimelineReaderPayload(
             incoming,
             sessionId: "chat-a",
             composerDestination: composerA
@@ -139,7 +139,7 @@ struct ChatReaderOpenLookupDestinationTests {
 
         let composerA = ComposerCanvasDestination(sessionId: "chat-a") { _, _ in true }
         for payload in try payloadsOfEveryKind() {
-            let stamped = ChatView.stampedTimelineReaderPayload(
+            let stamped = ChatViewController.stampedTimelineReaderPayload(
                 payload,
                 sessionId: "chat-a",
                 composerDestination: composerA
@@ -192,7 +192,7 @@ struct ChatReaderOpenLookupDestinationTests {
 
         let store = ChatReaderPayloadStore()
         let target = store.store(
-            ChatView.stampedTimelineReaderPayload(
+            ChatViewController.stampedTimelineReaderPayload(
                 .document(content: .html(content: "<p>hello</p>", filePath: "note.html")),
                 sessionId: "chat-a",
                 composerDestination: origin
@@ -313,7 +313,7 @@ struct ChatReaderOpenLookupDestinationTests {
         #expect(view.presentCollapsedImagePreviewIfAvailable())
         let payload = try #require(opened)
         #expect(addToChatSessionId(from: payload) == nil)
-        let stamped = ChatView.stampedTimelineReaderPayload(
+        let stamped = ChatViewController.stampedTimelineReaderPayload(
             payload,
             sessionId: "timeline-chat",
             composerDestination: destination
@@ -336,7 +336,7 @@ struct ChatReaderOpenLookupDestinationTests {
             return
         }
         #expect(opened.destination == nil)
-        let stamped = ChatView.stampedTimelineReaderPayload(
+        let stamped = ChatViewController.stampedTimelineReaderPayload(
             opened,
             sessionId: "chat-origin",
             composerDestination: destination

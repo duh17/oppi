@@ -221,14 +221,14 @@ struct AppRootLayer: View {
 
         // Switch server FIRST so coordinator.activeConnection (and all
         // environment-injected stores) reflect the target server by the time
-        // ChatView renders. Without this, cross-server quick sessions can
-        // capture the OLD connection in ChatView's .task.
+        // ChatViewController renders. Without this, cross-server quick sessions can
+        // capture the OLD connection in the chat's session entry.
         guard await coordinator.switchToServerReady(pending.target.serverId) else {
             return
         }
         navigation.pendingQuickSessionNav = nil
 
-        // Keep the existing send path intact. ChatView will upload any pending
+        // Keep the existing send path intact. ChatViewController will upload any pending
         // local attachments and dispatch the message through the focused stream.
         navigation.pendingQuickSessionMessage = pending.autoSendMessage
         navigation.pendingQuickSessionAttachments = pending.autoSendAttachments

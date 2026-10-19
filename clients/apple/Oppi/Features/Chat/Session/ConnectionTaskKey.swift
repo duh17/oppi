@@ -1,4 +1,4 @@
-/// Composite key for ChatView's local review-comment load task.
+/// Composite key for ChatViewController's local review-comment load task.
 ///
 /// Draft review comments are persisted by a local scope and session. Workspace
 /// sessions use their workspace ID; declared control sessions use a fixed local

@@ -208,7 +208,7 @@ final class ChatScrollController: NSObject {
     var needsInitialScroll = false
 
     /// Incremented when the user sends a message and we need to scroll
-    /// to the bottom. ChatTimelineView observes this via `.onChange`.
+    /// to the bottom. The timeline's owned clock observes it.
     var scrollToBottomNonce: UInt = 0
 
     // MARK: - Scroll Position (Non-Reactive)
@@ -535,7 +535,7 @@ struct ChatScrollReentryIntent {
 
 /// Carries a chat's reading position across a stack/split shell swap.
 ///
-/// A fold or rotation that swaps the workspace shell remounts ChatView for the
+/// A fold or rotation that swaps the workspace shell remounts ChatViewController for the
 /// same session, so its `@State` scroll controller is new and would land on
 /// the tail. The outgoing controller's re-entry intent moves to the incoming
 /// one instead. Depending on the hosting containers, the incoming chat can

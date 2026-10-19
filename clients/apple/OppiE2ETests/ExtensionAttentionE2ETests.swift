@@ -140,7 +140,7 @@ final class ExtensionAttentionE2ETests: E2ETestCase {
 
     /// A notification tap into the running app while another chat is on
     /// screen replaces `[chat B]` with `[chat A]` at the same stack depth.
-    /// SwiftUI must not reuse B's ChatView for A: the reused runtime never
+    /// SwiftUI must not reuse B's ChatViewController for A: the reused runtime never
     /// connected and A showed only its ask card over a blank timeline.
     /// `openSessionDeepLink` relaunches the app, so this uses a warm system open.
     @MainActor

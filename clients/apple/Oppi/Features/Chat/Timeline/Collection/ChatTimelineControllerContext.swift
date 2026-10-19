@@ -29,7 +29,7 @@ final class ChatTimelineControllerContext {
     var audioLifecycleCoordinator: AudioLifecycleCoordinator?
     let interactionContext = TimelineInteractionContext()
 
-    func didChangeSessionScope(for configuration: ChatTimelineCollectionHost.Configuration) -> Bool {
+    func didChangeSessionScope(for configuration: ChatTimelineConfiguration) -> Bool {
         sessionId != configuration.sessionId
             || serverId != configuration.serverId
             || workspaceId != configuration.workspaceId
@@ -37,17 +37,17 @@ final class ChatTimelineControllerContext {
     }
 
     func didChangeAgentPresentation(
-        for configuration: ChatTimelineCollectionHost.Configuration
+        for configuration: ChatTimelineConfiguration
     ) -> Bool {
         agentId != configuration.agentId || agentIcon != configuration.agentIcon
     }
 
     /// Chrome changes row geometry, so cached heights are stale with it.
-    func didChangeChromeStyle(for configuration: ChatTimelineCollectionHost.Configuration) -> Bool {
+    func didChangeChromeStyle(for configuration: ChatTimelineConfiguration) -> Bool {
         chromeStyle != configuration.chromeStyle
     }
 
-    func apply(configuration: ChatTimelineCollectionHost.Configuration) {
+    func apply(configuration: ChatTimelineConfiguration) {
         sessionId = configuration.sessionId
         serverId = configuration.serverId
         workspaceId = configuration.workspaceId

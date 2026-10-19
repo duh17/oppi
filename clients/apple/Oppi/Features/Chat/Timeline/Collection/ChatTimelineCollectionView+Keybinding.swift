@@ -1,6 +1,6 @@
 import UIKit
 
-extension ChatTimelineCollectionHost.Controller {
+extension ChatTimelineController {
     func attachHardwareKeybindingResponder(to collectionView: UICollectionView) {
         let responder = HardwareKeybindingResponder(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         responder.mode = KeybindingPreferenceStore().mode

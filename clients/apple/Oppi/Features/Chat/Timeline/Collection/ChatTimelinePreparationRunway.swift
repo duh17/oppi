@@ -1200,7 +1200,7 @@ actor TimelineSerialRasterPreparer {
     }
 }
 
-extension ChatTimelineCollectionHost.Controller: UICollectionViewDataSourcePrefetching {
+extension ChatTimelineController: UICollectionViewDataSourcePrefetching {
     func makeTimelinePreparationRequest(
         itemID: String,
         text: String,

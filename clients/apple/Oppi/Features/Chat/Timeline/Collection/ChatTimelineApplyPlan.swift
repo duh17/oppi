@@ -40,7 +40,7 @@ struct ChatTimelineApplyPlan {
             hiddenCount: hiddenCount,
             hasOlderServerPage: hasOlderServerPage
         ) {
-            nextIDs.append(ChatTimelineCollectionHost.loadMoreID)
+            nextIDs.append(ChatTimelineController.loadMoreID)
         }
 
         var lastIndexByItemID: [String: Int] = [:]
@@ -65,7 +65,7 @@ struct ChatTimelineApplyPlan {
         }
 
         if showsWorkingIndicator ?? isBusy {
-            nextIDs.append(ChatTimelineCollectionHost.workingIndicatorID)
+            nextIDs.append(ChatTimelineController.workingIndicatorID)
         }
 
         return Self(

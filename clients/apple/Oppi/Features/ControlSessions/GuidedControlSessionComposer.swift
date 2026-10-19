@@ -22,7 +22,7 @@ enum GuidedControlSessionInitialPrompt {
     ) -> PreparedPrompt {
         let completeRequest = comments?.appendReviewBlock(
             to: userRequest,
-            pathFormatting: ChatView.reviewCommentPathFormattingPolicy(controlDomain: domain)
+            pathFormatting: ChatViewController.reviewCommentPathFormattingPolicy(controlDomain: domain)
         ) ?? userRequest
         return PreparedPrompt(
             message: ControlSessionStarterPrompt.make(

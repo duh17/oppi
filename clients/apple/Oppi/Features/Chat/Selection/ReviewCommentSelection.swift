@@ -79,7 +79,7 @@ final class ReviewCommentSelectionRouter {
     }
 }
 
-/// Session-keyed live ChatView routers. Covering a chat must not unregister;
+/// Session-keyed live ChatViewController routers. Covering a chat must not unregister;
 /// drop the entry only when that chat is removed or replaced.
 @MainActor
 enum ReviewCommentSelectionActiveRouter {

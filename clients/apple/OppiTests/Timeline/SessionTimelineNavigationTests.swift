@@ -39,21 +39,18 @@ struct SessionTimelineNavigationTests {
         let audioPlayer = AudioPlayerService()
         let scrollController = ChatScrollController()
         manager.needsInitialScroll = true
-        let timeline = ChatTimelineView(
-            sessionId: manager.sessionId, serverId: nil, workspaceId: nil,
-            isBusy: false, extensionWorkingState: nil, extensionHiddenThinkingLabel: nil,
-            currentModel: nil, sessionContent: connection.sessionContent,
-            iconAssetCache: nil, openDestination: nil, loadOlderPage: nil, scrollController: scrollController,
-            sessionManager: manager, audioLifecycleCoordinator: nil,
+        let timeline = OwnedTimelineHostController(configuration: makeOwnedTimelineConfiguration(
+            sessionManager: manager,
+            reducer: reducer,
+            scrollController: scrollController,
+            connection: connection,
+            audioPlayer: audioPlayer,
+            isBusy: false,
             quietModeEnabled: scenario == .quietTool,
-            onFork: { _ in }, onOpenCurrentFile: { _ in }, onBackSwipe: {}, reviewCommentSelectionRouter: nil,
-            topOverlap: 160, bottomOverlap: 0
-        )
-        let host = UIHostingController(rootView:
-            NavigationStack { timeline.navigationTitle("Chat") }
-                .environment(reducer)
-                .environment(audioPlayer)
-        )
+            topOverlap: 160
+        ))
+        timeline.navigationItem.title = "Chat"
+        let host = UINavigationController(rootViewController: timeline)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
@@ -66,18 +63,18 @@ struct SessionTimelineNavigationTests {
         }
         #expect(ready)
         let cv = try #require(timelineFirstView(ofType: UICollectionView.self, in: host.view))
-        let coordinator = try #require(cv.delegate as? ChatTimelineCollectionHost.Controller)
+        let coordinator = try #require(cv.delegate as? ChatTimelineController)
         #expect(!coordinator.currentIDs.contains(targetID), "Setup must retain the real 80-row render window")
         #expect(scrollController.isCurrentlyNearBottom)
 
-        // Invoke the actual ChatView onSelect/load/scrollTargetID path while
-        // an outline sheet covers the mounted, windowed SwiftUI timeline.
+        // Invoke the actual ChatViewController onSelect/load/scrollTargetID path while
+        // an outline sheet covers the mounted, windowed timeline.
         // No pre-expansion, manual detach, scroll command, or highlight injection.
         var didLoadTarget = false
         let outline = SessionOutlineViewController(
             items: reducer.items, toolArgsStore: reducer.toolArgsStore,
             onSelect: { selectedID in
-                ChatView.selectOutlineTimelineEntry(
+                ChatViewController.selectOutlineTimelineEntry(
                     selectedID, items: reducer.items, scrollController: scrollController
                 ) {
                     didLoadTarget = true
@@ -151,21 +148,18 @@ struct SessionTimelineNavigationTests {
         let audioPlayer = AudioPlayerService()
         let scrollController = ChatScrollController()
         manager.needsInitialScroll = true
-        let timeline = ChatTimelineView(
-            sessionId: manager.sessionId, serverId: nil, workspaceId: nil,
-            isBusy: true, extensionWorkingState: nil, extensionHiddenThinkingLabel: nil,
-            currentModel: nil, sessionContent: connection.sessionContent,
-            iconAssetCache: nil, openDestination: nil, loadOlderPage: nil, scrollController: scrollController,
-            sessionManager: manager, audioLifecycleCoordinator: nil,
+        let timeline = OwnedTimelineHostController(configuration: makeOwnedTimelineConfiguration(
+            sessionManager: manager,
+            reducer: reducer,
+            scrollController: scrollController,
+            connection: connection,
+            audioPlayer: audioPlayer,
+            isBusy: true,
             quietModeEnabled: false,
-            onFork: { _ in }, onOpenCurrentFile: { _ in }, onBackSwipe: {}, reviewCommentSelectionRouter: nil,
-            topOverlap: 160, bottomOverlap: 0
-        )
-        let host = UIHostingController(rootView:
-            NavigationStack { timeline.navigationTitle("Chat") }
-                .environment(reducer)
-                .environment(audioPlayer)
-        )
+            topOverlap: 160
+        ))
+        timeline.navigationItem.title = "Chat"
+        let host = UINavigationController(rootViewController: timeline)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
@@ -178,11 +172,11 @@ struct SessionTimelineNavigationTests {
         }
         #expect(ready)
         let cv = try #require(timelineFirstView(ofType: UICollectionView.self, in: host.view))
-        let coordinator = try #require(cv.delegate as? ChatTimelineCollectionHost.Controller)
+        let coordinator = try #require(cv.delegate as? ChatTimelineController)
         #expect(scrollController.isCurrentlyNearBottom)
 
         var didTryLoad = false
-        ChatView.selectOutlineTimelineEntry(
+        ChatViewController.selectOutlineTimelineEntry(
             "not-loaded", items: reducer.items, scrollController: scrollController
         ) {
             didTryLoad = true

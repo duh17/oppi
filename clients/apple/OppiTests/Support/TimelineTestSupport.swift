@@ -233,7 +233,7 @@ func timelineOffsetY(forDistanceFromBottom distance: CGFloat, in collectionView:
 @MainActor
 struct TimelineTestHarness {
     let sessionId: String
-    let coordinator: ChatTimelineCollectionHost.Controller
+    let coordinator: ChatTimelineController
     let collectionView: UICollectionView
     let reducer: TimelineReducer
     let toolOutputStore: ToolOutputStore
@@ -325,7 +325,7 @@ struct WindowedTimelineHarness {
     let harness: TimelineTestHarness
 
     var sessionId: String { harness.sessionId }
-    var coordinator: ChatTimelineCollectionHost.Controller { harness.coordinator }
+    var coordinator: ChatTimelineController { harness.coordinator }
     var collectionView: UICollectionView { harness.collectionView }
     var reducer: TimelineReducer { harness.reducer }
     var toolOutputStore: ToolOutputStore { harness.toolOutputStore }
@@ -389,7 +389,7 @@ func makeWindowedTimelineHarness(
     useAnchoredCollectionView: Bool = true
 ) -> WindowedTimelineHarness {
     let window = UIWindow(frame: frame)
-    let layout = ChatTimelineCollectionHost.makeTestLayout()
+    let layout = ChatTimelineController.makeTestLayout()
     let collectionView: UICollectionView
 
     if useAnchoredCollectionView {
@@ -408,7 +408,7 @@ func makeWindowedTimelineHarness(
 
 @MainActor
 private func makeTimelineHarness(sessionId: String, collectionView: UICollectionView) -> TimelineTestHarness {
-    let coordinator = ChatTimelineCollectionHost.Controller()
+    let coordinator = ChatTimelineController()
     coordinator.debugInstallResourcePressureSnapshotForTesting(.nominal)
     coordinator.configureDataSource(collectionView: collectionView)
 
@@ -491,8 +491,8 @@ func makeTimelineConfiguration(
     hasOlderServerPage: Bool = false,
     openDestination: ChatTimelineOpenDestination? = nil,
     loadOlderPage: (@MainActor () async -> Bool)? = nil
-) -> ChatTimelineCollectionHost.Configuration {
-    ChatTimelineCollectionHost.Configuration(
+) -> ChatTimelineConfiguration {
+    ChatTimelineConfiguration(
         items: items,
         displayRows: displayRows,
         workLineByID: workLineByID,
@@ -739,4 +739,88 @@ func fittedTimelineSizeWithoutPrelayout(for view: UIView, width: CGFloat) -> CGS
         withHorizontalFittingPriority: .required,
         verticalFittingPriority: .fittingSizeLevel
     )
+}
+
+/// The timeline as the chat screen mounts it: the controller owns the
+/// projection and observes the reducer; the host pushes chrome once.
+@MainActor
+final class OwnedTimelineHostController: UIViewController {
+    let timeline = ChatTimelineController()
+    private(set) var collectionView: UICollectionView?
+    private let configuration: ChatTimelineConfiguration
+
+    init(configuration: ChatTimelineConfiguration) {
+        self.configuration = configuration
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let collectionView = timeline.makeCollectionView(configuration: configuration, contentRoot: makeTestAppRoot())
+        collectionView.frame = view.bounds
+        collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(collectionView)
+        self.collectionView = collectionView
+        timeline.update(configuration: configuration, collectionView: collectionView)
+    }
+}
+
+/// What the chat screen hands an owned timeline, with test defaults.
+@MainActor
+func makeOwnedTimelineConfiguration(
+    sessionManager: ChatSessionManager,
+    reducer: TimelineReducer,
+    scrollController: ChatScrollController,
+    connection: ServerConnection,
+    audioPlayer: AudioPlayerService,
+    isBusy: Bool,
+    serverId: String? = nil,
+    workspaceId: String? = nil,
+    quietModeEnabled: Bool = false,
+    topOverlap: CGFloat = 0
+) -> ChatTimelineConfiguration {
+    ChatTimelineConfiguration(
+        items: [],
+        hiddenCount: 0,
+        renderWindowStep: TimelineRenderWindowPolicy.renderWindowStep,
+        isBusy: isBusy,
+        showsWorkingIndicator: isBusy,
+        streamingAssistantID: nil,
+        sessionId: sessionManager.sessionId,
+        serverId: serverId,
+        workspaceId: workspaceId,
+        onFork: { _ in },
+        onOpenCurrentFile: { _ in },
+        onBackSwipe: {},
+        onShowEarlier: {},
+        scrollController: scrollController,
+        reducer: reducer,
+        toolOutputStore: reducer.toolOutputStore,
+        toolArgsStore: reducer.toolArgsStore,
+        toolSegmentStore: reducer.toolSegmentStore,
+        toolDetailsStore: reducer.toolDetailsStore,
+        sessionContent: connection.sessionContent,
+        audioPlayer: audioPlayer,
+        topOverlap: topOverlap,
+        ownsTimelineProjection: true,
+        quietModeEnabled: quietModeEnabled,
+        sessionManager: sessionManager
+    )
+}
+
+/// A 390×844 window in the test host's scene. UIKit services a controller's
+/// `updateProperties()` (its `@Observable` reads) only for windows in a scene.
+@MainActor
+func makeSceneWindow() -> UIWindow {
+    guard let scene = UIApplication.shared.connectedScenes
+        .compactMap({ $0 as? UIWindowScene })
+        .first else {
+        fatalError("Missing UIWindowScene in the test host")
+    }
+    let window = UIWindow(windowScene: scene)
+    window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+    return window
 }

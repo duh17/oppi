@@ -661,6 +661,52 @@ struct RouterPreviewNavigation<Content: View>: View {
     }
 }
 
+/// `RouterPreviewNavigation` for a UIKit screen (the chat). A new `id`
+/// replaces the root screen, the way the shell builds a new screen for
+/// another session.
+struct RouterPreviewControllerNavigation: View {
+    let id: AnyHashable
+    let screen: () -> UIViewController
+    @Environment(\.appRootEnvironment) private var root
+
+    var body: some View {
+        RouterPreviewControllerNavigationHost(id: id, screen: screen)
+            .preferredColorScheme(root?.themeStore.preferredColorScheme)
+    }
+}
+
+private struct RouterPreviewControllerNavigationHost: UIViewControllerRepresentable {
+    let id: AnyHashable
+    let screen: () -> UIViewController
+    @Environment(\.appRootEnvironment) private var root
+
+    final class Coordinator {
+        var id: AnyHashable?
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIViewController(context: Context) -> RouterNavigationController {
+        guard let root else {
+            preconditionFailure("RouterPreviewControllerNavigation needs appRootEnvironment(_:) above it")
+        }
+        let navigation = RouterNavigationController(rootViewController: screen())
+        navigation.traitOverrides.appRootEnvironment = root
+        let themeStore = root.themeStore
+        navigation.interfaceStyle = { themeStore.userInterfaceStyle }
+        context.coordinator.id = id
+        return navigation
+    }
+
+    func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {
+        guard context.coordinator.id != id else { return }
+        context.coordinator.id = id
+        navigation.setViewControllers([screen()], animated: false)
+    }
+}
+
 private struct RouterPreviewNavigationHost<Content: View>: UIViewControllerRepresentable {
     let content: () -> Content
     @Environment(\.appRootEnvironment) private var root

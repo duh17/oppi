@@ -1759,7 +1759,7 @@ final class ServerConnection {
 
         // Route to per-session continuation if active. Metadata stays attached
         // to the message through SessionStreamEvent. If the session is already
-        // focused but ChatView has not attached yet, park the frame so the
+        // focused but ChatViewController has not attached yet, park the frame so the
         // bootstrap is not lost.
         if let sessionId {
             let event = SessionStreamEvent(
@@ -1904,7 +1904,7 @@ final class ServerConnection {
     // MARK: - External Session Open Claim
 
     /// A notification or `oppi://session` tap binds the focused-session stream
-    /// before navigation commits. A ChatView for a different session is often
+    /// before navigation commits. A ChatViewController for a different session is often
     /// still mounted at that moment: its `onAppear` re-entry or connect loop
     /// would steal focus and tear down the socket that was opened for the
     /// tapped session milliseconds earlier, leaving the target with an ask card
@@ -2606,7 +2606,7 @@ final class ServerConnection {
     ) async {
         // Claim before the first await: the session record fetch and dialog
         // hydration below are exactly the window in which a still-mounted
-        // ChatView for another session re-enters and steals the transport.
+        // ChatViewController for another session re-enters and steals the transport.
         beginExternalSessionOpenClaim(for: sessionId)
         sessionStore.activeSessionId = sessionId
         await refreshSessionRecordIfPossible(sessionId: sessionId)
@@ -2632,7 +2632,7 @@ final class ServerConnection {
                 routeScope: nil
             )
         }
-        // Re-assert the active session: a losing ChatView's connect loop can
+        // Re-assert the active session: a losing ChatViewController's connect loop can
         // still have overwritten this pointer during the awaits above.
         sessionStore.activeSessionId = sessionId
     }
@@ -2659,7 +2659,7 @@ final class ServerConnection {
         }
     }
 
-    /// Warm the timeline cache so ChatView's normal connect path is not blank
+    /// Warm the timeline cache so ChatViewController's normal connect path is not blank
     /// while the focused session WebSocket is opening.
     func prefetchSessionTimelineIfPossible(sessionId: String) async {
         do {

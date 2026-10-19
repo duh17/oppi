@@ -350,7 +350,7 @@ struct ServerConnectionStreamTests {
         #expect(receivedEvents.first?.meta?.currentSeq == 80)
     }
 
-    /// Notification tap / in-app re-entry opens the bound socket before ChatView
+    /// Notification tap / in-app re-entry opens the bound socket before ChatViewController
     /// registers a per-session continuation. Bootstrap frames must park and then
     /// drain in order when `streamSession` attaches.
     @Test func focusedBootstrapFramesParkUntilStreamSessionAttaches() async {
@@ -1180,12 +1180,12 @@ struct ServerConnectionStreamTests {
         #expect(conn.focusedSessionId == "target")
         #expect(streamConnects == 1)
 
-        // A ChatView for the previous session is still mounted; its re-entry
+        // A ChatViewController for the previous session is still mounted; its re-entry
         // arrives while the tapped session's socket is still connecting.
         conn.prepareForSessionReentry("stale")
 
         #expect(conn.focusedSessionId == "target",
-                "A stale ChatView must not steal focus from the notification target")
+                "A stale ChatViewController must not steal focus from the notification target")
         #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/target/stream")
         #expect(streamConnects == 1, "The tapped session's stream must not be torn down and reopened")
         #expect(conn.streamConsumptionTask != nil)

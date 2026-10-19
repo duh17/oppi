@@ -22,7 +22,7 @@ struct StreamingFastPathTests {
     private final class Harness {
         let window: UIWindow
         let collectionView: AnchoredCollectionView
-        let coordinator: ChatTimelineCollectionHost.Controller
+        let coordinator: ChatTimelineController
         let reducer: TimelineReducer
         let toolOutputStore: ToolOutputStore
         let toolArgsStore: ToolArgsStore
@@ -44,12 +44,12 @@ struct StreamingFastPathTests {
 
             collectionView = AnchoredCollectionView(
                 frame: window.bounds,
-                collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+                collectionViewLayout: ChatTimelineController.makeTestLayout()
             )
             window.addSubview(collectionView)
             window.makeKeyAndVisible()
 
-            coordinator = ChatTimelineCollectionHost.Controller()
+            coordinator = ChatTimelineController()
             coordinator.configureDataSource(collectionView: collectionView)
             collectionView.delegate = coordinator
 

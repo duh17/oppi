@@ -113,12 +113,12 @@ struct ScrollStabilityTests {
         let window = makeScrollTestWindow()
         let collectionView = AnchoredCollectionView(
             frame: window.bounds,
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
 
-        let coordinator = ChatTimelineCollectionHost.Controller()
+        let coordinator = ChatTimelineController()
         coordinator.configureDataSource(collectionView: collectionView)
         collectionView.delegate = coordinator
 
@@ -231,12 +231,12 @@ struct ScrollStabilityTests {
         let window = makeScrollTestWindow()
         let collectionView = AnchoredCollectionView(
             frame: window.bounds,
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
 
-        let coordinator = ChatTimelineCollectionHost.Controller()
+        let coordinator = ChatTimelineController()
         coordinator.configureDataSource(collectionView: collectionView)
         collectionView.delegate = coordinator
 
@@ -348,13 +348,13 @@ struct ScrollStabilityTests {
         let window = makeScrollTestWindow()
         let collectionView = AnchoredCollectionView(
             frame: window.bounds,
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
         collectionView.layoutIfNeeded()
 
-        let coordinator = ChatTimelineCollectionHost.Controller()
+        let coordinator = ChatTimelineController()
         coordinator.configureDataSource(collectionView: collectionView)
         collectionView.delegate = coordinator
 
@@ -461,12 +461,12 @@ struct ScrollStabilityTests {
         let window = makeScrollTestWindow()
         let collectionView = AnchoredCollectionView(
             frame: window.bounds,
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
 
-        let coordinator = ChatTimelineCollectionHost.Controller()
+        let coordinator = ChatTimelineController()
         coordinator.configureDataSource(collectionView: collectionView)
         collectionView.delegate = coordinator
 
@@ -559,12 +559,12 @@ struct ScrollStabilityTests {
         let window = makeScrollTestWindow()
         let collectionView = AnchoredCollectionView(
             frame: window.bounds,
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
 
-        let coordinator = ChatTimelineCollectionHost.Controller()
+        let coordinator = ChatTimelineController()
         coordinator.configureDataSource(collectionView: collectionView)
         collectionView.delegate = coordinator
 
@@ -639,12 +639,12 @@ struct ScrollStabilityTests {
         let window = makeScrollTestWindow()
         let collectionView = AnchoredCollectionView(
             frame: window.bounds,
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
 
-        let coordinator = ChatTimelineCollectionHost.Controller()
+        let coordinator = ChatTimelineController()
         coordinator.configureDataSource(collectionView: collectionView)
         collectionView.delegate = coordinator
 
@@ -759,12 +759,12 @@ struct ScrollStabilityTests {
         let window = makeScrollTestWindow()
         let collectionView = AnchoredCollectionView(
             frame: window.bounds,
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
 
-        let coordinator = ChatTimelineCollectionHost.Controller()
+        let coordinator = ChatTimelineController()
         coordinator.configureDataSource(collectionView: collectionView)
         collectionView.delegate = coordinator
 
@@ -870,12 +870,12 @@ struct ScrollStabilityTests {
         let window = makeScrollTestWindow()
         let collectionView = AnchoredCollectionView(
             frame: window.bounds,
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
 
-        let coordinator = ChatTimelineCollectionHost.Controller()
+        let coordinator = ChatTimelineController()
         coordinator.configureDataSource(collectionView: collectionView)
         collectionView.delegate = coordinator
 
@@ -981,12 +981,12 @@ struct ScrollStabilityTests {
         let window = makeScrollTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 400))
         let collectionView = AnchoredCollectionView(
             frame: window.bounds,
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
 
-        let coordinator = ChatTimelineCollectionHost.Controller()
+        let coordinator = ChatTimelineController()
         coordinator.configureDataSource(collectionView: collectionView)
         collectionView.delegate = coordinator
 
@@ -1098,12 +1098,12 @@ struct ScrollStabilityTests {
         let window = makeScrollTestWindow()
         let collectionView = AnchoredCollectionView(
             frame: window.bounds,
-            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+            collectionViewLayout: ChatTimelineController.makeTestLayout()
         )
         window.addSubview(collectionView)
         window.makeKeyAndVisible()
 
-        let coordinator = ChatTimelineCollectionHost.Controller()
+        let coordinator = ChatTimelineController()
         coordinator.configureDataSource(collectionView: collectionView)
         collectionView.delegate = coordinator
 

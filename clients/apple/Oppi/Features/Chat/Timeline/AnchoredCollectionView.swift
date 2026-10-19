@@ -20,7 +20,7 @@ final class AnchoredCollectionView: UICollectionView {
             guard previous.accessibilityContrast != view.traitCollection.accessibilityContrast else {
                 return
             }
-            (view.delegate as? ChatTimelineCollectionHost.Controller)?
+            (view.delegate as? ChatTimelineController)?
                 .handleSpeakerAccessibilityDidChange()
         }
     }
@@ -520,15 +520,15 @@ final class AnchoredCollectionView: UICollectionView {
     // MARK: - Private
 
     private func timelineItemIDs() -> [String] {
-        (delegate as? ChatTimelineCollectionHost.Controller)?.currentIDs ?? []
+        (delegate as? ChatTimelineController)?.currentIDs ?? []
     }
 
     private func stableItemID(at indexPath: IndexPath) -> String? {
         let itemIDs = timelineItemIDs()
         guard indexPath.item >= 0, indexPath.item < itemIDs.count else { return nil }
         let itemID = itemIDs[indexPath.item]
-        if itemID == ChatTimelineCollectionHost.loadMoreID
-            || itemID == ChatTimelineCollectionHost.workingIndicatorID {
+        if itemID == ChatTimelineController.loadMoreID
+            || itemID == ChatTimelineController.workingIndicatorID {
             return nil
         }
         return itemID
@@ -553,7 +553,7 @@ final class AnchoredCollectionView: UICollectionView {
 
     private func currentDetachedAnchorIndexPath() -> IndexPath? {
         if let detachedAnchorItemID {
-            let controller = delegate as? ChatTimelineCollectionHost.Controller
+            let controller = delegate as? ChatTimelineController
             guard let renderedID = controller?.renderedID(forFullTimelineItemID: detachedAnchorItemID),
                   let index = timelineItemIDs().firstIndex(of: renderedID) else {
                 return nil

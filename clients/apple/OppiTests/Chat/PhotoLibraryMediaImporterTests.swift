@@ -249,7 +249,7 @@ struct PhotoLibraryMediaImporterTests {
         let binding = Binding(
             get: { pending },
             set: { newValue in
-                guard let accepted = ChatView.applyPendingAttachments(
+                guard let accepted = ChatViewController.applyPendingAttachments(
                     newValue,
                     draftController: controller,
                     current: pending

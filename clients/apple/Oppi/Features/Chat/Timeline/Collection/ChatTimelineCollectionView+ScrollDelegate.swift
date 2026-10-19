@@ -2,7 +2,7 @@ import UIKit
 
 // MARK: - UIScrollViewDelegate
 
-extension ChatTimelineCollectionHost.Controller {
+extension ChatTimelineController {
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         scrollController?.setUserInteracting(true)
         lastObservedContentOffsetY = scrollView.contentOffset.y
@@ -145,13 +145,13 @@ struct EarlierRowsRequestMark: Equatable {
 
 // MARK: - Scroll State Helpers
 
-extension ChatTimelineCollectionHost.Controller {
+extension ChatTimelineController {
     /// Infinite scroll toward older rows: once an upward user scroll is within
     /// one viewport of the top, reveal the next batch before the reader reaches
     /// the edge. The detached identity anchor keeps the reader's row in place
     /// while rows are inserted above it.
     func requestEarlierRowsIfNearTop(_ scrollView: UIScrollView) {
-        guard currentIDs.first == ChatTimelineCollectionHost.loadMoreID,
+        guard currentIDs.first == ChatTimelineController.loadMoreID,
               onShowEarlier != nil else {
             return
         }

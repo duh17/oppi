@@ -2,8 +2,8 @@ import SwiftUI
 
 // The SwiftUI content of the workspace shell's routes. UIKit owns the stacks
 // (`ShellRouter.swift`, `WorkspaceShellController.swift`). Most routes are a
-// `ShellRouteView` hosted through `HostFactory`; SSH Terminal's host list is a
-// UIKit screen.
+// `ShellRouteView` hosted through `HostFactory`; a session's chat
+// (`ChatRouteViewController`) and SSH Terminal's host list are UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -18,6 +18,9 @@ enum ShellRouteScreens {
             let screen = SSHTerminalHostListViewController(showsSidebarToggle: placement == .splitDetailRoot)
             screen.traitOverrides.appRootEnvironment = root
             return screen
+        }
+        if case .session(let target) = route {
+            return ChatRouteViewController(target: target, placement: placement, root: root)
         }
         return HostFactory.screen(root: root, bars: route.bars) {
             ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
@@ -35,6 +38,10 @@ enum ShellRouteScreens {
             list.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
+        if let chatRoute = screen as? ChatRouteViewController {
+            chatRoute.placement = placement
+            return
+        }
         guard let screen = screen as? HostedScreenController else { return }
         screen.setContent {
             ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
@@ -48,6 +55,37 @@ enum ShellRouteScreens {
 
     static func serverLockCover(serverId: String, root: AppRootEnvironment) -> UIViewController {
         HostFactory.content(ShellServerLockCover(serverId: serverId), root: root)
+    }
+
+    /// A locked session's cover in place of its chat.
+    static func sessionLockCover(target: ScopedLockTarget, title: String, root: AppRootEnvironment) -> UIViewController {
+        HostFactory.content(ShellSessionLockCover(target: target, title: title), root: root)
+    }
+
+    /// A session route waiting for its server.
+    static func connecting(root: AppRootEnvironment) -> UIViewController {
+        HostFactory.content(
+            ProgressView("Connecting\u{2026}")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.themeBg),
+            root: root
+        )
+    }
+}
+
+/// A session's lock cover; Unlock authorizes the session's scope.
+private struct ShellSessionLockCover: View {
+    let target: ScopedLockTarget
+    let title: String
+
+    @State private var locks = ScopedLockService.shared
+
+    var body: some View {
+        ScopedLockCoverView(title: title, isAuthenticating: locks.isAuthenticating) {
+            Task { _ = await locks.authorize(target) }
+        } accessory: {
+            EmptyView()
+        }
     }
 }
 
@@ -82,8 +120,9 @@ struct ShellRouteView: View {
             WorkspaceSidebarView()
         case .workspace(let target):
             WorkspaceScopedDestinationView(target: target)
-        case .session(let target):
-            WorkspaceSessionScopedDestinationView(target: target)
+        case .session:
+            // The shell hosts this route as ChatRouteViewController.
+            EmptyView()
         case .fileBrowser(let target):
             WorkspaceFileBrowserDestinationView(target: target)
         case .linkedFile(let target):

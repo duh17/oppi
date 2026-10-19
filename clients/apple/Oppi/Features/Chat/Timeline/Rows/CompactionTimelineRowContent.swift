@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct CompactionTimelineRowConfiguration: UIContentConfiguration {
-    let presentation: ChatTimelineCollectionHost.Controller.CompactionPresentation
+    let presentation: ChatTimelineController.CompactionPresentation
     let isExpanded: Bool
     let onToggleExpand: (() -> Void)?
     let interactionContext: TimelineInteractionContext?
@@ -14,7 +14,7 @@ struct CompactionTimelineRowConfiguration: UIContentConfiguration {
     var rowWidth: CGFloat?
 
     init(
-        presentation: ChatTimelineCollectionHost.Controller.CompactionPresentation,
+        presentation: ChatTimelineController.CompactionPresentation,
         isExpanded: Bool,
         onToggleExpand: (() -> Void)? = nil,
         interactionContext: TimelineInteractionContext? = nil,
@@ -288,7 +288,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
     private static let contentInset: CGFloat = 10
 
     private static func style(
-        for phase: ChatTimelineCollectionHost.Controller.CompactionPresentation.Phase,
+        for phase: ChatTimelineController.CompactionPresentation.Phase,
         palette: ThemePalette
     ) -> Style {
         switch phase {

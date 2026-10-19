@@ -15,7 +15,7 @@ func timelineFirstView<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {
 @MainActor
 struct TimelineTestHarness {
     let sessionId: String
-    let coordinator: ChatTimelineCollectionHost.Controller
+    let coordinator: ChatTimelineController
     let collectionView: UICollectionView
     let reducer: TimelineReducer
     let toolOutputStore: ToolOutputStore
@@ -73,7 +73,7 @@ struct WindowedTimelineHarness {
     let harness: TimelineTestHarness
 
     var sessionId: String { harness.sessionId }
-    var coordinator: ChatTimelineCollectionHost.Controller { harness.coordinator }
+    var coordinator: ChatTimelineController { harness.coordinator }
     var collectionView: UICollectionView { harness.collectionView }
     var reducer: TimelineReducer { harness.reducer }
     var toolOutputStore: ToolOutputStore { harness.toolOutputStore }
@@ -107,7 +107,7 @@ func makeWindowedTimelineHarness(
     useAnchoredCollectionView: Bool = true
 ) -> WindowedTimelineHarness {
     let window = UIWindow(frame: frame)
-    let layout = ChatTimelineCollectionHost.makeTestLayout()
+    let layout = ChatTimelineController.makeTestLayout()
     let collectionView: UICollectionView
 
     if useAnchoredCollectionView {
@@ -126,7 +126,7 @@ func makeWindowedTimelineHarness(
 
 @MainActor
 private func makeTimelineHarness(sessionId: String, collectionView: UICollectionView) -> TimelineTestHarness {
-    let coordinator = ChatTimelineCollectionHost.Controller()
+    let coordinator = ChatTimelineController()
     coordinator.configureDataSource(collectionView: collectionView)
 
     let reducer = TimelineReducer()
@@ -192,8 +192,8 @@ func makeTimelineConfiguration(
     audioPlayer: AudioPlayerService,
     topOverlap: CGFloat = 0,
     bottomOverlap: CGFloat = 0
-) -> ChatTimelineCollectionHost.Configuration {
-    ChatTimelineCollectionHost.Configuration(
+) -> ChatTimelineConfiguration {
+    ChatTimelineConfiguration(
         items: items,
         hiddenCount: hiddenCount,
         renderWindowStep: renderWindowStep,

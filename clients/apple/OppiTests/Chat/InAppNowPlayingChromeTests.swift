@@ -539,15 +539,6 @@ struct InAppNowPlayingChromeTests {
         #expect(pill.contains("chevron.right"))
         #expect(InAppNowPlayingChrome.titleAction(tapCount: 1, expandsOnTap: true) == .expandOrCollapse)
         #expect(InAppNowPlayingChrome.titleAction(tapCount: 2, expandsOnTap: true) == .openFullScreen)
-
-        let chat = try chatViewSource()
-        let callSite = try #require(sourceSlice(
-            chat,
-            from: "InAppNowPlayingDrawer(",
-            to: ".padding(.horizontal, 16)"
-        ))
-        #expect(!callSite.contains("onCollapse"))
-        #expect(callSite.contains("onOpen:"))
     }
 
     @Test func expandedDrawerShowsCurrentLyricInFullWithoutTruncation() throws {
@@ -781,15 +772,6 @@ private func nowPlayingChromeSource() throws -> String {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .appending(path: "Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift")
-    return try String(contentsOf: sourceURL, encoding: .utf8)
-}
-
-private func chatViewSource() throws -> String {
-    let sourceURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: "Oppi/Features/Chat/ChatView.swift")
     return try String(contentsOf: sourceURL, encoding: .utf8)
 }
 

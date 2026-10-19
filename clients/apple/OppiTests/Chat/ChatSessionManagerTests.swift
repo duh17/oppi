@@ -276,7 +276,7 @@ struct ChatSessionManagerTests {
         #expect(settled, "Stopped connect must focus and settle history-only before destroy")
         #expect(!streamCreated, "Stopped connect must not open a WebSocket")
 
-        // Covered destroy: lease deinit without ChatView onDisappear or a stream-loop tail.
+        // Covered destroy: lease deinit without ChatViewController onDisappear or a stream-loop tail.
         lease = nil
 
         let disconnected = await waitForTestCondition(timeoutMs: 1_000) {

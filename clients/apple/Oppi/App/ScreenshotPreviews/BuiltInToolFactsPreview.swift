@@ -87,7 +87,7 @@ private struct CompletionRowPreview: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UIView {
         let reducer = TimelineReducer()
-        let controller = ChatTimelineCollectionHost.Controller()
+        let controller = ChatTimelineController()
         controller.reducer = reducer
         controller.toolOutputStore = reducer.toolOutputStore
         if expanded { reducer.expandedItemIDs.insert("result") }

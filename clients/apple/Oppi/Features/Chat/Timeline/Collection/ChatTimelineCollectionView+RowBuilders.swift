@@ -16,7 +16,7 @@ private extension UIView {
 
 // MARK: - Row Configuration Builders
 
-extension ChatTimelineCollectionHost.Controller {
+extension ChatTimelineController {
     func assistantRowConfiguration(itemID: String, item: ChatItem) -> AssistantTimelineRowConfiguration? {
         guard var rowConfiguration = assistantBaseRowConfiguration(itemID: itemID, item: item) else {
             return nil
@@ -573,7 +573,7 @@ extension ChatTimelineCollectionHost.Controller {
 
 // MARK: - Compaction Parsing
 
-extension ChatTimelineCollectionHost.Controller {
+extension ChatTimelineController {
     struct CompactionPresentation: Equatable {
         enum Phase: Equatable {
             case inProgress

@@ -137,8 +137,6 @@ struct ChatInputBar: View {
     let onExpand: () -> Void
     let externalFocusRequestID: Int
     var externalDictationRequestID: Int = 0
-    var externalDictationOwner: ComposerShared.VoiceInputOwner = .inboxComposer
-    var onExternalDictationHandled: ((_ requestID: Int) -> Void)? = nil
     let appliesOuterPadding: Bool
     var alwaysShowActionRow: Bool = false
     var allowsExpansion: Bool = true
@@ -289,13 +287,11 @@ struct ChatInputBar: View {
     }
 
     private func startExternalDictationIfRequested() async {
-        let requestID = externalDictationRequestID
-        guard requestID > 0 else { return }
-        defer { onExternalDictationHandled?(requestID) }
+        guard externalDictationRequestID > 0 else { return }
         guard let manager = voiceInputManager else { return }
-        guard ComposerShared.canControlVoiceInput(manager, owner: externalDictationOwner) else { return }
+        guard ComposerShared.canControlVoiceInput(manager, owner: .inboxComposer) else { return }
         guard ComposerShared.micTapAction(for: manager.state) == .start else { return }
-        await startOwnedVoiceInput(owner: externalDictationOwner)
+        await startOwnedVoiceInput(owner: .inboxComposer)
     }
 
     private func startOwnedVoiceInput(owner: ComposerShared.VoiceInputOwner) async {
@@ -940,33 +936,43 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
                 return
             }
             guard let root = HostFactory.root(near: controller) else { return }
-            // The tip claims height only while it is presented; report that so
-            // the bar does not keep an empty band once the tip is learned.
-            let tip = FeatureEducationTipBannerHost(
-                tip: FeatureEducationTips.BusySendModeTip(),
-                descriptor: FeatureEducationTips.busySendMode,
-                contentInsets: EdgeInsets(top: 8, leading: 12, bottom: 2, trailing: 12)
-            )
-            .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.size.height
-            } action: { [weak self] height in
-                DispatchQueue.main.async {
-                    self?.commitTipHeight(height)
-                }
+            let host = tipHost ?? ComposerBusyTip.makeHost(root: root) { [weak self] height in
+                self?.commitTipHeight(height)
             }
-            if let tipHost {
-                tipHost.setContent(tip)
-                tipHost.view.backgroundColor = .clear
-                controller.installBusyTip(tipHost)
-            } else {
-                let hosted = HostFactory.content(tip, root: root)
-                hosted.sizingOptions = []
-                hosted.view.backgroundColor = .clear
-                tipHost = hosted
-                controller.installBusyTip(hosted)
-            }
+            tipHost = host
+            controller.installBusyTip(host)
         }
 
+    }
+}
+
+/// The busy-mode education tip in the composer's tip slot, shared by the
+/// SwiftUI seam and `ChatComposerOwner`.
+@MainActor
+enum ComposerBusyTip {
+    /// The tip claims height only while it is presented; `onHeight` reports
+    /// it (on the next main-queue turn) so the bar does not keep an empty band
+    /// once the tip is learned.
+    static func makeHost(
+        root: AppRootEnvironment,
+        onHeight: @escaping @MainActor (CGFloat) -> Void
+    ) -> HostedContentController {
+        let tip = FeatureEducationTipBannerHost(
+            tip: FeatureEducationTips.BusySendModeTip(),
+            descriptor: FeatureEducationTips.busySendMode,
+            contentInsets: EdgeInsets(top: 8, leading: 12, bottom: 2, trailing: 12)
+        )
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { height in
+            DispatchQueue.main.async {
+                onHeight(height)
+            }
+        }
+        let hosted = HostFactory.content(tip, root: root)
+        hosted.sizingOptions = []
+        hosted.view.backgroundColor = .clear
+        return hosted
     }
 }
 

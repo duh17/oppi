@@ -15,182 +15,195 @@ struct ChatTimelineScrollCommand: Equatable {
     let nonce: Int
 }
 
-struct ChatTimelineCollectionHost: UIViewRepresentable {
+/// What the chat screen hands the timeline: its rows (when the caller owns the
+/// projection), chrome, stores, and actions. `ChatViewController` pushes it
+/// with `ChatTimelineController.updateHostChrome`; harnesses and tests that
+/// own the rows apply it with `apply(configuration:to:)`.
+struct ChatTimelineConfiguration {
+    var items: [ChatItem]
+    var displayRows: [TimelineDisplayRow]
+    var workLineByID: [String: QuietTimelineWorkLine]
+    /// Full timeline order used for absolute navigation ordinals. This is
+    /// separate from `items`, which may only contain the rendered suffix.
+    var fullTimelineItemIDs: [String]
+    var hiddenCount: Int
+    var hasOlderServerPage: Bool
+    let renderWindowStep: Int
+    let isBusy: Bool
+    let showsWorkingIndicator: Bool
+    var streamingAssistantID: String?
+    let sessionId: String
+    let serverId: String?
+    let workspaceId: String?
+    let agentId: String?
+    let agentIcon: IconChoice?
+    let routeScope: SessionRouteScope?
+    let onFork: (String) -> Void
+    let onOpenCurrentFile: (String) -> Void
+    let onOpenChatReader: ((ChatReaderPayload) -> Void)?
+    let onBackSwipe: () -> Void
+    var onQuietWorkLineToggle: (String) -> Void
+    var onShowEarlier: () -> Void
+    var scrollCommand: ChatTimelineScrollCommand?
+    let scrollController: ChatScrollController
+    let reducer: TimelineReducer
+    let toolOutputStore: ToolOutputStore
+    let toolArgsStore: ToolArgsStore
+    let toolSegmentStore: ToolSegmentStore
+    let toolDetailsStore: ToolDetailsStore
+    /// Session content owner for assistant/tool/user rows, supplied by chat composition.
+    let sessionContent: SessionContentAccess
+    let iconAssetCache: IconAssetCache?
+    /// Opens a commit or path-pill destination built by chat composition. Nil: pills
+    /// do nothing.
+    let openDestination: ChatTimelineOpenDestination?
+    /// Loads the next older trace page through the session runtime chat composition
+    /// already bound. The timeline decides when to call it; nil means no remote paging.
+    let loadOlderPage: (@MainActor () async -> Bool)?
+    let currentModel: String?
+    let extensionWorkingState: ExtensionWorkingState?
+    let extensionHiddenThinkingLabel: String?
+    let audioPlayer: AudioPlayerService
+    let audioLifecycleCoordinator: AudioLifecycleCoordinator?
+    let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    let topOverlap: CGFloat
+    let bottomOverlap: CGFloat
+    let onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)?
+    /// When true, `ChatTimelineController.update` pushes chrome only. The controller observes
+    /// `TimelineReducer` and owns projection / render window / quiet state.
+    let ownsTimelineProjection: Bool
+    let quietModeEnabled: Bool
+    let workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle
+    let chromeStyle: ChatTimelineChromeStyle
+    let sessionManager: ChatSessionManager?
+    var outlineAvailability: ChatTimelineOutlineAvailability?
+    /// Nil: resolve Increase Contrast from UIAccessibility / traits.
+    var speakerIncreasedContrastOverride: Bool? = nil
+    /// Nil: resolve Differentiate Without Color from UIAccessibility.
+    var speakerDifferentiateWithoutColorOverride: Bool? = nil
+
+    init(
+        items: [ChatItem],
+        displayRows: [TimelineDisplayRow]? = nil,
+        workLineByID: [String: QuietTimelineWorkLine] = [:],
+        fullTimelineItemIDs: [String]? = nil,
+        hiddenCount: Int,
+        hasOlderServerPage: Bool = false,
+        renderWindowStep: Int,
+        isBusy: Bool,
+        showsWorkingIndicator: Bool? = nil,
+        streamingAssistantID: String?,
+        sessionId: String,
+        serverId: String? = nil,
+        workspaceId: String?,
+        agentId: String? = nil,
+        agentIcon: IconChoice? = nil,
+        routeScope: SessionRouteScope? = nil,
+        onFork: @escaping (String) -> Void,
+        onOpenCurrentFile: @escaping (String) -> Void = { _ in },
+        onOpenChatReader: ((ChatReaderPayload) -> Void)? = nil,
+        onBackSwipe: @escaping () -> Void,
+        onQuietWorkLineToggle: @escaping (String) -> Void = { _ in },
+        onShowEarlier: @escaping () -> Void,
+        scrollCommand: ChatTimelineScrollCommand? = nil,
+        scrollController: ChatScrollController,
+        reducer: TimelineReducer,
+        toolOutputStore: ToolOutputStore,
+        toolArgsStore: ToolArgsStore,
+        toolSegmentStore: ToolSegmentStore,
+        toolDetailsStore: ToolDetailsStore? = nil,
+        sessionContent: SessionContentAccess,
+        iconAssetCache: IconAssetCache? = nil,
+        openDestination: ChatTimelineOpenDestination? = nil,
+        loadOlderPage: (@MainActor () async -> Bool)? = nil,
+        currentModel: String? = nil,
+        extensionWorkingState: ExtensionWorkingState? = nil,
+        extensionHiddenThinkingLabel: String? = nil,
+        audioPlayer: AudioPlayerService,
+        audioLifecycleCoordinator: AudioLifecycleCoordinator? = nil,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
+        topOverlap: CGFloat = 0,
+        bottomOverlap: CGFloat = 0,
+        onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)? = nil,
+        ownsTimelineProjection: Bool = false,
+        quietModeEnabled: Bool = false,
+        workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
+        chromeStyle: ChatTimelineChromeStyle = .standard,
+        sessionManager: ChatSessionManager? = nil,
+        outlineAvailability: ChatTimelineOutlineAvailability? = nil,
+        speakerIncreasedContrastOverride: Bool? = nil,
+        speakerDifferentiateWithoutColorOverride: Bool? = nil
+    ) {
+        self.items = items
+        self.displayRows = displayRows ?? items.map(TimelineDisplayRow.item)
+        self.workLineByID = workLineByID
+        self.fullTimelineItemIDs = fullTimelineItemIDs ?? items.map(\.id)
+        self.hiddenCount = hiddenCount
+        self.hasOlderServerPage = hasOlderServerPage
+        self.renderWindowStep = renderWindowStep
+        self.isBusy = isBusy
+        self.showsWorkingIndicator = showsWorkingIndicator ?? isBusy
+        self.streamingAssistantID = streamingAssistantID
+        self.sessionId = sessionId
+        self.serverId = serverId
+        self.workspaceId = workspaceId
+        self.agentId = agentId
+        self.agentIcon = agentIcon
+        self.routeScope = routeScope
+            ?? workspaceId.map(SessionRouteScope.workspace)
+        self.onFork = onFork
+        self.onOpenCurrentFile = onOpenCurrentFile
+        self.onOpenChatReader = onOpenChatReader
+        self.onBackSwipe = onBackSwipe
+        self.onQuietWorkLineToggle = onQuietWorkLineToggle
+        self.onShowEarlier = onShowEarlier
+        self.scrollCommand = scrollCommand
+        self.scrollController = scrollController
+        self.reducer = reducer
+        self.toolOutputStore = toolOutputStore
+        self.toolArgsStore = toolArgsStore
+        self.toolSegmentStore = toolSegmentStore
+        self.toolDetailsStore = toolDetailsStore ?? reducer.toolDetailsStore
+        self.sessionContent = sessionContent
+        self.iconAssetCache = iconAssetCache
+        self.openDestination = openDestination
+        self.loadOlderPage = loadOlderPage
+        self.currentModel = currentModel
+        self.extensionWorkingState = extensionWorkingState
+        self.extensionHiddenThinkingLabel = extensionHiddenThinkingLabel
+        self.audioPlayer = audioPlayer
+        self.audioLifecycleCoordinator = audioLifecycleCoordinator
+        self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
+        self.topOverlap = topOverlap
+        self.bottomOverlap = bottomOverlap
+        self.onVisibleAudioStripItemIDsChange = onVisibleAudioStripItemIDsChange
+        self.ownsTimelineProjection = ownsTimelineProjection
+        self.quietModeEnabled = quietModeEnabled
+        self.workStripStyle = workStripStyle
+        self.chromeStyle = chromeStyle
+        self.sessionManager = sessionManager
+        self.outlineAvailability = outlineAvailability
+        self.speakerIncreasedContrastOverride = speakerIncreasedContrastOverride
+        self.speakerDifferentiateWithoutColorOverride = speakerDifferentiateWithoutColorOverride
+    }
+}
+
+// The chat timeline's UIKit owner: builds the collection view, observes
+// `TimelineReducer` itself, and applies rows on its own clock.
+@MainActor
+final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestureRecognizerDelegate {
     static let loadMoreID = "__timeline.load-more__"
     static let workingIndicatorID = "working-indicator"
 
-    struct Configuration {
-        var items: [ChatItem]
-        var displayRows: [TimelineDisplayRow]
-        var workLineByID: [String: QuietTimelineWorkLine]
-        /// Full timeline order used for absolute navigation ordinals. This is
-        /// separate from `items`, which may only contain the rendered suffix.
-        var fullTimelineItemIDs: [String]
-        var hiddenCount: Int
-        var hasOlderServerPage: Bool
-        let renderWindowStep: Int
-        let isBusy: Bool
-        let showsWorkingIndicator: Bool
-        var streamingAssistantID: String?
-        let sessionId: String
-        let serverId: String?
-        let workspaceId: String?
-        let agentId: String?
-        let agentIcon: IconChoice?
-        let routeScope: SessionRouteScope?
-        let onFork: (String) -> Void
-        let onOpenCurrentFile: (String) -> Void
-        let onOpenChatReader: ((ChatReaderPayload) -> Void)?
-        let onBackSwipe: () -> Void
-        var onQuietWorkLineToggle: (String) -> Void
-        var onShowEarlier: () -> Void
-        var scrollCommand: ChatTimelineScrollCommand?
-        let scrollController: ChatScrollController
-        let reducer: TimelineReducer
-        let toolOutputStore: ToolOutputStore
-        let toolArgsStore: ToolArgsStore
-        let toolSegmentStore: ToolSegmentStore
-        let toolDetailsStore: ToolDetailsStore
-        /// Session content owner for assistant/tool/user rows, supplied by chat composition.
-        let sessionContent: SessionContentAccess
-        let iconAssetCache: IconAssetCache?
-        /// Opens a commit or path-pill destination built by chat composition. Nil: pills
-        /// do nothing.
-        let openDestination: ChatTimelineOpenDestination?
-        /// Loads the next older trace page through the session runtime chat composition
-        /// already bound. The timeline decides when to call it; nil means no remote paging.
-        let loadOlderPage: (@MainActor () async -> Bool)?
-        let currentModel: String?
-        let extensionWorkingState: ExtensionWorkingState?
-        let extensionHiddenThinkingLabel: String?
-        let audioPlayer: AudioPlayerService
-        let audioLifecycleCoordinator: AudioLifecycleCoordinator?
-        let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
-        let topOverlap: CGFloat
-        let bottomOverlap: CGFloat
-        let onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)?
-        /// When true, `updateUIView` pushes chrome only. The controller observes
-        /// `TimelineReducer` and owns projection / render window / quiet state.
-        let ownsTimelineProjection: Bool
-        let quietModeEnabled: Bool
-        let workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle
-        let chromeStyle: ChatTimelineChromeStyle
-        let sessionManager: ChatSessionManager?
-        var outlineAvailability: ChatTimelineOutlineAvailability?
-        /// Nil: resolve Increase Contrast from UIAccessibility / traits.
-        var speakerIncreasedContrastOverride: Bool? = nil
-        /// Nil: resolve Differentiate Without Color from UIAccessibility.
-        var speakerDifferentiateWithoutColorOverride: Bool? = nil
+    // MARK: - Collection view lifecycle
 
-        init(
-            items: [ChatItem],
-            displayRows: [TimelineDisplayRow]? = nil,
-            workLineByID: [String: QuietTimelineWorkLine] = [:],
-            fullTimelineItemIDs: [String]? = nil,
-            hiddenCount: Int,
-            hasOlderServerPage: Bool = false,
-            renderWindowStep: Int,
-            isBusy: Bool,
-            showsWorkingIndicator: Bool? = nil,
-            streamingAssistantID: String?,
-            sessionId: String,
-            serverId: String? = nil,
-            workspaceId: String?,
-            agentId: String? = nil,
-            agentIcon: IconChoice? = nil,
-            routeScope: SessionRouteScope? = nil,
-            onFork: @escaping (String) -> Void,
-            onOpenCurrentFile: @escaping (String) -> Void = { _ in },
-            onOpenChatReader: ((ChatReaderPayload) -> Void)? = nil,
-            onBackSwipe: @escaping () -> Void,
-            onQuietWorkLineToggle: @escaping (String) -> Void = { _ in },
-            onShowEarlier: @escaping () -> Void,
-            scrollCommand: ChatTimelineScrollCommand? = nil,
-            scrollController: ChatScrollController,
-            reducer: TimelineReducer,
-            toolOutputStore: ToolOutputStore,
-            toolArgsStore: ToolArgsStore,
-            toolSegmentStore: ToolSegmentStore,
-            toolDetailsStore: ToolDetailsStore? = nil,
-            sessionContent: SessionContentAccess,
-            iconAssetCache: IconAssetCache? = nil,
-            openDestination: ChatTimelineOpenDestination? = nil,
-            loadOlderPage: (@MainActor () async -> Bool)? = nil,
-            currentModel: String? = nil,
-            extensionWorkingState: ExtensionWorkingState? = nil,
-            extensionHiddenThinkingLabel: String? = nil,
-            audioPlayer: AudioPlayerService,
-            audioLifecycleCoordinator: AudioLifecycleCoordinator? = nil,
-            reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
-            topOverlap: CGFloat = 0,
-            bottomOverlap: CGFloat = 0,
-            onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)? = nil,
-            ownsTimelineProjection: Bool = false,
-            quietModeEnabled: Bool = false,
-            workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
-            chromeStyle: ChatTimelineChromeStyle = .standard,
-            sessionManager: ChatSessionManager? = nil,
-            outlineAvailability: ChatTimelineOutlineAvailability? = nil,
-            speakerIncreasedContrastOverride: Bool? = nil,
-            speakerDifferentiateWithoutColorOverride: Bool? = nil
-        ) {
-            self.items = items
-            self.displayRows = displayRows ?? items.map(TimelineDisplayRow.item)
-            self.workLineByID = workLineByID
-            self.fullTimelineItemIDs = fullTimelineItemIDs ?? items.map(\.id)
-            self.hiddenCount = hiddenCount
-            self.hasOlderServerPage = hasOlderServerPage
-            self.renderWindowStep = renderWindowStep
-            self.isBusy = isBusy
-            self.showsWorkingIndicator = showsWorkingIndicator ?? isBusy
-            self.streamingAssistantID = streamingAssistantID
-            self.sessionId = sessionId
-            self.serverId = serverId
-            self.workspaceId = workspaceId
-            self.agentId = agentId
-            self.agentIcon = agentIcon
-            self.routeScope = routeScope
-                ?? workspaceId.map(SessionRouteScope.workspace)
-            self.onFork = onFork
-            self.onOpenCurrentFile = onOpenCurrentFile
-            self.onOpenChatReader = onOpenChatReader
-            self.onBackSwipe = onBackSwipe
-            self.onQuietWorkLineToggle = onQuietWorkLineToggle
-            self.onShowEarlier = onShowEarlier
-            self.scrollCommand = scrollCommand
-            self.scrollController = scrollController
-            self.reducer = reducer
-            self.toolOutputStore = toolOutputStore
-            self.toolArgsStore = toolArgsStore
-            self.toolSegmentStore = toolSegmentStore
-            self.toolDetailsStore = toolDetailsStore ?? reducer.toolDetailsStore
-            self.sessionContent = sessionContent
-            self.iconAssetCache = iconAssetCache
-            self.openDestination = openDestination
-            self.loadOlderPage = loadOlderPage
-            self.currentModel = currentModel
-            self.extensionWorkingState = extensionWorkingState
-            self.extensionHiddenThinkingLabel = extensionHiddenThinkingLabel
-            self.audioPlayer = audioPlayer
-            self.audioLifecycleCoordinator = audioLifecycleCoordinator
-            self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
-            self.topOverlap = topOverlap
-            self.bottomOverlap = bottomOverlap
-            self.onVisibleAudioStripItemIDsChange = onVisibleAudioStripItemIDsChange
-            self.ownsTimelineProjection = ownsTimelineProjection
-            self.quietModeEnabled = quietModeEnabled
-            self.workStripStyle = workStripStyle
-            self.chromeStyle = chromeStyle
-            self.sessionManager = sessionManager
-            self.outlineAvailability = outlineAvailability
-            self.speakerIncreasedContrastOverride = speakerIncreasedContrastOverride
-            self.speakerDifferentiateWithoutColorOverride = speakerDifferentiateWithoutColorOverride
-        }
-    }
-
-    let configuration: Configuration
-
-    func makeUIView(context: Context) -> UICollectionView {
+    /// Builds the timeline's collection view with this controller as its
+    /// delegate and data source. `contentRoot` is the app root for SwiftUI
+    /// content the timeline hosts (its empty state).
+    func makeCollectionView(
+        configuration: ChatTimelineConfiguration,
+        contentRoot: AppRootEnvironment?
+    ) -> UICollectionView {
         let collectionView = AnchoredCollectionView(frame: .zero, collectionViewLayout: Self.makeLayout())
         collectionView.backgroundColor = UIColor(Color.themeBg)
         collectionView.alwaysBounceVertical = true
@@ -200,51 +213,51 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         // soft because the composer glass intentionally lets content breathe.
         collectionView.topEdgeEffect.style = .hard
         collectionView.bottomEdgeEffect.style = .soft
-        collectionView.delegate = context.coordinator
-        context.coordinator.contentRoot = context.environment.appRootEnvironment
+        collectionView.delegate = self
+        self.contentRoot = contentRoot
 
-        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Controller.handleTimelineTap(_:)))
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTimelineTap(_:)))
         tapGesture.cancelsTouchesInView = false
-        tapGesture.delegate = context.coordinator
+        tapGesture.delegate = self
         collectionView.addGestureRecognizer(tapGesture)
-        // The timeline is a UIKit scroll view, so the shared back-swipe
-        // recognizer must live here instead of on the SwiftUI parent.
-        context.coordinator.installBackSwipeGesture(on: collectionView)
+        // The timeline is a scroll view, so the shared back-swipe recognizer
+        // lives on it instead of on the screen around it.
+        installBackSwipeGesture(on: collectionView)
 
         collectionView.accessibilityIdentifier = "chat.timeline"
-        // ChatView already folds nav + context-bar chrome into `topOverlap`.
-        // Automatic adjustment would add the window safe area again and park
-        // the first row below the branch chip. Horizontal safe area (a vertical
-        // rail on one side) is handled by `ChatTimelineCachedHeightLayout.rowColumn`.
+        // The chat screen folds the bar and context-bar chrome into
+        // `topOverlap`. Automatic adjustment would add the window safe area
+        // again and park the first row below the branch chip. Horizontal safe
+        // area (a vertical rail on one side) is handled by
+        // `ChatTimelineCachedHeightLayout.rowColumn`.
         collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.contentInset.top = configuration.topOverlap
         collectionView.contentInset.bottom = configuration.bottomOverlap
-        context.coordinator.attachHardwareKeybindingResponder(to: collectionView)
-        context.coordinator.configureDataSource(collectionView: collectionView)
-        collectionView.prefetchDataSource = context.coordinator
+        attachHardwareKeybindingResponder(to: collectionView)
+        configureDataSource(collectionView: collectionView)
+        collectionView.prefetchDataSource = self
         ChatReaderOpenLookup.install(configuration.onOpenChatReader, on: collectionView)
         return collectionView
     }
 
-    func updateUIView(_ collectionView: UICollectionView, context: Context) {
+    /// Applies a caller-owned configuration (rows included) to the timeline.
+    /// A timeline that owns its projection (`ownsTimelineProjection`) takes
+    /// chrome only, through `updateHostChrome`.
+    func update(configuration: ChatTimelineConfiguration, collectionView: UICollectionView) {
         ChatTimelinePerf.recordHostUpdateUIView()
         ChatReaderOpenLookup.install(configuration.onOpenChatReader, on: collectionView)
-        context.coordinator.contentRoot = context.environment.appRootEnvironment
         if configuration.ownsTimelineProjection {
-            context.coordinator.updateHostChrome(configuration: configuration, to: collectionView)
+            updateHostChrome(configuration: configuration, to: collectionView)
         } else {
-            context.coordinator.apply(configuration: configuration, to: collectionView)
+            apply(configuration: configuration, to: collectionView)
         }
     }
 
-    static func dismantleUIView(_ collectionView: UICollectionView, coordinator: Controller) {
-        coordinator.stopOwnedTimelineObservation()
-        coordinator.stopMarkdownVideoPlayback(in: collectionView)
-        coordinator.cancelTimelinePreparation()
-    }
-
-    func makeCoordinator() -> Controller {
-        Controller()
+    /// Stops observation, inline video, and preparation when the timeline goes away.
+    func dismantle(_ collectionView: UICollectionView) {
+        stopOwnedTimelineObservation()
+        stopMarkdownVideoPlayback(in: collectionView)
+        cancelTimelinePreparation()
     }
 
     // periphery:ignore - used by ChatTimelineLayoutTests via @testable import
@@ -255,903 +268,1014 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         ChatTimelineCachedHeightLayout()
     }
 
-    @MainActor
-    final class Controller: NSObject, UICollectionViewDelegate, UIGestureRecognizerDelegate {
-        // MARK: - Properties + Init
+    // MARK: - Properties + Init
 
-        var dataSource: UICollectionViewDiffableDataSource<Int, String>?
+    var dataSource: UICollectionViewDiffableDataSource<Int, String>?
 
-        private let context = ChatTimelineControllerContext()
-        let ownedClock = ChatTimelineOwnedClockState()
-        /// The app root above this timeline, for SwiftUI content it hosts
-        /// through `HostFactory.content`. The timeline reads no services from it.
-        var contentRoot: AppRootEnvironment?
-        /// Prepared when an explicit jump starts, spent when its row arrives.
-        private var navigationArrivalHaptic: UIImpactFeedbackGenerator?
+    private let context = ChatTimelineControllerContext()
+    let ownedClock = ChatTimelineOwnedClockState()
+    /// The app root above this timeline, for SwiftUI content it hosts
+    /// through `HostFactory.content`. The timeline reads no services from it.
+    var contentRoot: AppRootEnvironment?
+    /// Prepared when an explicit jump starts, spent when its row arrives.
+    private var navigationArrivalHaptic: UIImpactFeedbackGenerator?
 
-        var workLineByID: [String: QuietTimelineWorkLine] = [:]
-        /// Timeline extent when the last automatic earlier-rows request fired;
-        /// nil means armed. A reveal or a loaded page changes the extent and
-        /// re-arms, while a page load that fails or stays in flight waits for
-        /// the next drag instead of refiring on every scroll frame.
-        var earlierRowsRequestMark: EarlierRowsRequestMark?
-        var streamingAssistantID: String?
-        var audioPlayer: AudioPlayerService?
-        var audioLifecycleCoordinator: AudioLifecycleCoordinator? {
-            get { context.audioLifecycleCoordinator }
-            set { context.audioLifecycleCoordinator = newValue }
+    var workLineByID: [String: QuietTimelineWorkLine] = [:]
+    /// Timeline extent when the last automatic earlier-rows request fired;
+    /// nil means armed. A reveal or a loaded page changes the extent and
+    /// re-arms, while a page load that fails or stays in flight waits for
+    /// the next drag instead of refiring on every scroll frame.
+    var earlierRowsRequestMark: EarlierRowsRequestMark?
+    var streamingAssistantID: String?
+    var audioPlayer: AudioPlayerService?
+    var audioLifecycleCoordinator: AudioLifecycleCoordinator? {
+        get { context.audioLifecycleCoordinator }
+        set { context.audioLifecycleCoordinator = newValue }
+    }
+    weak var collectionView: UICollectionView?
+    var hardwareKeybindingResponder: HardwareKeybindingResponder?
+    private var backSwipeGestureInstaller: HorizontalBackSwipeGestureInstaller?
+    var onBackSwipe: (() -> Void)?
+    var onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)?
+    var timelineTopOverlap: CGFloat = 0
+    var timelineBottomOverlap: CGFloat = 0
+    private var lastPublishedVisibleAudioStripItemIDs = Set<String>()
+
+    override init() {
+        super.init()
+        preparationRunway.onArtifactReady = { [weak self] scope, itemID, _ in
+            self?.handlePreparedArtifact(scope: scope, itemID: itemID)
         }
-        weak var collectionView: UICollectionView?
-        var hardwareKeybindingResponder: HardwareKeybindingResponder?
-        private var backSwipeGestureInstaller: HorizontalBackSwipeGestureInstaller?
-        var onBackSwipe: (() -> Void)?
-        var onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)?
-        var timelineTopOverlap: CGFloat = 0
-        var timelineBottomOverlap: CGFloat = 0
-        private var lastPublishedVisibleAudioStripItemIDs = Set<String>()
+        applyResourcePressure(.current())
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleThemeDidChange),
+            name: .oppiThemeDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleTimelineMemoryWarning),
+            name: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleResourcePressureDidChange),
+            name: ProcessInfo.thermalStateDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleResourcePressureDidChange),
+            name: .NSProcessInfoPowerStateDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSpeakerAccessibilityDidChange),
+            name: UIAccessibility.darkerSystemColorsStatusDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSpeakerAccessibilityDidChange),
+            name: UIAccessibility.differentiateWithoutColorDidChangeNotification,
+            object: nil
+        )
+        let traits = UITraitCollection.current
+        speakerIncreasedContrast = TimelineSpeakerChrome.increasedContrast(traitCollection: traits)
+        speakerDifferentiateWithoutColor = TimelineSpeakerChrome.differentiateWithoutColor()
+    }
 
-        override init() {
-            super.init()
-            preparationRunway.onArtifactReady = { [weak self] scope, itemID, _ in
-                self?.handlePreparedArtifact(scope: scope, itemID: itemID)
+    var sessionId: String {
+        get { context.sessionId }
+        set { context.sessionId = newValue }
+    }
+
+    var serverId: String? { context.serverId }
+
+    var workspaceId: String? {
+        get { context.workspaceId }
+        set { context.workspaceId = newValue }
+    }
+
+    var agentId: String? { context.agentId }
+    var agentIcon: IconChoice? { context.agentIcon }
+    var chromeStyle: ChatTimelineChromeStyle { context.chromeStyle }
+
+    var routeScope: SessionRouteScope? {
+        get { context.routeScope }
+        set { context.routeScope = newValue }
+    }
+
+    var onFork: ((String) -> Void)? {
+        get { context.onFork }
+        set { context.onFork = newValue }
+    }
+
+    func installBackSwipeGesture(on collectionView: UICollectionView) {
+        let installer = HorizontalBackSwipeGestureInstaller(
+            onBack: { [weak self] in
+                self?.onBackSwipe?()
+            },
+            shouldReceiveTouch: { [weak self] touch in
+                self?.shouldReceiveTimelineGestureTouch(touch) ?? true
             }
-            applyResourcePressure(.current())
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(handleThemeDidChange),
-                name: .oppiThemeDidChange,
-                object: nil
-            )
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(handleTimelineMemoryWarning),
-                name: UIApplication.didReceiveMemoryWarningNotification,
-                object: nil
-            )
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(handleResourcePressureDidChange),
-                name: ProcessInfo.thermalStateDidChangeNotification,
-                object: nil
-            )
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(handleResourcePressureDidChange),
-                name: .NSProcessInfoPowerStateDidChange,
-                object: nil
-            )
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(handleSpeakerAccessibilityDidChange),
-                name: UIAccessibility.darkerSystemColorsStatusDidChangeNotification,
-                object: nil
-            )
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(handleSpeakerAccessibilityDidChange),
-                name: UIAccessibility.differentiateWithoutColorDidChangeNotification,
-                object: nil
-            )
-            let traits = UITraitCollection.current
-            speakerIncreasedContrast = TimelineSpeakerChrome.increasedContrast(traitCollection: traits)
-            speakerDifferentiateWithoutColor = TimelineSpeakerChrome.differentiateWithoutColor()
+        )
+        installer.install(on: collectionView)
+        backSwipeGestureInstaller = installer
+    }
+
+    var onOpenCurrentFile: ((String) -> Void)? {
+        get { context.onOpenCurrentFile }
+        set { context.onOpenCurrentFile = newValue }
+    }
+
+    var onOpenChatReader: ((ChatReaderPayload) -> Void)? {
+        get { context.onOpenChatReader }
+        set { context.onOpenChatReader = newValue }
+    }
+
+    var onShowEarlier: (() -> Void)? {
+        get { context.onShowEarlier }
+        set { context.onShowEarlier = newValue }
+    }
+
+    var onQuietWorkLineToggle: ((String) -> Void)? {
+        get { context.onQuietWorkLineToggle }
+        set { context.onQuietWorkLineToggle = newValue }
+    }
+
+    var scrollController: ChatScrollController? {
+        get { context.scrollController }
+        set { context.scrollController = newValue }
+    }
+
+    var reducer: TimelineReducer? {
+        get { context.reducer }
+        set { context.reducer = newValue }
+    }
+
+    var toolOutputStore: ToolOutputStore? {
+        get { context.toolOutputStore }
+        set { context.toolOutputStore = newValue }
+    }
+
+    var toolArgsStore: ToolArgsStore? {
+        get { context.toolArgsStore }
+        set { context.toolArgsStore = newValue }
+    }
+
+    var toolSegmentStore: ToolSegmentStore? {
+        get { context.toolSegmentStore }
+        set { context.toolSegmentStore = newValue }
+    }
+
+    var toolDetailsStore: ToolDetailsStore? {
+        get { context.toolDetailsStore }
+        set { context.toolDetailsStore = newValue }
+    }
+
+    var sessionContent: SessionContentAccess? {
+        get { context.sessionContent }
+        set { context.sessionContent = newValue }
+    }
+
+    var iconAssetCache: IconAssetCache? {
+        get { context.iconAssetCache }
+        set { context.iconAssetCache = newValue }
+    }
+
+    var openDestination: ChatTimelineOpenDestination? {
+        get { context.openDestination }
+        set { context.openDestination = newValue }
+    }
+
+    var currentModel: String? {
+        get { context.currentModel }
+        set { context.currentModel = newValue }
+    }
+
+    var currentExtensionWorkingState: ExtensionWorkingState? {
+        get { context.extensionWorkingState }
+        set { context.extensionWorkingState = newValue }
+    }
+
+    var currentExtensionHiddenThinkingLabel: String? {
+        get { context.extensionHiddenThinkingLabel }
+        set { context.extensionHiddenThinkingLabel = newValue }
+    }
+
+    var interactionContext: TimelineInteractionContext {
+        context.interactionContext
+    }
+
+    /// Follow only at the true live tail. Any larger gap is detached
+    /// reading, including a tall just-sent user message.
+    let nearBottomEnterThreshold: CGFloat = 32
+    let nearBottomExitThreshold: CGFloat = 32
+
+    var currentIDs: [String] = []
+
+    func fullTimelineItemID(forRenderedID id: String) -> String? {
+        if currentFullTimelineItemIDs.contains(id) {
+            return id
         }
+        return currentWorkLineByID[id]?.sourceItemIDs.first
+    }
 
-        var sessionId: String {
-            get { context.sessionId }
-            set { context.sessionId = newValue }
+    /// Resolve a full ChatItem identity into the currently rendered row.
+    /// A collapsed source item is represented by its synthetic work line;
+    /// expanded items retain their own identity.
+    func renderedID(forFullTimelineItemID id: String) -> String? {
+        if currentIDs.contains(id) {
+            return id
         }
-
-        var serverId: String? { context.serverId }
-
-        var workspaceId: String? {
-            get { context.workspaceId }
-            set { context.workspaceId = newValue }
+        if let workLine = currentWorkLineByID[id], currentIDs.contains(workLine.id) {
+            return workLine.id
         }
-
-        var agentId: String? { context.agentId }
-        var agentIcon: IconChoice? { context.agentIcon }
-        var chromeStyle: ChatTimelineChromeStyle { context.chromeStyle }
-
-        var routeScope: SessionRouteScope? {
-            get { context.routeScope }
-            set { context.routeScope = newValue }
+        if let renderedWorkLine = currentWorkLineByID.values.first(where: {
+            $0.sourceItemIDs.contains(id) && currentIDs.contains($0.id)
+        }) {
+            return renderedWorkLine.id
         }
-
-        var onFork: ((String) -> Void)? {
-            get { context.onFork }
-            set { context.onFork = newValue }
+        // A Quiet toggle or older-page prepend can replace a synthetic
+        // row while the detached capture still holds its prior ID. Bridge
+        // overlapping source membership to the replacement presentation
+        // row first; synthetic rows remain derived from ChatItem identity.
+        if let replacementID = workLineReplacementIDByPreviousID[id],
+           currentIDs.contains(replacementID) {
+            return replacementID
         }
-
-        func installBackSwipeGesture(on collectionView: UICollectionView) {
-            let installer = HorizontalBackSwipeGestureInstaller(
-                onBack: { [weak self] in
-                    self?.onBackSwipe?()
-                },
-                shouldReceiveTouch: { [weak self] touch in
-                    self?.shouldReceiveTimelineGestureTouch(touch) ?? true
-                }
-            )
-            installer.install(on: collectionView)
-            backSwipeGestureInstaller = installer
+        if let previousWorkLine = previousWorkLineByID[id],
+           let sourceID = previousWorkLine.sourceItemIDs.first(where: currentIDs.contains) {
+            return sourceID
         }
+        return nil
+    }
 
-        var onOpenCurrentFile: ((String) -> Void)? {
-            get { context.onOpenCurrentFile }
-            set { context.onOpenCurrentFile = newValue }
-        }
-
-        var onOpenChatReader: ((ChatReaderPayload) -> Void)? {
-            get { context.onOpenChatReader }
-            set { context.onOpenChatReader = newValue }
-        }
-
-        var onShowEarlier: (() -> Void)? {
-            get { context.onShowEarlier }
-            set { context.onShowEarlier = newValue }
-        }
-
-        var onQuietWorkLineToggle: ((String) -> Void)? {
-            get { context.onQuietWorkLineToggle }
-            set { context.onQuietWorkLineToggle = newValue }
-        }
-
-        var scrollController: ChatScrollController? {
-            get { context.scrollController }
-            set { context.scrollController = newValue }
-        }
-
-        var reducer: TimelineReducer? {
-            get { context.reducer }
-            set { context.reducer = newValue }
-        }
-
-        var toolOutputStore: ToolOutputStore? {
-            get { context.toolOutputStore }
-            set { context.toolOutputStore = newValue }
-        }
-
-        var toolArgsStore: ToolArgsStore? {
-            get { context.toolArgsStore }
-            set { context.toolArgsStore = newValue }
-        }
-
-        var toolSegmentStore: ToolSegmentStore? {
-            get { context.toolSegmentStore }
-            set { context.toolSegmentStore = newValue }
-        }
-
-        var toolDetailsStore: ToolDetailsStore? {
-            get { context.toolDetailsStore }
-            set { context.toolDetailsStore = newValue }
-        }
-
-        var sessionContent: SessionContentAccess? {
-            get { context.sessionContent }
-            set { context.sessionContent = newValue }
-        }
-
-        var iconAssetCache: IconAssetCache? {
-            get { context.iconAssetCache }
-            set { context.iconAssetCache = newValue }
-        }
-
-        var openDestination: ChatTimelineOpenDestination? {
-            get { context.openDestination }
-            set { context.openDestination = newValue }
-        }
-
-        var currentModel: String? {
-            get { context.currentModel }
-            set { context.currentModel = newValue }
-        }
-
-        var currentExtensionWorkingState: ExtensionWorkingState? {
-            get { context.extensionWorkingState }
-            set { context.extensionWorkingState = newValue }
-        }
-
-        var currentExtensionHiddenThinkingLabel: String? {
-            get { context.extensionHiddenThinkingLabel }
-            set { context.extensionHiddenThinkingLabel = newValue }
-        }
-
-        var interactionContext: TimelineInteractionContext {
-            context.interactionContext
-        }
-
-        /// Follow only at the true live tail. Any larger gap is detached
-        /// reading, including a tall just-sent user message.
-        let nearBottomEnterThreshold: CGFloat = 32
-        let nearBottomExitThreshold: CGFloat = 32
-
-        var currentIDs: [String] = []
-
-        func fullTimelineItemID(forRenderedID id: String) -> String? {
-            if currentFullTimelineItemIDs.contains(id) {
-                return id
-            }
-            return currentWorkLineByID[id]?.sourceItemIDs.first
-        }
-
-        /// Resolve a full ChatItem identity into the currently rendered row.
-        /// A collapsed source item is represented by its synthetic work line;
-        /// expanded items retain their own identity.
-        func renderedID(forFullTimelineItemID id: String) -> String? {
-            if currentIDs.contains(id) {
-                return id
-            }
-            if let workLine = currentWorkLineByID[id], currentIDs.contains(workLine.id) {
-                return workLine.id
-            }
-            if let renderedWorkLine = currentWorkLineByID.values.first(where: {
-                $0.sourceItemIDs.contains(id) && currentIDs.contains($0.id)
-            }) {
-                return renderedWorkLine.id
-            }
-            // A Quiet toggle or older-page prepend can replace a synthetic
-            // row while the detached capture still holds its prior ID. Bridge
-            // overlapping source membership to the replacement presentation
-            // row first; synthetic rows remain derived from ChatItem identity.
-            if let replacementID = workLineReplacementIDByPreviousID[id],
-               currentIDs.contains(replacementID) {
-                return replacementID
-            }
-            if let previousWorkLine = previousWorkLineByID[id],
-               let sourceID = previousWorkLine.sourceItemIDs.first(where: currentIDs.contains) {
-                return sourceID
-            }
+    func resolvedScrollCommand(_ command: ChatTimelineScrollCommand) -> ChatTimelineScrollCommand? {
+        guard let renderedID = renderedID(forFullTimelineItemID: command.id) else {
             return nil
         }
+        guard renderedID != command.id else { return command }
+        return ChatTimelineScrollCommand(
+            id: renderedID,
+            anchor: command.anchor,
+            animated: command.animated,
+            nonce: command.nonce
+        )
+    }
 
-        func resolvedScrollCommand(_ command: ChatTimelineScrollCommand) -> ChatTimelineScrollCommand? {
-            guard let renderedID = renderedID(forFullTimelineItemID: command.id) else {
-                return nil
-            }
-            guard renderedID != command.id else { return command }
-            return ChatTimelineScrollCommand(
-                id: renderedID,
-                anchor: command.anchor,
-                animated: command.animated,
-                nonce: command.nonce
+    /// Complete stable timeline order, including rows outside the rendered
+    /// suffix window. Viewport fallback ordinals must use this coordinate space.
+    private(set) var currentFullTimelineItemIDs: [String] = []
+    var currentItemByID: [String: ChatItem] = [:]
+    var currentWorkLineByID: [String: QuietTimelineWorkLine] = [:]
+    private var previousWorkLineByID: [String: QuietTimelineWorkLine] = [:]
+    private var workLineReplacementIDByPreviousID: [String: String] = [:]
+    private var previousItemByID: [String: ChatItem] = [:]
+    private var previousStreamingAssistantID: String?
+    private(set) var previousHiddenCount = 0
+    private var previousHasOlderServerPage = false
+    private var previousItemCount = 0
+    private var previousShowsWorkingIndicator = false
+    private var previousExtensionWorkingState: ExtensionWorkingState?
+    private var previousHiddenThinkingLabel: String?
+    private var previousThemeID: ThemeID?
+    var speakerIncreasedContrast = false
+    var speakerDifferentiateWithoutColor = false
+    private var speakerIncreasedContrastOverride: Bool?
+    private var speakerDifferentiateWithoutColorOverride: Bool?
+    private var lastHandledScrollCommandNonce = 0
+    var lastObservedContentOffsetY: CGFloat?
+    var lastObservedContentHeight: CGFloat?
+    var isTimelineBusy = false
+    /// Rendering/sizing must stop treating an assistant as streaming as soon
+    /// as execution becomes idle, even if the reducer retains its final ID
+    /// for one more render pass.
+    var isAssistantStreamingPresentationActive = false
+    var lastDistanceFromBottom: CGFloat = 0
+    private var lastBusyAmbientScrollReconcileNs: UInt64 = 0
+    let toolOutputLoader = ExpandedToolOutputLoader()
+    let preparationRunway = ChatTimelinePreparationRunway()
+    var resourcePressure = StreamingRenderPolicy.ResourcePressure.nominal
+    var lastPrefetchCenterIndex: Int?
+    var lastPrefetchDirection = 0
+
+    #if DEBUG
+        var _fetchToolOutputForTesting: ExpandedToolOutputLoader.FetchToolOutput? {
+            get { toolOutputLoader.fetchOverrideForTesting }
+            set { toolOutputLoader.fetchOverrideForTesting = newValue }
+        }
+
+        // periphery:ignore - used by ChatTimelineTests via @testable import
+        var _toolOutputCanceledCountForTesting: Int {
+            toolOutputLoader.canceledCountForTesting
+        }
+
+        // periphery:ignore - used by ChatTimelineTests via @testable import
+        var _toolOutputStaleDiscardCountForTesting: Int {
+            toolOutputLoader.staleDiscardCountForTesting
+        }
+
+        // periphery:ignore - used by ChatTimelineTests via @testable import
+        var _toolOutputAppliedCountForTesting: Int {
+            toolOutputLoader.appliedCountForTesting
+        }
+
+        private(set) var _audioStateRefreshCountForTesting = 0
+        private(set) var _audioStateRefreshedItemIDsForTesting: [String] = []
+        var debugPreparedArtifactReconfiguredItemIDs: [String] = []
+        var debugReconfiguredItemIDs: [String] = []
+        var debugIgnoresLiveProcessInfoResourcePressureForTesting = false
+        var debugNextNotificationPressureForTesting: StreamingRenderPolicy.ResourcePressure?
+        var debugLastResourcePressureAppliedOnMainActorForTesting = false
+
+        // periphery:ignore - used by ChatTimelineTests via @testable import
+        var _toolOutputLoadTaskCountForTesting: Int {
+            toolOutputLoader.taskCountForTesting
+        }
+
+        // periphery:ignore - used by ChatTimelineTests via @testable import
+        var _toolOutputRetryDelayForTesting: TimeInterval? {
+            get { toolOutputLoader.retryDelayForTesting }
+            set { toolOutputLoader.retryDelayForTesting = newValue }
+        }
+
+        // periphery:ignore - used by ChatTimelineTests via @testable import
+        var _loadingToolOutputIDsForTesting: Set<String> {
+            toolOutputLoader.loadingIDsForTesting
+        }
+
+        // periphery:ignore - used by ChatTimelineTests via @testable import
+        func _triggerLoadFullToolOutputForTesting(
+            itemID: String,
+            tool: String,
+            outputByteCount: Int,
+            in collectionView: UICollectionView
+        ) {
+            ensureExpandedToolOutputLoaded(
+                itemID: itemID,
+                tool: tool,
+                outputByteCount: outputByteCount,
+                in: collectionView
             )
         }
+    #endif
 
-        /// Complete stable timeline order, including rows outside the rendered
-        /// suffix window. Viewport fallback ordinals must use this coordinate space.
-        private(set) var currentFullTimelineItemIDs: [String] = []
-        var currentItemByID: [String: ChatItem] = [:]
-        var currentWorkLineByID: [String: QuietTimelineWorkLine] = [:]
-        private var previousWorkLineByID: [String: QuietTimelineWorkLine] = [:]
-        private var workLineReplacementIDByPreviousID: [String: String] = [:]
-        private var previousItemByID: [String: ChatItem] = [:]
-        private var previousStreamingAssistantID: String?
-        private(set) var previousHiddenCount = 0
-        private var previousHasOlderServerPage = false
-        private var previousItemCount = 0
-        private var previousShowsWorkingIndicator = false
-        private var previousExtensionWorkingState: ExtensionWorkingState?
-        private var previousHiddenThinkingLabel: String?
-        private var previousThemeID: ThemeID?
-        var speakerIncreasedContrast = false
-        var speakerDifferentiateWithoutColor = false
-        private var speakerIncreasedContrastOverride: Bool?
-        private var speakerDifferentiateWithoutColorOverride: Bool?
-        private var lastHandledScrollCommandNonce = 0
-        var lastObservedContentOffsetY: CGFloat?
-        var lastObservedContentHeight: CGFloat?
-        var isTimelineBusy = false
-        /// Rendering/sizing must stop treating an assistant as streaming as soon
-        /// as execution becomes idle, even if the reducer retains its final ID
-        /// for one more render pass.
-        var isAssistantStreamingPresentationActive = false
-        var lastDistanceFromBottom: CGFloat = 0
-        private var lastBusyAmbientScrollReconcileNs: UInt64 = 0
-        let toolOutputLoader = ExpandedToolOutputLoader()
-        let preparationRunway = ChatTimelinePreparationRunway()
-        var resourcePressure = StreamingRenderPolicy.ResourcePressure.nominal
-        var lastPrefetchCenterIndex: Int?
-        var lastPrefetchDirection = 0
-
-        #if DEBUG
-            var _fetchToolOutputForTesting: ExpandedToolOutputLoader.FetchToolOutput? {
-                get { toolOutputLoader.fetchOverrideForTesting }
-                set { toolOutputLoader.fetchOverrideForTesting = newValue }
-            }
-
-            // periphery:ignore - used by ChatTimelineTests via @testable import
-            var _toolOutputCanceledCountForTesting: Int {
-                toolOutputLoader.canceledCountForTesting
-            }
-
-            // periphery:ignore - used by ChatTimelineTests via @testable import
-            var _toolOutputStaleDiscardCountForTesting: Int {
-                toolOutputLoader.staleDiscardCountForTesting
-            }
-
-            // periphery:ignore - used by ChatTimelineTests via @testable import
-            var _toolOutputAppliedCountForTesting: Int {
-                toolOutputLoader.appliedCountForTesting
-            }
-
-            private(set) var _audioStateRefreshCountForTesting = 0
-            private(set) var _audioStateRefreshedItemIDsForTesting: [String] = []
-            var debugPreparedArtifactReconfiguredItemIDs: [String] = []
-            var debugReconfiguredItemIDs: [String] = []
-            var debugIgnoresLiveProcessInfoResourcePressureForTesting = false
-            var debugNextNotificationPressureForTesting: StreamingRenderPolicy.ResourcePressure?
-            var debugLastResourcePressureAppliedOnMainActorForTesting = false
-
-            // periphery:ignore - used by ChatTimelineTests via @testable import
-            var _toolOutputLoadTaskCountForTesting: Int {
-                toolOutputLoader.taskCountForTesting
-            }
-
-            // periphery:ignore - used by ChatTimelineTests via @testable import
-            var _toolOutputRetryDelayForTesting: TimeInterval? {
-                get { toolOutputLoader.retryDelayForTesting }
-                set { toolOutputLoader.retryDelayForTesting = newValue }
-            }
-
-            // periphery:ignore - used by ChatTimelineTests via @testable import
-            var _loadingToolOutputIDsForTesting: Set<String> {
-                toolOutputLoader.loadingIDsForTesting
-            }
-
-            // periphery:ignore - used by ChatTimelineTests via @testable import
-            func _triggerLoadFullToolOutputForTesting(
-                itemID: String,
-                tool: String,
-                outputByteCount: Int,
-                in collectionView: UICollectionView
-            ) {
-                ensureExpandedToolOutputLoaded(
-                    itemID: itemID,
-                    tool: tool,
-                    outputByteCount: outputByteCount,
-                    in: collectionView
-                )
-            }
-        #endif
-
-        deinit {
-            MainActor.assumeIsolated {
-                ownedClock.isObserving = false
-                ownedClock.emptyOverlayController = nil
-                let observedAudioPlayer = audioPlayer
-                toolOutputLoader.cancelAllWork()
-                preparationRunway.cancelAll()
-                NotificationCenter.default.removeObserver(
-                    self,
-                    name: AudioPlayerService.stateDidChangeNotification,
-                    object: observedAudioPlayer
-                )
-                NotificationCenter.default.removeObserver(
-                    self,
-                    name: .oppiThemeDidChange,
-                    object: nil
-                )
-                NotificationCenter.default.removeObserver(
-                    self,
-                    name: UIApplication.didReceiveMemoryWarningNotification,
-                    object: nil
-                )
-                NotificationCenter.default.removeObserver(
-                    self,
-                    name: ProcessInfo.thermalStateDidChangeNotification,
-                    object: nil
-                )
-                NotificationCenter.default.removeObserver(
-                    self,
-                    name: .NSProcessInfoPowerStateDidChange,
-                    object: nil
-                )
-                NotificationCenter.default.removeObserver(
-                    self,
-                    name: UIAccessibility.darkerSystemColorsStatusDidChangeNotification,
-                    object: nil
-                )
-                NotificationCenter.default.removeObserver(
-                    self,
-                    name: UIAccessibility.differentiateWithoutColorDidChangeNotification,
-                    object: nil
-                )
-            }
-        }
-
-        // MARK: - Diffing
-
-        /// Build ordered unique items, keeping the last occurrence of each ID.
-        ///
-        /// Single-pass fast path when no duplicates exist (the common case).
-        /// Falls back to a two-pass dedup only when a collision is detected.
-        static func uniqueItemsKeepingLast(_ items: [ChatItem]) -> (orderedIDs: [String], itemByID: [String: ChatItem]) {
-            var itemByID: [String: ChatItem] = [:]
-            itemByID.reserveCapacity(items.count)
-
-            var orderedIDs: [String] = []
-            orderedIDs.reserveCapacity(items.count)
-
-            var hasDuplicates = false
-
-            for item in items {
-                if itemByID[item.id] != nil {
-                    hasDuplicates = true
-                    break
-                }
-                itemByID[item.id] = item
-                orderedIDs.append(item.id)
-            }
-
-            // Common case: no duplicates — single pass is complete.
-            if !hasDuplicates {
-                return (orderedIDs: orderedIDs, itemByID: itemByID)
-            }
-
-            // Rare case: duplicates found — fall back to two-pass dedup
-            // that keeps the last occurrence of each ID.
-            itemByID.removeAll(keepingCapacity: true)
-            orderedIDs.removeAll(keepingCapacity: true)
-
-            var lastIndexByID: [String: Int] = [:]
-            lastIndexByID.reserveCapacity(items.count)
-            for (index, item) in items.enumerated() {
-                lastIndexByID[item.id] = index
-            }
-
-            for (index, item) in items.enumerated() {
-                guard lastIndexByID[item.id] == index else { continue }
-                orderedIDs.append(item.id)
-                itemByID[item.id] = item
-            }
-
-            return (orderedIDs: orderedIDs, itemByID: itemByID)
-        }
-
-        // periphery:ignore - used by ChatTimelineCoordinatorTests via @testable import
-        static func toolOutputCompletionDisposition(
-            output: String,
-            isTaskCancelled: Bool,
-            activeSessionID: String,
-            currentSessionID: String,
-            itemExists: Bool
-        ) -> ExpandedToolOutputLoader.CompletionDisposition {
-            ExpandedToolOutputLoader.completionDisposition(
-                output: output,
-                isTaskCancelled: isTaskCancelled,
-                activeSessionID: activeSessionID,
-                currentSessionID: currentSessionID,
-                itemExists: itemExists
-            )
-        }
-
-        // MARK: - Audio State Observation
-
-        private func bindAudioStateObservationIfNeeded(audioPlayer: AudioPlayerService) {
-            if let currentAudioPlayer = self.audioPlayer,
-               currentAudioPlayer === audioPlayer {
-                return
-            }
-
+    deinit {
+        MainActor.assumeIsolated {
+            ownedClock.isObserving = false
+            ownedClock.emptyOverlayController = nil
+            let observedAudioPlayer = audioPlayer
+            toolOutputLoader.cancelAllWork()
+            preparationRunway.cancelAll()
             NotificationCenter.default.removeObserver(
                 self,
                 name: AudioPlayerService.stateDidChangeNotification,
-                object: self.audioPlayer
+                object: observedAudioPlayer
             )
-
-            self.audioPlayer = audioPlayer
-            NotificationCenter.default.addObserver(
+            NotificationCenter.default.removeObserver(
                 self,
-                selector: #selector(handleAudioStateChangeNotification(_:)),
-                name: AudioPlayerService.stateDidChangeNotification,
-                object: audioPlayer
+                name: .oppiThemeDidChange,
+                object: nil
             )
+            NotificationCenter.default.removeObserver(
+                self,
+                name: UIApplication.didReceiveMemoryWarningNotification,
+                object: nil
+            )
+            NotificationCenter.default.removeObserver(
+                self,
+                name: ProcessInfo.thermalStateDidChangeNotification,
+                object: nil
+            )
+            NotificationCenter.default.removeObserver(
+                self,
+                name: .NSProcessInfoPowerStateDidChange,
+                object: nil
+            )
+            NotificationCenter.default.removeObserver(
+                self,
+                name: UIAccessibility.darkerSystemColorsStatusDidChangeNotification,
+                object: nil
+            )
+            NotificationCenter.default.removeObserver(
+                self,
+                name: UIAccessibility.differentiateWithoutColorDidChangeNotification,
+                object: nil
+            )
+        }
+    }
+
+    // MARK: - Diffing
+
+    /// Build ordered unique items, keeping the last occurrence of each ID.
+    ///
+    /// Single-pass fast path when no duplicates exist (the common case).
+    /// Falls back to a two-pass dedup only when a collision is detected.
+    static func uniqueItemsKeepingLast(_ items: [ChatItem]) -> (orderedIDs: [String], itemByID: [String: ChatItem]) {
+        var itemByID: [String: ChatItem] = [:]
+        itemByID.reserveCapacity(items.count)
+
+        var orderedIDs: [String] = []
+        orderedIDs.reserveCapacity(items.count)
+
+        var hasDuplicates = false
+
+        for item in items {
+            if itemByID[item.id] != nil {
+                hasDuplicates = true
+                break
+            }
+            itemByID[item.id] = item
+            orderedIDs.append(item.id)
         }
 
-        @objc
-        private func handleThemeDidChange() {
-            guard let collectionView else { return }
-            let currentThemeID = ThemeRuntimeState.currentThemeID()
-            guard previousThemeID != currentThemeID else { return }
-            previousThemeID = currentThemeID
-            collectionView.backgroundColor = UIColor(Color.themeBg)
-            reconfigureVisibleRowsAfterAppearanceChange(
-                collectionView: collectionView,
-                expectedThemeID: currentThemeID
-            )
+        // Common case: no duplicates — single pass is complete.
+        if !hasDuplicates {
+            return (orderedIDs: orderedIDs, itemByID: itemByID)
         }
 
-        @objc
-        func handleSpeakerAccessibilityDidChange() {
-            guard let collectionView else { return }
-            let resolved = resolvedSpeakerAccessibility(traitCollection: collectionView.traitCollection)
-            applySpeakerAccessibility(
-                increasedContrast: resolved.increasedContrast,
-                differentiateWithoutColor: resolved.differentiateWithoutColor,
-                collectionView: collectionView
-            )
+        // Rare case: duplicates found — fall back to two-pass dedup
+        // that keeps the last occurrence of each ID.
+        itemByID.removeAll(keepingCapacity: true)
+        orderedIDs.removeAll(keepingCapacity: true)
+
+        var lastIndexByID: [String: Int] = [:]
+        lastIndexByID.reserveCapacity(items.count)
+        for (index, item) in items.enumerated() {
+            lastIndexByID[item.id] = index
         }
+
+        for (index, item) in items.enumerated() {
+            guard lastIndexByID[item.id] == index else { continue }
+            orderedIDs.append(item.id)
+            itemByID[item.id] = item
+        }
+
+        return (orderedIDs: orderedIDs, itemByID: itemByID)
+    }
+
+    // periphery:ignore - used by ChatTimelineCoordinatorTests via @testable import
+    static func toolOutputCompletionDisposition(
+        output: String,
+        isTaskCancelled: Bool,
+        activeSessionID: String,
+        currentSessionID: String,
+        itemExists: Bool
+    ) -> ExpandedToolOutputLoader.CompletionDisposition {
+        ExpandedToolOutputLoader.completionDisposition(
+            output: output,
+            isTaskCancelled: isTaskCancelled,
+            activeSessionID: activeSessionID,
+            currentSessionID: currentSessionID,
+            itemExists: itemExists
+        )
+    }
+
+    // MARK: - Audio State Observation
+
+    private func bindAudioStateObservationIfNeeded(audioPlayer: AudioPlayerService) {
+        if let currentAudioPlayer = self.audioPlayer,
+           currentAudioPlayer === audioPlayer {
+            return
+        }
+
+        NotificationCenter.default.removeObserver(
+            self,
+            name: AudioPlayerService.stateDidChangeNotification,
+            object: self.audioPlayer
+        )
+
+        self.audioPlayer = audioPlayer
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioStateChangeNotification(_:)),
+            name: AudioPlayerService.stateDidChangeNotification,
+            object: audioPlayer
+        )
+    }
+
+    @objc
+    private func handleThemeDidChange() {
+        guard let collectionView else { return }
+        let currentThemeID = ThemeRuntimeState.currentThemeID()
+        guard previousThemeID != currentThemeID else { return }
+        previousThemeID = currentThemeID
+        collectionView.backgroundColor = UIColor(Color.themeBg)
+        reconfigureVisibleRowsAfterAppearanceChange(
+            collectionView: collectionView,
+            expectedThemeID: currentThemeID
+        )
+    }
+
+    @objc
+    func handleSpeakerAccessibilityDidChange() {
+        guard let collectionView else { return }
+        let resolved = resolvedSpeakerAccessibility(traitCollection: collectionView.traitCollection)
+        applySpeakerAccessibility(
+            increasedContrast: resolved.increasedContrast,
+            differentiateWithoutColor: resolved.differentiateWithoutColor,
+            collectionView: collectionView
+        )
+    }
+
+    #if DEBUG
+    func applySpeakerAccessibilityForTesting(
+        increasedContrast: Bool,
+        differentiateWithoutColor: Bool
+    ) {
+        speakerIncreasedContrastOverride = increasedContrast
+        speakerDifferentiateWithoutColorOverride = differentiateWithoutColor
+        guard let collectionView else { return }
+        applySpeakerAccessibility(
+            increasedContrast: increasedContrast,
+            differentiateWithoutColor: differentiateWithoutColor,
+            collectionView: collectionView
+        )
+    }
+    #endif
+
+    private func resolvedSpeakerAccessibility(
+        traitCollection: UITraitCollection
+    ) -> (increasedContrast: Bool, differentiateWithoutColor: Bool) {
+        (
+            increasedContrast: speakerIncreasedContrastOverride
+                ?? TimelineSpeakerChrome.increasedContrast(traitCollection: traitCollection),
+            differentiateWithoutColor: speakerDifferentiateWithoutColorOverride
+                ?? TimelineSpeakerChrome.differentiateWithoutColor()
+        )
+    }
+
+    private func applySpeakerAccessibility(
+        increasedContrast: Bool,
+        differentiateWithoutColor: Bool,
+        collectionView: UICollectionView
+    ) {
+        let dwcChanged = differentiateWithoutColor != speakerDifferentiateWithoutColor
+        let icChanged = increasedContrast != speakerIncreasedContrast
+        speakerIncreasedContrast = increasedContrast
+        speakerDifferentiateWithoutColor = differentiateWithoutColor
+        guard icChanged || dwcChanged else { return }
+
+        reconfigureVisibleRowsAfterAppearanceChange(
+            collectionView: collectionView,
+            expectedThemeID: nil
+        )
+    }
+
+    /// Theme and Increase Contrast / Differentiate Without Color changes
+    /// are posted while SwiftUI may be in a scene update. Defer one
+    /// run-loop turn and refresh visible rows; reused offscreen cells pick
+    /// up the current chrome when configured.
+    private func reconfigureVisibleRowsAfterAppearanceChange(
+        collectionView: UICollectionView,
+        expectedThemeID: ThemeID?
+    ) {
+        DispatchQueue.main.async { [weak self, weak collectionView] in
+            guard let self, let collectionView else { return }
+            if let expectedThemeID {
+                guard self.previousThemeID == expectedThemeID,
+                      ThemeRuntimeState.currentThemeID() == expectedThemeID else {
+                    return
+                }
+            }
+            let visibleIDs = collectionView.indexPathsForVisibleItems.compactMap {
+                self.dataSource?.itemIdentifier(for: $0)
+            }
+            let targetIDs = TimelineSnapshotApplier.themeReconfigureItemIDs(
+                currentIDs: self.currentIDs,
+                visibleIDs: visibleIDs
+            )
+            guard !targetIDs.isEmpty else { return }
+            self.reconfigureItems(targetIDs, in: collectionView)
+        }
+    }
+
+    @objc
+    private func handleAudioStateChangeNotification(_ notification: Notification) {
+        guard let collectionView else { return }
+
+        // Progress ticks omit previous* keys. Identity changes must republish
+        // unobstructed strip IDs because idle scrolling skipped the walk.
+        if notification.userInfo?[AudioPlayerService.previousPlayingItemIDUserInfoKey] != nil {
+            publishVisibleAudioStripItemIDs(in: collectionView)
+        }
+
+        let changedIDs = Set(Self.audioStateItemIDs(from: notification.userInfo))
+        let targetIDs: [String]
+        if changedIDs.isEmpty {
+            targetIDs = currentAudioItemIDs()
+        } else {
+            let correlatedIDs = Set(changedIDs.flatMap { id -> [String] in
+                if let toolID = Self.toolItemID(fromAudioPlaybackItemID: id) {
+                    return [id, toolID]
+                }
+                return [id]
+            })
+            // Read-aloud state belongs to an assistant message, which is not
+            // otherwise audio-reactive. Only identity changes (start, stop,
+            // load) carry previous* keys; progress ticks must not relayout it.
+            let isIdentityChange = notification.userInfo?[AudioPlayerService.previousPlayingItemIDUserInfoKey] != nil
+            let readAloudIDs = isIdentityChange
+                ? Set(changedIDs.compactMap(AudioPlayerService.messageID(fromSpeechPlaybackItemID:)))
+                : []
+            targetIDs = currentIDs.filter {
+                (correlatedIDs.contains($0) && isAudioStateReactiveItem(id: $0)) || readAloudIDs.contains($0)
+            }
+        }
+
+        guard !targetIDs.isEmpty else { return }
 
         #if DEBUG
-        func applySpeakerAccessibilityForTesting(
-            increasedContrast: Bool,
-            differentiateWithoutColor: Bool
-        ) {
-            speakerIncreasedContrastOverride = increasedContrast
-            speakerDifferentiateWithoutColorOverride = differentiateWithoutColor
-            guard let collectionView else { return }
-            applySpeakerAccessibility(
-                increasedContrast: increasedContrast,
-                differentiateWithoutColor: differentiateWithoutColor,
-                collectionView: collectionView
-            )
-        }
+            _audioStateRefreshCountForTesting += 1
+            _audioStateRefreshedItemIDsForTesting = targetIDs
         #endif
+        reconfigureItems(targetIDs, in: collectionView)
+    }
 
-        private func resolvedSpeakerAccessibility(
-            traitCollection: UITraitCollection
-        ) -> (increasedContrast: Bool, differentiateWithoutColor: Bool) {
-            (
-                increasedContrast: speakerIncreasedContrastOverride
-                    ?? TimelineSpeakerChrome.increasedContrast(traitCollection: traitCollection),
-                differentiateWithoutColor: speakerDifferentiateWithoutColorOverride
-                    ?? TimelineSpeakerChrome.differentiateWithoutColor()
-            )
+    private func currentAudioItemIDs() -> [String] {
+        currentIDs.filter { isAudioStateReactiveItem(id: $0) }
+    }
+
+    private func isAudioStateReactiveItem(id: String) -> Bool {
+        guard let item = currentItemByID[id] else { return false }
+        switch item {
+        case .audioClip, .toolCall:
+            return true
+        case .agentMessage, .assistantMessage, .cacheMiss, .customEvent, .error, .notice, .systemEvent, .thinking, .userMessage:
+            return false
+        }
+    }
+
+    private static func toolItemID(fromAudioPlaybackItemID id: String) -> String? {
+        let prefix = "audio-stream-"
+        guard id.hasPrefix(prefix) else { return nil }
+        return String(id.dropFirst(prefix.count))
+    }
+
+    private static func audioStateItemIDs(from userInfo: [AnyHashable: Any]?) -> [String] {
+        guard let userInfo else { return [] }
+
+        let keys = [
+            AudioPlayerService.previousPlayingItemIDUserInfoKey,
+            AudioPlayerService.playingItemIDUserInfoKey,
+            AudioPlayerService.previousLoadingItemIDUserInfoKey,
+            AudioPlayerService.loadingItemIDUserInfoKey,
+        ]
+
+        var ids: [String] = []
+        ids.reserveCapacity(keys.count)
+        for key in keys {
+            guard let value = userInfo[key] as? String,
+                  !value.isEmpty else {
+                continue
+            }
+            ids.append(value)
         }
 
-        private func applySpeakerAccessibility(
-            increasedContrast: Bool,
-            differentiateWithoutColor: Bool,
-            collectionView: UICollectionView
-        ) {
-            let dwcChanged = differentiateWithoutColor != speakerDifferentiateWithoutColor
-            let icChanged = increasedContrast != speakerIncreasedContrast
-            speakerIncreasedContrast = increasedContrast
-            speakerDifferentiateWithoutColor = differentiateWithoutColor
-            guard icChanged || dwcChanged else { return }
+        return ids
+    }
 
-            reconfigureVisibleRowsAfterAppearanceChange(
-                collectionView: collectionView,
-                expectedThemeID: nil
-            )
+    // MARK: - Apply Configuration
+
+    /// Tell the cached-height layout which rows may only grow. Streaming
+    /// assistant text and expanded in-flight tool output append height.
+    /// Idle rows and collapsed in-flight tools must still be allowed to shrink.
+    private func updateLiveTailItemIDs(
+        in collectionView: UICollectionView,
+        streamingAssistantID: String?,
+        isBusy: Bool,
+        items: [ChatItem],
+        expandedItemIDs: Set<String>
+    ) {
+        guard let layout = collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout else {
+            return
+        }
+        var liveIDs: Set<String> = []
+        if isBusy, let streamingAssistantID {
+            liveIDs.insert(streamingAssistantID)
+        }
+        for item in items {
+            if case .toolCall(_, _, _, _, _, _, let isDone) = item,
+               !isDone,
+               expandedItemIDs.contains(item.id) {
+                liveIDs.insert(item.id)
+            }
+        }
+        layout.setLiveTailItemIDs(liveIDs)
+    }
+
+    private func updateLiveTailItemIDs(
+        in collectionView: UICollectionView,
+        configuration: ChatTimelineConfiguration
+    ) {
+        updateLiveTailItemIDs(
+            in: collectionView,
+            streamingAssistantID: configuration.streamingAssistantID,
+            isBusy: configuration.isBusy,
+            items: configuration.items,
+            expandedItemIDs: configuration.reducer.expandedItemIDs
+        )
+    }
+
+    private func updateLiveTailItemIDsFromCurrentState(
+        in collectionView: UICollectionView
+    ) {
+        updateLiveTailItemIDs(
+            in: collectionView,
+            streamingAssistantID: streamingAssistantID,
+            isBusy: isTimelineBusy,
+            items: Array(currentItemByID.values),
+            expandedItemIDs: reducer?.expandedItemIDs ?? []
+        )
+    }
+
+    func apply(configuration: ChatTimelineConfiguration, to collectionView: UICollectionView) {
+        let sessionScopeChanged = context.didChangeSessionScope(for: configuration)
+        let agentPresentationChanged = context.didChangeAgentPresentation(for: configuration)
+        let chromeStyleChanged = context.didChangeChromeStyle(for: configuration)
+        workLineReplacementIDByPreviousID = Dictionary(uniqueKeysWithValues:
+            previousWorkLineByID.compactMap { previousID, previousLine in
+                guard configuration.workLineByID[previousID] == nil else { return nil }
+                let previousSourceIDs = Set(previousLine.sourceItemIDs)
+                guard let replacement = configuration.workLineByID.values.first(where: {
+                    $0.sourceItemIDs.contains(where: previousSourceIDs.contains)
+                }) else {
+                    return nil
+                }
+                return (previousID, replacement.id)
+            }
+        )
+        workLineByID = configuration.workLineByID
+        currentWorkLineByID = configuration.workLineByID
+        streamingAssistantID = configuration.streamingAssistantID
+        updateLiveTailItemIDs(in: collectionView, configuration: configuration)
+        let expandedChanged = (reducer?.expandedItemIDs ?? [])
+            .symmetricDifference(configuration.reducer.expandedItemIDs)
+        if !expandedChanged.isEmpty {
+            (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?
+                .removeCachedHeights(for: expandedChanged)
+        }
+        let timelineBusyChanged = configuration.isBusy != isTimelineBusy
+        isAssistantStreamingPresentationActive = configuration.isBusy
+        // Note: isTimelineBusy is updated AFTER the structurallyUnchanged
+        // check so the comparison detects busy→idle transitions.
+
+        if sessionScopeChanged || chromeStyleChanged {
+            (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?
+                .removeAllCachedHeights()
+            cancelAllToolOutputLoadTasks()
+            cancelTimelinePreparation()
+            lastObservedContentOffsetY = nil
+            lastObservedContentHeight = nil
+            configuration.scrollController.setUserInteracting(false)
+            configuration.scrollController.setDetachedStreamingHintVisible(false)
+            configuration.scrollController.setJumpToBottomHintVisible(false)
         }
 
-        /// Theme and Increase Contrast / Differentiate Without Color changes
-        /// are posted while SwiftUI may be in a scene update. Defer one
-        /// run-loop turn and refresh visible rows; reused offscreen cells pick
-        /// up the current chrome when configured.
-        private func reconfigureVisibleRowsAfterAppearanceChange(
-            collectionView: UICollectionView,
-            expectedThemeID: ThemeID?
-        ) {
-            DispatchQueue.main.async { [weak self, weak collectionView] in
-                guard let self, let collectionView else { return }
-                if let expectedThemeID {
-                    guard self.previousThemeID == expectedThemeID,
-                          ThemeRuntimeState.currentThemeID() == expectedThemeID else {
-                        return
-                    }
-                }
-                let visibleIDs = collectionView.indexPathsForVisibleItems.compactMap {
-                    self.dataSource?.itemIdentifier(for: $0)
-                }
-                let targetIDs = TimelineSnapshotApplier.themeReconfigureItemIDs(
-                    currentIDs: self.currentIDs,
-                    visibleIDs: visibleIDs
+        context.apply(configuration: configuration)
+        ChatReaderOpenLookup.install(configuration.onOpenChatReader, on: collectionView)
+        self.collectionView = collectionView
+        refreshHardwareKeybindingResponder()
+        currentFullTimelineItemIDs = configuration.fullTimelineItemIDs
+        scrollController?.updateTimelineItemOrder(configuration.fullTimelineItemIDs)
+        onBackSwipe = configuration.onBackSwipe
+        onVisibleAudioStripItemIDsChange = configuration.onVisibleAudioStripItemIDsChange
+        timelineTopOverlap = configuration.topOverlap
+        timelineBottomOverlap = configuration.bottomOverlap
+        bindAudioStateObservationIfNeeded(audioPlayer: configuration.audioPlayer)
+
+        if let override = configuration.speakerIncreasedContrastOverride {
+            speakerIncreasedContrastOverride = override
+        }
+        if let override = configuration.speakerDifferentiateWithoutColorOverride {
+            speakerDifferentiateWithoutColorOverride = override
+        }
+        let speaker = resolvedSpeakerAccessibility(
+            traitCollection: collectionView.traitCollection
+        )
+        speakerIncreasedContrast = speaker.increasedContrast
+        speakerDifferentiateWithoutColor = speaker.differentiateWithoutColor
+
+        // Detect theme change from runtime state instead of threaded param.
+        let currentThemeID = ThemeRuntimeState.currentThemeID()
+        let themeChanged = previousThemeID != currentThemeID || previousThemeID == nil
+        // Row configuration also depends on session/workspace-scoped
+        // closures such as attachment fetchers. Reconfigure visible rows
+        // when that scope appears or changes, even if ChatItem values are
+        // identical, so expanded media retries with the current workspace.
+        let globalAppearanceChanged = themeChanged || sessionScopeChanged || chromeStyleChanged
+        let appearanceChanged = globalAppearanceChanged || agentPresentationChanged
+
+        // Only update backgroundColor when theme changed or on first apply.
+        if themeChanged {
+            collectionView.backgroundColor = UIColor(Color.themeBg)
+        }
+
+        if collectionView.contentInset.top != configuration.topOverlap {
+            collectionView.contentInset.top = configuration.topOverlap
+        }
+        if collectionView.contentInset.bottom != configuration.bottomOverlap {
+            let oldBottom = collectionView.contentInset.bottom
+            collectionView.contentInset.bottom = configuration.bottomOverlap
+
+            // When the bottom inset grows (e.g. footer measured from 0 →
+            // real height, or message queue appearing) while the user is
+            // attached to the bottom, compensate the content offset so
+            // the last item stays right above the footer. Without this,
+            // the inset increase expands the scrollable range downward
+            // but the offset stays put, leaving a visible gap between
+            // the last message and the input bar.
+            let delta = configuration.bottomOverlap - oldBottom
+            if delta > 0, scrollController?.isCurrentlyNearBottom ?? true {
+                TimelineOffsetController.apply(
+                    targetOffsetY: collectionView.contentOffset.y + delta,
+                    reason: .bottomInsetGrowth,
+                    collectionView: collectionView,
+                    scrollController: scrollController
                 )
-                guard !targetIDs.isEmpty else { return }
-                self.reconfigureItems(targetIDs, in: collectionView)
             }
         }
 
-        @objc
-        private func handleAudioStateChangeNotification(_ notification: Notification) {
-            guard let collectionView else { return }
-
-            // Progress ticks omit previous* keys. Identity changes must republish
-            // unobstructed strip IDs because idle scrolling skipped the walk.
-            if notification.userInfo?[AudioPlayerService.previousPlayingItemIDUserInfoKey] != nil {
-                publishVisibleAudioStripItemIDs(in: collectionView)
-            }
-
-            let changedIDs = Set(Self.audioStateItemIDs(from: notification.userInfo))
-            let targetIDs: [String]
-            if changedIDs.isEmpty {
-                targetIDs = currentAudioItemIDs()
-            } else {
-                let correlatedIDs = Set(changedIDs.flatMap { id -> [String] in
-                    if let toolID = Self.toolItemID(fromAudioPlaybackItemID: id) {
-                        return [id, toolID]
-                    }
-                    return [id]
-                })
-                // Read-aloud state belongs to an assistant message, which is not
-                // otherwise audio-reactive. Only identity changes (start, stop,
-                // load) carry previous* keys; progress ticks must not relayout it.
-                let isIdentityChange = notification.userInfo?[AudioPlayerService.previousPlayingItemIDUserInfoKey] != nil
-                let readAloudIDs = isIdentityChange
-                    ? Set(changedIDs.compactMap(AudioPlayerService.messageID(fromSpeechPlaybackItemID:)))
-                    : []
-                targetIDs = currentIDs.filter {
-                    (correlatedIDs.contains($0) && isAudioStateReactiveItem(id: $0)) || readAloudIDs.contains($0)
-                }
-            }
-
-            guard !targetIDs.isEmpty else { return }
-
-            #if DEBUG
-                _audioStateRefreshCountForTesting += 1
-                _audioStateRefreshedItemIDsForTesting = targetIDs
-            #endif
-            reconfigureItems(targetIDs, in: collectionView)
+        // Streaming fast path: when the rendered row list is structurally
+        // unchanged, skip the full plan build. Quiet mode folds tools into
+        // synthetic work lines, so ChatItem count alone is not the structure
+        // — a new live strip can appear while items.count stays put.
+        let previousDisplayIDs = currentIDs.filter {
+            $0 != ChatTimelineController.loadMoreID
+                && $0 != ChatTimelineController.workingIndicatorID
         }
-
-        private func currentAudioItemIDs() -> [String] {
-            currentIDs.filter { isAudioStateReactiveItem(id: $0) }
+        let nextDisplayIDs = configuration.displayRows.map(\.id)
+        if nextDisplayIDs != previousDisplayIDs {
+            preparationRunway.cancelAllPrefetch()
+            lastPrefetchCenterIndex = nil
+            lastPrefetchDirection = 0
         }
+        let structurallyUnchanged = nextDisplayIDs == previousDisplayIDs
+            && configuration.streamingAssistantID == previousStreamingAssistantID
+            && configuration.isBusy == isTimelineBusy
+            && configuration.showsWorkingIndicator == previousShowsWorkingIndicator
+            && configuration.hiddenCount == previousHiddenCount
+            && configuration.hasOlderServerPage == previousHasOlderServerPage
+            && configuration.workLineByID == previousWorkLineByID
+            && !appearanceChanged
+            && configuration.extensionWorkingState == previousExtensionWorkingState
+            && configuration.extensionHiddenThinkingLabel == previousHiddenThinkingLabel
 
-        private func isAudioStateReactiveItem(id: String) -> Bool {
-            guard let item = currentItemByID[id] else { return false }
-            switch item {
-            case .audioClip, .toolCall:
-                return true
-            case .agentMessage, .assistantMessage, .cacheMiss, .customEvent, .error, .notice, .systemEvent, .thinking, .userMessage:
-                return false
-            }
-        }
+        if structurallyUnchanged,
+           let streamingID = configuration.streamingAssistantID,
+           let nextItem = configuration.items.last(where: { $0.id == streamingID }),
+           let prevItem = currentItemByID[streamingID],
+           prevItem != nextItem,
+           let dataSource {
+            // Lightweight streaming reconfigure: skip the full plan build
+            // (O(n) dedup + Set construction) but still go through
+            // dataSource.apply() so UIKit handles cell self-sizing.
+            // Raw cell.contentConfiguration bypasses the layout's
+            // preferredLayoutAttributesFitting — the cell stays its old
+            // height and clips growing text.
 
-        private static func toolItemID(fromAudioPlaybackItemID id: String) -> String? {
-            let prefix = "audio-stream-"
-            guard id.hasPrefix(prefix) else { return nil }
-            return String(id.dropFirst(prefix.count))
-        }
+            // Update the streaming item map entry.
+            currentItemByID[streamingID] = nextItem
 
-        private static func audioStateItemIDs(from userInfo: [AnyHashable: Any]?) -> [String] {
-            guard let userInfo else { return [] }
-
-            let keys = [
-                AudioPlayerService.previousPlayingItemIDUserInfoKey,
-                AudioPlayerService.playingItemIDUserInfoKey,
-                AudioPlayerService.previousLoadingItemIDUserInfoKey,
-                AudioPlayerService.loadingItemIDUserInfoKey,
-            ]
-
-            var ids: [String] = []
-            ids.reserveCapacity(keys.count)
-            for key in keys {
-                guard let value = userInfo[key] as? String,
-                      !value.isEmpty else {
+            // Also detect changed mutable items (in-flight tools, active
+            // thinking rows) alongside the streaming assistant. Check both
+            // the previous AND current item for mutability — a tool going
+            // from isDone:false to isDone:true needs reconfiguration even
+            // though the NEW item is no longer "mutable".
+            var reconfigureIDs = [streamingID]
+            for item in configuration.items {
+                let id = item.id
+                guard id != streamingID else { continue }
+                let prevItem = currentItemByID[id]
+                guard TimelineSnapshotApplier.isStreamingMutableItem(item)
+                    || TimelineSnapshotApplier.isStreamingMutableItem(prevItem) else {
                     continue
                 }
-                ids.append(value)
+                if let prev = prevItem, prev != item {
+                    currentItemByID[id] = item
+                    previousItemByID[id] = item
+                    reconfigureIDs.append(id)
+                }
             }
 
-            return ids
+            ChatTimelinePerf.beginTimelineApplyCycle(
+                itemCount: currentIDs.count,
+                changedCount: reconfigureIDs.count
+            )
+            var snapshot = dataSource.snapshot()
+            snapshot.reconfigureItems(reconfigureIDs)
+            let applyToken = ChatTimelinePerf.beginCollectionApply(
+                itemCount: currentIDs.count,
+                changedCount: reconfigureIDs.count,
+                sessionId: configuration.sessionId
+            )
+            dataSource.apply(snapshot, animatingDifferences: false)
+            ChatTimelinePerf.endCollectionApply(applyToken)
+
+            previousStreamingAssistantID = configuration.streamingAssistantID
+            previousWorkLineByID = configuration.workLineByID
+            previousHiddenCount = configuration.hiddenCount
+            previousHasOlderServerPage = configuration.hasOlderServerPage
+            previousItemCount = configuration.items.count
+            previousThemeID = currentThemeID
+            previousShowsWorkingIndicator = configuration.showsWorkingIndicator
+            previousExtensionWorkingState = configuration.extensionWorkingState
+            previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
+            isTimelineBusy = configuration.isBusy
+
+            let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
+            let didScroll = performPendingScrollCommandIfNeeded(
+                configuration.scrollCommand,
+                in: collectionView
+            )
+            reconcileScrollAfterTimelineApply(
+                didScroll: didScroll,
+                hadPendingScrollCommand: hadPendingScrollCommand,
+                configuration: configuration,
+                collectionView: collectionView,
+                itemCount: currentIDs.count
+            )
+            ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
+            updateDetachedStreamingHintVisibility()
+            return
         }
 
-        // MARK: - Apply Configuration
-
-        /// Tell the cached-height layout which rows may only grow. Streaming
-        /// assistant text and expanded in-flight tool output append height.
-        /// Idle rows and collapsed in-flight tools must still be allowed to shrink.
-        private func updateLiveTailItemIDs(
-            in collectionView: UICollectionView,
-            streamingAssistantID: String?,
-            isBusy: Bool,
-            items: [ChatItem],
-            expandedItemIDs: Set<String>
-        ) {
-            guard let layout = collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout else {
+        // No-op fast path: streaming, structurally unchanged, content
+        // identical for the assistant AND all mutable items.
+        if structurallyUnchanged,
+           let streamingID = configuration.streamingAssistantID,
+           let nextItem = configuration.items.last(where: { $0.id == streamingID }),
+           let prevItem = currentItemByID[streamingID],
+           prevItem == nextItem {
+            // Even when the assistant is unchanged, mutable items (tools,
+            // thinking) may have changed. Scan for them before declaring
+            // this a true no-op.
+            var mutableChanged = false
+            for item in configuration.items {
+                let id = item.id
+                guard id != streamingID else { continue }
+                let prev = currentItemByID[id]
+                guard TimelineSnapshotApplier.isStreamingMutableItem(item)
+                    || TimelineSnapshotApplier.isStreamingMutableItem(prev) else {
+                    continue
+                }
+                if prev != item {
+                    mutableChanged = true
+                    break
+                }
+            }
+            if !mutableChanged {
+                ChatTimelinePerf.beginTimelineApplyCycle(
+                    itemCount: currentIDs.count,
+                    changedCount: 0
+                )
+                previousStreamingAssistantID = configuration.streamingAssistantID
+                previousHiddenCount = configuration.hiddenCount
+                previousHasOlderServerPage = configuration.hasOlderServerPage
+                previousItemCount = configuration.items.count
+                previousThemeID = currentThemeID
+                previousShowsWorkingIndicator = configuration.showsWorkingIndicator
+                previousExtensionWorkingState = configuration.extensionWorkingState
+                previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
+                isTimelineBusy = configuration.isBusy
+                let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
+                let didScroll = performPendingScrollCommandIfNeeded(
+                    configuration.scrollCommand,
+                    in: collectionView
+                )
+                reconcileScrollAfterTimelineApply(
+                    didScroll: didScroll,
+                    hadPendingScrollCommand: hadPendingScrollCommand,
+                    configuration: configuration,
+                    collectionView: collectionView,
+                    itemCount: currentIDs.count
+                )
+                ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
+                updateDetachedStreamingHintVisibility()
                 return
             }
-            var liveIDs: Set<String> = []
-            if isBusy, let streamingAssistantID {
-                liveIDs.insert(streamingAssistantID)
-            }
-            for item in items {
-                if case .toolCall(_, _, _, _, _, _, let isDone) = item,
-                   !isDone,
-                   expandedItemIDs.contains(item.id) {
-                    liveIDs.insert(item.id)
+            // Mutable items changed — fall through to mutable-only reconfigure.
+            var reconfigureIDs: [String] = []
+            for item in configuration.items {
+                let id = item.id
+                guard id != streamingID else { continue }
+                let prev = currentItemByID[id]
+                guard TimelineSnapshotApplier.isStreamingMutableItem(item)
+                    || TimelineSnapshotApplier.isStreamingMutableItem(prev) else {
+                    continue
+                }
+                if let prev, prev != item {
+                    currentItemByID[id] = item
+                    previousItemByID[id] = item
+                    reconfigureIDs.append(id)
                 }
             }
-            layout.setLiveTailItemIDs(liveIDs)
-        }
-
-        private func updateLiveTailItemIDs(
-            in collectionView: UICollectionView,
-            configuration: Configuration
-        ) {
-            updateLiveTailItemIDs(
-                in: collectionView,
-                streamingAssistantID: configuration.streamingAssistantID,
-                isBusy: configuration.isBusy,
-                items: configuration.items,
-                expandedItemIDs: configuration.reducer.expandedItemIDs
-            )
-        }
-
-        private func updateLiveTailItemIDsFromCurrentState(
-            in collectionView: UICollectionView
-        ) {
-            updateLiveTailItemIDs(
-                in: collectionView,
-                streamingAssistantID: streamingAssistantID,
-                isBusy: isTimelineBusy,
-                items: Array(currentItemByID.values),
-                expandedItemIDs: reducer?.expandedItemIDs ?? []
-            )
-        }
-
-        func apply(configuration: Configuration, to collectionView: UICollectionView) {
-            let sessionScopeChanged = context.didChangeSessionScope(for: configuration)
-            let agentPresentationChanged = context.didChangeAgentPresentation(for: configuration)
-            let chromeStyleChanged = context.didChangeChromeStyle(for: configuration)
-            workLineReplacementIDByPreviousID = Dictionary(uniqueKeysWithValues:
-                previousWorkLineByID.compactMap { previousID, previousLine in
-                    guard configuration.workLineByID[previousID] == nil else { return nil }
-                    let previousSourceIDs = Set(previousLine.sourceItemIDs)
-                    guard let replacement = configuration.workLineByID.values.first(where: {
-                        $0.sourceItemIDs.contains(where: previousSourceIDs.contains)
-                    }) else {
-                        return nil
-                    }
-                    return (previousID, replacement.id)
-                }
-            )
-            workLineByID = configuration.workLineByID
-            currentWorkLineByID = configuration.workLineByID
-            streamingAssistantID = configuration.streamingAssistantID
-            updateLiveTailItemIDs(in: collectionView, configuration: configuration)
-            let expandedChanged = (reducer?.expandedItemIDs ?? [])
-                .symmetricDifference(configuration.reducer.expandedItemIDs)
-            if !expandedChanged.isEmpty {
-                (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?
-                    .removeCachedHeights(for: expandedChanged)
-            }
-            let timelineBusyChanged = configuration.isBusy != isTimelineBusy
-            isAssistantStreamingPresentationActive = configuration.isBusy
-            // Note: isTimelineBusy is updated AFTER the structurallyUnchanged
-            // check so the comparison detects busy→idle transitions.
-
-            if sessionScopeChanged || chromeStyleChanged {
-                (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?
-                    .removeAllCachedHeights()
-                cancelAllToolOutputLoadTasks()
-                cancelTimelinePreparation()
-                lastObservedContentOffsetY = nil
-                lastObservedContentHeight = nil
-                configuration.scrollController.setUserInteracting(false)
-                configuration.scrollController.setDetachedStreamingHintVisible(false)
-                configuration.scrollController.setJumpToBottomHintVisible(false)
-            }
-
-            context.apply(configuration: configuration)
-            ChatReaderOpenLookup.install(configuration.onOpenChatReader, on: collectionView)
-            self.collectionView = collectionView
-            refreshHardwareKeybindingResponder()
-            currentFullTimelineItemIDs = configuration.fullTimelineItemIDs
-            scrollController?.updateTimelineItemOrder(configuration.fullTimelineItemIDs)
-            onBackSwipe = configuration.onBackSwipe
-            onVisibleAudioStripItemIDsChange = configuration.onVisibleAudioStripItemIDsChange
-            timelineTopOverlap = configuration.topOverlap
-            timelineBottomOverlap = configuration.bottomOverlap
-            bindAudioStateObservationIfNeeded(audioPlayer: configuration.audioPlayer)
-
-            if let override = configuration.speakerIncreasedContrastOverride {
-                speakerIncreasedContrastOverride = override
-            }
-            if let override = configuration.speakerDifferentiateWithoutColorOverride {
-                speakerDifferentiateWithoutColorOverride = override
-            }
-            let speaker = resolvedSpeakerAccessibility(
-                traitCollection: collectionView.traitCollection
-            )
-            speakerIncreasedContrast = speaker.increasedContrast
-            speakerDifferentiateWithoutColor = speaker.differentiateWithoutColor
-
-            // Detect theme change from runtime state instead of threaded param.
-            let currentThemeID = ThemeRuntimeState.currentThemeID()
-            let themeChanged = previousThemeID != currentThemeID || previousThemeID == nil
-            // Row configuration also depends on session/workspace-scoped
-            // closures such as attachment fetchers. Reconfigure visible rows
-            // when that scope appears or changes, even if ChatItem values are
-            // identical, so expanded media retries with the current workspace.
-            let globalAppearanceChanged = themeChanged || sessionScopeChanged || chromeStyleChanged
-            let appearanceChanged = globalAppearanceChanged || agentPresentationChanged
-
-            // Only update backgroundColor when theme changed or on first apply.
-            if themeChanged {
-                collectionView.backgroundColor = UIColor(Color.themeBg)
-            }
-
-            if collectionView.contentInset.top != configuration.topOverlap {
-                collectionView.contentInset.top = configuration.topOverlap
-            }
-            if collectionView.contentInset.bottom != configuration.bottomOverlap {
-                let oldBottom = collectionView.contentInset.bottom
-                collectionView.contentInset.bottom = configuration.bottomOverlap
-
-                // When the bottom inset grows (e.g. footer measured from 0 →
-                // real height, or message queue appearing) while the user is
-                // attached to the bottom, compensate the content offset so
-                // the last item stays right above the footer. Without this,
-                // the inset increase expands the scrollable range downward
-                // but the offset stays put, leaving a visible gap between
-                // the last message and the input bar.
-                let delta = configuration.bottomOverlap - oldBottom
-                if delta > 0, scrollController?.isCurrentlyNearBottom ?? true {
-                    TimelineOffsetController.apply(
-                        targetOffsetY: collectionView.contentOffset.y + delta,
-                        reason: .bottomInsetGrowth,
-                        collectionView: collectionView,
-                        scrollController: scrollController
-                    )
-                }
-            }
-
-            // Streaming fast path: when the rendered row list is structurally
-            // unchanged, skip the full plan build. Quiet mode folds tools into
-            // synthetic work lines, so ChatItem count alone is not the structure
-            // — a new live strip can appear while items.count stays put.
-            let previousDisplayIDs = currentIDs.filter {
-                $0 != ChatTimelineCollectionHost.loadMoreID
-                    && $0 != ChatTimelineCollectionHost.workingIndicatorID
-            }
-            let nextDisplayIDs = configuration.displayRows.map(\.id)
-            if nextDisplayIDs != previousDisplayIDs {
-                preparationRunway.cancelAllPrefetch()
-                lastPrefetchCenterIndex = nil
-                lastPrefetchDirection = 0
-            }
-            let structurallyUnchanged = nextDisplayIDs == previousDisplayIDs
-                && configuration.streamingAssistantID == previousStreamingAssistantID
-                && configuration.isBusy == isTimelineBusy
-                && configuration.showsWorkingIndicator == previousShowsWorkingIndicator
-                && configuration.hiddenCount == previousHiddenCount
-                && configuration.hasOlderServerPage == previousHasOlderServerPage
-                && configuration.workLineByID == previousWorkLineByID
-                && !appearanceChanged
-                && configuration.extensionWorkingState == previousExtensionWorkingState
-                && configuration.extensionHiddenThinkingLabel == previousHiddenThinkingLabel
-
-            if structurallyUnchanged,
-               let streamingID = configuration.streamingAssistantID,
-               let nextItem = configuration.items.last(where: { $0.id == streamingID }),
-               let prevItem = currentItemByID[streamingID],
-               prevItem != nextItem,
-               let dataSource {
-                // Lightweight streaming reconfigure: skip the full plan build
-                // (O(n) dedup + Set construction) but still go through
-                // dataSource.apply() so UIKit handles cell self-sizing.
-                // Raw cell.contentConfiguration bypasses the layout's
-                // preferredLayoutAttributesFitting — the cell stays its old
-                // height and clips growing text.
-
-                // Update the streaming item map entry.
-                currentItemByID[streamingID] = nextItem
-
-                // Also detect changed mutable items (in-flight tools, active
-                // thinking rows) alongside the streaming assistant. Check both
-                // the previous AND current item for mutability — a tool going
-                // from isDone:false to isDone:true needs reconfiguration even
-                // though the NEW item is no longer "mutable".
-                var reconfigureIDs = [streamingID]
-                for item in configuration.items {
-                    let id = item.id
-                    guard id != streamingID else { continue }
-                    let prevItem = currentItemByID[id]
-                    guard TimelineSnapshotApplier.isStreamingMutableItem(item)
-                        || TimelineSnapshotApplier.isStreamingMutableItem(prevItem) else {
-                        continue
-                    }
-                    if let prev = prevItem, prev != item {
-                        currentItemByID[id] = item
-                        previousItemByID[id] = item
-                        reconfigureIDs.append(id)
-                    }
-                }
-
+            if !reconfigureIDs.isEmpty, let dataSource {
                 ChatTimelinePerf.beginTimelineApplyCycle(
                     itemCount: currentIDs.count,
                     changedCount: reconfigureIDs.count
@@ -1165,246 +1289,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 )
                 dataSource.apply(snapshot, animatingDifferences: false)
                 ChatTimelinePerf.endCollectionApply(applyToken)
-
-                previousStreamingAssistantID = configuration.streamingAssistantID
-                previousWorkLineByID = configuration.workLineByID
-                previousHiddenCount = configuration.hiddenCount
-                previousHasOlderServerPage = configuration.hasOlderServerPage
-                previousItemCount = configuration.items.count
-                previousThemeID = currentThemeID
-                previousShowsWorkingIndicator = configuration.showsWorkingIndicator
-                previousExtensionWorkingState = configuration.extensionWorkingState
-                previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
-                isTimelineBusy = configuration.isBusy
-
-                let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
-                let didScroll = performPendingScrollCommandIfNeeded(
-                    configuration.scrollCommand,
-                    in: collectionView
-                )
-                reconcileScrollAfterTimelineApply(
-                    didScroll: didScroll,
-                    hadPendingScrollCommand: hadPendingScrollCommand,
-                    configuration: configuration,
-                    collectionView: collectionView,
-                    itemCount: currentIDs.count
-                )
-                ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
-                updateDetachedStreamingHintVisibility()
-                return
             }
-
-            // No-op fast path: streaming, structurally unchanged, content
-            // identical for the assistant AND all mutable items.
-            if structurallyUnchanged,
-               let streamingID = configuration.streamingAssistantID,
-               let nextItem = configuration.items.last(where: { $0.id == streamingID }),
-               let prevItem = currentItemByID[streamingID],
-               prevItem == nextItem {
-                // Even when the assistant is unchanged, mutable items (tools,
-                // thinking) may have changed. Scan for them before declaring
-                // this a true no-op.
-                var mutableChanged = false
-                for item in configuration.items {
-                    let id = item.id
-                    guard id != streamingID else { continue }
-                    let prev = currentItemByID[id]
-                    guard TimelineSnapshotApplier.isStreamingMutableItem(item)
-                        || TimelineSnapshotApplier.isStreamingMutableItem(prev) else {
-                        continue
-                    }
-                    if prev != item {
-                        mutableChanged = true
-                        break
-                    }
-                }
-                if !mutableChanged {
-                    ChatTimelinePerf.beginTimelineApplyCycle(
-                        itemCount: currentIDs.count,
-                        changedCount: 0
-                    )
-                    previousStreamingAssistantID = configuration.streamingAssistantID
-                    previousHiddenCount = configuration.hiddenCount
-                    previousHasOlderServerPage = configuration.hasOlderServerPage
-                    previousItemCount = configuration.items.count
-                    previousThemeID = currentThemeID
-                    previousShowsWorkingIndicator = configuration.showsWorkingIndicator
-                    previousExtensionWorkingState = configuration.extensionWorkingState
-                    previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
-                    isTimelineBusy = configuration.isBusy
-                    let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
-                    let didScroll = performPendingScrollCommandIfNeeded(
-                        configuration.scrollCommand,
-                        in: collectionView
-                    )
-                    reconcileScrollAfterTimelineApply(
-                        didScroll: didScroll,
-                        hadPendingScrollCommand: hadPendingScrollCommand,
-                        configuration: configuration,
-                        collectionView: collectionView,
-                        itemCount: currentIDs.count
-                    )
-                    ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
-                    updateDetachedStreamingHintVisibility()
-                    return
-                }
-                // Mutable items changed — fall through to mutable-only reconfigure.
-                var reconfigureIDs: [String] = []
-                for item in configuration.items {
-                    let id = item.id
-                    guard id != streamingID else { continue }
-                    let prev = currentItemByID[id]
-                    guard TimelineSnapshotApplier.isStreamingMutableItem(item)
-                        || TimelineSnapshotApplier.isStreamingMutableItem(prev) else {
-                        continue
-                    }
-                    if let prev, prev != item {
-                        currentItemByID[id] = item
-                        previousItemByID[id] = item
-                        reconfigureIDs.append(id)
-                    }
-                }
-                if !reconfigureIDs.isEmpty, let dataSource {
-                    ChatTimelinePerf.beginTimelineApplyCycle(
-                        itemCount: currentIDs.count,
-                        changedCount: reconfigureIDs.count
-                    )
-                    var snapshot = dataSource.snapshot()
-                    snapshot.reconfigureItems(reconfigureIDs)
-                    let applyToken = ChatTimelinePerf.beginCollectionApply(
-                        itemCount: currentIDs.count,
-                        changedCount: reconfigureIDs.count,
-                        sessionId: configuration.sessionId
-                    )
-                    dataSource.apply(snapshot, animatingDifferences: false)
-                    ChatTimelinePerf.endCollectionApply(applyToken)
-                }
-                previousStreamingAssistantID = configuration.streamingAssistantID
-                previousWorkLineByID = configuration.workLineByID
-                previousHiddenCount = configuration.hiddenCount
-                previousHasOlderServerPage = configuration.hasOlderServerPage
-                previousItemCount = configuration.items.count
-                previousThemeID = currentThemeID
-                previousShowsWorkingIndicator = configuration.showsWorkingIndicator
-                previousExtensionWorkingState = configuration.extensionWorkingState
-                previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
-                isTimelineBusy = configuration.isBusy
-
-                let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
-                let didScroll = performPendingScrollCommandIfNeeded(
-                    configuration.scrollCommand,
-                    in: collectionView
-                )
-                reconcileScrollAfterTimelineApply(
-                    didScroll: didScroll,
-                    hadPendingScrollCommand: hadPendingScrollCommand,
-                    configuration: configuration,
-                    collectionView: collectionView,
-                    itemCount: currentIDs.count
-                )
-                ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
-                updateDetachedStreamingHintVisibility()
-                return
-            }
-
-            let applyPlan = ChatTimelineApplyPlan.build(
-                rows: configuration.displayRows,
-                hiddenCount: configuration.hiddenCount,
-                hasOlderServerPage: configuration.hasOlderServerPage,
-                isBusy: configuration.isBusy,
-                showsWorkingIndicator: configuration.showsWorkingIndicator,
-                streamingAssistantID: configuration.streamingAssistantID
-            ).withRemovedIDs(from: currentIDs)
-
-            if !applyPlan.removedIDs.isEmpty {
-                cancelToolOutputLoadTasks(for: applyPlan.removedIDs)
-                preparationRunway.remove(itemIDs: applyPlan.removedIDs)
-            }
-
-            // Capture identity against the current layout / currentIDs before
-            // the rendered suffix is replaced. A later window shift can move
-            // the same item to a new index path. Skip when a viewport jump is
-            // pending: the identity pin would fight relative-Y restoration.
-            var readerPosition: AnchoredCollectionView.DetachedReaderPosition?
-            if let anchoredCV = collectionView as? AnchoredCollectionView {
-                let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
-                anchoredCV.isDetachedFromBottom = detached
-                let pendingViewportRestore: Bool = {
-                    guard case .viewport = configuration.scrollCommand?.anchor else {
-                        return false
-                    }
-                    return isPendingScrollCommand(configuration.scrollCommand)
-                }()
-                if pendingViewportRestore {
-                    anchoredCV.clearDetachedAnchor()
-                } else if detached {
-                    anchoredCV.captureDetachedAnchor()
-                    anchoredCV.remapDetachedAnchorItemID(
-                        using: workLineReplacementIDByPreviousID
-                    )
-                    readerPosition = anchoredCV.detachedReaderPosition
-                }
-            }
-
-            let previousIDs = currentIDs
-            currentIDs = applyPlan.nextIDs
-            currentItemByID = applyPlan.nextItemByID
-
-            var forceReconfigureIDs: [String] = []
-            if agentPresentationChanged {
-                forceReconfigureIDs.append(contentsOf:
-                    TimelineSnapshotApplier.assistantPresentationItemIDs(
-                        nextIDs: applyPlan.nextIDs,
-                        nextItemByID: applyPlan.nextItemByID
-                    )
-                )
-            }
-            if timelineBusyChanged,
-               let finalAssistantID = configuration.streamingAssistantID ?? previousStreamingAssistantID {
-                // Completion can arrive before the reducer clears its streaming
-                // ID. Reconfigure anyway so SafeSizingCell drops its monotonic
-                // streaming-height cache and the final markdown gets a settled
-                // non-streaming layout instead of retaining a blank tail.
-                forceReconfigureIDs.append(finalAssistantID)
-            }
-            if configuration.showsWorkingIndicator,
-               configuration.extensionWorkingState != previousExtensionWorkingState {
-                forceReconfigureIDs.append(ChatTimelineCollectionHost.workingIndicatorID)
-            }
-            forceReconfigureIDs.append(
-                contentsOf: ChatTimelineApplyPlan.workLineReconfigureIDs(
-                    previous: previousWorkLineByID,
-                    next: configuration.workLineByID
-                )
-            )
-            if configuration.extensionHiddenThinkingLabel != previousHiddenThinkingLabel {
-                forceReconfigureIDs.append(contentsOf: applyPlan.nextIDs.filter { id in
-                    if case .thinking = applyPlan.nextItemByID[id] {
-                        return true
-                    }
-                    return false
-                })
-            }
-
-            TimelineSnapshotApplier.applySnapshot(
-                dataSource: dataSource,
-                nextIDs: applyPlan.nextIDs,
-                previousIDs: previousIDs,
-                nextItemByID: applyPlan.nextItemByID,
-                previousItemByID: previousItemByID,
-                streamingAssistantID: configuration.streamingAssistantID,
-                previousStreamingAssistantID: previousStreamingAssistantID,
-                sessionId: configuration.sessionId,
-                themeChanged: globalAppearanceChanged,
-                isBusy: configuration.isBusy,
-                forceReconfigureIDs: forceReconfigureIDs
-            )
-
-            previousItemByID = applyPlan.nextItemByID
-            previousWorkLineByID = applyPlan.nextWorkLineByID
             previousStreamingAssistantID = configuration.streamingAssistantID
+            previousWorkLineByID = configuration.workLineByID
             previousHiddenCount = configuration.hiddenCount
-                previousHasOlderServerPage = configuration.hasOlderServerPage
+            previousHasOlderServerPage = configuration.hasOlderServerPage
             previousItemCount = configuration.items.count
             previousThemeID = currentThemeID
             previousShowsWorkingIndicator = configuration.showsWorkingIndicator
@@ -1412,46 +1301,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
             isTimelineBusy = configuration.isBusy
 
-            // Note: detached anchor is NOT cleared here. It persists until
-            // the next snapshot apply, where captureDetachedAnchor() replaces
-            // it with a fresh capture. This ensures the anchor stays active
-            // through all deferred layout invalidations (e.g.
-            // invalidateEnclosingCollectionViewLayout from tool rows) that
-            // fire asynchronously after this apply completes.
-            //
-            // Previously, a double-async clear raced with the deferred
-            // invalidation — the anchor could be cleared BEFORE the
-            // invalidation's layoutIfNeeded fired, causing 480pt drift.
-
-            // When detached, force layout immediately after snapshot apply to
-            // let AnchoredCollectionView restore the captured anchor and resolve
-            // pending self-sizing in one pass. When attached, the ambient tail
-            // governor/idle settle below owns the layout pass and applies only
-            // the movement it needs.
-            let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
-            if detached {
-                let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: applyPlan.nextIDs.count, sessionId: configuration.sessionId)
-                collectionView.layoutIfNeeded()
-                if let readerPosition,
-                   let anchoredCollectionView = collectionView as? AnchoredCollectionView {
-                    anchoredCollectionView.restoreDetachedReaderPosition(readerPosition)
-                    if !workLineReplacementIDByPreviousID.isEmpty {
-                        DispatchQueue.main.async { [weak anchoredCollectionView] in
-                            // A finger that landed since the apply owns the
-                            // viewport; replaying the old Y would snap it back.
-                            guard let anchoredCollectionView,
-                                  !anchoredCollectionView.isTracking,
-                                  !anchoredCollectionView.isDragging,
-                                  !anchoredCollectionView.isDecelerating else {
-                                return
-                            }
-                            anchoredCollectionView.layoutIfNeeded()
-                            anchoredCollectionView.restoreDetachedReaderPosition(readerPosition)
-                        }
-                    }
-                }
-                ChatTimelinePerf.endLayoutPass(layoutToken)
-            }
             let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
             let didScroll = performPendingScrollCommandIfNeeded(
                 configuration.scrollCommand,
@@ -1462,327 +1311,379 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 hadPendingScrollCommand: hadPendingScrollCommand,
                 configuration: configuration,
                 collectionView: collectionView,
-                itemCount: applyPlan.nextIDs.count,
-                structuralAppend: applyPlan.nextIDs.count > previousIDs.count
+                itemCount: currentIDs.count
             )
-
-            // When the session is busy (streaming or running tools), ambient
-            // follow is handled by the tail governor and user-initiated scroll
-            // changes are detected via scrollViewDidScroll delegate callbacks.
-            // Suppress updateScrollState here so passive layout growth cannot
-            // false-detach the user from attached follow.
-            //
-            // When idle (!isBusy), only update scroll state if the user is
-            // currently attached. A detached user must not be re-attached by
-            // the idle transition — re-attachment only happens through explicit
-            // user-driven scrolls back toward the bottom.
-            let isBusy = configuration.isBusy
-            let alreadyAttached = scrollController?.isCurrentlyNearBottom ?? true
-            if !isBusy, alreadyAttached {
-                updateScrollState(collectionView)
-            }
-            updateDetachedStreamingHintVisibility()
-            publishVisibleAudioStripItemIDs(in: collectionView)
             ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
+            updateDetachedStreamingHintVisibility()
+            return
         }
 
-        func publishVisibleAudioStripItemIDs(in collectionView: UICollectionView) {
-            // Idle scrolling must not walk the timeline looking for audio strips.
-            guard audioPlayer?.hasActivePlayback == true else { return }
+        let applyPlan = ChatTimelineApplyPlan.build(
+            rows: configuration.displayRows,
+            hiddenCount: configuration.hiddenCount,
+            hasOlderServerPage: configuration.hasOlderServerPage,
+            isBusy: configuration.isBusy,
+            showsWorkingIndicator: configuration.showsWorkingIndicator,
+            streamingAssistantID: configuration.streamingAssistantID
+        ).withRemovedIDs(from: currentIDs)
 
-            let unobstructed = collectionView.bounds.inset(
-                by: UIEdgeInsets(
-                    top: timelineTopOverlap,
-                    left: 0,
-                    bottom: timelineBottomOverlap,
-                    right: 0
+        if !applyPlan.removedIDs.isEmpty {
+            cancelToolOutputLoadTasks(for: applyPlan.removedIDs)
+            preparationRunway.remove(itemIDs: applyPlan.removedIDs)
+        }
+
+        // Capture identity against the current layout / currentIDs before
+        // the rendered suffix is replaced. A later window shift can move
+        // the same item to a new index path. Skip when a viewport jump is
+        // pending: the identity pin would fight relative-Y restoration.
+        var readerPosition: AnchoredCollectionView.DetachedReaderPosition?
+        if let anchoredCV = collectionView as? AnchoredCollectionView {
+            let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
+            anchoredCV.isDetachedFromBottom = detached
+            let pendingViewportRestore: Bool = {
+                guard case .viewport = configuration.scrollCommand?.anchor else {
+                    return false
+                }
+                return isPendingScrollCommand(configuration.scrollCommand)
+            }()
+            if pendingViewportRestore {
+                anchoredCV.clearDetachedAnchor()
+            } else if detached {
+                anchoredCV.captureDetachedAnchor()
+                anchoredCV.remapDetachedAnchorItemID(
+                    using: workLineReplacementIDByPreviousID
+                )
+                readerPosition = anchoredCV.detachedReaderPosition
+            }
+        }
+
+        let previousIDs = currentIDs
+        currentIDs = applyPlan.nextIDs
+        currentItemByID = applyPlan.nextItemByID
+
+        var forceReconfigureIDs: [String] = []
+        if agentPresentationChanged {
+            forceReconfigureIDs.append(contentsOf:
+                TimelineSnapshotApplier.assistantPresentationItemIDs(
+                    nextIDs: applyPlan.nextIDs,
+                    nextItemByID: applyPlan.nextItemByID
                 )
             )
-            let ids = InAppNowPlayingChrome.visibleStripItemIDs(
-                from: collectionView.visibleCells.map(\.contentView),
-                in: collectionView,
-                unobstructedRect: unobstructed
+        }
+        if timelineBusyChanged,
+           let finalAssistantID = configuration.streamingAssistantID ?? previousStreamingAssistantID {
+            // Completion can arrive before the reducer clears its streaming
+            // ID. Reconfigure anyway so SafeSizingCell drops its monotonic
+            // streaming-height cache and the final markdown gets a settled
+            // non-streaming layout instead of retaining a blank tail.
+            forceReconfigureIDs.append(finalAssistantID)
+        }
+        if configuration.showsWorkingIndicator,
+           configuration.extensionWorkingState != previousExtensionWorkingState {
+            forceReconfigureIDs.append(ChatTimelineController.workingIndicatorID)
+        }
+        forceReconfigureIDs.append(
+            contentsOf: ChatTimelineApplyPlan.workLineReconfigureIDs(
+                previous: previousWorkLineByID,
+                next: configuration.workLineByID
             )
-            guard ids != lastPublishedVisibleAudioStripItemIDs else { return }
-            lastPublishedVisibleAudioStripItemIDs = ids
-            let callback = onVisibleAudioStripItemIDsChange
-            DispatchQueue.main.async {
-                callback?(ids)
-            }
-        }
-
-        // MARK: - UICollectionViewDelegate
-
-        @objc func handleTimelineTap(_ gesture: UITapGestureRecognizer) {
-            guard gesture.state == .ended else { return }
-            gesture.view?.window?.endEditing(true)
-            claimHardwareKeybindingFocusIfNeeded()
-        }
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-            Self.shouldReceiveTimelineGestureTouch(from: touch.view)
-        }
-
-        // The timeline tap only dismisses the keyboard. It must yield to any
-        // interactive control so a control tap is owned by that control alone.
-        static func shouldReceiveTimelineGestureTouch(from view: UIView?) -> Bool {
-            var current = view
-            while let candidate = current {
-                if candidate is UIControl { return false }
-                if candidate is NativeMarkdownVideoView { return false }
-                if candidate is NativeMarkdownUSDZView { return false }
-                if let textView = candidate as? UITextView, textView.isSelectable { return false }
-                current = candidate.superview
-            }
-            return true
-        }
-
-        private func shouldReceiveTimelineGestureTouch(_ touch: UITouch) -> Bool {
-            Self.shouldReceiveTimelineGestureTouch(from: touch.view)
-        }
-
-        func collectionView(
-            _ collectionView: UICollectionView,
-            willDisplay cell: UICollectionViewCell,
-            forItemAt indexPath: IndexPath
-        ) {
-            Self.firstSubview(
-                ofType: AssistantTimelineRowContentView.self,
-                in: cell.contentView
-            )?.setMarkdownVideoPlaybackVisible(true)
-            publishVisibleAudioStripItemIDs(in: collectionView)
-        }
-
-        func collectionView(
-            _ collectionView: UICollectionView,
-            didEndDisplaying cell: UICollectionViewCell,
-            forItemAt indexPath: IndexPath
-        ) {
-            Self.firstSubview(
-                ofType: AssistantTimelineRowContentView.self,
-                in: cell.contentView
-            )?.setMarkdownVideoPlaybackVisible(false)
-            publishVisibleAudioStripItemIDs(in: collectionView)
-        }
-
-        func stopMarkdownVideoPlayback(in collectionView: UICollectionView) {
-            for cell in collectionView.visibleCells {
-                Self.firstSubview(
-                    ofType: AssistantTimelineRowContentView.self,
-                    in: cell.contentView
-                )?.prepareMarkdownVideosForRemoval()
-            }
-        }
-
-        func collectionView(
-            _ collectionView: UICollectionView,
-            shouldSelectItemAt indexPath: IndexPath
-        ) -> Bool {
-            guard indexPath.section == 0, indexPath.item < currentIDs.count else { return false }
-            // Full-row UIButtons own their actions. Collection selection must
-            // not become a second owner or a sticky highlight.
-            let itemID = currentIDs[indexPath.item]
-            if case .customEvent(_, _, let presentation) = currentItemByID[itemID], presentation.terminalOutput == nil {
-                // The custom card owns tap/double-tap. Collection selection
-                // would steal the first tap of a fullscreen double-tap.
+        )
+        if configuration.extensionHiddenThinkingLabel != previousHiddenThinkingLabel {
+            forceReconfigureIDs.append(contentsOf: applyPlan.nextIDs.filter { id in
+                if case .thinking = applyPlan.nextItemByID[id] {
+                    return true
+                }
                 return false
-            }
-            return itemID != ChatTimelineCollectionHost.loadMoreID
-                && currentWorkLineByID[itemID] == nil
+            })
         }
 
-        func toggleQuietWorkLine(
-            _ workLine: QuietTimelineWorkLine,
-            in collectionView: UICollectionView,
-            indexPath: IndexPath? = nil
-        ) {
-            guard let indexPath = indexPath
-                ?? currentIDs.firstIndex(of: workLine.id).map({ IndexPath(item: $0, section: 0) }) else {
-                return
-            }
+        TimelineSnapshotApplier.applySnapshot(
+            dataSource: dataSource,
+            nextIDs: applyPlan.nextIDs,
+            previousIDs: previousIDs,
+            nextItemByID: applyPlan.nextItemByID,
+            previousItemByID: previousItemByID,
+            streamingAssistantID: configuration.streamingAssistantID,
+            previousStreamingAssistantID: previousStreamingAssistantID,
+            sessionId: configuration.sessionId,
+            themeChanged: globalAppearanceChanged,
+            isBusy: configuration.isBusy,
+            forceReconfigureIDs: forceReconfigureIDs
+        )
 
-            AppHaptics.toolbarExpansion()
-            let anchoredCollectionView = collectionView as? AnchoredCollectionView
-            let expandGeneration = anchoredCollectionView?.setExpandCollapseAnchor(
-                indexPath: indexPath
-            )
-            onQuietWorkLineToggle?(workLine.turnID)
-            DispatchQueue.main.async { [weak self, weak collectionView] in
-                guard let self, let collectionView else { return }
-                self.reconfigureItems(
-                    [workLine.id] + workLine.sourceItemIDs,
-                    in: collectionView
-                )
-                // Keep the identity anchor through the snapshot apply and the
-                // following layout pass. The second hop covers deferred
-                // self-sizing invalidations without allowing idle tail settle
-                // to reclaim the viewport in between.
-                DispatchQueue.main.async {
-                    DispatchQueue.main.async { [weak anchoredCollectionView, expandGeneration] in
-                        if let expandGeneration {
-                            anchoredCollectionView?.clearExpandCollapseAnchor(
-                                generation: expandGeneration
-                            )
+        previousItemByID = applyPlan.nextItemByID
+        previousWorkLineByID = applyPlan.nextWorkLineByID
+        previousStreamingAssistantID = configuration.streamingAssistantID
+        previousHiddenCount = configuration.hiddenCount
+            previousHasOlderServerPage = configuration.hasOlderServerPage
+        previousItemCount = configuration.items.count
+        previousThemeID = currentThemeID
+        previousShowsWorkingIndicator = configuration.showsWorkingIndicator
+        previousExtensionWorkingState = configuration.extensionWorkingState
+        previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
+        isTimelineBusy = configuration.isBusy
+
+        // Note: detached anchor is NOT cleared here. It persists until
+        // the next snapshot apply, where captureDetachedAnchor() replaces
+        // it with a fresh capture. This ensures the anchor stays active
+        // through all deferred layout invalidations (e.g.
+        // invalidateEnclosingCollectionViewLayout from tool rows) that
+        // fire asynchronously after this apply completes.
+        //
+        // Previously, a double-async clear raced with the deferred
+        // invalidation — the anchor could be cleared BEFORE the
+        // invalidation's layoutIfNeeded fired, causing 480pt drift.
+
+        // When detached, force layout immediately after snapshot apply to
+        // let AnchoredCollectionView restore the captured anchor and resolve
+        // pending self-sizing in one pass. When attached, the ambient tail
+        // governor/idle settle below owns the layout pass and applies only
+        // the movement it needs.
+        let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
+        if detached {
+            let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: applyPlan.nextIDs.count, sessionId: configuration.sessionId)
+            collectionView.layoutIfNeeded()
+            if let readerPosition,
+               let anchoredCollectionView = collectionView as? AnchoredCollectionView {
+                anchoredCollectionView.restoreDetachedReaderPosition(readerPosition)
+                if !workLineReplacementIDByPreviousID.isEmpty {
+                    DispatchQueue.main.async { [weak anchoredCollectionView] in
+                        // A finger that landed since the apply owns the
+                        // viewport; replaying the old Y would snap it back.
+                        guard let anchoredCollectionView,
+                              !anchoredCollectionView.isTracking,
+                              !anchoredCollectionView.isDragging,
+                              !anchoredCollectionView.isDecelerating else {
+                            return
                         }
+                        anchoredCollectionView.layoutIfNeeded()
+                        anchoredCollectionView.restoreDetachedReaderPosition(readerPosition)
+                    }
+                }
+            }
+            ChatTimelinePerf.endLayoutPass(layoutToken)
+        }
+        let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
+        let didScroll = performPendingScrollCommandIfNeeded(
+            configuration.scrollCommand,
+            in: collectionView
+        )
+        reconcileScrollAfterTimelineApply(
+            didScroll: didScroll,
+            hadPendingScrollCommand: hadPendingScrollCommand,
+            configuration: configuration,
+            collectionView: collectionView,
+            itemCount: applyPlan.nextIDs.count,
+            structuralAppend: applyPlan.nextIDs.count > previousIDs.count
+        )
+
+        // When the session is busy (streaming or running tools), ambient
+        // follow is handled by the tail governor and user-initiated scroll
+        // changes are detected via scrollViewDidScroll delegate callbacks.
+        // Suppress updateScrollState here so passive layout growth cannot
+        // false-detach the user from attached follow.
+        //
+        // When idle (!isBusy), only update scroll state if the user is
+        // currently attached. A detached user must not be re-attached by
+        // the idle transition — re-attachment only happens through explicit
+        // user-driven scrolls back toward the bottom.
+        let isBusy = configuration.isBusy
+        let alreadyAttached = scrollController?.isCurrentlyNearBottom ?? true
+        if !isBusy, alreadyAttached {
+            updateScrollState(collectionView)
+        }
+        updateDetachedStreamingHintVisibility()
+        publishVisibleAudioStripItemIDs(in: collectionView)
+        ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
+    }
+
+    func publishVisibleAudioStripItemIDs(in collectionView: UICollectionView) {
+        // Idle scrolling must not walk the timeline looking for audio strips.
+        guard audioPlayer?.hasActivePlayback == true else { return }
+
+        let unobstructed = collectionView.bounds.inset(
+            by: UIEdgeInsets(
+                top: timelineTopOverlap,
+                left: 0,
+                bottom: timelineBottomOverlap,
+                right: 0
+            )
+        )
+        let ids = InAppNowPlayingChrome.visibleStripItemIDs(
+            from: collectionView.visibleCells.map(\.contentView),
+            in: collectionView,
+            unobstructedRect: unobstructed
+        )
+        guard ids != lastPublishedVisibleAudioStripItemIDs else { return }
+        lastPublishedVisibleAudioStripItemIDs = ids
+        let callback = onVisibleAudioStripItemIDsChange
+        DispatchQueue.main.async {
+            callback?(ids)
+        }
+    }
+
+    // MARK: - UICollectionViewDelegate
+
+    @objc func handleTimelineTap(_ gesture: UITapGestureRecognizer) {
+        guard gesture.state == .ended else { return }
+        gesture.view?.window?.endEditing(true)
+        claimHardwareKeybindingFocusIfNeeded()
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        Self.shouldReceiveTimelineGestureTouch(from: touch.view)
+    }
+
+    // The timeline tap only dismisses the keyboard. It must yield to any
+    // interactive control so a control tap is owned by that control alone.
+    static func shouldReceiveTimelineGestureTouch(from view: UIView?) -> Bool {
+        var current = view
+        while let candidate = current {
+            if candidate is UIControl { return false }
+            if candidate is NativeMarkdownVideoView { return false }
+            if candidate is NativeMarkdownUSDZView { return false }
+            if let textView = candidate as? UITextView, textView.isSelectable { return false }
+            current = candidate.superview
+        }
+        return true
+    }
+
+    private func shouldReceiveTimelineGestureTouch(_ touch: UITouch) -> Bool {
+        Self.shouldReceiveTimelineGestureTouch(from: touch.view)
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        willDisplay cell: UICollectionViewCell,
+        forItemAt indexPath: IndexPath
+    ) {
+        Self.firstSubview(
+            ofType: AssistantTimelineRowContentView.self,
+            in: cell.contentView
+        )?.setMarkdownVideoPlaybackVisible(true)
+        publishVisibleAudioStripItemIDs(in: collectionView)
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        didEndDisplaying cell: UICollectionViewCell,
+        forItemAt indexPath: IndexPath
+    ) {
+        Self.firstSubview(
+            ofType: AssistantTimelineRowContentView.self,
+            in: cell.contentView
+        )?.setMarkdownVideoPlaybackVisible(false)
+        publishVisibleAudioStripItemIDs(in: collectionView)
+    }
+
+    func stopMarkdownVideoPlayback(in collectionView: UICollectionView) {
+        for cell in collectionView.visibleCells {
+            Self.firstSubview(
+                ofType: AssistantTimelineRowContentView.self,
+                in: cell.contentView
+            )?.prepareMarkdownVideosForRemoval()
+        }
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        shouldSelectItemAt indexPath: IndexPath
+    ) -> Bool {
+        guard indexPath.section == 0, indexPath.item < currentIDs.count else { return false }
+        // Full-row UIButtons own their actions. Collection selection must
+        // not become a second owner or a sticky highlight.
+        let itemID = currentIDs[indexPath.item]
+        if case .customEvent(_, _, let presentation) = currentItemByID[itemID], presentation.terminalOutput == nil {
+            // The custom card owns tap/double-tap. Collection selection
+            // would steal the first tap of a fullscreen double-tap.
+            return false
+        }
+        return itemID != ChatTimelineController.loadMoreID
+            && currentWorkLineByID[itemID] == nil
+    }
+
+    func toggleQuietWorkLine(
+        _ workLine: QuietTimelineWorkLine,
+        in collectionView: UICollectionView,
+        indexPath: IndexPath? = nil
+    ) {
+        guard let indexPath = indexPath
+            ?? currentIDs.firstIndex(of: workLine.id).map({ IndexPath(item: $0, section: 0) }) else {
+            return
+        }
+
+        AppHaptics.toolbarExpansion()
+        let anchoredCollectionView = collectionView as? AnchoredCollectionView
+        let expandGeneration = anchoredCollectionView?.setExpandCollapseAnchor(
+            indexPath: indexPath
+        )
+        onQuietWorkLineToggle?(workLine.turnID)
+        DispatchQueue.main.async { [weak self, weak collectionView] in
+            guard let self, let collectionView else { return }
+            self.reconfigureItems(
+                [workLine.id] + workLine.sourceItemIDs,
+                in: collectionView
+            )
+            // Keep the identity anchor through the snapshot apply and the
+            // following layout pass. The second hop covers deferred
+            // self-sizing invalidations without allowing idle tail settle
+            // to reclaim the viewport in between.
+            DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak anchoredCollectionView, expandGeneration] in
+                    if let expandGeneration {
+                        anchoredCollectionView?.clearExpandCollapseAnchor(
+                            generation: expandGeneration
+                        )
                     }
                 }
             }
         }
+    }
 
-        func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-            guard indexPath.section == 0, indexPath.item < currentIDs.count else { return }
-            let itemID = currentIDs[indexPath.item]
-            if itemID == ChatTimelineCollectionHost.loadMoreID
-                || currentWorkLineByID[itemID] != nil {
-                collectionView.deselectItem(at: indexPath, animated: false)
-                return
-            }
-            if itemID == ChatTimelineCollectionHost.workingIndicatorID {
-                return
-            }
-
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        guard indexPath.section == 0, indexPath.item < currentIDs.count else { return }
+        let itemID = currentIDs[indexPath.item]
+        if itemID == ChatTimelineController.loadMoreID
+            || currentWorkLineByID[itemID] != nil {
             collectionView.deselectItem(at: indexPath, animated: false)
+            return
+        }
+        if itemID == ChatTimelineController.workingIndicatorID {
+            return
+        }
 
-            guard let item = currentItemByID[itemID],
-                  let reducer else {
-                return
-            }
+        collectionView.deselectItem(at: indexPath, animated: false)
 
-            switch item {
-            case .toolCall:
+        guard let item = currentItemByID[itemID],
+              let reducer else {
+            return
+        }
+
+        switch item {
+        case .toolCall:
+            activateToolHeader(itemID: itemID, in: collectionView)
+        case .thinking:
+            // Thinking rows own their long-form entry points (floating
+            // button, context menu, pinch/double-tap) to match tool rows.
+            return
+
+        case .systemEvent:
+            // Compaction rows now use an explicit chevron button affordance
+            // for expand/collapse to keep row-level tap behavior consistent
+            // with double-tap copy gestures.
+            return
+
+        case .customEvent(_, _, let presentation):
+            if presentation.terminalOutput != nil {
                 activateToolHeader(itemID: itemID, in: collectionView)
-            case .thinking:
-                // Thinking rows own their long-form entry points (floating
-                // button, context menu, pinch/double-tap) to match tool rows.
                 return
-
-            case .systemEvent:
-                // Compaction rows now use an explicit chevron button affordance
-                // for expand/collapse to keep row-level tap behavior consistent
-                // with double-tap copy gestures.
-                return
-
-            case .customEvent(_, _, let presentation):
-                if presentation.terminalOutput != nil {
-                    activateToolHeader(itemID: itemID, in: collectionView)
-                    return
-                }
-                guard let row = systemEventRowConfiguration(itemID: itemID, item: item) as? CustomTimelineRowConfiguration,
-                      row.canExpand else { return }
-                AppHaptics.toolbarExpansion()
-                if reducer.expandedItemIDs.contains(itemID) {
-                    reducer.expandedItemIDs.remove(itemID)
-                } else {
-                    reducer.expandedItemIDs.insert(itemID)
-                }
-                updateLiveTailItemIDsFromCurrentState(in: collectionView)
-                anchoredReconfigureToolRow(
-                    itemID: itemID,
-                    anchorIndexPath: indexPath,
-                    in: collectionView,
-                    preserveTopEdge: true
-                )
-
-            case .cacheMiss, .notice:
-                return
-
-            default:
-                break
             }
-        }
-
-        /// Selection and the header accessibility action both resolve the row
-        /// here, by item ID, at activation time. A captured index path is stale
-        /// after reuse or a snapshot reorder.
-        @discardableResult
-        func activateToolHeader(itemID: String, in collectionView: UICollectionView) -> Bool {
-            guard let index = currentIDs.firstIndex(of: itemID),
-                  let item = currentItemByID[itemID],
-                  reducer != nil else { return false }
-            let indexPath = IndexPath(item: index, section: 0)
-            switch item {
-            case .toolCall(_, let tool, _, _, let outputByteCount, _, _):
-                return activateToolCallHeader(
-                    itemID: itemID,
-                    item: item,
-                    tool: tool,
-                    outputByteCount: outputByteCount,
-                    indexPath: indexPath,
-                    in: collectionView
-                )
-            case .customEvent(_, _, let presentation) where presentation.terminalOutput != nil:
-                toggleOutputRow(
-                    itemID: itemID,
-                    tool: "",
-                    outputByteCount: 0,
-                    indexPath: indexPath,
-                    in: collectionView
-                )
-                return true
-            default:
-                return false
-            }
-        }
-
-        private func activateToolCallHeader(
-            itemID: String,
-            item: ChatItem,
-            tool: String,
-            outputByteCount: Int,
-            indexPath: IndexPath,
-            in collectionView: UICollectionView
-        ) -> Bool {
-            guard let reducer else { return false }
-            // Interactive settlement is independent of manual inspection.
-            if presentReadImagePreviewInsteadOfExpanding(
-                itemID: itemID,
-                item: item,
-                indexPath: indexPath,
-                in: collectionView
-            ) {
-                if reducer.expandedItemIDs.contains(itemID) {
-                    reducer.expandedItemIDs.remove(itemID)
-                    updateLiveTailItemIDsFromCurrentState(in: collectionView)
-                    anchoredReconfigureToolRow(
-                        itemID: itemID,
-                        anchorIndexPath: indexPath,
-                        in: collectionView,
-                        preserveTopEdge: true
-                    )
-                }
-                return true
-            }
-            toggleOutputRow(
-                itemID: itemID,
-                tool: tool,
-                outputByteCount: outputByteCount,
-                indexPath: indexPath,
-                in: collectionView
-            )
-            return true
-        }
-
-        private func toggleOutputRow(itemID: String, tool: String, outputByteCount: Int,
-                                     indexPath: IndexPath, in collectionView: UICollectionView) {
-            guard let reducer else { return }
-            // Do not gate on current cell.contentConfiguration type.
-            // During high-frequency streaming updates the visible cell can be
-            // transiently reconfigured while still representing the same
-            // tool item, and strict type checks can drop taps.
-            let wasExpanded = reducer.expandedItemIDs.contains(itemID)
+            guard let row = systemEventRowConfiguration(itemID: itemID, item: item) as? CustomTimelineRowConfiguration,
+                  row.canExpand else { return }
             AppHaptics.toolbarExpansion()
-            if wasExpanded {
+            if reducer.expandedItemIDs.contains(itemID) {
                 reducer.expandedItemIDs.remove(itemID)
-                cancelToolOutputRetryWork(for: itemID)
-                cancelToolOutputLoadTasks(for: [itemID])
             } else {
                 reducer.expandedItemIDs.insert(itemID)
-                FeatureEducationTips.markToolDetailsOpened()
-                ensureExpandedToolOutputLoaded(
-                    itemID: itemID,
-                    tool: tool,
-                    outputByteCount: outputByteCount,
-                    in: collectionView
-                )
             }
             updateLiveTailItemIDsFromCurrentState(in: collectionView)
             anchoredReconfigureToolRow(
@@ -1791,590 +1692,699 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 in: collectionView,
                 preserveTopEdge: true
             )
+
+        case .cacheMiss, .notice:
+            return
+
+        default:
+            break
         }
+    }
 
-        private func presentReadImagePreviewInsteadOfExpanding(
-            itemID: String,
-            item: ChatItem,
-            indexPath: IndexPath,
-            in collectionView: UICollectionView
-        ) -> Bool {
-            guard let config = toolRowConfiguration(itemID: itemID, item: item) else {
-                return false
-            }
-            let collapsedImageBase64 = (config as? ToolTimelineRowConfiguration)?.collapsedImageBase64
-                ?? (config as? CollapsedToolTimelineRowConfiguration)?.chrome.collapsedImageBase64
-            guard collapsedImageBase64 != nil else {
-                return false
-            }
-
-            guard let cell = collectionView.cellForItem(at: indexPath),
-                  let toolRowView = Self.firstSubview(ofType: ToolTimelineRowContentView.self, in: cell.contentView) else {
-                return false
-            }
-
-            return toolRowView.presentCollapsedImagePreviewIfAvailable()
-        }
-
-        static func firstSubview<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {
-            if let match = root as? T { return match }
-            for child in root.subviews {
-                if let match = firstSubview(ofType: type, in: child) {
-                    return match
-                }
-            }
-            return nil
-        }
-
-        // MARK: - Tool Output Loading
-
-        func ensureExpandedToolOutputLoaded(
-            itemID: String,
-            tool: String,
-            outputByteCount: Int,
-            in collectionView: UICollectionView,
-            attempt: Int = 0
-        ) {
-            guard let toolOutputStore else { return }
-
-            let fetchToolOutput: ExpandedToolOutputLoader.FetchToolOutput
-            #if DEBUG
-                if let fetchHook = _fetchToolOutputForTesting {
-                    fetchToolOutput = fetchHook
-                } else {
-                    guard let defaultFetch = makeDefaultFetchToolOutput(itemID: itemID) else { return }
-                    fetchToolOutput = defaultFetch
-                }
-            #else
-                guard let defaultFetch = makeDefaultFetchToolOutput(itemID: itemID) else { return }
-                fetchToolOutput = defaultFetch
-            #endif
-
-            // The configuration's metadata stores need not be the reducer's.
-            // Resolve only facts, from the same stores that paint the row.
-            let outputPresentation = BuiltInToolFacts.resolve(tool: tool, context: .init(
-                inputPresentation: toolArgsStore?.inputPresentation(for: itemID),
-                outputPresentation: toolArgsStore?.outputPresentation(for: itemID)
-            )).outputPresentation
-            let request = ExpandedToolOutputLoader.LoadRequest(
+    /// Selection and the header accessibility action both resolve the row
+    /// here, by item ID, at activation time. A captured index path is stale
+    /// after reuse or a snapshot reorder.
+    @discardableResult
+    func activateToolHeader(itemID: String, in collectionView: UICollectionView) -> Bool {
+        guard let index = currentIDs.firstIndex(of: itemID),
+              let item = currentItemByID[itemID],
+              reducer != nil else { return false }
+        let indexPath = IndexPath(item: index, section: 0)
+        switch item {
+        case .toolCall(_, let tool, _, _, let outputByteCount, _, _):
+            return activateToolCallHeader(
                 itemID: itemID,
+                item: item,
                 tool: tool,
-                outputPresentation: outputPresentation,
                 outputByteCount: outputByteCount,
-                attempt: attempt,
-                hasExistingOutput: {
-                    ExpandedToolOutputFetch.shouldSkipExpandFetch(
-                        availability: self.toolArgsStore?.outputAvailability(for: itemID),
-                        hasCompleteOutput: toolOutputStore.hasCompleteOutput(for: itemID),
-                        storedPreview: toolOutputStore.fullOutput(for: itemID)
-                    )
-                },
-                activeSessionID: sessionId,
-                currentSessionID: { [weak self] in
-                    self?.sessionId ?? ""
-                },
-                itemExists: { [weak self] in
-                    self?.currentItemByID[itemID] != nil
-                },
-                isItemExpanded: { [weak self] in
-                    self?.reducer?.expandedItemIDs.contains(itemID) == true
-                },
-                fetchToolOutput: fetchToolOutput,
-                applyOutput: { fetched in
-                    toolOutputStore.replace(
-                        fetched.text,
-                        for: itemID,
-                        previewOnly: fetched.previewOnly,
-                        totalBytes: fetched.totalBytes
-                    )
-                },
-                reconfigureItem: { [weak self, weak collectionView] in
-                    guard let self, let collectionView else { return }
-                    self.reconfigureItems([itemID], in: collectionView)
-                }
+                indexPath: indexPath,
+                in: collectionView
             )
-
-            toolOutputLoader.loadIfNeeded(request)
+        case .customEvent(_, _, let presentation) where presentation.terminalOutput != nil:
+            toggleOutputRow(
+                itemID: itemID,
+                tool: "",
+                outputByteCount: 0,
+                indexPath: indexPath,
+                in: collectionView
+            )
+            return true
+        default:
+            return false
         }
+    }
 
-        /// Expansion fetch over the session's tool-output access. Access is bound to this
-        /// timeline's session and scope right now; without a client or scope there is no fetch.
-        private func makeDefaultFetchToolOutput(itemID: String) -> ExpandedToolOutputLoader.FetchToolOutput? {
-            // Capture the session-bound content capability; the common loader guards stale results.
-            if case .customEvent(_, _, let card) = currentItemByID[itemID], let output = card.terminalOutput {
-                guard let fetch = sessionContent?.inputCardOutputFetch(
-                    sessionId: sessionId, routeScope: routeScope, output: output) else { return nil }
-                return { _, _ in .init(text: try await fetch()) }
-            }
-            guard let access = toolOutputAccess else { return nil }
-            // The loader's session id is `access.sessionId`: both come from this controller's
-            // `sessionId` in the same synchronous call.
-            return { [weak self] _, toolCallId in
-                try await access.fetchForExpand(availability: self?.toolArgsStore?.outputAvailability(for: toolCallId), toolCallId: toolCallId)
-            }
-        }
-
-        func cancelToolOutputRetryWork(for itemID: String) {
-            toolOutputLoader.cancelRetryWork(for: itemID)
-        }
-
-        func cancelToolOutputLoadTasks(for itemIDs: Set<String>) {
-            toolOutputLoader.cancelLoadTasks(for: itemIDs)
-        }
-
-        private func cancelAllToolOutputLoadTasks() {
-            toolOutputLoader.cancelAllWork()
-        }
-
-        // MARK: - Animation + Scroll
-
-        /// Reconfigure a single tool row through the diffable data source
-        /// snapshot pipeline. This preserves scroll stability through UIKit's
-        /// self-sizing flow. The previous direct cell.contentConfiguration +
-        /// invalidateLayout() approach caused full layout re-estimation that
-        /// reset off-screen cached sizes, shifting contentOffset when a
-        /// visible cell changed height (expand/collapse).
-        private func reconfigureToolRow(
-            itemID: String,
-            in collectionView: UICollectionView
+    private func activateToolCallHeader(
+        itemID: String,
+        item: ChatItem,
+        tool: String,
+        outputByteCount: Int,
+        indexPath: IndexPath,
+        in collectionView: UICollectionView
+    ) -> Bool {
+        guard let reducer else { return false }
+        // Interactive settlement is independent of manual inspection.
+        if presentReadImagePreviewInsteadOfExpanding(
+            itemID: itemID,
+            item: item,
+            indexPath: indexPath,
+            in: collectionView
         ) {
-            reconfigureItems([itemID], in: collectionView)
-        }
-
-        /// Reconfigure a tool row while anchoring a specific item's screen
-        /// position. Captures the tapped row's screen-relative Y before
-        /// the reconfigure, restores it after, and sets the anchored
-        /// collection view's expand/collapse anchor for any deferred async
-        /// layout passes (e.g. `invalidateEnclosingCollectionViewLayout`).
-        func anchoredReconfigureToolRow(
-            itemID: String,
-            anchorIndexPath: IndexPath,
-            in collectionView: UICollectionView,
-            preserveTopEdge: Bool = true
-        ) {
-            // Callers mutate expandedItemIDs first. Refresh live-tail
-            // membership here so collapse can shrink: resolvedHeight uses
-            // max(cached, preferred) while the id is still in the live set.
-            // Keybinding collapse does not go through didSelect, and a busy
-            // streaming apply will not pick up a collapse-only expansion change.
-            updateLiveTailItemIDsFromCurrentState(in: collectionView)
-
-            let anchoredCV = collectionView as? AnchoredCollectionView
-
-            // Keep the tapped row header stable so expansion grows downward
-            // from the user's tap point and collapse leaves the same header
-            // available for an immediate second tap.
-            let anchorScreenYBefore: CGFloat?
-            if let attrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) {
-                anchorScreenYBefore = (preserveTopEdge ? attrs.frame.minY : attrs.frame.maxY)
-                    - collectionView.contentOffset.y
-            } else {
-                anchorScreenYBefore = nil
-            }
-
-            reconfigureToolRow(itemID: itemID, in: collectionView)
-
-            // Temporarily disable AnchoredCollectionView's own anchoring
-            // during the forced layout. Without this, the anchoring captures
-            // the old offset before our explicit correction and the self-sizing
-            // cascade can try to maintain that stale state.
-            let savedDetached = anchoredCV?.isDetachedFromBottom ?? false
-            anchoredCV?.isDetachedFromBottom = false
-            anchoredCV?.clearDetachedAnchor()
-
-            // Force layout to settle the new cell size before computing the
-            // absolute offset that preserves the chosen edge.
-            let offsetBeforeLayout = collectionView.contentOffset.y
-            collectionView.layoutIfNeeded()
-
-            // Restore the detached flag after the forced layout.
-            anchoredCV?.isDetachedFromBottom = savedDetached
-
-            // Compute the absolute target offset that keeps the chosen edge
-            // at the same screen position as before the reconfigure.
-            if let anchorScreenYBefore,
-               let newAttrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) {
-                // Target: newAnchorY - targetOffset = savedAnchorScreenY
-                //   => targetOffset = newAnchorY - savedAnchorScreenY
-                let newAnchorY = preserveTopEdge ? newAttrs.frame.minY : newAttrs.frame.maxY
-                let targetOffset = newAnchorY - anchorScreenYBefore
-
-                TimelineOffsetController.apply(
-                    targetOffsetY: targetOffset,
-                    reason: .expandCollapse(edge: preserveTopEdge ? .top : .bottom),
-                    collectionView: collectionView,
-                    scrollController: scrollController
-                )
-            } else if abs(collectionView.contentOffset.y - offsetBeforeLayout) > 0.5 {
-                // No attrs but layout shifted the offset — restore.
-                TimelineOffsetController.apply(
-                    targetOffsetY: offsetBeforeLayout,
-                    reason: .expandCollapse(edge: preserveTopEdge ? .top : .bottom),
-                    collectionView: collectionView,
-                    scrollController: scrollController
+            if reducer.expandedItemIDs.contains(itemID) {
+                reducer.expandedItemIDs.remove(itemID)
+                updateLiveTailItemIDsFromCurrentState(in: collectionView)
+                anchoredReconfigureToolRow(
+                    itemID: itemID,
+                    anchorIndexPath: indexPath,
+                    in: collectionView,
+                    preserveTopEdge: true
                 )
             }
-
-            // Sync the detached flag on the AnchoredCollectionView so the
-            // detached anchor system provides ongoing protection after the
-            // expand/collapse anchor clears.
-            let isDetached = !(scrollController?.isCurrentlyNearBottom ?? true)
-            anchoredCV?.isDetachedFromBottom = isDetached
-            let expandGeneration = anchoredCV?.setExpandCollapseAnchor(
-                indexPath: anchorIndexPath
-            )
-
-            DispatchQueue.main.async { [weak anchoredCV, isDetached, expandGeneration] in
-                DispatchQueue.main.async { [weak anchoredCV, isDetached, expandGeneration] in
-                    guard let anchoredCV, let expandGeneration else { return }
-                    guard anchoredCV.clearExpandCollapseAnchor(
-                        generation: expandGeneration
-                    ) else {
-                        return
-                    }
-                    if isDetached {
-                        anchoredCV.captureDetachedAnchor()
-                    }
-                }
-            }
-        }
-
-        func reconfigureItems(_ itemIDs: [String], in collectionView: UICollectionView) {
-            #if DEBUG
-            debugReconfiguredItemIDs.append(contentsOf: itemIDs)
-            #endif
-            TimelineSnapshotApplier.reconfigureItems(
-                itemIDs,
-                dataSource: dataSource,
-                collectionView: collectionView,
-                currentIDs: currentIDs,
-                sessionId: sessionId
-            )
-        }
-
-        private let liveTailMinimumBottomPadding: CGFloat = 16
-
-        private func isPendingScrollCommand(
-            _ scrollCommand: ChatTimelineScrollCommand?
-        ) -> Bool {
-            guard let scrollCommand else { return false }
-            return scrollCommand.nonce != lastHandledScrollCommandNonce
-        }
-
-        private func performPendingScrollCommandIfNeeded(
-            _ scrollCommand: ChatTimelineScrollCommand?,
-            in collectionView: UICollectionView
-        ) -> Bool {
-            guard let scrollCommand,
-                  scrollCommand.nonce != lastHandledScrollCommandNonce,
-                  let resolvedCommand = resolvedScrollCommand(scrollCommand) else {
-                return false
-            }
-            if let anchoredCV = collectionView as? AnchoredCollectionView {
-                switch resolvedCommand.anchor {
-                case .bottom:
-                    anchoredCV.isDetachedFromBottom = false
-                    anchoredCV.clearDetachedAnchor()
-                case .viewport, .top:
-                    // Identity pin would fight the programmatic jump.
-                    anchoredCV.clearDetachedAnchor()
-                }
-            }
-            guard performScroll(resolvedCommand, in: collectionView) else {
-                return false
-            }
-            lastHandledScrollCommandNonce = scrollCommand.nonce
             return true
         }
+        toggleOutputRow(
+            itemID: itemID,
+            tool: tool,
+            outputByteCount: outputByteCount,
+            indexPath: indexPath,
+            in: collectionView
+        )
+        return true
+    }
 
-        /// Scroll commands measure against first-pass estimated heights. After
-        /// preferred sizes land, pin an idle attached timeline to the true bottom.
-        func reconcileScrollAfterTimelineApply(
-            didScroll: Bool,
-            hadPendingScrollCommand: Bool,
-            configuration: Configuration,
-            collectionView: UICollectionView,
-            itemCount: Int,
-            structuralAppend: Bool = false
-        ) {
-            // Only the apply that consumes an outline jump owns its landing.
-            // SwiftUI retains handled commands; they must not disable follow
-            // after the user scrolls back to the live tail.
-            guard !(hadPendingScrollCommand && configuration.scrollCommand?.anchor == .top) else { return }
-            if didScroll || hadPendingScrollCommand {
-                collectionView.layoutIfNeeded()
-                guard scrollController?.isCurrentlyNearBottom ?? true else { return }
-                if configuration.isBusy {
-                    keepLiveTailVisible(collectionView)
-                } else {
-                    settleAttachedBottom(collectionView)
-                }
-                return
+    private func toggleOutputRow(itemID: String, tool: String, outputByteCount: Int,
+                                 indexPath: IndexPath, in collectionView: UICollectionView) {
+        guard let reducer else { return }
+        // Do not gate on current cell.contentConfiguration type.
+        // During high-frequency streaming updates the visible cell can be
+        // transiently reconfigured while still representing the same
+        // tool item, and strict type checks can drop taps.
+        let wasExpanded = reducer.expandedItemIDs.contains(itemID)
+        AppHaptics.toolbarExpansion()
+        if wasExpanded {
+            reducer.expandedItemIDs.remove(itemID)
+            cancelToolOutputRetryWork(for: itemID)
+            cancelToolOutputLoadTasks(for: [itemID])
+        } else {
+            reducer.expandedItemIDs.insert(itemID)
+            FeatureEducationTips.markToolDetailsOpened()
+            ensureExpandedToolOutputLoaded(
+                itemID: itemID,
+                tool: tool,
+                outputByteCount: outputByteCount,
+                in: collectionView
+            )
+        }
+        updateLiveTailItemIDsFromCurrentState(in: collectionView)
+        anchoredReconfigureToolRow(
+            itemID: itemID,
+            anchorIndexPath: indexPath,
+            in: collectionView,
+            preserveTopEdge: true
+        )
+    }
+
+    private func presentReadImagePreviewInsteadOfExpanding(
+        itemID: String,
+        item: ChatItem,
+        indexPath: IndexPath,
+        in collectionView: UICollectionView
+    ) -> Bool {
+        guard let config = toolRowConfiguration(itemID: itemID, item: item) else {
+            return false
+        }
+        let collapsedImageBase64 = (config as? ToolTimelineRowConfiguration)?.collapsedImageBase64
+            ?? (config as? CollapsedToolTimelineRowConfiguration)?.chrome.collapsedImageBase64
+        guard collapsedImageBase64 != nil else {
+            return false
+        }
+
+        guard let cell = collectionView.cellForItem(at: indexPath),
+              let toolRowView = Self.firstSubview(ofType: ToolTimelineRowContentView.self, in: cell.contentView) else {
+            return false
+        }
+
+        return toolRowView.presentCollapsedImagePreviewIfAvailable()
+    }
+
+    static func firstSubview<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {
+        if let match = root as? T { return match }
+        for child in root.subviews {
+            if let match = firstSubview(ofType: type, in: child) {
+                return match
             }
-            reconcileAmbientScrollAfterTimelineUpdate(
-                collectionView,
-                isBusy: configuration.isBusy,
-                itemCount: itemCount,
-                sessionId: configuration.sessionId,
-                structuralAppend: structuralAppend
+        }
+        return nil
+    }
+
+    // MARK: - Tool Output Loading
+
+    func ensureExpandedToolOutputLoaded(
+        itemID: String,
+        tool: String,
+        outputByteCount: Int,
+        in collectionView: UICollectionView,
+        attempt: Int = 0
+    ) {
+        guard let toolOutputStore else { return }
+
+        let fetchToolOutput: ExpandedToolOutputLoader.FetchToolOutput
+        #if DEBUG
+            if let fetchHook = _fetchToolOutputForTesting {
+                fetchToolOutput = fetchHook
+            } else {
+                guard let defaultFetch = makeDefaultFetchToolOutput(itemID: itemID) else { return }
+                fetchToolOutput = defaultFetch
+            }
+        #else
+            guard let defaultFetch = makeDefaultFetchToolOutput(itemID: itemID) else { return }
+            fetchToolOutput = defaultFetch
+        #endif
+
+        // The configuration's metadata stores need not be the reducer's.
+        // Resolve only facts, from the same stores that paint the row.
+        let outputPresentation = BuiltInToolFacts.resolve(tool: tool, context: .init(
+            inputPresentation: toolArgsStore?.inputPresentation(for: itemID),
+            outputPresentation: toolArgsStore?.outputPresentation(for: itemID)
+        )).outputPresentation
+        let request = ExpandedToolOutputLoader.LoadRequest(
+            itemID: itemID,
+            tool: tool,
+            outputPresentation: outputPresentation,
+            outputByteCount: outputByteCount,
+            attempt: attempt,
+            hasExistingOutput: {
+                ExpandedToolOutputFetch.shouldSkipExpandFetch(
+                    availability: self.toolArgsStore?.outputAvailability(for: itemID),
+                    hasCompleteOutput: toolOutputStore.hasCompleteOutput(for: itemID),
+                    storedPreview: toolOutputStore.fullOutput(for: itemID)
+                )
+            },
+            activeSessionID: sessionId,
+            currentSessionID: { [weak self] in
+                self?.sessionId ?? ""
+            },
+            itemExists: { [weak self] in
+                self?.currentItemByID[itemID] != nil
+            },
+            isItemExpanded: { [weak self] in
+                self?.reducer?.expandedItemIDs.contains(itemID) == true
+            },
+            fetchToolOutput: fetchToolOutput,
+            applyOutput: { fetched in
+                toolOutputStore.replace(
+                    fetched.text,
+                    for: itemID,
+                    previewOnly: fetched.previewOnly,
+                    totalBytes: fetched.totalBytes
+                )
+            },
+            reconfigureItem: { [weak self, weak collectionView] in
+                guard let self, let collectionView else { return }
+                self.reconfigureItems([itemID], in: collectionView)
+            }
+        )
+
+        toolOutputLoader.loadIfNeeded(request)
+    }
+
+    /// Expansion fetch over the session's tool-output access. Access is bound to this
+    /// timeline's session and scope right now; without a client or scope there is no fetch.
+    private func makeDefaultFetchToolOutput(itemID: String) -> ExpandedToolOutputLoader.FetchToolOutput? {
+        // Capture the session-bound content capability; the common loader guards stale results.
+        if case .customEvent(_, _, let card) = currentItemByID[itemID], let output = card.terminalOutput {
+            guard let fetch = sessionContent?.inputCardOutputFetch(
+                sessionId: sessionId, routeScope: routeScope, output: output) else { return nil }
+            return { _, _ in .init(text: try await fetch()) }
+        }
+        guard let access = toolOutputAccess else { return nil }
+        // The loader's session id is `access.sessionId`: both come from this controller's
+        // `sessionId` in the same synchronous call.
+        return { [weak self] _, toolCallId in
+            try await access.fetchForExpand(availability: self?.toolArgsStore?.outputAvailability(for: toolCallId), toolCallId: toolCallId)
+        }
+    }
+
+    func cancelToolOutputRetryWork(for itemID: String) {
+        toolOutputLoader.cancelRetryWork(for: itemID)
+    }
+
+    func cancelToolOutputLoadTasks(for itemIDs: Set<String>) {
+        toolOutputLoader.cancelLoadTasks(for: itemIDs)
+    }
+
+    private func cancelAllToolOutputLoadTasks() {
+        toolOutputLoader.cancelAllWork()
+    }
+
+    // MARK: - Animation + Scroll
+
+    /// Reconfigure a single tool row through the diffable data source
+    /// snapshot pipeline. This preserves scroll stability through UIKit's
+    /// self-sizing flow. The previous direct cell.contentConfiguration +
+    /// invalidateLayout() approach caused full layout re-estimation that
+    /// reset off-screen cached sizes, shifting contentOffset when a
+    /// visible cell changed height (expand/collapse).
+    private func reconfigureToolRow(
+        itemID: String,
+        in collectionView: UICollectionView
+    ) {
+        reconfigureItems([itemID], in: collectionView)
+    }
+
+    /// Reconfigure a tool row while anchoring a specific item's screen
+    /// position. Captures the tapped row's screen-relative Y before
+    /// the reconfigure, restores it after, and sets the anchored
+    /// collection view's expand/collapse anchor for any deferred async
+    /// layout passes (e.g. `invalidateEnclosingCollectionViewLayout`).
+    func anchoredReconfigureToolRow(
+        itemID: String,
+        anchorIndexPath: IndexPath,
+        in collectionView: UICollectionView,
+        preserveTopEdge: Bool = true
+    ) {
+        // Callers mutate expandedItemIDs first. Refresh live-tail
+        // membership here so collapse can shrink: resolvedHeight uses
+        // max(cached, preferred) while the id is still in the live set.
+        // Keybinding collapse does not go through didSelect, and a busy
+        // streaming apply will not pick up a collapse-only expansion change.
+        updateLiveTailItemIDsFromCurrentState(in: collectionView)
+
+        let anchoredCV = collectionView as? AnchoredCollectionView
+
+        // Keep the tapped row header stable so expansion grows downward
+        // from the user's tap point and collapse leaves the same header
+        // available for an immediate second tap.
+        let anchorScreenYBefore: CGFloat?
+        if let attrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) {
+            anchorScreenYBefore = (preserveTopEdge ? attrs.frame.minY : attrs.frame.maxY)
+                - collectionView.contentOffset.y
+        } else {
+            anchorScreenYBefore = nil
+        }
+
+        reconfigureToolRow(itemID: itemID, in: collectionView)
+
+        // Temporarily disable AnchoredCollectionView's own anchoring
+        // during the forced layout. Without this, the anchoring captures
+        // the old offset before our explicit correction and the self-sizing
+        // cascade can try to maintain that stale state.
+        let savedDetached = anchoredCV?.isDetachedFromBottom ?? false
+        anchoredCV?.isDetachedFromBottom = false
+        anchoredCV?.clearDetachedAnchor()
+
+        // Force layout to settle the new cell size before computing the
+        // absolute offset that preserves the chosen edge.
+        let offsetBeforeLayout = collectionView.contentOffset.y
+        collectionView.layoutIfNeeded()
+
+        // Restore the detached flag after the forced layout.
+        anchoredCV?.isDetachedFromBottom = savedDetached
+
+        // Compute the absolute target offset that keeps the chosen edge
+        // at the same screen position as before the reconfigure.
+        if let anchorScreenYBefore,
+           let newAttrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) {
+            // Target: newAnchorY - targetOffset = savedAnchorScreenY
+            //   => targetOffset = newAnchorY - savedAnchorScreenY
+            let newAnchorY = preserveTopEdge ? newAttrs.frame.minY : newAttrs.frame.maxY
+            let targetOffset = newAnchorY - anchorScreenYBefore
+
+            TimelineOffsetController.apply(
+                targetOffsetY: targetOffset,
+                reason: .expandCollapse(edge: preserveTopEdge ? .top : .bottom),
+                collectionView: collectionView,
+                scrollController: scrollController
+            )
+        } else if abs(collectionView.contentOffset.y - offsetBeforeLayout) > 0.5 {
+            // No attrs but layout shifted the offset — restore.
+            TimelineOffsetController.apply(
+                targetOffsetY: offsetBeforeLayout,
+                reason: .expandCollapse(edge: preserveTopEdge ? .top : .bottom),
+                collectionView: collectionView,
+                scrollController: scrollController
             )
         }
 
-        private func reconcileAmbientScrollAfterTimelineUpdate(
-            _ collectionView: UICollectionView,
-            isBusy: Bool,
-            itemCount: Int,
-            sessionId: String,
-            structuralAppend: Bool = false
-        ) {
-            guard scrollController?.isCurrentlyNearBottom ?? true else { return }
-            guard !collectionView.isTracking,
-                  !collectionView.isDragging,
-                  !collectionView.isDecelerating else {
-                return
-            }
-            if #available(iOS 17.4, *), collectionView.isScrollAnimating {
-                return
-            }
-            if (collectionView as? AnchoredCollectionView)?.expandCollapseAnchorIP != nil {
-                // The tapped work header owns the viewport until its structural
-                // apply and deferred self-sizing passes settle. An idle bottom
-                // correction here would yank an older turn back to the tail.
-                return
-            }
+        // Sync the detached flag on the AnchoredCollectionView so the
+        // detached anchor system provides ongoing protection after the
+        // expand/collapse anchor clears.
+        let isDetached = !(scrollController?.isCurrentlyNearBottom ?? true)
+        anchoredCV?.isDetachedFromBottom = isDetached
+        let expandGeneration = anchoredCV?.setExpandCollapseAnchor(
+            indexPath: anchorIndexPath
+        )
 
-            if isBusy, !structuralAppend {
-                let now = DispatchTime.now().uptimeNanoseconds
-                if now &- lastBusyAmbientScrollReconcileNs < 260_000_000 {
+        DispatchQueue.main.async { [weak anchoredCV, isDetached, expandGeneration] in
+            DispatchQueue.main.async { [weak anchoredCV, isDetached, expandGeneration] in
+                guard let anchoredCV, let expandGeneration else { return }
+                guard anchoredCV.clearExpandCollapseAnchor(
+                    generation: expandGeneration
+                ) else {
                     return
                 }
-                lastBusyAmbientScrollReconcileNs = now
+                if isDetached {
+                    anchoredCV.captureDetachedAnchor()
+                }
             }
+        }
+    }
 
-            let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: itemCount, sessionId: sessionId)
+    func reconfigureItems(_ itemIDs: [String], in collectionView: UICollectionView) {
+        #if DEBUG
+        debugReconfiguredItemIDs.append(contentsOf: itemIDs)
+        #endif
+        TimelineSnapshotApplier.reconfigureItems(
+            itemIDs,
+            dataSource: dataSource,
+            collectionView: collectionView,
+            currentIDs: currentIDs,
+            sessionId: sessionId
+        )
+    }
+
+    private let liveTailMinimumBottomPadding: CGFloat = 16
+
+    private func isPendingScrollCommand(
+        _ scrollCommand: ChatTimelineScrollCommand?
+    ) -> Bool {
+        guard let scrollCommand else { return false }
+        return scrollCommand.nonce != lastHandledScrollCommandNonce
+    }
+
+    private func performPendingScrollCommandIfNeeded(
+        _ scrollCommand: ChatTimelineScrollCommand?,
+        in collectionView: UICollectionView
+    ) -> Bool {
+        guard let scrollCommand,
+              scrollCommand.nonce != lastHandledScrollCommandNonce,
+              let resolvedCommand = resolvedScrollCommand(scrollCommand) else {
+            return false
+        }
+        if let anchoredCV = collectionView as? AnchoredCollectionView {
+            switch resolvedCommand.anchor {
+            case .bottom:
+                anchoredCV.isDetachedFromBottom = false
+                anchoredCV.clearDetachedAnchor()
+            case .viewport, .top:
+                // Identity pin would fight the programmatic jump.
+                anchoredCV.clearDetachedAnchor()
+            }
+        }
+        guard performScroll(resolvedCommand, in: collectionView) else {
+            return false
+        }
+        lastHandledScrollCommandNonce = scrollCommand.nonce
+        return true
+    }
+
+    /// Scroll commands measure against first-pass estimated heights. After
+    /// preferred sizes land, pin an idle attached timeline to the true bottom.
+    func reconcileScrollAfterTimelineApply(
+        didScroll: Bool,
+        hadPendingScrollCommand: Bool,
+        configuration: ChatTimelineConfiguration,
+        collectionView: UICollectionView,
+        itemCount: Int,
+        structuralAppend: Bool = false
+    ) {
+        // Only the apply that consumes an outline jump owns its landing.
+        // SwiftUI retains handled commands; they must not disable follow
+        // after the user scrolls back to the live tail.
+        guard !(hadPendingScrollCommand && configuration.scrollCommand?.anchor == .top) else { return }
+        if didScroll || hadPendingScrollCommand {
             collectionView.layoutIfNeeded()
-            ChatTimelinePerf.endLayoutPass(layoutToken)
-
-            if isBusy, !structuralAppend {
+            guard scrollController?.isCurrentlyNearBottom ?? true else { return }
+            if configuration.isBusy {
                 keepLiveTailVisible(collectionView)
             } else {
                 settleAttachedBottom(collectionView)
             }
+            return
         }
-
-        private func keepLiveTailVisible(_ collectionView: UICollectionView) {
-            guard let tailIndex = currentIDs.indices.last else { return }
-            let tailIndexPath = IndexPath(item: tailIndex, section: 0)
-            guard let attrs = collectionView.layoutAttributesForItem(at: tailIndexPath) else { return }
-
-            let insets = collectionView.adjustedContentInset
-            let viewportBottomY = collectionView.contentOffset.y
-                + collectionView.bounds.height
-                - insets.bottom
-            let distanceFromViewportBottom = viewportBottomY - attrs.frame.maxY
-
-            // Busy streaming uses minimum-needed visibility instead of
-            // exact-bottom chasing. If the live tail is visible, do nothing.
-            // If it is about to fall behind the composer/footer, nudge downward
-            // only enough to restore the minimum padding. Never move upward
-            // while busy; final settling happens on idle.
-            guard distanceFromViewportBottom < liveTailMinimumBottomPadding else { return }
-
-            let targetOffsetY = collectionView.contentOffset.y
-                + (liveTailMinimumBottomPadding - distanceFromViewportBottom)
-            applyAmbientOffsetCorrection(
-                targetOffsetY,
-                reason: .liveTailVisibility,
-                in: collectionView
-            )
-        }
-
-        private func settleAttachedBottom(_ collectionView: UICollectionView) {
-            let insets = collectionView.adjustedContentInset
-            let targetOffsetY = max(
-                -insets.top,
-                collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
-            )
-            applyAmbientOffsetCorrection(
-                targetOffsetY,
-                reason: .idleBottomSettle,
-                in: collectionView
-            )
-        }
-
-        private func applyAmbientOffsetCorrection(
-            _ proposedOffsetY: CGFloat,
-            reason: TimelineOffsetReason,
-            in collectionView: UICollectionView
-        ) {
-            let didApply = TimelineOffsetController.apply(
-                targetOffsetY: proposedOffsetY,
-                reason: reason,
-                collectionView: collectionView,
-                scrollController: scrollController
-            )
-            guard didApply else { return }
-
-            scrollController?.updateNearBottom(true)
-            updateLastDistanceFromBottom(collectionView)
-        }
-
-        private func performScroll(
-            _ command: ChatTimelineScrollCommand,
-            in collectionView: UICollectionView
-        ) -> Bool {
-            TimelineScrollCoordinator.performScroll(
-                command,
-                in: collectionView,
-                currentIDs: currentIDs,
-                sessionId: sessionId
-            ) { [weak self, weak collectionView] in
-                guard let self, let collectionView else { return }
-                // `scrollToItem(animated: false)` can update contentOffset on the next
-                // runloop tick without always triggering immediate delegate callbacks.
-                // Re-sample scroll state asynchronously so diagnostics (near-bottom,
-                // top visible id) converge deterministically for harness assertions.
-                collectionView.layoutIfNeeded()
-                self.correctProgrammaticScrollAlignmentIfNeeded(command, in: collectionView)
-                self.triggerNavigationHighlightIfNeeded(for: command, in: collectionView)
-                let preservesDetachedState: Bool
-                if case .viewport = command.anchor {
-                    // Estimated row heights can temporarily place a restored
-                    // viewport inside near-bottom hysteresis. Reattaching here
-                    // lets the later self-sizing pass pin to the live tail.
-                    preservesDetachedState = true
-                } else {
-                    preservesDetachedState = false
-                }
-                self.updateScrollState(
-                    collectionView,
-                    preserveDetachedState: preservesDetachedState
-                )
-                self.updateDetachedStreamingHintVisibility()
-            }
-        }
-
-        private func triggerNavigationHighlightIfNeeded(
-            for command: ChatTimelineScrollCommand,
-            in collectionView: UICollectionView
-        ) {
-            guard command.anchor == .top,
-                  currentIDs.contains(command.id) else {
-                return
-            }
-
-            func tryApplyHighlight(attempt: Int) {
-                collectionView.layoutIfNeeded()
-
-                if applyPendingNavigationHighlightIfVisible(for: command.id, in: collectionView) {
-                    return
-                }
-
-                // Covers a router sheet's dismissal, which can outlast the jump.
-                guard attempt < 60 else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    tryApplyHighlight(attempt: attempt + 1)
-                }
-            }
-
-            tryApplyHighlight(attempt: 0)
-        }
-
-        @discardableResult
-        func applyPendingNavigationHighlightIfVisible(
-            for itemID: String,
-            in collectionView: UICollectionView
-        ) -> Bool {
-            guard let scrollController,
-                  let token = scrollController.navigationHighlightTokenIfNeeded(for: itemID),
-                  let itemIndex = currentIDs.firstIndex(of: itemID) else {
-                return false
-            }
-
-            // The outline sheet closes while the jump runs under it. Arrive
-            // once the chat is uncovered, or the lift plays behind the sheet.
-            guard !Self.isCoveredByPresentation(collectionView) else { return false }
-
-            let indexPath = IndexPath(item: itemIndex, section: 0)
-            guard let cell = collectionView.cellForItem(at: indexPath) as? SafeSizingCell else {
-                return false
-            }
-
-            cell.performNavigationArrival()
-            AppHaptics.navigationArrival(navigationArrivalHaptic)
-            navigationArrivalHaptic = nil
-            scrollController.clearNavigationHighlightIfNeeded(for: itemID, token: token)
-
-            let refreshZOrder: @MainActor @Sendable () -> Void = { [weak collectionView] in
-                guard let collectionView,
-                      let cell = collectionView.cellForItem(at: indexPath) as? SafeSizingCell else {
-                    return
-                }
-                cell.ensureNavigationHighlightOverlayFrontmost()
-            }
-
-            DispatchQueue.main.async(execute: refreshZOrder)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: refreshZOrder)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: refreshZOrder)
-            return true
-        }
-
-        /// Warm the arrival tap when a jump starts so it fires on landing.
-        func prepareNavigationArrivalHaptic() {
-            navigationArrivalHaptic = AppHaptics.prepareNavigationArrival()
-        }
-
-        /// `presentedViewController` also reports a modal presented by any
-        /// ancestor, so this sees a router sheet over the chat's screen.
-        private static func isCoveredByPresentation(_ view: UIView) -> Bool {
-            let owner = sequence(first: view as UIResponder, next: \.next)
-                .lazy.compactMap { $0 as? UIViewController }.first
-            return owner?.presentedViewController != nil
-        }
-
-        private func correctProgrammaticScrollAlignmentIfNeeded(
-            _ command: ChatTimelineScrollCommand,
-            in collectionView: UICollectionView
-        ) {
-            let relativeY: CGFloat
-            let reason: TimelineOffsetReason
-            switch command.anchor {
-            case .top:
-                relativeY = collectionView.adjustedContentInset.top
-                reason = .programmaticTopAlign
-            case .viewport(let savedRelativeY):
-                relativeY = savedRelativeY
-                reason = .navigationViewportRestore
-            case .bottom:
-                return
-            }
-
-            guard let itemIndex = currentIDs.firstIndex(of: command.id) else {
-                return
-            }
-
-            let indexPath = IndexPath(item: itemIndex, section: 0)
-            collectionView.layoutIfNeeded()
-            guard let attrs = collectionView.layoutAttributesForItem(at: indexPath) else {
-                return
-            }
-
-            TimelineOffsetController.apply(
-                targetOffsetY: attrs.frame.minY - relativeY,
-                reason: reason,
-                collectionView: collectionView,
-                scrollController: scrollController
-            )
-            if let anchoredCV = collectionView as? AnchoredCollectionView,
-               anchoredCV.isDetachedFromBottom {
-                anchoredCV.captureDetachedAnchor()
-            }
-        }
-
-        /// Minimum distance from bottom before showing the jump-to-bottom
-        /// button. One viewport height prevents flash from bounce/small scrolls.
-        let jumpToBottomMinDistance: CGFloat = 500
+        reconcileAmbientScrollAfterTimelineUpdate(
+            collectionView,
+            isBusy: configuration.isBusy,
+            itemCount: itemCount,
+            sessionId: configuration.sessionId,
+            structuralAppend: structuralAppend
+        )
     }
+
+    private func reconcileAmbientScrollAfterTimelineUpdate(
+        _ collectionView: UICollectionView,
+        isBusy: Bool,
+        itemCount: Int,
+        sessionId: String,
+        structuralAppend: Bool = false
+    ) {
+        guard scrollController?.isCurrentlyNearBottom ?? true else { return }
+        guard !collectionView.isTracking,
+              !collectionView.isDragging,
+              !collectionView.isDecelerating else {
+            return
+        }
+        if #available(iOS 17.4, *), collectionView.isScrollAnimating {
+            return
+        }
+        if (collectionView as? AnchoredCollectionView)?.expandCollapseAnchorIP != nil {
+            // The tapped work header owns the viewport until its structural
+            // apply and deferred self-sizing passes settle. An idle bottom
+            // correction here would yank an older turn back to the tail.
+            return
+        }
+
+        if isBusy, !structuralAppend {
+            let now = DispatchTime.now().uptimeNanoseconds
+            if now &- lastBusyAmbientScrollReconcileNs < 260_000_000 {
+                return
+            }
+            lastBusyAmbientScrollReconcileNs = now
+        }
+
+        let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: itemCount, sessionId: sessionId)
+        collectionView.layoutIfNeeded()
+        ChatTimelinePerf.endLayoutPass(layoutToken)
+
+        if isBusy, !structuralAppend {
+            keepLiveTailVisible(collectionView)
+        } else {
+            settleAttachedBottom(collectionView)
+        }
+    }
+
+    private func keepLiveTailVisible(_ collectionView: UICollectionView) {
+        guard let tailIndex = currentIDs.indices.last else { return }
+        let tailIndexPath = IndexPath(item: tailIndex, section: 0)
+        guard let attrs = collectionView.layoutAttributesForItem(at: tailIndexPath) else { return }
+
+        let insets = collectionView.adjustedContentInset
+        let viewportBottomY = collectionView.contentOffset.y
+            + collectionView.bounds.height
+            - insets.bottom
+        let distanceFromViewportBottom = viewportBottomY - attrs.frame.maxY
+
+        // Busy streaming uses minimum-needed visibility instead of
+        // exact-bottom chasing. If the live tail is visible, do nothing.
+        // If it is about to fall behind the composer/footer, nudge downward
+        // only enough to restore the minimum padding. Never move upward
+        // while busy; final settling happens on idle.
+        guard distanceFromViewportBottom < liveTailMinimumBottomPadding else { return }
+
+        let targetOffsetY = collectionView.contentOffset.y
+            + (liveTailMinimumBottomPadding - distanceFromViewportBottom)
+        applyAmbientOffsetCorrection(
+            targetOffsetY,
+            reason: .liveTailVisibility,
+            in: collectionView
+        )
+    }
+
+    private func settleAttachedBottom(_ collectionView: UICollectionView) {
+        let insets = collectionView.adjustedContentInset
+        let targetOffsetY = max(
+            -insets.top,
+            collectionView.contentSize.height - collectionView.bounds.height + insets.bottom
+        )
+        applyAmbientOffsetCorrection(
+            targetOffsetY,
+            reason: .idleBottomSettle,
+            in: collectionView
+        )
+    }
+
+    private func applyAmbientOffsetCorrection(
+        _ proposedOffsetY: CGFloat,
+        reason: TimelineOffsetReason,
+        in collectionView: UICollectionView
+    ) {
+        let didApply = TimelineOffsetController.apply(
+            targetOffsetY: proposedOffsetY,
+            reason: reason,
+            collectionView: collectionView,
+            scrollController: scrollController
+        )
+        guard didApply else { return }
+
+        scrollController?.updateNearBottom(true)
+        updateLastDistanceFromBottom(collectionView)
+    }
+
+    private func performScroll(
+        _ command: ChatTimelineScrollCommand,
+        in collectionView: UICollectionView
+    ) -> Bool {
+        TimelineScrollCoordinator.performScroll(
+            command,
+            in: collectionView,
+            currentIDs: currentIDs,
+            sessionId: sessionId
+        ) { [weak self, weak collectionView] in
+            guard let self, let collectionView else { return }
+            // `scrollToItem(animated: false)` can update contentOffset on the next
+            // runloop tick without always triggering immediate delegate callbacks.
+            // Re-sample scroll state asynchronously so diagnostics (near-bottom,
+            // top visible id) converge deterministically for harness assertions.
+            collectionView.layoutIfNeeded()
+            self.correctProgrammaticScrollAlignmentIfNeeded(command, in: collectionView)
+            self.triggerNavigationHighlightIfNeeded(for: command, in: collectionView)
+            let preservesDetachedState: Bool
+            if case .viewport = command.anchor {
+                // Estimated row heights can temporarily place a restored
+                // viewport inside near-bottom hysteresis. Reattaching here
+                // lets the later self-sizing pass pin to the live tail.
+                preservesDetachedState = true
+            } else {
+                preservesDetachedState = false
+            }
+            self.updateScrollState(
+                collectionView,
+                preserveDetachedState: preservesDetachedState
+            )
+            self.updateDetachedStreamingHintVisibility()
+        }
+    }
+
+    private func triggerNavigationHighlightIfNeeded(
+        for command: ChatTimelineScrollCommand,
+        in collectionView: UICollectionView
+    ) {
+        guard command.anchor == .top,
+              currentIDs.contains(command.id) else {
+            return
+        }
+
+        func tryApplyHighlight(attempt: Int) {
+            collectionView.layoutIfNeeded()
+
+            if applyPendingNavigationHighlightIfVisible(for: command.id, in: collectionView) {
+                return
+            }
+
+            // Covers a router sheet's dismissal, which can outlast the jump.
+            guard attempt < 60 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                tryApplyHighlight(attempt: attempt + 1)
+            }
+        }
+
+        tryApplyHighlight(attempt: 0)
+    }
+
+    @discardableResult
+    func applyPendingNavigationHighlightIfVisible(
+        for itemID: String,
+        in collectionView: UICollectionView
+    ) -> Bool {
+        guard let scrollController,
+              let token = scrollController.navigationHighlightTokenIfNeeded(for: itemID),
+              let itemIndex = currentIDs.firstIndex(of: itemID) else {
+            return false
+        }
+
+        // The outline sheet closes while the jump runs under it. Arrive
+        // once the chat is uncovered, or the lift plays behind the sheet.
+        guard !Self.isCoveredByPresentation(collectionView) else { return false }
+
+        let indexPath = IndexPath(item: itemIndex, section: 0)
+        guard let cell = collectionView.cellForItem(at: indexPath) as? SafeSizingCell else {
+            return false
+        }
+
+        cell.performNavigationArrival()
+        AppHaptics.navigationArrival(navigationArrivalHaptic)
+        navigationArrivalHaptic = nil
+        scrollController.clearNavigationHighlightIfNeeded(for: itemID, token: token)
+
+        let refreshZOrder: @MainActor @Sendable () -> Void = { [weak collectionView] in
+            guard let collectionView,
+                  let cell = collectionView.cellForItem(at: indexPath) as? SafeSizingCell else {
+                return
+            }
+            cell.ensureNavigationHighlightOverlayFrontmost()
+        }
+
+        DispatchQueue.main.async(execute: refreshZOrder)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: refreshZOrder)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: refreshZOrder)
+        return true
+    }
+
+    /// Warm the arrival tap when a jump starts so it fires on landing.
+    func prepareNavigationArrivalHaptic() {
+        navigationArrivalHaptic = AppHaptics.prepareNavigationArrival()
+    }
+
+    /// `presentedViewController` also reports a modal presented by any
+    /// ancestor, so this sees a router sheet over the chat's screen.
+    private static func isCoveredByPresentation(_ view: UIView) -> Bool {
+        let owner = sequence(first: view as UIResponder, next: \.next)
+            .lazy.compactMap { $0 as? UIViewController }.first
+        return owner?.presentedViewController != nil
+    }
+
+    private func correctProgrammaticScrollAlignmentIfNeeded(
+        _ command: ChatTimelineScrollCommand,
+        in collectionView: UICollectionView
+    ) {
+        let relativeY: CGFloat
+        let reason: TimelineOffsetReason
+        switch command.anchor {
+        case .top:
+            relativeY = collectionView.adjustedContentInset.top
+            reason = .programmaticTopAlign
+        case .viewport(let savedRelativeY):
+            relativeY = savedRelativeY
+            reason = .navigationViewportRestore
+        case .bottom:
+            return
+        }
+
+        guard let itemIndex = currentIDs.firstIndex(of: command.id) else {
+            return
+        }
+
+        let indexPath = IndexPath(item: itemIndex, section: 0)
+        collectionView.layoutIfNeeded()
+        guard let attrs = collectionView.layoutAttributesForItem(at: indexPath) else {
+            return
+        }
+
+        TimelineOffsetController.apply(
+            targetOffsetY: attrs.frame.minY - relativeY,
+            reason: reason,
+            collectionView: collectionView,
+            scrollController: scrollController
+        )
+        if let anchoredCV = collectionView as? AnchoredCollectionView,
+           anchoredCV.isDetachedFromBottom {
+            anchoredCV.captureDetachedAnchor()
+        }
+    }
+
+    /// Minimum distance from bottom before showing the jump-to-bottom
+    /// button. One viewport height prevents flash from bounce/small scrolls.
+    let jumpToBottomMinDistance: CGFloat = 500
 }
 
 // swiftlint:enable type_body_length

@@ -96,7 +96,7 @@ struct TimelineCommitDetailHost: View {
     let commit: GitCommitSummary
     var testingQuickActionDestination: QuickActionSessionNavDestination? = nil
     @Environment(\.screenNavigator) private var navigator
-    /// The viewer runs its own chat stack inside the modal. A `ChatView` pushed
+    /// The viewer runs its own chat stack inside the modal. A `ChatViewController` pushed
     /// here must not take the app's pending quick-session message (it would
     /// send it into this session) or change the app's split state underneath,
     /// so it gets a navigation of its own.

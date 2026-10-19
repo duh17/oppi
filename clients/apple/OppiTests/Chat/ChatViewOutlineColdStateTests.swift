@@ -1,26 +1,24 @@
 import Foundation
-import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
 
-/// Mounted `ChatView` proof that content-only streaming stays on the UIKit clock.
+/// Mounted `ChatViewController` proof that content-only streaming stays on
+/// the timeline's own clock: the chat pushes no chrome while tokens stream.
 ///
-/// SwiftUI `.toolbar` outline/context controls are not exposed as UIView
-/// accessibility identifiers in this `UIHostingController` host. Dumps show
-/// `UIKitNavigationBar` without `chat.toolbar.outline`. Do not reintroduce a
-/// synthetic `SessionOutlineViewController` present/onSelect path as a substitute.
-/// Drive the real toolbar, presented Session Outline, and row navigation with
-/// `OppiUITests/ChatOutlineColdStateUITests` (DEBUG ChatView harness, no model).
-@Suite("ChatView outline cold state", .serialized)
+/// Do not reintroduce a synthetic `SessionOutlineViewController`
+/// present/onSelect path here. Drive the real bar, presented Session Outline,
+/// and row navigation with `OppiUITests/ChatOutlineColdStateUITests` (DEBUG
+/// chat harness, no model).
+@Suite("Chat outline cold state", .serialized)
 @MainActor
 struct ChatViewOutlineColdStateTests {
     @Test func contentOnlyStreamingDoesNotIncrementHostUpdateUIView() async {
-        let fixture = makeMountedChatView()
+        let fixture = makeMountedChat()
         defer { fixture.tearDown() }
 
-        let settled = await settleMountedChatView(fixture)
-        #expect(settled, "Expected ChatView timeline to settle before streaming")
+        let settled = await settleMountedChat(fixture)
+        #expect(settled, "Expected ChatViewController timeline to settle before streaming")
 
         let marker = "cold-hello-\(UUID().uuidString.prefix(8))"
         injectAssistantDelta(fixture, text: marker)
@@ -31,7 +29,7 @@ struct ChatViewOutlineColdStateTests {
                 return timelineHasAssistantText(fixture, containing: marker)
             }
         }
-        #expect(mounted, "Expected first tokens to paint in the mounted ChatView timeline")
+        #expect(mounted, "Expected first tokens to paint in the mounted ChatViewController timeline")
 
         ChatTimelinePerf.reset()
         injectAssistantDelta(fixture, text: " stream")
@@ -51,7 +49,7 @@ struct ChatViewOutlineColdStateTests {
         #expect(streamed)
         #expect(
             snapshot.hostUpdateUIViewCount == 0,
-            "Content-only streaming must not rebuild ChatView/updateUIView; hostUpdateUIViewCount=\(snapshot.hostUpdateUIViewCount)"
+            "Content-only streaming must not rebuild ChatViewController/updateUIView; hostUpdateUIViewCount=\(snapshot.hostUpdateUIViewCount)"
         )
         #expect(snapshot.controllerOwnedApplyCount >= 1)
     }
@@ -59,11 +57,11 @@ struct ChatViewOutlineColdStateTests {
     /// Telemetry, crash context, and system classes write `UserDefaults` at
     /// any moment; none of that is chat state.
     @Test func unrelatedDefaultsWriteDoesNotRebuildTimelineHost() async {
-        let fixture = makeMountedChatView()
+        let fixture = makeMountedChat()
         defer { fixture.tearDown() }
 
-        let settled = await settleMountedChatView(fixture)
-        #expect(settled, "Expected ChatView timeline to settle before the write")
+        let settled = await settleMountedChat(fixture)
+        #expect(settled, "Expected ChatViewController timeline to settle before the write")
         fixture.host.view.layoutIfNeeded()
 
         let key = "oppi.tests.unrelated-defaults-write"
@@ -79,16 +77,16 @@ struct ChatViewOutlineColdStateTests {
                 return ChatTimelinePerf.snapshot().hostUpdateUIViewCount > 0
             }
         }
-        #expect(!rebuilt, "A UserDefaults write must not rebuild ChatView or call updateUIView")
+        #expect(!rebuilt, "A UserDefaults write must not rebuild ChatViewController or call updateUIView")
     }
 
     @Test func sessionRebindIsolatesOldReducerFromHostUpdates() async throws {
         let sessionA = "cold-a-\(UUID().uuidString)"
         let sessionB = "cold-b-\(UUID().uuidString)"
-        let fixture = makeMountedChatView(sessionId: sessionA)
+        let fixture = makeMountedChat(sessionId: sessionA)
         defer { fixture.tearDown() }
 
-        let settledA = await settleMountedChatView(fixture)
+        let settledA = await settleMountedChat(fixture)
         #expect(settledA)
 
         let markerA = "session-a-\(UUID().uuidString.prefix(8))"
@@ -183,21 +181,35 @@ struct ChatViewOutlineColdStateTests {
 }
 
 @MainActor
-private struct MountedChatViewFixture {
+private final class MountedChatFixture {
     let connection: ServerConnection
     let appNavigation: AppNavigation
-    let quickCommentTemplateStore: QuickCommentTemplateStore
-    let host: UIHostingController<MountedChatViewRoot>
+    let host: UINavigationController
     let window: UIWindow
+    private(set) var sessionId: String
 
-    var timelineController: ChatTimelineCollectionHost.Controller? {
+    init(
+        connection: ServerConnection,
+        appNavigation: AppNavigation,
+        host: UINavigationController,
+        window: UIWindow,
+        sessionId: String
+    ) {
+        self.connection = connection
+        self.appNavigation = appNavigation
+        self.host = host
+        self.window = window
+        self.sessionId = sessionId
+    }
+
+    var timelineController: ChatTimelineController? {
         guard let collectionView = timelineFirstView(
             ofType: UICollectionView.self,
             in: host.view
         ) else {
             return nil
         }
-        return collectionView.delegate as? ChatTimelineCollectionHost.Controller
+        return collectionView.delegate as? ChatTimelineController
     }
 
     var reducer: TimelineReducer? {
@@ -208,17 +220,18 @@ private struct MountedChatViewFixture {
         timelineController?.ownedClock.lastConfiguration?.outlineAvailability?.isAvailable ?? false
     }
 
-    var sessionId: String {
-        host.rootView.sessionId
-    }
-
+    /// Same contract as every production host: a new session is a new chat
+    /// controller, never an in-place session swap.
     func rebind(sessionId: String) {
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
-        var root = host.rootView
-        root.sessionId = sessionId
-        host.rootView = root
+        self.sessionId = sessionId
+        host.setViewControllers([makeChat(sessionId: sessionId)], animated: false)
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
+    }
+
+    func makeChat(sessionId: String) -> ChatViewController {
+        ChatViewController(sessionId: sessionId, connection: connection, navigation: appNavigation)
     }
 
     func tearDown() {
@@ -228,72 +241,36 @@ private struct MountedChatViewFixture {
 }
 
 @MainActor
-private struct MountedChatViewRoot: View {
-    var sessionId: String
-    let connection: ServerConnection
-    let appNavigation: AppNavigation
-    let quickCommentTemplateStore: QuickCommentTemplateStore
-    /// The timeline hosts its empty state with the app root above it.
-    let appRoot = makeTestAppRoot()
-
-    var body: some View {
-        NavigationStack {
-            // Same contract as every production caller: a new session is a
-            // new ChatView identity, never an in-place sessionId swap.
-            ChatView(sessionId: sessionId)
-                .id(sessionId)
-                .environment(\.appRootEnvironment, appRoot)
-                .environment(connection)
-                .environment(connection.chatState)
-                .environment(connection.sessionStore)
-                .environment(connection.audioPlayer)
-                .environment(connection.gitStatusStore)
-                .environment(connection.fileIndexStore)
-                .environment(connection.messageQueueStore)
-                .environment(connection.askRequestStore)
-                .environment(appNavigation)
-                .environment(quickCommentTemplateStore)
-        }
-    }
-}
-
-@MainActor
-private func makeMountedChatView(
+private func makeMountedChat(
     sessionId: String = "cold-\(UUID().uuidString)"
-) -> MountedChatViewFixture {
+) -> MountedChatFixture {
     let (connection, _) = makeTestConnection(sessionId: sessionId)
     connection.setAPIClientForTesting(nil)
     connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .stopped))
 
     let appNavigation = AppNavigation()
-    let quickCommentTemplateStore = QuickCommentTemplateStore(templates: [])
-    let root = MountedChatViewRoot(
-        sessionId: sessionId,
-        connection: connection,
-        appNavigation: appNavigation,
-        quickCommentTemplateStore: quickCommentTemplateStore
-    )
-    let host = UIHostingController(rootView: root)
-    host.loadViewIfNeeded()
-    host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+    let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: appNavigation)
+    let host = UINavigationController(rootViewController: chat)
 
-    let window = UIWindow(frame: host.view.frame)
+    let window = makeSceneWindow()
+    // The timeline hosts its empty state with the app root above it.
+    window.traitOverrides.appRootEnvironment = makeTestAppRoot()
     window.rootViewController = host
     window.makeKeyAndVisible()
     host.view.setNeedsLayout()
     host.view.layoutIfNeeded()
 
-    return MountedChatViewFixture(
+    return MountedChatFixture(
         connection: connection,
         appNavigation: appNavigation,
-        quickCommentTemplateStore: quickCommentTemplateStore,
         host: host,
-        window: window
+        window: window,
+        sessionId: sessionId
     )
 }
 
 @MainActor
-private func settleMountedChatView(_ fixture: MountedChatViewFixture) async -> Bool {
+private func settleMountedChat(_ fixture: MountedChatFixture) async -> Bool {
     await waitForTimelineCondition(timeoutMs: 2_000) {
         await MainActor.run {
             fixture.host.view.layoutIfNeeded()
@@ -316,7 +293,7 @@ private func settleMountedChatView(_ fixture: MountedChatViewFixture) async -> B
 }
 
 @MainActor
-private func injectAssistantDelta(_ fixture: MountedChatViewFixture, text: String) {
+private func injectAssistantDelta(_ fixture: MountedChatFixture, text: String) {
     guard let reducer = fixture.reducer else { return }
     let sessionId = fixture.sessionId
     if reducer.items.isEmpty {
@@ -333,7 +310,7 @@ private func injectAssistantDelta(_ fixture: MountedChatViewFixture, text: Strin
 
 @MainActor
 private func timelineHasAssistantText(
-    _ fixture: MountedChatViewFixture,
+    _ fixture: MountedChatFixture,
     containing needle: String
 ) -> Bool {
     fixture.timelineController?.currentItemByID.values.contains { item in

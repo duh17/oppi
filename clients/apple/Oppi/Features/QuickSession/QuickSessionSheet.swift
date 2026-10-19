@@ -129,7 +129,7 @@ struct QuickSessionOverlay: View {
 /// first message, then create and navigate to the new session.
 ///
 /// **Flow**: Pick workspace/worktree/Agent → compose message → send → session created →
-/// navigate to ChatView. Create and Agent launch send the resolved checkout.
+/// navigate to ChatViewController. Create and Agent launch send the resolved checkout.
 /// Hidden single-checkout workspaces still bind to Main. Plain Pi uses workspace
 /// session create + optional auto-send. A selected Agent uses `launchAgentSession`
 /// so definition defaults apply.

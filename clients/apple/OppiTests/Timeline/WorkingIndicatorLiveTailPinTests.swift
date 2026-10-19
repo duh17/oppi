@@ -184,7 +184,7 @@ struct WorkingIndicatorLiveTailPinTests {
         label: String
     ) throws {
         let collectionView = windowed.collectionView
-        let workingID = ChatTimelineCollectionHost.workingIndicatorID
+        let workingID = ChatTimelineController.workingIndicatorID
         #expect(
             windowed.coordinator.currentIDs.last == workingID,
             "\(label) missing working indicator at tail"

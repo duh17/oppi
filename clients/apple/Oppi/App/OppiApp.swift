@@ -1893,7 +1893,7 @@ final class OppiApp {
         let cacheStats = MarkdownSegmentCache.shared.snapshot()
         MarkdownSegmentCache.shared.clearAll()
 
-        // Per-session reducer memory cleanup is handled by ChatView
+        // Per-session reducer memory cleanup is handled by ChatViewController
         // (reducer is now per-session, not on ServerConnection).
 
         let footprintAfter = AppDiagnosticsService.currentFootprintMB()

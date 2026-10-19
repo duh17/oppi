@@ -3,7 +3,7 @@ import SwiftUI
 import Testing
 @testable import Oppi
 
-@Suite("ChatView sendPrompt file-backed drafts")
+@Suite("ChatViewController sendPrompt file-backed drafts")
 @MainActor
 struct ChatViewComposerPromptSendTests {
     @Test func reopenInlineUploadFailureReopenRetryUsesCanonicalDraftFile() async throws {
@@ -29,9 +29,9 @@ struct ChatViewComposerPromptSendTests {
         #expect(afterReopen.pendingAttachments.first?.localFileData == nil)
         #expect(try Data(contentsOf: reopenedURL) == videoBytes)
 
-        let (failed, _) = await ChatView.sendPrompt(
+        let (failed, _) = await ChatViewController.sendPrompt(
             draftController: afterReopen,
-            state: ChatView.ComposerPromptSendState(
+            state: ChatViewController.ComposerPromptSendState(
                 pendingAttachments: afterReopen.pendingAttachments,
                 isPreparingAttachments: false
             ),
@@ -59,9 +59,9 @@ struct ChatViewComposerPromptSendTests {
         #expect(retryURL.standardizedFileURL == draftURL.standardizedFileURL)
         #expect(try Data(contentsOf: retryURL) == videoBytes)
 
-        let (succeeded, _) = await ChatView.sendPrompt(
+        let (succeeded, _) = await ChatViewController.sendPrompt(
             draftController: afterFailureReopen,
-            state: ChatView.ComposerPromptSendState(
+            state: ChatViewController.ComposerPromptSendState(
                 pendingAttachments: afterFailureReopen.pendingAttachments,
                 isPreparingAttachments: false
             ),
@@ -101,9 +101,9 @@ struct ChatViewComposerPromptSendTests {
         )
         controller.attach(store: store, key: key, isEphemeral: false)
 
-        let (outcome, _) = await ChatView.sendPrompt(
+        let (outcome, _) = await ChatViewController.sendPrompt(
             draftController: controller,
-            state: ChatView.ComposerPromptSendState(
+            state: ChatViewController.ComposerPromptSendState(
                 pendingAttachments: controller.pendingAttachments,
                 isPreparingAttachments: false
             ),
@@ -142,9 +142,9 @@ struct ChatViewComposerPromptSendTests {
         )
         controller.attach(store: store, key: key, isEphemeral: false)
 
-        let (outcome, _) = await ChatView.sendPrompt(
+        let (outcome, _) = await ChatViewController.sendPrompt(
             draftController: controller,
-            state: ChatView.ComposerPromptSendState(
+            state: ChatViewController.ComposerPromptSendState(
                 pendingAttachments: controller.pendingAttachments,
                 isPreparingAttachments: false
             ),
@@ -193,19 +193,6 @@ struct ChatViewComposerPromptSendTests {
         #expect(pending.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: draftURL.path))
         #expect(importError == ComposerShared.photoLibraryImportRefusedMessage)
-    }
-
-    @Test func bothComposerPresentationsClearAfterSuccess() throws {
-        let sourceURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appending(path: "Oppi/Features/Chat/ChatView.swift")
-        let source = try String(contentsOf: sourceURL, encoding: .utf8)
-        #expect(source.contains("onSend: { sendComposerAction(draftClearance: .afterSuccess) }"))
-        #expect(!source.contains("onSend: { sendComposerAction() }"))
-        #expect(source.contains("draftClearance: ChatComposerDraftController.SubmissionDraftClearance = .afterSuccess"))
-        #expect(source.contains("clearVisibleTextForDispatchedSubmission(submission)"))
     }
 
     private static let uploadedVideoRef = ChatAttachmentRef(

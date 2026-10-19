@@ -75,68 +75,170 @@ enum NavigationChromeProfiler {
     }
 }
 
-private struct NavigationChromeProfileHeavyTimelineDestination: View {
+/// The stand-in chat: the timeline over a synthetic 180-turn trace, a Back
+/// and a Files control, and a stand-in Files panel. UIKit, like the chat.
+@MainActor
+private final class NavigationChromeReproChatController: UIViewController {
     private static let initialRenderWindow = 80
     private static let renderWindowStep = 60
     private static let traceEvents = NavigationChromeProfileTimelineFixtures.makeTraceEvents(turnCount: 180)
+    private static let route = "chat-files-repro"
 
-    let route: String
+    private let state: NavigationChromeReproState
+    private let connection = ServerConnection()
+    private let reducer = TimelineReducer()
+    private let scrollController = ChatScrollController()
+    private let timeline = ChatTimelineController()
+    private var collectionView: UICollectionView?
+    private var renderWindow = initialRenderWindow
+    private var scrollCommandNonce = 0
+    private var pendingScrollCommand: ChatTimelineScrollCommand?
+    private let filesPanel = UIStackView()
+    private lazy var filesItem = UIBarButtonItem(
+        image: UIImage(systemName: "folder"),
+        primaryAction: UIAction { [weak self] _ in self?.toggleFiles() }
+    )
 
-    @State private var connection = ServerConnection()
-    @State private var reducer = TimelineReducer()
-    @State private var scrollController = ChatScrollController()
-    @State private var renderWindow = initialRenderWindow
-    @State private var scrollCommandNonce = 0
-    @State private var pendingScrollCommand: ChatTimelineScrollCommand?
+    init(state: NavigationChromeReproState) {
+        self.state = state
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        navigationItem.title = "Session Repro"
+        navigationItem.largeTitleDisplayMode = .never
+        navigationItem.hidesBackButton = true
+        let back = UIBarButtonItem(
+            image: UIImage(systemName: "chevron.left"),
+            primaryAction: UIAction { [weak self] _ in
+                guard let self else { return }
+                Router.finish(self)
+            }
+        )
+        back.accessibilityLabel = "Back"
+        back.accessibilityIdentifier = "navChrome.chat.back"
+        filesItem.accessibilityIdentifier = "navChrome.chat.files"
+        navigationItem.leftBarButtonItems = [back, filesItem]
+
+        let collectionView = timeline.makeCollectionView(
+            configuration: makeConfiguration(),
+            contentRoot: HostFactory.root(near: self)
+        )
+        collectionView.accessibilityIdentifier = "navChrome.repro.chat"
+        collectionView.frame = view.bounds
+        collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(collectionView)
+        self.collectionView = collectionView
+
+        let title = UILabel()
+        title.text = "Files"
+        title.font = .preferredFont(forTextStyle: .headline)
+        title.accessibilityIdentifier = "navChrome.chat.filesPanel"
+        let tabs = UIStackView(arrangedSubviews: [
+            UIButton(configuration: .plain(), primaryAction: UIAction(title: "Changed") { _ in }),
+            UIButton(configuration: .plain(), primaryAction: UIAction(title: "All") { _ in }),
+        ])
+        tabs.spacing = 8
+        filesPanel.addArrangedSubview(title)
+        filesPanel.addArrangedSubview(tabs)
+        filesPanel.addArrangedSubview(UIView())
+        filesPanel.axis = .vertical
+        filesPanel.alignment = .leading
+        filesPanel.spacing = 12
+        filesPanel.isLayoutMarginsRelativeArrangement = true
+        filesPanel.layoutMargins = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        filesPanel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(filesPanel)
+        NSLayoutConstraint.activate([
+            filesPanel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            filesPanel.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            filesPanel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            filesPanel.widthAnchor.constraint(equalToConstant: 260),
+        ])
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        navigationController?.setToolbarHidden(true, animated: animated)
+        NavigationChromeProfiler.mark(
+            "heavy_timeline_host_appear",
+            metadata: [
+                "route": Self.route,
+                "events": String(Self.traceEvents.count),
+                "visible": String(visibleItems.count),
+            ]
+        )
+        loadSyntheticTraceIfNeeded()
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        let palette = HostFactory.root(near: self)?.themeStore.activeThemeID.palette ?? ThemeRuntimeState.currentPalette()
+        let colors = ComposerThemeColors(palette: palette)
+        let open = state.isFilePanelVisible
+        view.backgroundColor = colors.bg
+        filesPanel.backgroundColor = colors.bg
+        filesItem.image = UIImage(systemName: open ? "folder.fill" : "folder")
+        filesItem.accessibilityLabel = open ? "Close chat files" : "Open chat files"
+        UIView.animate(withDuration: 0.18) {
+            self.filesPanel.alpha = open ? 1 : 0
+        }
+        filesPanel.isHidden = false
+        filesPanel.isUserInteractionEnabled = open
+        filesPanel.accessibilityElementsHidden = !open
+    }
+
+    private func toggleFiles() {
+        state.filesTapCount += 1
+        state.isFilePanelVisible.toggle()
+        NavigationChromeProfiler.mark(
+            "chat_files_repro_files_tapped",
+            metadata: ["visible": String(state.isFilePanelVisible), "tapCount": String(state.filesTapCount)]
+        )
+    }
 
     private var visibleItems: [ChatItem] {
         Array(reducer.items.suffix(renderWindow))
     }
 
-    private var hiddenCount: Int {
-        max(0, reducer.items.count - visibleItems.count)
+    private func makeConfiguration() -> ChatTimelineConfiguration {
+        let visibleItems = visibleItems
+        return ChatTimelineConfiguration(
+            items: visibleItems,
+            hiddenCount: max(0, reducer.items.count - visibleItems.count),
+            renderWindowStep: Self.renderWindowStep,
+            isBusy: false,
+            streamingAssistantID: nil,
+            sessionId: Self.route,
+            workspaceId: "nav-chrome-profile-workspace",
+            onFork: { _ in },
+            onBackSwipe: {},
+            onShowEarlier: { [weak self] in
+                guard let self else { return }
+                self.renderWindow = min(self.reducer.items.count, self.renderWindow + Self.renderWindowStep)
+                self.applyTimeline()
+            },
+            scrollCommand: pendingScrollCommand,
+            scrollController: scrollController,
+            reducer: reducer,
+            toolOutputStore: reducer.toolOutputStore,
+            toolArgsStore: reducer.toolArgsStore,
+            toolSegmentStore: reducer.toolSegmentStore,
+            toolDetailsStore: reducer.toolDetailsStore,
+            sessionContent: connection.sessionContent,
+            iconAssetCache: connection.iconAssetCache,
+            currentModel: "profile/model",
+            audioPlayer: connection.audioPlayer
+        )
     }
 
-    var body: some View {
-        ChatTimelineCollectionHost(
-            configuration: .init(
-                items: visibleItems,
-                hiddenCount: hiddenCount,
-                renderWindowStep: Self.renderWindowStep,
-                isBusy: false,
-                streamingAssistantID: nil,
-                sessionId: route,
-                workspaceId: "nav-chrome-profile-workspace",
-                onFork: { _ in },
-                onBackSwipe: {},
-                onShowEarlier: {
-                    renderWindow = min(reducer.items.count, renderWindow + Self.renderWindowStep)
-                },
-                scrollCommand: pendingScrollCommand,
-                scrollController: scrollController,
-                reducer: reducer,
-                toolOutputStore: reducer.toolOutputStore,
-                toolArgsStore: reducer.toolArgsStore,
-                toolSegmentStore: reducer.toolSegmentStore,
-                toolDetailsStore: reducer.toolDetailsStore,
-                sessionContent: connection.sessionContent,
-                iconAssetCache: connection.iconAssetCache,
-                currentModel: "profile/model",
-                audioPlayer: connection.audioPlayer
-            )
-        )
-        .background(Color.themeBg)
-        .onAppear {
-            NavigationChromeProfiler.mark(
-                "heavy_timeline_host_appear",
-                metadata: [
-                    "route": route,
-                    "events": String(Self.traceEvents.count),
-                    "visible": String(visibleItems.count),
-                ]
-            )
-            loadSyntheticTraceIfNeeded()
-        }
+    private func applyTimeline() {
+        guard let collectionView else { return }
+        timeline.update(configuration: makeConfiguration(), collectionView: collectionView)
     }
 
     private func loadSyntheticTraceIfNeeded() {
@@ -144,7 +246,7 @@ private struct NavigationChromeProfileHeavyTimelineDestination: View {
         let startNs = DispatchTime.now().uptimeNanoseconds
         NavigationChromeProfiler.mark(
             "reducer_load_start",
-            metadata: ["events": String(Self.traceEvents.count), "route": route]
+            metadata: ["events": String(Self.traceEvents.count), "route": Self.route]
         )
         reducer.loadSession(Self.traceEvents)
         renderWindow = TimelineRenderWindowPolicy.syncedWindow(
@@ -157,22 +259,25 @@ private struct NavigationChromeProfileHeavyTimelineDestination: View {
             metadata: [
                 "durationMs": String(durationMs),
                 "items": String(reducer.items.count),
-                "route": route,
+                "route": Self.route,
             ]
         )
         if let bottomID = visibleItems.last?.id {
-            issueScrollCommand(id: bottomID, anchor: .bottom, animated: false)
+            scrollCommandNonce &+= 1
+            pendingScrollCommand = ChatTimelineScrollCommand(
+                id: bottomID,
+                anchor: .bottom,
+                animated: false,
+                nonce: scrollCommandNonce
+            )
         }
+        applyTimeline()
     }
 
-    private func issueScrollCommand(id: String, anchor: ChatTimelineScrollCommand.Anchor, animated: Bool) {
-        scrollCommandNonce &+= 1
-        pendingScrollCommand = ChatTimelineScrollCommand(
-            id: id,
-            anchor: anchor,
-            animated: animated,
-            nonce: scrollCommandNonce
-        )
+    deinit {
+        MainActor.assumeIsolated {
+            if let collectionView { timeline.dismantle(collectionView) }
+        }
     }
 }
 
@@ -207,7 +312,6 @@ struct NavigationChromeProfileHarnessView: View {
 
     @State private var navigation = AppNavigation()
     @State private var connection = Self.makeConnection()
-    @State private var quickCommentTemplateStore = QuickCommentTemplateStore(templates: [])
     @State private var state = NavigationChromeReproState()
 
     var body: some View {
@@ -215,8 +319,7 @@ struct NavigationChromeProfileHarnessView: View {
             NavigationChromeReproRoot(
                 state: state,
                 connection: connection,
-                navigation: navigation,
-                quickCommentTemplateStore: quickCommentTemplateStore
+                navigation: navigation
             )
         }
         .ignoresSafeArea()
@@ -287,7 +390,6 @@ private struct NavigationChromeReproRoot: View {
     let state: NavigationChromeReproState
     let connection: ServerConnection
     let navigation: AppNavigation
-    let quickCommentTemplateStore: QuickCommentTemplateStore
     @Environment(\.screenNavigator) private var navigator
     @State private var didAutoOpen = false
 
@@ -316,30 +418,16 @@ private struct NavigationChromeReproRoot: View {
     private func openFromRoot() {
         state.pathCount += 1
         if NavigationChromeProfileConfig.chatBackLocalRepro {
-            navigator.push { workspaceDetail }
+            let state = state
+            let connection = connection
+            let navigation = navigation
+            navigator.push {
+                NavigationChromeReproWorkspace(state: state, connection: connection, navigation: navigation)
+            }
         } else {
             state.pathCount += 1
-            navigator.push { chatDestination }
+            navigator.push(makeNavigationChromeReproChat(state: state, connection: connection, navigation: navigation))
         }
-    }
-
-    private var workspaceDetail: some View {
-        NavigationChromeReproWorkspace(
-            state: state,
-            connection: connection,
-            navigation: navigation,
-            quickCommentTemplateStore: quickCommentTemplateStore
-        )
-    }
-
-    private var chatDestination: some View {
-        NavigationChromeReproChat(
-            state: state,
-            connection: connection,
-            navigation: navigation,
-            quickCommentTemplateStore: quickCommentTemplateStore,
-            ownsBackNavigation: true
-        )
     }
 }
 
@@ -347,7 +435,6 @@ private struct NavigationChromeReproWorkspace: View {
     let state: NavigationChromeReproState
     let connection: ServerConnection
     let navigation: AppNavigation
-    let quickCommentTemplateStore: QuickCommentTemplateStore
     @Environment(\.screenNavigator) private var navigator
 
     var body: some View {
@@ -355,31 +442,15 @@ private struct NavigationChromeReproWorkspace: View {
             Section("Sessions") {
                 Button("Open Session") {
                     state.pathCount += 1
-                    navigator.push {
-                        NavigationChromeReproChat(
-                            state: state,
-                            connection: connection,
-                            navigation: navigation,
-                            quickCommentTemplateStore: quickCommentTemplateStore,
-                            ownsBackNavigation: true
-                        )
-                    }
+                    navigator.push(makeNavigationChromeReproChat(state: state, connection: connection, navigation: navigation))
                 }
                 .accessibilityIdentifier("navChrome.repro.openSession")
 
                 if NavigationChromeProfileConfig.chatBackLocalRepro {
                     Button("Open Local Chat") {
                         // Router push, not an AppNavigation path hop. Chat back
-                        // must finish this push; SwiftUI dismiss() cannot pop it.
-                        navigator.push {
-                            NavigationChromeReproChat(
-                                state: state,
-                                connection: connection,
-                                navigation: navigation,
-                                quickCommentTemplateStore: quickCommentTemplateStore,
-                                ownsBackNavigation: true
-                            )
-                        }
+                        // must finish this push.
+                        navigator.push(makeNavigationChromeReproChat(state: state, connection: connection, navigation: navigation))
                     }
                     .accessibilityIdentifier("navChrome.repro.openLocalChat")
                 }
@@ -394,97 +465,21 @@ private struct NavigationChromeReproWorkspace: View {
 }
 
 /// The production chat, or a stand-in with a Files control and panel.
-private struct NavigationChromeReproChat: View {
-    let state: NavigationChromeReproState
-    let connection: ServerConnection
-    let navigation: AppNavigation
-    let quickCommentTemplateStore: QuickCommentTemplateStore
-    let ownsBackNavigation: Bool
-
-    var body: some View {
-        if NavigationChromeProfileConfig.chatFilesRealChatRepro {
-            ChatView(
-                sessionId: "nav-chrome-repro-session",
-                workspaceIdHint: "nav-chrome-repro-workspace",
-                isShellRoute: ownsBackNavigation
-            )
-            .withServerScopedEnvironment(connection)
-            .environment(navigation)
-            .environment(quickCommentTemplateStore)
-        } else {
-            NavigationChromeChatFilesReproChatView(state: state)
-        }
+@MainActor
+private func makeNavigationChromeReproChat(
+    state: NavigationChromeReproState,
+    connection: ServerConnection,
+    navigation: AppNavigation
+) -> UIViewController {
+    guard NavigationChromeProfileConfig.chatFilesRealChatRepro else {
+        return NavigationChromeReproChatController(state: state)
     }
-}
-
-private struct NavigationChromeChatFilesReproChatView: View {
-    @Environment(\.screenNavigator) private var navigator
-    let state: NavigationChromeReproState
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            NavigationChromeProfileHeavyTimelineDestination(route: "chat-files-repro")
-                .accessibilityIdentifier("navChrome.repro.chat")
-
-            if state.isFilePanelVisible {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Files")
-                        .font(.headline)
-                        .accessibilityIdentifier("navChrome.chat.filesPanel")
-                    HStack(spacing: 8) {
-                        Button("Changed") {}
-                        Button("All") {}
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(16)
-                .frame(width: 260)
-                .frame(maxHeight: .infinity)
-                .background(Color.themeBg)
-                .overlay(alignment: .leading) {
-                    Divider().overlay(Color.themeComment.opacity(0.18))
-                }
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
-        }
-        .animation(.easeInOut(duration: 0.18), value: state.isFilePanelVisible)
-        .navigationTitle("Session Repro")
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(true)
-        .toolbarVisibility(.hidden, for: .bottomBar)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                HStack(spacing: 10) {
-                    Button { navigator.finish() } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.headline.weight(.semibold))
-                            .frame(width: 36, height: 36)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Back")
-                    .accessibilityIdentifier("navChrome.chat.back")
-
-                    Button {
-                        state.filesTapCount += 1
-                        state.isFilePanelVisible.toggle()
-                        NavigationChromeProfiler.mark(
-                            "chat_files_repro_files_tapped",
-                            metadata: ["visible": String(state.isFilePanelVisible), "tapCount": String(state.filesTapCount)]
-                        )
-                    } label: {
-                        Image(systemName: state.isFilePanelVisible ? "folder.fill" : "folder")
-                            .font(.subheadline)
-                            .frame(width: 36, height: 36)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(state.isFilePanelVisible ? "Close chat files" : "Open chat files")
-                    .accessibilityIdentifier("navChrome.chat.files")
-                }
-            }
-        }
-    }
+    return ChatViewController(
+        sessionId: "nav-chrome-repro-session",
+        connection: connection,
+        navigation: navigation,
+        workspaceIdHint: "nav-chrome-repro-workspace"
+    )
 }
 
 private enum NavigationChromeProfileTimelineFixtures {

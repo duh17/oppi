@@ -639,7 +639,7 @@ final class VoiceInputManager {
 
     // MARK: - Session Attribution
 
-    /// Active session ID for metric attribution. Set by ChatView on session connect.
+    /// Active session ID for metric attribution. Set by ChatViewController on session connect.
     var activeSessionId: String?
 
     // MARK: - Dictation Telemetry State
@@ -671,7 +671,7 @@ final class VoiceInputManager {
     // MARK: - Server Configuration
 
     /// Server credentials for the Oppi dictation endpoint.
-    /// Set by ChatView when server connection is active.
+    /// Set by ChatViewController when server connection is active.
     private(set) var serverCredentials: ServerCredentials?
     private(set) var serverConnection: ServerConnection?
 
@@ -727,7 +727,7 @@ final class VoiceInputManager {
     }
 
     /// Update server credentials for the dictation provider.
-    /// Called by ChatView when the server connection state changes.
+    /// Called by ChatViewController when the server connection state changes.
     func setServerCredentials(_ credentials: ServerCredentials?) {
         serverCredentials = credentials
         if credentials != nil {
@@ -744,7 +744,7 @@ final class VoiceInputManager {
     }
 
     /// Update the server connection reference for the dictation provider.
-    /// Called by ChatView alongside setServerCredentials.
+    /// Called by ChatViewController alongside setServerCredentials.
     func setServerConnection(_ connection: ServerConnection?) {
         serverConnection = connection
     }
@@ -965,7 +965,7 @@ final class VoiceInputManager {
     // MARK: - Pre-warm
 
     /// Check model availability and cache audio format in the background.
-    /// Call from ChatView's .task {} so the first mic tap is fast.
+    /// Call when the chat appears so the first mic tap is fast.
     /// Safe to call multiple times — no-ops after first success for the same locale+engine.
     func prewarm(keyboardLanguage: String? = nil, source: String = "unknown") async {
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)

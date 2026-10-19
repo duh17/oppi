@@ -589,13 +589,13 @@ struct FileBrowserReviewCommentSelectionTests {
     }
 
     @Test func currentFileRoutingUsesSessionRawForWorkspaceAndHostBrowseForControl() throws {
-        let workspaceTarget = try #require(ChatView.currentToolFileTarget(
+        let workspaceTarget = try #require(ChatViewController.currentToolFileTarget(
             serverId: "server-origin",
             routeScope: .workspace("workspace-origin"),
             sessionId: "session-origin",
             path: "/workspace/docs/current.md"
         ))
-        let controlTarget = try #require(ChatView.currentToolFileTarget(
+        let controlTarget = try #require(ChatViewController.currentToolFileTarget(
             serverId: "server-origin",
             routeScope: .control,
             sessionId: "control-session",
@@ -618,7 +618,7 @@ struct FileBrowserReviewCommentSelectionTests {
                 store: .constant(FullScreenMarkdownViewportRestoreState())
             )
         #expect(controlContent.debugControlSessionIdForTesting == "control-session")
-        #expect(ChatView.currentToolFileTarget(
+        #expect(ChatViewController.currentToolFileTarget(
             serverId: "server-origin",
             routeScope: nil,
             sessionId: "unknown-session",

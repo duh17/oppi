@@ -3,7 +3,7 @@ import Testing
 import UIKit
 @testable import Oppi
 
-@Suite("ChatView Lifecycle")
+@Suite("Chat screen lifecycle")
 @MainActor
 struct ChatViewLifecycleTests {
     @Test func sessionWarningChromeRendersGenericNoticesWithoutBranchingOnText() {
@@ -25,9 +25,9 @@ struct ChatViewLifecycleTests {
     }
 
     @Test func inactiveAndBackgroundPauseTimelinePresentation() {
-        #expect(ChatView.shouldPauseTimelinePresentation(for: .inactive))
-        #expect(ChatView.shouldPauseTimelinePresentation(for: .background))
-        #expect(!ChatView.shouldPauseTimelinePresentation(for: .active))
+        #expect(ChatViewController.shouldPauseTimelinePresentation(for: .inactive))
+        #expect(ChatViewController.shouldPauseTimelinePresentation(for: .background))
+        #expect(!ChatViewController.shouldPauseTimelinePresentation(for: .active))
     }
 
     @Test func onAppearPreparesSessionReentryBeforeAsyncConnectLoop() async {
@@ -55,7 +55,7 @@ struct ChatViewLifecycleTests {
             await MainActor.run { preparedSessionIds == [parentId] }
         }
 
-        #expect(prepared, "Expected ChatView.onAppear to prepare session re-entry")
+        #expect(prepared, "Expected ChatViewController.onAppear to prepare session re-entry")
         #expect(connection.focusedSessionId == parentId)
 
         host.teardown()
@@ -95,7 +95,7 @@ struct ChatViewLifecycleTests {
         connection.sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
 
         #expect(await frames.waitForCreated(1, timeoutMs: 1_000),
-                "When a visible stopped session becomes busy externally, ChatView should reconnect so live parent output is subscribed")
+                "When a visible stopped session becomes busy externally, ChatViewController should reconnect so live parent output is subscribed")
 
         frames.finish(index: 0)
         host.teardown()
@@ -114,9 +114,7 @@ struct ChatViewLifecycleTests {
         }
         #expect(appeared)
 
-        host.controller.rootView = AnyView(EmptyView())
-        host.controller.view.setNeedsLayout()
-        host.controller.view.layoutIfNeeded()
+        host.hide()
 
         let disconnected = await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { connection.focusedSessionId == nil }
@@ -156,14 +154,14 @@ struct ChatViewLifecycleTests {
 
         stack.pushViewController(UIViewController(), animated: false)
         stack.view.layoutIfNeeded()
-        #expect(host.controller.viewIfLoaded?.window == nil, "Covered-alive proof requires the chat to leave the window")
+        #expect(host.controller?.viewIfLoaded?.window == nil, "Covered-alive proof requires the chat to leave the window")
 
         let retained = await waitForMainActorConditionToStayTrue(for: .milliseconds(120)) {
             connection.focusedSessionId == sessionId
         }
         #expect(
             retained,
-            "Covered ChatView must stay alive under a real reader push"
+            "Covered ChatViewController must stay alive under a real reader push"
         )
 
         host.teardown()
@@ -220,7 +218,7 @@ struct ChatViewLifecycleTests {
         }
         #expect(
             disconnected,
-            "Destroying a covered ChatView must still release the focused session"
+            "Destroying a covered ChatViewController must still release the focused session"
         )
 
         frames.finish(index: 0)
@@ -276,7 +274,7 @@ struct ChatViewLifecycleTests {
         }
         #expect(
             disconnected,
-            "Destroying a covered stopped ChatView must still release the focused session"
+            "Destroying a covered stopped ChatViewController must still release the focused session"
         )
         #expect(streamsCreated == 0, "Stopped covered destroy must not open a stream")
 
@@ -310,7 +308,7 @@ struct ChatViewLifecycleTests {
 
         #expect(
             connection.focusedSessionId == targetSessionId,
-            "Old ChatView disappearance must not clear the notification target session"
+            "Old ChatViewController disappearance must not clear the notification target session"
         )
 
         host.teardown()
@@ -338,14 +336,14 @@ struct ChatViewLifecycleTests {
         #expect(connection.focusedSessionId == targetSessionId)
         #expect(streamConnects == 1)
 
-        // The previous session's ChatView is still mounted and appears again
+        // The previous session's ChatViewController is still mounted and appears again
         // while the tapped session's socket is still connecting.
         let host = makeHost(connection: connection, sessionId: staleSessionId)
         try? await Task.sleep(for: .milliseconds(200))
 
         #expect(
             connection.focusedSessionId == targetSessionId,
-            "A stale ChatView appearing must not steal focus from the notification target"
+            "A stale ChatViewController appearing must not steal focus from the notification target"
         )
         #expect(
             connection.focusedSessionStreamURLForTesting?.path
@@ -377,7 +375,7 @@ struct ChatViewLifecycleTests {
             await MainActor.run { connection.focusedSessionId == nil }
         }
         #expect(disconnected, "Local playback should not keep session focus/subscription lifecycle pinned")
-        #expect(connection.audioPlayer.hasActivePlayback, "Expected local playback to survive ChatView disappearance")
+        #expect(connection.audioPlayer.hasActivePlayback, "Expected local playback to survive ChatViewController disappearance")
 
         connection.audioPlayer._setPlaybackStateForTesting(playing: nil, loading: nil)
 
@@ -421,13 +419,8 @@ struct ChatViewLifecycleTests {
         sessionId: String,
         appNavigation: AppNavigation = AppNavigation()
     ) -> HostHarness {
-        makeHost(
-            root: makeChatView(
-                connection: connection,
-                sessionId: sessionId,
-                appNavigation: appNavigation
-            )
-        )
+        let chat = makeChat(connection: connection, sessionId: sessionId, appNavigation: appNavigation)
+        return show(chat, in: chat)
     }
 
     /// The chat at the root of a UIKit navigation stack, as the shell hosts it.
@@ -436,65 +429,43 @@ struct ChatViewLifecycleTests {
         sessionId: String,
         appNavigation: AppNavigation
     ) -> (HostHarness, UINavigationController) {
-        let controller = makeHostingController(
-            root: makeChatView(connection: connection, sessionId: sessionId, appNavigation: appNavigation)
-        )
-        let stack = UINavigationController(rootViewController: controller)
-        return (show(controller, in: stack), stack)
+        let chat = makeChat(connection: connection, sessionId: sessionId, appNavigation: appNavigation)
+        let stack = UINavigationController(rootViewController: chat)
+        return (show(chat, in: stack), stack)
     }
 
-    private func makeHost(root: AnyView) -> HostHarness {
-        let controller = makeHostingController(root: root)
-        return show(controller, in: controller)
-    }
-
-    private func makeHostingController(root: AnyView) -> UIHostingController<AnyView> {
-        // The timeline hosts its empty state with the app root above it.
-        UIHostingController(
-            rootView: AnyView(root.environment(\.appRootEnvironment, makeTestAppRoot()))
-        )
-    }
-
-    private func show(_ controller: UIHostingController<AnyView>, in windowRoot: UIViewController) -> HostHarness {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    private func show(_ chat: ChatViewController, in windowRoot: UIViewController) -> HostHarness {
+        // A window in the app's scene, so UIKit runs the chat's
+        // `updateProperties()` when the stores it reads change.
+        let window = makeSceneWindow()
+        // The chat's leaves and the timeline's empty state need the app root.
+        window.traitOverrides.appRootEnvironment = makeTestAppRoot()
         window.rootViewController = windowRoot
         window.makeKeyAndVisible()
 
         windowRoot.view.setNeedsLayout()
         windowRoot.view.layoutIfNeeded()
-        return HostHarness(controller: controller, window: window)
+        return HostHarness(controller: chat, window: window)
     }
 
-    private func makeChatView(
+    private func makeChat(
         connection: ServerConnection,
         sessionId: String,
         appNavigation: AppNavigation
-    ) -> AnyView {
-        AnyView(
-            ChatView(sessionId: sessionId)
-                .environment(connection)
-                .environment(connection.chatState)
-                .environment(connection.sessionStore)
-                .environment(connection.audioPlayer)
-                .environment(connection.gitStatusStore)
-                .environment(connection.fileIndexStore)
-                .environment(connection.messageQueueStore)
-                .environment(connection.askRequestStore)
-                .environment(appNavigation)
-                .environment(QuickCommentTemplateStore(templates: []))
-        )
+    ) -> ChatViewController {
+        ChatViewController(sessionId: sessionId, connection: connection, navigation: appNavigation)
     }
 }
 
 @MainActor
 private struct HostHarness {
-    let controller: UIHostingController<AnyView>
+    weak var controller: ChatViewController?
     let window: UIWindow
 
+    /// Takes the chat out of the window, the way a pop removes it.
     func hide() {
-        controller.rootView = AnyView(EmptyView())
-        controller.view.setNeedsLayout()
-        controller.view.layoutIfNeeded()
+        window.rootViewController = UIViewController()
+        window.layoutIfNeeded()
     }
 
     func teardown() {

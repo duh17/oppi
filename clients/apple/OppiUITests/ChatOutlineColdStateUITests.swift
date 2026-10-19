@@ -1,7 +1,7 @@
 import XCTest
 
-/// Deterministic ChatView toolbar/outline drive. Launches the DEBUG harness
-/// with production ChatView chrome. Does not construct SessionOutlineViewController,
+/// Deterministic ChatViewController toolbar/outline drive. Launches the DEBUG harness
+/// with production ChatViewController chrome. Does not construct SessionOutlineViewController,
 /// call onSelect, or use a local model.
 final class ChatOutlineColdStateUITests: XCTestCase {
     private let targetText = "COLD_OUTLINE_TARGET_ROW"
@@ -140,11 +140,11 @@ final class ChatOutlineColdStateUITests: XCTestCase {
     private func waitForHarnessReady(in app: XCUIApplication) {
         XCTAssertTrue(
             app.buttons["chat.toolbar.context"].waitForExistence(timeout: 10),
-            "Real ChatView toolbar did not appear"
+            "Real ChatViewController toolbar did not appear"
         )
         XCTAssertTrue(
             waitForDiagnostic(app, "chat.outline.harness.ready", equals: "1", timeout: 10),
-            "Harness did not observe the mounted ChatView timeline"
+            "Harness did not observe the mounted ChatViewController timeline"
         )
     }
 

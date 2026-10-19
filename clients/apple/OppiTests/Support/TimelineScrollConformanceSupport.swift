@@ -45,7 +45,7 @@ final class TimelineScrollConformanceHarness {
     var collectionView: UICollectionView { windowed.collectionView }
     var scrollController: ChatScrollController { windowed.scrollController }
     var reducer: TimelineReducer { windowed.reducer }
-    var coordinator: ChatTimelineCollectionHost.Controller { windowed.coordinator }
+    var coordinator: ChatTimelineController { windowed.coordinator }
 
     func replaceTimelineItems(_ newItems: [ChatItem]) {
         items = newItems

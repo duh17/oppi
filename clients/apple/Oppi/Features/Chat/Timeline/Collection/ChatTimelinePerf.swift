@@ -22,8 +22,9 @@ enum ChatTimelinePerf {
         let hardGuardrailBreachCount: Int
         let failsafeConfigureCount: Int
         let scrollCommandsPerSecond: Int
-        /// SwiftUI `updateUIView` pushes. Streaming should not increment this
-        /// once the collection controller owns the timeline clock.
+        /// Chrome pushes from the screen that hosts the timeline
+        /// (`ChatTimelineController.update`). Streaming must not increment this:
+        /// the collection controller owns the timeline clock.
         let hostUpdateUIViewCount: Int
         /// Controller-owned projection applies (observer / chrome rebuild).
         let controllerOwnedApplyCount: Int
@@ -142,9 +143,9 @@ enum ChatTimelinePerf {
         sessionId ?? activeSessionId
     }
 
-    /// SwiftUI hosted `updateUIView`. Chrome/insets/session identity may
-    /// increment this; token streaming must not if the UIKit controller owns
-    /// the projection clock.
+    /// A chrome push from the hosting screen (`ChatTimelineController.update`).
+    /// Chrome, insets, and session identity may increment this; token
+    /// streaming must not, because the controller owns the projection clock.
     static func recordHostUpdateUIView() {
         hostUpdateUIViewCount &+= 1
     }
