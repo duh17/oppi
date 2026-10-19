@@ -90,6 +90,19 @@ Code blocks, images, and URLs are skipped; link labels and list items are read. 
 
 Live Voice on the local backend (`asr.liveVoiceBackend` `yuwp`) speaks with this same engine and voice. Without `tts`, a local call listens and shows the agent's replies on screen but stays silent.
 
+### Live Voice availability
+
+The app offers Live Voice (the long-press choice on the composer mic, in a chat and in Quick Session) only when `GET /server/info` advertises `capabilities.liveVoice`. The server advertises it while the configured backend can start a call:
+
+| `asr.liveVoiceBackend` | Advertised when |
+| ---------------------- | --------------- |
+| `yuwp` (default)       | `asr.sttEndpoint` is non-empty |
+| `grok-voice`           | an xAI credential resolves (sign-in, stored API key, or `XAI_API_KEY`) |
+
+The server does not probe a Yuwp endpoint or Grok Voice, so a backend that is down still fails when the call starts. A server that does not advertise `liveVoice`, such as one older than 0.53.0, shows no Live Voice choice.
+
+The server reads `asr` and `tts` from disk on each `/server/info` request, the same as each new call, so a change with `oppi config set` takes effect without a restart. The app reads `/server/info` when it connects to the server, including each reconnect, and keeps those capabilities until the next connect. An open app therefore shows or hides the choice after its next reconnect or relaunch, not the moment you change the setting. A choice that is still showing after the backend went away fails at call start with the server's error.
+
 ## Voice extensions
 
 Voice extensions synthesize speech for their own tools. Common server-side pieces:
@@ -216,7 +229,7 @@ Pi's host MCP commands (`pi mcp list`, `login`, `logout`), which the MCP Servers
 | `asr.provider`                          | `http` or `xai` (restart)                          |
 | `asr.sttModel`                          | HTTP/Yuwp STT model id (restart)                                      |
 | `tts.provider` / `tts.endpoint` / `tts.model` / `tts.voice` / `tts.language` | Read aloud (restart; see [Read aloud](#read-aloud)) |
-| `asr.liveVoiceBackend`                  | Live Voice ears and voice for a call on a session: `yuwp` (local ASR from `asr.sttEndpoint`, speech from `tts`) or `grok-voice` (no restart: each new call reads `asr` and `tts` from disk; Grok uses the xAI `tts.voice`, else `eve`) |
+| `asr.liveVoiceBackend`                  | Live Voice ears and voice for a call on a session: `yuwp` (local ASR from `asr.sttEndpoint`, speech from `tts`) or `grok-voice` (no restart: each new call reads `asr` and `tts` from disk; Grok uses the xAI `tts.voice`, else `eve`). The app offers Live Voice only when this backend is set up; see [Live Voice availability](#live-voice-availability) |
 | `runtimeEnv.<NAME>`                     | Host runtime env, including TTS URLs (restart)                      |
 | `extensions.voice.defaultVoiceId`       | Default voice id                                                    |
 | `images.autoResize`                     | Client image preprocessing preference                               |

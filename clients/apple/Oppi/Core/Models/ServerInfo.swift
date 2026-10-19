@@ -75,6 +75,8 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var desktopLiveView: CapabilityVersion? = nil
         /// `POST /speech` reads messages aloud with the server's configured TTS provider.
         var speech: CapabilityVersion? = nil
+        /// The server's Live Voice backend is set up, so a call can start (`asr.liveVoiceBackend`).
+        var liveVoice: CapabilityVersion? = nil
         /// The server pushes end to end encrypted through this relay (`push.mode` relay).
         var pushNotifications: PushNotificationsCapability? = nil
 

@@ -19,6 +19,29 @@ struct ChatInputBarTests {
         }
     }
 
+    @Test("The chat composer offers Live Voice only when the server advertises it")
+    func liveVoiceEntryFollowsServerCapability() {
+        let (connection, _) = makeTestConnection(sessionId: "live-voice-entry")
+        let chat = ChatViewController(
+            sessionId: "live-voice-entry",
+            connection: connection,
+            navigation: AppNavigation()
+        )
+
+        // A server older than 0.53.0, or one whose voice backend is not set up, advertises nothing.
+        connection.setSplitStreamCapabilitiesForTesting(liveVoice: false)
+        #expect(!connection.liveVoiceAvailable)
+        #expect(chat.liveVoiceEntry == nil)
+
+        connection.setSplitStreamCapabilitiesForTesting(liveVoice: true)
+        #expect(connection.liveVoiceAvailable)
+        #expect(chat.liveVoiceEntry != nil)
+
+        // The next connect reads /server/info again; a backend that went away hides the entry.
+        connection.setSplitStreamCapabilitiesForTesting(liveVoice: false)
+        #expect(chat.liveVoiceEntry == nil)
+    }
+
     @Test("Tap-to-type remains enabled while voice is active")
     func tapToTypeRemainsEnabledDuringVoiceStates() {
         #expect(ChatInputBar.allowKeyboardRestoreOnTap(voiceState: .recording))

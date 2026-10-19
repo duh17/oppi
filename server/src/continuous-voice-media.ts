@@ -8,6 +8,7 @@ import type {
 } from "./continuous-voice.js";
 import type { SttProvider, SttSpeechState, SttTranscriptUpdate } from "./stt-provider.js";
 import { createLogger } from "./logger.js";
+import { hasVoiceProviderCredential, type SttGetAuth } from "./create-stt-provider.js";
 import { startSpeech, type SpeechDeps, type TtsConfig } from "./speech-synthesis.js";
 import { parseVoiceApprovalDecision } from "./voice-approval-bridge.js";
 
@@ -53,6 +54,22 @@ export function selectLiveVoiceMediaAdapter(input: {
     throw new Error("Live Voice ASR is unavailable");
   }
   return new YuwpVoiceMediaAdapter(input.createStt(), { tts: input.tts });
+}
+
+/**
+ * True when a call started now could run: `yuwp` (the default) needs `asr.sttEndpoint`;
+ * `grok-voice` needs an xAI sign-in or API key. Mirrors the checks that make
+ * `selectLiveVoiceMediaAdapter` and the Grok adapter fail at call start, and is advertised as
+ * `capabilities.liveVoice` so the app offers Live Voice only where a call can start. An
+ * endpoint or a Grok backend that is down is not probed.
+ */
+export async function isLiveVoiceReady(
+  asr: { liveVoiceBackend?: string; sttEndpoint?: string } | undefined,
+  getAuth?: SttGetAuth,
+): Promise<boolean> {
+  const backend = asr?.liveVoiceBackend ?? "yuwp";
+  if (backend === "grok-voice") return hasVoiceProviderCredential("xai", getAuth);
+  return backend === "yuwp" && (asr?.sttEndpoint?.trim().length ?? 0) > 0;
 }
 
 export interface VoiceCallMediaAttachInput {

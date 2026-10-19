@@ -9,6 +9,7 @@ import { createIdentityRoutes } from "../src/routes/identity.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
+import { ConfigStore } from "../src/storage/config-store.js";
 import { makeResponse } from "./harness/route-test-helpers.js";
 
 const tempDirs: string[] = [];
@@ -29,13 +30,18 @@ function tempDir(prefix: string): string {
 type VoiceCapabilities = {
   dictationStream?: { version: number };
   speech?: { version: number };
+  liveVoice?: { version: number };
 };
 
 const signedInToXai = async () => ({ auth: { apiKey: "xai-test-key" } });
 
 async function getServerInfo(
   asr: unknown,
-  options: { tts?: unknown; getProviderAuth?: RouteContext["getProviderAuth"] } = {},
+  options: {
+    tts?: unknown;
+    getProviderAuth?: RouteContext["getProviderAuth"];
+    readVoiceConfig?: () => { asr?: unknown };
+  } = {},
 ): Promise<VoiceCapabilities> {
   const ctx = {
     getProviderAuth: options.getProviderAuth,
@@ -47,6 +53,7 @@ async function getServerInfo(
         uploadStore: { maxFileBytes: 1, maxTurnBytes: 2 },
         images: { autoResize: false },
       }),
+      readVoiceConfig: options.readVoiceConfig ?? (() => ({ asr })),
       listWorkspaces: () => [],
       listSessions: () => [],
       getDataDir: () => tempDirs[0] ?? tmpdir(),
@@ -196,6 +203,57 @@ describe("GET /server/info speech", () => {
     expect((await getServerInfo(undefined, { tts, getProviderAuth: signedInToXai })).speech).toEqual(
       { version: 1 },
     );
+  });
+});
+
+describe("GET /server/info liveVoice", () => {
+  beforeEach(() => vi.stubEnv("XAI_API_KEY", ""));
+  afterEach(() => vi.unstubAllEnvs());
+
+  const liveVoice = async (
+    asr: unknown,
+    getProviderAuth?: RouteContext["getProviderAuth"],
+  ) => (await getServerInfo(undefined, { readVoiceConfig: () => ({ asr }), getProviderAuth })).liveVoice;
+
+  it("advertises the local backend only with an ASR endpoint", async () => {
+    expect(await liveVoice(undefined)).toBeUndefined();
+    expect(await liveVoice({ liveVoiceBackend: "yuwp" })).toBeUndefined();
+    expect(await liveVoice({ liveVoiceBackend: "yuwp", sttEndpoint: "  " })).toBeUndefined();
+    expect(await liveVoice({ liveVoiceBackend: "yuwp", sttEndpoint: "http://127.0.0.1:7936" })).toEqual({
+      version: 1,
+    });
+    // yuwp is the default backend.
+    expect(await liveVoice({ sttEndpoint: "http://127.0.0.1:7936" })).toEqual({ version: 1 });
+  });
+
+  it("advertises Grok Voice only with an xAI credential, whatever asr.sttEndpoint says", async () => {
+    const asr = { liveVoiceBackend: "grok-voice" };
+    expect(await liveVoice(asr, async () => undefined)).toBeUndefined();
+    expect(await liveVoice(asr, signedInToXai)).toEqual({ version: 1 });
+    expect(
+      await liveVoice({ ...asr, sttEndpoint: "http://127.0.0.1:7936" }, async () => undefined),
+    ).toBeUndefined();
+  });
+
+  it("accepts XAI_API_KEY as the Grok Voice credential", async () => {
+    vi.stubEnv("XAI_API_KEY", "xai-env-key");
+    expect(await liveVoice({ liveVoiceBackend: "grok-voice" })).toEqual({ version: 1 });
+  });
+
+  it("follows voice settings saved after the server loaded its config", async () => {
+    const dataDir = tempDir("oppi-live-voice-capability-");
+    const server = new ConfigStore(dataDir);
+    server.updateConfig({ asr: { liveVoiceBackend: "yuwp" } });
+    const readVoiceConfig = () => server.readVoiceConfig();
+    const advertised = async () => (await getServerInfo(undefined, { readVoiceConfig })).liveVoice;
+
+    expect(await advertised()).toBeUndefined();
+
+    // `oppi config set` runs in its own process with its own store; no server restart.
+    new ConfigStore(dataDir).updateConfig({
+      asr: { liveVoiceBackend: "yuwp", sttEndpoint: "http://127.0.0.1:7936" },
+    });
+    expect(await advertised()).toEqual({ version: 1 });
   });
 });
 

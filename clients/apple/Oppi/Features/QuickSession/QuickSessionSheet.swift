@@ -507,7 +507,7 @@ struct QuickSessionSheet: View {
         let configuration = ExpandedComposerConfiguration(
             voiceInputManager: voiceInputManager,
             onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
-            onLiveVoiceSelected: { handleSend(startsLiveVoice: true) },
+            onLiveVoiceSelected: liveVoiceEntry,
             onSend: { handleSend() },
             onModelTap: { showModelPicker = true },
             onThinkingSelect: selectThinkingLevel,
@@ -610,8 +610,7 @@ struct QuickSessionSheet: View {
                 isStopping: false,
                 voiceInputManager: voiceInputManager,
                 onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
-                // Starts the session and opens it straight into a Live Voice call.
-                onLiveVoiceSelected: { handleSend(startsLiveVoice: true) },
+                onLiveVoiceSelected: liveVoiceEntry,
                 showForceStop: false,
                 isForceStopInFlight: false,
                 slashCommands: slashCommands,
@@ -1365,6 +1364,13 @@ struct QuickSessionSheet: View {
             return
         }
         connection.fetchFileSuggestions(query: query)
+    }
+
+    /// Starts the session and opens it straight into a Live Voice call; none while the
+    /// selected server's voice backend is not set up.
+    private var liveVoiceEntry: (() -> Void)? {
+        guard selectedServerConnection()?.liveVoiceAvailable == true else { return nil }
+        return { handleSend(startsLiveVoice: true) }
     }
 
     private func selectedServerConnection() -> ServerConnection? {

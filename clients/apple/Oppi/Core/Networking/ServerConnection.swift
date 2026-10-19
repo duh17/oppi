@@ -275,6 +275,9 @@ final class ServerConnection {
     var desktopLiveViewAvailable: Bool { serverCapabilities?.desktopLiveView?.version ?? 0 >= 1 }
     /// The server reads messages aloud (`capabilities.speech`, `POST /speech`).
     var speechAvailable: Bool { serverCapabilities?.speech?.version ?? 0 >= 1 }
+    /// A Live Voice call can start (`capabilities.liveVoice`). A server that does not
+    /// advertise it, such as one older than 0.53.0, cannot run a call.
+    var liveVoiceAvailable: Bool { serverCapabilities?.liveVoice?.version ?? 0 >= 1 }
     /// Relay the server pushes through (`capabilities.pushNotifications`); nil when it does not.
     var pushRelay: URL? { serverCapabilities?.pushRelay }
 
@@ -3147,6 +3150,7 @@ final class ServerConnection {
         conversationStream: Bool = false,
         desktopLiveView: Bool = false,
         speech: Bool = false,
+        liveVoice: Bool = false,
         pushRelay: URL? = nil
     ) {
         func version(_ enabled: Bool) -> ServerInfo.CapabilityVersion? {
@@ -3161,6 +3165,7 @@ final class ServerConnection {
             conversationStream: version(conversationStream),
             desktopLiveView: version(desktopLiveView),
             speech: version(speech),
+            liveVoice: version(liveVoice),
             pushNotifications: pushRelay.map {
                 ServerInfo.PushNotificationsCapability(version: 1, relay: $0.absoluteString)
             }

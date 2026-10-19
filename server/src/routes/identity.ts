@@ -14,6 +14,7 @@ import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import { isDictationStreamReady } from "../create-stt-provider.js";
 import { isSpeechReady } from "../speech-synthesis.js";
+import { isLiveVoiceReady } from "../continuous-voice-media.js";
 import { MAX_WORKSPACE_FILE_EDIT_BYTES } from "../file-serving-policy.js";
 import { isDeviceAccessPrincipal, type RequestPrincipal } from "../request-principal.js";
 import { checkPushRegistration } from "../push/registration.js";
@@ -427,9 +428,12 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const piCliVersion = typeof ctx.piCliVersion === "string" ? ctx.piCliVersion.trim() : "";
     const update = ctx.serverUpdate?.infoSnapshot();
     // Voice controls appear only when their provider is configured and, for xAI, signed in.
-    const [dictationReady, speechReady] = await Promise.all([
+    // Live Voice reads the settings on disk, as each call does, so `oppi config set` changes
+    // show on the next /server/info without a restart.
+    const [dictationReady, speechReady, liveVoiceReady] = await Promise.all([
       isDictationStreamReady(config.asr, ctx.getProviderAuth),
       isSpeechReady(config.tts, ctx.getProviderAuth),
+      isLiveVoiceReady(ctx.storage.readVoiceConfig().asr, ctx.getProviderAuth),
     ]);
     helpers.json(res, {
       name: hostname(),
@@ -464,6 +468,8 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         dictationStream: dictationReady ? { version: 1 } : undefined,
         // `POST /speech` reads messages aloud with the configured `tts` provider.
         speech: speechReady ? { version: 1 } : undefined,
+        // A Live Voice call can start: its configured backend is ready (`isLiveVoiceReady`).
+        liveVoice: liveVoiceReady ? { version: 1 } : undefined,
         // Create requests may ask for engine "durable" (experimental.serverDurable).
         durableSessions: ctx.sessions.durableSessionsAvailable() ? { version: 1 } : undefined,
         // Experimental: `attach` on a durable session's focused stream sends snapshot/update.

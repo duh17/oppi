@@ -192,6 +192,7 @@ function identityCtx(service: ServerUpdateService): RouteContext {
   return {
     storage: {
       getConfig: () => ({ configVersion: 1 }),
+      readVoiceConfig: () => ({}),
       listWorkspaces: () => [],
       listSessions: () => [],
     },
