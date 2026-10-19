@@ -1585,6 +1585,30 @@ describe("SessionManager prompt", () => {
     }
   });
 
+  it("runs a followUp prompt as a plain prompt on an idle session", async () => {
+    const { manager, sdkBackend } = makeManagerHarness({ status: "ready" });
+
+    await manager.sendPrompt("s1", "now", { streamingBehavior: "followUp" });
+
+    expect(sdkBackend.prompt).toHaveBeenCalledTimes(1);
+    expect(sdkBackend.prompt.mock.calls[0]?.[1]?.streamingBehavior).toBeUndefined();
+  });
+
+  it("queues a followUp prompt behind a busy turn", async () => {
+    const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
+
+    await manager.sendPrompt("s1", "later", {
+      streamingBehavior: "followUp",
+      clientTurnId: "turn-follow",
+    });
+
+    expect(sdkBackend.prompt).toHaveBeenCalledWith(
+      "later",
+      expect.objectContaining({ streamingBehavior: "followUp" }),
+    );
+    expect(manager.getMessageQueue("s1").followUp.map((item) => item.message)).toEqual(["later"]);
+  });
+
   it("forwards busy prompt streamingBehavior to SDK", async () => {
     const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
 

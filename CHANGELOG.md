@@ -89,6 +89,7 @@ Example:
 
 ### Fixed
 
+- **Server:** `oppi session send --follow-up` and `--steer` no longer fail with "requires an active streaming turn" when the session is idle or finishes its turn just before the send. An idle session is prompted right away; a busy one queues or steers as before.
 - **Client:** Very large Mermaid diagrams, such as a long flowchart chain, a big sequence diagram, or a deep mindmap, render as diagrams in chat and the Markdown reader instead of showing their source.
 - **Client:** A running `write` of a Markdown file keeps updating as it streams, in the expanded row and in the full-screen reader opened from it. Before, both stopped after the first few lines.
 - **Server:** A scheduled run that fails because its Agent's selected Extensions or Skills are unavailable now says which ones (for example `agent_extensions_unavailable: extension_…`) in the run error and the server log, instead of only the error code.

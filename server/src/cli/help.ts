@@ -1186,10 +1186,10 @@ const HELP_TOPICS: HelpTopic[] = [
     arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [
       { name: "--text", value: "<text>", summary: "message text to send", required: true },
-      { name: "--steer", summary: "require a busy session and steer at the next turn boundary" },
+      { name: "--steer", summary: "steer a busy session at the next turn boundary (default)" },
       {
         name: "--follow-up",
-        summary: "require a busy session and wait until current work finishes",
+        summary: "queue behind a busy session's current work; an idle session is prompted now",
       },
       {
         name: "--turn-id",
@@ -1202,7 +1202,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "Pass @- to --text to read the message from stdin.",
       "When a managed session is the caller, send prefixes the text with `This is a message from session <caller-id>:` so the target can inspect that source session. Do not type the prefix yourself.",
       "Without a delivery flag, send prompts an idle session and steers a busy session after its current tool calls, before the next model turn.",
-      "Use --follow-up for work that should begin only after the agent finishes its current work.",
+      "Use --follow-up for work that should begin only after the agent finishes its current work. If the session is idle, it starts immediately.",
     ],
     examples: [
       {

@@ -25,6 +25,15 @@ export function printSessionNotice(message: string): void {
   writeHumanLine(message);
 }
 
+// Every delivery kind is a prompt with a streaming behavior: an idle session starts a turn now,
+// a busy one steers or queues. The bare `steer`/`follow_up` commands reject an idle session,
+// which a caller cannot rule out between checking status and sending.
+const STREAMING_BEHAVIOR: Record<SessionSendKind, "steer" | "followUp"> = {
+  prompt: "steer",
+  steer: "steer",
+  follow_up: "followUp",
+};
+
 export async function sendSessionInput(
   id: string,
   commandType: SessionSendKind,
@@ -37,10 +46,10 @@ export async function sendSessionInput(
     return await call<Record<string, unknown>>(`/sessions/${encodeURIComponent(id)}/command`, {
       method: "POST",
       body: {
-        type: commandType,
+        type: "prompt",
         message: text,
         ...(turnId ? { clientTurnId: turnId, requestId: turnId } : {}),
-        ...(commandType === "prompt" ? { streamingBehavior: "steer" } : {}),
+        streamingBehavior: STREAMING_BEHAVIOR[commandType],
       },
     });
   } catch (err) {

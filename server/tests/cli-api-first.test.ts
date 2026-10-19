@@ -439,7 +439,7 @@ describe("CLI app-state API boundary", () => {
     expect(stdout).toContain("No trace entries found.");
   });
 
-  it("defaults send to prompt-or-steer and preserves explicit delivery commands", async () => {
+  it("sends every delivery flag as a prompt with its busy-session behavior", async () => {
     await withOrchApi(
       (res) => sendJson(res, { messages: [] }),
       async ({ dataDir, requests }) => {
@@ -463,8 +463,8 @@ describe("CLI app-state API boundary", () => {
           .map((request) => request.body);
         expect(commandBodies).toEqual([
           { type: "prompt", message: "default", streamingBehavior: "steer" },
-          { type: "steer", message: "hi" },
-          { type: "follow_up", message: "later" },
+          { type: "prompt", message: "hi", streamingBehavior: "steer" },
+          { type: "prompt", message: "later", streamingBehavior: "followUp" },
           {
             type: "prompt",
             message: "again",

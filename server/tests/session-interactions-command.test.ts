@@ -23,9 +23,9 @@ describe("session interaction command contract", () => {
 
   it.each([
     ["prompt", { type: "prompt", message: "hello", streamingBehavior: "steer" }],
-    ["steer", { type: "steer", message: "hello" }],
-    ["follow_up", { type: "follow_up", message: "hello" }],
-  ] as const)("posts encoded %s session input with its delivery behavior", async (kind, body) => {
+    ["steer", { type: "prompt", message: "hello", streamingBehavior: "steer" }],
+    ["follow_up", { type: "prompt", message: "hello", streamingBehavior: "followUp" }],
+  ] as const)("posts encoded %s session input as a prompt with its busy-session behavior", async (kind, body) => {
     const call = vi.fn().mockResolvedValue({ messages: [] });
 
     const result = await sendSessionInput("session/one", kind, "hello", call);
@@ -34,6 +34,23 @@ describe("session interaction command contract", () => {
     expect(call).toHaveBeenCalledWith("/sessions/session%2Fone/command", {
       method: "POST",
       body,
+    });
+  });
+
+  it("keeps the caller's turn id on a follow-up so a retry is the same turn", async () => {
+    const call = vi.fn().mockResolvedValue({ messages: [] });
+
+    await sendSessionInput("s", "follow_up", "later", call, "turn-9");
+
+    expect(call).toHaveBeenCalledWith("/sessions/s/command", {
+      method: "POST",
+      body: {
+        type: "prompt",
+        message: "later",
+        clientTurnId: "turn-9",
+        requestId: "turn-9",
+        streamingBehavior: "followUp",
+      },
     });
   });
 
