@@ -1,3 +1,4 @@
+import { describeAgentConfigurationFailure } from "./agent-launch-errors.js";
 import { AgentLaunchService, type AgentDefinition } from "./agent-launch-service.js";
 import { ScheduleDispatchError } from "./schedule-run-metrics.js";
 import type {
@@ -101,7 +102,9 @@ async function launchNewSession(
     if (!result.discarded) deps.appEvents?.emitSessionCreated(result.session);
     throw new ScheduleDispatchError(
       "other",
-      result.session.launch?.promptError ?? result.failure?.code ?? "prompt_not_sent",
+      result.failure
+        ? describeAgentConfigurationFailure(result.failure)
+        : (result.session.launch?.promptError ?? "prompt_not_sent"),
     );
   }
   deps.appEvents?.emitSessionCreated(result.createdSession);

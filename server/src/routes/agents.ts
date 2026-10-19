@@ -1,6 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { actionableAgentConfigurationMessage } from "../agent-launch-errors.js";
+import {
+  actionableAgentConfigurationMessage,
+  describeAgentConfigurationFailure,
+} from "../agent-launch-errors.js";
 import {
   AgentLaunchService,
   DelegationPolicyError,
@@ -283,6 +286,7 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
           workspaceId: workspace.id,
           sessionId: result.session.id,
           failureCode: result.failure.code,
+          failureDetail: describeAgentConfigurationFailure(result.failure),
           existing: result.kind === "existing",
           discarded: result.discarded === true,
         });

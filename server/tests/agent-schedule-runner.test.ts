@@ -253,6 +253,50 @@ describe("agent schedule runner", () => {
     });
   });
 
+  it("names the unavailable Extension in the failed run error and the dispatch log", async () => {
+    const schedule = store.createSchedule(
+      {
+        name: "Stale Extension digest",
+        trigger: { type: "at", at: 1_000, timeZone: "UTC" },
+        action: { ...action(), agentId: "agent-1" },
+      },
+      500,
+    );
+    const resolvedAgent = {
+      id: "agent-1",
+      version: 1,
+      status: "active" as const,
+      definition: {
+        name: "Stale Extension digest",
+        resources: { extensionIds: ["extension_stale_after_rename"] },
+      },
+    };
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const runner = new AgentScheduleRunner({
+      storage: {
+        ...storage(resolvedAgent),
+        getWorkspace: vi.fn(() => ({ ...workspace, hostMount: process.cwd() }) as Workspace),
+      },
+      sessions: { startSession, sendPrompt },
+      ensureSessionContextWindow: (session) => session,
+      nowMs: () => 2_000,
+    });
+
+    await runner.runOnce();
+
+    expect(startSession).not.toHaveBeenCalled();
+    expect(store.listRunSummaries(schedule.id)).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        error: "agent_extensions_unavailable: extension_stale_after_rename",
+      }),
+    ]);
+    const logged = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+    stderr.mockRestore();
+    expect(logged).toContain("agent_schedule_runner.dispatch.failed");
+    expect(logged).toContain("agent_extensions_unavailable: extension_stale_after_rename");
+  });
+
   it("does not broadcast a discarded scheduled launch shell", async () => {
     const schedule = store.createSchedule(
       {

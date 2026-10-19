@@ -25,6 +25,21 @@ export class AgentConfigurationError extends Error {
   }
 }
 
+/**
+ * Operator-facing summary for logs and schedule run errors: the failure code,
+ * plus the missing Extension IDs / Skill paths when the preflight recorded
+ * them. Mobile-facing copy lives in `actionableAgentConfigurationMessage`.
+ */
+export function describeAgentConfigurationFailure(failure: AgentConfigurationFailure): string {
+  const missing =
+    failure.code === "agent_extensions_unavailable"
+      ? failure.details.unavailableExtensions
+      : failure.code === "agent_skills_unavailable"
+        ? failure.details.unavailableSkills
+        : undefined;
+  return missing?.length ? `${failure.code}: ${missing.join(", ")}` : failure.code;
+}
+
 export function actionableAgentConfigurationMessage(
   failure: AgentConfigurationFailure,
   context: { agentName: string; workspaceName: string },
