@@ -25,10 +25,11 @@ enum FullScreenViewerPresentationPolicy {
         }
     }
 
-    /// Presented document overlay that would hide workspace stack pushes. Walks the presented chain only. The overlay is a
-    /// ``FullScreenCodeViewController`` or a presented host (SwiftUI
-    /// sheet/fullScreenCover) that contains one in its children or navigation
-    /// stack. Embedded pushed viewers are not selected.
+    /// Presented document overlay that would hide workspace stack pushes.
+    /// Walks the presented chain only. The overlay is a
+    /// ``FullScreenCodeViewController`` or a router-presented host that
+    /// contains one in its children or navigation stack. Embedded pushed
+    /// viewers are not selected.
     static func coveringPresentedDocumentOverlay(
         from root: UIViewController
     ) -> UIViewController? {

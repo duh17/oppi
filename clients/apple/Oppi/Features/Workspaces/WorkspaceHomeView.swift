@@ -320,7 +320,7 @@ struct WorkspaceSessionScopedDestinationView: View {
                     serverIdHint: target.serverId,
                     workspaceIdHint: target.workspaceId,
                     routeScope: target.routeScope,
-                    ownsWorkspacePathBackNavigation: true
+                    isShellRoute: true
                 )
                 .id(target.sessionId)
                 .withServerScopedEnvironment(connection)

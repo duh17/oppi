@@ -790,7 +790,7 @@ struct WorkspaceDetailView: View {
             "workspaceId": workspace.id,
             "serverId": currentServerId,
             "presentation": navigation.workspaceNavigationPresentation == .stack ? "stack" : "split",
-            "workspacePathCount": String(navigation.workspaceStackRouteElements.count),
+            "workspaceStackDepth": String(navigation.workspaceStackRouteElements.count),
         ])
         switch navigation.workspaceNavigationPresentation {
         case .stack:

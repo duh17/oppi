@@ -406,7 +406,7 @@ private struct NavigationChromeReproChat: View {
             ChatView(
                 sessionId: "nav-chrome-repro-session",
                 workspaceIdHint: "nav-chrome-repro-workspace",
-                ownsWorkspacePathBackNavigation: ownsBackNavigation
+                isShellRoute: ownsBackNavigation
             )
             .withServerScopedEnvironment(connection)
             .environment(navigation)

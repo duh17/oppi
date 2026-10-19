@@ -69,15 +69,16 @@ struct ChatView: View {
     }
 
     /// Fixed for this view's lifetime. Every caller keys the view with
-    /// `.id(sessionId)`: a NavigationStack that replaces one session target
-    /// with another at the same position would otherwise reuse this view and
-    /// its @State runtime, and the new session would never connect (blank
-    /// timeline after a notification tap from another chat).
+    /// `.id(sessionId)`: a host that swaps one session's chat for another's
+    /// in place (the split detail column, a shell route) would otherwise
+    /// reuse this view and its @State runtime, and the new session would
+    /// never connect (blank timeline after a notification tap from another
+    /// chat).
     let sessionId: String
     private let serverIdHint: String?
     private let workspaceIdHint: String?
     private let routeScope: SessionRouteScope?
-    private let ownsWorkspacePathBackNavigation: Bool
+    private let isShellRoute: Bool
 
     @Environment(ServerConnection.self) private var connection
     @Environment(ChatSessionState.self) private var chatState
@@ -159,14 +160,14 @@ struct ChatView: View {
         routeScope: SessionRouteScope? = nil,
         initialInputText: String = "",
         initialPendingFiles: [PendingFileReference] = [],
-        ownsWorkspacePathBackNavigation: Bool = false
+        isShellRoute: Bool = false
     ) {
         self.sessionId = sessionId
         self.serverIdHint = serverIdHint
         self.workspaceIdHint = workspaceIdHint
         self.routeScope = routeScope
             ?? workspaceIdHint.map(SessionRouteScope.workspace)
-        self.ownsWorkspacePathBackNavigation = ownsWorkspacePathBackNavigation
+        self.isShellRoute = isShellRoute
         let manager = ChatSessionManager(
             sessionId: sessionId,
             workspaceIdHint: workspaceIdHint,
@@ -1064,7 +1065,7 @@ struct ChatView: View {
                     return
                 }
                 // Capture while the source timeline still owns its live geometry;
-                // NavigationStack teardown can report tail geometry before onDisappear.
+                // A push or pop can report tail geometry before onDisappear.
                 scrollController.suspendForNavigation()
             }
             .onChange(of: selectedFilePanelTab) { _, newTab in
@@ -1658,7 +1659,7 @@ struct ChatView: View {
     /// detail root, the column shows its list. A chat pushed inside another
     /// screen (a quick action, a fork) leaves the way it came.
     private func navigateBackFromChat() {
-        if ownsWorkspacePathBackNavigation {
+        if isShellRoute {
             navigator.finish()
         } else {
             dismiss()

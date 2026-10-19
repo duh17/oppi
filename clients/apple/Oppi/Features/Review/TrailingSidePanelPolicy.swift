@@ -286,14 +286,17 @@ final class TrailingColumnController: UIViewController {
 
     /// The keyboard spans the window, so a field in the panel (the Outline's
     /// search) lifted the composer and pills of the chat beside it over its
-    /// timeline. While the column is up, the screen follows the keyboard only
-    /// for its own inputs; the panel avoids the keyboard itself. An input
-    /// begins editing before the keyboard moves, so the screen is settled
-    /// when it does.
+    /// timeline. While the column is up, the screen stops following the
+    /// keyboard only for the panel's inputs; the panel avoids the keyboard
+    /// itself. The rule is decided by the panel, not the screen's view: with
+    /// no navigation controller the column sits inside the screen's view, and
+    /// a field in a sheet over the screen is neither. An input begins editing
+    /// before the keyboard moves, so the screen is settled when it does.
     @objc private func inputBeganEditing(_ notification: Notification) {
         guard let screen, let input = notification.object as? UIView,
               let window = screen.viewIfLoaded?.window, input.window === window else { return }
-        screenFollowsKeyboard(input.isDescendant(of: screen.view))
+        let isPanelInput = container.map { input.isDescendant(of: $0.view) } ?? false
+        screenFollowsKeyboard(!isPanelInput)
     }
 
     private func screenFollowsKeyboard(_ follows: Bool) {

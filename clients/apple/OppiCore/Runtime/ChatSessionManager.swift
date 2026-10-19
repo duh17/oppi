@@ -60,7 +60,7 @@ final class ChatSessionManager {
 
     /// Per-session timeline pipeline — each ChatSessionManager owns its own
     /// reducer, coalescer, and correlator so sessions maintain independent
-    /// timeline state across NavigationStack back-navigation.
+    /// timeline state across back-navigation.
     let reducer: TimelineReducer
     let coalescer: DeltaCoalescer
     let toolCallCorrelator = ToolCallCorrelator()
@@ -1423,7 +1423,7 @@ final class ChatSessionManager {
     ///
     /// This handles all coalescer/reducer mutations for the active session.
     /// Each ChatSessionManager owns its own coalescer + reducer, so sessions
-    /// maintain independent timelines across NavigationStack navigation.
+    /// maintain independent timelines across navigation.
     private func routeToTimeline(
         _ message: ServerMessage,
         storeResult: ChatSessionStoreUpdateResult = .notHandled

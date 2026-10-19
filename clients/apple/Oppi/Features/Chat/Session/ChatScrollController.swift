@@ -374,8 +374,8 @@ final class ChatScrollController: NSObject {
         pendingNavigationHighlightItemID = nil
 
         // A route preflight captures live collection geometry before the push.
-        // Arm re-entry here rather than waiting for a reconnect flag: NavigationStack
-        // can rebuild the collection without republishing session history.
+        // Arm re-entry here rather than waiting for a reconnect flag: a push or
+        // pop can rebuild the collection without republishing session history.
         needsInitialScroll = true
 
         // The later onDisappear cleanup must not overwrite that frozen intent.

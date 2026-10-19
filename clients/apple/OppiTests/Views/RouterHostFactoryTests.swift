@@ -394,44 +394,38 @@ struct RouterHostFactoryTests {
         }
     }
 
-    /// A chat is a SwiftUI navigation destination, and UIKit code under it
-    /// presents from controllers no hosted screen owns. Both must find the root.
-    @Test("the app root reaches SwiftUI navigation destinations and UIKit anywhere in the window")
-    func appRootReachesNavigationDestinationsAndTheWindow() async throws {
+    /// UIKit code a hosted screen does not own (a plain controller pushed on
+    /// the stack, what it presents, a view it embeds) has no trait of its own
+    /// and must find the root through the window.
+    @Test("the app root reaches UIKit anywhere in the window")
+    func appRootReachesUIKitAnywhereInTheWindow() async throws {
         let root = makeTestAppRoot()
-        let capture = ControllerCapture()
-        let host = UIHostingController(
-            rootView: NavigationStack {
-                Color.clear.navigationDestination(isPresented: .constant(true)) {
-                    CapturedController(capture: capture)
-                }
-            }
-            .appRootEnvironment(root)
-            .publishesAppRootToWindow(root)
-        )
-        let window = try showInWindow(host)
+        let screen = HostFactory.screen(root: root) {
+            Color.clear.publishesAppRootToWindow(root)
+        }
+        let navigation = RouterNavigationController(rootViewController: screen)
+        let window = try showInWindow(navigation)
         defer { hide(window) }
 
+        let plain = UIViewController()
+        navigation.pushViewController(plain, animated: false)
         // Trait changes reach the hierarchy on the next update pass.
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
-            guard let controller = capture.controller, controller.viewIfLoaded?.window != nil else { return false }
-            return HostFactory.root(near: controller) == root
+            plain.viewIfLoaded?.window != nil && HostFactory.root(near: plain) == root
         })
-        let controller = try #require(capture.controller)
-        #expect(capture.environmentRoot == root, "The SwiftUI value must survive a navigation push")
-        #expect(HostFactory.root(near: controller.view) == root)
+        #expect(HostFactory.root(near: plain.view) == root)
 
         let presented = UIViewController()
-        controller.present(presented, animated: false)
+        plain.present(presented, animated: false)
         #expect(HostFactory.root(near: presented) == root)
         presented.dismiss(animated: false)
 
         let probe = ServiceProbe()
-        let content = HostFactory.content(ServiceReader(probe: probe), root: HostFactory.root(near: controller.view))
-        controller.addChild(content)
-        content.view.frame = controller.view.bounds
-        controller.view.addSubview(content.view)
-        content.didMove(toParent: controller)
+        let content = HostFactory.content(ServiceReader(probe: probe), root: HostFactory.root(near: plain.view))
+        plain.addChild(content)
+        content.view.frame = plain.view.bounds
+        plain.view.addSubview(content.view)
+        content.didMove(toParent: plain)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { probe.themeStore != nil })
         #expect(probe.themeStore === root.themeStore)
     }
@@ -508,18 +502,55 @@ struct RouterHostFactoryTests {
         })
     }
 
-
     /// The keyboard spans the window. A field in the trailing column lifted
     /// the chat's composer beside it over the timeline; the screen's own
     /// field still moves it, and closing the column gives the keyboard back.
     @Test("a trailing column's field leaves the screen beside it in place")
     func trailingColumnFieldLeavesTheScreenInPlace() async throws {
+        try await expectColumnFieldLeavesScreenInPlace(inNavigationController: true)
+    }
+
+    /// Without a navigation controller the column lands inside the screen's
+    /// own view, so "inside the screen" cannot tell the panel's field apart.
+    @Test("a trailing column's field leaves a screen outside a navigation controller in place")
+    func trailingColumnFieldLeavesAStandaloneScreenInPlace() async throws {
+        try await expectColumnFieldLeavesScreenInPlace(inNavigationController: false)
+    }
+
+    /// A sheet over the chat is neither the column nor the screen's own view;
+    /// its field must not switch off the chat's keyboard avoidance.
+    @Test("a field in a sheet over the screen keeps the screen following the keyboard")
+    func sheetFieldKeepsTheScreenFollowingTheKeyboard() async throws {
         let state = RouteState()
         let panelField = UITextField()
         let screen = HostFactory.screen(root: makeTestAppRoot()) {
             ColumnScreen(state: state, panelField: panelField)
         }
         let window = try showInWindow(RouterNavigationController(rootViewController: screen))
+        defer { hide(window) }
+        state.item = RouteItem(id: "panel")
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { panelField.window === window })
+        let sheet = UIViewController()
+        let sheetField = UITextField()
+        sheet.view.addSubview(sheetField)
+        screen.present(sheet, animated: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            sheetField.window === window
+        })
+
+        beginEditing(sheetField)
+        #expect(screen.safeAreaRegions == .all)
+    }
+
+    private func expectColumnFieldLeavesScreenInPlace(inNavigationController: Bool) async throws {
+        let state = RouteState()
+        let panelField = UITextField()
+        let screen = HostFactory.screen(root: makeTestAppRoot()) {
+            ColumnScreen(state: state, panelField: panelField)
+        }
+        let window = try showInWindow(
+            inNavigationController ? RouterNavigationController(rootViewController: screen) : screen
+        )
         defer { hide(window) }
         let screenField = UITextField()
         screen.view.addSubview(screenField)
@@ -712,25 +743,6 @@ private struct PopoverScreen: View {
             Spacer()
         }
     }
-}
-
-@MainActor
-private final class ControllerCapture {
-    var controller: UIViewController?
-    var environmentRoot: AppRootEnvironment?
-}
-
-private struct CapturedController: UIViewControllerRepresentable {
-    let capture: ControllerCapture
-
-    func makeUIViewController(context: Context) -> UIViewController {
-        let controller = UIViewController()
-        capture.controller = controller
-        capture.environmentRoot = context.environment.appRootEnvironment
-        return controller
-    }
-
-    func updateUIViewController(_ controller: UIViewController, context: Context) {}
 }
 
 // MARK: - Helpers
