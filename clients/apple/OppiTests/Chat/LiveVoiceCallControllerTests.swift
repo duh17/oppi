@@ -73,6 +73,50 @@ struct LiveVoiceCallControllerTests {
         #expect(!containsDeviceId(harness.channel.sent.last))
     }
 
+    @Test("After a reconnect no keepalive goes out until the call is rejoined")
+    func reconnectHoldsKeepaliveUntilRejoined() async throws {
+        let harness = try await startedHarness()
+        harness.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
+        await waitUntil { sentTypes(harness.channel.sent).contains("voice_call_attach") }
+        let attach = harness.channel.sent.last { $0.typeLabel == "voice_call_attach" }
+
+        await harness.controller.sendKeepAliveNow()
+        #expect(!sentTypes(harness.channel.sent).contains("voice_call_keepalive"))
+
+        harness.channel.emit(.commandResult(
+            command: "voice_call_attach",
+            requestId: requestId(of: attach),
+            success: true,
+            data: nil,
+            error: nil
+        ))
+        harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 3, leaseEpoch: 2)))
+        await waitUntil { harness.controller.callState?.controllerLeaseEpoch == 2 }
+        await harness.controller.sendKeepAliveNow()
+        #expect(leasePayload(harness.channel.sent.last)?.1 == 2)
+    }
+
+    @Test("A keepalive rejected after a server restart rejoins the call instead of hanging up")
+    func staleKeepaliveRejoins() async throws {
+        let harness = try await startedHarness()
+        await harness.controller.sendKeepAliveNow()
+        let keepalive = harness.channel.sent.last { $0.typeLabel == "voice_call_keepalive" }
+
+        harness.channel.emit(.commandResult(
+            command: "voice_call_keepalive",
+            requestId: requestId(of: keepalive),
+            success: false,
+            data: nil,
+            error: "Stale voice controller lease"
+        ))
+        await waitUntil { sentTypes(harness.channel.sent).last == "voice_call_attach" }
+
+        #expect(harness.controller.isLive)
+        #expect(harness.controller.lastError == nil)
+        #expect(!harness.channel.closed)
+        #expect(attachPayload(harness.channel.sent.last)?.0 == "call-1")
+    }
+
     @Test("Keepalive uses the current lease and never invents a device id")
     func keepaliveUsesCurrentLease() async throws {
         let harness = try await startedHarness()

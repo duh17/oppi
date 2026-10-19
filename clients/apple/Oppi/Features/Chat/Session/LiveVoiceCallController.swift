@@ -50,8 +50,10 @@ final class LiveVoiceCallController {
     @ObservationIgnored private var didConfirmCall = false
     @ObservationIgnored private var startSent = false
     @ObservationIgnored private var pendingRequestId: String?
-    /// Request id of an attach to a call remembered from an earlier start.
-    @ObservationIgnored private var storedAttachRequestId: String?
+    /// Request id of an attach that rejoins a call (a remembered one, or this one after the
+    /// stream reconnected). Until it answers the lease is unknown, so no keepalive goes out;
+    /// if it fails the call is gone and a fresh one starts.
+    @ObservationIgnored private var rejoinRequestId: String?
     @ObservationIgnored private var orphanFinishAction: FinishAction?
     @ObservationIgnored private var startGeneration: UInt64 = 0
     @ObservationIgnored private var startWaiter: StartWaiter?
@@ -106,7 +108,7 @@ final class LiveVoiceCallController {
         orphanFinishAction = nil
         pendingRequestId = nil
         didConfirmCall = false
-        storedAttachRequestId = nil
+        rejoinRequestId = nil
         startSent = false
         callState = nil
         approvalSummary = nil
@@ -140,7 +142,7 @@ final class LiveVoiceCallController {
     }
 
     func sendKeepAliveNow() async {
-        guard let callState, callState.lifecycle == .active else { return }
+        guard let callState, callState.lifecycle == .active, rejoinRequestId == nil else { return }
         await send(
             .voiceCallKeepAlive(
                 callId: callState.callId,
@@ -192,6 +194,8 @@ final class LiveVoiceCallController {
 
         switch message {
         case .streamConnected:
+            // A new socket: an attach sent on the old one will never be answered.
+            rejoinRequestId = nil
             await sendJoinOrStart()
         case .voiceCallState(let snapshot):
             apply(snapshot)
@@ -207,12 +211,20 @@ final class LiveVoiceCallController {
         case .commandResult(let command, let requestId, let success, _, let error):
             // The session's stream also carries other callers' command results (model, compact).
             guard command.hasPrefix("voice_") else { return }
-            if !success, requestId != nil, requestId == storedAttachRequestId {
-                // The remembered call is gone (ended, or the server no longer has it):
-                // start a new one instead of failing the call the user just asked for.
-                storedAttachRequestId = nil
-                forgetStoredCall()
-                await sendStart()
+            if requestId != nil, requestId == rejoinRequestId {
+                rejoinRequestId = nil
+                if !success {
+                    // The call is gone (ended, or the server no longer has it): start a new
+                    // one instead of failing the call the user is on.
+                    forgetStoredCall()
+                    await sendStart()
+                    return
+                }
+            }
+            if !success, command == "voice_call_keepalive" {
+                // The lease moved on under us (a server restart or a reconnect re-attached
+                // the call): rejoin it instead of hanging up.
+                await rejoinCall()
                 return
             }
             if !success {
@@ -344,18 +356,24 @@ final class LiveVoiceCallController {
 
     private func sendJoinOrStart() async {
         if let callState, callState.lifecycle == .active {
-            await sendAttach(callId: callState.callId, lastEventSeq: callState.eventSeq)
+            await rejoinCall()
             return
         }
         if let identity = memory.callIdentity(forServer: serverKey) {
             clientCallId = identity.clientCallId
             await sendAttach(callId: identity.callId, lastEventSeq: identity.eventSeq)
-            storedAttachRequestId = pendingRequestId
+            rejoinRequestId = pendingRequestId
             return
         }
         if !startSent {
             await sendStart()
         }
+    }
+
+    private func rejoinCall() async {
+        guard let callState, callState.lifecycle == .active, rejoinRequestId == nil else { return }
+        await sendAttach(callId: callState.callId, lastEventSeq: callState.eventSeq)
+        rejoinRequestId = pendingRequestId
     }
 
     private func forgetStoredCall() {
@@ -486,7 +504,7 @@ final class LiveVoiceCallController {
         startSent = false
         pendingRequestId = nil
         orphanFinishAction = nil
-        storedAttachRequestId = nil
+        rejoinRequestId = nil
         callState = nil
         approvalSummary = nil
         if closeChannel {
@@ -505,7 +523,7 @@ final class LiveVoiceCallController {
         startSent = false
         pendingRequestId = nil
         orphanFinishAction = nil
-        storedAttachRequestId = nil
+        rejoinRequestId = nil
         callState = nil
         approvalSummary = nil
         lastError = nil
