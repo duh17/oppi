@@ -127,7 +127,7 @@ struct ChatViewLifecycleTests {
         connection.disconnectStream()
     }
 
-    @Test func coveredNavigationStackPushRetainsFocusedSession() async {
+    @Test func coveredNavigationPushRetainsFocusedSession() async {
         let sessionId = "session-\(UUID().uuidString)"
         let (connection, _) = makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
@@ -139,12 +139,10 @@ struct ChatViewLifecycleTests {
                 sessionId: sessionId
             )
         )
-        let pathBox = NavigationPathBox()
-        let host = makeStackedHost(
+        let (host, stack) = makeStackedHost(
             connection: connection,
             sessionId: sessionId,
-            appNavigation: appNavigation,
-            pathBox: pathBox
+            appNavigation: appNavigation
         )
 
         let appeared = await waitForTestCondition(timeoutMs: 500) {
@@ -156,16 +154,9 @@ struct ChatViewLifecycleTests {
         appNavigation.openChatReader(reader)
         #expect(appNavigation.isCoveringChat(sessionId: sessionId))
 
-        pathBox.path.append(reader)
-        host.controller.view.setNeedsLayout()
-        host.controller.view.layoutIfNeeded()
-
-        let pushed = await waitForTestCondition(timeoutMs: 500) {
-            await MainActor.run {
-                nestedNavigationController(in: host.controller)?.viewControllers.count ?? 0 >= 2
-            }
-        }
-        #expect(pushed, "Covered-alive proof requires a real NavigationStack push")
+        stack.pushViewController(UIViewController(), animated: false)
+        stack.view.layoutIfNeeded()
+        #expect(host.controller.viewIfLoaded?.window == nil, "Covered-alive proof requires the chat to leave the window")
 
         let retained = await waitForMainActorConditionToStayTrue(for: .milliseconds(120)) {
             connection.focusedSessionId == sessionId
@@ -439,46 +430,38 @@ struct ChatViewLifecycleTests {
         )
     }
 
+    /// The chat at the root of a UIKit navigation stack, as the shell hosts it.
     private func makeStackedHost(
         connection: ServerConnection,
         sessionId: String,
-        appNavigation: AppNavigation,
-        pathBox: NavigationPathBox
-    ) -> HostHarness {
-        makeHost(
-            root: AnyView(
-                StackedChatRoot(
-                    sessionId: sessionId,
-                    pathBox: pathBox
-                )
-                .environment(connection)
-                .environment(connection.chatState)
-                .environment(connection.sessionStore)
-                .environment(connection.audioPlayer)
-                .environment(connection.gitStatusStore)
-                .environment(connection.fileIndexStore)
-                .environment(connection.messageQueueStore)
-                .environment(connection.askRequestStore)
-                .environment(appNavigation)
-                .environment(QuickCommentTemplateStore(templates: []))
-            )
+        appNavigation: AppNavigation
+    ) -> (HostHarness, UINavigationController) {
+        let controller = makeHostingController(
+            root: makeChatView(connection: connection, sessionId: sessionId, appNavigation: appNavigation)
         )
+        let stack = UINavigationController(rootViewController: controller)
+        return (show(controller, in: stack), stack)
     }
 
     private func makeHost(root: AnyView) -> HostHarness {
+        let controller = makeHostingController(root: root)
+        return show(controller, in: controller)
+    }
+
+    private func makeHostingController(root: AnyView) -> UIHostingController<AnyView> {
         // The timeline hosts its empty state with the app root above it.
-        let controller = UIHostingController(
+        UIHostingController(
             rootView: AnyView(root.environment(\.appRootEnvironment, makeTestAppRoot()))
         )
-        controller.loadViewIfNeeded()
-        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+    }
 
-        let window = UIWindow(frame: controller.view.frame)
-        window.rootViewController = controller
+    private func show(_ controller: UIHostingController<AnyView>, in windowRoot: UIViewController) -> HostHarness {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = windowRoot
         window.makeKeyAndVisible()
 
-        controller.view.setNeedsLayout()
-        controller.view.layoutIfNeeded()
+        windowRoot.view.setNeedsLayout()
+        windowRoot.view.layoutIfNeeded()
         return HostHarness(controller: controller, window: window)
     }
 
@@ -519,39 +502,4 @@ private struct HostHarness {
         window.isHidden = true
         window.rootViewController = nil
     }
-}
-
-@MainActor
-@Observable
-private final class NavigationPathBox {
-    var path = NavigationPath()
-}
-
-private struct StackedChatRoot: View {
-    let sessionId: String
-    @Bindable var pathBox: NavigationPathBox
-
-    var body: some View {
-        NavigationStack(path: $pathBox.path) {
-            ChatView(sessionId: sessionId)
-                .navigationDestination(for: ChatReaderNavTarget.self) { _ in
-                    Text("Covered reader")
-                }
-        }
-    }
-}
-
-private func nestedNavigationController(in controller: UIViewController) -> UINavigationController? {
-    if let navigation = controller as? UINavigationController {
-        return navigation
-    }
-    for child in controller.children {
-        if let navigation = nestedNavigationController(in: child) {
-            return navigation
-        }
-    }
-    if let presented = controller.presentedViewController {
-        return nestedNavigationController(in: presented)
-    }
-    return nil
 }

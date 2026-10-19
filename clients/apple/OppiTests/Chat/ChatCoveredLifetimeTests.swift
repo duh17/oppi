@@ -57,7 +57,7 @@ struct ChatCoveredLifetimeTests {
         #expect(navigation.containsChatReader(first))
         #expect(navigation.containsChatReader(second))
 
-        navigation.workspacePath.removeLast()
+        navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
         #expect(!navigation.containsChatReader(second))
         #expect(navigation.containsChatReader(first))
     }
@@ -69,12 +69,12 @@ struct ChatCoveredLifetimeTests {
         )
         let first = ChatReaderNavTarget(id: UUID())
         navigation.openChatReader(first)
-        let countAfterFirst = navigation.workspacePath.count
+        let countAfterFirst = navigation.workspaceStackRouteElements.count
 
         let second = ChatReaderNavTarget(id: UUID())
         navigation.openChatReader(second)
 
-        #expect(navigation.workspacePath.count == countAfterFirst + 1)
+        #expect(navigation.workspaceStackRouteElements.count == countAfterFirst + 1)
         #expect(navigation.containsChatReader(first))
         #expect(navigation.containsChatReader(second))
         #expect(navigation.isCoveringChat(sessionId: "session-1"))
@@ -128,7 +128,7 @@ struct ChatCoveredLifetimeTests {
         let second = store.store(ChatReaderPayload(content: .plainText(content: "two", filePath: "two.txt")))
         navigation.openChatReader(second)
 
-        navigation.workspacePath.removeLast(navigation.workspacePath.count)
+        navigation.popWorkspaceStack(toDepth: 0)
 
         let third = store.store(
             ChatReaderPayload(content: .plainText(content: "three", filePath: "three.txt")),
@@ -152,7 +152,7 @@ struct ChatCoveredLifetimeTests {
         let second = store.store(ChatReaderPayload(content: .plainText(content: "two", filePath: "two.txt")))
         navigation.openChatReader(second)
 
-        navigation.workspacePath.removeLast()
+        navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
 
         let third = store.store(
             ChatReaderPayload(content: .plainText(content: "three", filePath: "three.txt")),

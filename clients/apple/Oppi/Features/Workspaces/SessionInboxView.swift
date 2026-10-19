@@ -302,13 +302,13 @@ struct SessionInboxView: View {
     private var isSearchListCoveredByDestination: Bool {
         SessionListSearchNavigationPersistence.isInboxCovered(
             isSplitPresentation: navigation.workspaceNavigationPresentation == .split,
-            stackDepth: navigation.workspacePath.count,
+            stackDepth: navigation.workspaceStackRouteElements.count,
             splitDetailReplacesList: navigation.splitDetailTarget != nil
         )
     }
 
     private var searchCoverageSignature: String {
-        "\(navigation.workspacePath.count):\(navigation.workspaceNavigationPresentation):\(navigation.splitDetailTarget != nil)"
+        "\(navigation.workspaceStackRouteElements.count):\(navigation.workspaceNavigationPresentation):\(navigation.splitDetailTarget != nil)"
     }
 
     /// Do not install Message while a destination is pushed over this list.
@@ -320,7 +320,7 @@ struct SessionInboxView: View {
             surface: .allSessions,
             workspaceStack: navigation.workspaceStackRouteElements,
             splitDetailTarget: navigation.splitDetailTarget,
-            splitDetailPath: navigation.splitDetailPathElements
+            splitDetailElements: navigation.splitDetailPathElements
         )
     }
 
@@ -516,11 +516,11 @@ struct SessionInboxView: View {
             _ = await (refresh, providers)
             applyE2ELaunchHintsIfNeeded()
         }
-        .onChange(of: navigation.workspacePath.count) { oldCount, newCount in
+        .onChange(of: navigation.workspaceStackRouteElements.count) { oldCount, newCount in
             guard newCount < oldCount else { return }
             Task { await loadProviderSetupState() }
         }
-        .onChange(of: navigation.splitDetailPath.count) { oldCount, newCount in
+        .onChange(of: navigation.splitDetailPathElements.count) { oldCount, newCount in
             guard newCount < oldCount else { return }
             Task { await loadProviderSetupState() }
         }
@@ -1137,7 +1137,7 @@ struct SessionInboxView: View {
     private func autoOpenRemoteScreenIfRequested() {
         guard !hasAutoOpenedRemoteScreen,
               ProcessInfo.processInfo.environment["OPPI_E2E_OPEN_REMOTE_SCREEN"] == "1",
-              navigation.workspacePath.isEmpty,
+              navigation.workspaceStackRouteElements.isEmpty,
               WorkspaceUtilityNavTarget.desktopStill.isReleaseEnabled,
               ReleaseFeatures.desktopStillEnabled || activeConnection?.desktopLiveViewAvailable == true
         else { return }
@@ -1147,7 +1147,7 @@ struct SessionInboxView: View {
 
     private func autoOpenE2EWorkspaceIfRequested() {
         guard !hasAutoOpenedE2EWorkspace,
-              navigation.workspacePath.isEmpty,
+              navigation.workspaceStackRouteElements.isEmpty,
               let workspaceName = ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_WORKSPACE"],
               !workspaceName.isEmpty,
               let activeServerId,

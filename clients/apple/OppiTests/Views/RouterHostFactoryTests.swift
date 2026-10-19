@@ -105,7 +105,7 @@ struct RouterHostFactoryTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 1
         })
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
     }
 
     @Test("popping a reader that hid the shell's bar brings the bar and Back back")
@@ -237,34 +237,6 @@ struct RouterHostFactoryTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             presenter.presentedViewController == nil && dismissals == 2
         })
-    }
-
-    /// Every presenter sits in a SwiftUI `NavigationStack` until the app shell
-    /// moves to UIKit. A modal presented during that stack's update put its
-    /// title and Cancel into the stack's bar and left its own bar empty.
-    @Test("a routerModal declared in a SwiftUI NavigationStack keeps its title and bar items in its own bar")
-    func routerModalFromNavigationStackKeepsItsBar() async throws {
-        let state = RouteState()
-        let presenter = HostFactory.screen(root: makeTestAppRoot()) {
-            NavigationStack { StackPresenterScreen(state: state) }
-        }
-        let window = try showInWindow(presenter)
-        defer { hide(window) }
-
-        state.showsSheet = true
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
-            isSettled(presenter.presentedViewController)
-        })
-        let navigation = try #require(presenter.presentedViewController as? RouterNavigationController)
-        let modal = try #require(navigation.topViewController)
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
-            modal.navigationItem.title == "Modal Title"
-        })
-        let item = modal.navigationItem
-        let barItems = (item.leftBarButtonItems ?? []) + (item.rightBarButtonItems ?? [])
-            + (item.leadingItemGroups + item.trailingItemGroups).flatMap(\.barButtonItems)
-        #expect(!barItems.isEmpty, "The modal's Cancel belongs in its own bar")
-        #expect(stackItemTitles(in: presenter.view.window).allSatisfy { $0 != "Modal Title" })
     }
 
     /// UIKit reads the lock from the presented controller, which is the
@@ -536,50 +508,6 @@ struct RouterHostFactoryTests {
         })
     }
 
-    /// A screen the router created inside SwiftUI's update pass was tied to
-    /// the presenter's graph: a modal with its own `NavigationStack`, opened
-    /// from a SwiftUI stack's destination, reset that stack to its root, and
-    /// the modal went with it (a chat in the workspace stack popped).
-    @Test(
-        "a modal with its own NavigationStack keeps the SwiftUI stack destination it opened from",
-        arguments: [false, true]
-    )
-    func modalWithOwnStackKeepsPresentersStack(overFullScreen: Bool) async throws {
-        let state = StackState()
-        let host = HostFactory.screen(root: makeTestAppRoot()) {
-            StackShell(state: state, opens: overFullScreen ? .overFullScreen : .sheet)
-        }
-        let window = try showInWindow(host)
-        defer { hide(window) }
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { stackDepth(in: host) == 2 })
-
-        state.opensPanel = true
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { isSettled(host.presentedViewController) })
-        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(800)) {
-            stackDepth(in: host) == 2 && host.presentedViewController != nil
-        })
-
-        // The presenter re-renders under the open modal and refreshes it.
-        state.revision += 1
-        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(800)) {
-            stackDepth(in: host) == 2 && host.presentedViewController != nil
-        })
-    }
-
-    @Test("a trailing column beside a SwiftUI stack destination shows its panel and keeps the destination")
-    func trailingColumnKeepsEnclosingStack() async throws {
-        let state = StackState()
-        let host = HostFactory.screen(root: makeTestAppRoot()) { StackShell(state: state, opens: .column) }
-        let window = try showInWindow(host)
-        defer { hide(window) }
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { stackDepth(in: host) == 2 })
-
-        state.opensPanel = true
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { hasColumnPanel(in: host) })
-        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(800)) {
-            stackDepth(in: host) == 2 && hasColumnPanel(in: host)
-        })
-    }
 }
 
 // MARK: - Fixtures
@@ -617,53 +545,6 @@ private struct FlagModalScreen: View {
                 Text("Modal")
             }
             .onReceive(opens) { isPresented = $0 }
-    }
-}
-
-@MainActor @Observable
-private final class StackState {
-    var path = [1]
-    var opensPanel = false
-    var revision = 0
-}
-
-/// A SwiftUI `NavigationStack` showing a pushed destination, which opens a
-/// router modal with a stack of its own, or a trailing column.
-private struct StackShell: View {
-    enum Panel { case sheet, overFullScreen, column }
-
-    @Bindable var state: StackState
-    let opens: Panel
-
-    var body: some View {
-        NavigationStack(path: $state.path) {
-            Text("Root")
-                .navigationDestination(for: Int.self) { _ in destination }
-        }
-    }
-
-    @ViewBuilder
-    private var destination: some View {
-        switch opens {
-        case .sheet, .overFullScreen:
-            let revision = state.revision
-            Text("Destination \(revision)")
-                .routerModal(
-                    isPresented: $state.opensPanel,
-                    presentation: opens == .sheet ? .sheet : ModalPresentation(style: .overFullScreen)
-                ) {
-                    NavigationStack { Text("Panel \(revision)") }
-                }
-        case .column:
-            Text("Destination")
-                .routerTrailingColumn(
-                    item: state.opensPanel ? RouteItem(id: "panel") : nil,
-                    minWidth: 100,
-                    idealWidth: 150
-                ) { _ in
-                    Text("Panel")
-                }
-        }
     }
 }
 
@@ -717,24 +598,6 @@ private struct ModalScreen: View {
     }
 }
 
-private struct StackPresenterScreen: View {
-    @Bindable var state: RouteState
-
-    var body: some View {
-        Text("Presenter")
-            .navigationTitle("Presenter Title")
-            .routerModal(isPresented: $state.showsSheet, presentation: .sheet.inNavigation()) {
-                Text("Modal")
-                    .navigationTitle("Modal Title")
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") {}
-                        }
-                    }
-            }
-    }
-}
-
 private struct LockingSheetScreen: View {
     @Bindable var state: RouteState
 
@@ -745,17 +608,6 @@ private struct LockingSheetScreen: View {
                     .interactiveDismissDisabled(state.locked)
             }
     }
-}
-
-/// Titles of every navigation item shown by the window's navigation bars,
-/// outside presented controllers.
-@MainActor
-private func stackItemTitles(in window: UIWindow?) -> [String] {
-    func bars(in view: UIView) -> [UINavigationBar] {
-        view.subviews.flatMap { ($0 as? UINavigationBar).map { [$0] } ?? bars(in: $0) }
-    }
-    guard let root = window?.rootViewController?.view else { return [] }
-    return bars(in: root).flatMap { $0.items ?? [] }.compactMap(\.title)
 }
 
 private struct SearchingScreen: View {
@@ -829,28 +681,6 @@ private struct CapturedController: UIViewControllerRepresentable {
 }
 
 // MARK: - Helpers
-
-/// The depth of the first navigation controller under `controller`.
-@MainActor
-private func stackDepth(in controller: UIViewController) -> Int {
-    if let navigation = controller as? UINavigationController {
-        return navigation.viewControllers.count
-    }
-    for child in controller.children {
-        let depth = stackDepth(in: child)
-        if depth >= 0 { return depth }
-    }
-    return -1
-}
-
-/// Whether a trailing column shows a panel in `controller`'s view.
-@MainActor
-private func hasColumnPanel(in controller: UIViewController) -> Bool {
-    func showsColumn(_ view: UIView) -> Bool {
-        view is TrailingColumnOverlayView || view.subviews.contains(where: showsColumn)
-    }
-    return showsColumn(controller.view)
-}
 
 /// The workspace shell's UIKit stack under `controller`.
 @MainActor

@@ -647,7 +647,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             host.controller.view.layoutIfNeeded()
             return chatReaderShowsDiffBody(in: host.controller.view, containing: "let value = 2")
         }
-        #expect(visible, "timeline activate must push a visible navigationDestination reader")
+        #expect(visible, "timeline activate must push a visible reader")
 
         host.store.remove(target)
         #expect(host.navigation.containsChatReader(target), "store-miss must not pop the stacked reader")
@@ -683,8 +683,8 @@ struct ToolTimelineRowFullScreenActivationTests {
             retaining: host.navigation.containsChatReader
         )
         host.navigation.openChatReader(second)
-        host.controller.view.setNeedsLayout()
-        host.controller.view.layoutIfNeeded()
+        // The covering reader must reach the screen, so the first one really disappears.
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { Self.shellShows(screens: 3, in: host) })
 
         let coveringKept = await waitForMainActorCondition(timeout: .seconds(2)) {
             host.controller.view.layoutIfNeeded()
@@ -695,7 +695,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         }
         #expect(coveringKept, "covering disappear must not release a still-stacked payload")
 
-        host.navigation.workspacePath.removeLast()
+        host.navigation.popWorkspaceStack(toDepth: host.navigation.workspaceStackRouteElements.count - 1)
         host.controller.view.setNeedsLayout()
         host.controller.view.layoutIfNeeded()
 
@@ -708,7 +708,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         }
         #expect(secondReleased, "true pop must release the popped payload and keep the stacked one")
 
-        host.navigation.workspacePath.removeLast()
+        host.navigation.popWorkspaceStack(toDepth: host.navigation.workspaceStackRouteElements.count - 1)
         host.controller.view.setNeedsLayout()
         host.controller.view.layoutIfNeeded()
 
@@ -864,33 +864,12 @@ struct ToolTimelineRowFullScreenActivationTests {
         let target: ChatReaderNavTarget
     }
 
+    /// The app's workspace shell; reader routes push onto its UIKit stack.
     private struct ProductionChatReaderHost {
         let window: UIWindow
-        let controller: UIHostingController<AnyView>
+        let controller: UIViewController
         let store: ChatReaderPayloadStore
         let navigation: AppNavigation
-    }
-
-    private struct ProductionChatReaderStack: View {
-        var navigation: AppNavigation
-        let store: ChatReaderPayloadStore
-
-        var body: some View {
-            NavigationStack(path: Binding(
-                get: { navigation.workspacePath },
-                set: { navigation.workspacePath = $0 }
-            )) {
-                Text("Inbox")
-                    .navigationDestination(for: WorkspaceSessionNavTarget.self) { _ in
-                        Text("Chat")
-                    }
-                    .navigationDestination(for: ChatReaderNavTarget.self) { target in
-                        ChatReaderDestinationView(target: target, store: store)
-                    }
-            }
-            .environment(navigation)
-            .environment(\.chatReaderPayloadStore, store)
-        }
     }
 
     private static func makeEditDiffReaderPayload() -> ChatReaderPayload {
@@ -938,17 +917,18 @@ struct ToolTimelineRowFullScreenActivationTests {
         )
     }
 
+    /// The shell's stack shows `screens` (inbox included) with no transition in flight.
+    private static func shellShows(screens: Int, in host: ProductionChatReaderHost) -> Bool {
+        func stack(in controller: UIViewController) -> ShellNavigationController? {
+            (controller as? ShellNavigationController) ?? controller.children.lazy.compactMap(stack(in:)).first
+        }
+        guard let stack = stack(in: host.controller) else { return false }
+        return stack.transitionCoordinator == nil && stack.viewControllers.count == screens
+    }
+
     private func makeProductionChatReaderStack() throws -> ProductionChatReaderHost {
-        let store = ChatReaderPayloadStore()
-        let navigation = AppNavigation()
-        navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
-        )
-        let controller = UIHostingController(
-            rootView: AnyView(
-                ProductionChatReaderStack(navigation: navigation, store: store)
-            )
-        )
+        let root = makeTestAppRoot()
+        let controller = WorkspaceShellController(root: root)
         let harness = makeHostHarness()
         harness.window.rootViewController = controller
         controller.view.frame = harness.window.bounds
@@ -957,8 +937,8 @@ struct ToolTimelineRowFullScreenActivationTests {
         return ProductionChatReaderHost(
             window: harness.window,
             controller: controller,
-            store: store,
-            navigation: navigation
+            store: root.chatReaderPayloadStore,
+            navigation: root.navigation
         )
     }
 

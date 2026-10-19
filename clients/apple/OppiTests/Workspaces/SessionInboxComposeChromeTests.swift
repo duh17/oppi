@@ -351,7 +351,7 @@ struct QuickSessionLauncherCoverageTests {
                 surface: surface,
                 workspaceStack: stack,
                 splitDetailTarget: detail,
-                splitDetailPath: path
+                splitDetailElements: path
             ) == covered,
             "\(name)"
         )

@@ -1291,11 +1291,13 @@ struct FileBrowserView: View {
 
         switch navigation.workspaceNavigationPresentation {
         case .stack:
-            guard navigation.workspacePath.count >= popCount else { return }
-            navigation.workspacePath.removeLast(popCount)
+            let depth = navigation.workspaceStackRouteElements.count
+            guard depth >= popCount else { return }
+            navigation.popWorkspaceStack(toDepth: depth - popCount)
         case .split:
-            guard navigation.splitDetailPath.count >= popCount else { return }
-            navigation.removeLastSplitDetailPath(popCount)
+            let depth = navigation.splitDetailPathElements.count
+            guard depth >= popCount else { return }
+            navigation.popSplitDetail(toDepth: depth - popCount)
         }
     }
 

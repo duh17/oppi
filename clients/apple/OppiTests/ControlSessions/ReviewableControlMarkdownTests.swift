@@ -612,7 +612,7 @@ struct ReviewableControlMarkdownTests {
             resourceId: "skill-1",
             path: "SKILL.md"
         ))
-        let readerDepth = navigation.workspacePath.count
+        let readerDepth = navigation.workspaceStackRouteElements.count
 
         let target = try ControlRevisionCommentNavigation.makeSessionTarget(
             serverId: "server-1",
@@ -624,14 +624,14 @@ struct ReviewableControlMarkdownTests {
         var handoff = ControlRevisionSheetHandoff()
         handoff.prepare(target)
 
-        #expect(navigation.workspacePath.count == readerDepth)
+        #expect(navigation.workspaceStackRouteElements.count == readerDepth)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_file")
 
         let completedTarget = handoff.completeAfterDismissal()
         let dismissedTarget = try #require(completedTarget)
         navigation.openWorkspaceSession(dismissedTarget)
 
-        #expect(navigation.workspacePath.count == readerDepth + 1)
+        #expect(navigation.workspaceStackRouteElements.count == readerDepth + 1)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "chat")
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "control-session-1")
         #expect(handoff.completeAfterDismissal() == nil)

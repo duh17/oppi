@@ -344,7 +344,7 @@ struct SessionNotificationOpenPathTests {
         )
 
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "child")
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(connection.focusedSessionId == "child")
         #expect(connection.sessionStore.session(id: "child")?.status == .busy)
         #expect(connection.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/child/stream")

@@ -375,7 +375,7 @@ struct ConnectionCoordinatorTests {
         for _ in 0..<10 { await Task.yield() }
 
         #expect(coordinator.activeServerId == newerServer.id)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "newer-session")
     }
 

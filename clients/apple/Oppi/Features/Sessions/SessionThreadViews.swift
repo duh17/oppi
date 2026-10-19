@@ -807,7 +807,7 @@ private struct SessionThreadDetailContentView: View {
             surface: .thread(target),
             workspaceStack: navigation.workspaceStackRouteElements,
             splitDetailTarget: navigation.splitDetailTarget,
-            splitDetailPath: navigation.splitDetailPathElements
+            splitDetailElements: navigation.splitDetailPathElements
         )
     }
 

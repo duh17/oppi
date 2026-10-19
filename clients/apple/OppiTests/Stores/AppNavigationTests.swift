@@ -25,26 +25,26 @@ private actor ResourceReferenceAsyncGate {
 struct AppNavigationShellRoutingTests {
     @Test func workspacesSelectionLeavesPathUntouched() {
         let navigation = readyNavigation()
-        navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
+        navigation.openWorkspaceUtility(.appSettings)
         navigation.selectedTab = .workspaces
 
         let routed = navigation.routeLegacySelectedTabIfNeeded()
 
         #expect(routed == nil)
         #expect(navigation.selectedTab == .workspaces)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
     }
 
     @Test func legacyServerSelectionRoutesToManageServersUtility() {
         let navigation = readyNavigation()
-        navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
+        navigation.openWorkspaceUtility(.appSettings)
         navigation.selectedTab = .server
 
         let routed = navigation.routeLegacySelectedTabIfNeeded()
 
         #expect(routed == .manageServers)
         #expect(navigation.selectedTab == .workspaces)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
     }
 
     @Test func legacySettingsSelectionRoutesToSettingsUtility() {
@@ -55,7 +55,7 @@ struct AppNavigationShellRoutingTests {
 
         #expect(routed == .appSettings)
         #expect(navigation.selectedTab == .workspaces)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
     }
 
     @Test func legacySelectionDoesNotRouteDuringOnboarding() {
@@ -68,7 +68,7 @@ struct AppNavigationShellRoutingTests {
 
         #expect(routed == nil)
         #expect(navigation.selectedTab == .server)
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
     }
 
     @Test func legacySelectionDoesNotRouteBeforeLaunchIsReady() {
@@ -81,7 +81,7 @@ struct AppNavigationShellRoutingTests {
 
         #expect(routed == nil)
         #expect(navigation.selectedTab == .settings)
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
     }
 
     @Test func pairedLaunchRevealNeverShowsOnboarding() {
@@ -184,20 +184,14 @@ struct AppNavigationShellRoutingTests {
         ) == nil)
     }
 
-    @Test func workspaceSessionPathBuilderCreatesSingleDestination() {
-        let path = AppNavigation.workspaceSessionPath(serverId: "server-1", sessionId: "session-1")
-
-        #expect(path.count == 1)
-    }
-
     @Test func setWorkspaceSessionPathReplacesExistingStackInOneAssignment() {
         let navigation = AppNavigation()
-        navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
-        navigation.workspacePath.append(WorkspaceUtilityNavTarget.manageServers)
+        navigation.openWorkspaceUtility(.appSettings)
+        navigation.openWorkspaceUtility(.manageServers)
 
         navigation.setWorkspaceSessionPath(serverId: "server-1", sessionId: "session-1")
 
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
     }
 
     @Test func externalSessionDeepLinkPolicyReplacesKnownAndRootsUnknownTargets() {
@@ -216,7 +210,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openSession(inAppTarget, source: .inAppHyperlink)
 
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "in-app-target")
 
         navigation.openSession(
@@ -228,7 +222,7 @@ struct AppNavigationShellRoutingTests {
             source: .externalURL
         )
 
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "external-target")
 
         for presentation in [
@@ -253,10 +247,10 @@ struct AppNavigationShellRoutingTests {
             MissingSessionDeepLinkNavigationPolicy.showWorkspaceRoot(in: missingTargetNavigation)
 
             #expect(missingTargetNavigation.selectedTab == .workspaces)
-            #expect(missingTargetNavigation.workspacePath.isEmpty)
+            #expect(missingTargetNavigation.workspaceStackRouteElements.isEmpty)
             #expect(missingTargetNavigation.splitSelectedWorkspace == nil)
             #expect(missingTargetNavigation.splitDetailTarget == nil)
-            #expect(missingTargetNavigation.splitDetailPath.isEmpty)
+            #expect(missingTargetNavigation.splitDetailPathElements.isEmpty)
             #expect(missingTargetNavigation.workspaceStackDiagnosticContext == .inboxAll)
             #expect(missingTargetNavigation.visibleSplitDiagnosticContext.screen == "workspace_split_inbox_all")
         }
@@ -278,11 +272,11 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openReferencedSession(target)
 
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "target")
         navigation.openReferencedSession(target)
-        #expect(navigation.workspacePath.count == 2)
-        navigation.workspacePath.removeLast()
+        #expect(navigation.workspaceStackRouteElements.count == 2)
+        navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "source")
     }
 
@@ -304,15 +298,15 @@ struct AppNavigationShellRoutingTests {
         navigation.openReferencedSession(target)
 
         #expect(navigation.splitDetailTarget == .session(source))
-        #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.splitDetailPathElements.count == 1)
         #expect(navigation.visibleSplitDiagnosticContext == WorkspaceStackDiagnosticContext(
             screen: "chat",
             sessionId: "target",
             workspaceId: "workspace-2"
         ))
         navigation.openReferencedSession(target)
-        #expect(navigation.splitDetailPath.count == 1)
-        navigation.splitDetailPath.removeLast()
+        #expect(navigation.splitDetailPathElements.count == 1)
+        navigation.popSplitDetail(toDepth: navigation.splitDetailPathElements.count - 1)
         #expect(navigation.splitDetailTarget == .session(source))
         #expect(navigation.visibleSplitDiagnosticContext == WorkspaceStackDiagnosticContext(
             screen: "chat",
@@ -350,15 +344,15 @@ struct AppNavigationShellRoutingTests {
 
             switch presentation {
             case .stack:
-                #expect(navigation.workspacePath.count == 2)
+                #expect(navigation.workspaceStackRouteElements.count == 2)
                 #expect(navigation.selectedWorkspaceFilter == nil)
-                navigation.workspacePath.removeLast()
-                #expect(navigation.workspacePath.count == 1)
+                navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
+                #expect(navigation.workspaceStackRouteElements.count == 1)
                 #expect(navigation.selectedWorkspaceFilter == nil)
             case .split:
                 #expect(navigation.splitDetailTarget == .session(source))
-                #expect(navigation.splitDetailPath.count == 1)
-                navigation.splitDetailPath.removeLast()
+                #expect(navigation.splitDetailPathElements.count == 1)
+                navigation.popSplitDetail(toDepth: navigation.splitDetailPathElements.count - 1)
                 #expect(navigation.splitDetailTarget == .session(source))
             }
         }
@@ -387,7 +381,7 @@ struct AppNavigationShellRoutingTests {
             sourceSession: source
         )
 
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.selectedWorkspaceFilter == workspace)
     }
 
@@ -405,7 +399,7 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.visibleSplitDiagnosticContext.sessionId == nil)
         #expect(navigation.visibleSplitDiagnosticContext.workspaceId == nil)
 
-        navigation.splitDetailPath.removeLast()
+        navigation.popSplitDetail(toDepth: navigation.splitDetailPathElements.count - 1)
         #expect(navigation.visibleSplitDiagnosticContext.screen == "utility_skills")
     }
 
@@ -427,13 +421,13 @@ struct AppNavigationShellRoutingTests {
         navigation.setWorkspaceNavigationPresentation(.split)
 
         #expect(navigation.splitDetailTarget == .session(source))
-        #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.splitDetailPathElements.count == 1)
 
         navigation.setWorkspaceNavigationPresentation(.stack)
 
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "target")
-        navigation.workspacePath.removeLast()
+        navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "source")
     }
 
@@ -529,7 +523,7 @@ struct AppNavigationShellRoutingTests {
         for _ in 0..<10 { await Task.yield() }
 
         #expect(activeServerID == "server-newer")
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "newer")
     }
 
@@ -559,23 +553,23 @@ struct AppNavigationShellRoutingTests {
 
     @Test func splitPresentationClearsStackPath() {
         let navigation = AppNavigation()
-        navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
+        navigation.openWorkspaceUtility(.appSettings)
 
         navigation.setWorkspaceNavigationPresentation(.split)
 
         #expect(navigation.workspaceNavigationPresentation == .split)
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.splitColumnVisibility == .all)
     }
 
     @Test func openWorkspacePushesInboxInStackPresentation() {
         let navigation = AppNavigation()
         let target = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
-        navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
+        navigation.openWorkspaceUtility(.appSettings)
 
         navigation.openWorkspace(target)
 
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.selectedWorkspaceFilter == target)
     }
 
@@ -586,7 +580,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openWorkspace(target)
 
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.selectedWorkspaceFilter == target)
         #expect(navigation.splitSelectedWorkspace == target)
         #expect(navigation.splitDetailTarget == nil)
@@ -601,7 +595,7 @@ struct AppNavigationShellRoutingTests {
         navigation.showAllWorkspaceSessions()
 
         #expect(navigation.selectedWorkspaceFilter == nil)
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
     }
 
     @Test func leaveDeletedWorkspaceReturnsSelectedInboxToAllSessions() {
@@ -615,7 +609,7 @@ struct AppNavigationShellRoutingTests {
         navigation.leaveDeletedWorkspace(serverId: "server-1", workspaceId: "workspace-1")
 
         #expect(navigation.selectedWorkspaceFilter == nil)
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
     }
 
     @Test func leaveDeletedWorkspaceMatchesSelectionByIdentityWhenNameChanged() {
@@ -629,7 +623,7 @@ struct AppNavigationShellRoutingTests {
         navigation.leaveDeletedWorkspace(serverId: "server-1", workspaceId: "workspace-1")
 
         #expect(navigation.selectedWorkspaceFilter == nil)
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
     }
 
     @Test func leaveDeletedWorkspaceLeavesUnselectedWorkspaceOnManagePath() {
@@ -642,12 +636,12 @@ struct AppNavigationShellRoutingTests {
         )
         navigation.openWorkspace(selected)
         navigation.openHostSwitcherDestination(.serverSettings, serverId: "server-1")
-        let pathCount = navigation.workspacePath.count
+        let pathCount = navigation.workspaceStackRouteElements.count
 
         navigation.leaveDeletedWorkspace(serverId: "server-1", workspaceId: "workspace-delete")
 
         #expect(navigation.selectedWorkspaceFilter == selected)
-        #expect(navigation.workspacePath.count == pathCount)
+        #expect(navigation.workspaceStackRouteElements.count == pathCount)
         #expect(navigation.visibleHostSwitcherDestination == .serverSettings)
     }
 
@@ -656,12 +650,12 @@ struct AppNavigationShellRoutingTests {
         navigation.launchPhase = .ready
         navigation.showOnboarding = false
         navigation.openHostSwitcherDestination(.serverSettings, serverId: "server-1")
-        let pathCount = navigation.workspacePath.count
+        let pathCount = navigation.workspaceStackRouteElements.count
 
         navigation.leaveDeletedWorkspace(serverId: "server-1", workspaceId: "workspace-1")
 
         #expect(navigation.selectedWorkspaceFilter == nil)
-        #expect(navigation.workspacePath.count == pathCount)
+        #expect(navigation.workspaceStackRouteElements.count == pathCount)
         #expect(navigation.visibleHostSwitcherDestination == .serverSettings)
     }
 
@@ -694,15 +688,15 @@ struct AppNavigationShellRoutingTests {
             workspace: workspaceTarget
         )
 
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
 
-        navigation.workspacePath.removeLast()
-        #expect(navigation.workspacePath.count == 1)
+        navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
 
-        navigation.workspacePath.removeLast()
-        #expect(navigation.workspacePath.isEmpty)
+        navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.selectedWorkspaceFilter == nil)
     }
 
@@ -720,11 +714,11 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openWorkspaceSession(sessionTarget, workspace: workspaceTarget)
 
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.selectedWorkspaceFilter == nil)
 
-        navigation.workspacePath.removeLast()
-        #expect(navigation.workspacePath.isEmpty)
+        navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.selectedWorkspaceFilter == nil)
     }
 
@@ -746,7 +740,7 @@ struct AppNavigationShellRoutingTests {
             workspaceId: "workspace-1"
         ))
 
-        navigation.workspacePath.removeLast()
+        navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
         #expect(navigation.workspaceStackDiagnosticContext == WorkspaceStackDiagnosticContext(
             screen: "workspace_inbox_filtered",
             sessionId: nil,
@@ -756,23 +750,6 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceUtility(.appSettings)
         #expect(navigation.workspaceStackDiagnosticContext == WorkspaceStackDiagnosticContext(
             screen: "utility_app_settings",
-            sessionId: nil,
-            workspaceId: nil
-        ))
-    }
-
-    @Test func externallyAppendedStackDestinationDoesNotReuseStaleWorkspaceOrSession() {
-        let navigation = AppNavigation()
-        let workspaceTarget = WorkspaceNavTarget(
-            serverId: "server-1",
-            workspace: makeTestWorkspace(id: "workspace-1")
-        )
-        navigation.openWorkspace(workspaceTarget)
-
-        navigation.workspacePath.append(WorkspaceUtilityNavTarget.appSettings)
-
-        #expect(navigation.workspaceStackDiagnosticContext == WorkspaceStackDiagnosticContext(
-            screen: "workspace_stack_unknown",
             sessionId: nil,
             workspaceId: nil
         ))
@@ -849,7 +826,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openWorkspaceSession(target)
 
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.splitDetailTarget == .session(target))
         #expect(navigation.splitColumnVisibility == .detailOnly)
     }
@@ -879,16 +856,16 @@ struct AppNavigationShellRoutingTests {
         ))
 
         #expect(navigation.splitDetailTarget == .utility(.agents))
-        #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.splitDetailPathElements.count == 1)
         #expect(navigation.splitColumnVisibility == .detailOnly)
 
         navigation.setWorkspaceNavigationPresentation(.stack)
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "control-1")
 
         navigation.setWorkspaceNavigationPresentation(.split)
         #expect(navigation.splitDetailTarget == .utility(.agents))
-        #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.splitDetailPathElements.count == 1)
     }
 
     @Test func openSessionPreservesWorkspaceHintFromWorkspaceTarget() {
@@ -941,7 +918,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openWorkspaceFileBrowser(fileTarget, workspace: workspaceTarget)
 
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.splitSelectedWorkspace == workspaceTarget)
         #expect(navigation.splitDetailTarget == .fileBrowser(fileTarget))
         #expect(navigation.splitColumnVisibility == .detailOnly)
@@ -987,7 +964,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openWorkspaceLinkedFile(fileTarget, workspace: workspaceTarget)
 
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.splitSelectedWorkspace == workspaceTarget)
         #expect(navigation.splitDetailTarget == .linkedFile(fileTarget))
         #expect(navigation.splitColumnVisibility == .detailOnly)
@@ -1004,7 +981,7 @@ struct AppNavigationShellRoutingTests {
         let navigation = AppNavigation()
         navigation.openWorkspaceLinkedFile(target)
 
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.workspaceStackDiagnosticContext.workspaceId == "workspace-1")
         #expect(target.lineAnchor == anchor)
 
@@ -1034,7 +1011,7 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitDetailTarget == .linkedFile(target))
 
         navigation.setWorkspaceNavigationPresentation(.stack)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
     }
 
     @Test func linkedFileAppendsInStackPresentationToPreserveBackNavigation() {
@@ -1053,7 +1030,7 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceLinkedFile(firstTarget)
         navigation.openWorkspaceLinkedFile(secondTarget)
 
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
     }
 
     @Test func linkedFileOpenedFromSessionPreservesSessionBackNavigation() {
@@ -1068,7 +1045,7 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceSession(sessionTarget)
         navigation.openWorkspaceLinkedFile(fileTarget)
 
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
     }
 
     @Test func linkedFileOpenedFromSplitSessionPreservesSessionBackNavigation() {
@@ -1085,7 +1062,7 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceLinkedFile(fileTarget)
 
         #expect(navigation.splitDetailTarget == .session(sessionTarget))
-        #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.splitDetailPathElements.count == 1)
     }
 
     @Test func linkedFileOpenedFromSplitSessionSurvivesCompactRotation() {
@@ -1102,7 +1079,7 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceLinkedFile(fileTarget)
         navigation.setWorkspaceNavigationPresentation(.stack)
 
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
     }
 
     @Test func linkedFileChainOpenedFromSplitFileSurvivesCompactRotation() {
@@ -1123,7 +1100,7 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceLinkedFile(secondTarget)
         navigation.setWorkspaceNavigationPresentation(.stack)
 
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
     }
 
     @Test func splitFileBrowserDirectoryDrillSurvivesCompactRotation() {
@@ -1137,7 +1114,7 @@ struct AppNavigationShellRoutingTests {
         navigation.pushSplitDetailFileBrowser(childTarget)
         navigation.setWorkspaceNavigationPresentation(.stack)
 
-        #expect(navigation.workspacePath.count == 3)
+        #expect(navigation.workspaceStackRouteElements.count == 3)
     }
 
     @Test func splitAllSessionsSessionKeepsAllSessionsOnCompactRotation() {
@@ -1155,7 +1132,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.setWorkspaceNavigationPresentation(.stack)
 
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.selectedWorkspaceFilter == nil)
         #expect(navigation.splitSelectedWorkspace == nil)
     }
@@ -1173,7 +1150,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.setWorkspaceNavigationPresentation(.stack)
 
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
     }
 
@@ -1189,7 +1166,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.setWorkspaceNavigationPresentation(.split)
 
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.splitSelectedWorkspace == workspaceTarget)
         #expect(navigation.splitDetailTarget == .session(
             WorkspaceSessionNavTarget(
@@ -1225,7 +1202,7 @@ struct AppNavigationShellRoutingTests {
 
         #expect(navigation.splitSelectedWorkspace == workspaceTarget)
         #expect(navigation.splitDetailTarget == .fileBrowser(rootTarget))
-        #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.splitDetailPathElements.count == 1)
         #expect(navigation.splitColumnVisibility == .detailOnly)
     }
 
@@ -1240,7 +1217,7 @@ struct AppNavigationShellRoutingTests {
             WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1"),
             workspace: workspaceTarget
         )
-        navigation.workspacePath.removeLast()
+        navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
 
         navigation.setWorkspaceNavigationPresentation(.split)
 
@@ -1265,10 +1242,10 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openWorkspaceLinkedFile(firstTarget)
         navigation.openWorkspaceLinkedFile(secondTarget)
-        navigation.splitDetailPath.removeLast()
+        navigation.popSplitDetail(toDepth: navigation.splitDetailPathElements.count - 1)
         navigation.setWorkspaceNavigationPresentation(.stack)
 
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
     }
 
     @Test func exactDirectoryLookupPreservesPresentAbsentAndTruncatedSemantics() {
@@ -1396,7 +1373,7 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceSession(sessionTarget, workspace: sourceWorkspace)
         navigation.openWorkspaceLinkedFile(hostFile)
 
-        #expect(navigation.workspacePath.count == 3)
+        #expect(navigation.workspaceStackRouteElements.count == 3)
         #expect(navigation.selectedWorkspaceFilter == sourceWorkspace)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "linked_file")
         #expect(navigation.workspaceStackDiagnosticContext.workspaceId?.isEmpty != false)
@@ -1408,7 +1385,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openWorkspaceUtility(.appSettings)
 
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.splitDetailTarget == .utility(.appSettings))
         #expect(navigation.splitColumnVisibility == .all)
     }
@@ -1422,12 +1399,12 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceUtility(.agents)
 
         #expect(navigation.selectedTab == .workspaces)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "utility_agents")
 
         navigation.openWorkspaceUtility(.schedules)
 
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "utility_schedules")
     }
 
@@ -1438,7 +1415,7 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceUtility(.appSettings)
 
         #expect(navigation.selectedTab == .workspaces)
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
     }
 
     @Test func agentAndScheduleUtilitiesReplaceSplitWorkspaceAndDetailSelection() {
@@ -1452,7 +1429,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openWorkspaceUtility(.agents)
 
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.selectedWorkspaceFilter == nil)
         #expect(navigation.splitSelectedWorkspace == nil)
         #expect(navigation.splitDetailTarget == .utility(.agents))
@@ -1470,7 +1447,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openWorkspaceUtility(.manageServers)
 
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.splitDetailTarget == .utility(.manageServers))
         #expect(navigation.splitColumnVisibility == .all)
     }
@@ -1482,7 +1459,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openWorkspaceConfiguration(workspaceTarget)
 
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.splitSelectedWorkspace == workspaceTarget)
         #expect(navigation.splitDetailTarget == .workspaceConfiguration(workspaceTarget))
         #expect(navigation.splitColumnVisibility == .all)
@@ -1499,7 +1476,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.setWorkspaceNavigationPresentation(.stack)
 
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
     }
 
@@ -1545,7 +1522,7 @@ struct AppNavigationShellRoutingTests {
 
         #expect(navigation.splitSelectedWorkspace == workspaceTarget)
         #expect(navigation.splitDetailTarget == nil)
-        #expect(navigation.splitDetailPath.isEmpty)
+        #expect(navigation.splitDetailPathElements.isEmpty)
     }
 
     @Test func legacySettingsSelectionRoutesToSplitDetailUtility() {
@@ -1557,7 +1534,7 @@ struct AppNavigationShellRoutingTests {
 
         #expect(routed == .appSettings)
         #expect(navigation.selectedTab == .workspaces)
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.splitDetailTarget == .utility(.appSettings))
         #expect(navigation.splitColumnVisibility == .all)
     }
@@ -1590,11 +1567,11 @@ struct AppNavigationShellRoutingTests {
         #expect(WorkspaceUtilityNavTarget.extensions.isReleaseEnabled)
 
         navigation.openWorkspaceUtility(.skills)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "utility_skills")
 
         navigation.openWorkspaceUtility(.extensions)
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "utility_extensions")
     }
 
@@ -1640,26 +1617,26 @@ struct AppNavigationShellRoutingTests {
         navigation.openServerSkillBrowser(browser)
         navigation.openServerSkillFile(file)
 
-        #expect(navigation.workspacePath.count == 4)
+        #expect(navigation.workspaceStackRouteElements.count == 4)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_file")
 
         navigation.setWorkspaceNavigationPresentation(.split)
         #expect(navigation.splitDetailTarget == .utility(.skills))
-        #expect(navigation.splitDetailPath.count == 3)
+        #expect(navigation.splitDetailPathElements.count == 3)
 
         navigation.setWorkspaceNavigationPresentation(.stack)
-        #expect(navigation.workspacePath.count == 4)
+        #expect(navigation.workspaceStackRouteElements.count == 4)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_file")
 
-        navigation.workspacePath.removeLast()
+        navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_browser")
 
         navigation.setWorkspaceNavigationPresentation(.split)
         #expect(navigation.splitDetailTarget == .utility(.skills))
-        #expect(navigation.splitDetailPath.count == 2)
+        #expect(navigation.splitDetailPathElements.count == 2)
 
         navigation.setWorkspaceNavigationPresentation(.stack)
-        #expect(navigation.workspacePath.count == 3)
+        #expect(navigation.workspaceStackRouteElements.count == 3)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_browser")
         #expect(browser.serverId == detail.serverId)
         #expect(file.resourceId == detail.resourceId)
@@ -1677,15 +1654,15 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openServerResourceDetail(detail)
         #expect(navigation.splitDetailTarget == .utility(.extensions))
-        #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.splitDetailPathElements.count == 1)
 
         navigation.setWorkspaceNavigationPresentation(.stack)
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "server_extension_detail")
 
         navigation.setWorkspaceNavigationPresentation(.split)
         #expect(navigation.splitDetailTarget == .utility(.extensions))
-        #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.splitDetailPathElements.count == 1)
     }
 
     @Test func modelProvidersPushesServerScopedDestinationFromCompactInbox() {
@@ -1694,7 +1671,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openModelProviders(target)
 
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "model_providers")
     }
 
@@ -1709,18 +1686,18 @@ struct AppNavigationShellRoutingTests {
         navigation.openModelProviders(providers)
 
         #expect(navigation.splitDetailTarget == .utility(.manageServers))
-        #expect(navigation.splitDetailPath.count == 2)
+        #expect(navigation.splitDetailPathElements.count == 2)
 
         navigation.setWorkspaceNavigationPresentation(.stack)
-        #expect(navigation.workspacePath.count == 3)
+        #expect(navigation.workspaceStackRouteElements.count == 3)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "model_providers")
 
-        navigation.workspacePath.removeLast()
+        navigation.popWorkspaceStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "server_details")
 
         navigation.setWorkspaceNavigationPresentation(.split)
         #expect(navigation.splitDetailTarget == .utility(.manageServers))
-        #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.splitDetailPathElements.count == 1)
     }
 
     @Test func hostSwitcherOpensUsageThroughManageServersUtility() {
@@ -1729,7 +1706,7 @@ struct AppNavigationShellRoutingTests {
         navigation.openHostSwitcherDestination(.usage, serverId: "server-a")
 
         #expect(navigation.visibleHostSwitcherDestination == .usage)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "utility_manage_servers")
     }
 
@@ -1739,7 +1716,7 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openHostSwitcherDestination(.usage, serverId: "server-a")
 
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.visibleHostSwitcherDestination == .usage)
     }
 
@@ -1749,13 +1726,13 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openHostSwitcherDestination(.serverSettings, serverId: "server-a")
 
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.visibleHostSwitcherDestination == .serverSettings)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "server_details")
 
         navigation.openHostSwitcherDestination(.modelProviders, serverId: "server-a")
 
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.visibleHostSwitcherDestination == .modelProviders)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "model_providers")
     }
@@ -1765,7 +1742,7 @@ struct AppNavigationShellRoutingTests {
         stack.openHostSwitcherDestination(.usage, serverId: "server-a")
         stack.openHostSwitcherDestination(.serverMetrics, serverId: "server-a")
 
-        #expect(stack.workspacePath.count == 1)
+        #expect(stack.workspaceStackRouteElements.count == 1)
         #expect(stack.visibleHostSwitcherDestination == .serverMetrics)
         #expect(stack.workspaceStackDiagnosticContext.screen == "utility_server_metrics")
 
@@ -1776,7 +1753,7 @@ struct AppNavigationShellRoutingTests {
 
         #expect(split.visibleHostSwitcherDestination == .serverMetrics)
         #expect(split.splitDetailTarget == .utility(.serverMetrics))
-        #expect(split.splitDetailPath.isEmpty)
+        #expect(split.splitDetailPathElements.isEmpty)
     }
 
     @Test func hostSwitcherUsageInSplitReplacesInboxWithoutPath() {
@@ -1787,7 +1764,7 @@ struct AppNavigationShellRoutingTests {
 
         #expect(navigation.visibleHostSwitcherDestination == .usage)
         #expect(navigation.splitDetailTarget == .utility(.manageServers))
-        #expect(navigation.splitDetailPath.isEmpty)
+        #expect(navigation.splitDetailPathElements.isEmpty)
     }
 
     @Test func hostSwitcherSiblingsReplaceSplitPath() {
@@ -1799,22 +1776,22 @@ struct AppNavigationShellRoutingTests {
 
         #expect(navigation.visibleHostSwitcherDestination == .serverSettings)
         #expect(navigation.splitDetailTarget == nil)
-        #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.splitDetailPathElements.count == 1)
 
         navigation.openHostSwitcherDestination(.modelProviders, serverId: "server-a")
 
         #expect(navigation.visibleHostSwitcherDestination == .modelProviders)
-        #expect(navigation.splitDetailPath.count == 1)
+        #expect(navigation.splitDetailPathElements.count == 1)
     }
 
     @Test func hostSwitcherDoesNotPopWhenOpeningTheVisibleJob() {
         let navigation = readyNavigation()
         navigation.openHostSwitcherDestination(.serverSettings, serverId: "server-a")
-        let count = navigation.workspacePath.count
+        let count = navigation.workspaceStackRouteElements.count
 
         navigation.openHostSwitcherDestination(.serverSettings, serverId: "server-b")
 
-        #expect(navigation.workspacePath.count == count)
+        #expect(navigation.workspaceStackRouteElements.count == count)
         #expect(navigation.visibleHostSwitcherDestination == .serverSettings)
     }
 

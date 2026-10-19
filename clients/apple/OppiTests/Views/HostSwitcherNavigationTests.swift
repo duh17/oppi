@@ -198,7 +198,7 @@ struct HostJobCompactSwitchTests {
 
         navigation.showAllWorkspaceSessions()
         #expect(navigation.visibleHostSwitcherDestination == .inbox)
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
     }
 }
 

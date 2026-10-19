@@ -73,7 +73,7 @@ final class ChatFilesNavigationReproUITests: XCTestCase {
     }
 
     @MainActor
-    func testChatBackFromLocalDestinationDoesNotPopWorkspacePath() {
+    func testChatBackFromLocalDestinationDoesNotPopWorkspaceRoute() {
         let app = launchRealChatHarness(extraArguments: ["--nav-chrome-chat-back-local-repro"], extraEnvironment: [
             "PI_NAV_CHROME_CHAT_BACK_LOCAL_REPRO": "1",
         ])
@@ -86,7 +86,7 @@ final class ChatFilesNavigationReproUITests: XCTestCase {
 
         let backButton = app.buttons["chat.toolbar.back"]
         XCTAssertTrue(backButton.waitForExistence(timeout: 8), "Local ChatView should expose the chat Back control")
-        XCTAssertEqual(app.staticTexts["navChrome.repro.pathCount"].label, "1", "Opening local chat must not append to AppNavigation.workspacePath")
+        XCTAssertEqual(app.staticTexts["navChrome.repro.pathCount"].label, "1", "Opening local chat must not add a workspace route")
 
         backButton.tap()
 
@@ -97,7 +97,7 @@ final class ChatFilesNavigationReproUITests: XCTestCase {
         XCTAssertEqual(
             app.staticTexts["navChrome.repro.pathCount"].label,
             "1",
-            "Chat Back from a local destination must not pop AppNavigation.workspacePath"
+            "Chat Back from a local destination must not pop a workspace route"
         )
         XCTAssertFalse(
             app.collectionViews["navChrome.repro.root"].exists,

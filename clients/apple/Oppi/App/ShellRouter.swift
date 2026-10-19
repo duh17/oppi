@@ -51,9 +51,8 @@ enum ShellRoute: Hashable {
         }
     }
 
-    /// A compact-stack element. Nil for a value pushed onto `workspacePath`
-    /// without its route, which nothing in the app does.
-    init?(_ element: WorkspaceStackRouteElement) {
+    /// A screen pushed onto the compact stack.
+    init(_ element: WorkspaceStackRouteElement) {
         switch element {
         case .workspace(let target): self = .workspace(target)
         case .session(let target): self = .session(target)
@@ -68,7 +67,6 @@ enum ShellRoute: Hashable {
         case .serverSkillBrowser(let target): self = .serverSkillBrowser(target)
         case .serverSkillFile(let target): self = .serverSkillFile(target)
         case .sessionThread(let target): self = .sessionThread(target)
-        case .unknown: return nil
         }
     }
 

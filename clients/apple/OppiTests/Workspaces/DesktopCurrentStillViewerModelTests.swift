@@ -322,7 +322,7 @@ struct DesktopCurrentStillViewerModelTests {
 
         navigation.openWorkspaceUtility(.desktopStill)
 
-        #expect(navigation.workspacePath.isEmpty)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.splitDetailTarget == nil)
     }
 

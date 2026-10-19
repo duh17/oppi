@@ -115,19 +115,19 @@ struct WorkspaceMediaOverlayNavigationTests {
             workspaceId: "ws-b"
         )
         navigation.openWorkspaceSession(session)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
-        navigation.workspacePath = NavigationPath()
+        navigation.popWorkspaceStack(toDepth: 0)
 
         #expect(navigation.isMediaOverlayActive)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "chat-1")
 
         let restoreServer = navigation.endMediaOverlay(currentServerId: "server-a")
         #expect(restoreServer == "server-b")
         #expect(!navigation.isMediaOverlayActive)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "chat-1")
     }
 
@@ -143,19 +143,19 @@ struct WorkspaceMediaOverlayNavigationTests {
             workspaceId: "ws-b"
         )
         navigation.openWorkspaceSession(session, workspace: workspace)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.selectedWorkspaceFilter == nil)
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         navigation.selectedWorkspaceFilter = workspace
-        navigation.workspacePath = NavigationPath()
+        navigation.popWorkspaceStack(toDepth: 0)
 
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.selectedWorkspaceFilter == nil)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "chat-1")
 
         #expect(navigation.endMediaOverlay(currentServerId: "server-a") == "server-b")
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.selectedWorkspaceFilter == nil)
         #expect(navigation.splitSelectedWorkspace == nil)
     }
@@ -203,18 +203,18 @@ struct WorkspaceMediaOverlayNavigationTests {
         )
         navigation.openWorkspace(workspace)
         navigation.openWorkspaceSession(session, workspace: workspace)
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.selectedWorkspaceFilter == workspace)
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
-        navigation.workspacePath = NavigationPath()
+        navigation.popWorkspaceStack(toDepth: 0)
 
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.selectedWorkspaceFilter == workspace)
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "chat-1")
 
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
-        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.selectedWorkspaceFilter == workspace)
     }
 
@@ -232,12 +232,12 @@ struct WorkspaceMediaOverlayNavigationTests {
         navigation.setWorkspaceNavigationPresentation(.split)
 
         #expect(navigation.workspaceNavigationPresentation == .stack)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.splitDetailTarget == nil)
 
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
         #expect(navigation.workspaceNavigationPresentation == .stack)
-        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
     }
 
     @Test func nestedOverlayEndsWaitForMatchingBegins() {
@@ -251,14 +251,14 @@ struct WorkspaceMediaOverlayNavigationTests {
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         navigation.beginMediaOverlay(activeServerId: "server-b")
-        navigation.workspacePath = NavigationPath()
-        #expect(navigation.workspacePath.count == 1)
+        navigation.popWorkspaceStack(toDepth: 0)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
 
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
         #expect(navigation.isMediaOverlayActive)
 
-        navigation.workspacePath = NavigationPath()
-        #expect(navigation.workspacePath.count == 1)
+        navigation.popWorkspaceStack(toDepth: 0)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
         #expect(!navigation.isMediaOverlayActive)
     }
@@ -274,8 +274,8 @@ struct WorkspaceMediaOverlayNavigationTests {
         navigation.beginMediaOverlay(activeServerId: "server-b")
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
 
-        navigation.workspacePath = NavigationPath()
-        #expect(navigation.workspacePath.isEmpty)
+        navigation.popWorkspaceStack(toDepth: 0)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.workspaceStackDiagnosticContext == .inboxAll)
     }
 

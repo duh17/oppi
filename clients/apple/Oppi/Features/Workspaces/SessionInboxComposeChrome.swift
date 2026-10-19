@@ -288,7 +288,7 @@ enum QuickSessionLauncherCoverage {
         surface: QuickSessionLauncherSurface,
         workspaceStack: [WorkspaceStackRouteElement],
         splitDetailTarget: WorkspaceSplitDetailTarget?,
-        splitDetailPath: [WorkspaceSplitDetailPathElement]
+        splitDetailElements: [WorkspaceSplitDetailPathElement]
     ) -> Bool {
         switch presentation {
         case .split:
@@ -299,17 +299,17 @@ enum QuickSessionLauncherCoverage {
                 presentation: .split,
                 surface: surface,
                 workspaceStack: workspaceStack,
-                splitDetailPath: splitDetailPath
+                splitDetailElements: splitDetailElements
             ) else {
                 return true
             }
-            return splitDetailPath.count > depth
+            return splitDetailElements.count > depth
         case .stack:
             guard let depth = depth(
                 presentation: .stack,
                 surface: surface,
                 workspaceStack: workspaceStack,
-                splitDetailPath: splitDetailPath
+                splitDetailElements: splitDetailElements
             ) else {
                 return true
             }
@@ -322,7 +322,7 @@ enum QuickSessionLauncherCoverage {
         presentation: WorkspaceNavigationPresentation,
         surface: QuickSessionLauncherSurface,
         workspaceStack: [WorkspaceStackRouteElement],
-        splitDetailPath: [WorkspaceSplitDetailPathElement]
+        splitDetailElements: [WorkspaceSplitDetailPathElement]
     ) -> Int? {
         switch surface {
         case .allSessions:
@@ -330,7 +330,7 @@ enum QuickSessionLauncherCoverage {
         case .thread(let target):
             switch presentation {
             case .split:
-                return index(of: target, in: splitDetailPath).map { $0 + 1 }
+                return index(of: target, in: splitDetailElements).map { $0 + 1 }
             case .stack:
                 return index(of: target, in: workspaceStack).map { $0 + 1 }
             }

@@ -337,11 +337,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         // The corner cutouts the rounded foreground reveals show the theme,
         // never the bare window.
         view.backgroundColor = root.themeStore.backgroundColor
-        stack.setRoutes([.inbox] + navigation.workspaceStackRouteElements.compactMap { element in
-            let route = ShellRoute(element)
-            assert(route != nil, "A workspace path value was pushed without its route")
-            return route
-        })
+        stack.setRoutes([.inbox] + navigation.workspaceStackRouteElements.map(ShellRoute.init))
     }
 
     override func accessibilityPerformEscape() -> Bool {

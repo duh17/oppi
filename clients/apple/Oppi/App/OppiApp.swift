@@ -612,10 +612,10 @@ final class OppiApp {
         recordNavigationChanges("onboarding") { navigation.showOnboarding }
         recordNavigationChanges("quick_session") { navigation.showQuickSession }
         recordNavigationChanges("workspace_filter") { navigation.selectedWorkspaceFilter }
-        recordNavigationChanges("workspace_path") { navigation.workspacePath.count }
+        recordNavigationChanges("workspace_path") { navigation.workspaceStackRouteElements.count }
         recordNavigationChanges("stack_destination") { navigation.workspaceStackDiagnosticContext }
         recordNavigationChanges("split_destination") { navigation.visibleSplitDiagnosticContext }
-        recordNavigationChanges("split_detail_path") { navigation.splitDetailPath.count }
+        recordNavigationChanges("split_detail_path") { navigation.splitDetailPathElements.count }
         let trigger = intentSessionOpenTrigger
         onChange(of: { trigger.requestID }) { app in
             Task { await app.consumeIntentSessionOpenIfNeeded() }

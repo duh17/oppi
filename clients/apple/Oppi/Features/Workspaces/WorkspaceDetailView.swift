@@ -143,12 +143,12 @@ struct WorkspaceDetailView: View {
     /// HTTP polling pauses behind focused chat. Do not attach tap gestures to
     /// `NavigationLink` rows for this; that can consume the row activation.
     private var isNavigatingDeeperInWorkspaceStack: Bool {
-        navigation.workspacePath.count > 1
+        navigation.workspaceStackRouteElements.count > 1
     }
 
     private var isSearchListCoveredByDestination: Bool {
         SessionListSearchNavigationPersistence.isWorkspaceListCovered(
-            stackDepth: navigation.workspacePath.count,
+            stackDepth: navigation.workspaceStackRouteElements.count,
             splitDetailReplacesList: navigation.splitDetailTarget != nil
         )
     }
@@ -649,7 +649,7 @@ struct WorkspaceDetailView: View {
         .onChange(of: searchNavigation.isSearchPresented) { _, presented in
             applySearchNavigation(.searchPresentationChanged(presented))
         }
-        .onChange(of: navigation.workspacePath.count) { _, _ in
+        .onChange(of: navigation.workspaceStackRouteElements.count) { _, _ in
             restoreSearchAfterCoverageChange()
         }
         .onChange(of: navigation.splitDetailTarget) { _, _ in
@@ -790,7 +790,7 @@ struct WorkspaceDetailView: View {
             "workspaceId": workspace.id,
             "serverId": currentServerId,
             "presentation": navigation.workspaceNavigationPresentation == .stack ? "stack" : "split",
-            "workspacePathCount": String(navigation.workspacePath.count),
+            "workspacePathCount": String(navigation.workspaceStackRouteElements.count),
         ])
         switch navigation.workspaceNavigationPresentation {
         case .stack:
