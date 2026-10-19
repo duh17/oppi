@@ -1,146 +1,137 @@
 import UIKit
 
-/// Dummy document the software keyboard can delete from so held ⌫ repeats.
-/// The grid never paints this storage; each mutation maps to terminal keys.
-struct SSHTerminalTextInputStorage {
+/// The document the software keyboard edits, kept equal to what it typed
+/// into the shell since the last reset, so the keyboard can edit it the way
+/// it edits a text field. Streaming dictation inserts a guess and rewrites it
+/// as you speak, then puts in its final text when you stop; each edit
+/// reaches the shell as the backspaces and text that make the shell's line
+/// match. The grid never paints this storage.
+///
+/// A filler character stands in front for whatever the shell already had,
+/// so UIKit always has something to delete and held ⌫ keeps repeating.
+/// Input that bypasses this document (an arrow, a paste, a hardware key,
+/// Return) resets it to the filler.
+struct SSHTerminalTextInputStorage: Equatable {
     enum Action: Equatable {
         /// Keys, one per character; a one-shot Ctrl or Alt applies.
         case insert(String)
-        /// Text the keyboard put in at once (a suggestion, a slide-typed
-        /// word, dictation): one write, no modifier. The owner reports it
-        /// with `phraseSent` once it is in the shell or handed to paste
-        /// confirmation.
-        case phrase(String, generation: Int)
+        /// ⌫ on the keyboard; held, it speeds up to whole words.
         case backspace
+        /// The keyboard rewrote the line (a suggestion, a slide-typed word,
+        /// dictation): `deleting` backspaces, then `text`, in one write with
+        /// no modifier.
+        case edit(deleting: Int, text: String)
     }
 
-    /// One character so UIKit always has something to delete and repeat on.
     static let filler = " "
 
     private(set) var text: String
-    private(set) var markedText: String?
-    /// UTF-16 selection in `text`. Pinned to the end unless text is marked.
+    /// UTF-16 range of an input method's composition. The shell gets it
+    /// only once it is committed.
+    private(set) var markedUTF16: Range<Int>?
     private(set) var selectedUTF16: Range<Int>
+    /// UTF-16 length of the filler still at the front: 0 once an edit took
+    /// it, and that edit sent the backspace it stands for.
+    private var fillerUTF16: Int
     /// A commit `unmarkText` already sent. The keyboard may echo it through
     /// `insertText` in the same call stack; only that echo is dropped. The
     /// owner calls `expireCommitEcho` on the next main turn so a later,
     /// identical keystroke still sends.
     private var unmarkedCommit: String?
     private(set) var commitEchoGeneration = 0
-    /// The last text the keyboard inserted, kept after the filler. Streaming
-    /// dictation inserts a guess, then replaces it by finding it before the
-    /// caret; without it here iOS cancels dictation after the first guess.
-    /// `sent` is the start of it already in the shell. An insert goes at
-    /// once; only what a revision adds waits, until the owner takes it.
-    private(set) var phrase = ""
-    private var sent = ""
-    private var phraseGeneration = 0
 
     var utf16Count: Int { text.utf16.count }
+    var markedText: String? { markedUTF16.map { slice($0) } }
     var awaitsCommitEcho: Bool { unmarkedCommit != nil }
-    var hasUnsentPhrase: Bool { phrase.count > sent.count }
 
     init(text: String = Self.filler) {
         self.text = text
-        markedText = nil
+        markedUTF16 = nil
         unmarkedCommit = nil
+        fillerUTF16 = text.hasPrefix(Self.filler) ? Self.filler.utf16.count : 0
         let end = text.utf16.count
         selectedUTF16 = end..<end
     }
 
     mutating func insertText(_ string: String, hardwareKeysDown: Bool) -> [Action] {
-        let pending = markedText
         let echo = unmarkedCommit
         unmarkedCommit = nil
-        let earlier = takeUnsentPhrase()
-        refill()
-        guard !hardwareKeysDown else { return earlier }
-        if pending == nil, echo == string { return earlier }
-        guard !string.isEmpty else { return earlier }
-        // An IME commit is final; only plain insertions can be revised.
-        guard pending == nil else { return earlier + [.insert(string)] }
-        keepPhrase(string)
-        guard string.count == 1 else { return earlier + [.phrase(string, generation: phraseGeneration)] }
-        // A keystroke spends a one-shot modifier like a key does.
-        sent = phrase
-        return earlier + [.insert(string)]
-    }
-
-    /// What a revision added and the shell does not have yet. The phrase
-    /// stays, so dictation can still extend it.
-    mutating func takeUnsentPhrase() -> [Action] {
-        guard hasUnsentPhrase else { return [] }
-        return [.phrase(String(phrase.dropFirst(sent.count)), generation: phraseGeneration)]
-    }
-
-    /// The owner wrote `text` from `takeUnsentPhrase` or an insert. Text a
-    /// write refused stays unsent; a phrase that has since ended is ignored.
-    mutating func phraseSent(_ text: String, generation: Int) {
-        guard generation == phraseGeneration, phrase.hasPrefix(sent + text) else { return }
-        sent += text
-    }
-
-    /// Input that bypasses this document (an arrow, a paste, a hardware key)
-    /// may move the shell's cursor, so the phrase ends after its unsent rest.
-    mutating func finishPhrase() -> [Action] {
-        guard markedText == nil, !phrase.isEmpty else { return [] }
-        let rest = takeUnsentPhrase()
-        refill()
-        return rest
+        guard !hardwareKeysDown else {
+            reset()
+            return []
+        }
+        if markedUTF16 == nil, echo == string { return [] }
+        guard !string.isEmpty else { return [] }
+        let composed = markedUTF16 != nil
+        let change = replaceDocument(markedUTF16 ?? selectedUTF16, with: string)
+        // A keystroke or an input method's commit spends a one-shot modifier
+        // like a key does; anything else the keyboard puts in is one write.
+        if change.deleting == 0, change.text == string, composed || string.count == 1 {
+            return [.insert(string)]
+        }
+        return Self.actions(change)
     }
 
     mutating func deleteBackward(hardwareKeysDown: Bool) -> [Action] {
         unmarkedCommit = nil
-        if let marked = markedText, !marked.isEmpty {
-            var next = marked
-            next.removeLast()
-            if next.isEmpty {
-                markedText = nil
-                refill()
-            } else {
-                markedText = next
-                text = next
-                let end = utf16Count
-                selectedUTF16 = end..<end
+        if let marked = markedUTF16 {
+            // ⌫ edits the composition only.
+            let caret = min(max(selectedUTF16.lowerBound, marked.lowerBound), marked.upperBound)
+            let target = selectedUTF16.isEmpty ? characterRange(before: caret, from: marked.lowerBound) : selectedUTF16
+            if let target {
+                text = slice(0..<target.lowerBound) + slice(target.upperBound..<utf16Count)
+                let length = marked.count - target.count
+                markedUTF16 = length > 0 ? marked.lowerBound..<(marked.lowerBound + length) : nil
+                selectedUTF16 = target.lowerBound..<target.lowerBound
             }
+            if markedUTF16 == nil, text.isEmpty { reset() }
             return []
         }
-        let earlier = takeUnsentPhrase()
-        refill()
-        guard !hardwareKeysDown else { return earlier }
-        return earlier + [.backspace]
+        guard !hardwareKeysDown else {
+            reset()
+            return []
+        }
+        let target = selectedUTF16.isEmpty ? characterRange(before: selectedUTF16.lowerBound, from: 0) : selectedUTF16
+        guard let target else {
+            reset()
+            return [.backspace]
+        }
+        let change = replaceDocument(target, with: "")
+        if change.deleting == 1, change.text.isEmpty { return [.backspace] }
+        return Self.actions(change)
     }
 
     mutating func setMarkedText(_ markedText: String?, selectedRange: NSRange) -> [Action] {
         unmarkedCommit = nil
-        let earlier = takeUnsentPhrase()
         let next = markedText ?? ""
-        if next.isEmpty {
-            self.markedText = nil
-            refill()
-        } else {
-            self.markedText = next
-            text = next
-            let length = next.utf16.count
-            let location = min(max(selectedRange.location, 0), length)
-            let lengthInMarked = min(max(selectedRange.length, 0), length - location)
-            selectedUTF16 = location..<(location + lengthInMarked)
-            phrase = ""
-            sent = ""
-            phraseGeneration &+= 1
+        let change = replaceDocument(markedUTF16 ?? selectedUTF16, with: next, marking: true)
+        if let marked = markedUTF16 {
+            let location = min(max(selectedRange.location, 0), marked.count)
+            let length = min(max(selectedRange.length, 0), marked.count - location)
+            let start = marked.lowerBound + location
+            selectedUTF16 = start..<(start + length)
         }
-        return earlier
+        return Self.actions(change)
     }
 
     /// A commit already sent by `insertText` cleared the mark, so the
     /// `unmarkText` that follows it finds nothing and sends nothing.
     mutating func unmarkText(hardwareKeysDown: Bool) -> [Action] {
-        let committed = markedText
         unmarkedCommit = nil
-        refill()
-        guard !hardwareKeysDown, let committed, !committed.isEmpty else { return [] }
+        guard let marked = markedUTF16 else { return [] }
+        guard !hardwareKeysDown else {
+            reset()
+            return []
+        }
+        let committed = slice(marked)
+        let before = shellText
+        markedUTF16 = nil
+        selectedUTF16 = marked.upperBound..<marked.upperBound
+        let change = Self.change(from: before, to: shellText)
+        guard !committed.isEmpty else { return Self.actions(change) }
         unmarkedCommit = committed
         commitEchoGeneration &+= 1
+        guard change.deleting == 0, change.text == committed else { return Self.actions(change) }
         return [.insert(committed)]
     }
 
@@ -149,51 +140,60 @@ struct SSHTerminalTextInputStorage {
     }
 
     mutating func replace(utf16Range: Range<Int>, with string: String, hardwareKeysDown: Bool) -> [Action] {
-        if markedText != nil {
+        if markedUTF16 != nil {
             return setMarkedText(
                 string,
                 selectedRange: NSRange(location: string.utf16.count, length: 0)
             )
         }
         unmarkedCommit = nil
-        let fillerEnd = Self.filler.utf16.count
-        if !hardwareKeysDown, !phrase.isEmpty, utf16Range.lowerBound >= fillerEnd, utf16Range.upperBound <= utf16Count {
-            // Dictation revising its guess. What follows the sent text is
-            // the new unsent rest. A guess that rewrites sent text cannot be
-            // taken back from the shell, so that revision is dropped and
-            // later words continue from it.
-            let start = String.Index(utf16Offset: utf16Range.lowerBound - fillerEnd, in: phrase)
-            let stop = String.Index(utf16Offset: utf16Range.upperBound - fillerEnd, in: phrase)
-            var revised = phrase
-            revised.replaceSubrange(start..<stop, with: string)
-            let kept = sent
-            let generation = phraseGeneration
-            keepPhrase(revised)
-            phraseGeneration = generation
-            sent = revised.hasPrefix(kept) ? kept : revised
+        guard !hardwareKeysDown else {
+            reset()
             return []
         }
-        let earlier = takeUnsentPhrase()
-        refill()
-        guard !hardwareKeysDown else { return earlier }
-        if string.isEmpty { return earlier + [.backspace] }
-        return earlier + [.insert(string)]
+        // A range from before a reset (dictation still revising the guess
+        // it typed) no longer names text the shell has; clamped, it would
+        // type the guess a second time.
+        guard utf16Range.lowerBound >= 0, utf16Range.upperBound <= utf16Count else { return [] }
+        return Self.actions(replaceDocument(utf16Range, with: string))
     }
 
-    /// Outside a composition the caret stays after the filler, so ⌫ always
-    /// has a character to delete and keeps repeating. The space-bar trackpad
-    /// and hit tests would otherwise park it at 0, where UIKit stops deleting.
+    /// The caret stays at or after the filler, so ⌫ always has a character
+    /// to delete and keeps repeating. The space-bar trackpad and hit tests
+    /// would otherwise park it at 0, where UIKit stops deleting.
     mutating func select(utf16Range: Range<Int>) {
-        guard markedText != nil else { return }
+        let floor = markedUTF16 == nil ? fillerUTF16 : 0
         let end = utf16Count
-        let lower = min(max(utf16Range.lowerBound, 0), end)
-        let upper = min(max(utf16Range.upperBound, 0), end)
+        let lower = min(max(utf16Range.lowerBound, floor), end)
+        let upper = min(max(utf16Range.upperBound, floor), end)
         selectedUTF16 = min(lower, upper)..<max(lower, upper)
     }
 
+    /// Back to the filler alone. A commit echo still pending stays
+    /// guarded: the reset may come from sending that commit.
     mutating func reset() {
-        unmarkedCommit = nil
-        refill()
+        text = Self.filler
+        markedUTF16 = nil
+        fillerUTF16 = Self.filler.utf16.count
+        let end = text.utf16.count
+        selectedUTF16 = end..<end
+    }
+
+    /// Starts over after input that bypassed this document, keeping an
+    /// input method's composition and its caret: the composition is not in
+    /// the shell yet, and the input method is still editing it.
+    mutating func restart() {
+        guard let marked = markedUTF16 else {
+            reset()
+            return
+        }
+        let composition = slice(marked)
+        let caret = min(max(selectedUTF16.lowerBound, marked.lowerBound), marked.upperBound) - marked.lowerBound
+        reset()
+        let start = utf16Count
+        text += composition
+        markedUTF16 = start..<utf16Count
+        selectedUTF16 = (start + caret)..<(start + caret)
     }
 
     func text(in utf16Range: Range<Int>) -> String? {
@@ -201,28 +201,81 @@ struct SSHTerminalTextInputStorage {
         let lower = min(max(utf16Range.lowerBound, 0), end)
         let upper = min(max(utf16Range.upperBound, 0), end)
         guard lower <= upper else { return nil }
-        let start = String.Index(utf16Offset: lower, in: text)
-        let stop = String.Index(utf16Offset: upper, in: text)
-        return String(text[start..<stop])
+        return slice(lower..<upper)
     }
 
-    private mutating func keepPhrase(_ string: String) {
-        phrase = string
-        sent = ""
-        phraseGeneration &+= 1
-        text = Self.filler + string
+    /// What the shell has of this document: the text after the filler,
+    /// without an uncommitted composition.
+    private var shellText: String {
+        let start = fillerUTF16
+        guard let marked = markedUTF16 else { return slice(start..<utf16Count) }
+        return slice(start..<max(start, marked.lowerBound)) + slice(max(start, marked.upperBound)..<utf16Count)
+    }
+
+    /// Replaces `range` and returns what the shell needs to match. The caret
+    /// follows the edit as in a text field. `marking` makes `string` the
+    /// composition; otherwise any composition ends and `string` is typed.
+    private mutating func replaceDocument(
+        _ range: Range<Int>,
+        with string: String,
+        marking: Bool = false
+    ) -> (deleting: Int, text: String) {
         let end = utf16Count
-        selectedUTF16 = end..<end
+        var lower = min(max(range.lowerBound, 0), end)
+        var upper = min(max(range.upperBound, lower), end)
+        // Nothing the shell has comes before the filler, so text put in
+        // there goes after it.
+        if lower == upper, lower < fillerUTF16 {
+            lower = fillerUTF16
+            upper = fillerUTF16
+        }
+        let before = shellText
+        // An edit that takes the filler deletes the shell's character it
+        // stands for.
+        let tookFiller = lower < fillerUTF16
+        text = slice(0..<lower) + string + slice(upper..<end)
+        let inserted = string.utf16.count
+        let delta = inserted - (upper - lower)
+        if upper <= selectedUTF16.lowerBound {
+            selectedUTF16 = (selectedUTF16.lowerBound + delta)..<(selectedUTF16.upperBound + delta)
+        } else if lower < selectedUTF16.upperBound {
+            selectedUTF16 = (lower + inserted)..<(lower + inserted)
+        }
+        markedUTF16 = marking && inserted > 0 ? lower..<(lower + inserted) : nil
+        if tookFiller { fillerUTF16 = 0 }
+        let change = tookFiller
+            ? (deleting: before.count + 1, text: shellText)
+            : Self.change(from: before, to: shellText)
+        if text.isEmpty { reset() }
+        return change
     }
 
-    private mutating func refill() {
-        text = Self.filler
-        markedText = nil
-        phrase = ""
-        sent = ""
-        phraseGeneration &+= 1
-        let end = text.utf16.count
-        selectedUTF16 = end..<end
+    /// One backspace per character (grapheme), as ⌫ sends: agent editors
+    /// such as pi delete a grapheme per backspace. readline deletes a code
+    /// point, so a rewritten emoji with a modifier can leave a stray one.
+    private static func change(from old: String, to new: String) -> (deleting: Int, text: String) {
+        let common = zip(old, new).prefix { $0 == $1 }.count
+        return (old.count - common, String(new.dropFirst(common)))
+    }
+
+    private static func actions(_ change: (deleting: Int, text: String)) -> [Action] {
+        guard change.deleting > 0 || !change.text.isEmpty else { return [] }
+        return [.edit(deleting: change.deleting, text: change.text)]
+    }
+
+    /// The last character before `offset`, not reaching before `floor`.
+    private func characterRange(before offset: Int, from floor: Int) -> Range<Int>? {
+        guard offset > floor else { return nil }
+        let head = slice(floor..<offset)
+        guard let last = head.last else { return nil }
+        return (offset - String(last).utf16.count)..<offset
+    }
+
+    private func slice(_ range: Range<Int>) -> String {
+        let units = text.utf16
+        let start = units.index(units.startIndex, offsetBy: range.lowerBound)
+        let stop = units.index(units.startIndex, offsetBy: range.upperBound)
+        return String(decoding: units[start..<stop], as: UTF16.self)
     }
 }
 
@@ -373,8 +426,8 @@ extension SSHTerminalGridView {
     }
 
     var markedTextRange: UITextRange? {
-        guard textInputStorage.markedText != nil else { return nil }
-        return SSHTerminalTextRange(0, textInputStorage.utf16Count)
+        guard let marked = textInputStorage.markedUTF16 else { return nil }
+        return SSHTerminalTextRange(marked.lowerBound, marked.upperBound)
     }
 
     var beginningOfDocument: UITextPosition { SSHTerminalTextPosition(0) }
@@ -475,7 +528,8 @@ extension SSHTerminalGridView {
     // move the dummy caret, so the trackpad cannot stop held ⌫ from
     // repeating. A composition in progress keeps its own caret.
     func beginFloatingCursor(at point: CGPoint) {
-        guard textInputStorage.markedText == nil, finishPhrase() else { return }
+        guard textInputStorage.markedUTF16 == nil else { return }
+        resetTextInput()
         trackpadArrows.begin(at: point)
     }
 

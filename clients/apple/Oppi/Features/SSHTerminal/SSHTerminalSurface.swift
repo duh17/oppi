@@ -95,7 +95,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// same press and must not send again. Ended or cancelled presses are
     /// ignored so a stale UIPress cannot swallow software ⌫ repeats.
     private var hardwarePresses = Set<UIPress>()
-    /// Dummy document the software keyboard deletes from; never echoed.
+    /// The keyboard's document, kept equal to what it typed into the shell.
     var textInputStorage = SSHTerminalTextInputStorage()
     weak var inputDelegate: UITextInputDelegate?
     var markedTextStyle: [NSAttributedString.Key: Any]?
@@ -108,7 +108,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private var repeatingPress: UIPress?
     var trackpadArrows = SSHTerminalTrackpadArrows()
     private var deleteAcceleration = SSHTerminalDeleteAcceleration()
-    private var phraseCommit: Task<Void, Never>?
     /// The highlighted selection, while a drag or its copy highlight shows.
     private var shownSelection: SSHTerminalSelectionSnapshot?
     private lazy var shortcutCommands: [UIKeyCommand] = SSHTerminalHardwareShortcut.allCases.map { shortcut in
@@ -248,7 +247,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             channel.copyLocalSelection(selection.text)
             showHighlight(selection, lingering: true)
         case .clearScreen:
-            guard finishPhrase() else { return }
+            resetTextInput()
             clearHighlight()
             channel.clearScreen()
             syncHistoryScrollFromEngine()
@@ -286,8 +285,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 
     @objc private func sceneResignedActive() {
-        // Into the SSH queue before Oppi may be suspended.
-        finishPhrase()
         sceneActive = false
         stopDisplayLink()
     }
@@ -493,56 +490,61 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         applyTextInput(textInputStorage.deleteBackward(hardwareKeysDown: ignoresSoftwareKeyEcho))
     }
 
-    /// Writes what the text document produced, in order. Returns false when
-    /// text went to paste confirmation: nothing after it in this batch is
-    /// sent, so a key that followed a phrase cannot run the line without it.
-    @discardableResult
-    func applyTextInput(_ actions: [SSHTerminalTextInputStorage.Action]) -> Bool {
-        defer {
-            // Only a dictation revision leaves text waiting; a refused write
-            // waits for the next input instead of retrying on a timer.
-            if actions.isEmpty { schedulePhraseSettle() }
-            if !actions.isEmpty { showModifiers() }
-        }
+    /// Writes what the keyboard's document produced. Whenever the shell's
+    /// line stops matching the document (Return, Tab, a key a one-shot
+    /// modifier changed, a word delete, text sent to paste confirmation),
+    /// the document starts over.
+    func applyTextInput(_ actions: [SSHTerminalTextInputStorage.Action]) {
+        guard !actions.isEmpty else { return }
+        defer { showModifiers() }
         for action in actions {
             switch action {
             case .insert(let text):
                 deleteAcceleration.reset()
-                // Writing Tools and system replacements can hand over text
-                // at once. A lone Return is Enter; any other text that could
-                // run a command takes the paste confirmation.
+                // A lone Return is Enter; any other text that could run a
+                // command takes the paste confirmation.
                 if text != "\n", text != "\r", SSHTerminalEngine.pasteNeedsConfirmation(text) {
                     requestPaste(text)
-                    return false
+                    resetTextInput()
+                    return
                 }
+                let modified = channel.modifierLatch.modifiers != 0
                 for character in text {
                     let piece = String(character)
                     let key = Self.logicalKey(piece)
                     channel.key(key, text: key == GHOSTTY_KEY_ENTER || key == GHOSTTY_KEY_TAB ? "" : piece)
                 }
-            case .phrase(let text, let generation):
+                if modified || text.contains(where: { $0.isNewline || $0 == "\t" }) { resetTextInput() }
+            case .edit(let deleting, let text):
                 deleteAcceleration.reset()
-                // A newline anywhere in a phrase, even alone, asks first.
-                if SSHTerminalEngine.pasteNeedsConfirmation(text) || text.contains(where: \.isNewline) {
-                    requestPaste(text)
-                    textInputStorage.phraseSent(text, generation: generation)
-                    return false
-                }
                 // One write without the one-shot latch: a modifier armed for
                 // the next key must not turn the first letter into Ctrl-C.
-                var bytes = Data()
+                var bytes = SSHTerminalScrollCoalescing.encodeRepeated(deleting) {
+                    channel.engine.key(GHOSTTY_KEY_BACKSPACE)
+                }
+                // A newline anywhere in the text, even alone, asks first.
+                if SSHTerminalEngine.pasteNeedsConfirmation(text) || text.contains(where: \.isNewline) {
+                    if !bytes.isEmpty { channel.send(bytes) }
+                    requestPaste(text)
+                    resetTextInput()
+                    return
+                }
                 for character in text {
                     let piece = String(character)
                     let key = Self.logicalKey(piece)
                     bytes.append(channel.engine.key(key, text: key == GHOSTTY_KEY_TAB ? "" : piece))
                 }
-                if channel.send(bytes) { textInputStorage.phraseSent(text, generation: generation) }
+                channel.send(bytes)
+                if text.contains("\t") { resetTextInput() }
             case .backspace:
                 let word = deleteAcceleration.softwareDeletesWord(at: CACurrentMediaTime())
+                // A one-shot Alt or Ctrl makes ⌫ another key (Alt-⌫ deletes
+                // a word in readline), so the document starts over.
+                let modified = channel.modifierLatch.modifiers != 0
                 sendBackspace(word: word)
+                if word || modified { resetTextInput() }
             }
         }
-        return true
     }
 
     /// A word delete is Ctrl-W, encoded for the app's keyboard protocol, and
@@ -569,45 +571,25 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         channel.send(bytes)
     }
 
-    /// Words a dictation revision added go to the shell once iOS stops
-    /// revising them for `phraseSettleDelay`. The phrase stays so dictation
-    /// can add to it.
-    func settlePhrase() {
-        phraseCommit?.cancel()
-        phraseCommit = nil
-        applyTextInput(textInputStorage.takeUnsentPhrase())
+    /// Input that bypasses the keyboard's document may change the shell's
+    /// line or move its cursor, so the document starts over, and the
+    /// keyboard is told so it stops editing text that is gone. A
+    /// composition in progress is the input method's and stays.
+    func resetTextInput() {
+        var restarted = textInputStorage
+        restarted.restart()
+        guard restarted != textInputStorage else { return }
+        inputDelegate?.selectionWillChange(self)
+        inputDelegate?.textWillChange(self)
+        textInputStorage = restarted
+        inputDelegate?.textDidChange(self)
+        inputDelegate?.selectionDidChange(self)
     }
 
-    /// Before input that bypasses the text document reaches the shell, the
-    /// dictated words go first and the phrase ends. Returns false when they
-    /// went to paste confirmation; the caller then sends nothing.
-    @discardableResult
-    func finishPhrase() -> Bool {
-        phraseCommit?.cancel()
-        phraseCommit = nil
-        return applyTextInput(textInputStorage.finishPhrase())
-    }
-
-    /// Dictation revises its guess several times a second while you speak.
-    static let phraseSettleDelay: Duration = .milliseconds(1500)
-
-    private func schedulePhraseSettle() {
-        phraseCommit?.cancel()
-        phraseCommit = nil
-        guard textInputStorage.hasUnsentPhrase else { return }
-        phraseCommit = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: Self.phraseSettleDelay)
-            guard !Task.isCancelled else { return }
-            self?.settlePhrase()
-        }
-    }
-
-    @discardableResult
-    private func accessoryKey(_ key: GhosttyKey) -> Bool {
-        guard finishPhrase() else { return false }
+    private func accessoryKey(_ key: GhosttyKey) {
+        resetTextInput()
         channel.key(key)
         showModifiers()
-        return true
     }
     func showModifiers() {
         keyStrip?.showModifiers()
@@ -664,7 +646,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             window?.endEditing(true)
         case .mouseClick:
             cancelHideKeyboard()
-            guard finishPhrase() else { return }
+            resetTextInput()
             let cell = self.cell(at: point)
             channel.mouse(.click, column: cell.column, row: cell.row)
         case .focusChatBar:
@@ -726,14 +708,15 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
     /// The edit menu's Paste. iOS grants that read without the Allow Paste alert.
     override func paste(_ sender: Any?) {
-        guard !ignoresSoftwareKeyEcho, finishPhrase() else { return }
+        guard !ignoresSoftwareKeyEcho else { return }
+        resetTextInput()
         requestPaste(UIPasteboard.general.string)
     }
 
     /// The accessory bar's UIPasteControl. Its tap is the consent, so there is
     /// no alert, and the text loads off the main thread.
     override func paste(itemProviders: [NSItemProvider]) {
-        guard finishPhrase() else { return }
+        resetTextInput()
         guard let provider = itemProviders.first(where: { $0.canLoadObject(ofClass: String.self) }) else {
             requestPaste(nil)
             return
@@ -744,7 +727,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
     override func resignFirstResponder() -> Bool {
         hardwarePresses.removeAll()
-        finishPhrase()
         textInputStorage.reset()
         deleteAcceleration.reset()
         trackpadArrows.end()
@@ -758,12 +740,10 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         var unhandled = Set<UIPress>()
-        // A phrase sent to paste confirmation takes the keys that ended it.
-        let phraseHeld = presses.contains { $0.key != nil } && !finishPhrase()
+        if presses.contains(where: { $0.key != nil }) { resetTextInput() }
         for press in presses {
             guard let key = press.key else { unhandled.insert(press); continue }
             hardwarePresses.insert(press)
-            if phraseHeld { continue }
             // Modifier keys alone (HID 0xE0...0xE7) send nothing and must not
             // spend the one-shot modifiers.
             if (0xE0...0xE7).contains(key.keyCode.rawValue) { continue }
@@ -855,10 +835,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             dragSnapshot = nil
             switch target {
             case .mouse:
-                guard finishPhrase() else {
-                    dragTarget = nil
-                    break
-                }
+                resetTextInput()
                 channel.mouse(.press, column: cell.column, row: cell.row)
             case .selection:
                 channel.engine.beginSelection(column: cell.column, row: cell.row, surfacePoint: surface)
@@ -924,13 +901,8 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         guard scrollView === historyScroll else { return }
-        // Local history sends nothing, and dictation needs its guess kept.
-        // A drag the app receives goes after the phrase, or not at all.
-        if channel.engine.scrollAction != .history, !finishPhrase() {
-            let pan = scrollView.panGestureRecognizer
-            pan.isEnabled = false
-            pan.isEnabled = true
-        }
+        // Local history sends nothing, so dictation keeps its document.
+        if channel.engine.scrollAction != .history { resetTextInput() }
         appScroll.resetGesture()
         if channel.engine.scrollAction == .history {
             // The grid already follows the finger; the first drag callback
@@ -1347,19 +1319,19 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             role: .accessory,
             handlers: SSHTerminalKeyStripView.Handlers(
                 sendStrokes: { [weak self] strokes in
-                    guard let self, self.finishPhrase() else { return }
+                    guard let self else { return }
+                    self.resetTextInput()
                     self.channel.keys(strokes)
                 },
                 sendKey: { [weak self] key in self?.accessoryKey(key) },
                 sendArrow: { [weak self] key in
                     guard let self, self.isFirstResponder, self.channel.connected,
                           !self.channel.inputClosed else { return false }
-                    return self.accessoryKey(key)
+                    self.accessoryKey(key)
+                    return true
                 },
                 toggleModifier: { [weak self] modifier in
                     guard let self else { return }
-                    // Dictated words go first, so the latch is for the next key.
-                    self.finishPhrase()
                     self.channel.modifierLatch.toggle(modifier)
                     self.showModifiers()
                 },

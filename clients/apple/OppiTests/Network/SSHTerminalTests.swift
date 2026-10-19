@@ -544,8 +544,8 @@ struct SSHTerminalTests {
         let input = grid as UITextInput
         var bytes = fixture.bytes.makeAsyncIterator()
         // Writing Tools and similar system edits replace a range.
-        let whole = try #require(input.textRange(from: input.beginningOfDocument, to: input.endOfDocument))
-        input.replace(whole, withText: "ls\n")
+        let caret = try #require(input.textRange(from: input.endOfDocument, to: input.endOfDocument))
+        input.replace(caret, withText: "ls\n")
         // Dictation can insert a phrase in one call.
         input.insertText("echo hi\nrm -rf build")
         input.insertText("\u{1b}[A")
@@ -560,37 +560,36 @@ struct SSHTerminalTests {
         channel.close(reason: "done")
     }
 
-    @Test func aKeyAfterADictatedPhraseThatAsksFirstIsNotSent() async throws {
+    /// Dictation revises its guess while you speak. Each revision reaches the
+    /// shell at once as one write: backspaces back to the first changed
+    /// character, then the rest of the new guess.
+    @Test func dictationRevisionsReachTheShellAtOnce() async throws {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()
         channel.opened(fixture)
         var pasted = [String?]()
         let grid = SSHTerminalGridView(channel: channel, paste: { pasted.append($0) }, followChanged: { _ in })
+        let input = grid as UITextInput
         var bytes = fixture.bytes.makeAsyncIterator()
-        grid.insertText("echo")
-        #expect(await bytes.next() == Data("echo".utf8))
-        // Dictation revises its guess; the new words wait.
-        let end = grid.textInputStorage.utf16Count
-        grid.applyTextInput(grid.textInputStorage.replace(
-            utf16Range: (end - 4)..<end, with: "echo hi\nrm -rf build", hardwareKeysDown: false
-        ))
-        #expect(pasted.isEmpty)
-        // Return ends the phrase. The phrase asks first; Return is not sent.
-        grid.insertText("\n")
-        #expect(pasted == [" hi\nrm -rf build"])
-        #expect(channel.key(GHOSTTY_KEY_X, text: "x"))
-        #expect(await bytes.next() == Data("x".utf8))
-        // Nor does a key strip key or a paste go out behind a waiting phrase.
-        grid.insertText("ls")
-        #expect(await bytes.next() == Data("ls".utf8))
-        let next = grid.textInputStorage.utf16Count
-        grid.applyTextInput(grid.textInputStorage.replace(
-            utf16Range: (next - 2)..<next, with: "ls\n", hardwareKeysDown: false
-        ))
-        #expect(!grid.finishPhrase())
-        #expect(pasted == [" hi\nrm -rf build", "\n"])
-        #expect(channel.key(GHOSTTY_KEY_Y, text: "y"))
-        #expect(await bytes.next() == Data("y".utf8))
+        func revise(_ last: String, _ next: String) throws {
+            let start = try #require(input.position(from: input.endOfDocument, offset: -last.utf16.count))
+            let range = try #require(input.textRange(from: start, to: input.endOfDocument))
+            #expect(input.text(in: range) == last)
+            input.replace(range, withText: next)
+        }
+        input.insertText("hello")
+        #expect(await bytes.next() == Data("hello".utf8))
+        try revise("hello", "hello there")
+        #expect(await bytes.next() == Data(" there".utf8))
+        try revise("hello there", "Hello there")
+        #expect(await bytes.next() == Data(repeating: 127, count: 11) + Data("Hello there".utf8))
+        // A revision that adds a new line asks first, after the backspaces.
+        try revise("Hello there", "Hello\nrm -rf build")
+        #expect(await bytes.next() == Data(repeating: 127, count: 6))
+        #expect(pasted == ["\nrm -rf build"])
+        // The document started over, so the next guess goes after it.
+        let whole = try #require(input.textRange(from: input.beginningOfDocument, to: input.endOfDocument))
+        #expect(input.text(in: whole) == SSHTerminalTextInputStorage.filler)
         channel.close(reason: "done")
     }
 
@@ -609,42 +608,23 @@ struct SSHTerminalTests {
         grid.applyTextInput(grid.textInputStorage.replace(
             utf16Range: (end - 5)..<end, with: "clear screen", hardwareKeysDown: false
         ))
-        grid.settlePhrase()
         #expect(await bytes.next() == Data(" screen".utf8))
         #expect(channel.modifierLatch.isArmed(ctrl))
         // The key the modifier was armed for still gets it.
         grid.insertText("c")
         #expect(await bytes.next() == Data([3]))
         #expect(channel.modifierLatch.modifiers == 0)
+        // Ctrl-C is not the "c" the document holds; it starts over.
+        #expect(grid.textInputStorage.text == SSHTerminalTextInputStorage.filler)
+        // Alt-⌫ deletes a word in readline, not the character the
+        // document would drop, so it starts over too.
+        grid.insertText("ls")
+        #expect(await bytes.next() == Data("ls".utf8))
+        channel.modifierLatch.toggle(GhosttyMods(GHOSTTY_MODS_ALT))
+        grid.deleteBackward()
+        #expect(await bytes.next() == Data("\u{1b}\u{7f}".utf8))
+        #expect(grid.textInputStorage.text == SSHTerminalTextInputStorage.filler)
         channel.close(reason: "done")
-    }
-
-    @Test func dictatedWordsGoBeforeOppiLeavesTheForegroundAndStayUnsentWhenRefused() async throws {
-        let fixture = TerminalConnectionFixture()
-        let channel = try SSHTerminalChannel()
-        channel.opened(fixture)
-        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
-        let mounted = try MountedTerminalTestGrid(grid)
-        defer { mounted.dismiss() }
-        var bytes = fixture.bytes.makeAsyncIterator()
-        func revise(_ last: String, _ next: String) {
-            let end = grid.textInputStorage.utf16Count
-            grid.applyTextInput(grid.textInputStorage.replace(
-                utf16Range: (end - last.utf16.count)..<end, with: next, hardwareKeysDown: false
-            ))
-        }
-        grid.insertText("hello")
-        #expect(await bytes.next() == Data("hello".utf8))
-        revise("hello", "hello there")
-        NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
-        #expect(await bytes.next() == Data(" there".utf8))
-        // A write the closed channel refuses is not counted as sent.
-        grid.insertText("bye")
-        _ = await bytes.next()
-        revise("bye", "bye now")
-        channel.close(reason: "done")
-        grid.settlePhrase()
-        #expect(grid.textInputStorage.hasUnsentPhrase)
     }
 
     @Test func softwareDeleteKeepsRepeatingAfterTheCaretIsMoved() async throws {
