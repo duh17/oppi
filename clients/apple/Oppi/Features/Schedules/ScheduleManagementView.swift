@@ -172,6 +172,23 @@ struct ScheduleManagementView: View {
 
 }
 
+extension ScheduleManagementView {
+    /// Prettifies only the leading error code. Detail after the first `:` is
+    /// server data (extension ids, skill paths) and must pass through unchanged.
+    nonisolated static func runErrorSummary(_ error: String?) -> String? {
+        guard let error, !error.isEmpty else { return nil }
+        if error.contains("approval_required_noninteractive") {
+            return "Approval required — this action can’t run unattended."
+        }
+        guard let colon = error.firstIndex(of: ":") else {
+            return error.replacingOccurrences(of: "_", with: " ")
+        }
+        let code = error[..<colon].replacingOccurrences(of: "_", with: " ")
+        let detail = error[error.index(after: colon)...].drop { $0 == " " }
+        return "\(code): \(detail)"
+    }
+}
+
 private struct ScheduleSummaryCard: View {
     let schedule: AgentScheduleSummary
 
@@ -780,13 +797,7 @@ private struct ScheduleRunRow: View {
     }
 
     private var errorSummary: String? {
-        guard let error = run.error, !error.isEmpty else { return nil }
-        if error.contains("approval_required_noninteractive") {
-            return "Approval required — this action can’t run unattended."
-        }
-        return error
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: ":", with: ": ")
+        ScheduleManagementView.runErrorSummary(run.error)
     }
 
     private var runSourceLabel: String {
