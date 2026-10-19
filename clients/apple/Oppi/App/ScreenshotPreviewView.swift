@@ -639,8 +639,24 @@ struct RouterPreviewStack<Content: View>: UIViewControllerRepresentable {
 /// screens that rely on UIKit bars and the navigator host them here; the app
 /// root comes from the window. `content` runs in the screen's own graph: put
 /// its fixture environment on it, not on this view.
-struct RouterPreviewNavigation<Content: View>: UIViewControllerRepresentable {
+///
+/// The app puts the theme's appearance on its window (`AppRootViewController`),
+/// and system chrome that reads the window rather than the screen, such as the
+/// Duo's vertical rail, follows it there. A harness's window keeps the system
+/// appearance, which drew a light rail beside a dark chat, so this host
+/// asks for the theme's color scheme the same way.
+struct RouterPreviewNavigation<Content: View>: View {
     @ViewBuilder let content: () -> Content
+    @Environment(\.appRootEnvironment) private var root
+
+    var body: some View {
+        RouterPreviewNavigationHost(content: content)
+            .preferredColorScheme(root?.themeStore.preferredColorScheme)
+    }
+}
+
+private struct RouterPreviewNavigationHost<Content: View>: UIViewControllerRepresentable {
+    let content: () -> Content
     @Environment(\.appRootEnvironment) private var root
 
     func makeUIViewController(context: Context) -> RouterNavigationController {
