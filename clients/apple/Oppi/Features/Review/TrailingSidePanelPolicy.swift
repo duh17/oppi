@@ -124,6 +124,8 @@ final class TrailingColumnController: UIViewController {
     /// trailing inset this column added to it.
     private weak var host: UIViewController?
     private var hostInset: CGFloat = 0
+    /// The hosted screen beside the column while it is attached.
+    private weak var screen: HostedScreenController?
     private var isOnScreen = false
 
     override func loadView() {
@@ -131,6 +133,18 @@ final class TrailingColumnController: UIViewController {
         view.backgroundColor = .clear
         view.isUserInteractionEnabled = false
         self.view = view
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        for name in [UITextField.textDidBeginEditingNotification, UITextView.textDidBeginEditingNotification] {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(inputBeganEditing(_:)),
+                name: name,
+                object: nil
+            )
+        }
     }
 
     func show(_ panel: Panel?, root: AppRootEnvironment?) {
@@ -216,22 +230,29 @@ final class TrailingColumnController: UIViewController {
     /// hosts the column itself. A harness with no hosted screen uses its top
     /// ancestor.
     private var hostController: UIViewController? {
-        var candidate = parent
-        while let current = candidate {
-            if let screen = current as? HostedScreenController {
-                return screen.navigationController ?? screen
-            }
-            candidate = current.parent
+        if let screen = owningScreen {
+            return screen.navigationController ?? screen
         }
         var top: UIViewController = self
         while let parent = top.parent { top = parent }
         return top === self ? nil : top
     }
 
+    /// The hosted screen that asked for this column.
+    private var owningScreen: HostedScreenController? {
+        var candidate = parent
+        while let current = candidate {
+            if let screen = current as? HostedScreenController { return screen }
+            candidate = current.parent
+        }
+        return nil
+    }
+
     private func attach() {
         guard isOnScreen, let overlay, let container, overlay.superview == nil,
               let host = hostController else { return }
         self.host = host
+        screen = owningScreen
         host.addChild(container)
         overlay.frame = host.view.bounds
         overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -258,7 +279,29 @@ final class TrailingColumnController: UIViewController {
             }
         }
         makeRoom(for: 0)
+        screenFollowsKeyboard(true)
+        screen = nil
         self.host = nil
+    }
+
+    /// The keyboard spans the window, so a field in the panel (the Outline's
+    /// search) lifted the composer and pills of the chat beside it over its
+    /// timeline. While the column is up, the screen follows the keyboard only
+    /// for its own inputs; the panel avoids the keyboard itself. An input
+    /// begins editing before the keyboard moves, so the screen is settled
+    /// when it does.
+    @objc private func inputBeganEditing(_ notification: Notification) {
+        guard let screen, let input = notification.object as? UIView,
+              let window = screen.viewIfLoaded?.window, input.window === window else { return }
+        screenFollowsKeyboard(input.isDescendant(of: screen.view))
+    }
+
+    private func screenFollowsKeyboard(_ follows: Bool) {
+        guard let screen else { return }
+        let regions: SafeAreaRegions = follows ? .all : .container
+        if screen.safeAreaRegions != regions {
+            screen.safeAreaRegions = regions
+        }
     }
 
     /// Insets the host's safe area so the screen's bar items and content stop

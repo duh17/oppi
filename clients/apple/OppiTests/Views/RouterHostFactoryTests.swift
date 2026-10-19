@@ -508,12 +508,65 @@ struct RouterHostFactoryTests {
         })
     }
 
+
+    /// The keyboard spans the window. A field in the trailing column lifted
+    /// the chat's composer beside it over the timeline; the screen's own
+    /// field still moves it, and closing the column gives the keyboard back.
+    @Test("a trailing column's field leaves the screen beside it in place")
+    func trailingColumnFieldLeavesTheScreenInPlace() async throws {
+        let state = RouteState()
+        let panelField = UITextField()
+        let screen = HostFactory.screen(root: makeTestAppRoot()) {
+            ColumnScreen(state: state, panelField: panelField)
+        }
+        let window = try showInWindow(RouterNavigationController(rootViewController: screen))
+        defer { hide(window) }
+        let screenField = UITextField()
+        screen.view.addSubview(screenField)
+
+        state.item = RouteItem(id: "panel")
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { panelField.window === window })
+
+        beginEditing(panelField)
+        #expect(screen.safeAreaRegions == .container)
+        beginEditing(screenField)
+        #expect(screen.safeAreaRegions == .all)
+        beginEditing(panelField)
+        #expect(screen.safeAreaRegions == .container)
+
+        state.item = nil
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { panelField.window == nil })
+        #expect(screen.safeAreaRegions == .all)
+    }
+}
+
+/// What UIKit posts as `field` becomes first responder.
+@MainActor
+private func beginEditing(_ field: UITextField) {
+    NotificationCenter.default.post(name: UITextField.textDidBeginEditingNotification, object: field)
 }
 
 // MARK: - Fixtures
 
 private struct RouteItem: Identifiable {
     let id: String
+}
+
+/// A screen with a trailing column whose UIKit panel holds `panelField`.
+private struct ColumnScreen: View {
+    @Bindable var state: RouteState
+    let panelField: UITextField
+
+    var body: some View {
+        Text("Screen")
+            .routerTrailingColumn(item: state.item, minWidth: 100, idealWidth: 150, screen: { _ in
+                .controller {
+                    let panel = UIViewController()
+                    panel.view.addSubview(panelField)
+                    return panel
+                }
+            })
+    }
 }
 
 @MainActor @Observable
