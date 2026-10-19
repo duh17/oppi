@@ -82,9 +82,6 @@ struct ChatCoveredLifetimeTests {
             sessionId: "incognito", serverId: nil, scope: nil, apiClient: nil,
             sessionStore: store, navigation: navigation
         )
-        let cancelled = IncognitoRouteWatch()
-        cancelled.cancel()
-        end.endWhenRouteDrops(cancelled)
         end.endWhenRouteDrops(IncognitoRouteWatch())
 
         navigation.openChatReader(ChatReaderNavTarget(id: UUID()))

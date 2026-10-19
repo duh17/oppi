@@ -184,7 +184,7 @@ final class ChatViewController: UIViewController {
     /// straight onto a stack (`pushChat`) never ends an incognito session.
     private var isRouteManaged = false
     /// Watches the route for an incognito chat hidden while still in it, so a
-    /// later change that drops the session ends it. Cancelled when the chat shows again.
+    /// later change that drops the session ends it. Cancelled when this chat shows again.
     private var incognitoRouteWatch: IncognitoRouteWatch?
     nonisolated(unsafe) private var notificationObservers: [NSObjectProtocol] = []
     private var cachedReviewCommentRouter: (templates: [UUID], router: ReviewCommentSelectionRouter)?
@@ -2643,11 +2643,10 @@ private struct ChatTimelineChromeKey: Equatable {
     let reviewTemplates: [UUID]
 }
 
-/// Ends an incognito session whose chat was left: the server stops and
-/// deletes it, and this device drops its row, cached trace, and lock, so it
-/// shows in no list. A failed delete leaves it on the server, and the next
-/// list sync shows it again.
-/// Cancelled when its chat shows again, so the session it watches stays.
+/// Cancelled when the chat that started it shows again, so the session it
+/// watches stays. A stack/split swap remounts the chat in a new controller and
+/// leaves the old controller's watch running; when the session is later left,
+/// both end it, and the second delete's 404 counts as done.
 @MainActor
 final class IncognitoRouteWatch {
     private(set) var isCancelled = false
@@ -2657,6 +2656,10 @@ final class IncognitoRouteWatch {
     }
 }
 
+/// Ends an incognito session whose chat was left: the server stops and
+/// deletes it, and this device drops its row, cached trace, and lock, so it
+/// shows in no list. A failed delete leaves it on the server, and the next
+/// list sync shows it again.
 @MainActor
 struct IncognitoSessionEnd: Sendable {
     let sessionId: String
