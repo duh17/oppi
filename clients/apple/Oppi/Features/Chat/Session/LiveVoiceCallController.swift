@@ -283,16 +283,18 @@ final class LiveVoiceCallController {
     }
 
     private static func statusText(for snapshot: VoiceCallStateSnapshot) -> String {
-        if let blocked = snapshot.delegations.last(where: { $0.state == .blocked }),
-           let text = blocked.latestText, !text.isEmpty {
-            return text
-        }
         if snapshot.frontend == .detached {
             return "Reconnecting"
         }
+        // What the user is saying right now wins over any older outcome.
         let partial = snapshot.partialTranscript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !partial.isEmpty {
             return partial
+        }
+        // Only the newest request's failure is news; a later request supersedes an old one.
+        if let latest = snapshot.delegations.last, latest.state == .blocked,
+           let text = latest.latestText, !text.isEmpty {
+            return text
         }
         return "Listening"
     }

@@ -117,6 +117,31 @@ struct LiveVoiceCallControllerTests {
         #expect(attachPayload(harness.channel.sent.last)?.0 == "call-1")
     }
 
+    @Test("An old stopped request does not hide what the user is saying now")
+    func oldBlockedRequestDoesNotStick() async throws {
+        let harness = try await startedHarness()
+        let stopped = Self.delegation("d-1", .blocked, "Stopped.")
+
+        harness.channel.emit(.voiceCallState(Self.snapshot(
+            callId: "call-1", eventSeq: 2, leaseEpoch: 1, delegations: [stopped]
+        )))
+        await waitUntil { harness.controller.statusText == "Stopped." }
+
+        harness.channel.emit(.voiceCallState(Self.snapshot(
+            callId: "call-1", eventSeq: 3, leaseEpoch: 1,
+            partialTranscript: "check the server tests", delegations: [stopped]
+        )))
+        await waitUntil { harness.controller.statusText == "check the server tests" }
+        #expect(harness.controller.statusText == "check the server tests")
+
+        harness.channel.emit(.voiceCallState(Self.snapshot(
+            callId: "call-1", eventSeq: 4, leaseEpoch: 1,
+            delegations: [stopped, Self.delegation("d-2", .completed, "All passed.")]
+        )))
+        await waitUntil { harness.controller.callState?.eventSeq == 4 }
+        #expect(harness.controller.statusText == "Listening")
+    }
+
     @Test("Keepalive uses the current lease and never invents a device id")
     func keepaliveUsesCurrentLease() async throws {
         let harness = try await startedHarness()
@@ -580,7 +605,8 @@ struct LiveVoiceCallControllerTests {
         callId: String,
         eventSeq: Int,
         leaseEpoch: Int,
-        partialTranscript: String? = nil
+        partialTranscript: String? = nil,
+        delegations: [VoiceCallDelegationSnapshot] = []
     ) -> VoiceCallStateSnapshot {
         VoiceCallStateSnapshot(
             callId: callId,
@@ -592,9 +618,24 @@ struct LiveVoiceCallControllerTests {
             eventSeq: eventSeq,
             startedAt: 1_000,
             updatedAt: 2_000,
-            delegations: [],
+            delegations: delegations,
             pendingApprovals: [],
             partialTranscript: partialTranscript
+        )
+    }
+
+    private static func delegation(
+        _ id: String,
+        _ state: VoiceCallDelegationState,
+        _ text: String
+    ) -> VoiceCallDelegationSnapshot {
+        VoiceCallDelegationSnapshot(
+            delegationId: id,
+            utteranceId: "u-\(id)",
+            request: "request \(id)",
+            state: state,
+            createdAt: 1_000,
+            latestText: text
         )
     }
 }
