@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// Live edit sessions by identity. Reopening a file while a save is in flight
 /// reuses that session, so one file never has two writers with different base
@@ -229,7 +230,11 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         keyBar.onKey = { [weak self] key in self?.press(key) }
         keyBar.onHideKeyboard = { [weak self] in self?.textView.resignFirstResponder() }
         vim.buffer = self
-        vim.onYank = { text in UIPasteboard.general.string = text }
+        // Device-local: a yank never travels to other devices over Universal Clipboard.
+        vim.onYank = { text in
+            UIPasteboard.general.setItems([[UTType.utf8PlainText.identifier: text]], options: [.localOnly: true])
+        }
+        textView.onFloatingCursorChange = { [weak self] _ in self?.vimStateDidChange(scrolls: false) }
 
         view.addSubview(textView)
         view.addSubview(statusBar)
@@ -248,6 +253,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
             style: highlightStyle,
             isEnabled: preferences.highlightsSyntax
         )
+        appliedTabWidth = indentation.width
         applyColors()
         session.attachEditor { [weak textView] in textView?.text ?? "" }
         NotificationCenter.default.addObserver(
@@ -273,7 +279,6 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         textView.highlightsCurrentLine = preferences.highlightsCurrentLine
         textView.wrapsLines = preferences.wrapsLines
         highlighter?.isEnabled = preferences.highlightsSyntax
-        _ = preferences.closesBrackets
         if indentation.width != appliedTabWidth {
             appliedTabWidth = indentation.width
             highlighter?.restyle(highlightStyle)
@@ -336,13 +341,13 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
 
     // MARK: - Buffer edits
 
-    /// One undoable replace through the text view, reported like typing.
+    /// One undoable replace through the text view. `replace` reports
+    /// `textViewDidChange` itself, so the session hears it like typing.
     private func replace(_ range: NSRange, with text: String) {
         guard let start = textView.position(from: textView.beginningOfDocument, offset: range.location),
               let end = textView.position(from: start, offset: range.length),
               let textRange = textView.textRange(from: start, to: end) else { return }
         textView.replace(textRange, withText: text)
-        textDidChange()
     }
 
     private func select(_ range: NSRange) {
@@ -450,10 +455,12 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
     }
 
     private func vimStateDidChange(scrolls: Bool = true) {
-        // Normal mode draws its own block; the system caret would sit beside it.
+        // Normal mode draws its own block; the system caret would sit beside
+        // it, except during a space-bar trackpad drag, when only the system's
+        // floating caret shows where the cursor goes.
         let block = vimEnabled && vim.mode == .normal
         textView.usesBlockCaret = block
-        textView.tintColor = block ? .clear : UIColor(appliedThemeID.palette.blue)
+        textView.tintColor = block && !textView.isFloatingCursorActive ? .clear : UIColor(appliedThemeID.palette.blue)
         if keyCommandCache?.key != keyCommandKey { keyCommandCache = nil }
         if scrolls { textView.scrollRangeToVisible(textView.selectedRange) }
         refreshStatus()

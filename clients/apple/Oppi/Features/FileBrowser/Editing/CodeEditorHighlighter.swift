@@ -115,6 +115,9 @@ final class CodeEditorHighlighter {
     func restyle(_ style: Style) {
         self.style = style
         paragraphStyles = [:]
+        // New text (Use Disk Version) or new colors: a pass already parsing
+        // must not paint its now-stale spans.
+        generation += 1
         guard let textView else { return }
         let storage = textView.textStorage
         storage.beginEditing()

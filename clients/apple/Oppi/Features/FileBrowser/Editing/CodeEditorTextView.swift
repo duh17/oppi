@@ -68,6 +68,11 @@ final class CodeEditorTextView: UITextView {
         }
     }
 
+    /// The keyboard's space-bar trackpad began (true) or ended (false). The
+    /// system draws its own floating caret meanwhile, so the owner shows it.
+    var onFloatingCursorChange: (Bool) -> Void = { _ in }
+    private(set) var isFloatingCursorActive = false
+
     private let gutter = CodeEditorGutterView()
     private let currentLineBand = UIView()
     private let blockCursor = UIView()
@@ -232,8 +237,25 @@ final class CodeEditorTextView: UITextView {
 
     // MARK: - Block cursor
 
+    // The space-bar trackpad is UIKit's own floating cursor, the precise
+    // caret movement a real text view gets for free (the SSH terminal, which
+    // has no text view, emulates it with arrow keys).
+    override func beginFloatingCursor(at point: CGPoint) {
+        super.beginFloatingCursor(at: point)
+        isFloatingCursorActive = true
+        updateBlockCursor()
+        onFloatingCursorChange(true)
+    }
+
+    override func endFloatingCursor() {
+        super.endFloatingCursor()
+        isFloatingCursorActive = false
+        onFloatingCursorChange(false)
+        updateBlockCursor()
+    }
+
     private func updateBlockCursor() {
-        guard usesBlockCaret, selectedRange.length == 0,
+        guard usesBlockCaret, !isFloatingCursorActive, selectedRange.length == 0,
               let position = position(from: beginningOfDocument, offset: selectedRange.location) else {
             blockCursor.isHidden = true
             return

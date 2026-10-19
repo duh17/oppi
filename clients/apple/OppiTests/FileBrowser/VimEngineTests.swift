@@ -268,10 +268,21 @@ struct VimEngineTests {
         #expect(vim("|a\nb", "\"_ddP") == "|b")
     }
 
-    @Test func yankMirrorsToClipboardHook() {
-        let harness = VimHarness("|one\ntwo").send("yy")
+    /// Only explicit yanks reach the system clipboard; deleting a line of a
+    /// secrets file must not put it there.
+    @Test func onlyYanksMirrorToClipboard() {
+        let harness = VimHarness("|one\ntwo\nthree").send("yy")
         #expect(harness.yanked == ["one\n"])
-        #expect(harness.rendered == "|one\ntwo")
+        #expect(harness.rendered == "|one\ntwo\nthree")
+        harness.send("jdd").send("x").send("cwz<esc>")
+        #expect(harness.yanked == ["one\n"], "dd, x, and cw stay in Vim's register")
+        harness.send("vy")
+        #expect(harness.yanked == ["one\n", "z"])
+    }
+
+    @Test func hugeCountsAreClamped() {
+        let harness = VimHarness("|abc").send("yy999999999p")
+        #expect(CodeLineIndex(harness.buffer.text).lineCount == VimEngine.maxCount + 1)
     }
 
     @Test func joinLines() {
@@ -383,6 +394,15 @@ struct VimEngineTests {
         #expect(VimHarness("|foo foo\nfoo").command(":", "%s/foo/bar/g").rendered == "bar bar\n|bar")
         #expect(VimHarness("|a-b").command(":", "s/\\(a\\)-\\(b\\)/\\2-\\1/").rendered == "|b-a")
         #expect(VimHarness("|cost").command(":", "s/cost/$5 &/").rendered == "|$5 cost")
+        // `i` ignores case without rewriting escapes such as \W.
+        #expect(VimHarness("|Hello World\nhello").command(":", "%s/\\W/_/gi").buffer.text as String == "Hello_World\nhello")
+        #expect(VimHarness("|Foo foo").command(":", "s/FOO/x/gi").rendered == "|x x")
+    }
+
+    @Test func forceQuitExplainsAutosaveInsteadOfClosing() {
+        let harness = VimHarness("|a").command(":", "q!")
+        #expect(harness.requests.isEmpty)
+        #expect(harness.engine.message?.contains("autosave") == true)
     }
 
     @Test func scrollAndPagingRequests() {

@@ -136,6 +136,9 @@ final class VimEngine {
 
     var pendingDisplay: String { pendingKeys.map(\.display).joined() }
 
+    static let maxCount = 9_999
+    static let maxPasteLength = 2_097_152
+
     /// The Vim cursor. In Visual mode the selection's moving end, which the
     /// buffer's selection range alone does not tell.
     var cursorOffset: Int { cursor }
@@ -227,7 +230,11 @@ final class VimEngine {
         let command = entry.trimmingCharacters(in: .whitespaces)
         switch command {
         case "w", "write", "w!": return [.save]
-        case "q", "q!", "quit", "quit!": return [.quit]
+        case "q", "quit": return [.quit]
+        case "q!", "quit!":
+            // Nothing to abandon: edits are already autosaving.
+            message = "Edits autosave; use u to undo, or :q to close"
+            return []
         case "wq", "wq!", "x", "x!", "xit", "exit": return [.saveAndQuit]
         case "noh", "nohlsearch", "": return []
         case "$":
@@ -339,7 +346,8 @@ final class VimEngine {
                 digits.append(character)
                 index += 1
             }
-            return digits.isEmpty ? nil : Int(digits)
+            // Clamped so `999999999p` cannot allocate gigabytes or spin the main thread.
+            return digits.isEmpty ? nil : min(Int(digits.prefix(6)) ?? 1, Self.maxCount)
         }
 
         if case .char("\"") = keys.first {
@@ -428,7 +436,7 @@ final class VimEngine {
         if let op {
             let secondCount = peekCount()
             let total: Int? = switch (count, secondCount) {
-            case let (first?, second?): first * second
+            case let (first?, second?): min(first * second, Self.maxCount)
             case let (first?, nil): first
             case let (nil, second?): second
             case (nil, nil): nil
@@ -817,7 +825,7 @@ final class VimEngine {
         let start = range.location
         switch op {
         case .yank:
-            store(text.substring(with: range), linewise: linewise, discard: discard)
+            store(text.substring(with: range), linewise: linewise, discard: discard, isYank: true)
             // `yy` keeps the cursor; a yank that reaches back moves to its start.
             if !linewise || lineStart(start) < lineStart(cursor) { place(clampNormal(start)) }
         case .delete:
@@ -883,12 +891,14 @@ final class VimEngine {
         }
     }
 
-    private func store(_ text: String, linewise: Bool, discard: Bool) {
+    /// Fill the unnamed register. Only explicit yanks reach `onYank` (the
+    /// system clipboard); deletes and changes stay inside the editor.
+    private func store(_ text: String, linewise: Bool, discard: Bool, isYank: Bool = false) {
         guard !discard else { return }
         var stored = text
         if linewise, !(stored.last?.isNewline ?? false) { stored += "\n" }
         register = Register(text: stored, linewise: linewise)
-        onYank(stored)
+        if isYank { onYank(stored) }
     }
 
     private static func toggledCase(_ text: String) -> String {
@@ -939,6 +949,11 @@ final class VimEngine {
 
     private func paste(after: Bool, count: Int) {
         guard let buffer, !register.text.isEmpty else { return }
+        // A file can be at most 1 MiB; never build a paste far past that.
+        guard (register.text as NSString).length * count <= Self.maxPasteLength else {
+            message = "Too much to paste"
+            return
+        }
         let text = buffer.vimText
         let payload = String(repeating: register.text, count: count)
         if register.linewise {
@@ -1507,8 +1522,21 @@ final class VimEngine {
 
     // MARK: - Search
 
-    private func regex(for pattern: String) -> NSRegularExpression? {
-        let caseSensitive = pattern.contains { $0.isUppercase }
+    /// Smart case: a capital letter in the pattern (not an escape such as
+    /// `\W`) makes it case-sensitive; `ignoreCase` (`:s///i`) always ignores case.
+    private func regex(for pattern: String, ignoreCase: Bool = false) -> NSRegularExpression? {
+        var caseSensitive = false
+        var escaped = false
+        for character in pattern {
+            if escaped {
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character.isUppercase {
+                caseSensitive = true
+            }
+        }
+        if ignoreCase { caseSensitive = false }
         var converted = pattern
         for (vim, icu) in [("\\<", "\\b"), ("\\>", "\\b"), ("\\(", "("), ("\\)", ")"), ("\\|", "|"), ("\\+", "+"), ("\\?", "?")] {
             converted = converted.replacingOccurrences(of: vim, with: icu)
@@ -1568,17 +1596,16 @@ final class VimEngine {
         }
         let pattern = parts[0].isEmpty ? (lastSearch?.pattern ?? "") : parts[0]
         let flags = parts.count > 2 ? parts[2] : ""
-        var regexPattern = pattern
-        if flags.contains("i") { regexPattern = pattern.lowercased() }
-        guard let regex = regex(for: regexPattern) else { return }
+        guard let regex = regex(for: pattern, ignoreCase: flags.contains("i")) else { return }
         let template = Self.template(fromVimReplacement: parts[1])
         let text = buffer.vimText
         let source = text as String
         let global = flags.contains("g")
-        var matches = regex.matches(in: source, range: scope)
-        if !global {
-            var seenLines = Set<Int>()
-            matches = matches.filter { seenLines.insert(lineStart($0.range.location)).inserted }
+        // As in Vim, each line is matched on its own and line breaks never match.
+        var matches: [NSTextCheckingResult] = []
+        for line in CodeTextEditing.lineContents(text, in: scope) {
+            let lineMatches = regex.matches(in: source, range: line)
+            matches += global ? lineMatches : Array(lineMatches.prefix(1))
         }
         guard !matches.isEmpty else {
             message = "Pattern not found: \(pattern)"

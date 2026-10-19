@@ -230,6 +230,7 @@ final class SettingsEditorKeyBarViewController: UIViewController, UICollectionVi
     private let preferences: CodeEditorPreferences
     private let collectionView: UICollectionView
     private var dataSource: UICollectionViewDiffableDataSource<Section, String>?
+    private var appliedThemeID: ThemeID?
 
     private enum Section: Hashable { case shown, more }
 
@@ -252,7 +253,7 @@ final class SettingsEditorKeyBarViewController: UIViewController, UICollectionVi
         collectionView.isEditing = true
         collectionView.accessibilityIdentifier = "settings.editor.keyBar.list"
         SSHTerminalSettingsList.pin(collectionView, in: view)
-        SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: ThemeRuntimeState.currentThemeID())
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         let reset = UIBarButtonItem(title: String(localized: "Reset"), primaryAction: UIAction { [weak self] _ in
             self?.preferences.resetKeyBar()
         })
@@ -262,8 +263,19 @@ final class SettingsEditorKeyBarViewController: UIViewController, UICollectionVi
         setNeedsUpdateProperties()
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func themeDidChange() { setNeedsUpdateProperties() }
+
     override func updateProperties() {
         super.updateProperties()
+        let themeID = ThemeRuntimeState.currentThemeID()
+        if appliedThemeID != themeID {
+            appliedThemeID = themeID
+            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
+        }
         applySnapshot(preferences.keyBarKeys)
     }
 

@@ -12,6 +12,7 @@ final class CodeEditorStatusBar: UIView, UITextFieldDelegate {
     private let pendingLabel = UILabel()
     private let messageLabel = UILabel()
     private let positionButton = UIButton(type: .system)
+    private let divider = UIView()
     private let detailLabel = UILabel()
     private let row = UIStackView()
     private let field = CommandField()
@@ -56,6 +57,9 @@ final class CodeEditorStatusBar: UIView, UITextFieldDelegate {
         row.axis = .horizontal
         row.alignment = .center
         row.spacing = 8
+        // The whole bar opens Go to Line, so the target spans its full width
+        // and height rather than only the small Ln/Col text.
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(goToLine)))
         for view in [modeLabel, pendingLabel, messageLabel, positionButton, detailLabel] as [UIView] {
             row.addArrangedSubview(view)
         }
@@ -75,11 +79,16 @@ final class CodeEditorStatusBar: UIView, UITextFieldDelegate {
         field.leftView = promptLabel
         field.leftViewMode = .always
 
-        for view in [row, field] as [UIView] {
+        divider.isUserInteractionEnabled = false
+        for view in [row, field, divider] as [UIView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
         NSLayoutConstraint.activate([
+            divider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            divider.topAnchor.constraint(equalTo: topAnchor),
+            divider.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
             row.leadingAnchor.constraint(equalTo: layoutMarginsGuide.leadingAnchor),
             row.trailingAnchor.constraint(equalTo: layoutMarginsGuide.trailingAnchor),
             row.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -96,6 +105,11 @@ final class CodeEditorStatusBar: UIView, UITextFieldDelegate {
 
     var isEditingCommand: Bool { !field.isHidden }
 
+    @objc private func goToLine() {
+        guard !isEditingCommand else { return }
+        onGoToLine()
+    }
+
     func applyColors(background: UIColor, foreground: UIColor, dim: UIColor, accent: UIColor, divider: UIColor) {
         backgroundColor = background
         self.foreground = foreground
@@ -108,7 +122,7 @@ final class CodeEditorStatusBar: UIView, UITextFieldDelegate {
         field.textColor = foreground
         field.tintColor = accent
         promptLabel.textColor = accent
-        layer.borderColor = divider.cgColor
+        self.divider.backgroundColor = divider
     }
 
     /// `mode` is nil with Standard keybindings, which hides the mode pill.
