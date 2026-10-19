@@ -10,6 +10,7 @@ import UIKit
 final class AppRootViewController: UIViewController {
     private enum Content: Equatable {
         case launching
+        case pairedServersUnavailable
         case onboarding
         case shell
     }
@@ -54,7 +55,7 @@ final class AppRootViewController: UIViewController {
     override func updateProperties() {
         super.updateProperties()
         applyTheme()
-        showContent(Self.content(for: navigation))
+        showContent(Self.content(for: navigation, pairedServersUnavailable: app.pairedServersUnavailable))
 
         // Quick Session takes the screen: the content under it neither takes
         // touches nor reads to VoiceOver.
@@ -75,9 +76,9 @@ final class AppRootViewController: UIViewController {
         showResourceChoice(root.opener.pendingResourceReferenceChoice)
     }
 
-    private static func content(for navigation: AppNavigation) -> Content {
+    private static func content(for navigation: AppNavigation, pairedServersUnavailable: Bool) -> Content {
         switch navigation.launchPhase {
-        case .resolving: .launching
+        case .resolving: pairedServersUnavailable ? .pairedServersUnavailable : .launching
         case .ready: navigation.showOnboarding ? .onboarding : .shell
         }
     }
@@ -106,11 +107,33 @@ final class AppRootViewController: UIViewController {
         }
         let next: UIViewController = switch kind {
         case .launching: HostFactory.content(AppRootLayer.launchBackdrop, root: root)
+        case .pairedServersUnavailable: Self.pairedServersUnavailableScreen { [weak app] in
+            app?.retryPairedServerLoad()
+        }
         case .onboarding: HostFactory.screen(root: root) { OnboardingView() }
         case .shell: WorkspaceShellController(root: root)
         }
         content = next
         embed(next, above: layer)
+    }
+
+    /// The saved servers could not be read with the device unlocked. The
+    /// pairings may be intact, so this is never onboarding.
+    private static func pairedServersUnavailableScreen(retry: @escaping () -> Void) -> UIViewController {
+        let screen = UIViewController()
+        screen.view.backgroundColor = UIColor(ThemeRuntimeState.currentPalette().bg)
+        var configuration = UIContentUnavailableConfiguration.empty()
+        configuration.image = UIImage(systemName: "lock")
+        configuration.text = String(localized: "Can\u{2019}t Read Saved Servers")
+        configuration.secondaryText = String(
+            localized: "Oppi can\u{2019}t read its saved servers. Unlock your device or restart Oppi."
+        )
+        var button = UIButton.Configuration.filled()
+        button.title = String(localized: "Retry")
+        configuration.button = button
+        configuration.buttonProperties.primaryAction = UIAction { _ in retry() }
+        screen.contentUnavailableConfiguration = configuration
+        return screen
     }
 
     private func showPairingWait(expiresAt: Int64?) {

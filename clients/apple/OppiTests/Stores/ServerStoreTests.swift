@@ -196,7 +196,7 @@ struct ServerStoreTests {
         }
 
         let store = ServerStore(loadServers: {
-            throw KeychainError.readFailed(errSecInteractionNotAllowed)
+            throw PairedServerKeychain.ReadFailed(status: errSecInteractionNotAllowed)
         })
         store.load()
 
@@ -222,7 +222,7 @@ struct ServerStoreTests {
         var keychainReadable = false
         let store = ServerStore(loadServers: {
             guard keychainReadable else {
-                throw KeychainError.readFailed(errSecInteractionNotAllowed)
+                throw PairedServerKeychain.ReadFailed(status: errSecInteractionNotAllowed)
             }
             return [server]
         })

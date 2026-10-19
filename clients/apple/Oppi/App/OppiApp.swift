@@ -124,7 +124,7 @@ enum ProtectedDataAvailability {
     }
 
     /// Returns at the next `protectedDataDidBecomeAvailableNotification`.
-    static func nextAvailability() async {
+    private static func nextAvailability() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let observer = ObserverToken()
             observer.token = NotificationCenter.default.addObserver(
@@ -164,6 +164,10 @@ final class OppiApp {
     private var connection: ServerConnection { coordinator.activeConnection }
     private var serverStore: ServerStore { coordinator.serverStore }
 
+    /// Launch could not read the pairing list with protected data available.
+    /// The root shows an error with Retry instead of onboarding.
+    private(set) var pairedServersUnavailable = false
+
     @ObservationIgnored private let navigationRouteTelemetry = NavigationRouteTelemetryCoalescer()
     @ObservationIgnored private let mainThreadLagWatchdog = MainThreadLagWatchdog()
     @ObservationIgnored private var foregroundReconnectGate = ForegroundReconnectGate()
@@ -172,6 +176,8 @@ final class OppiApp {
     @ObservationIgnored private var appEventObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var hasConnectedScene = false
     @ObservationIgnored private var pairedServerLoad: Task<Void, Never>?
+    @ObservationIgnored private var pairedServerRetry: CheckedContinuation<Void, Never>?
+    @ObservationIgnored private var pairedServerRetryObserver: NSObjectProtocol?
 
     init() {
 #if DEBUG
@@ -385,22 +391,48 @@ final class OppiApp {
 
     /// Reads the pairing list once protected data is available. Launch and
     /// invites share the one read. A read that still fails (the device
-    /// locked again in between) reads once more at each later unlock, so launch
-    /// stays on its blank canvas instead of showing onboarding.
+    /// locked again in between, or a Keychain error) shows the launch error
+    /// state, never onboarding, and reads again on Retry or the next unlock.
     @MainActor
     private func loadPairedServers() async {
         if pairedServerLoad == nil {
-            let store = serverStore
             pairedServerLoad = Task { @MainActor in
                 await ProtectedDataAvailability.wait()
-                store.load()
-                while store.loadState != .loaded {
-                    await ProtectedDataAvailability.nextAvailability()
-                    store.load()
+                serverStore.load()
+                while serverStore.loadState != .loaded {
+                    pairedServersUnavailable = true
+                    await nextPairedServerLoadAttempt()
+                    serverStore.load()
                 }
+                pairedServersUnavailable = false
             }
         }
         await pairedServerLoad?.value
+    }
+
+    /// The launch error state's Retry: read the pairing list again now.
+    func retryPairedServerLoad() {
+        guard let continuation = pairedServerRetry else { return }
+        pairedServerRetry = nil
+        if let observer = pairedServerRetryObserver {
+            NotificationCenter.default.removeObserver(observer)
+            pairedServerRetryObserver = nil
+        }
+        continuation.resume()
+    }
+
+    /// Returns at Retry or the next unlock, whichever comes first.
+    private func nextPairedServerLoadAttempt() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            pairedServerRetry = continuation
+            pairedServerRetryObserver = NotificationCenter.default.addObserver(
+                forName: UIApplication.protectedDataDidBecomeAvailableNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.retryPairedServerLoad() }
+            }
+        }
     }
 
     @MainActor

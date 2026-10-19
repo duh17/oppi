@@ -1,17 +1,13 @@
 import Foundation
-import OSLog
 import Security
-
-private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Keychain")
 
 /// Secure storage for server credentials in the iOS Keychain.
 ///
 /// Items are stored in the shared App Group keychain access group so
 /// the widget extension can read them for Live Activity intent actions.
 ///
-/// Reads fail closed: only `errSecItemNotFound` means a server is absent.
-/// Items are `WhenUnlockedThisDeviceOnly`, so a launch while the device is
-/// locked gets an error, and that must never read as "no paired servers".
+/// Reads fail closed through `PairedServerKeychain`: only `errSecItemNotFound`
+/// means a server is absent.
 enum KeychainService {
     private static let service = SharedConstants.keychainService
     private static let accessGroup = SharedConstants.keychainAccessGroup
@@ -51,7 +47,7 @@ enum KeychainService {
     ) throws {
         var toWrite = server
         let account = serverAccount(for: server.id)
-        if let latest = try loadServer(account: account),
+        if let latest = try loadServer(id: server.id),
            let stored = latest.deviceCredential {
             if let incoming = toWrite.deviceCredential {
                 let merged = incoming.freshestMerge(with: stored)
@@ -120,48 +116,22 @@ enum KeychainService {
     /// scanned for servers the index does not name, so a reinstall (index
     /// wiped, Keychain kept) pairs again.
     ///
-    /// Throws `KeychainError.readFailed` when any item cannot be read.
+    /// Throws `PairedServerKeychain.ReadFailed` when any item cannot be read.
     static func loadServers() throws -> [PairedServer] {
         syncUserDefaultsIndex()
 
         let ids = SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey)
             ?? UserDefaults.standard.stringArray(forKey: SharedConstants.pairedServerIdsKey)
             ?? []
-        return try ids.compactMap { try loadServer(id: $0) }
+        return try PairedServerKeychain.records(PairedServer.self, ids: ids)
     }
 
     /// Load a single server by fingerprint ID; nil only when it is not stored.
     static func loadServer(id: String) throws -> PairedServer? {
-        try loadServer(account: serverAccount(for: id))
+        try PairedServerKeychain.record(PairedServer.self, id: id)
     }
 
     // MARK: - Private Helpers
-
-    private static func loadServer(account: String) throws -> PairedServer? {
-        var query = sharedQuery(account: account)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        return try decodeLookup(status: status, result: result)
-    }
-
-    /// Maps one `SecItemCopyMatching` lookup. Only `errSecItemNotFound` is
-    /// absent; every other failure throws. A stored record that no longer
-    /// decodes is unusable after unlock too, so it is logged and skipped.
-    static func decodeLookup(status: OSStatus, result: AnyObject?) throws -> PairedServer? {
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess else {
-            throw KeychainError.readFailed(status)
-        }
-        guard let data = result as? Data,
-              let server = try? JSONDecoder().decode(PairedServer.self, from: data) else {
-            logger.error("Skipping undecodable paired server record")
-            return nil
-        }
-        return server
-    }
 
     /// Ensure the shared UserDefaults suite has the server ID index.
     /// Copies from standard defaults if missing.
@@ -189,14 +159,11 @@ enum KeychainService {
 
 enum KeychainError: LocalizedError, Equatable {
     case saveFailed(OSStatus)
-    case readFailed(OSStatus)
 
     var errorDescription: String? {
         switch self {
         case .saveFailed(let status):
             return "Keychain save failed: \(status)"
-        case .readFailed(let status):
-            return "Keychain read failed: \(status)"
         }
     }
 }

@@ -5,11 +5,13 @@ import Testing
 
 @Suite("Share Quick Session sender", .serialized)
 struct ShareQuickSessionSenderTests {
-    @Test func repairsMissingDefaultsIndexFromSharedKeychain() throws {
-        let serverID = "share-discovery-\(UUID().uuidString)"
+    /// Sharing reads only the servers the app's id index names and never
+    /// writes that index.
+    @Test func loadsOnlyIndexedServersAndNeverWritesTheIndex() throws {
+        let serverID = "share-unindexed-\(UUID().uuidString)"
         let server = try #require(ShareQuickSessionServer(
             id: serverID,
-            name: "Discovered Mac",
+            name: "Unindexed Mac",
             baseURL: URL(string: "https://mac.example:7749"),
             token: "device-token",
             tlsCertFingerprint: nil,
@@ -38,13 +40,13 @@ struct ShareQuickSessionSenderTests {
         }
         #expect(SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess)
 
-        let loaded = ShareQuickSessionCredentialStore.loadServers()
+        let loaded = try ShareQuickSessionCredentialStore.loadServers()
 
-        #expect(loaded.contains(server))
-        #expect(
-            SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey)?
-                .contains(serverID) == true
-        )
+        #expect(!loaded.contains(server))
+        #expect(SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey) == nil)
+
+        SharedConstants.sharedDefaults.set([serverID], forKey: SharedConstants.pairedServerIdsKey)
+        #expect(try ShareQuickSessionCredentialStore.loadServers() == [server])
     }
 
     @Test func fetchesWorkspacesWithPairedServerCredentials() async throws {

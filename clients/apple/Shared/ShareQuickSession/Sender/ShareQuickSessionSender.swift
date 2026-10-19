@@ -122,68 +122,15 @@ protocol ShareQuickSessionHTTPTransport: Sendable {
 extension URLSession: ShareQuickSessionHTTPTransport {}
 
 enum ShareQuickSessionCredentialStore {
-    static func loadServers() -> [ShareQuickSessionServer] {
-        let defaults = SharedConstants.sharedDefaults
-        let ids = defaults.stringArray(forKey: SharedConstants.pairedServerIdsKey) ?? []
-        var serversByID: [String: ShareQuickSessionServer] = [:]
-        for id in ids {
-            if let server = loadServer(id: id) {
-                serversByID[server.id] = server
-            }
-        }
-
-        // The defaults index can be missing or stale after an upgrade. Discover
-        // only within the shared access group.
-        for server in discoverSharedServers() {
-            serversByID[server.id] = server
-        }
-        let sortedServers = serversByID.values.sorted { $0.sortOrder < $1.sortOrder }
-        let repairedIDs = sortedServers.map(\.id)
-        if repairedIDs != ids {
-            defaults.set(repairedIDs, forKey: SharedConstants.pairedServerIdsKey)
-        }
-        return sortedServers
-    }
-
-    private static func loadServer(id: String) -> ShareQuickSessionServer? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: SharedConstants.keychainService,
-            kSecAttrAccount as String: "\(SharedConstants.serverAccountPrefix)\(id)",
-            kSecAttrAccessGroup as String: SharedConstants.keychainAccessGroup,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else {
-            return nil
-        }
-        return try? JSONDecoder().decode(ShareQuickSessionServer.self, from: data)
-    }
-
-    private static func discoverSharedServers() -> [ShareQuickSessionServer] {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: SharedConstants.keychainService,
-            kSecAttrAccessGroup as String: SharedConstants.keychainAccessGroup,
-            kSecReturnAttributes as String: true,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let items = result as? [[String: Any]] else {
-            return []
-        }
-        return items.compactMap { item in
-            guard let account = item[kSecAttrAccount as String] as? String,
-                  account.hasPrefix(SharedConstants.serverAccountPrefix),
-                  let data = item[kSecValueData as String] as? Data else {
-                return nil
-            }
-            return try? JSONDecoder().decode(ShareQuickSessionServer.self, from: data)
-        }
+    /// The paired servers named by the app's shared id index, one Keychain
+    /// query per id. The app owns the index; sharing never writes it.
+    ///
+    /// Throws `PairedServerKeychain.ReadFailed` when a record cannot be read
+    /// (the device is locked), which is not "no paired servers".
+    static func loadServers() throws -> [ShareQuickSessionServer] {
+        let ids = SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey) ?? []
+        return try PairedServerKeychain.records(ShareQuickSessionServer.self, ids: ids)
+            .sorted { $0.sortOrder < $1.sortOrder }
     }
 
     /// Persist a refreshed device credential back to the shared keychain so a

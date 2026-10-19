@@ -217,7 +217,6 @@ final class ShareQuickSessionComposerViewController: UIViewController, UITextVie
     private func loadWorkspaces() {
         loadTask?.cancel()
         setRetryAction(#selector(retryWorkspaceLoad))
-        let servers = ShareQuickSessionCredentialStore.loadServers()
         retryButton.isHidden = true
         selectedWorkspace = nil
         workspaces = []
@@ -225,6 +224,18 @@ final class ShareQuickSessionComposerViewController: UIViewController, UITextVie
         workspaceButton.isEnabled = false
         workspaceButton.configuration?.title = "Loading workspaces…"
         updateSendEnabled()
+        let servers: [ShareQuickSessionServer]
+        do {
+            servers = try ShareQuickSessionCredentialStore.loadServers()
+        } catch {
+            // Unreadable is not unpaired: never send the user to pair again.
+            shareComposerLog.error("Paired servers unavailable: \(error.localizedDescription, privacy: .public)")
+            workspaceButton.configuration?.title = "Servers unavailable"
+            statusLabel.text = "Unlock your device, then try again. Nothing was sent."
+            retryButton.isHidden = false
+            UIAccessibility.post(notification: .announcement, argument: statusLabel.text)
+            return
+        }
         guard !servers.isEmpty else {
             workspaceButton.configuration?.title = "No paired server"
             statusLabel.text = "Open Oppi and pair a server before sharing."

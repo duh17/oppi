@@ -111,17 +111,17 @@ struct KeychainServiceTests {
     /// Only `errSecItemNotFound` means absent. Any other failure, such as the
     /// locked-device `errSecInteractionNotAllowed`, must not read as "not paired".
     @Test func onlyItemNotFoundReadsAsAbsent() throws {
-        #expect(try KeychainService.decodeLookup(status: errSecItemNotFound, result: nil) == nil)
-        #expect(throws: KeychainError.readFailed(errSecInteractionNotAllowed)) {
-            try KeychainService.decodeLookup(status: errSecInteractionNotAllowed, result: nil)
+        #expect(try PairedServerKeychain.decode(PairedServer.self, status: errSecItemNotFound, result: nil) == nil)
+        #expect(throws: PairedServerKeychain.ReadFailed(status: errSecInteractionNotAllowed)) {
+            try PairedServerKeychain.decode(PairedServer.self, status: errSecInteractionNotAllowed, result: nil)
         }
-        #expect(throws: KeychainError.readFailed(errSecAuthFailed)) {
-            try KeychainService.decodeLookup(status: errSecAuthFailed, result: nil)
+        #expect(throws: PairedServerKeychain.ReadFailed(status: errSecAuthFailed)) {
+            try PairedServerKeychain.decode(PairedServer.self, status: errSecAuthFailed, result: nil)
         }
 
         let server = try #require(makeServer(fingerprint: "lookup-success"))
         let data = try JSONEncoder().encode(server) as NSData
-        #expect(try KeychainService.decodeLookup(status: errSecSuccess, result: data)?.id == server.id)
+        #expect(try PairedServerKeychain.decode(PairedServer.self, status: errSecSuccess, result: data)?.id == server.id)
     }
 
     @Test func leftoverDtPersistAfterMigrateKeepsReplacementAccessToken() throws {

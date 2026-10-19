@@ -675,6 +675,7 @@
 		4F5A4FB4AC3E81762AEC7A86 /* FeatureEducationToolRowTipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55104D1077BCF5EECF90BF92 /* FeatureEducationToolRowTipTests.swift */; };
 		4F84EAD93E4FDF4253F26643 /* ReviewCommentStashLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9738787FCE7065A28EBD4FB6 /* ReviewCommentStashLocation.swift */; };
 		4FB3DD17EE404B125D8B75FF /* IPhoneSessionsFirstScreenshotE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F69390322324DBB0B5A5DD9 /* IPhoneSessionsFirstScreenshotE2ETests.swift */; };
+		4FCF0F90637162B52FB53D8B /* PairedServerKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2959299BFA73F150F5562ED /* PairedServerKeychain.swift */; };
 		4FE55BB3C8276D97447A1D6B /* TailscaleKit.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 35BF3FE30B7EC795027E2D18 /* TailscaleKit.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		4FF7F111C5C9547DD9E3856D /* MacScreenAwakeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 562CB7139A941B08ABAD4FA1 /* MacScreenAwakeController.swift */; };
 		50162CA7516F0D0DE8DF3B68 /* NavigationBreadcrumbTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 235807254F19DA3A8D4B2890 /* NavigationBreadcrumbTests.swift */; };
@@ -955,6 +956,7 @@
 		705F800D2EB105CED5E05603 /* OppiShortcutsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEB60EDA15E4DF0B7721D6E8 /* OppiShortcutsProvider.swift */; };
 		70D8427365941E8DB2D8E855 /* PushEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = C77B5D9B52AF85DDEE510CFF /* PushEnvelope.swift */; };
 		70D9FF4E5B27C7464D7C20EB /* AgentDetailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F28AABCE4427B183948D99F /* AgentDetailViewController.swift */; };
+		70F55877EEB613BEE524DECB /* PairedServerKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2959299BFA73F150F5562ED /* PairedServerKeychain.swift */; };
 		7129C67EC9608442588A2F33 /* OrbMetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79289812FD7C83A5FAF21678 /* OrbMetalView.swift */; };
 		712C0503DF1F2BCD47FCC2B0 /* MacWorkspaceFileBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118B5DE983269414E3D1DF81 /* MacWorkspaceFileBrowserTests.swift */; };
 		712DD707B81AC1567C1C6903 /* MermaidParserConformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09343D0A8EA69657145D85F4 /* MermaidParserConformanceTests.swift */; };
@@ -1370,6 +1372,7 @@
 		A16BC499051D14180BF3048F /* DictationIndicatorStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3977422D7A816A6145BDB84 /* DictationIndicatorStyle.swift */; };
 		A178500F48D26245D8B7114F /* TimelineScrollConformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AF1B0D0BA36107442C46714 /* TimelineScrollConformanceTests.swift */; };
 		A19F7356417700E91F09FA66 /* MacSessionTraceStoreRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B3EE8B447F2AF3F1FBE77C9 /* MacSessionTraceStoreRuntimeTests.swift */; };
+		A1B37FEB9BEF5C9C5E75B015 /* PairedServerKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2959299BFA73F150F5562ED /* PairedServerKeychain.swift */; };
 		A1B4CBA2CD86949FBE8A7878 /* MacSessionTraceStoreToolOutputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF38FDCA194DE712792710FA /* MacSessionTraceStoreToolOutputTests.swift */; };
 		A1B993A868D9E78A477548B6 /* RendererTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFF83F29DBFB9DE129123A79 /* RendererTestSupport.swift */; };
 		A1F1B379B2C93BFE693FF2F1 /* MermaidRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33C6B9D3178696BDFFAA0A2F /* MermaidRendererTests.swift */; };
@@ -3430,6 +3433,7 @@
 		A1C0B572906E01F931C647C4 /* AssistantMarkdownSegmentApplier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantMarkdownSegmentApplier.swift; sourceTree = "<group>"; };
 		A1ED3C9F68D3430013C7359E /* ToolRowContentViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowContentViewTests.swift; sourceTree = "<group>"; };
 		A258A67AF49D572F6ACDA472 /* MermaidGanttParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidGanttParser.swift; sourceTree = "<group>"; };
+		A2959299BFA73F150F5562ED /* PairedServerKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairedServerKeychain.swift; sourceTree = "<group>"; };
 		A2A0260EABFFFD41FF5505F9 /* MarkdownStressFixtureDisplayMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownStressFixtureDisplayMathTests.swift; sourceTree = "<group>"; };
 		A2F279BD3C0388350AEE583E /* BackgroundKeepAlive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundKeepAlive.swift; sourceTree = "<group>"; };
 		A3158D2D9998FB647D430634 /* SymbolsNerdFontMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SymbolsNerdFontMono-Regular.ttf"; sourceTree = "<group>"; };
@@ -7102,6 +7106,7 @@
 			isa = PBXGroup;
 			children = (
 				17F0D7514B129681BE8687AC /* KeychainDeviceCredentialMerger.swift */,
+				A2959299BFA73F150F5562ED /* PairedServerKeychain.swift */,
 			);
 			path = Keychain;
 			sourceTree = "<group>";
@@ -8172,6 +8177,7 @@
 				FBCD2D4E37D5E45C8E9FEED6 /* OrgParser.swift in Sources */,
 				35FB056E18A60650934292E3 /* OrgToMarkdownConverter.swift in Sources */,
 				2F504B907C78E27763827B00 /* PairView.swift in Sources */,
+				A1B37FEB9BEF5C9C5E75B015 /* PairedServerKeychain.swift in Sources */,
 				1D9196AF50E197EB41689EED /* PairingEnrollment.swift in Sources */,
 				9F979966E9FB60FBB5A96878 /* PairingInviteService.swift in Sources */,
 				CD541712844CDC06654B08A6 /* PermissionsStepView.swift in Sources */,
@@ -8495,6 +8501,7 @@
 				14F849CC18DE4A9341AB9D98 /* DeviceKeyProvider.swift in Sources */,
 				445BA3E065EA03C9E1EC1F1D /* DeviceKeyStore.swift in Sources */,
 				FCC77B5040A4339BCE0FCB50 /* KeychainDeviceCredentialMerger.swift in Sources */,
+				4FCF0F90637162B52FB53D8B /* PairedServerKeychain.swift in Sources */,
 				C24E6FA07237638FC20AEA20 /* ServerTLSTrustPolicy.swift in Sources */,
 				08452F59BD5D5A35DE507B16 /* ShareQuickSessionComposerViewController.swift in Sources */,
 				FAD66587B5AF0EA8FC6C63AB /* ShareQuickSessionPayload.swift in Sources */,
@@ -9496,6 +9503,7 @@
 				72FBCC0792564F4BE5384350 /* OrgToMarkdownConverter.swift in Sources */,
 				71A6B3CD5F8FD2567C6B8E08 /* PairedDeviceRoster.swift in Sources */,
 				9A22D32C7059FD99994052CF /* PairedServer.swift in Sources */,
+				70F55877EEB613BEE524DECB /* PairedServerKeychain.swift in Sources */,
 				160473910083A84E91185548 /* PairingApprovalController.swift in Sources */,
 				7BC8DD484D28885829C5C25D /* PairingApprovalPrompt.swift in Sources */,
 				55A2B884E1915CCA5566515C /* PairingDeviceName.swift in Sources */,

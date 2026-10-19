@@ -100,7 +100,7 @@ Example:
 
 ### Fixed
 
-- **Client:** When iOS starts Oppi in the background while the phone is locked, for example to start a Live Activity, opening Oppi later no longer shows onboarding to a paired user or clears the cached session lists and chats. Siri and Shortcuts ask you to unlock the phone instead of saying no server is paired.
+- **Client:** When iOS starts Oppi in the background while the phone is locked, for example to start a Live Activity, opening Oppi later no longer shows onboarding to a paired user or clears the cached session lists and chats. Siri, Shortcuts, and the share sheet ask you to unlock the phone instead of saying no server is paired. If Oppi still can't read its saved servers, it says so and offers Retry instead of showing onboarding.
 - **Client:** Markdown headings and inline code scale with **Message Text Size**, so headings stay larger than body text at every size, and numbered list items are the same size as other text. Changing Dynamic Type updates open chats without relaunching the app.
 - **Client:** In full-screen readers, raising **Text Size** at accessibility text sizes no longer makes text smaller, and **Standard** spacing looks the same at every text size. See [Text size](docs/document-viewers.md#text-size).
 - **Client:** Editing a file opened from a chat's **Files → All** shows the editor's bar again, with Done, Preview, and the save status. Before, the bar stayed hidden and the only way out was swiping the sheet away. Going to the next file from a text file to an image or an unreadable file, in **Files → All** or **Files → Changed**, also shows its title, Back, and Share again.
@@ -147,7 +147,7 @@ Example:
 - **Client:** The SSH Terminal's migration of the single saved host from before Build 53.
 - **Server:** Classic sandbox sessions no longer load your global Skills; they discover Skills inside the workspace, through the VM.
 - **Client/Server:** The Live Remote Screen experiment and the Mac app's Capture window.
-- **Client:** Recovering pairings from the Keychain when Oppi's list of paired servers is missing, including the move of pairings saved before the shared Keychain group. After you delete and reinstall Oppi, pair your servers again.
+- **Client:** Recovering pairings from the Keychain when Oppi's list of paired servers is missing, in the app and the share sheet, including the move of pairings saved before the shared Keychain group. After you delete and reinstall Oppi, pair your servers again.
 
 ### Migration notes
 
