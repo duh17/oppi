@@ -77,6 +77,41 @@ extension ScopedLockGate where Accessory == EmptyView {
     }
 }
 
+/// `ScopedLockGate`'s cover for UIKit screens: the screen shows this in place
+/// of its content while `target` is locked, and tears its content down.
+@MainActor
+enum ScopedLockScreenCover {
+    /// The cover with Unlock for `target`; pass the existing `host` to retitle it.
+    static func make(
+        updating host: HostedContentController?,
+        target: ScopedLockTarget,
+        title: String,
+        root: AppRootEnvironment
+    ) -> HostedContentController {
+        let content = ScopedLockTargetCover(target: target, title: title)
+        if let host {
+            host.setContent(content)
+            return host
+        }
+        return HostFactory.content(content, root: root)
+    }
+}
+
+private struct ScopedLockTargetCover: View {
+    let target: ScopedLockTarget
+    let title: String
+
+    @State private var locks = ScopedLockService.shared
+
+    var body: some View {
+        ScopedLockCoverView(title: title, isAuthenticating: locks.isAuthenticating) {
+            Task { _ = await locks.authorize(target) }
+        } accessory: {
+            EmptyView()
+        }
+    }
+}
+
 /// Opaque stand-in for a locked server, workspace, or session.
 struct ScopedLockCoverView<Accessory: View>: View {
     let title: String

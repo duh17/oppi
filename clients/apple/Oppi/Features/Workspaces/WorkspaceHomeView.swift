@@ -280,34 +280,55 @@ struct WorkspaceCreateSheetContext: Identifiable {
     }
 }
 
-struct WorkspaceScopedDestinationView: View {
-    @Environment(ConnectionCoordinator.self) private var coordinator
-    let target: WorkspaceNavTarget
-
-    @State private var scopedConnection: ServerConnection?
-
-    var body: some View {
-        ScopedLockGate(
-            target: .workspace(serverId: target.serverId, workspaceId: target.workspace.id),
-            title: target.workspace.name
-        ) {
-            unlockedBody
-        }
+/// The git context bar over a workspace's sessions
+/// (`WorkspaceDetailViewController`), on the workspace's server.
+@MainActor
+enum WorkspaceContextBarHost {
+    struct Parameters: Equatable {
+        let gitStatus: GitStatus
+        let workspaceId: String
+        let worktreeId: String
+        let serverId: String
+        /// Incremented to collapse an expanded bar (a tap on the scrim).
+        let collapseToken: Int
     }
 
-    private var unlockedBody: some View {
-        Group {
-            if let connection = scopedConnection {
-                WorkspaceDetailView(workspace: target.workspace)
-                    .withServerScopedEnvironment(connection)
-            } else {
-                ProgressView("Connecting…")
-            }
+    /// Hosts the bar at its natural height: the host's view reports each
+    /// height (collapsed or expanded) through `onHeightChange`; pin its top
+    /// and sides and give it that height. Pass the existing `host` to update it.
+    static func make(
+        updating host: HostedContentController?,
+        _ parameters: Parameters,
+        root: AppRootEnvironment,
+        connection: ServerConnection,
+        navigator: ScreenNavigator,
+        onExpandedChanged: @escaping (Bool) -> Void,
+        onHeightChange: @escaping (CGFloat) -> Void
+    ) -> HostedContentController {
+        let content = WorkspaceContextBar(
+            gitStatus: parameters.gitStatus,
+            isLoading: false,
+            workspaceId: parameters.workspaceId,
+            worktreeId: parameters.worktreeId,
+            serverId: parameters.serverId,
+            showCleanWorkspace: true,
+            collapseToken: parameters.collapseToken,
+            onExpandedChanged: onExpandedChanged
+        )
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { onHeightChange($0) }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .withServerScopedEnvironment(connection)
+        .environment(\.screenNavigator, navigator)
+        if let host {
+            host.setContent(content)
+            return host
         }
-        .task(id: target.serverId) {
-            guard await coordinator.switchToServerReady(target.serverId) else { return }
-            scopedConnection = coordinator.connection(for: target.serverId)
-        }
+        let host = HostFactory.content(content, root: root)
+        host.safeAreaRegions = []
+        host.view.backgroundColor = .clear
+        return host
     }
 }
 

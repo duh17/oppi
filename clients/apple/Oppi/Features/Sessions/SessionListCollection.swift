@@ -257,7 +257,7 @@ final class SessionListErrorAlert: UIAlertController {}
 
 /// A session-list section header: a plain title ("Your Turn"), or an
 /// expandable group (a stopped day) that is one button with its title,
-/// an Expanded/Collapsed value, and a chevron.
+/// an optional count, an Expanded/Collapsed value, and a chevron.
 final class SessionListSectionHeaderView: UICollectionReusableView {
     static let elementKind = UICollectionView.elementKindSectionHeader
 
@@ -265,6 +265,7 @@ final class SessionListSectionHeaderView: UICollectionReusableView {
     private let button = UIButton(type: .custom)
     private let row = UIStackView()
     private let titleLabel = UILabel()
+    private let detailLabel = UILabel()
     private let chevron = UIImageView()
     private var onToggle: (() -> Void)?
 
@@ -277,8 +278,13 @@ final class SessionListSectionHeaderView: UICollectionReusableView {
         chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .caption1, scale: .default)
             .applying(UIImage.SymbolConfiguration(weight: .semibold))
         chevron.setContentHuggingPriority(.required, for: .horizontal)
+        detailLabel.font = .preferredFont(forTextStyle: .caption1)
+        detailLabel.adjustsFontForContentSizeCategory = true
+        detailLabel.setContentHuggingPriority(.required, for: .horizontal)
+        detailLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         row.addArrangedSubview(titleLabel)
+        row.addArrangedSubview(detailLabel)
         row.addArrangedSubview(chevron)
         row.alignment = .center
         row.spacing = 8
@@ -300,22 +306,34 @@ final class SessionListSectionHeaderView: UICollectionReusableView {
             row.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
             row.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
         ])
-        // Plain-list header text sits 16 pt in, as SwiftUI's did.
         directionalLayoutMargins = NSDirectionalEdgeInsets(
             top: header.directionalLayoutMargins.top,
-            leading: 16,
+            leading: Self.plainInset,
             bottom: header.directionalLayoutMargins.bottom,
-            trailing: 16
+            trailing: Self.plainInset
         )
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// Header text sits 16 pt in on a plain list and 20 pt in on an inset
+    /// grouped one (level with the rows' text), as SwiftUI's did.
+    static let plainInset: CGFloat = 16
+    static let insetGroupedInset: CGFloat = 20
+
+    var horizontalInset: CGFloat = SessionListSectionHeaderView.plainInset {
+        didSet {
+            directionalLayoutMargins.leading = horizontalInset
+            directionalLayoutMargins.trailing = horizontalInset
+        }
+    }
+
     /// A titled header. Reuse clears the expandable state.
     func configure(title: String, palette: ThemePalette) {
         apply(title: title, palette: palette)
         onToggle = nil
+        detailLabel.isHidden = true
         chevron.isHidden = true
         button.isHidden = true
         button.accessibilityIdentifier = nil
@@ -325,21 +343,26 @@ final class SessionListSectionHeaderView: UICollectionReusableView {
     }
 
     /// An expandable group header: the whole header toggles the group, for
-    /// touch and accessibility activation alike.
+    /// touch and accessibility activation alike. `detail` (a count) sits
+    /// before the chevron.
     func configure(
         title: String,
+        detail: String? = nil,
         isExpanded: Bool,
-        accessibilityIdentifier: String,
+        accessibilityIdentifier: String?,
         palette: ThemePalette,
         onToggle: @escaping () -> Void
     ) {
         apply(title: title, palette: palette)
         self.onToggle = onToggle
+        detailLabel.text = detail
+        detailLabel.textColor = UIColor(palette.comment)
+        detailLabel.isHidden = detail == nil
         chevron.isHidden = false
         chevron.image = UIImage(systemName: isExpanded ? "chevron.down" : "chevron.right")
         chevron.tintColor = UIColor(palette.comment)
         button.isHidden = false
-        button.accessibilityLabel = title
+        button.accessibilityLabel = detail.map { "\(title), \($0)" } ?? title
         button.accessibilityValue = isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed")
         button.accessibilityIdentifier = accessibilityIdentifier
         // The button speaks for the row beneath it.
@@ -348,7 +371,8 @@ final class SessionListSectionHeaderView: UICollectionReusableView {
 
     private func apply(title: String, palette: ThemePalette) {
         titleLabel.text = title
-        titleLabel.textColor = UIColor(palette.comment)
+        // SwiftUI's section header color; the chevron and count keep the theme's.
+        titleLabel.textColor = .secondaryLabel
         backgroundColor = UIColor(palette.bg)
     }
 }

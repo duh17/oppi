@@ -436,8 +436,9 @@ final class ScreenNavigator {
     }
 
     /// A navigator for a UIKit screen, for the SwiftUI leaf content it hosts
-    /// with `HostFactory.content` or `HostFactory.leaf` (the chat's context
-    /// bar opens a quick-action chat with `push`). The leaf gets it with
+    /// with `HostFactory.content` or `HostFactory.leaf` (the chat's and a
+    /// workspace's context bars open a quick-action chat with `push`). The
+    /// leaf gets it with
     /// `.environment(\.screenNavigator, navigator)`.
     static func forUIKitScreen(_ screen: UIViewController, root: AppRootEnvironment) -> ScreenNavigator {
         let navigator = ScreenNavigator(root: root)

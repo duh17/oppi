@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Row for a local pi TUI session, visually matching SessionRow.
 ///
@@ -68,5 +69,29 @@ struct LocalSessionRow: View {
         .padding(.trailing, 4)
         .id(themeID)
         .padding(.vertical, 2)
+    }
+}
+
+extension LocalSessionRow {
+    /// The row as a UIKit list cell's content: one button element
+    /// (`localSession.nav.<piSessionId>`) that imports and resumes the
+    /// session. The collection owns the tap; accessibility activation runs
+    /// the same `onImport`.
+    static func cellConfiguration(
+        _ session: LocalSession,
+        isEnabled: Bool,
+        root: AppRootEnvironment,
+        onImport: @escaping () -> Void
+    ) -> any UIContentConfiguration {
+        UIHostingConfiguration {
+            LocalSessionRow(session: session)
+                .contentShape(Rectangle())
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { if isEnabled { onImport() } }
+                .accessibilityIdentifier("localSession.nav.\(session.piSessionId)")
+                .disabled(!isEnabled)
+                .appRootEnvironment(root)
+        }
     }
 }

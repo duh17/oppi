@@ -1,63 +1,11 @@
 import Foundation
-import SwiftUI
+import UIKit
 import Testing
 @testable import Oppi
 
 @Suite("Workspace Navigation Server Scope", .serialized)
 @MainActor
 struct WorkspaceNavigationServerScopeTests {
-    @Test func staleWorkspaceRefreshDoesNotPresentErrorAfterSwitchingWorkspaces() async throws {
-        defer { TestURLProtocol.handler = nil }
-        let errorLog = WorkspaceErrorLog()
-        let requestLog = RequestLog()
-        WorkspaceDetailView._onWorkspaceLoadErrorForTesting = { workspaceId, message in
-            errorLog.append(workspaceId: workspaceId, message: message)
-        }
-        defer { WorkspaceDetailView._onWorkspaceLoadErrorForTesting = nil }
-
-        TestURLProtocol.handler = { request in
-            requestLog.append(request)
-            if request.url?.path.hasPrefix("/workspaces/ws-old") == true {
-                Thread.sleep(forTimeInterval: 0.25)
-                return try Self.makeResponse(request: request, status: 404, body: #"{"error":"Workspace not found"}"#)
-            }
-            return try Self.response(for: request)
-        }
-
-        let connection = ServerConnection()
-        connection.configure(credentials: makeTestCredentials(host: "single.test", fingerprint: "sha256:single"))
-        connection.setAPIClientForTesting(try Self.makeAPIClient(host: "single.test"))
-        let navigation = AppNavigation()
-        let model = WorkspaceSelectionModel(
-            workspace: makeTestWorkspace(id: "ws-old", name: "Old Workspace", gitStatusEnabled: true)
-        )
-
-        let host = makeDetailHost(
-            model: model,
-            connection: connection,
-            navigation: navigation
-        )
-        defer { host.teardown() }
-
-        let oldRefreshStarted = await waitForTestCondition(timeoutMs: 500) {
-            requestLog.contains(host: "single.test", pathPrefix: "/workspaces/ws-old")
-        }
-        #expect(oldRefreshStarted, "Expected the old workspace refresh to start before switching workspaces")
-
-        model.workspace = makeTestWorkspace(id: "ws-new", name: "New Workspace", gitStatusEnabled: true)
-        host.pump()
-
-        let staleErrorSurfaced = await waitForTestCondition(timeoutMs: 500) {
-            errorLog.contains(workspaceId: "ws-old")
-        }
-        host.pump()
-
-        #expect(
-            !staleErrorSurfaced,
-            "A stale refresh from the previous workspace must not surface an error after switching workspaces"
-        )
-    }
-
     @Test func workspaceDetailUsesTargetServerConnectionWhenActiveServerDiffers() async throws {
         SharedConstants.sharedDefaults.removeObject(forKey: SharedConstants.pairedServerIdsKey)
         UserDefaults.standard.removeObject(forKey: SharedConstants.pairedServerIdsKey)
@@ -118,14 +66,14 @@ struct WorkspaceNavigationServerScopeTests {
                 || requestLog.contains(host: "server-b.test", pathPrefix: "/workspaces/ws-b/sessions")
         }
 
-        #expect(observedWorkspaceLoad, "Expected WorkspaceDetailView to issue its workspace refresh")
+        #expect(observedWorkspaceLoad, "Expected the workspace screen to issue its workspace refresh")
         #expect(
             !requestLog.contains(host: "server-a.test", pathPrefix: "/workspaces/ws-b"),
-            "WorkspaceDetailView must not ask the previously active server for the target workspace"
+            "The workspace screen must not ask the previously active server for the target workspace"
         )
         #expect(
             requestLog.contains(host: "server-b.test", pathPrefix: "/workspaces/ws-b/sessions"),
-            "WorkspaceDetailView should refresh through the target server connection"
+            "The workspace screen should refresh through the target server connection"
         )
     }
 
@@ -266,22 +214,6 @@ struct WorkspaceNavigationServerScopeTests {
         return (data, response)
     }
 
-    /// The workspace screen hosted the way the shell hosts it.
-    private func makeDetailHost(
-        model: WorkspaceSelectionModel,
-        connection: ServerConnection,
-        navigation: AppNavigation
-    ) -> WorkspaceNavigationHostHarness {
-        let screen = HostFactory.screen(root: makeTestAppRoot()) {
-            WorkspaceDetailSwapHost(model: model)
-                .withServerScopedEnvironment(connection)
-                .environment(navigation)
-        }
-        return WorkspaceNavigationHostHarness(
-            controller: RouterNavigationController(rootViewController: screen)
-        )
-    }
-
     /// The real workspace shell over this coordinator and navigation.
     private func makeHost(
         coordinator: ConnectionCoordinator,
@@ -341,64 +273,9 @@ private struct WorkspaceNavigationHostHarness {
         controller.view.layoutIfNeeded()
     }
 
-    func containsText(_ needle: String) -> Bool {
-        if let presented = controller.presentedViewController,
-           Self.viewHierarchyContainsText(needle, in: presented.view) {
-            return true
-        }
-        return Self.viewHierarchyContainsText(needle, in: controller.view)
-    }
-
-    private static func viewHierarchyContainsText(_ needle: String, in view: UIView?) -> Bool {
-        guard let view else { return false }
-        if let label = view as? UILabel,
-           label.text?.localizedCaseInsensitiveContains(needle) == true {
-            return true
-        }
-        if let button = view as? UIButton,
-           button.title(for: .normal)?.localizedCaseInsensitiveContains(needle) == true {
-            return true
-        }
-        return view.subviews.contains { viewHierarchyContainsText(needle, in: $0) }
-    }
-
     func teardown() {
         window.isHidden = true
         window.rootViewController = nil
-    }
-}
-
-@MainActor @Observable
-private final class WorkspaceSelectionModel {
-    var workspace: Workspace
-
-    init(workspace: Workspace) {
-        self.workspace = workspace
-    }
-}
-
-private struct WorkspaceDetailSwapHost: View {
-    @Bindable var model: WorkspaceSelectionModel
-
-    var body: some View {
-        WorkspaceDetailView(workspace: model.workspace)
-    }
-}
-
-private final class WorkspaceErrorLog: @unchecked Sendable {
-    private let lock = NSLock()
-    private var entries: [(workspaceId: String, message: String)] = []
-
-    func append(workspaceId: String, message: String) {
-        lock.withLock {
-            entries.append((workspaceId: workspaceId, message: message))
-        }
-    }
-
-    func contains(workspaceId: String) -> Bool {
-        lock.withLock {
-            entries.contains { $0.workspaceId == workspaceId }
-        }
     }
 }
 

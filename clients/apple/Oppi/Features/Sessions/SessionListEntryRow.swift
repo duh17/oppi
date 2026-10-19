@@ -16,11 +16,24 @@ struct SessionListRowActions {
     let lockTarget: (Session) -> ScopedLockTarget?
 }
 
-/// One session-list entry, drawn the same in All Sessions and workspace lists:
-/// the session row, then its Thread strip or a link to the thread it belongs
-/// to. The row body opens the session's chat and the strip or link opens
-/// Thread detail; they are sibling tap targets (neither wraps the other), each
-/// a real tap recognizer so a swipe on either cancels navigation.
+/// What deleting a session asks and how its swipe button behaves.
+enum SessionDeleteConfirmationPolicy {
+    /// Delete only asks (the confirmation deletes), so its swipe is not destructive.
+    static let swipeButtonRole: ButtonRole? = nil
+
+    static func deleteMessage(for session: Session) -> String {
+        "This permanently deletes SQLite session metadata, local pi JSONL trace files for this session, chat attachment copies under .pi/attachments/\(session.id), generated media attachments served by Oppi, this device's cached timeline copy, and its local message draft."
+    }
+}
+
+/// One session-list entry, drawn the same in All Sessions and workspace lists,
+/// hosted in a UIKit list cell: the session row, then its Thread strip or a
+/// link to the thread it belongs to. The collection owns the row-body tap
+/// (selection), the trailing swipes, and the long-press menu
+/// (`SessionListRowMenus`); a SwiftUI tap, swipe, or menu here would compete
+/// with the cell's. The row keeps its accessibility activation, and the strip
+/// or link opens Thread detail with its own tap recognizer, so a swipe on it
+/// cancels navigation.
 struct SessionListEntryRow: View {
     let entry: SessionListEntry
     let presentation: (Session) -> SessionRowPresentation
@@ -29,25 +42,10 @@ struct SessionListEntryRow: View {
     /// Workspace name to show for a session outside this list's workspace; nil hides it.
     let foreignWorkspaceName: (Session) -> String?
     let actions: SessionListRowActions
-    /// In a UIKit collection cell the collection owns the row-body tap
-    /// (selection), the trailing swipes, and the long-press menu
-    /// (`SessionListRowMenus`). The row keeps its accessibility activation and
-    /// the Thread strip or link taps; a SwiftUI tap, swipe, or menu here would
-    /// compete with the cell's.
-    var isInCollectionCell = false
 
     @State private var locks = ScopedLockService.shared
 
-    @ViewBuilder
     var body: some View {
-        if isInCollectionCell {
-            content
-        } else {
-            content.sessionRowActions(entry.session, actions: actions)
-        }
-    }
-
-    private var content: some View {
         VStack(alignment: .leading, spacing: 6) {
             rowBody
             if let thread = entry.thread {
@@ -91,7 +89,6 @@ struct SessionListEntryRow: View {
             hidesDetails: target.map(locks.isLocked) ?? false
         )
             .contentShape(Rectangle())
-            .modifier(SessionRowOpenTap(isEnabled: !isInCollectionCell) { actions.open(session) })
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { actions.open(session) }
@@ -117,8 +114,7 @@ extension SessionListEntryRow {
                 presentation: { _ in row.presentation },
                 status: row.status(of:),
                 foreignWorkspaceName: { row.foreignWorkspaceNames[$0.id] },
-                actions: actions,
-                isInCollectionCell: true
+                actions: actions
             )
             .appRootEnvironment(root)
             .withServerScopedEnvironment(connection ?? root.coordinator.activeConnection)
@@ -126,32 +122,18 @@ extension SessionListEntryRow {
     }
 }
 
-/// A plain Button can still commit after a horizontal drag loses to the
-/// List's swipe recognizer. An actual tap recognizer makes row navigation fail
-/// as soon as either swipe direction becomes a drag.
-private struct SessionRowOpenTap: ViewModifier {
-    let isEnabled: Bool
-    let action: () -> Void
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if isEnabled {
-            content.onTapGesture(perform: action)
-        } else {
-            content
-        }
-    }
-}
-
 extension View {
-    /// The shared long-press menu and Mail-style swipes for a session row.
+    /// The SwiftUI long-press menu and Mail-style swipes for a session row
+    /// outside a UIKit list (Thread detail's member rows). UIKit session
+    /// lists use `SessionListRowMenus`.
     func sessionRowActions(_ session: Session, actions: SessionListRowActions) -> some View {
         modifier(SessionRowActionsModifier(session: session, actions: actions))
     }
 }
 
 /// Long-press menu (Open, Stop/Resume, Lock/Unlock, Copy Session ID, Delete)
-/// and trailing swipes for every session row. Swipe left is lifecycle: full
+/// and trailing swipes for a SwiftUI session row, matching
+/// `SessionListRowMenus`. Swipe left is lifecycle: full
 /// swipe stops; a stopped row offers Resume and Delete with no full swipe, so
 /// a swipe never starts or deletes a session without a deliberate tap. There
 /// is no leading swipe: a row's leading-edge drag belongs to the workspace

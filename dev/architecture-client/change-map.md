@@ -8,8 +8,8 @@ Keep these high-churn client modules small and explicit:
 
 - `APIClient.swift` — split by route domain while keeping the same actor and request helpers.
 - `ServerConnection.swift` and extensions — keep as composition root; move capability/reconnect policy and extension UI state transitions into smaller coordinators when behavior grows.
-- `SessionInboxView.swift` — keep global grouping, sidebar selection, and session actions explicit; move them into a `@MainActor @Observable` controller if the view's state continues to grow.
-- `WorkspaceDetailView.swift` — extract refresh, worktree, archive bucket, and local-import state into a `@MainActor @Observable` controller as the view grows.
+- `SessionInboxViewController.swift` — keep global grouping and session actions explicit; shared list behavior belongs in `SessionListCollection.swift`, not a copy per screen.
+- `WorkspaceDetailViewController.swift` — extract refresh, worktree, archive bucket, and local-import state into a small owner type as the controller grows.
 - `ChatViewController.swift` (with its `+Bars`, `+Presentations`, and `+Leaves` extensions) — keep screen structure and composition in the controller; push lifecycle and timeline policy into `ChatSessionManager` and timeline helpers, and composer state into `ChatComposerOwner`.
 - `FullScreenCodeBodies.swift` and timeline tool rows — continue moving heavy rendering and measurement code behind focused view models/builders. The tool row's Markdown viewport lives in `ToolExpandedMarkdownSurface` and its hosted notebook-cell, media and document viewports (notebook cell, read-media, audio message, tables, maps) in `ToolExpandedHostedSurface`; the row keeps orchestration and calls each concrete surface directly (they share no polymorphic lifecycle call, so there is no surface protocol). CSV/TSV and GeoJSON/TopoJSON dispatch lives in `DocumentFamily`; the row's install-action, viewport, interaction and full-screen switches forward its `.document` case.
 

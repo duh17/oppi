@@ -616,8 +616,16 @@ private struct RouterModalSitesPreview: View {
             RouterPreviewControllerStack(root: root) { SessionInboxViewController(root: root) }
                 .ignoresSafeArea()
         case "workspace-now-playing":
-            RouterPreviewStack(root: root) { WorkspaceDetailView(workspace: RouterModalSitesFixtures.workspaces[0]) }
-                .ignoresSafeArea()
+            RouterPreviewControllerStack(root: root) {
+                WorkspaceDetailViewController(
+                    root: root,
+                    target: WorkspaceNavTarget(
+                        serverId: RouterModalSitesFixtures.serverId,
+                        workspace: RouterModalSitesFixtures.workspaces[0]
+                    )
+                )
+            }
+            .ignoresSafeArea()
         default:
             QuickSessionOverlay {}
         }
@@ -904,6 +912,7 @@ private struct RouterModalSitesStashPage: View {
 @MainActor
 private enum RouterModalSitesFixtures {
     static let workspaces = [workspace(id: "oppi", icon: "iphone"), workspace(id: "kypu", icon: "figure.run")]
+    static let serverId = "sha256:router-modal-sites"
 
     static func makeCoordinator(playing: Bool) -> ConnectionCoordinator {
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
@@ -913,7 +922,7 @@ private enum RouterModalSitesFixtures {
             token: "sk_preview",
             name: "modal-sites",
             scheme: .https,
-            serverFingerprint: "sha256:router-modal-sites",
+            serverFingerprint: serverId,
             tlsCertFingerprint: "sha256:router-modal-sites-leaf"
         )) else { return coordinator }
         coordinator.serverStore.replaceServersForPreview([server])

@@ -673,9 +673,6 @@
     "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceDetailView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceDetailsPage.swift": {
       "import SwiftUI": 1
     },
@@ -707,9 +704,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSkillsPage.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceStoppedSessionsSection.swift": {
       "import SwiftUI": 1
     }
   }

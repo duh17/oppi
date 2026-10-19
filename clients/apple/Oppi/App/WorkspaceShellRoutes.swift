@@ -3,8 +3,8 @@ import SwiftUI
 // The SwiftUI content of the workspace shell's routes. UIKit owns the stacks
 // (`ShellRouter.swift`, `WorkspaceShellController.swift`). Most routes are a
 // `ShellRouteView` hosted through `HostFactory`; All Sessions, the workspace
-// sidebar, a session's chat (`ChatRouteViewController`), and SSH Terminal's
-// host list are UIKit screens.
+// sidebar, a workspace's sessions, a session's chat
+// (`ChatRouteViewController`), and SSH Terminal's host list are UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -29,6 +29,13 @@ enum ShellRouteScreens {
         }
         if case .sidebar = route {
             return WorkspaceSidebarViewController(root: root)
+        }
+        if case .workspace(let target) = route {
+            return WorkspaceDetailViewController(
+                root: root,
+                target: target,
+                showsSidebarToggle: placement == .splitDetailRoot
+            )
         }
         if case .session(let target) = route {
             return ChatRouteViewController(target: target, placement: placement, root: root)
@@ -60,6 +67,13 @@ enum ShellRouteScreens {
         }
         // The sidebar reads its own state.
         if screen is WorkspaceSidebarViewController { return }
+        if let detail = screen as? WorkspaceDetailViewController {
+            if case .workspace(let target) = route {
+                detail.update(workspace: target.workspace)
+            }
+            detail.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
         guard let screen = screen as? HostedScreenController else { return }
         screen.setContent {
             ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
@@ -138,8 +152,9 @@ struct ShellRouteView: View {
         case .sidebar:
             // The shell mounts this route as WorkspaceSidebarViewController.
             EmptyView()
-        case .workspace(let target):
-            WorkspaceScopedDestinationView(target: target)
+        case .workspace:
+            // The shell mounts this route as WorkspaceDetailViewController.
+            EmptyView()
         case .session:
             // The shell hosts this route as ChatRouteViewController.
             EmptyView()

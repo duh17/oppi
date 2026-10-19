@@ -227,7 +227,7 @@ struct SessionListPerfBench {
         let sessions = Self.generateSessions(count: 200, activeRatio: 0.0)
 
         let us = Self.measureMedianUs {
-            // Mirrors WorkspaceStoppedSessionsSection.stoppedSessionGroups
+            // Mirrors WorkspaceStoppedSessionGrouping.groups
             // Pre-sort by lastActivity descending (production code receives pre-sorted data)
             let sorted = sessions.sorted { $0.lastActivity > $1.lastActivity }
 

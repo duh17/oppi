@@ -198,8 +198,10 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         XCTAssertTrue(activeRow.waitForExistence(timeout: 15), "Created session row \(sessionId) not found")
         activeRow.swipeLeft()
 
-        let stopButton = app.buttons["session.stop.\(sessionId)"]
-        let deleteButton = app.buttons["session.delete.\(sessionId)"]
+        // UIKit swipe actions have no accessibility identifier; the open
+        // swipe exposes them by their visible titles.
+        let stopButton = app.buttons["Stop"]
+        let deleteButton = app.buttons["Delete"]
         if stopButton.waitForExistence(timeout: 5) {
             tap(stopButton, named: "session stop button")
         } else if deleteButton.waitForExistence(timeout: 1) {
@@ -213,7 +215,7 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         XCTAssertTrue(stoppedRow.waitForExistence(timeout: 20), "Stopped session row \(sessionId) not found")
         stoppedRow.swipeLeft()
 
-        let stoppedDeleteButton = app.buttons["session.delete.\(sessionId)"]
+        let stoppedDeleteButton = app.buttons["Delete"]
         tap(stoppedDeleteButton, named: "session delete button", timeout: 5)
         confirmSessionDeleteIfNeeded()
 
