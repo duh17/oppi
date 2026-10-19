@@ -457,6 +457,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             self?.setNeedsUpdateProperties()
         }
         grid.useChatBar = { [weak self] in self?.showChatBar() }
+        grid.pasteImage = { [weak self] in self?.pasteImage($0) }
         return grid
     }
 
@@ -1165,6 +1166,23 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         } else {
             do { try channel.paste(text) }
             catch { presentPasteFailure("Paste was not sent. \(error.localizedDescription)") }
+        }
+    }
+
+    /// Saves the image on the host like a chat-bar attachment, then pastes
+    /// its path. Claude Code and pi read a pasted image path as the image.
+    private func pasteImage(_ image: SSHTerminalPastedImage) {
+        guard channel.connected else { channel.send(Data()); return }
+        let channel = channel
+        showPasteNotice("Saving the image on the host\u{2026}")
+        Task { [weak self] in
+            do {
+                let path = try await channel.upload(image.data, fileExtension: image.fileExtension)
+                try channel.paste(path)
+                self?.showPasteNotice("Pasted the image's path.")
+            } catch {
+                self?.presentPasteFailure("The image was not pasted. \(error.localizedDescription)")
+            }
         }
     }
 

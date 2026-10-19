@@ -138,6 +138,12 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private var pendingHide: Task<Void, Never>?
     private var dragTarget: SSHTerminalDragTarget?
     private var dragSnapshot: SSHTerminalSelectionSnapshot?
+    /// Where a recognized hold started. It becomes a selection or mouse drag
+    /// only once the finger moves; a hold lifted in place opens the Paste menu.
+    private var holdStart: CGPoint?
+    private let editMenu = UIEditMenuInteraction(delegate: nil)
+    /// An image from Paste or the paste control, for the host to save.
+    var pasteImage: (SSHTerminalPastedImage) -> Void = { _ in }
     private var highlightClear: Task<Void, Never>?
     private var highlightGeneration = 0
     private var isSyncingHistoryScroll = false
@@ -183,9 +189,10 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         // The bar's UIPasteControl delivers to paste(itemProviders:). A
         // programmatic UIPasteboard read from a plain button shows iOS's
         // Allow Paste alert and blocks the main thread until it is answered.
-        pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [UTType.plainText.identifier])
+        pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [UTType.plainText.identifier, UTType.image.identifier])
         accessibilityIdentifier = "sshTerminal.grid"
-        accessibilityLabel = "SSH terminal. Tap to type or hide the keyboard. Double-tap a word to copy it. Drag to scroll. Touch and hold, then drag, to select."
+        accessibilityLabel = "SSH terminal. Tap to type or hide the keyboard. Double-tap a word to copy it. Drag to scroll. Touch and hold to paste, or hold then drag to select."
+        addInteraction(editMenu)
         installGestures()
         bar = makeAccessoryBar()
         applyTheme(ThemeRuntimeState.currentThemeID())
@@ -707,22 +714,45 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         return (Int(point.x / cellSize.width), Int((point.y + shift) / cellSize.height))
     }
     /// The edit menu's Paste. iOS grants that read without the Allow Paste alert.
+    /// Text wins over an image when the clipboard holds both.
     override func paste(_ sender: Any?) {
         guard !ignoresSoftwareKeyEcho else { return }
         resetTextInput()
-        requestPaste(UIPasteboard.general.string)
+        let board = UIPasteboard.general
+        if !board.hasStrings, let image = SSHTerminalPastedImage(pasteboard: board) {
+            pasteImage(image)
+            return
+        }
+        requestPaste(board.string)
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)) {
+            return UIPasteboard.general.hasStrings || UIPasteboard.general.hasImages
+        }
+        return super.canPerformAction(action, withSender: sender)
     }
 
     /// The accessory bar's UIPasteControl. Its tap is the consent, so there is
-    /// no alert, and the text loads off the main thread.
+    /// no alert, and the text or image loads off the main thread.
     override func paste(itemProviders: [NSItemProvider]) {
         resetTextInput()
-        guard let provider = itemProviders.first(where: { $0.canLoadObject(ofClass: String.self) }) else {
+        if let provider = itemProviders.first(where: { $0.canLoadObject(ofClass: String.self) }) {
+            _ = provider.loadObject(ofClass: String.self) { [weak self] text, _ in
+                Task { @MainActor in self?.requestPaste(text) }
+            }
+            return
+        }
+        guard let provider = itemProviders.first(where: { SSHTerminalPastedImage.imageType(in: $0) != nil }),
+              let type = SSHTerminalPastedImage.imageType(in: provider) else {
             requestPaste(nil)
             return
         }
-        _ = provider.loadObject(ofClass: String.self) { [weak self] text, _ in
-            Task { @MainActor in self?.requestPaste(text) }
+        _ = provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { [weak self] data, _ in
+            let image = data.map { SSHTerminalPastedImage(data: $0, type: type) }
+            Task { @MainActor in
+                if let image { self?.pasteImage(image) } else { self?.requestPaste(nil) }
+            }
         }
     }
     override func resignFirstResponder() -> Bool {
@@ -830,17 +860,13 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             tapSequence.reset()
             cancelHideKeyboard()
             historyScroll.isScrollEnabled = false
-            let target = SSHTerminalDragTarget.resolve(mouseReporting: channel.engine.mouseTracking)
-            dragTarget = target
+            holdStart = location
             dragSnapshot = nil
-            switch target {
-            case .mouse:
-                resetTextInput()
-                channel.mouse(.press, column: cell.column, row: cell.row)
-            case .selection:
-                channel.engine.beginSelection(column: cell.column, row: cell.row, surfacePoint: surface)
-            }
         case .changed:
+            if dragTarget == nil, let start = holdStart,
+               hypot(location.x - start.x, location.y - start.y) >= Self.holdDragThreshold {
+                beginHoldDrag(at: start)
+            }
             switch dragTarget {
             case .mouse:
                 channel.mouse(.motion, column: cell.column, row: cell.row)
@@ -870,8 +896,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
                     channel.engine.cancelSelection()
                 }
             case nil:
-                break
+                if gesture.state == .ended, let start = holdStart {
+                    editMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: start))
+                }
             }
+            holdStart = nil
             dragSnapshot = nil
             let tapFailed = tapRecognizer?.state == .failed || tapRecognizer?.state == .cancelled
             tapIgnore.longPressEnded(tapFailed: tapFailed)
@@ -880,6 +909,27 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             break
         }
         needsPaint = true
+    }
+
+    /// Finger travel after the hold before it counts as a drag rather than
+    /// a hold for the Paste menu.
+    private static let holdDragThreshold: CGFloat = 6
+
+    /// Starts the selection, or the mouse press in an app that asked for
+    /// mouse input, at the cell where the hold began.
+    private func beginHoldDrag(at start: CGPoint) {
+        let cell = self.cell(at: start)
+        let scale = max(traitCollection.displayScale, 1)
+        let surface = CGPoint(x: start.x * scale, y: start.y * scale + CGFloat(historyShiftPixels))
+        let target = SSHTerminalDragTarget.resolve(mouseReporting: channel.engine.mouseTracking)
+        dragTarget = target
+        switch target {
+        case .mouse:
+            resetTextInput()
+            channel.mouse(.press, column: cell.column, row: cell.row)
+        case .selection:
+            channel.engine.beginSelection(column: cell.column, row: cell.row, surfacePoint: surface)
+        }
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -1592,5 +1642,32 @@ private extension UIColor {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         getRed(&r, green: &g, blue: &b, alpha: &a)
         return .init(r: UInt8(max(0, min(255, r * 255))), g: UInt8(max(0, min(255, g * 255))), b: UInt8(max(0, min(255, b * 255))))
+    }
+}
+
+/// A pasted image as the bytes the clipboard held and a file extension the
+/// host file can carry, so the agent sees a PNG, JPEG, or HEIC as such.
+struct SSHTerminalPastedImage: Equatable {
+    let data: Data
+    let fileExtension: String
+
+    init(data: Data, type: UTType) {
+        self.data = data
+        fileExtension = type.preferredFilenameExtension ?? "png"
+    }
+
+    init?(pasteboard: UIPasteboard) {
+        for identifier in pasteboard.types {
+            guard let type = UTType(identifier), type.conforms(to: .image),
+                  let data = pasteboard.data(forPasteboardType: identifier) else { continue }
+            self.init(data: data, type: type)
+            return
+        }
+        guard let data = pasteboard.image?.pngData() else { return nil }
+        self.init(data: data, type: .png)
+    }
+
+    static func imageType(in provider: NSItemProvider) -> UTType? {
+        provider.registeredTypeIdentifiers.lazy.compactMap { UTType($0) }.first { $0.conforms(to: .image) }
     }
 }

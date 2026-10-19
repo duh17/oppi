@@ -2,6 +2,7 @@ import Foundation
 import GhosttyVt
 import Testing
 import UIKit
+import UniformTypeIdentifiers
 @testable import Oppi
 
 @Suite("Interactive SSH terminal", .serialized, .timeLimit(.minutes(1)))
@@ -860,6 +861,63 @@ struct SSHTerminalTests {
         #expect(findType(accessory) { $0 is SSHTerminalArrowButton } != nil)
         let accessoryArrows = collectArrows(accessory)
         #expect(Set(accessoryArrows.compactMap { $0.configuration?.title }) == ["\u{2190}", "\u{2193}", "\u{2191}", "\u{2192}"])
+    }
+
+    @Test func pastedImagesKeepTheirTypeForTheHostFile() {
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.jpeg.identifier, visibility: .all) { done in
+            done(Data([0xFF, 0xD8]), nil)
+            return nil
+        }
+        #expect(SSHTerminalPastedImage.imageType(in: provider) == .jpeg)
+        #expect(SSHTerminalPastedImage.imageType(in: NSItemProvider(object: "text" as NSString)) == nil)
+        #expect(SSHTerminalPastedImage(data: Data(), type: .jpeg).fileExtension == "jpeg")
+        #expect(SSHTerminalPastedImage(data: Data(), type: .heic).fileExtension == "heic")
+        #expect(SSHTerminalPastedImage(data: Data(), type: .image).fileExtension == "png")
+    }
+
+    @Test func phoneWidthAccessoryKeepsHideAndChatInReachAndPagesTheKeys() {
+        let accessory = SSHTerminalKeyStripView(role: .accessory, handlers: .init())
+        accessory.apply(
+            profile: SSHTerminalKeymap.profile(for: "claude"),
+            userFile: nil,
+            actions: SSHTerminalKeymap.actions(for: SSHTerminalKeymap.profile(for: "claude")!, userFile: nil),
+            colors: .placeholder,
+            foreground: .label,
+            background: .black
+        )
+        accessory.frame = CGRect(x: 0, y: 0, width: 390, height: 48)
+        // Pages come from the keys' laid-out frames; showing the page button
+        // asks for one more pass.
+        for _ in 0..<3 { accessory.layoutIfNeeded() }
+        func find(_ root: UIView, _ id: String) -> UIView? {
+            if root.accessibilityIdentifier == id { return root }
+            for child in root.subviews {
+                if let match = find(child, id) { return match }
+            }
+            return nil
+        }
+        for id in ["sshTerminal.hideKeyboard", "sshTerminal.useChatBar", "sshTerminal.page"] {
+            guard let control = find(accessory, id) else {
+                Issue.record("missing \(id)")
+                continue
+            }
+            #expect(!control.isHidden)
+            let frame = control.convert(control.bounds, to: accessory)
+            #expect(accessory.bounds.contains(frame), "\(id) at \(frame)")
+        }
+        guard let page = find(accessory, "sshTerminal.page") as? UIButton,
+              let scroll = find(accessory, "sshTerminal.escape")?.superview?.superview as? UIScrollView else {
+            Issue.record("missing page button or key row")
+            return
+        }
+        #expect(page.configuration?.title?.hasPrefix("1/") == true)
+        page.sendActions(for: .touchUpInside)
+        let deadline = Date().addingTimeInterval(1)
+        while scroll.contentOffset.x == 0, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        #expect(scroll.contentOffset.x > 0)
     }
 
     @Test func terminalDictationWritesTheLiveDraftAndKeepsItAfterLeavingTheBar() async throws {

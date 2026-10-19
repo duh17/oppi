@@ -4,9 +4,10 @@ import UniformTypeIdentifiers
 
 /// One key strip for the chat bar and the raw-keyboard accessory.
 /// Composer pages stay paged (agent / move / exit); the accessory keeps Ctrl/Alt
-/// latches, Paste, program actions, and the chat/hide controls. Buttons, arrows,
-/// spacing, and press treatment are shared.
-final class SSHTerminalKeyStripView: UIView {
+/// latches, Paste, and program actions in one scrolling row, with its page,
+/// chat, and hide controls pinned at the trailing edge so a phone-width bar
+/// can always reach them. Buttons, arrows, spacing, and press treatment are shared.
+final class SSHTerminalKeyStripView: UIView, UIScrollViewDelegate {
     enum Role {
         case composer
         case accessory
@@ -45,6 +46,7 @@ final class SSHTerminalKeyStripView: UIView {
     private var pasteControl: UIPasteControl?
     private var pageButton: SSHTerminalKeyButton?
     private var appliedSignature = ""
+    private var accessoryPageTitle = ""
 
     init(role: Role, handlers: Handlers) {
         self.role = role
@@ -129,6 +131,7 @@ final class SSHTerminalKeyStripView: UIView {
         scroll.alwaysBounceHorizontal = false
         scroll.keyboardDismissMode = .none
         scroll.delaysContentTouches = false
+        scroll.delegate = self
         keys.axis = .horizontal
         keys.alignment = .center
         keys.spacing = 4
@@ -162,7 +165,7 @@ final class SSHTerminalKeyStripView: UIView {
             scroll.topAnchor.constraint(equalTo: topAnchor),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             trailing.leadingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: 4),
-            trailing.trailingAnchor.constraint(equalTo: trailingAnchor),
+            trailing.trailingAnchor.constraint(equalTo: trailingAnchor, constant: role == .accessory ? -4 : 0),
             trailing.topAnchor.constraint(equalTo: topAnchor),
             trailing.bottomAnchor.constraint(equalTo: bottomAnchor),
             keys.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
@@ -172,10 +175,15 @@ final class SSHTerminalKeyStripView: UIView {
             keys.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
             heightAnchor.constraint(equalToConstant: stripHeight),
         ])
-        trailing.isHidden = role != .composer
-        if role != .composer {
-            trailing.widthAnchor.constraint(equalToConstant: 0).isActive = true
-        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if role == .accessory { showAccessoryPage() }
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        if role == .accessory { showAccessoryPage() }
     }
 
     private func rebuild() {
@@ -277,24 +285,84 @@ final class SSHTerminalKeyStripView: UIView {
                 self?.handlers.sendStrokes(action.strokes)
             }
         }
-        let chat = addKey(
+        let pageButton = SSHTerminalKeyButton()
+        pageButton.accessibilityIdentifier = "sshTerminal.page"
+        pageButton.accessibilityHint = "Shows the next keys"
+        pageButton.isHidden = true
+        pageButton.addAction(UIAction { [weak self] _ in
+            self?.showNextAccessoryPage()
+        }, for: .touchUpInside)
+        trailing.addArrangedSubview(pageButton)
+        self.pageButton = pageButton
+        accessoryPageTitle = ""
+        addKey(
             title: nil,
             systemImage: "text.bubble",
             id: "sshTerminal.useChatBar",
             accessibilityLabel: "Use chat bar",
-            hint: nil
+            hint: nil,
+            in: trailing
         ) { [weak self] in
             self?.handlers.useChatBar()
         }
-        _ = chat
         addKey(
             title: "⌄",
             id: "sshTerminal.hideKeyboard",
             accessibilityLabel: "Hide keyboard",
-            hint: nil
+            hint: nil,
+            in: trailing
         ) { [weak self] in
             self?.handlers.hideKeyboard()
         }
+        scroll.contentOffset = .zero
+    }
+
+    // MARK: - Accessory pages
+
+    /// Scroll offsets where each accessory page starts: a page starts at the
+    /// first key that does not fit whole on the page before it, so paging
+    /// never cuts a key in half. Swiping the row still works.
+    private func accessoryPageStarts() -> [CGFloat] {
+        let width = scroll.bounds.width
+        let maxOffset = max(0, scroll.contentSize.width - width)
+        guard width > 0, maxOffset > 0.5 else { return [0] }
+        var starts: [CGFloat] = [0]
+        for key in keys.arrangedSubviews where key.frame.maxX > starts[starts.count - 1] + width + 0.5 {
+            starts.append(min(key.frame.minX, maxOffset))
+        }
+        return starts
+    }
+
+    private func currentAccessoryPage(_ starts: [CGFloat]) -> Int {
+        let offset = scroll.contentOffset.x
+        let maxOffset = max(0, scroll.contentSize.width - scroll.bounds.width)
+        if offset >= maxOffset - 0.5 { return starts.count - 1 }
+        return starts.lastIndex { $0 <= offset + 0.5 } ?? 0
+    }
+
+    /// The page button shows only while the keys overflow. Hiding it only
+    /// widens the row, so the choice cannot flip back and forth.
+    private func showAccessoryPage() {
+        guard let pageButton else { return }
+        let starts = accessoryPageStarts()
+        let page = currentAccessoryPage(starts)
+        let title = starts.count > 1 ? "\(page + 1)/\(starts.count)" : ""
+        guard title != accessoryPageTitle else { return }
+        accessoryPageTitle = title
+        if pageButton.isHidden != title.isEmpty {
+            pageButton.isHidden = title.isEmpty
+            setNeedsLayout()
+        }
+        pageButton.apply(title: title, colors: colors, compactTitle: true)
+        pageButton.accessibilityLabel = "Key page \(page + 1) of \(starts.count)"
+    }
+
+    private func showNextAccessoryPage() {
+        let starts = accessoryPageStarts()
+        guard starts.count > 1 else { return }
+        let next = (currentAccessoryPage(starts) + 1) % starts.count
+        stopRepeating()
+        scroll.setContentOffset(CGPoint(x: starts[next], y: 0), animated: !UIAccessibility.isReduceMotionEnabled)
     }
 
     @discardableResult
@@ -304,6 +372,7 @@ final class SSHTerminalKeyStripView: UIView {
         id: String,
         accessibilityLabel: String?,
         hint: String?,
+        in stack: UIStackView? = nil,
         action: @escaping () -> Void
     ) -> SSHTerminalKeyButton {
         let button = SSHTerminalKeyButton()
@@ -314,7 +383,7 @@ final class SSHTerminalKeyStripView: UIView {
             button.accessibilityHint = hint
         }
         button.addAction(UIAction { _ in action() }, for: .touchUpInside)
-        keys.addArrangedSubview(button)
+        (stack ?? keys).addArrangedSubview(button)
         return button
     }
 
