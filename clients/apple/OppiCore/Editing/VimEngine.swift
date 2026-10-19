@@ -137,6 +137,7 @@ final class VimEngine {
     var pendingDisplay: String { pendingKeys.map(\.display).joined() }
 
     static let maxCount = 9_999
+    static let maxLineCount = 9_999_999
     static let maxPasteLength = 2_097_152
 
     /// The Vim cursor. In Visual mode the selection's moving end, which the
@@ -346,8 +347,9 @@ final class VimEngine {
                 digits.append(character)
                 index += 1
             }
-            // Clamped so `999999999p` cannot allocate gigabytes or spin the main thread.
-            return digits.isEmpty ? nil : min(Int(digits.prefix(6)) ?? 1, Self.maxCount)
+            // Kept as typed (a line number for `G`); work that repeats clamps
+            // it to `maxCount` where it runs.
+            return digits.isEmpty ? nil : min(Int(digits.prefix(7)) ?? 1, Self.maxLineCount)
         }
 
         if case .char("\"") = keys.first {
@@ -436,7 +438,7 @@ final class VimEngine {
         if let op {
             let secondCount = peekCount()
             let total: Int? = switch (count, secondCount) {
-            case let (first?, second?): min(first * second, Self.maxCount)
+            case let (first?, second?): min(first * second, Self.maxLineCount)
             case let (first?, nil): first
             case let (nil, second?): second
             case (nil, nil): nil
@@ -596,7 +598,9 @@ final class VimEngine {
 
     private func execute(_ command: Command, keys: [VimKey]) -> [VimHostRequest] {
         guard let buffer else { return [] }
-        let count = max(1, command.count ?? 1)
+        // Repetitions are clamped so `999999999p` cannot allocate gigabytes or
+        // spin the main thread; `G` and `dd` counts stay as typed.
+        let count = min(max(1, command.count ?? 1), Self.maxCount)
         switch command.action {
         case .motion(let motion) where Self.isVertical(motion):
             // `j`/`k` remember the column they started from.
@@ -630,7 +634,7 @@ final class VimEngine {
             let text = buffer.vimText
             let startLine = lineStart(cursor)
             var end = startLine
-            for _ in 1..<count {
+            for _ in 1..<max(1, command.count ?? 1) {
                 let nextLine = lineEnd(end)
                 guard nextLine > end, nextLine < text.length else { break }
                 end = nextLine
@@ -1112,7 +1116,8 @@ final class VimEngine {
         guard let buffer else { return nil }
         let text = buffer.vimText
         let length = text.length
-        let count = max(1, explicitCount ?? 1)
+        // Line numbers (`G`, `gg`) read `explicitCount` as typed; loops use the clamp.
+        let count = min(max(1, explicitCount ?? 1), Self.maxCount)
         var position = start
         switch motion {
         case .left:

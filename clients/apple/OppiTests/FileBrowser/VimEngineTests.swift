@@ -285,6 +285,18 @@ struct VimEngineTests {
         #expect(CodeLineIndex(harness.buffer.text).lineCount == VimEngine.maxCount + 1)
     }
 
+    /// Repeat counts are clamped, line numbers are not: `G` reaches any line.
+    @Test func lineJumpsReachPastTheRepeatClamp() {
+        let text = (1...12_000).map { "line \($0)" }.joined(separator: "\n")
+        let harness = VimHarness("|" + text)
+        harness.send("10001G")
+        #expect(harness.buffer.selection.location == CodeLineIndex(harness.buffer.text).starts[10_000])
+        harness.send("gg").send("11000gg")
+        #expect(harness.buffer.selection.location == CodeLineIndex(harness.buffer.text).starts[10_999])
+        harness.send("gg").send("d10500G")
+        #expect(harness.buffer.text.hasPrefix("line 10501"))
+    }
+
     @Test func joinLines() {
         #expect(vim("|a\n  b", "J") == "a| b")
         #expect(vim("|a\nb\nc", "3J") == "a b| c")

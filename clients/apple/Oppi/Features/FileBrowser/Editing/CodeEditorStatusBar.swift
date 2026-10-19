@@ -3,7 +3,7 @@ import UIKit
 /// The editor's status line: Vim mode and pending keys on the leading side,
 /// then any message, then Ln/Col (tap for Go to Line), indentation, and
 /// language. `:`, `/`, and `?` swap it for a one-line command field.
-final class CodeEditorStatusBar: UIView, UITextFieldDelegate {
+final class CodeEditorStatusBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelegate {
     var onCommand: (Character, String) -> Void = { _, _ in }
     var onCommandEnded: () -> Void = {}
     var onGoToLine: () -> Void = {}
@@ -57,9 +57,12 @@ final class CodeEditorStatusBar: UIView, UITextFieldDelegate {
         row.axis = .horizontal
         row.alignment = .center
         row.spacing = 8
-        // The whole bar opens Go to Line, so the target spans its full width
-        // and height rather than only the small Ln/Col text.
-        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(goToLine)))
+        // The trailing Ln/Col and detail area opens Go to Line at the bar's
+        // full height, so the target is larger than the small text. The
+        // leading side stays inert, and the command field keeps its taps.
+        let tap = UITapGestureRecognizer(target: self, action: #selector(goToLine))
+        tap.delegate = self
+        addGestureRecognizer(tap)
         for view in [modeLabel, pendingLabel, messageLabel, positionButton, detailLabel] as [UIView] {
             row.addArrangedSubview(view)
         }
@@ -105,9 +108,11 @@ final class CodeEditorStatusBar: UIView, UITextFieldDelegate {
 
     var isEditingCommand: Bool { !field.isHidden }
 
-    @objc private func goToLine() {
-        guard !isEditingCommand else { return }
-        onGoToLine()
+    @objc private func goToLine() { onGoToLine() }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard !isEditingCommand else { return false }
+        return touch.location(in: self).x >= convert(positionButton.bounds, from: positionButton).minX - 12
     }
 
     func applyColors(background: UIColor, foreground: UIColor, dim: UIColor, accent: UIColor, divider: UIColor) {
