@@ -70,6 +70,8 @@ struct SessionThreadStrip: View {
             HStack(alignment: .center, spacing: 8) {
                 if display.showsThreadAgentSummary, !hidesDetails {
                     SessionThreadAgentCluster(groups: SessionThreadAgentGroup.groups(rollup.members), maxGroups: 3)
+                        // Natural single-line width: the summary truncates, never wraps "+N" or collapses "×N".
+                        .fixedSize(horizontal: true, vertical: false)
                 }
                 Text(summary)
                     .font(.caption)
