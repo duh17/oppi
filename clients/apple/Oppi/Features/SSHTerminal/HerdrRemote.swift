@@ -12,17 +12,18 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
             self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
         }
 
-        /// Shared session-status reading. Herdr reports no blocked kind, so
-        /// `blocked` is a question. An unknown Herdr state stays nil rather
-        /// than claiming Done or a blocked kind.
+        /// Herdr's states are OSC 7501's, so they read through the same
+        /// resolver as sessions and terminal records. Herdr reports no blocked
+        /// kind, so `blocked` is a question; an unknown state stays nil. Herdr
+        /// keeps its own seen ledger: its `done` is already unseen and turns
+        /// `idle` once looked at, so every outcome it reports counts as unseen.
         var sessionStatus: SessionStatusKind? {
-            switch self {
-            case .working: .working
-            case .blocked: .question
-            case .done: .done
-            case .idle: .idle
-            case .unknown: nil
-            }
+            SessionStatusKind.resolve(
+                state: ProgramStatusState(rawValue: rawValue),
+                kind: nil,
+                since: .distantFuture,
+                seenAt: nil
+            )
         }
     }
 
