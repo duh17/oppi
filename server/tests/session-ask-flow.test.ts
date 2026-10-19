@@ -8,8 +8,10 @@ import {
   drainExtensionUITeardownMessages,
   handleExtensionUIRequest,
   respondToExtensionUIRequest,
+  settleExtensionUIRequest,
   type ExtensionUIRequest,
 } from "../src/extension-ui-state.js";
+import type { ServerMetricCollector } from "../src/server-metric-collector.js";
 import type { SdkBackend } from "../src/sdk-backend.js";
 import type { Session } from "../src/types.js";
 
@@ -189,6 +191,51 @@ describe("direct ask flow", () => {
     expect(active.pendingAsk).toBeUndefined();
     expect(active.pendingUIRequests.size).toBe(0);
     expect(sdkBackend.respondToExtensionUIRequest).toHaveBeenCalledWith(response);
+  });
+
+  it("records ask round-trip when the backend settles the dialog while delivering", () => {
+    const harness = createHarness();
+    const { active } = harness;
+    const record = vi.fn();
+    let now = 1_000;
+
+    handleExtensionUIRequest(
+      active,
+      {
+        type: "extension_ui_request",
+        id: "ask-sync-settle",
+        method: "ask",
+        questions: [
+          { id: "approach", question: "Which?", options: [{ value: "unit", label: "Unit" }] },
+        ],
+      },
+      { broadcast: () => {}, now: () => now },
+    );
+    now = 4_500;
+
+    // The SDK UI bridge resolves the dialog and emits extension_ui_request_settled
+    // synchronously inside respond(); the event path settles without metrics.
+    const handled = respondToExtensionUIRequest(
+      active,
+      { type: "extension_ui_response", id: "ask-sync-settle", value: "{}" },
+      {
+        metrics: { record } as unknown as ServerMetricCollector,
+        now: () => now,
+        deliver: (payload) => {
+          settleExtensionUIRequest(active, payload.id, {});
+          return true;
+        },
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(active.pendingAsk).toBeUndefined();
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record).toHaveBeenCalledWith("server.ask_round_trip_ms", 3_500, {
+      sessionId: active.session.id,
+      cancelled: "false",
+      questionCount: "1",
+    });
   });
 
   it("keeps a pending request when response delivery fails", () => {

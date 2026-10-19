@@ -81,12 +81,21 @@ export function respondToExtensionUIRequest(
     return false;
   }
 
+  // Snapshot before delivery: the SDK UI bridge resolves the dialog and emits
+  // extension_ui_request_settled synchronously inside deliver, and that event
+  // path settles without metrics, clearing pendingAsk before finish runs.
+  const ask = active.pendingAsk?.requestId === response.id ? active.pendingAsk : undefined;
   const finish = (delivered: boolean): boolean => {
     if (!delivered) return false;
+    if (ask) {
+      recordAskRoundTrip(active.session.id, ask, {
+        cancelled: !!response.cancelled,
+        metrics: options.metrics,
+        now: options.now,
+      });
+    }
     settleExtensionUIRequest(active, response.id, {
       cancelled: !!response.cancelled,
-      metrics: options.metrics,
-      now: options.now,
       broadcastSettled: options.broadcastSettled,
     });
     return true;
@@ -461,16 +470,25 @@ function completeAskRequest(
     return;
   }
 
-  const metrics = options.metrics;
-  if (metrics && ask.initiatedAt) {
-    metrics.record("server.ask_round_trip_ms", (options.now?.() ?? Date.now()) - ask.initiatedAt, {
-      sessionId: active.session.id,
+  recordAskRoundTrip(active.session.id, ask, options);
+  active.pendingAsk = undefined;
+}
+
+function recordAskRoundTrip(
+  sessionId: string,
+  ask: PendingAskState,
+  options: { cancelled: boolean; metrics?: ServerMetricCollector; now?: () => number },
+): void {
+  if (!options.metrics || !ask.initiatedAt) return;
+  options.metrics.record(
+    "server.ask_round_trip_ms",
+    (options.now?.() ?? Date.now()) - ask.initiatedAt,
+    {
+      sessionId,
       cancelled: options.cancelled ? "true" : "false",
       questionCount: String(ask.questionCount),
-    });
-  }
-
-  active.pendingAsk = undefined;
+    },
+  );
 }
 
 export function settleExtensionUIRequest(
