@@ -370,15 +370,15 @@ enum WorkspaceReviewDiffHunkBuilder {
     private static let contextLines = 3
     private static let maxTokenDiffCells = 40_000
 
-    /// Build hunks from diff lines, optionally computing word-level change spans.
+    /// Build hunks from diff lines with word-level change spans.
     ///
-    /// When `withWordSpans` is true (default), pairs of removed/added lines
-    /// within each change group get intra-line highlighting via token LCS.
-    static func buildHunks(from lines: [DiffLine], withWordSpans: Bool = true) -> [WorkspaceReviewDiffHunk] {
+    /// This is the single owner of intra-line spans for client-computed diffs:
+    /// pairs of removed/added lines within each change group get token-LCS
+    /// spans, so every diff surface (timeline row, full screen, review) shows
+    /// the same word highlights.
+    static func buildHunks(from lines: [DiffLine]) -> [WorkspaceReviewDiffHunk] {
         var numberedLines = number(lines)
-        if withWordSpans {
-            applyWordLevelHighlights(&numberedLines)
-        }
+        applyWordLevelHighlights(&numberedLines)
         guard !numberedLines.isEmpty else { return [] }
 
         var changeWindows: [(start: Int, end: Int)] = []

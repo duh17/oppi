@@ -14,8 +14,9 @@ let diffCodeColumnAttributeKey = NSAttributedString.Key("oppiDiffCodeColumn")
 ///    (gutter, line numbers, code) gets its final font/foreground from the start.
 ///    This eliminates the expensive Phase 4 attribute overrides (1300+ addAttribute
 ///    calls on a large string). Append is O(1) amortized.
-/// 2. Apply row-level backgrounds, syntax highlights, and word-span overrides
-///    via addAttribute on the assembled string.
+/// 2. Apply row-level backgrounds, word-span backgrounds, and syntax colors
+///    via addAttribute on the assembled string. Word spans only own the
+///    background; syntax owns the foreground, so both show together.
 enum DiffAttributedStringBuilder {
 
     // MARK: - Cached Style Attrs
@@ -34,8 +35,6 @@ enum DiffAttributedStringBuilder {
         /// Row tints left to `DiffReaderView`'s tint layers.
         let paintedRows: RowStyle
         let painterColors: PainterColors
-
-        let fgColor: UIColor
 
         // Syntax token colors
         // Array indexed by TokenKind.rawValue for O(1) lookup (no dictionary hash)
@@ -177,7 +176,6 @@ enum DiffAttributedStringBuilder {
                     addedBar: addedAccent,
                     removedBar: removedAccent
                 ),
-                fgColor: fgColor,
                 syntaxColorArray: syntaxColorArray,
                 addedAccentColor: addedAccent,
                 removedAccentColor: removedAccent,
@@ -544,18 +542,6 @@ enum DiffAttributedStringBuilder {
             }
         }
 
-        let fgColor = style.fgColor
-        for info in lineInfos {
-            guard let spans = info.spans, !spans.isEmpty else { continue }
-            for span in spans {
-                let length = span.end - span.start
-                guard span.start >= 0, length > 0 else { continue }
-                let spanStart = info.codeStart + span.start
-                guard spanStart + length <= info.codeStart + info.codeLen else { continue }
-                result.addAttribute(.foregroundColor, value: fgColor, range: NSRange(location: spanStart, length: length))
-            }
-        }
-
         result.endEditing()
         return BuildResult(attributedText: result)
     }
@@ -842,7 +828,6 @@ enum DiffAttributedStringBuilder {
                 guard span.start >= 0, length > 0, span.end <= code.utf16.count else { continue }
                 let range = NSRange(location: codeStart + span.start, length: length)
                 result.addAttribute(.backgroundColor, value: background, range: range)
-                result.addAttribute(.foregroundColor, value: style.fgColor, range: range)
             }
         }
     }

@@ -12,7 +12,7 @@ struct WordSpanTests {
             old: "let value = oldName",
             new: "let value = newName"
         )
-        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines)
 
         #expect(hunks.count == 1)
         let hunk = hunks[0]
@@ -47,7 +47,7 @@ struct WordSpanTests {
             old: "func foo(x: Int) -> String",
             new: "func bar(x: Double) -> Bool"
         )
-        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines)
         let removed = hunks.flatMap(\.lines).first { $0.kind == .removed }
         let added = hunks.flatMap(\.lines).first { $0.kind == .added }
 
@@ -62,7 +62,7 @@ struct WordSpanTests {
             old: "let x = 1\nlet y = 2",
             new: "let x = 1\nlet y = 2"
         )
-        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines)
 
         // No changes → no hunks
         #expect(hunks.isEmpty)
@@ -73,24 +73,11 @@ struct WordSpanTests {
             old: "line1\nline2\nline3",
             new: "line1\nchanged\nline3"
         )
-        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines)
         let contextLines = hunks.flatMap(\.lines).filter { $0.kind == .context }
 
         for line in contextLines {
             #expect(line.spans == nil, "Context lines should not have spans")
-        }
-    }
-
-    @Test func withoutWordSpansProducesNilSpans() {
-        let lines = DiffEngine.compute(
-            old: "let value = oldName",
-            new: "let value = newName"
-        )
-        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: false)
-        let allLines = hunks.flatMap(\.lines)
-
-        for line in allLines {
-            #expect(line.spans == nil, "Without word spans, all spans should be nil")
         }
     }
 
@@ -100,7 +87,7 @@ struct WordSpanTests {
             old: "",
             new: "new line here"
         )
-        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines)
         let addedLines = hunks.flatMap(\.lines).filter { $0.kind == .added }
 
         // With no removed counterpart, no word spans should be computed
@@ -114,7 +101,7 @@ struct WordSpanTests {
             old: "old line here",
             new: ""
         )
-        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines)
         let removedLines = hunks.flatMap(\.lines).filter { $0.kind == .removed }
 
         for line in removedLines {
@@ -128,7 +115,7 @@ struct WordSpanTests {
             old: "abc def",
             new: "abc xyz"
         )
-        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines)
         let added = hunks.flatMap(\.lines).first { $0.kind == .added }
 
         if let span = added?.spans?.first {
@@ -143,7 +130,7 @@ struct WordSpanTests {
         let oldText = "let family = \"\(family)\"; oldName"
         let newText = "let family = \"\(family)\"; newName"
         let lines = DiffEngine.compute(old: oldText, new: newText)
-        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines)
         let added = try #require(hunks.flatMap(\.lines).first { $0.kind == .added })
         let span = try #require(added.spans?.first)
         let expectedRange = (newText as NSString).range(of: "newName")

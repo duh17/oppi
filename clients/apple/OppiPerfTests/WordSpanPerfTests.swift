@@ -16,7 +16,7 @@ struct WordSpanPerfTests {
         let iterations = 1000
         let start = CFAbsoluteTimeGetCurrent()
         for _ in 0..<iterations {
-            _ = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+            _ = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines)
         }
         let elapsed = CFAbsoluteTimeGetCurrent() - start
         let perCall = (elapsed / Double(iterations)) * 1_000_000 // microseconds
@@ -44,7 +44,7 @@ struct WordSpanPerfTests {
         let iterations = 100
         let start = CFAbsoluteTimeGetCurrent()
         for _ in 0..<iterations {
-            _ = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+            _ = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines)
         }
         let elapsed = CFAbsoluteTimeGetCurrent() - start
         let perCall = (elapsed / Double(iterations)) * 1_000_000
@@ -72,55 +72,12 @@ struct WordSpanPerfTests {
         let iterations = 20
         let start = CFAbsoluteTimeGetCurrent()
         for _ in 0..<iterations {
-            _ = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
+            _ = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines)
         }
         let elapsed = CFAbsoluteTimeGetCurrent() - start
         let perCall = (elapsed / Double(iterations)) * 1_000_000
 
         print("[perf] Large edit (50 line pairs, 100 total): \(String(format: "%.1f", perCall))us per call (\(iterations) iterations)")
         #expect(perCall < 20000, "Large edit should be under 20ms")
-    }
-
-    @Test func measureWordSpansVsNoWordSpans() {
-        // Compare with vs without word spans to isolate the cost
-        var oldLines: [String] = []
-        var newLines: [String] = []
-        for i in 0..<30 {
-            if i >= 10 && i < 20 {
-                oldLines.append("    let value\(i) = oldFunction(\(i))")
-                newLines.append("    let value\(i) = newFunction(\(i), extra: true)")
-            } else {
-                let shared = "    let shared\(i) = context(\(i))"
-                oldLines.append(shared)
-                newLines.append(shared)
-            }
-        }
-        let lines = DiffEngine.compute(old: oldLines.joined(separator: "\n"), new: newLines.joined(separator: "\n"))
-
-        let iterations = 200
-
-        // Without word spans
-        let startNoSpans = CFAbsoluteTimeGetCurrent()
-        for _ in 0..<iterations {
-            _ = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: false)
-        }
-        let elapsedNoSpans = CFAbsoluteTimeGetCurrent() - startNoSpans
-        let perCallNoSpans = (elapsedNoSpans / Double(iterations)) * 1_000_000
-
-        // With word spans
-        let startWithSpans = CFAbsoluteTimeGetCurrent()
-        for _ in 0..<iterations {
-            _ = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
-        }
-        let elapsedWithSpans = CFAbsoluteTimeGetCurrent() - startWithSpans
-        let perCallWithSpans = (elapsedWithSpans / Double(iterations)) * 1_000_000
-
-        let overhead = perCallWithSpans - perCallNoSpans
-        let overheadPct = (overhead / perCallNoSpans) * 100
-
-        print("[perf] Without word spans: \(String(format: "%.1f", perCallNoSpans))us")
-        print("[perf] With word spans:    \(String(format: "%.1f", perCallWithSpans))us")
-        print("[perf] Overhead:           \(String(format: "%.1f", overhead))us (\(String(format: "%.0f", overheadPct))%)")
-        #expect(overhead < 5000, "Word span overhead should be under 5ms for medium edit")
     }
 }

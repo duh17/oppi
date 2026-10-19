@@ -53,9 +53,9 @@ struct ToolRowDiffRenderStrategy {
                 expandedLabel.attributedText = cached
                 renderedText = cached.string
             } else {
-                // Unified diff renderer: convert DiffLines → readable hunks → attributed string.
-                // Keep this cheap: line-level colors and hunk summaries are enough for tool diffs.
-                let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: false)
+                // Same hunk + attributed-string owners as the full-screen diff, so
+                // syntax colors and word spans match across both surfaces.
+                let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines)
                 let diffText: NSAttributedString
                 if hunks.isEmpty {
                     diffText = NSAttributedString(

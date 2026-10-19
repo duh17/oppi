@@ -364,49 +364,45 @@ struct DiffSyntaxHighlightOffsetTests {
         #expect(addedGutterColor != keywordColor)
     }
 
-    @Test func wordSpanForegroundOverridesSyntaxAndKeepsBackground() throws {
-        let hunks = [
-            WorkspaceReviewDiffHunk(
-                oldStart: 1,
-                oldCount: 1,
-                newStart: 1,
-                newCount: 1,
-                lines: [
-                    WorkspaceReviewDiffLine(
-                        kind: .removed,
-                        text: "return false",
-                        oldLine: 1,
-                        newLine: nil,
-                        spans: [WorkspaceReviewDiffSpan(start: 7, end: 12, kind: .changed)]
-                    ),
-                    WorkspaceReviewDiffLine(
-                        kind: .added,
-                        text: "return true",
-                        oldLine: nil,
-                        newLine: 1,
-                        spans: [WorkspaceReviewDiffSpan(start: 7, end: 11, kind: .changed)]
-                    ),
-                ]
-            )
-        ]
-
-        let result = DiffAttributedStringBuilder.build(hunks: hunks, filePath: "test.swift")
-        let text = result.string as NSString
+    /// Word spans own the background only; syntax keeps the foreground, so a
+    /// changed keyword is both word-highlighted and syntax-colored. Both the
+    /// whole-document and the virtualized chunk paths must agree.
+    @Test func wordSpanKeepsSyntaxColorAndAddsBackground() throws {
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(
+            from: DiffEngine.compute(old: "let value = 1", new: "var value = 1")
+        )
         let keywordColor = try #require(SyntaxHighlighter.color(for: .keyword))
-        let fgColor = UIColor(ThemeRuntimeState.currentThemeID().palette.fg)
 
-        let returnRange = text.range(of: "return")
-        let trueRange = text.range(of: "true")
-        #expect(returnRange.location != NSNotFound)
-        #expect(trueRange.location != NSNotFound)
+        let whole = DiffAttributedStringBuilder.build(hunks: hunks, filePath: "test.swift")
+        let index = DiffAttributedStringBuilder.buildChunkIndex(hunks: hunks, filePath: "test.swift")
+        let chunked = NSMutableAttributedString()
+        for chunk in index.chunks {
+            chunked.append(DiffAttributedStringBuilder.buildChunk(chunk))
+        }
 
-        #expect(result.attribute(.foregroundColor, at: returnRange.location, effectiveRange: nil) as? UIColor == keywordColor)
-        #expect(result.attribute(.foregroundColor, at: trueRange.location, effectiveRange: nil) as? UIColor == fgColor)
-        #expect(result.attribute(.backgroundColor, at: trueRange.location, effectiveRange: nil) != nil)
+        for result in [whole, chunked as NSAttributedString] {
+            let text = result.string as NSString
+            for keyword in ["let", "var"] {
+                let range = text.range(of: "\(keyword) value")
+                #expect(range.location != NSNotFound)
+                #expect(
+                    result.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? UIColor
+                        == keywordColor,
+                    "Changed keyword '\(keyword)' must keep its syntax color"
+                )
+                #expect(
+                    result.attribute(.backgroundColor, at: range.location, effectiveRange: nil) != nil,
+                    "Changed keyword '\(keyword)' must keep its word-span background"
+                )
 
-        let addedLine = text.lineRange(for: trueRange)
-        let gutterColor = result.attribute(.foregroundColor, at: addedLine.location, effectiveRange: nil) as? UIColor
-        #expect(gutterColor != keywordColor, "Word-span syntax colors must not paint the gutter")
+                let gutterColor = result.attribute(
+                    .foregroundColor,
+                    at: text.lineRange(for: range).location,
+                    effectiveRange: nil
+                ) as? UIColor
+                #expect(gutterColor != keywordColor, "Syntax colors must not paint the gutter")
+            }
+        }
     }
 
     @Test func makefilePathUsesShellSyntaxInsteadOfExtensionOnly() throws {
