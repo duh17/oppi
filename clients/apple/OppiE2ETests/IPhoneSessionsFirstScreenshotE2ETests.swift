@@ -357,8 +357,9 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         try saveLabScreenshot(name: "iphone-sidebar-agents-schedules-e2e")
 
         tap(app.buttons["workspace.sidebar.disclosure"], named: "Workspaces disclosure")
-        XCTAssertFalse(
-            app.buttons["workspace.open.\(anchorWorkspaceName)"].exists,
+        // The collapse lands through an animated snapshot apply after the tap.
+        XCTAssertTrue(
+            app.buttons["workspace.open.\(anchorWorkspaceName)"].waitForNonExistence(timeout: 5),
             "Collapsed Workspaces section must hide workspace rows"
         )
         XCTAssertTrue(
