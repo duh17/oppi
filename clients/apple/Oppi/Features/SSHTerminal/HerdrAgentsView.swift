@@ -55,7 +55,7 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
 
-        let cell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
+        let cell = UICollectionView.CellRegistration<HerdrAgentCell, Item> { [weak self] cell, _, item in
             self?.configure(cell, item: item)
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
@@ -95,11 +95,12 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
         applySnapshot()
     }
 
-    private func configure(_ cell: UICollectionViewListCell, item: Item) {
+    private func configure(_ cell: HerdrAgentCell, item: Item) {
         let palette = themeID.palette
         var content = UIListContentConfiguration.subtitleCell()
         cell.accessories = []
         cell.accessibilityIdentifier = nil
+        cell.indentationLevel = 0
         switch item {
         case .failure(let message):
             content.text = message
@@ -115,31 +116,43 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
             content.textProperties.color = UIColor(palette.comment)
         case .workspace(_, let label, let focused):
             content.text = label
-            content.image = UIImage(systemName: focused ? "checkmark.circle.fill" : "square.stack")
-            content.imageProperties.tintColor = UIColor(palette.fg)
+            content.image = UIImage(systemName: "square.stack")
+            content.imageProperties.tintColor = UIColor(palette.comment)
             content.textProperties.color = UIColor(palette.fg)
-            cell.accessories = []
+            content.textProperties.font = Self.font(focused: focused)
             cell.accessibilityValue = focused ? "Focused" : ""
         case .agent(_, let name, let subtitle, let tab, let focused, let status):
             content.text = name
             content.secondaryText = [subtitle, tab.map { "tab \($0)" }].compactMap { $0 }.joined(separator: " · ")
             content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.font = Self.font(focused: focused)
             content.secondaryTextProperties.color = UIColor(palette.comment)
-            if let kind = status.sessionStatus {
-                content.image = UIImage(systemName: kind.terminalSymbol)
-                content.imageProperties.tintColor = UIColor(kind.tint(themeID.appTheme))
-            } else {
-                content.image = UIImage(systemName: "questionmark")
-                content.imageProperties.tintColor = UIColor(palette.comment)
+            // Same mark and label as the status glyph and session rows.
+            let kind = status.sessionStatus
+            cell.mark.isHidden = kind == nil
+            if let kind {
+                cell.mark.apply(status: kind, themeID: themeID, reduceMotion: UIAccessibility.isReduceMotionEnabled)
             }
-            if focused {
-                cell.accessories = [.disclosureIndicator()]
-            }
+            cell.accessories = [
+                .customView(configuration: .init(customView: cell.mark, placement: .leading(), reservedLayoutWidth: .custom(20))),
+                .label(text: kind?.label ?? "Unknown", options: .init(
+                    tintColor: UIColor(kind?.tint(themeID.appTheme) ?? palette.comment),
+                    font: .preferredFont(forTextStyle: .caption1)
+                )),
+            ]
             cell.accessibilityIdentifier = "sshTerminal.herdr.agent"
-            cell.accessibilityValue = status.sessionStatus?.label ?? "Unknown"
-            content.directionalLayoutMargins.leading = 28
+            cell.accessibilityValue = [kind?.label ?? "Unknown", focused ? "Focused" : nil].compactMap { $0 }.joined(separator: ", ")
+            cell.indentationLevel = 1
         }
         cell.contentConfiguration = content
+    }
+
+    /// Herdr's focused workspace and pane read bold: focus is where the
+    /// attached client looks, not a status.
+    private static func font(focused: Bool) -> UIFont {
+        let body = UIFont.preferredFont(forTextStyle: .body)
+        guard focused, let bold = body.fontDescriptor.withSymbolicTraits(.traitBold) else { return body }
+        return UIFont(descriptor: bold, size: 0)
     }
 
     private func applySnapshot() {
@@ -194,4 +207,10 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
             if monitor.failure == nil, isVisible { Router.finish(self) }
         }
     }
+}
+
+/// A Herdr row that keeps its own status mark, so a working agent's
+/// animation survives reconfiguration instead of restarting on a new view.
+final class HerdrAgentCell: UICollectionViewListCell {
+    let mark = SSHTerminalStatusMarkView(style: .row)
 }

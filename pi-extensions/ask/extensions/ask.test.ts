@@ -75,15 +75,26 @@ type RegisteredTool = {
 
 function createMockAPI(): {
   tools: Map<string, RegisteredTool>;
+  emitted: Array<{ channel: string; data: unknown }>;
+  events: { emit(channel: string, data: unknown): void };
+  getSessionName(): string | undefined;
   on(event: string, handler: TurnStartHandler): void;
   registerTool(tool: RegisteredTool): void;
   resetTurn(): Promise<void>;
 } {
   const tools = new Map<string, RegisteredTool>();
+  const emitted: Array<{ channel: string; data: unknown }> = [];
   let turnStart: TurnStartHandler | undefined;
 
   return {
     tools,
+    emitted,
+    events: {
+      emit(channel: string, data: unknown) {
+        emitted.push({ channel, data });
+      },
+    },
+    getSessionName: () => undefined,
     on(event: string, handler: TurnStartHandler) {
       if (event === "turn_start") {
         turnStart = handler;
@@ -219,6 +230,47 @@ describe("createAskFactory", () => {
     expect(askCalls).toBe(1);
     expect(customCalls).toBe(0);
     expect(selectCalls).toBe(0);
+  });
+
+  it("tells Herdr the pane is blocked while the question waits", async () => {
+    const api = createMockAPI();
+    createAskFactory()(api as never);
+    const tool = api.tools.get("ask")!;
+
+    let emittedDuringAsk: unknown[] = [];
+    const ctx = {
+      hasUI: true,
+      ui: {
+        ask: async () => {
+          emittedDuringAsk = api.emitted.map((event) => event.data);
+          throw new Error("dialog closed");
+        },
+        custom: async () => undefined,
+        select: async () => undefined,
+        input: async () => undefined,
+      },
+    };
+    const params = {
+      questions: [
+        {
+          id: "scope",
+          question: "Which\nscope?",
+          options: [
+            { value: "small", label: "Small" },
+            { value: "large", label: "Large" },
+          ],
+        },
+      ],
+    };
+
+    await expect(
+      tool.execute("tc-herdr", params, undefined, undefined, ctx),
+    ).rejects.toThrow("dialog closed");
+    expect(emittedDuringAsk).toEqual([{ active: true, label: "Which scope?" }]);
+    expect(api.emitted).toEqual([
+      { channel: "herdr:blocked", data: { active: true, label: "Which scope?" } },
+      { channel: "herdr:blocked", data: { active: false } },
+    ]);
   });
 
   it("uses the terminal custom dialog in TUI mode when direct ask is missing", async () => {

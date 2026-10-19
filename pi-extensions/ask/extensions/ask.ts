@@ -345,14 +345,23 @@ export function createAskFactory(): ExtensionFactory {
 
         const allowCustom = params.allowCustom ?? true;
         const dialogOptions = signal ? { signal } : undefined;
-        const askResult = await runAskDialog(
-          ctx,
-          params.questions,
-          allowCustom,
-          dialogOptions,
-          () => pi.getSessionName(),
-        );
-        return buildAskToolResult(params.questions, askResult.answers);
+        // Herdr's pi integration reads `blocked` only from this event; the
+        // terminal's OSC 7501 report never reaches it, so without the event a
+        // question inside Herdr reads as working, then done.
+        const label = singleLine(params.questions[0]?.question ?? "");
+        pi.events.emit("herdr:blocked", { active: true, label });
+        try {
+          const askResult = await runAskDialog(
+            ctx,
+            params.questions,
+            allowCustom,
+            dialogOptions,
+            () => pi.getSessionName(),
+          );
+          return buildAskToolResult(params.questions, askResult.answers);
+        } finally {
+          pi.events.emit("herdr:blocked", { active: false });
+        }
       },
 
       renderCall(args, theme) {
