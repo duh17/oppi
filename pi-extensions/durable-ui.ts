@@ -284,4 +284,6 @@ export const DurableInputCards = defineDoc<{
   history: "latest",
   fork: "initial",
   initial: () => ({ requests: {} }),
+  // Written for every extension-generated input; a base bounds its replay.
+  checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });

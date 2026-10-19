@@ -1264,7 +1264,10 @@ describe("server durable managed runtime", () => {
     const ended = observed.next((message) => message.type === "session_ended");
     await expect(f.manager.sendPrompt(f.session.id, "lost")).rejects.toThrow();
     // A caller that waits on the recovering host (a Stop, a stream attach) is refused after
-    // the give-up instead of reopening a host the runtime no longer tracks.
+    // the give-up instead of reopening a host the runtime no longer tracks. Recovery starts once
+    // the failed Harness's `closed` settles, which can follow the failing call's rejection; the
+    // first reopen attempt shows it is under way.
+    await vi.waitFor(() => expect(openInner).toHaveBeenCalled());
     const waiter = host.open();
     expect(await ended).toMatchObject({ reason: "store_failed" });
     await expect(waiter).rejects.toThrow(/could not reopen/);

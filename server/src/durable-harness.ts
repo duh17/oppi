@@ -19,6 +19,7 @@ import {
   type ConversationId,
   type EntryId,
   type Registry,
+  type ReportInfo,
   type Storage,
   type TaskGraph,
   type TaskId,
@@ -78,6 +79,8 @@ export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?
   history: "latest",
   fork: "initial",
   initial: () => ({ kind: "host" }),
+  // Written once, when the conversation binds its runtime.
+  checkpointWhen: () => false,
 });
 
 const log = createLogger({ base: { component: "durable_harness" } });
@@ -726,13 +729,14 @@ export class SessionHost {
           registry: shared.registry,
           settings: shared.settings,
           // Without a handler pi-durable drops every failure that does not fail the calling
-          // operation: a throwing hook, extension, or commit listener, a task kept on an old
-          // definition. The storage error that fails the Harness is reported here too, then
-          // `recover` handles it.
-          onReport: (error) => {
+          // operation: a throwing hook, extension, or commit listener, a faulted or parked task,
+          // a task kept on an old definition. The storage error that fails the Harness is
+          // reported here too (`session_failed`), then `recover` handles it.
+          onReport: (error, info) => {
             const cause = error instanceof Error ? error.cause : undefined;
             log.warn("durable_store.report", {
               storeId: this.storeId,
+              ...reportFields(info),
               error: safeErrorMessage(error),
               ...(cause === undefined ? {} : { cause: safeErrorMessage(cause) }),
             });
@@ -1812,6 +1816,26 @@ function installPackages(
   return { loaded: installed, errors };
 }
 
+/**
+ * What a report is about, as flat log fields: its type, the task (with its conversation, which
+ * `(storeId, conversationId)` binds to one Session), the extension whose code failed, the host
+ * callback, and the typed reason.
+ */
+function reportFields(info: ReportInfo): Record<string, string | number> {
+  const fields: Record<string, string | number> = { type: info.type };
+  if ("task" in info && info.task !== undefined) {
+    fields.taskId = info.task.id;
+    fields.taskKind = info.task.kind;
+    fields.conversationId = info.task.conversationId;
+  }
+  if ("conversationId" in info && info.conversationId !== undefined)
+    fields.conversationId = info.conversationId;
+  if ("extension" in info && info.extension !== undefined) fields.extension = info.extension;
+  if ("callback" in info) fields.callback = info.callback;
+  if ("reason" in info) fields.reason = info.reason;
+  return fields;
+}
+
 // Pi v1 experimental/durable/harness-setup.ts: read policy at each use,
 // without writing user settings or copying run policy onto conversations.
 function harnessSettings(
@@ -1824,6 +1848,11 @@ function harnessSettings(
     get extensions() {
       return extensions();
     },
+    // pi-durable 1.4.0 parks a task cut off by 5 crashes in a row without committing a new
+    // state. Oppi's long in-process waits commit nothing while they wait (a reporter delivering
+    // to a child, a follower, an ask card), so a parked reporter would lose its child's answer
+    // and a parked ask would leave its session busy until Stop. Never park, as 1.3.0 did.
+    restartLimit: Number.POSITIVE_INFINITY,
     get stream() {
       const provider = settings.getProviderRetrySettings();
       const idle = settings.getHttpIdleTimeoutMs();

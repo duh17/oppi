@@ -26,6 +26,7 @@ const UncheckpointedUI = defineDoc<UIState>({
   history: "latest",
   fork: "initial",
   initial: () => ({ requests: {}, notifications: {} }),
+  checkpointWhen: () => false,
 });
 
 const dirs: string[] = [];

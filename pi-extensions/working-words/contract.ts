@@ -28,6 +28,8 @@ export const WordsOwner = defineDoc<{
   history: "latest",
   fork: "initial",
   initial: () => ({}),
+  // Written at the start and end of every run; a base bounds its replay.
+  checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 
 /**

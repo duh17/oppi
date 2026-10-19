@@ -326,6 +326,8 @@ const ScriptApproval = defineDoc<{ all: boolean }>({
   version: 1,
   scope: "task",
   initial: () => ({ all: false }),
+  // Written at most once; the document retires with its task.
+  checkpointWhen: () => false,
 });
 
 /**

@@ -44,6 +44,8 @@ const JobOutput = defineDoc<Output>({
   version: 1,
   scope: "task",
   initial: () => ({ output: "", truncated: false }),
+  // Written once, when the job ends; the document retires with its task.
+  checkpointWhen: () => false,
 });
 /** The run phase always writes it, and the runner stays live until delivery. */
 async function jobOutput(

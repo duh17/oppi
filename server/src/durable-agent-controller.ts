@@ -35,6 +35,8 @@ const RequestContent = defineDocFamily<{ content: string; display?: string }, nu
   history: "latest",
   fork: "initial",
   initial: () => ({ content: "" }),
+  // One member per request, written once.
+  checkpointWhen: () => false,
 });
 
 /** What the queue shows for an input instead of its model content. */
@@ -293,15 +295,19 @@ export class DurableAgentController {
    * Queued inputs also stay unstarted afterwards: pi-durable places the inbox only at a boundary or
    * on the next submission, after an aborted run as after a failed one.
    *
-   * The generation's retry phase clears `pi.live.generation.retry` and moves the same task on to
-   * `prepare` in one commit, then runs the next attempt under the same task id. A read followed by
+   * The backoff is a durable sleep: the generation commits `sleeping` at checkpoint `phase: "retry"`
+   * (a record an earlier pi-durable stored `running` or `pending` there sleeps again when it runs),
+   * and an abort mark ends a sleep at once. When the sleep is due, the retry phase clears
+   * `pi.live.generation.retry` and moves the same task on to `prepare` in one commit, then runs the
+   * next attempt under the same task id. A read followed by
    * `harness.abortTask` therefore lets a backoff that ends in between abort the new attempt, which
    * classic (it only aborts the sleep) never does. The check and the mark must be one commit, and
    * `abortTask` cannot do that: it marks whatever state the task has when its own commit runs.
    * pi-durable's public `Tx` reads the task and `pi.live` but has no way to write the mark, so this
-   * calls `setTask`, the call `abortTask` itself makes, on the commit's own transaction. The
-   * scheduler's commit listener signals the run invocation and starts the abort handler for the
-   * mark from any commit. `waitForTask` then returns once the abort handler has ended the run.
+   * calls `setTask` on the commit's own transaction with the record `abortTask` writes: the mark, and
+   * no restart count (it then counts cut-offs of the abort handler). The scheduler's commit listener
+   * signals a running invocation, or wakes the sleep, and starts the abort handler for the mark from
+   * any commit. `waitForTask` then returns once the abort handler has ended the run.
    */
   async abortRetry(): Promise<void> {
     this.host.assertSchedulingReady();
@@ -312,13 +318,15 @@ export class DurableAgentController {
       const task = await tx.task(live.run.taskId);
       if (task === undefined || task.abortRequested) return undefined;
       const state = task.state;
-      if (state.status !== "running" && state.status !== "pending") return undefined;
+      if (state.status !== "sleeping" && state.status !== "running" && state.status !== "pending")
+        return undefined;
       if ((state.checkpoint as GenerationCheckpoint).phase !== "retry") return undefined;
       const { setTask } = tx as Tx & { setTask?: (record: typeof task) => void };
       if (typeof setTask !== "function") {
         throw new Error("pi-durable no longer lets a commit mark a task abort-requested");
       }
-      setTask.call(tx, { ...task, abortRequested: true });
+      const { restarts: _restarts, ...unmarked } = task;
+      setTask.call(tx, { ...unmarked, abortRequested: true });
       return task.id;
     }, BACKGROUND_CONTEXT);
     if (marked !== undefined) await this.harness.waitForTask(marked, BACKGROUND_CONTEXT);

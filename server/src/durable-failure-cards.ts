@@ -30,6 +30,8 @@ export const FailureCardsDoc = defineDoc<{ taskId: number; open: number[] }>({
   history: "latest",
   fork: "initial",
   initial: () => ({ taskId: 0, open: [] }),
+  // Advances with the conversation's tasks for its lifetime; a base bounds its replay.
+  checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 
 /** Queue withdrawal and an explicit Stop settle `aborted`. `withdrawn` is reserved for the same quiet end. */

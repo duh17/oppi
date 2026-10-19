@@ -15,6 +15,8 @@ const AskTurn = defineDoc<{ assistant?: number; task?: number }>({
   history: "latest",
   fork: "initial",
   initial: () => ({}),
+  // Written by every ask call for the conversation's lifetime; a base bounds its replay.
+  checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 const ask = defineTool({
   name: "ask",

@@ -61,6 +61,8 @@ export const OppiAgentDoc = defineDoc<OppiAgentState>({
   // A fork is launched as what its source was.
   fork: "current",
   initial: () => ({ spawn: true, grant: false }),
+  // Written at launch and on an Agent change.
+  checkpointWhen: () => false,
 });
 
 /** A resolved agent: always an exact extension and tool selection. */

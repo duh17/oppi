@@ -17,4 +17,6 @@ export const ProjectContextDoc = defineDoc<{
   history: "latest",
   fork: "initial",
   initial: () => ({}),
+  // Written only when the context files or Skills change.
+  checkpointWhen: () => false,
 });

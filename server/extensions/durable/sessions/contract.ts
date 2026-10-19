@@ -49,6 +49,8 @@ export const Subagents = defineDoc<{
   // A fork of the parent starts without its children.
   fork: "initial",
   initial: () => ({ children: {}, calls: {} }),
+  // Written by every spawn for the conversation's lifetime; a base bounds its replay.
+  checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 
 /** Name of the pill watcher task the durable entry registers. */

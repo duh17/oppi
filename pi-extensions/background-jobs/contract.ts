@@ -36,4 +36,6 @@ export const DurableJobs = defineDoc<{ seq: number; jobs: Job[] }>({
   history: "latest",
   fork: "initial",
   initial: () => ({ seq: 0, jobs: [] }),
+  // Written at every job change for the conversation's lifetime; a base bounds its replay.
+  checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
