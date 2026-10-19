@@ -84,6 +84,53 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 1)
     }
 
+    /// A single tap anywhere in an expanded notebook cell, including blank
+    /// space beside a call, must leave the row expanded so it can be the first
+    /// half of the double-tap that opens the reader.
+    func testNotebookSingleTapKeepsRowExpandedForReaderDoubleTap() throws {
+        launchHarness(noStream: true, includeVisualFixtures: true)
+        XCTAssertGreaterThanOrEqual(waitForDiagnosticAtLeast("diag.visualTools", minimum: 9, timeout: 6), 9)
+
+        let scroll = app.descendants(matching: .any)["harness.notebook.scroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 4))
+        scroll.tap()
+
+        let row = app.descendants(matching: .any)["chat.timeline.row.alpha-visual-tool-notebook"].firstMatch
+        let header = app.descendants(matching: .any)["chat.timeline.row.alpha-visual-tool-notebook.header"].firstMatch
+        let timeline = app.descendants(matching: .any)["harness.timeline"].firstMatch
+        XCTAssertTrue(header.waitForExistence(timeout: 4))
+        XCTAssertEqual(pollDiagnostic("diag.notebookExpanded", timeout: 1), 0)
+        header.tap()
+        XCTAssertEqual(waitForDiagnostic("diag.notebookExpanded", equals: 1, timeout: 4), 1)
+
+        let call = row.descendants(matching: .any)["tool.notebook.call"].firstMatch
+        XCTAssertTrue(call.waitForExistence(timeout: 4))
+        for _ in 0..<4 where !call.isHittable {
+            timeline.swipeUp()
+        }
+        XCTAssertTrue(call.isHittable)
+        let code = row.descendants(matching: .any)["tool.notebook.code"].firstMatch
+        XCTAssertTrue(code.waitForExistence(timeout: 4))
+
+        // The code text, then blank space right of a call name.
+        for target in [code.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)),
+                       call.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5))] {
+            target.tap()
+            // Outlast the double-tap window so a deferred selection would land.
+            RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+            XCTAssertEqual(pollDiagnostic("diag.notebookExpanded", timeout: 1), 1, "A single tap collapsed the notebook row")
+            XCTAssertTrue(call.exists, "The notebook cell disappeared after a single tap")
+        }
+
+        call.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).doubleTap()
+        XCTAssertTrue(
+            fullScreenDismissControl().waitForExistence(timeout: 4),
+            "Double-tap on the calls section did not open the reader"
+        )
+        dismissFullScreenAndReturnToTimeline(expectedFullscreenContentIdentifier: nil)
+        XCTAssertEqual(pollDiagnostic("diag.notebookExpanded", timeout: 1), 1)
+    }
+
     func testCustomLogExpandsToCappedTerminal() throws {
         launchHarness(noStream: true, includeVisualFixtures: true)
         let expandAll = app.descendants(matching: .any)["harness.expand.all"]

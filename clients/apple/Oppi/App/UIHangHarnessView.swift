@@ -523,6 +523,16 @@ private struct UIHangHarnessContent: View {
                 ))
 
                 items.append(.toolCall(
+                    id: "\(sessionPrefix)-visual-tool-notebook",
+                    tool: "script",
+                    argsSummary: "code: const notes = await tools.read()",
+                    outputPreview: "resolved",
+                    outputByteCount: 8,
+                    isError: false,
+                    isDone: true
+                ))
+
+                items.append(.toolCall(
                     id: "\(sessionPrefix)-visual-tool-read-image",
                     tool: "read",
                     argsSummary: "path: fixtures/harness-image.png",
@@ -842,6 +852,10 @@ private struct UIHangHarnessContent: View {
         scrollController.currentTopVisibleItemId == extensionMarkdownToolID ? 1 : 0
     }
 
+    private var notebookIsExpandedValue: Int {
+        harnessReducer.expandedItemIDs.contains(notebookToolItemID(for: selectedSession)) ? 1 : 0
+    }
+
     private var writeMarkdownIsExpandedValue: Int {
         harnessReducer.expandedItemIDs.contains(writeMarkdownToolID) ? 1 : 0
     }
@@ -1017,6 +1031,16 @@ private struct UIHangHarnessContent: View {
                 harnessControl("Extension Text", id: "harness.extensionText.focus") {
                     focusExtensionTextTool()
                 }
+                // Scrolls only: the test expands the row with a real header tap.
+                harnessControl("Notebook", id: "harness.notebook.scroll") {
+                    renderWindow = currentItems.count
+                    heartbeat &+= 1
+                    issueScrollCommand(
+                        id: notebookToolItemID(for: selectedSession),
+                        anchor: .viewport(relativeY: 0.2),
+                        animated: false
+                    )
+                }
                 harnessControl("Write Markdown", id: "harness.writeMarkdown.focus") {
                     focusWriteMarkdownTool()
                 }
@@ -1130,6 +1154,7 @@ private struct UIHangHarnessContent: View {
             diagnosticValue(id: "diag.visualTools", value: visualToolCount)
             diagnosticValue(id: "diag.extensionExpanded", value: extensionMarkdownIsExpandedValue)
             diagnosticValue(id: "diag.extensionTextExpanded", value: extensionTextIsExpandedValue)
+            diagnosticValue(id: "diag.notebookExpanded", value: notebookIsExpandedValue)
             diagnosticValue(id: "diag.writeMarkdownExpanded", value: writeMarkdownIsExpandedValue)
             diagnosticValue(id: "diag.readMarkdownExpanded", value: readMarkdownIsExpandedValue)
             diagnosticValue(id: "diag.assistantOverlapReady", value: assistantOverlapReadyValue)
@@ -1316,6 +1341,7 @@ private struct UIHangHarnessContent: View {
             "\(prefix)-visual-tool-edit",
             "\(prefix)-visual-tool-extension-a",
             "\(prefix)-visual-tool-extension-b",
+            "\(prefix)-visual-tool-notebook",
             "\(prefix)-visual-tool-read-image",
             "\(prefix)-visual-tool-unknown",
         ]
@@ -1327,6 +1353,10 @@ private struct UIHangHarnessContent: View {
 
     private func extensionTextToolItemID(for session: HarnessSession) -> String {
         "\(session.rawValue)-visual-tool-extension-a"
+    }
+
+    private func notebookToolItemID(for session: HarnessSession) -> String {
+        "\(session.rawValue)-visual-tool-notebook"
     }
 
     private func writeMarkdownToolItemID(for session: HarnessSession) -> String {
@@ -1415,6 +1445,7 @@ private struct UIHangHarnessContent: View {
     private func seedVisualToolFixtures() {
         seedExtensionMarkdownFixtures()
         seedExtensionTextFixtures()
+        seedNotebookFixtures()
         seedReadMarkdownFixtures()
 
         if UIHangHarnessConfig.includeWriteMarkdownFixture {
@@ -1450,6 +1481,32 @@ private struct UIHangHarnessContent: View {
             let extensionID = extensionTextToolItemID(for: session)
             let output = visualExtensionTextOutput(for: session)
             _ = harnessReducer.toolOutputStore.append(output, to: extensionID)
+        }
+    }
+
+    /// A code-role script with nested calls paints the notebook cell, the
+    /// compact hosted surface whose taps must stay with the row.
+    private func seedNotebookFixtures() {
+        let notebookIDs = Set(HarnessSession.allCases.map(notebookToolItemID(for:)))
+        harnessReducer.toolOutputStore.clear(itemIDs: notebookIDs)
+
+        for id in notebookIDs {
+            harnessReducer.toolArgsStore.set([
+                "code": .string("""
+                const notes = await tools.read({path: "CHANGELOG.md"});
+                await tools.write({path: "CHANGELOG.md", content: notes});
+                return "resolved";
+                """),
+            ], for: id)
+            harnessReducer.toolArgsStore.setInputPresentation(
+                .init(fields: ["code": .init(role: "code", language: "javascript")]),
+                for: id
+            )
+            harnessReducer.toolDetailsStore.setNestedCalls(NestedToolCalls(calls: [
+                .init(id: "1", name: "read", arguments: ["path": .string("CHANGELOG.md")], status: "ok", durationMs: 2),
+                .init(id: "2", name: "write", arguments: ["path": .string("CHANGELOG.md")], status: "ok", durationMs: 1),
+            ], complete: false), for: id)
+            _ = harnessReducer.toolOutputStore.append("resolved", to: id)
         }
     }
 

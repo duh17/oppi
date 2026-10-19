@@ -92,6 +92,7 @@ Example:
 
 ### Fixed
 
+- **Client:** A single tap inside an expanded tool row, such as beside a call in a code cell or on an audio message, no longer collapses the row; only the header does. A double-tap anywhere in a code cell now opens the full-screen reader.
 - **Server:** `oppi session send --follow-up` and `--steer` no longer fail with "requires an active streaming turn" when the session is idle or finishes its turn just before the send. An idle session is prompted right away; a busy one queues or steers as before.
 - **Client:** Very large Mermaid diagrams, such as a long flowchart chain, a big sequence diagram, or a deep mindmap, render as diagrams in chat and the Markdown reader instead of showing their source.
 - **Client:** A running `write` of a Markdown file keeps updating as it streams, in the expanded row and in the full-screen reader opened from it. Before, both stopped after the first few lines.

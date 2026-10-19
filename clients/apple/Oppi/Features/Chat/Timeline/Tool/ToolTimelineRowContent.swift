@@ -127,6 +127,18 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
 
 }
 
+/// The expanded body keeps its touches. A single tap there must not reach the
+/// collection view, whose row selection collapses the row and steals the first
+/// tap of the reader double-tap. Text and scroll views already keep touches;
+/// plain views such as the notebook cell's calls would pass them up the
+/// responder chain. Gesture recognizers and controls inside still see them.
+final class ToolExpandedBodyView: UIView {
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {}
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {}
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {}
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {}
+}
+
 final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     static var activeInlineFeatureTipIDs: Set<String> = []
 #if DEBUG
@@ -182,7 +194,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let bodyStack = UIStackView()
     private let previewLabel = UILabel()
     let bashToolRowView = BashToolRowView()
-    let expandedContainer = UIView()
+    let expandedContainer = ToolExpandedBodyView()
     let expandedScrollView = HorizontalPanPassthroughScrollView()
     private let expandedSurfaceHostView = ToolExpandedSurfaceHostView()
     private var inspectionSupplementView: AssistantMarkdownContentView?
@@ -267,7 +279,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     private lazy var commandSingleTapBlocker = makeTapBlocker(requiringFailureOf: commandDoubleTapGesture)
     private lazy var outputSingleTapBlocker = makeTapBlocker(requiringFailureOf: outputDoubleTapGesture)
-    private lazy var expandedSingleTapBlocker = makeTapBlocker(requiringFailureOf: expandedDoubleTapGesture)
 
     init(configuration: ToolTimelineRowConfiguration) {
         self.currentConfiguration = configuration
@@ -1083,7 +1094,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         // require-to-fail would wait on a hidden gesture and never open the
         // reader. The delegate waits only while that scroll view is visible.
         expandedContainerDoubleTapGesture.delegate = self
-        expandedSingleTapBlocker.require(toFail: expandedContainerDoubleTapGesture)
         expandedContainer.addGestureRecognizer(expandedContainerDoubleTapGesture)
         // The notebook cell is hosted outside the scroll view. The pinch has to
         // live on the container so it reaches that cell and the other rows.
@@ -1091,7 +1101,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         commandContainer.addGestureRecognizer(commandSingleTapBlocker)
         outputContainer.addGestureRecognizer(outputSingleTapBlocker)
-        expandedContainer.addGestureRecognizer(expandedSingleTapBlocker)
 
         commandContainer.addInteraction(UIContextMenuInteraction(delegate: self))
         outputContainer.addInteraction(UIContextMenuInteraction(delegate: self))
@@ -2092,7 +2101,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func setExpandedContainerTapCopyGestureEnabled(_ enabled: Bool) {
         expandedDoubleTapGesture.isEnabled = enabled
         expandedContainerDoubleTapGesture.isEnabled = enabled
-        expandedSingleTapBlocker.isEnabled = enabled
     }
 
     #if DEBUG
@@ -2107,7 +2115,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     var expandedTapCopyGestureEnabledForTesting: Bool {
         expandedDoubleTapGesture.isEnabled
             && expandedContainerDoubleTapGesture.isEnabled
-            && expandedSingleTapBlocker.isEnabled
     }
 
     // periphery:ignore - used by ToolExpandedSurfaceHostTests via @testable import
