@@ -35,12 +35,12 @@ const reply = (text: string) => runEnd({ content: [{ type: "text", text }] });
 class FakeRuntime {
   active = ["read"];
   stale = false;
-  private readonly handlers = new Map<string, () => void>();
+  private readonly handlers = new Map<string, () => unknown>();
   private tool: { execute: (id: string, params: { text: string }) => Promise<unknown> } | undefined;
 
   constructor(speech: LiveVoiceSpeech, sessionId: string) {
     speech.extension(sessionId).factory({
-      on: (event: string, handler: () => void) => this.handlers.set(event, handler),
+      on: (event: string, handler: () => unknown) => this.handlers.set(event, handler),
       registerTool: (tool: FakeRuntime["tool"]) => (this.tool = tool),
       getActiveTools: () => {
         if (this.stale) throw new Error("ctx is stale");
@@ -52,6 +52,11 @@ class FakeRuntime {
 
   startSession(): void {
     this.handlers.get("session_start")?.();
+  }
+
+  /** What before_agent_start returns for a new run. */
+  startRun(): { message?: { content: unknown; display: boolean } } | undefined {
+    return this.handlers.get("before_agent_start")?.() as never;
   }
 
   speak(text: string): Promise<unknown> {
@@ -140,6 +145,26 @@ describe("LiveVoiceSpeech", () => {
 
     speech.setCallAttached("s1", false);
     expect(live.active).not.toContain("speak");
+  });
+
+  it("starts every run during a call with speak on and a hidden ask to acknowledge first", () => {
+    const { speech } = speechHarness();
+    const runtime = new FakeRuntime(speech, "s1");
+    runtime.startSession();
+    speech.setCallAttached("s1", true);
+    // The runtime settled its own loadout after the call attached and dropped speak.
+    runtime.active = ["read"];
+
+    const run = runtime.startRun();
+
+    expect(runtime.active).toContain("speak");
+    expect(run?.message?.display).toBe(false);
+    expect(String(run?.message?.content)).toMatch(/speak first/i);
+
+    speech.setCallAttached("s1", false);
+    runtime.active = ["read", "speak"];
+    expect(runtime.startRun()).toBeUndefined();
+    expect(runtime.active).not.toContain("speak");
   });
 });
 

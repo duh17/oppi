@@ -12,6 +12,9 @@ const log = createLogger({ base: { component: "live_voice_speech" } });
 type RunMessages = Extract<SessionBackendEvent, { type: "agent_end" }>["messages"];
 
 export const SPEAK_TOOL = "speak";
+const LIVE_VOICE_HINT_TYPE = "oppi-live-voice-hint";
+const LIVE_VOICE_HINT =
+  "The user said this on a Live Voice call. Call speak first, before any other tool. If you can answer right away, speak the answer. Otherwise speak a few words acknowledging it (for example: On it, checking the logs), then work, and speak the outcome when done.";
 const MAX_SPOKEN_CHARS = 2_000;
 /** Live Voice status lines on the phone are a glance, not the transcript. */
 const STATUS_MAX_CHARS = 500;
@@ -112,6 +115,18 @@ export class LiveVoiceSpeech {
       const state = this.state(sessionId);
       state.runtimes.add(activate);
       activate(state.callAttached);
+    });
+    // Each run settles its own loadout: an activation from attach can be lost while a new
+    // runtime is still settling its tools, and a call may attach between runs. While a call is
+    // attached, a hidden hint asks for a spoken acknowledgement first, so the caller hears
+    // something within seconds instead of silence until the work is done.
+    pi.on("before_agent_start", () => {
+      const attached = this.sessions.get(sessionId)?.callAttached ?? false;
+      activate(attached);
+      if (!attached) return undefined;
+      return {
+        message: { customType: LIVE_VOICE_HINT_TYPE, content: LIVE_VOICE_HINT, display: false },
+      };
     });
     pi.on("session_shutdown", () => {
       const state = this.sessions.get(sessionId);
