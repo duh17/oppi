@@ -336,8 +336,8 @@ The stack provisions this datasource and these dashboards automatically:
 
 - datasource: `Oppi Telemetry SQLite`
 - dashboards: `Oppi Release Preflight`, `Oppi Server Health`, and `Oppi Model Routing` (folder: `Oppi`)
-- Release Preflight: experience metrics, including workspace load, session switch, thread load by phase, client network handshake and ping RTT, server STT latency, and collapsed command, quick-session, and share-publish drill-down
-- Server Health: event-loop p99 trend and max gate, per-route HTTP latency and response bytes, and collapsed session-create, push, event-ring, MCP connect, schedule-run, and server-dictation drill-down
+- Release Preflight: experience metrics, including workspace load, session switch, thread load by phase, client network handshake and ping RTT, server STT latency, voice playback, device CPU and memory by screen and app state, and collapsed command, quick-session, and share-publish drill-down
+- Server Health: event-loop p99 trend and max gate, per-route HTTP latency and response bytes, and collapsed session-create, push (by event and relay result), event-ring, MCP connect, schedule-run, and server-dictation drill-down
 - Model Routing: provider, model, and runtime workload. Missing runtime is an explicit untagged bucket. The Runtime dropdown filters the panels.
 - Sum-aggregated counters use `SUM(value)`. Max-aggregated gauges (`broadcast_fanout`, `event_ring_utilization`) use `MAX(value)`. HTTP timings and response bytes are raw samples; `telemetry:review -- --http` prints latency and byte columns. `telemetry:review -- --models` includes the runtime breakdown.
 

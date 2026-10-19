@@ -1902,9 +1902,6 @@ final class VoiceInputManager {
             markTranscriptPresentationChanged()
             logger.debug("Finalized replace: \(text.count) chars\(snap ? " (snap)" : "")")
 
-        case .remoteChunkTelemetry(let chunk):
-            recordRemoteChunkTelemetry(chunk, annotation: annotation)
-
         case .providerMetricTags(let tags):
             // Merge backend metadata (stt_backend, model) resolved after readiness.
             // Subsequent metrics (finalize, session, audio_duration) get the real values.
@@ -2257,17 +2254,6 @@ final class VoiceInputManager {
 
     private static func metricErrorKind(for error: Error) -> String {
         VoiceInputTelemetry.metricErrorKind(for: error)
-    }
-
-    private func recordRemoteChunkTelemetry(
-        _ chunk: VoiceRemoteChunkTelemetry,
-        annotation: VoiceMetricAnnotation
-    ) {
-        VoiceInputTelemetry.recordRemoteChunkTelemetry(
-            chunk,
-            annotation: annotation,
-            sessionId: activeSessionId
-        )
     }
 
     private func recordVoiceMetric(

@@ -61,7 +61,7 @@ struct VoiceInputTelemetryTests {
         defer { recorder.uninstall() }
 
         VoiceInputTelemetry.recordCountMetric(
-            .voiceRemoteChunkBytes,
+            .dictationResultUpdates,
             value: -10,
             annotation: VoiceMetricAnnotation(engine: "remote", locale: "ja-JP", source: "mic"),
             status: "error",
@@ -70,7 +70,7 @@ struct VoiceInputTelemetryTests {
 
         let samples = recorder.samples
         #expect(samples.count == 1)
-        #expect(samples[0].metric == .voiceRemoteChunkBytes)
+        #expect(samples[0].metric == .dictationResultUpdates)
         #expect(samples[0].value == 0)
         #expect(samples[0].unit == .count)
         #expect(samples[0].tags == [
@@ -81,69 +81,6 @@ struct VoiceInputTelemetryTests {
             "status": "error",
             "host": "mac-studio",
         ])
-    }
-
-    @Test func recordRemoteChunkTelemetryEmitsExpectedSuccessMetrics() {
-        let recorder = TestMetricRecorder.install()
-        defer { recorder.uninstall() }
-
-        VoiceInputTelemetry.recordRemoteChunkTelemetry(
-            VoiceRemoteChunkTelemetry(
-                status: .success,
-                isFinal: true,
-                sampleCount: 32000,
-                audioDurationMs: 2000,
-                wavBytes: 64000,
-                uploadDurationMs: 180,
-                textLength: 12,
-                errorCategory: nil,
-                tags: ["host": "mac-studio", "chunk_profile": "default"]
-            ),
-            annotation: VoiceMetricAnnotation(engine: "remote", locale: "en-US", source: "composer")
-        )
-
-        let metrics = recorder.samples.map(\.metric)
-        #expect(metrics == [
-            .voiceRemoteChunkAudioMs,
-            .voiceRemoteChunkBytes,
-            .voiceRemoteChunkUploadMs,
-            .voiceRemoteChunkChars,
-        ])
-
-        let audio = recorder.samples[0]
-        #expect(audio.tags["chunk_status"] == "success")
-        #expect(audio.tags["chunk_final"] == "1")
-        #expect(audio.tags["host"] == "mac-studio")
-        #expect(audio.tags["chunk_profile"] == "default")
-    }
-
-    @Test func recordRemoteChunkTelemetryEmitsErrorCounterOnlyForErrors() {
-        let recorder = TestMetricRecorder.install()
-        defer { recorder.uninstall() }
-
-        VoiceInputTelemetry.recordRemoteChunkTelemetry(
-            VoiceRemoteChunkTelemetry(
-                status: .error,
-                isFinal: false,
-                sampleCount: 8000,
-                audioDurationMs: 500,
-                wavBytes: 16000,
-                uploadDurationMs: nil,
-                textLength: nil,
-                errorCategory: "timeout",
-                tags: ["host": "mac-studio"]
-            ),
-            annotation: VoiceMetricAnnotation(engine: "remote", locale: "en-US", source: "composer")
-        )
-
-        let metrics = recorder.samples.map(\.metric)
-        #expect(metrics == [
-            .voiceRemoteChunkAudioMs,
-            .voiceRemoteChunkBytes,
-            .voiceRemoteChunkError,
-        ])
-        #expect(recorder.samples.last?.tags["error_category"] == "timeout")
-        #expect(recorder.samples.last?.value == 1)
     }
 
     @Test func recordRatioMetricClampsNegativeValuesAndUsesRatioUnit() {

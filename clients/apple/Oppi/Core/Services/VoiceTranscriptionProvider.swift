@@ -60,26 +60,6 @@ struct VoiceSessionStartTimings: Sendable {
     let audioStartMs: Int
 }
 
-enum VoiceRemoteChunkStatus: String, Sendable {
-    case success
-    case empty
-    case skipped
-    case cancelled
-    case error
-}
-
-struct VoiceRemoteChunkTelemetry: Sendable {
-    let status: VoiceRemoteChunkStatus
-    let isFinal: Bool
-    let sampleCount: Int
-    let audioDurationMs: Int
-    let wavBytes: Int
-    let uploadDurationMs: Int?
-    let textLength: Int?
-    let errorCategory: String?
-    let tags: [String: String]
-}
-
 /// Provider-agnostic session events streamed back to the manager.
 enum VoiceSessionEvent: Sendable {
     case partialTranscript(String)
@@ -90,7 +70,6 @@ enum VoiceSessionEvent: Sendable {
         committedText: String? = nil,
         activeText: String? = nil
     )
-    case remoteChunkTelemetry(VoiceRemoteChunkTelemetry)
     /// Backend metadata resolved after async readiness. Used to update
     /// metric tags that were unknown at setup time (stt_backend, model).
     case providerMetricTags([String: String])

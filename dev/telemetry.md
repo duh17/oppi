@@ -48,7 +48,7 @@ npm run telemetry:grafana:up
 # Dashboards: Release Preflight, Server Health, Model Routing
 ```
 
-Release Preflight is the experience view: UX latency, connection readiness, client network, dictation, thread load beside workspace load and session switch, and collapsed command, quick-session, and share-publish drill-down. Server Health is resource and server-ops health: event-loop p99 trend and max gate, per-route HTTP latency and response bytes, and collapsed session, push, event-ring, MCP connect, schedule run, and dictation drill-down. Model Routing compares provider, model, and runtime workload.
+Release Preflight is the experience view: UX latency, connection readiness, client network, dictation, voice playback, thread load beside workspace load and session switch, device CPU and memory by screen and app state, and collapsed command, quick-session, and share-publish drill-down. Server Health is resource and server-ops health: event-loop p99 trend and max gate, per-route HTTP latency and response bytes, and collapsed session, push, event-ring, MCP connect, schedule run, and dictation drill-down. Model Routing compares provider, model, and runtime workload.
 
 ## Privacy model
 
@@ -134,7 +134,7 @@ The front page should focus on metrics that directly map to user experience. Kee
 
 | Metric                      | Why it matters                                                   |
 | --------------------------- | ---------------------------------------------------------------- |
-| `chat.app_launch_ms`        | Time until the app presents useful content.                      |
+| MetricKit app launch        | Daily time-to-first-draw and resume histograms; the client has no per-launch metric. |
 | `chat.workspace_load_ms`    | Time until the workspace screen is usable.                       |
 | `chat.session_load_ms`      | Time from selecting a session to chat content visible.           |
 | `chat.session_switch_ms`    | Session row tap-to-content latency.                              |
@@ -165,6 +165,8 @@ The front page should focus on metrics that directly map to user experience. Kee
 | `chat.ask_response_ms`         | How long the visible ask card blocked the agent before answer or ignore.               |
 | `chat.media_playback_start_ms` | Time from player setup to playable video or audio. Inline Markdown video sets up the player on the play tap, so it measures tap to ready. |
 | `chat.media_playback_error`    | User-visible media preview/player failures by media kind and phase.                    |
+| `chat.voice_playback_start_ms` | Startup latency for voice replies and replayable voice media, by source and mode.      |
+| `chat.voice_playback_error`    | Voice playback failures by source and phase.                                           |
 | Client logs: `MediaPlayback`   | Playback/source failures with privacy-safe kind, source, phase, mode, and error class. |
 
 ### Timeline rendering and scrolling
@@ -175,8 +177,7 @@ The front page should focus on metrics that directly map to user experience. Kee
 | `chat.timeline_layout_ms`    | UIKit layout cost during streaming.                    |
 | `chat.cell_configure_ms`     | Row rendering cost, especially large tool output rows. |
 | `chat.markdown_streaming_ms` | Markdown streaming parse/build/apply cost.             |
-| `chat.jank_pct`              | Percentage of render cycles over frame budget.         |
-| `chat.timeline_hitch`        | Count of detected frame-budget hitches.                |
+| `chat.jank_pct`              | Percentage of render cycles over frame budget. Tags `hitches` and `cycles` carry the raw counts. |
 
 ### Dictation and voice input
 
@@ -259,7 +260,7 @@ Current handling guidance:
 | Pattern                                                                                        | Action                                                                                                                                                                              |
 | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Per-message counters such as `server.ws_message_sent`                                          | Keep for drill-down, but sum-aggregate by path/type/status instead of showing raw sample volume.                                                                                    |
-| Ephemeral UI counters such as `chat.tool_update_count`                                         | Keep only if they explain a UX metric; otherwise sample or summarize by session.                                                                                                    |
+| Ephemeral UI counters                                                                          | Keep only if they explain a UX metric; otherwise sample or summarize by session.                                                                                                    |
 | Server HTTP timings such as `server.http_request_ms` and `server.http_response_bytes`          | Promote only route groups that affect visible UX; both use one threshold gate. Fast successful health/stats/capability/navigation/session-poll/telemetry-upload routes are omitted. |
 | Server drill-down gauges such as `server.broadcast_fanout` and `server.event_ring_utilization` | Max-aggregate by bounded tags; use peaks for diagnostics instead of raw sample counts.                                                                                              |
 | Server resource snapshots such as active-session peak                                          | Prefer the structured server resource sample over duplicating the same value into server-ops metrics.                                                                               |
@@ -340,7 +341,7 @@ Use the same tag names across clients, server metrics, logs, and dashboards when
 | `outcome`      | Subscribe result: `success` or `error`. Command send/roundtrip reuses it as `ok`, `cancelled`, or `error`. `error` is a user-visible failure; cancellation and supersession are `cancelled`, not `error`. Not renamed to `status`; already emitted. |
 | `reason`       | Why an event happened, such as `capabilityRefreshFailed`, `idle_timeout`, `auth`, `connect`, `config`, `lease_lost`, `not_found`, `launch_in_progress`, or `other`.                                                                        |
 
-Server ops samples also emit bounded tags that stay as stored: `attempt`, `success`, `push_type`, `ring`, `type`, `level`, `code`, `cancelled`, `questionCount`, `tokens`, `language`, `phase`, `audio_seconds`, `fatal`, and `sessionId`. Do not rename them; dashboards read the stored names. `success` is the push result (`true` or `false`), not `status`.
+Server ops samples also emit bounded tags that stay as stored: `attempt`, `event`, `ring`, `type`, `level`, `code`, `cancelled`, `questionCount`, `tokens`, `language`, `phase`, `audio_seconds`, `fatal`, and `sessionId`. Do not rename them; dashboards read the stored names. Push metrics use `result` for the relay outcome (`delivered`, `gone`, `rejected`, `unavailable`, `failed`, `throttled`, `no_activity`) and `event` for the notification kind, not `status`.
 
 `telemetry:review` derives `server.cpu_total`, `server.rss_mb`, `server.heap_mb`, `server.sessions_total`, `server.ws_connections`, and `server.event_loop_lag_ms` from resource-sample fields (`cpu.total`, `memory.rss`, `memory.heapUsed`, `sessions.total`, `wsConnections`, `eventLoop.p99`). Those names are not in the ops registry and have no second emitter. `server.event_loop_lag_ms` is the interval p99.
 

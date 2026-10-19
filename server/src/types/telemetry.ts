@@ -101,10 +101,6 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "ratio",
     description: "Percentage of render cycles exceeding 16ms frame budget during streaming.",
   },
-  "chat.timeline_hitch": {
-    unit: "count",
-    description: "Frame budget hitch detected during collection view apply cycle.",
-  },
   "chat.coalescer_flush_events": {
     unit: "count",
     description: "Event count flushed per coalescer batch.",
@@ -232,26 +228,6 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "count",
     description: "Audio playback failure count. Tags: source, phase, error_kind.",
   },
-  "chat.voice_remote_chunk_upload_ms": {
-    unit: "ms",
-    description: "Remote ASR chunk upload/request latency.",
-  },
-  "chat.voice_remote_chunk_audio_ms": {
-    unit: "ms",
-    description: "Audio duration covered by each uploaded remote ASR chunk.",
-  },
-  "chat.voice_remote_chunk_bytes": {
-    unit: "count",
-    description: "Encoded WAV byte size for each remote ASR chunk.",
-  },
-  "chat.voice_remote_chunk_chars": {
-    unit: "count",
-    description: "Character count returned per successful remote ASR chunk.",
-  },
-  "chat.voice_remote_chunk_error": {
-    unit: "count",
-    description: "Count of remote ASR chunk upload/transcription errors.",
-  },
   // ── Dictation session metrics ──
   "chat.dictation_setup_ms": {
     unit: "ms",
@@ -309,10 +285,6 @@ export const CHAT_METRIC_REGISTRY = {
   },
 
   // ── App-level UX latency ──
-  "chat.app_launch_ms": {
-    unit: "ms",
-    description: "Cold/warm app launch to first meaningful content visible.",
-  },
   "chat.session_switch_ms": {
     unit: "ms",
     description:
@@ -345,11 +317,6 @@ export const CHAT_METRIC_REGISTRY = {
   "chat.quick_session_error": {
     unit: "count",
     description: "Quick session failure count. Tags: source, selection, error_kind.",
-  },
-  "chat.tool_update_count": {
-    unit: "count",
-    description:
-      "Ephemeral tool update messages received by the active chat session. Tags: tool, has_segments.",
   },
   "chat.app_event_stream_connect_ms": {
     unit: "ms",

@@ -2176,7 +2176,7 @@
       "panels": [
         {
           "title": "Push send latency (ms)",
-          "description": "Raw server.push_send_ms samples, tagged by push_type in the stored JSON.",
+          "description": "Raw server.push_send_ms samples: encrypted seal-and-relay latency, tagged by result in the stored JSON.",
           "type": "timeseries",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2226,7 +2226,7 @@
         },
         {
           "title": "Push results",
-          "description": "Raw server.push_result counters. SUM(value) is the result count by push_type and success.",
+          "description": "Raw server.push_result counters. SUM(value) is the result count by event (blocked, done, error, pairing, Live Activity start/update/end) and relay result (delivered, gone, rejected, unavailable, failed, throttled, no_activity).",
           "type": "table",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2251,7 +2251,7 @@
           },
           "targets": [
             {
-              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.push_type'), '?') AS push_type,\n  COALESCE(json_extract(tags_json, '$.success'), '?') AS success,\n  SUM(value) AS results\nFROM server_ops_metric_samples\nWHERE metric = 'server.push_result'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY push_type, success\nORDER BY results DESC",
+              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.event'), '?') AS event,\n  COALESCE(json_extract(tags_json, '$.result'), '?') AS result,\n  SUM(value) AS results\nFROM server_ops_metric_samples\nWHERE metric = 'server.push_result'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY event, result\nORDER BY results DESC",
               "queryType": "table",
               "timeColumns": []
             }

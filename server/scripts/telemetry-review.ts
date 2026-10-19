@@ -271,12 +271,6 @@ export const SLO_THRESHOLDS: Record<string, SloThreshold> = {
     group: "UX Responsiveness",
     short: "sess_sw",
   },
-  "chat.app_launch_ms": {
-    p95: 1_000,
-    label: "App cold start",
-    group: "UX Responsiveness",
-    short: "app_launch",
-  },
 
   "chat.ws_wait_for_connected_ms": {
     p95: 1_000,

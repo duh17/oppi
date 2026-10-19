@@ -87,6 +87,7 @@ Example:
 - **Client:** Inline Markdown videos show a still frame with a play button and build their player only when you tap play, in chat and the full-screen reader. Scrolling through a chat with many videos no longer starts a player for each one. See [Markdown inline video](docs/attachment-rendering.md#markdown-inline-video).
 - **Client:** Every search field matches the same way: the session timeline and tree, Files, `@` file and `/` command suggestions, models, sessions, Skills, Extensions, icons, and time zones. Words can come in any order, case and accents are ignored, and abbreviations such as `wf` for `web_fetch` or `fbv` for `FileBrowserView` work, without matching letters scattered across a paragraph.
 - **Server:** In a Git repository, `@` file suggestions and Files search list tracked files and new files no ignore rule matches, and leave out Git-ignored ones like terminal Pi's `@`. They load much faster in large repositories, and source files no longer drop off a list filled with ignored files. Sandbox workspaces and folders outside Git still include ignored files. See [Document viewers](docs/document-viewers.md).
+- **Server:** The Release Preflight Grafana dashboard adds voice playback latency and errors and a device CPU and memory table by screen and app state. It drops panels for metrics the app no longer sends (app launch, timeline hitch, remote ASR chunks, internal dispatch latency, inbound queue depth) and the WebSocket lane tables that duplicate Server Health.
 
 ### Fixed
 
@@ -120,6 +121,7 @@ Example:
 - **Server:** A retried prompt or steer with an attachment is no longer rejected as a conflict after its turn has landed.
 - **Client:** SSH Terminal: holding Delete on the on-screen keyboard repeats while typing in the terminal. A dictated phrase with a newline asks first, like a multi-line paste.
 - **Client:** Editing a staged review comment shows one Save and one Cancel.
+- **Server:** The local Grafana Server Health dashboard records ask round-trip time again; answered asks were dropping the sample. Its Push results table groups by push event and relay result, and the Release Preflight MetricKit CPU and GPU panel loads instead of failing on summarized payloads.
 
 ### Removed
 

@@ -27,17 +27,7 @@ struct VoiceInputSessionMonitorTests {
         )
 
         session.yieldAudioLevel(0.25)
-        session.yieldEvent(.remoteChunkTelemetry(.init(
-            status: .success,
-            isFinal: false,
-            sampleCount: 12,
-            audioDurationMs: 34,
-            wavBytes: 56,
-            uploadDurationMs: 78,
-            textLength: 0,
-            errorCategory: nil,
-            tags: [:]
-        )))
+        session.yieldEvent(.providerMetricTags(["stt_backend": "test"]))
         session.yieldEvent(.partialTranscript("hel"))
         session.yieldEvent(.appendFinalTranscript("hello"))
 
@@ -67,17 +57,7 @@ struct VoiceInputSessionMonitorTests {
             }
         )
 
-        session.yieldEvent(.remoteChunkTelemetry(.init(
-            status: .success,
-            isFinal: false,
-            sampleCount: 10,
-            audioDurationMs: 10,
-            wavBytes: 10,
-            uploadDurationMs: 10,
-            textLength: nil,
-            errorCategory: nil,
-            tags: [:]
-        )))
+        session.yieldEvent(.providerMetricTags(["stt_backend": "test"]))
         session.yieldEvent(.replaceFinalTranscript("one"))
         session.yieldEvent(.partialTranscript("two"))
 

@@ -1839,8 +1839,6 @@ extension VoiceSessionEvent: @retroactive Equatable {
                 && snapA == snapB
                 && committedA == committedB
                 && activeA == activeB
-        case (.remoteChunkTelemetry, .remoteChunkTelemetry):
-            return true
         case (.providerMetricTags(let a), .providerMetricTags(let b)):
             return a == b
         default:
