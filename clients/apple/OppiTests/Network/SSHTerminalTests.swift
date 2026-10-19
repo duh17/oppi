@@ -444,6 +444,27 @@ struct SSHTerminalTests {
         }
     }
 
+    /// A rotation runs chat-bar chrome updates inside its animation. A hide
+    /// written over an already hidden action row must not leave the stack view
+    /// a pending hide that undoes the next focus.
+    @Test func chatBarActionRowShowsOnFocusAfterAnimatedChromeUpdates() async throws {
+        let channel = try SSHTerminalChannel()
+        let mounted = try MountedTerminalComposer(channel: channel)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let textView = try #require(mounted.find { $0 is PastableUITextView } as? PastableUITextView)
+        let row = try #require(mounted.bar.keyStripContainer.superview as? UIStackView)
+        #expect(row.isHidden, "the action row waits for focus")
+        for _ in 0..<2 {
+            UIView.animate(withDuration: 0.3) { mounted.bar.apply() }
+            try await Task.sleep(for: .milliseconds(600))
+        }
+        textView.delegate?.textViewDidBeginEditing?(textView)
+        try await Task.sleep(for: .milliseconds(600))
+        await mounted.update()
+        #expect(!row.isHidden, "focus shows the action row")
+        #expect(!mounted.bar.keyStripContainer.isHidden, "focus shows the key strip")
+    }
+
     @Test func rawKeyboardAndAccessoryConsumeOnlyAcceptedKeys() async throws {
         for modifier in [GhosttyMods(GHOSTTY_MODS_CTRL), GhosttyMods(GHOSTTY_MODS_ALT)] {
             let fixture = TerminalConnectionFixture()

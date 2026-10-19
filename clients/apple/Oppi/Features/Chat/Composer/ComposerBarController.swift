@@ -1307,11 +1307,11 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         sendProgressView.apply(text: content.sendProgressText, isSending: content.isSending, colors: colors)
         if let failure = ComposerShared.captureFailure(content.voiceInputManager, owner: .inlineComposer) {
             failureView.apply(message: failure.message, colors: colors)
-            failureView.isHidden = false
+            failureView.setHiddenIfChanged(false)
         } else {
-            failureView.isHidden = true
+            failureView.setHiddenIfChanged(true)
         }
-        forceStopButton.isHidden = !content.showForceStop
+        forceStopButton.setHiddenIfChanged(!content.showForceStop)
         forceStopButton.apply(isInFlight: content.isForceStopInFlight, colors: colors)
 
         attachmentStrip.apply(
@@ -1319,9 +1319,9 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             colors: colors,
             allowsMutation: !content.isSending
         )
-        attachmentStripWrapper.isHidden = content.pendingAttachments.isEmpty
+        attachmentStripWrapper.setHiddenIfChanged(content.pendingAttachments.isEmpty)
         filePillStrip.apply(pointers: content.pendingRepoPointers, colors: colors)
-        filePillStripWrapper.isHidden = content.pendingRepoPointers.isEmpty
+        filePillStripWrapper.setHiddenIfChanged(content.pendingRepoPointers.isEmpty)
 
         let showActionRow = ChatInputBar.shouldShowComposerActionRow(
             alwaysShowActionRow: content.alwaysShowActionRow,
@@ -1337,7 +1337,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             isBusy: content.isBusy,
             hasAskRequest: content.askRequest != nil
         )
-        busyModeButton.isHidden = !showsBusy || !showActionRow
+        busyModeButton.setHiddenIfChanged(!showsBusy || !showActionRow)
         if !showsBusy {
             // A tip shows once; each busy turn starts at zero until its tip
             // reports a height, so a tip left up by the last turn holds no space.
@@ -1345,7 +1345,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         }
         let tipHeight: CGFloat = showsBusy ? busyTipNaturalHeight : 0
         busyTipHeightConstraint?.constant = tipHeight
-        busyTipContainer.isHidden = tipHeight <= 0
+        busyTipContainer.setHiddenIfChanged(tipHeight <= 0)
         busyModeButton.apply(
             title: content.busyStreamingBehavior == .steer ? "Steering" : "Follow-up",
             systemImage: nil,
@@ -1356,8 +1356,8 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
 
         let leadingAttach = content.allowsAttachments && content.attachmentButtonPlacement == .leading
         let trailingAttach = content.allowsAttachments && content.attachmentButtonPlacement == .trailing
-        attachButton.isHidden = !leadingAttach || !showActionRow
-        trailingAttachButton.isHidden = !trailingAttach || !showActionRow
+        attachButton.setHiddenIfChanged(!leadingAttach || !showActionRow)
+        trailingAttachButton.setHiddenIfChanged(!trailingAttach || !showActionRow)
         attachButton.isEnabled = !content.isSending
         trailingAttachButton.isEnabled = !content.isSending
         attachButton.apply(title: nil, systemImage: "plus", colors: colors, symbolPointSize: 11)
@@ -1368,8 +1368,8 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
 
         let keyHeight = content.keyStripHeight
         keyStripHeightConstraint?.constant = keyHeight
-        keyStripContainer.isHidden = keyHeight <= 0 || !showActionRow
-        spacer.isHidden = keyHeight > 0
+        keyStripContainer.setHiddenIfChanged(keyHeight <= 0 || !showActionRow)
+        spacer.setHiddenIfChanged(keyHeight > 0)
 
         applyActionPills(content.actionRow, colors: colors, showActionRow: showActionRow)
         // Buttons first: the draft's width depends on which of them show.
@@ -1388,7 +1388,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         let visibilityChanged = lastShowActionRow.map { $0 != showActionRow } ?? false
         lastShowActionRow = showActionRow
         let applyFlags = {
-            self.actionRowStack.isHidden = !showActionRow
+            self.actionRowStack.setHiddenIfChanged(!showActionRow)
             self.actionRowMinHeight?.constant = minHeight
         }
         if visibilityChanged, !reduceMotion {
@@ -1419,7 +1419,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         if slotChanged {
             askHeightConstraint?.constant = slot
         }
-        askContainer.isHidden = !hasAsk || slot <= 0
+        askContainer.setHiddenIfChanged(!hasAsk || slot <= 0)
         if slotChanged {
             view.invalidateIntrinsicContentSize()
             if notifyHost { host?.askSlotDidChangeHeight() }
@@ -1430,8 +1430,8 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         leadingScroll.isScrollEnabled = row.leadingScrolls
         fill(leadingStack, actions: row.leading, colors: colors)
         fill(trailingStack, actions: row.trailing, colors: colors)
-        leadingScroll.isHidden = row.leading.isEmpty || !showActionRow
-        trailingStack.isHidden = row.trailing.isEmpty || !showActionRow
+        leadingScroll.setHiddenIfChanged(row.leading.isEmpty || !showActionRow)
+        trailingStack.setHiddenIfChanged(row.trailing.isEmpty || !showActionRow)
         let keep = Set((row.leading + row.trailing).map(\.id))
         for (id, view) in pillViews where !keep.contains(id) {
             if isPresentedSource(view) { continue }
@@ -1714,7 +1714,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             maxLines: maxLines
         )
         overlayExpand.isHidden = !(showsExpand && content.askRequest == nil)
-        expandInActionRow.isHidden = !(showsExpand && content.askRequest != nil && lastShowActionRow == true)
+        expandInActionRow.setHiddenIfChanged(!(showsExpand && content.askRequest != nil && lastShowActionRow == true))
         if showsExpand {
             textView.textContainerInset.right = ChatInputBar.composerTextTrailingPadding(showsExpandButton: true)
             growth = ComposerInputMetrics.textViewGrowth(
@@ -1807,19 +1807,19 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         inFlight: Bool
     ) {
         guard content.liveVoiceCall != nil else {
-            primaryButton.isHidden = false
-            endCallButton.isHidden = true
+            primaryButton.setHiddenIfChanged(false)
+            endCallButton.setHiddenIfChanged(true)
             return
         }
         switch kind {
         case .send:
-            primaryButton.isHidden = !(canSend || inFlight) || callTranscript != nil
+            primaryButton.setHiddenIfChanged(!(canSend || inFlight) || callTranscript != nil)
         case .ignoreAsk:
-            primaryButton.isHidden = false
+            primaryButton.setHiddenIfChanged(false)
         case .stop:
-            primaryButton.isHidden = true
+            primaryButton.setHiddenIfChanged(true)
         }
-        endCallButton.isHidden = false
+        endCallButton.setHiddenIfChanged(false)
         endCallButton.apply(
             systemImage: "phone.down.fill",
             fill: colors.red,
@@ -1838,10 +1838,10 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         micButton.setLiveSpectrumSource(nil)
         micButton.accessibilityIdentifier = "chat.voiceInput"
         guard let host, let manager = host.content.voiceInputManager else {
-            micButton.isHidden = true
+            micButton.setHiddenIfChanged(true)
             return
         }
-        micButton.isHidden = false
+        micButton.setHiddenIfChanged(false)
         let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .inlineComposer)
         let accent = host.content.isBusy ? host.content.colors.purple : host.content.colors.blue
         micButton.apply(
@@ -1866,7 +1866,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     /// The dictation ring or orb, following the user's mic while they have the floor and the
     /// agent's voice, in the agent's color, while its reply plays. A tap mutes.
     private func applyCallMicChrome(_ call: ComposerLiveVoiceCall, colors: ComposerThemeColors) {
-        micButton.isHidden = false
+        micButton.setHiddenIfChanged(false)
         let hears = call.isLive && !call.isMuted
         let speaking = call.isSpeaking
         let meter = call.meter
@@ -2368,5 +2368,16 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             }
         )
         applyChrome()
+    }
+}
+
+private extension UIView {
+    /// Chrome updates run on every host change, including inside a rotation's
+    /// animation. Under an animation, a stack view takes a repeated
+    /// `isHidden = true` on an arranged subview for a new animated hide and
+    /// finishes it later over whatever the view shows by then, which left the
+    /// action row and key strip hidden while the draft was focused.
+    func setHiddenIfChanged(_ hidden: Bool) {
+        if isHidden != hidden { isHidden = hidden }
     }
 }
