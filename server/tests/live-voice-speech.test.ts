@@ -31,32 +31,108 @@ function runEnd(message: Record<string, unknown>): SessionBackendEvent {
 
 const reply = (text: string) => runEnd({ content: [{ type: "text", text }] });
 
-/** A Pi runtime as the extension sees it: the active tool list and the registered tool. */
+interface SavedMessage {
+  customType: string;
+  content: string;
+  display: boolean;
+  details?: { active?: boolean };
+}
+
+/**
+ * A Pi runtime as the extension sees it: the active tool list, the registered tool, and a
+ * session that follows Pi's `sendMessage` rules for a message without `triggerTurn`: saved at
+ * once when idle, held until the current turn ends while a run is in progress. `saved` is what
+ * the next model call would carry for the call; `entries` is the saved session a restart reloads.
+ */
 class FakeRuntime {
   active = ["read"];
   stale = false;
-  private readonly handlers = new Map<string, () => unknown>();
+  busy = false;
+  /** Saved history, oldest first; the model's context is the part from `contextFrom`. */
+  entries: Array<{ type: "custom_message" } & SavedMessage>;
+  private contextFrom = 0;
+  private pending: SavedMessage[] = [];
+  private readonly handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
   private tool: { execute: (id: string, params: { text: string }) => Promise<unknown> } | undefined;
 
-  constructor(speech: LiveVoiceSpeech, sessionId: string) {
+  constructor(
+    speech: LiveVoiceSpeech,
+    sessionId: string,
+    saved: Array<{ type: "custom_message" } & SavedMessage> = [],
+  ) {
+    this.entries = [...saved];
     speech.extension(sessionId).factory({
-      on: (event: string, handler: () => unknown) => this.handlers.set(event, handler),
+      on: (event: string, handler: (event: unknown, ctx: unknown) => unknown) =>
+        this.handlers.set(event, handler),
       registerTool: (tool: FakeRuntime["tool"]) => (this.tool = tool),
       getActiveTools: () => {
         if (this.stale) throw new Error("ctx is stale");
         return [...this.active];
       },
       setActiveTools: (names: string[]) => (this.active = names),
+      sendMessage: (
+        message: SavedMessage,
+        options?: { triggerTurn?: boolean; deliverAs?: string },
+      ) => {
+        // Anything but a plain context message would start or steer a turn, or wait for a prompt.
+        if (options?.triggerTurn !== false || options.deliverAs) {
+          throw new Error("call mode must be context only");
+        }
+        if (this.busy) this.pending.push(message);
+        else this.entries.push({ type: "custom_message", ...message });
+      },
     } as never);
   }
 
   startSession(): void {
-    this.handlers.get("session_start")?.();
+    this.fire("session_start");
+  }
+
+  private fire(event: string): void {
+    const ctx = {
+      sessionManager: { buildContextEntries: () => this.entries.slice(this.contextFrom) },
+    };
+    this.handlers.get(event)?.({}, ctx);
+  }
+
+  /** A compaction summarizes everything saved so far out of the model's context. */
+  compact(): void {
+    this.contextFrom = this.entries.length;
+    this.fire("session_compact");
+  }
+
+  /** Tree navigation moves the leaf back to `length` saved entries; later ones leave the path. */
+  navigateTo(length: number): void {
+    this.entries = this.entries.slice(0, length);
+    this.contextFrom = Math.min(this.contextFrom, length);
+    this.fire("session_tree");
   }
 
   /** What before_agent_start returns for a new run. */
-  startRun(): { message?: { content: unknown; display: boolean } } | undefined {
-    return this.handlers.get("before_agent_start")?.() as never;
+  startRun(): unknown {
+    this.busy = true;
+    return this.handlers.get("before_agent_start")?.({}, {});
+  }
+
+  /** The turn's tool results are in: Pi saves what was held during the turn. */
+  endTurn(): void {
+    for (const message of this.pending) this.entries.push({ type: "custom_message", ...message });
+    this.pending = [];
+  }
+
+  endRun(): void {
+    this.endTurn();
+    this.busy = false;
+  }
+
+  /** Call-mode messages in order, as the model would read them. */
+  get callMessages(): SavedMessage[] {
+    return this.entries.filter((entry) => entry.customType === "oppi-live-voice-call");
+  }
+
+  /** The call state the model's context ends on. */
+  get contextSaysCall(): boolean | undefined {
+    return this.callMessages.at(-1)?.details?.active;
   }
 
   speak(text: string): Promise<unknown> {
@@ -147,7 +223,7 @@ describe("LiveVoiceSpeech", () => {
     expect(live.active).not.toContain("speak");
   });
 
-  it("starts every run during a call with speak on and a hidden ask to acknowledge first", () => {
+  it("keeps speak on for every run of a call even after the runtime dropped it", () => {
     const { speech } = speechHarness();
     const runtime = new FakeRuntime(speech, "s1");
     runtime.startSession();
@@ -155,16 +231,203 @@ describe("LiveVoiceSpeech", () => {
     // The runtime settled its own loadout after the call attached and dropped speak.
     runtime.active = ["read"];
 
-    const run = runtime.startRun();
-
+    runtime.startRun();
     expect(runtime.active).toContain("speak");
-    expect(run?.message?.display).toBe(false);
-    expect(String(run?.message?.content)).toMatch(/speak first/i);
 
     speech.setCallAttached("s1", false);
     runtime.active = ["read", "speak"];
-    expect(runtime.startRun()).toBeUndefined();
+    runtime.endRun();
+    runtime.startRun();
     expect(runtime.active).not.toContain("speak");
+  });
+
+  describe("call mode in the session context", () => {
+    it("says once that the call started, with the guidance the agent needs, and adds nothing per run", () => {
+      const { speech } = speechHarness();
+      const runtime = new FakeRuntime(speech, "s1");
+      runtime.startSession();
+      expect(runtime.callMessages).toEqual([]);
+
+      speech.setCallAttached("s1", true);
+      speech.setCallAttached("s1", true);
+      expect(runtime.callMessages).toHaveLength(1);
+      const [started] = runtime.callMessages;
+      expect(started?.display).toBe(false);
+      expect(started?.details).toEqual({ active: true });
+
+      for (let run = 0; run < 3; run++) {
+        expect(runtime.startRun()).toBeUndefined();
+        runtime.endRun();
+      }
+      expect(runtime.callMessages).toHaveLength(1);
+    });
+
+    it("says once that the call ended, and a typed session after it hears nothing more", () => {
+      const { speech } = speechHarness();
+      const runtime = new FakeRuntime(speech, "s1");
+      runtime.startSession();
+      speech.setCallAttached("s1", true);
+      speech.setCallAttached("s1", false);
+      speech.setCallAttached("s1", false);
+
+      expect(runtime.callMessages.map((message) => message.details?.active)).toEqual([true, false]);
+      expect(runtime.callMessages[1]?.display).toBe(false);
+
+      expect(runtime.startRun()).toBeUndefined();
+      expect(runtime.callMessages).toHaveLength(2);
+    });
+
+    it("reaches the model call of a run already in progress when the call attaches mid-run", () => {
+      const { speech } = speechHarness();
+      const runtime = new FakeRuntime(speech, "s1");
+      runtime.startSession();
+      runtime.startRun();
+
+      speech.setCallAttached("s1", true);
+      // Held while the turn's tool calls are still settling, so the context stays well formed.
+      expect(runtime.contextSaysCall).toBeUndefined();
+      runtime.endTurn();
+      // The steered message that follows, and the model call after it, see the call.
+      expect(runtime.contextSaysCall).toBe(true);
+      expect(runtime.active).toContain("speak");
+    });
+
+    it("reaches a run in progress when the call detaches mid-run", () => {
+      const { speech } = speechHarness();
+      const runtime = new FakeRuntime(speech, "s1");
+      runtime.startSession();
+      speech.setCallAttached("s1", true);
+      runtime.startRun();
+
+      speech.setCallAttached("s1", false);
+      runtime.endTurn();
+
+      expect(runtime.contextSaysCall).toBe(false);
+      expect(runtime.active).not.toContain("speak");
+    });
+
+    it("leaves the newest state last after a call attaches, detaches, and attaches again", () => {
+      const { speech } = speechHarness();
+      const runtime = new FakeRuntime(speech, "s1");
+      runtime.startSession();
+      runtime.startRun();
+
+      speech.setCallAttached("s1", true);
+      speech.setCallAttached("s1", false);
+      speech.setCallAttached("s1", true);
+      runtime.endRun();
+      expect(runtime.contextSaysCall).toBe(true);
+
+      speech.setCallAttached("s1", false);
+      speech.setCallAttached("s1", true);
+      speech.setCallAttached("s1", false);
+      expect(runtime.contextSaysCall).toBe(false);
+    });
+
+    it("ends a call the saved session still claims after a restart", () => {
+      const first = speechHarness();
+      const before = new FakeRuntime(first.speech, "s1");
+      before.startSession();
+      first.speech.setCallAttached("s1", true);
+      expect(before.contextSaysCall).toBe(true);
+
+      // The server restarts: calls are gone, the saved session is all that is left.
+      const second = speechHarness();
+      const after = new FakeRuntime(second.speech, "s1", before.entries);
+      after.startSession();
+
+      expect(after.contextSaysCall).toBe(false);
+      expect(after.callMessages).toHaveLength(2);
+      expect(after.active).not.toContain("speak");
+    });
+
+    it("does not repeat the end of a call when a reopened session already ends on it", () => {
+      const { speech } = speechHarness();
+      const first = new FakeRuntime(speech, "s1");
+      first.startSession();
+      speech.setCallAttached("s1", true);
+      speech.setCallAttached("s1", false);
+
+      const reopened = new FakeRuntime(speech, "s1", first.entries);
+      reopened.startSession();
+      expect(reopened.callMessages.map((message) => message.details?.active)).toEqual([
+        true,
+        false,
+      ]);
+    });
+
+    it("says the call again after a compaction summarized its start away, once per compaction", () => {
+      const { speech } = speechHarness();
+      const runtime = new FakeRuntime(speech, "s1");
+      runtime.startSession();
+      speech.setCallAttached("s1", true);
+
+      runtime.compact();
+      expect(runtime.callMessages.map((message) => message.details?.active)).toEqual([true, true]);
+      // The new message is in the context now: another event changes nothing.
+      runtime.navigateTo(runtime.entries.length);
+      expect(runtime.callMessages).toHaveLength(2);
+      runtime.compact();
+      expect(runtime.callMessages).toHaveLength(3);
+    });
+
+    it("adds nothing after a compaction when no call is attached", () => {
+      const { speech } = speechHarness();
+      const runtime = new FakeRuntime(speech, "s1");
+      runtime.startSession();
+      speech.setCallAttached("s1", true);
+      speech.setCallAttached("s1", false);
+
+      runtime.compact();
+      expect(runtime.callMessages).toHaveLength(2);
+    });
+
+    it("ends a call the context claims when the session navigates back into it", () => {
+      const { speech } = speechHarness();
+      const runtime = new FakeRuntime(speech, "s1");
+      runtime.startSession();
+      speech.setCallAttached("s1", true);
+      const insideCall = runtime.entries.length;
+      runtime.entries.push({
+        type: "custom_message",
+        customType: "other",
+        content: "work",
+        display: true,
+      });
+      speech.setCallAttached("s1", false);
+
+      // The leaf moves back to a point where the call was live, with no call attached now.
+      runtime.navigateTo(insideCall);
+      expect(runtime.contextSaysCall).toBe(false);
+    });
+
+    it("says the call again when the session navigates to before its start during a call", () => {
+      const { speech } = speechHarness();
+      const runtime = new FakeRuntime(speech, "s1");
+      runtime.startSession();
+      runtime.entries.push({
+        type: "custom_message",
+        customType: "other",
+        content: "earlier",
+        display: true,
+      });
+      const beforeCall = runtime.entries.length;
+      speech.setCallAttached("s1", true);
+
+      runtime.navigateTo(beforeCall);
+      expect(runtime.contextSaysCall).toBe(true);
+      expect(runtime.callMessages).toHaveLength(1);
+    });
+
+    it("tells a session that was resumed while a call is attached", () => {
+      const { speech } = speechHarness();
+      speech.setCallAttached("s1", true);
+      const runtime = new FakeRuntime(speech, "s1");
+      runtime.startSession();
+
+      expect(runtime.contextSaysCall).toBe(true);
+      expect(runtime.active).toContain("speak");
+    });
   });
 });
 

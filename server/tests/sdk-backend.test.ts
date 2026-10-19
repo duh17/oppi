@@ -336,6 +336,223 @@ describe("SdkBackend Live Voice", () => {
   });
 });
 
+describe("SdkBackend Live Voice call mode", () => {
+  /** The call-mode messages Pi saved in the session, oldest first. */
+  const callMessages = (backend: SdkBackend) =>
+    backend.session.sessionManager
+      .getBranch()
+      .flatMap((entry) =>
+        entry.type === "custom_message" && entry.customType === "oppi-live-voice-call"
+          ? [entry]
+          : [],
+      );
+
+  it("saves the call start and end in the session without a turn, and a restart ends a call the session still claims", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-live-voice-mode-"));
+    const session = makeSession({ workspaceId: undefined });
+    const make = () => {
+      const speech = new LiveVoiceSpeech({ speak: () => {}, runEnded: () => {} });
+      return {
+        speech,
+        create: () =>
+          SdkBackend.create({
+            session,
+            dataDir,
+            onEvent: vi.fn(),
+            onEnd: vi.fn(),
+            liveVoiceExtension: (sessionId) => speech.extension(sessionId),
+          }),
+      };
+    };
+    let backend: SdkBackend | undefined;
+    try {
+      const first = make();
+      backend = await first.create();
+      // Pi writes the session file once it holds an assistant reply.
+      backend.session.sessionManager.appendMessage({
+        role: "user",
+        content: "hello",
+        timestamp: Date.now(),
+      });
+      backend.session.sessionManager.appendMessage({
+        role: "assistant",
+        content: [{ type: "text", text: "Hi." }],
+        api: "anthropic-messages",
+        provider: "anthropic",
+        model: "test",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: Date.now(),
+      });
+      first.speech.setCallAttached(session.id, true);
+      const [started] = callMessages(backend);
+      expect(callMessages(backend)).toHaveLength(1);
+      expect(started?.display).toBe(false);
+      expect(backend.session.isStreaming).toBe(false);
+      // The next model call carries it.
+      expect(
+        backend.session.messages.some(
+          (message) => message.role === "custom" && message.customType === "oppi-live-voice-call",
+        ),
+      ).toBe(true);
+
+      // The server goes down with the call attached.
+      await backend.dispose();
+      const second = make();
+      backend = await second.create();
+      expect(callMessages(backend).map((entry) => entry.details)).toEqual([
+        { active: true },
+        { active: false },
+      ]);
+      expect(backend.session.getActiveToolNames()).not.toContain("speak");
+
+      second.speech.setCallAttached(session.id, true);
+      second.speech.setCallAttached(session.id, false);
+      expect(callMessages(backend).map((entry) => entry.details)).toEqual([
+        { active: true },
+        { active: false },
+        { active: true },
+        { active: false },
+      ]);
+    } finally {
+      await backend?.dispose();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  /** What the model's context says about the call, oldest first. */
+  const contextCall = (backend: SdkBackend) =>
+    backend.session.sessionManager
+      .buildContextEntries()
+      .flatMap((entry) =>
+        entry.type === "custom_message" && entry.customType === "oppi-live-voice-call"
+          ? [(entry.details as { active: boolean }).active]
+          : [],
+      );
+
+  /** One user turn and its assistant reply, saved like a finished run. Returns the reply's id. */
+  const finishedTurn = (backend: SdkBackend, text: string): string => {
+    const manager = backend.session.sessionManager;
+    manager.appendMessage({ role: "user", content: text, timestamp: Date.now() });
+    return manager.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "Ok." }],
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "test",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    });
+  };
+
+  async function withCall(
+    run: (ctx: {
+      backend: SdkBackend;
+      speech: LiveVoiceSpeech;
+      sessionId: string;
+    }) => Promise<void>,
+  ): Promise<void> {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-live-voice-mode-"));
+    const session = makeSession({ workspaceId: undefined });
+    const speech = new LiveVoiceSpeech({ speak: () => {}, runEnded: () => {} });
+    let backend: SdkBackend | undefined;
+    try {
+      backend = await SdkBackend.create({
+        session,
+        dataDir,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+        liveVoiceExtension: (sessionId) => speech.extension(sessionId),
+      });
+      await run({ backend, speech, sessionId: session.id });
+    } finally {
+      await backend?.dispose();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }
+
+  /** Compacts the way Pi does after a summary: append the entry, then fire session_compact. */
+  async function compact(backend: SdkBackend, firstKeptEntryId: string): Promise<void> {
+    const entryId = backend.session.sessionManager.appendCompaction(
+      "Earlier work.",
+      firstKeptEntryId,
+      1000,
+    );
+    const compactionEntry = backend.session.sessionManager.getEntry(entryId)!;
+    await backend.session.extensionRunner.emit({
+      type: "session_compact",
+      compactionEntry: compactionEntry as never,
+      fromExtension: false,
+      reason: "manual",
+      willRetry: false,
+    });
+  }
+
+  it("says the call again when a compaction summarizes its start out of the model's context", async () => {
+    await withCall(async ({ backend, speech, sessionId }) => {
+      finishedTurn(backend, "hello");
+      speech.setCallAttached(sessionId, true);
+      const kept = finishedTurn(backend, "work during the call");
+      expect(contextCall(backend)).toEqual([true]);
+
+      await compact(backend, kept);
+
+      // The saved history still holds the first message; the model's context does not.
+      expect(callMessages(backend)).toHaveLength(2);
+      expect(contextCall(backend)).toEqual([true]);
+    });
+  });
+
+  it("adds nothing after a compaction when no call is attached", async () => {
+    await withCall(async ({ backend, speech, sessionId }) => {
+      finishedTurn(backend, "hello");
+      speech.setCallAttached(sessionId, true);
+      speech.setCallAttached(sessionId, false);
+      const kept = finishedTurn(backend, "typed again");
+
+      await compact(backend, kept);
+
+      expect(callMessages(backend)).toHaveLength(2);
+      expect(contextCall(backend)).toEqual([]);
+    });
+  });
+
+  it("ends a call the context claims after navigating back into it, and restores it before its start", async () => {
+    await withCall(async ({ backend, speech, sessionId }) => {
+      const beforeCall = finishedTurn(backend, "hello");
+      speech.setCallAttached(sessionId, true);
+      const insideCall = finishedTurn(backend, "during the call");
+      speech.setCallAttached(sessionId, false);
+      finishedTurn(backend, "typed again");
+
+      // Back to a point inside the call with no call attached.
+      await backend.session.navigateTree(insideCall, { summarize: false });
+      expect(contextCall(backend)).toEqual([true, false]);
+
+      // A call is live again; before its start, the model's context holds no call message.
+      speech.setCallAttached(sessionId, true);
+      expect(contextCall(backend)).toEqual([true, false, true]);
+      await backend.session.navigateTree(beforeCall, { summarize: false });
+      expect(contextCall(backend)).toEqual([true]);
+    });
+  });
+});
+
 describe("SdkBackend sandbox", () => {
   it("does not forward provider auth secrets into the VM", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-secrets-"));

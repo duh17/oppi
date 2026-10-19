@@ -1,4 +1,9 @@
-import type { ExtensionAPI, InlineExtension } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  InlineExtension,
+  ExtensionContext,
+  SessionEntry,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import type { VoiceCallController } from "./continuous-voice-call.js";
@@ -12,9 +17,12 @@ const log = createLogger({ base: { component: "live_voice_speech" } });
 type RunMessages = Extract<SessionBackendEvent, { type: "agent_end" }>["messages"];
 
 export const SPEAK_TOOL = "speak";
-const LIVE_VOICE_HINT_TYPE = "oppi-live-voice-hint";
-const LIVE_VOICE_HINT =
-  "The user said this on a Live Voice call. Call speak first, before any other tool. If you can answer right away, speak the answer. Otherwise speak a few words acknowledging it (for example: On it, checking the logs), then work, and speak the outcome when done.";
+/** Hidden custom message in the session that tells the agent a call started or ended. */
+const CALL_MODE_TYPE = "oppi-live-voice-call";
+const CALL_STARTED =
+  "A Live Voice call started on this session. The user's messages now arrive as speech turned into text: they may be unpunctuated or contain recognition errors, so read for intent. This holds for messages that arrive while you are working too. Answer each one by calling speak first, before any other tool. If you can answer right away, speak the answer. Otherwise speak a few words acknowledging it (for example: On it, checking the logs), then work, and speak the outcome when done.";
+const CALL_ENDED =
+  "The Live Voice call ended. The speak tool is gone and nobody is listening. The user's messages are typed again: resume normal written chat.";
 const MAX_SPOKEN_CHARS = 2_000;
 /** Live Voice status lines on the phone are a glance, not the transcript. */
 const STATUS_MAX_CHARS = 500;
@@ -42,7 +50,8 @@ interface SessionSpeechState {
 
 /**
  * The agent side of a Live Voice call. While a call is attached to a session, its agent has a
- * `speak` tool and answers out loud with it. A run that ends without speaking still gets its
+ * `speak` tool and answers out loud with it; one hidden message in the session says the call
+ * started, another says it ended. A run that ends without speaking still gets its
  * final reply's opening read aloud, and a failed run says it failed, so the caller is never
  * left in silence.
  */
@@ -105,28 +114,61 @@ export class LiveVoiceSpeech {
   }
 
   private bind(sessionId: string, pi: ExtensionAPI): void {
-    const activate = (attached: boolean): void => {
+    const setSpeakActive = (attached: boolean): void => {
       const active = pi.getActiveTools();
       const has = active.includes(SPEAK_TOOL);
       if (attached && !has) pi.setActiveTools([...active, SPEAK_TOOL]);
       else if (!attached && has) pi.setActiveTools(active.filter((name) => name !== SPEAK_TOOL));
     };
-    pi.on("session_start", () => {
+    // What the model's context last says about the call. Read from the context Pi builds for the
+    // current leaf (after compaction, at the current tree position), not from the whole saved
+    // history: a compaction can summarize the message away and tree navigation can move the leaf
+    // across it, so the history alone can claim a state the model never sees.
+    let announced = false;
+    const readContext = (sessionManager: ExtensionContext["sessionManager"]): void => {
+      announced = lastAnnouncedCall(sessionManager.buildContextEntries());
+    };
+    // The call mode is context, not a turn: `triggerTurn: false` appends the message at once when
+    // the session is idle, and while a run is in progress holds it until the current turn's tool
+    // results are in, so the run's next model call sees it. `steer` and `nextTurn` delivery
+    // would start a turn or wait for the next prompt, and a steered message would miss it.
+    const announce = (attached: boolean): void => {
+      if (attached === announced) return;
+      announced = attached;
+      pi.sendMessage(
+        {
+          customType: CALL_MODE_TYPE,
+          content: attached ? CALL_STARTED : CALL_ENDED,
+          display: false,
+          details: { active: attached },
+        },
+        { triggerTurn: false },
+      );
+    };
+    const activate = (attached: boolean): void => {
+      setSpeakActive(attached);
+      announce(attached);
+    };
+    pi.on("session_start", (_event, ctx) => {
+      readContext(ctx.sessionManager);
       const state = this.state(sessionId);
       state.runtimes.add(activate);
+      // After a server restart the saved session may still say a call is live while the call
+      // is gone; this ends it in the context.
       activate(state.callAttached);
     });
+    // The context changed under the call: say again what the call is now.
+    const resync = (_event: unknown, ctx: ExtensionContext): void => {
+      readContext(ctx.sessionManager);
+      announce(this.sessions.get(sessionId)?.callAttached ?? false);
+    };
+    pi.on("session_compact", resync);
+    pi.on("session_tree", resync);
     // Each run settles its own loadout: an activation from attach can be lost while a new
-    // runtime is still settling its tools, and a call may attach between runs. While a call is
-    // attached, a hidden hint asks for a spoken acknowledgement first, so the caller hears
-    // something within seconds instead of silence until the work is done.
+    // runtime is still settling its tools.
     pi.on("before_agent_start", () => {
-      const attached = this.sessions.get(sessionId)?.callAttached ?? false;
-      activate(attached);
-      if (!attached) return undefined;
-      return {
-        message: { customType: LIVE_VOICE_HINT_TYPE, content: LIVE_VOICE_HINT, display: false },
-      };
+      setSpeakActive(this.sessions.get(sessionId)?.callAttached ?? false);
+      return undefined;
     });
     pi.on("session_shutdown", () => {
       const state = this.sessions.get(sessionId);
@@ -176,6 +218,16 @@ export class LiveVoiceSpeech {
   private forgetIfIdle(sessionId: string, state: SessionSpeechState): void {
     if (!state.callAttached && state.runtimes.size === 0) this.sessions.delete(sessionId);
   }
+}
+
+/** Whether the newest call-mode message in a model context says a call is live. */
+function lastAnnouncedCall(branch: readonly SessionEntry[]): boolean {
+  for (let index = branch.length - 1; index >= 0; index--) {
+    const entry = branch[index];
+    if (entry?.type !== "custom_message" || entry.customType !== CALL_MODE_TYPE) continue;
+    return (entry.details as { active?: boolean } | undefined)?.active === true;
+  }
+  return false;
 }
 
 /** How the run ended, as the caller should hear it. */
