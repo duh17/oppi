@@ -73,8 +73,8 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   private handler: VoiceFrontendEventHandler | undefined;
   /** The call's whole transcript as last heard. */
   private transcript = "";
-  /** Words of `transcript` already handed to Pi. Words, not characters: ASR revises punctuation and case of earlier text. */
-  private delegatedWords = 0;
+  /** Speech units of `transcript` already handed to Pi (see `speechUnits`). */
+  private delegatedUnits = 0;
   private lastTurnText = "";
   private commitInFlight: Promise<void> | undefined;
   private speaking = false;
@@ -169,9 +169,9 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     const handler = this.handler;
     if (!handler) return;
     // A recreated ASR session (Yuwp restart, or a long mute outlasting its idle
-    // timeout) starts its transcript over; count handed-off words from zero.
+    // timeout) starts its transcript over; count handed-off units from zero.
     if (update.transcriptRestarted) {
-      this.delegatedWords = 0;
+      this.delegatedUnits = 0;
       this.lastTurnText = "";
     }
     this.transcript = update.text.trim();
@@ -189,7 +189,8 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   }
 
   private pendingTurnText(): string {
-    return words(this.transcript).slice(this.delegatedWords).join(" ");
+    const next = speechUnits(this.transcript)[this.delegatedUnits];
+    return next ? this.transcript.slice(next.index).trim() : "";
   }
 
   /** Barge-in and End: stop the sentence playing and drop queued ones. */
@@ -226,7 +227,7 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
       if (!handler) return;
       const turn = this.pendingTurnText();
       if (!turn) return;
-      this.delegatedWords = words(this.transcript).length;
+      this.delegatedUnits = speechUnits(this.transcript).length;
       this.lastTurnText = "";
       if (this.speaking) {
         this.speaking = false;
@@ -249,8 +250,16 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   }
 }
 
-function words(text: string): string[] {
-  return text.split(/\s+/).filter(Boolean);
+/**
+ * What a turn boundary counts in: a word in spaced scripts, a single character in Chinese,
+ * Japanese, and Korean (which have no spaces between words). Punctuation does not count,
+ * because ASR revises the punctuation and case of earlier text as it hears more.
+ */
+const SPEECH_UNIT =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|[^\s\p{P}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
+
+function speechUnits(text: string): RegExpMatchArray[] {
+  return [...text.matchAll(SPEECH_UNIT)];
 }
 
 /**

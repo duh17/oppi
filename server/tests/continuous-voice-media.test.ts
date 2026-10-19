@@ -221,6 +221,23 @@ describe("continuous voice media", () => {
     expect(calls.snapshot(started.state.callId).delegations).toHaveLength(2);
   });
 
+  it("hands Pi each Chinese turn, which has no spaces between words", async () => {
+    const stt = new ScriptedSttProvider();
+    const adapter = localAdapter(stt);
+    const committed: string[] = [];
+    await adapter.start((event) => {
+      if (event.type === "user_utterance_committed") committed.push(event.text);
+    });
+
+    stt.emit({ text: "帮我看一下有几个会话在跑" });
+    await turnEnd();
+    // The next turn revises the punctuation of the first and adds no spaces.
+    stt.emit({ text: "帮我看一下有几个会话在跑。然后跑一下测试" });
+    await turnEnd();
+
+    expect(committed).toEqual(["帮我看一下有几个会话在跑", "然后跑一下测试"]);
+  });
+
   it("hands Pi the next turn after the ASR session restarts its transcript", async () => {
     const stt = new ScriptedSttProvider();
     const adapter = localAdapter(stt);
