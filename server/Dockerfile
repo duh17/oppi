@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-venv \
     ripgrep \
+    sqlite3 \
     tmux \
     && mkdir -p /usr/local/lib/docker/cli-plugins \
     && printf '#!/bin/sh\nexec /usr/bin/docker-compose "$@"\n' > /usr/local/lib/docker/cli-plugins/docker-compose \
