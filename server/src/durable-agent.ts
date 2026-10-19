@@ -6,7 +6,6 @@ import {
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 
-import { AgentConfigurationError } from "./agent-launch-errors.js";
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { LoadedDurableExtension } from "./durable-extension-loader.js";
 import { DURABLE_MCP_EXTENSION_PREFIX } from "./durable-mcp.js";
@@ -45,8 +44,11 @@ export type OppiAgentState = {
   resources?: DurableAgentResources;
   /** False when the Agent's instructions replace the prompt: no `project_context` section. */
   projectContext?: false;
-  /** An exact Extension selection: Pi package durable extensions by name, and MCP or not. */
-  extensions?: { packages: string[]; mcp: boolean };
+  /**
+   * An exact Extension selection: Pi package durable extensions by name, MCP or not, and the
+   * names of selected Extensions the session runs without (no durable version), for its warning.
+   */
+  extensions?: { packages: string[]; mcp: boolean; skipped?: string[] };
   /** The tool policy, also applied to tools added when the session attaches again. */
   tools?: DurableToolPolicy;
 };
@@ -124,39 +126,53 @@ export function toolAllowed(policy: DurableToolPolicy | undefined, name: string)
   return !(policy?.noTools === "builtin" && PI_BUILTIN_TOOL_NAMES.has(name));
 }
 
+/** What Oppi knows of the classic Extensions a saved Agent selects by ID. */
+export interface ClassicExtensionIndex {
+  /** IDs of classic Extensions whose durable version Oppi bundles, so every session has it. */
+  readonly bundled: ReadonlySet<string>;
+  /** A readable name per ID, for the warning about Extensions a session runs without. */
+  readonly names: ReadonlyMap<string, string>;
+}
+
+const MCP_EXTENSION_ID = `${BUILTIN_EXTENSION_PATH_PREFIX}mcp`;
+const TOOL_SEARCH_EXTENSION_ID = `${BUILTIN_EXTENSION_PATH_PREFIX}tool-search`;
+
 /**
  * The durable extensions a saved Agent's exact Extension selection names. `builtin:mcp` is the
- * session's own MCP extension; any other ID must belong to a Pi package whose durable entry is
- * loaded for this runtime. Fails closed with `agent_extensions_unavailable`, naming each ID that
- * has no durable entry, rather than starting without it.
+ * session's own MCP extension, which brings durable's `tool_search` (it searches MCP tools, so
+ * `builtin:tool-search` needs `builtin:mcp`). An ID whose durable version Oppi bundles is in every
+ * session already. Any other ID must belong to a Pi package whose durable entry is loaded for this
+ * runtime. The rest, `builtin:codemode` among them (durable sessions have no codemode; MCP tools
+ * classic reaches through it load through `tool_search`), are `skipped` by name: the session
+ * starts without them and warns.
  */
 export function resolveDurableExtensionSelection(
   extensionIds: readonly string[],
   loaded: readonly LoadedDurableExtension[],
+  classic: ClassicExtensionIndex,
   runtime: "host" | "sandbox",
-): { packages: LoadedDurableExtension[]; mcp: boolean } {
+): { packages: LoadedDurableExtension[]; mcp: boolean; skipped: string[] } {
+  const ids = new Set(extensionIds);
+  const mcp = ids.has(MCP_EXTENSION_ID);
   const packages: LoadedDurableExtension[] = [];
-  const missing: string[] = [];
-  let mcp = false;
-  for (const id of new Set(extensionIds)) {
-    if (id === `${BUILTIN_EXTENSION_PATH_PREFIX}mcp`) {
-      mcp = true;
-      continue;
-    }
+  // By name: two IDs of one package are one skipped Extension.
+  const skipped = new Set<string>();
+  for (const id of ids) {
+    if (id === MCP_EXTENSION_ID || (id === TOOL_SEARCH_EXTENSION_ID && mcp)) continue;
+    if (classic.bundled.has(id)) continue;
     const found = loaded.find((candidate) => candidate.extensionIds.includes(id));
-    if (!found || !found.runtimes.includes(runtime)) {
-      missing.push(id);
+    if (found?.runtimes.includes(runtime)) {
+      if (!packages.includes(found)) packages.push(found);
       continue;
     }
-    if (!packages.includes(found)) packages.push(found);
-  }
-  if (missing.length > 0)
-    throw new AgentConfigurationError(
-      "agent_extensions_unavailable",
-      { unavailableExtensions: missing },
-      `Selected Agent Extension has no durable entry for a ${runtime} session: ${missing.join(", ")}`,
+    skipped.add(
+      classic.names.get(id) ??
+        (id.startsWith(BUILTIN_EXTENSION_PATH_PREFIX)
+          ? id.slice(BUILTIN_EXTENSION_PATH_PREFIX.length)
+          : id),
     );
-  return { packages, mcp };
+  }
+  return { packages, mcp, skipped: [...skipped] };
 }
 
 interface DurableAgentInput {
@@ -178,6 +194,7 @@ interface DurableAgentInput {
   base: readonly Extension[];
   /** Every loaded Pi package durable extension. */
   loaded: readonly LoadedDurableExtension[];
+  classic: ClassicExtensionIndex;
   /** Oppi's extension that offers `subagent`. */
   sessions: Extension;
   spawn: boolean;
@@ -221,7 +238,7 @@ export function resolveDurableAgent(input: DurableAgentInput): {
   const selection =
     extensionIds === undefined
       ? undefined
-      : resolveDurableExtensionSelection(extensionIds, loaded, runtime);
+      : resolveDurableExtensionSelection(extensionIds, loaded, input.classic, runtime);
   const packages = !saved
     ? []
     : (selection?.packages ?? loaded.filter((entry) => entry.runtimes.includes(runtime))).map(
@@ -280,6 +297,7 @@ export function resolveDurableAgent(input: DurableAgentInput): {
               extensions: {
                 packages: selection.packages.map((entry) => entry.extension.name),
                 mcp: selection.mcp,
+                ...(selection.skipped.length ? { skipped: selection.skipped } : {}),
               },
             }
           : {}),

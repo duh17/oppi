@@ -157,6 +157,10 @@ export class DurableMcp {
   private readonly credentials: McpOAuthCredentialStore;
   private readonly serverLog: object;
   private readonly toolSearch: ToolRegistration | undefined;
+  private readonly excluded: ((name: string) => boolean) | undefined;
+  private readonly allowed: ((name: string) => boolean) | undefined;
+  /** An allow list that is empty or names `mcp__` entries filters MCP tools like any other. */
+  private readonly allowlistFiltersMcp: boolean;
 
   /** Undefined when no server is enabled, no config error needs reporting, or the policy allows no tools. */
   static async open(options: DurableMcpOptions): Promise<DurableMcp | undefined> {
@@ -193,9 +197,15 @@ export class DurableMcp {
     this.serverLog = new internals.McpServerLog(
       options.sandbox?.logPath ?? join(options.agentDir, "mcp.log"),
     );
+    const { allowed, excluded } = options.policy ?? {};
+    this.excluded = excluded ? internals.createToolNameMatcher(excluded) : undefined;
+    this.allowed = allowed ? internals.createToolNameMatcher(allowed) : undefined;
+    this.allowlistFiltersMcp =
+      allowed !== undefined &&
+      (allowed.length === 0 || allowed.some((entry) => entry.startsWith("mcp__")));
     this.toolSearch =
       this.servers.some((server) => configuredExposures(server.entry).has("deferred")) &&
-      this.permitted(DURABLE_TOOL_SEARCH_NAME)
+      this.permitted(DURABLE_TOOL_SEARCH_NAME, "direct")
         ? this.createToolSearch()
         : undefined;
     this.extension = this.buildExtension();
@@ -326,9 +336,20 @@ export class DurableMcp {
     await Promise.allSettled(this.servers.map((server) => server.connection?.close()));
   }
 
-  private permitted(name: string): boolean {
-    const policy = this.options.policy;
-    return (!policy?.allowed || policy.allowed.includes(name)) && !policy?.excluded?.includes(name);
+  /**
+   * Pi's tool policy (`AgentSession._isAllowedTool` and `_isActivatable`): exclusions and the
+   * allow list match exact names or `*` patterns, and an allow list that names no `mcp__` entry
+   * keeps MCP tools that tool search can load (not `direct` ones), as classic keeps them for
+   * codemode and tool search. Durable has no codemode, so an allow list naming `codemode` also
+   * permits `tool_search`, the way durable reaches what classic reaches through codemode.
+   */
+  private permitted(name: string, exposure: McpExposure): boolean {
+    if (this.excluded?.(name)) return false;
+    if (!this.allowed || this.allowed(name)) return true;
+    if (name === DURABLE_TOOL_SEARCH_NAME)
+      return this.allowed("codemode") && !this.excluded?.("codemode");
+    if (this.allowlistFiltersMcp || !this.internals.isMcpToolName(name)) return false;
+    return exposure !== "direct";
   }
 
   private async waitFor(
@@ -477,7 +498,7 @@ export class DurableMcp {
 
   private directToolNames(): string[] {
     return this.registered()
-      .filter((item) => item.exposure === "direct" && this.permitted(item.tool.name))
+      .filter((item) => item.exposure === "direct" && this.permitted(item.tool.name, "direct"))
       .map((item) => item.tool.name);
   }
 
@@ -562,7 +583,7 @@ export class DurableMcp {
           (item) =>
             item.exposure === "deferred" &&
             !offered.has(item.tool.name) &&
-            this.permitted(item.tool.name),
+            this.permitted(item.tool.name, "deferred"),
         );
         const matches = new this.internals.Bm25Ranker().rank(
           query,

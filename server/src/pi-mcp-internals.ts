@@ -97,6 +97,10 @@ export interface PiMcpInternals {
   }) => ToolDefinition[];
   renderServersSection: (servers: readonly McpServerListing[]) => string | undefined;
   mcpNamespace: (server: string) => string;
+  /** `--tools` / `--exclude-tools` matching: exact names, and patterns where `*` matches anything. */
+  createToolNameMatcher: (entries: readonly string[]) => (name: string) => boolean;
+  /** A server tool (`mcp__<server>__<tool>`) or one of the MCP resource tools. */
+  isMcpToolName: (name: string) => boolean;
   createToolSearchDocument: (
     tool: { name: string; description: string; parameters: unknown },
     namespace?: { name: string; description?: string; instructions?: string },
@@ -148,6 +152,8 @@ async function loadInternals(): Promise<PiMcpInternals> {
     createMcpResourceToolDefinitions: resources.createMcpResourceToolDefinitions,
     renderServersSection: mcp.renderServersSection,
     mcpNamespace: servers.mcpNamespace,
+    createToolNameMatcher: servers.createToolNameMatcher,
+    isMcpToolName: servers.isMcpToolName,
     createToolSearchDocument: search.createToolSearchDocument,
     Bm25Ranker: search.Bm25Ranker,
     TOOL_SEARCH_DESCRIPTION: search.TOOL_SEARCH_DESCRIPTION,

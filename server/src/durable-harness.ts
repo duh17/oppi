@@ -53,6 +53,7 @@ import {
 } from "./durable-extension-loader.js";
 import type { DurableMcp } from "./durable-mcp.js";
 import { DurableAgentController } from "./durable-agent-controller.js";
+import type { ClassicExtensionIndex } from "./durable-agent.js";
 import {
   attachConversationStream,
   readOlderConversationEntries,
@@ -1173,6 +1174,7 @@ export class DurableHarness {
   private bundled: readonly LoadedDurableExtension[] = [];
   /** Extensions from the durable entries of enabled Pi packages, in load order. */
   private packageExtensions: readonly LoadedDurableExtension[] = [];
+  private classic: ClassicExtensionIndex = { bundled: new Set(), names: new Map() };
   /** One load or reload at a time. */
   private extensionLoad: Promise<unknown> = Promise.resolve();
   private shared?: Promise<{
@@ -1336,6 +1338,11 @@ export class DurableHarness {
     return this.packageExtensions;
   }
 
+  /** The classic Extension IDs a saved Agent may select that the built-ins cover, and every ID's name. */
+  get classicExtensions(): ClassicExtensionIndex {
+    return this.classic;
+  }
+
   /**
    * Re-read Oppi's bundled packages and the durable entries of enabled Pi packages, and install
    * them in the open registry. Installing an extension under an installed name replaces it in
@@ -1440,6 +1447,17 @@ export class DurableHarness {
       // This load replaces or removes the previous packages' extensions, and their tasks with them.
       tasks: installedTasks(registry, new Set(previous.map((old) => old.extension.name))),
     });
+    // A package skipped because Oppi bundles its extensions (a link to `pi-extensions/ask`)
+    // stands for that built-in when a saved Agent selects it.
+    const bundledRoots = new Set(result.skipped.map((issue) => issue.root));
+    this.classic = {
+      bundled: new Set(
+        discovered.packages
+          .filter((found) => bundledRoots.has(found.root))
+          .flatMap((found) => found.extensionIds),
+      ),
+      names: discovered.names,
+    };
     // Packages no longer discovered go first, so a new package may take over a name or task
     // they held in this same reload. A package still discovered stays installed until its new
     // code installs, so a broken update of it rolls back to its previous code.

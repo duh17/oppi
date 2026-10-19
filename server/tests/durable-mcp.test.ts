@@ -20,7 +20,7 @@ import { SdkBackend } from "../src/sdk-backend.js";
 import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
-import type { ServerMessage, Workspace } from "../src/types.js";
+import type { ServerMessage, Session, Workspace } from "../src/types.js";
 
 const ECHO_SERVER = fileURLToPath(new URL("./fixtures/mcp-echo-server.mjs", import.meta.url));
 
@@ -59,6 +59,7 @@ function writeMcpJson(dir: string, servers: Record<string, unknown>): void {
 async function fixture(
   responses: FauxResponseStep[],
   sandboxConfig?: NonNullable<Workspace["sandboxConfig"]>,
+  tools?: NonNullable<Session["launch"]>["tools"],
 ) {
   const dir = mkdtempSync(join(tmpdir(), "oppi-durable-mcp-test-"));
   const models = await ModelRuntime.create({
@@ -91,6 +92,7 @@ async function fixture(
   const session = storage.createSession("Durable MCP", "faux/faux-1");
   session.serverDurable = { storeId: session.id };
   session.workspaceId = workspace.id;
+  if (tools) session.launch = { status: "accepted", requestedAt: Date.now(), tools };
   storage.saveSession(session);
   const manager = new SessionManager(storage);
   managers.push(manager);
@@ -272,6 +274,49 @@ describe("server durable MCP (host)", () => {
     await prompt(restarted, f.session.id, "Echo again");
     expect(read(marker)).toContain('call echo {"text":"again"}');
     expect((await toolResults(restarted, f.session.id)).at(-1)).toContain("echo:again");
+  });
+
+  it("follows Pi's tool policy: an allow list naming codemode reaches MCP through tool_search, never direct or excluded tools", async () => {
+    const marker = (name: string) => join(agentDir, `${name}.marker`);
+    writeMcpJson(agentDir, {
+      echo: echoServer(marker("echo")),
+      loud: echoServer(marker("loud"), { exposure: "direct" }),
+      secret: echoServer(marker("secret")),
+    });
+    const f = await fixture(
+      [
+        fauxAssistantMessage([fauxToolCall("mcp__loud__echo", { text: "direct" })], {
+          stopReason: "toolUse",
+        }),
+        fauxAssistantMessage([fauxToolCall("tool_search", { query: "echo text back" })], {
+          stopReason: "toolUse",
+        }),
+        fauxAssistantMessage(
+          [
+            fauxToolCall("mcp__echo__echo", { text: "found" }),
+            fauxToolCall("mcp__secret__echo", { text: "excluded" }),
+          ],
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage("POLICY_DONE"),
+      ],
+      undefined,
+      // A saved Agent's classic list: codemode is how classic reaches these servers.
+      { allowed: ["read", "codemode"], excluded: ["mcp__secret__*"] },
+    );
+    await f.manager.startSession(f.session.id, f.workspace);
+    await prompt(f.manager, f.session.id, "Find and use the echo tool");
+
+    const calls = (name: string) =>
+      read(marker(name))
+        .split("\n")
+        .filter((line) => line.startsWith("call "));
+    expect(calls("echo")).toEqual(['call echo {"text":"found"}']);
+    expect(calls("loud")).toEqual([]);
+    expect(calls("secret")).toEqual([]);
+    const results = await toolResults(f.manager, f.session.id);
+    expect(results[1]).toContain("mcp__echo__echo");
+    expect(results[1]).not.toContain("mcp__secret__echo");
   });
 
   it("in a sandbox, loads only picked global servers, runs stdio in the VM, and refuses hosts outside Allowed Hosts", async () => {

@@ -111,14 +111,6 @@ export interface AgentLaunchServiceDeps {
       message: string,
       opts?: { attachments?: ChatAttachmentRef[] },
     ): Promise<void>;
-    /**
-     * Rejects with `agent_extensions_unavailable` when a durable launch selects an Extension
-     * that has no durable entry for the runtime. Required for durable launches.
-     */
-    assertDurableExtensions?(
-      extensionIds: readonly string[],
-      runtime: "host" | "sandbox",
-    ): Promise<void>;
   };
   ensureSessionContextWindow: (session: Session) => Session;
   nowMs?: () => number;
@@ -590,18 +582,10 @@ export class AgentLaunchService {
     session: Session,
   ): Promise<void> {
     const extensionIds = request.agent.resources?.extensionIds;
-    if (extensionIds === undefined || extensionIds.length === 0) return;
-    if (request.engine === "durable") {
-      // A durable session runs durable entries, not classic extension factories.
-      const sessions = this.deps.sessions;
-      if (!sessions.assertDurableExtensions)
-        throw new Error("Durable Extension selection cannot be checked");
-      await sessions.assertDurableExtensions(
-        extensionIds,
-        request.target.workspace.runtime === "sandbox" ? "sandbox" : "host",
-      );
+    // A durable session runs durable entries, not classic extension factories, and starts
+    // without the selected Extensions that have none (`resolveDurableExtensionSelection`).
+    if (extensionIds === undefined || extensionIds.length === 0 || request.engine === "durable")
       return;
-    }
 
     let hostCwd: string;
     try {

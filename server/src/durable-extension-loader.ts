@@ -3,7 +3,7 @@ import type { Extension } from "@earendil-works/pi-durable";
 import { createJiti } from "jiti";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serverResourceId } from "./server-resource-id.js";
 
@@ -161,6 +161,8 @@ export function readDurableManifest(root: string): DurableExtensionManifest | un
 export async function discoverDurableExtensionPackages(agentDir: string): Promise<{
   packages: DurableExtensionPackage[];
   errors: DurableExtensionIssue[];
+  /** A readable name per classic extension ID Pi resolved, durable entry or not. */
+  names: Map<string, string>;
 }> {
   const settingsManager = SettingsManager.create(homedir(), agentDir, { projectTrusted: false });
   const resolved = await new DefaultPackageManager({
@@ -173,10 +175,15 @@ export async function discoverDurableExtensionPackages(agentDir: string): Promis
     message: `Pi settings (${entry.scope}): ${entry.error.message}`,
   }));
   const packages: Array<DurableExtensionPackage & { extensionIds: string[] }> = [];
+  const names = new Map<string, string>();
   const failed = new Set<string>();
   for (const resource of resolved.extensions) {
-    if (!resource.enabled) continue;
     const root = packageRoot(resource.path, resource.metadata);
+    names.set(
+      serverResourceId("extension", resource.path),
+      basename(root ?? resource.path).replace(/\.[cm]?[jt]s$/, ""),
+    );
+    if (!resource.enabled) continue;
     if (!root || failed.has(root)) continue;
     let manifest: DurableExtensionManifest | undefined;
     try {
@@ -197,7 +204,7 @@ export async function discoverDurableExtensionPackages(agentDir: string): Promis
     }
     packages.push({ root, entry, runtimes: manifest.runtimes, extensionIds: [id] });
   }
-  return { packages, errors };
+  return { packages, errors, names };
 }
 
 /**

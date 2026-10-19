@@ -181,6 +181,21 @@ interface LaunchedAs {
   created?: ReturnType<typeof resolveDurableAgent>;
 }
 
+/**
+ * The saved Agent's Extensions this session runs without, as a session warning like the classic
+ * dropped-tools one: it is stored with the session, so a launch nobody watched still shows it.
+ */
+function recordSkippedExtensionsWarning(session: Session, skipped: readonly string[]): void {
+  const warning = `Selected Agent Extensions have no durable version and are not loaded in this session: ${skipped.join(", ")}. Edit the Agent's selected Extensions, or start it Classic, to use them.`;
+  if (session.warnings?.includes(warning)) return;
+  session.warnings = [...(session.warnings ?? []), warning];
+  log.warn("durable_agent.extensions_skipped", {
+    sessionId: session.id,
+    agentId: session.launch?.agentId,
+    skipped: [...skipped],
+  });
+}
+
 /** The model and thinking level a new conversation starts with: the session's, else Pi's defaults. */
 function seedModel(
   models: ModelRuntime,
@@ -321,6 +336,8 @@ export class DurableBackend implements AgentBackend {
     const launched = control
       ? undefined
       : await DurableBackend.launchedAs(options, { hostCwd, cwd, sandbox });
+    const skipped = launched?.doc?.extensions?.skipped;
+    if (skipped?.length) recordSkippedExtensionsWarning(session, skipped);
     // Sandboxes see only the workspace, as SDK sandbox sessions: trusted.
     const projectTrusted = sandbox || (await resolveProjectTrust(hostCwd, agentDir, options));
     // A sandbox's workspace VM comes first: its Skills and context files are what this VM
@@ -423,6 +440,7 @@ export class DurableBackend implements AgentBackend {
       runtime,
       base: [...host.runtime.builtInsFor(runtime), ...host.runtime.packageExtensionsFor(runtime)],
       loaded: host.runtime.loadedPackages,
+      classic: host.runtime.classicExtensions,
       sessions: host.runtime.sessionsExtension,
       spawn,
       grant,

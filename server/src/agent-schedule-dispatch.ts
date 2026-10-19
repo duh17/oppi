@@ -35,10 +35,6 @@ export interface AgentScheduleDispatchDeps {
         requestId?: string;
       },
     ): Promise<void>;
-    assertDurableExtensions?(
-      extensionIds: readonly string[],
-      runtime: "host" | "sandbox",
-    ): Promise<void>;
   };
   ensureSessionContextWindow: (session: Session) => Session;
   appEvents?: Pick<AppEventEmitter, "emitSessionCreated" | "emitSessionSummary">;

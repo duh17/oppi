@@ -178,6 +178,7 @@ export class DurableThreads {
       runtime,
       base: agent.extensions,
       loaded: this.deps.runtime.loadedPackages,
+      classic: this.deps.runtime.classicExtensions,
       sessions: this.deps.runtime.sessionsExtension,
       spawn: grant,
       // Children report to their parent; only top-level sessions notify the user.

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +39,7 @@ import { createAgentScheduleDispatchHooks } from "../src/agent-schedule-dispatch
 import type { NewSessionDispatchInput } from "../src/agent-schedules.js";
 import { SessionManager } from "../src/sessions.js";
 import { readDurableTrace } from "../src/durable-history.js";
+import { serverResourceId } from "../src/server-resource-id.js";
 import { Storage } from "../src/storage.js";
 import { recordLiveSessionsForRestart } from "../src/session-restart-resume.js";
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -1192,8 +1193,6 @@ describe("durable-native threads", () => {
         if (last.role === "toolResult") return fauxAssistantMessage("DONE");
         if (text.includes("Review it"))
           return spawnCall({ name: "Rev", task: "REVIEW_TASK", agent: "Reviewer", wait: true });
-        if (text.includes("Plug it"))
-          return spawnCall({ name: "Plug", task: "T", agent: "Plugged", wait: true });
         if (text.includes("Fence it"))
           return spawnCall({ name: "Fence", task: "T", agent: "Fenced", wait: true });
         if (text.includes("List them")) return subagentCall("list");
@@ -1206,10 +1205,6 @@ describe("durable-native threads", () => {
       name: "Reviewer",
       instructions: { mode: "replace", text: "REVIEWER_PROMPT" },
       sessionDefaults: { model: "faux/faux-2", thinkingLevel: "high", tools: ["read", "ask"] },
-    });
-    agents.createAgent({
-      name: "Plugged",
-      resources: { extensionIds: ["extension_missing", "builtin:codemode"] },
     });
     agents.createAgent({
       name: "Fenced",
@@ -1262,11 +1257,6 @@ describe("durable-native threads", () => {
       tools: { allowed: ["read", "ask"] },
     });
 
-    const plugged = await call("Plug it");
-    expect(plugged).toMatchObject({ isError: true });
-    expect(plugged.text).toContain(
-      "Selected Agent Extension has no durable entry for a host session: extension_missing, builtin:codemode",
-    );
     const fenced = await call("Fence it");
     expect(fenced).toMatchObject({ isError: true });
     expect(fenced.text).toContain("Start it as a top-level session instead");
@@ -1537,23 +1527,68 @@ describe("durable engine on create requests", () => {
     ) as { agent?: unknown };
     expect(meta.agent).toEqual({ id: agent.id, version: 1 });
 
-    // A selection the durable engine cannot honor fails closed before a session exists.
+    // A selection the durable engine cannot fully honor still starts: MCP and tool search
+    // come with `builtin:mcp`, a Pi package whose durable version Oppi bundles is that
+    // built-in, and the rest (codemode, classic-only Extensions) are named as skipped.
+    const agentDir = process.env.PI_CODING_AGENT_DIR!;
+    const twin = join(agentDir, "extensions", "my-ask");
+    mkdirSync(twin, { recursive: true });
+    writeFileSync(
+      join(twin, "package.json"),
+      JSON.stringify({
+        name: "my-ask",
+        pi: { extensions: ["./index.ts"] },
+        oppi: { durable: { entry: "./durable.ts" } },
+      }),
+    );
+    writeFileSync(join(twin, "index.ts"), "export default function () {}\n");
+    writeFileSync(join(twin, "durable.ts"), 'export default { name: "ask" };\n');
+    const classicOnly = join(agentDir, "extensions", "commit-trailer.ts");
+    writeFileSync(classicOnly, "export default function () {}\n");
+    expect((await f.manager.reloadDurableExtensions())?.skipped).toEqual([
+      expect.objectContaining({ root: twin }),
+    ]);
     const plugged = agents.createAgent({
       name: "Plugged",
-      resources: { extensionIds: ["extension_missing"] },
+      resources: {
+        extensionIds: [
+          serverResourceId("extension", join(twin, "index.ts")),
+          serverResourceId("extension", classicOnly),
+          "extension_missing",
+          "builtin:mcp",
+          "builtin:tool-search",
+          "builtin:codemode",
+        ],
+      },
     });
-    const before = f.storage.listSessions().length;
-    const refused = await route(f, "POST", `/agents/${plugged.id}/sessions`, {
-      prompt: { text: "Never runs" },
+    const started = await route(f, "POST", `/agents/${plugged.id}/sessions`, {
+      prompt: { text: "Plugged in" },
       target: { workspaceId: f.workspace.id },
       engine: "durable",
     });
-    expect(refused.status).toBe(422);
-    expect(refused.body).toMatchObject({
-      code: "agent_extensions_unavailable",
-      recovery: { unavailableExtensions: ["extension_missing"] },
+    expect(started.status).toBe(201);
+    const pluggedId = (started.body.session as Session).id;
+    const pluggedConversation = conversationOf(f.storage, pluggedId);
+    const pluggedHarness = await f.openStore(pluggedId);
+    await until(
+      async () => (await userTexts(pluggedHarness, pluggedConversation)).includes("Plugged in"),
+      "the plugged agent's first prompt",
+    );
+    expect(
+      (await pluggedHarness.snapshot(OppiAgentDoc, pluggedConversation, context))?.extensions,
+    ).toEqual({
+      packages: [],
+      mcp: true,
+      skipped: ["commit-trailer", "extension_missing", "codemode"],
     });
-    expect(f.storage.listSessions()).toHaveLength(before);
+    // The session row says what it runs without, once, also after another attach.
+    const warnings = [
+      "Selected Agent Extensions have no durable version and are not loaded in this session: commit-trailer, extension_missing, codemode. Edit the Agent's selected Extensions, or start it Classic, to use them.",
+    ];
+    expect(f.storage.getSession(pluggedId)?.warnings).toEqual(warnings);
+    await f.manager.stopSession(pluggedId);
+    await f.manager.startSession(pluggedId, f.workspace);
+    expect(f.storage.getSession(pluggedId)?.warnings).toEqual(warnings);
   });
 
   it("runs a durable new-session schedule as its saved Agent", async () => {

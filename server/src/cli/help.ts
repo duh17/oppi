@@ -1917,7 +1917,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Pass @- to --prompt to read the first prompt from stdin.",
-      "--engine durable starts a server durable session. The server rejects it unless experimental.serverDurable is on. With --agent the saved Agent becomes the durable session's agent; an Agent Extension with no durable entry fails the launch with agent_extensions_unavailable. Every other create stays classic.",
+      "--engine durable starts a server durable session. The server rejects it unless experimental.serverDurable is on. With --agent the saved Agent becomes the durable session's agent; it starts without the Agent Extensions that have no durable entry (builtin:codemode among them) and warns, naming them. Every other create stays classic.",
       "When a managed session is the caller, create prefixes the prompt with `This is a message from session <caller-id>:` so the child can inspect that source session. Do not type the prefix yourself.",
       "JSON output is compact and returns the launch id as data.session_id.",
       "Managed sessions can create only direct children by default. A root may pass --allow-nested-delegation to authorize a child to spawn its own children; the grant then propagates down the subtree, so explicitly requested grandchild sessions work without re-authorizing at every level.",

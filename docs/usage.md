@@ -137,7 +137,7 @@ Turn on **Settings → Experiments → Durable Sessions** (off by default, saved
 
 Durable sessions appear in All Sessions like any other session, with a small **∞** after the title. Durable chats follow **Settings → Chat → Style** like any other chat; the title shows a small **Durable** label. The composer is the normal chat input bar.
 
-From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session; it fails while the server flag is off. Add `--agent <name>` to start it as a saved Agent, or use `oppi schedule create --engine durable` for a schedule. An Agent Extension that has no durable version fails the launch and names the Extension.
+From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session; it fails while the server flag is off. Add `--agent <name>` to start it as a saved Agent, or use `oppi schedule create --engine durable` for a schedule. A durable session runs the Agent's Extensions that have a durable version, plus MCP when the Agent selects it. It starts without the rest, including codemode, and shows a warning that names them. MCP tools load through `tool_search`, the durable stand-in for codemode, even when the Agent's tool list names only `codemode` or `tool_search`.
 
 A durable session can start helper sessions of its own with its `subagent` tool. Each one is a child session you can open from the tool row or the Subagents pill above the composer, listed in All Sessions. The pill shows each child as Working, Needs attention, Done, or Error, with its model and context use as of its last answer. It reports its answer back to the session that started it. A child can start its own children only when its parent allows it.
 
