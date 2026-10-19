@@ -1,5 +1,5 @@
 import { trustedSessionAttachmentSourceRoots } from "./chat-attachments.js";
-import type { VoiceControlBridge } from "./continuous-voice.js";
+import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import { applyHostEnv } from "./host-env.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionBackendEvent } from "./pi-events.js";
@@ -101,8 +101,7 @@ export interface SessionCoordinatorBundleDeps {
   takeStartupUIRequests?: (
     key: string,
   ) => SessionStartActiveSession["pendingUIRequests"] | undefined;
-  getRegisterVoiceControlBridge?: () =>
-    ((sessionId: string, bridge: VoiceControlBridge) => () => void) | undefined;
+  getLiveVoiceExtension?: () => ((sessionId: string) => InlineExtension) | undefined;
 }
 
 export function createSessionCoordinatorBundle(
@@ -179,8 +178,7 @@ export function createSessionCoordinatorBundle(
     bootstrapSessionState: (key) => deps.bootstrapSessionState(key),
     isClosed: deps.isClosed,
     metrics: deps.metrics,
-    registerVoiceControlBridge: (sessionId, bridge) =>
-      deps.getRegisterVoiceControlBridge?.()?.(sessionId, bridge) ?? (() => {}),
+    liveVoiceExtension: (sessionId) => deps.getLiveVoiceExtension?.()?.(sessionId),
   });
 
   const activationCoordinator = new SessionActivationCoordinator({

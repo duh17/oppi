@@ -493,7 +493,8 @@ struct QuickSessionSheet: View {
         let configuration = ExpandedComposerConfiguration(
             voiceInputManager: voiceInputManager,
             onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
-            onSend: handleSend,
+            onLiveVoiceSelected: { handleSend(startsLiveVoice: true) },
+            onSend: { handleSend() },
             onModelTap: { showModelPicker = true },
             onThinkingSelect: selectThinkingLevel,
             onFileSuggestionQuery: updateFileSuggestions,
@@ -592,12 +593,14 @@ struct QuickSessionSheet: View {
                 isStopping: false,
                 voiceInputManager: voiceInputManager,
                 onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
+                // Starts the session and opens it straight into a Live Voice call.
+                onLiveVoiceSelected: { handleSend(startsLiveVoice: true) },
                 showForceStop: false,
                 isForceStopInFlight: false,
                 slashCommands: slashCommands,
                 fileSuggestions: selectedChatState.fileSuggestions,
                 onFileSuggestionQuery: updateFileSuggestions,
-                onSend: handleSend,
+                onSend: { handleSend() },
                 onStop: {},
                 onForceStop: {},
                 onExpand: { showExpandedComposer = true },
@@ -1454,7 +1457,7 @@ struct QuickSessionSheet: View {
         }
     }
 
-    private func handleSend() {
+    private func handleSend(startsLiveVoice: Bool = false) {
         guard !isCreating else { return }
         // A saved Agent may still be resolving; sending now would launch it as a plain session.
         if engineDecision.blocksLaunch {
@@ -1679,7 +1682,8 @@ struct QuickSessionSheet: View {
                     target: WorkspaceNavTarget(serverId: serverId, workspace: workspace),
                     sessionId: session.id,
                     autoSendMessage: autoSendMessage,
-                    autoSendAttachments: autoSendAttachments
+                    autoSendAttachments: autoSendAttachments,
+                    startsLiveVoice: startsLiveVoice
                 )
 
                 launchedDraftPayload = submittedPayload

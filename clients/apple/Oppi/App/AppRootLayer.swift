@@ -232,6 +232,7 @@ struct AppRootLayer: View {
         // local attachments and dispatch the message through the focused stream.
         navigation.pendingQuickSessionMessage = pending.autoSendMessage
         navigation.pendingQuickSessionAttachments = pending.autoSendAttachments
+        navigation.pendingLiveVoiceSessionId = pending.startsLiveVoice ? pending.sessionId : nil
 
         // Quick Session is just "new session from here". Preserve the current
         // compact stack, or select the session detail column on iPad.

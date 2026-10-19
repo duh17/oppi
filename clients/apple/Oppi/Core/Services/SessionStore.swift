@@ -129,19 +129,7 @@ final class SessionStore {
     /// consume this instead of `sessions` so future full-session hot fields can
     /// change without causing list recomputation.
     var listProjectionSessions: [Session] {
-        (serverListProjectionSessions[activeServerKey] ?? []).filter(Self.isInboxProjectedSession)
-    }
-
-    /// Hidden Live Voice runtimes must not appear in All Sessions / workspace lists.
-    static func isInboxProjectedSession(_ session: Session) -> Bool {
-        if session.voice?.purpose == "voice-control" {
-            return false
-        }
-        // Summaries omit `voice`, so a leaked row still has this name and no workspace.
-        if session.workspaceId == nil, session.control == nil, session.name == "Voice Control" {
-            return false
-        }
-        return true
+        serverListProjectionSessions[activeServerKey] ?? []
     }
 
     func listProjectionSessions(workspaceId: String) -> [Session] {

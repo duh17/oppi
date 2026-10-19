@@ -78,12 +78,6 @@ export interface ControlSessionMetadata {
   targetName?: string;
 }
 
-export type VoiceControlSessionPurpose = "voice-control";
-
-export interface VoiceControlSessionMetadata {
-  purpose: VoiceControlSessionPurpose;
-}
-
 export type AgentConfigurationFailureCode =
   | "agent_workspace_incompatible"
   | "agent_workspace_unavailable"
@@ -248,9 +242,6 @@ export interface Session {
 
   // Server-scoped Oppi configuration session. Never infer this from a missing workspace.
   control?: ControlSessionMetadata;
-
-  // Hidden voice-control runtime. Never infer this from a missing workspace.
-  voice?: VoiceControlSessionMetadata;
 
   // Privacy / persistence
   ephemeral?: boolean; // true for in-memory pi sessions (incognito mode)

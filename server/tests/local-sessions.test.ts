@@ -126,9 +126,6 @@ describe("isControlSessionLocalArtifact", () => {
     expect(isControlSessionLocalArtifact(`${dataDir}/control-sessions/cwd`, { dataDir })).toBe(
       true,
     );
-    expect(
-      isControlSessionLocalArtifact(`${dataDir}/voice-control-sessions/cwd`, { dataDir }),
-    ).toBe(true);
     expect(isControlSessionLocalArtifact(`${dataDir}/other`, { dataDir })).toBe(false);
   });
 

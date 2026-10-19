@@ -18,7 +18,6 @@ import { runtimeLogTag } from "./session-runtime-capabilities.js";
 import { composeModelId } from "./session-state.js";
 import type { VoiceCallController, VoiceCallFrontendConnection } from "./continuous-voice-call.js";
 import type { VoiceCallMediaCoordinator } from "./continuous-voice-media.js";
-import { isDeclaredVoiceControlSession } from "./voice-control-session.js";
 import type {
   ChatAttachmentRef,
   ClientMessage,
@@ -40,6 +39,7 @@ export type WsSessionCommands = AgentRuntimeCommandTransport &
   Pick<AgentRuntimeEventTransport, "subscribe"> & {
     /** Retarget a session with no live runtime; undefined when it is live or terminal-owned. */
     setInactiveSessionModel(sessionId: string, model: string): Promise<Session | undefined>;
+    supportsLiveVoice(sessionId: string): boolean;
   };
 
 export interface WsMessageHandlerDeps {
@@ -314,9 +314,6 @@ export class WsMessageHandler {
     try {
       const voiceCalls = this.deps.voiceCalls;
       if (!voiceCalls) throw new Error("Continuous voice control is unavailable");
-      if (!isDeclaredVoiceControlSession(session)) {
-        throw new Error("Continuous voice requires a hidden voice-control session");
-      }
       if (!meta.connId || !meta.authenticatedDeviceId) {
         throw new Error("Continuous voice requires an authenticated paired device");
       }
@@ -328,6 +325,9 @@ export class WsMessageHandler {
       };
 
       if (msg.type === "voice_call_start") {
+        if (!this.deps.sessions.supportsLiveVoice(session.id)) {
+          throw new Error("Live Voice works in sessions Oppi runs, not terminal mirrors");
+        }
         const result = voiceCalls.startCall(
           { controlSessionId: session.id, clientCallId: msg.clientCallId },
           frontend,
@@ -353,7 +353,7 @@ export class WsMessageHandler {
 
       const existing = voiceCalls.snapshot(msg.callId);
       if (existing.controlSessionId !== session.id) {
-        throw new Error("Voice call belongs to a different control session");
+        throw new Error("Voice call belongs to a different session");
       }
 
       if (msg.type === "voice_call_attach") {

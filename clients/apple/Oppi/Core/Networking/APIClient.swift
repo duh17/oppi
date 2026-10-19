@@ -1752,50 +1752,6 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(CreateSessionResponse.self, from: data)
     }
 
-    struct CreateVoiceControlSessionRequest: Encodable, Sendable {
-        let purpose: String
-        let name: String?
-
-        init(purpose: String = "voice-control", name: String? = "Voice Control") {
-            self.purpose = purpose
-            self.name = name
-        }
-
-        func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(purpose, forKey: .purpose)
-            if let name {
-                try container.encode(name, forKey: .name)
-            }
-        }
-
-        private enum CodingKeys: String, CodingKey {
-            case purpose, name
-        }
-    }
-
-    func createVoiceControlSession(
-        purpose: String = "voice-control",
-        name: String? = "Voice Control"
-    ) async throws -> CreateSessionResponse {
-        let data = try await post(
-            "/voice-control-sessions",
-            body: CreateVoiceControlSessionRequest(purpose: purpose, name: name)
-        )
-        return try JSONDecoder().decode(CreateSessionResponse.self, from: data)
-    }
-
-    func resumeVoiceControlSession(
-        id: String,
-        purpose: String = "voice-control"
-    ) async throws -> CreateSessionResponse {
-        let data = try await post(
-            "/voice-control-sessions/\(id)/resume",
-            body: CreateVoiceControlSessionRequest(purpose: purpose, name: nil)
-        )
-        return try JSONDecoder().decode(CreateSessionResponse.self, from: data)
-    }
-
     /// Response from session creation. Includes `prompted` when a prompt was provided.
     struct CreateSessionResponse: Decodable, Sendable {
         let session: Session

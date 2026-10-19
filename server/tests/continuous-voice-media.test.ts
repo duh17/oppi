@@ -20,8 +20,6 @@ import {
 } from "../src/stt-provider.js";
 import {
   VoiceApprovalBridge,
-  VoiceControlBridgeRegistry,
-  VoicePiControlBridge,
   type VoiceApprovalChallenge,
   type VoiceFrontendSemanticEvent,
 } from "../src/continuous-voice.js";
@@ -84,7 +82,6 @@ function makeVoiceSession(id = "voice-1"): Session {
     messageCount: 0,
     tokens: { input: 0, output: 0 },
     cost: 0,
-    voice: { purpose: "voice-control" },
   };
 }
 
@@ -417,25 +414,13 @@ describe("continuous voice media", () => {
     }
   });
 
-  it("sends leftover Yuwp text into the hidden Pi voice-control bridge", async () => {
-    const bridge = new VoicePiControlBridge();
-    const sendMessage = vi.fn();
-    const handlers = new Map<string, (event: unknown, ctx: { isIdle(): boolean }) => void>();
-    bridge.extension.factory({
-      registerTool() {},
-      on(name: string, handler: (event: unknown, ctx: { isIdle(): boolean }) => void) {
-        handlers.set(name, handler);
-      },
-      sendMessage,
-    } as never);
-    handlers.get("session_start")?.({}, { isIdle: () => true });
-
-    const registry = new VoiceControlBridgeRegistry();
-    registry.register("voice-1", bridge);
+  it("sends what was said before End to the call's session", async () => {
+    const dispatched: Array<{ sessionId: string; request: string }> = [];
     const calls = new VoiceCallController({
       now: () => 1_000,
       nextCallId: () => "call-1",
-      dispatchDelegation: (sessionId, delegation) => registry.dispatch(sessionId, delegation),
+      dispatchDelegation: (sessionId, delegation) =>
+        dispatched.push({ sessionId, request: delegation.request }),
     });
     const stt = new ScriptedSttProvider();
     stt.stopResult = {
@@ -469,18 +454,7 @@ describe("continuous voice media", () => {
     });
     await coordinator.detach("connection-1");
 
-    expect(sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        customType: "oppi.voice.delegation",
-        content: "list open sessions",
-        details: expect.objectContaining({
-          callId: "call-1",
-          delegationId: "delegation-pi-1",
-          utteranceId: "utterance-pi-1",
-        }),
-      }),
-      expect.objectContaining({ triggerTurn: true }),
-    );
+    expect(dispatched).toEqual([{ sessionId: "voice-1", request: "list open sessions" }]);
   });
 
   it("does not use the dictation stream or DictationManager as the call engine", async () => {
@@ -527,6 +501,7 @@ describe("continuous voice media", () => {
     const sent: ServerMessage[] = [];
     const handler = new WsMessageHandler({
       sessions: {
+        supportsLiveVoice: () => true,
         sendPrompt: vi.fn(),
         sendSteer: vi.fn(),
         sendFollowUp: vi.fn(),
@@ -642,7 +617,7 @@ describe("continuous voice media", () => {
     expect(() => selectLiveVoiceMediaAdapter({ liveVoiceBackend: "yuwp" })).toThrow(
       "Live Voice ASR is unavailable",
     );
-    const grok = { start: vi.fn(), publish: vi.fn(), stop: vi.fn() } as VoiceMediaAdapter;
+    const grok = { start: vi.fn(), speak: vi.fn(), stop: vi.fn() } as VoiceMediaAdapter;
     expect(
       selectLiveVoiceMediaAdapter({
         liveVoiceBackend: "grok-voice",
@@ -658,25 +633,13 @@ describe("continuous voice media", () => {
     );
   });
 
-  it("commits a mid-call Yuwp segment into the Pi bridge without ending the call", async () => {
-    const bridge = new VoicePiControlBridge();
-    const sendMessage = vi.fn();
-    const handlers = new Map<string, (event: unknown, ctx: { isIdle(): boolean }) => void>();
-    bridge.extension.factory({
-      registerTool() {},
-      on(name: string, handler: (event: unknown, ctx: { isIdle(): boolean }) => void) {
-        handlers.set(name, handler);
-      },
-      sendMessage,
-    } as never);
-    handlers.get("session_start")?.({}, { isIdle: () => true });
-
-    const registry = new VoiceControlBridgeRegistry();
-    registry.register("voice-1", bridge);
+  it("sends a mid-call turn to the call's session without ending the call", async () => {
+    const dispatched: Array<{ sessionId: string; request: string }> = [];
     const calls = new VoiceCallController({
       now: () => 1_000,
       nextCallId: () => "call-1",
-      dispatchDelegation: (sessionId, delegation) => registry.dispatch(sessionId, delegation),
+      dispatchDelegation: (sessionId, delegation) =>
+        dispatched.push({ sessionId, request: delegation.request }),
     });
     const stt = new ScriptedSttProvider();
     const frontend = new DeterministicVoiceCallFrontend({
@@ -708,13 +671,7 @@ describe("continuous voice media", () => {
 
     expect(calls.snapshot(started.state.callId).lifecycle).toBe("active");
     expect(calls.snapshot(started.state.callId).frontend).toBe("attached");
-    expect(sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        customType: "oppi.voice.delegation",
-        content: "summarize the inbox",
-      }),
-      expect.objectContaining({ triggerTurn: true }),
-    );
+    expect(dispatched).toEqual([{ sessionId: "voice-1", request: "summarize the inbox" }]);
     await coordinator.detach("connection-1");
   });
 
@@ -768,7 +725,7 @@ describe("continuous voice media", () => {
     expect(pcm.readInt16LE(pcm.length - 2)).toBe(Math.round(0.25 * 32767));
   });
 
-  it("drops queued voice_updates when the user starts talking and speaks later ones", async () => {
+  it("drops queued speech when the user starts talking and says later words", async () => {
     const stt = new ScriptedSttProvider();
     const spoken: string[] = [];
     const pcm: string[] = [];
@@ -776,8 +733,7 @@ describe("continuous voice media", () => {
     const adapter = localAdapter(stt, { tts, turnEndPauseMs: 60_000 });
     adapter.setPlaybackSink((chunk) => pcm.push(chunk.toString()));
     await adapter.start(() => {});
-    const update = (text: string) =>
-      adapter.publish({ delegationId: "delegation-1", kind: "progress", text });
+    const update = (text: string) => adapter.speak(text);
 
     const playing = update("working on it");
     const queued = update("still working");
@@ -793,7 +749,7 @@ describe("continuous voice media", () => {
     expect(pcm).toEqual(["done"]);
   });
 
-  it("speaks a newer voice_update after the one playing instead of cutting it off", async () => {
+  it("says newer words after the ones playing instead of cutting them off", async () => {
     const stt = new ScriptedSttProvider();
     const spoken: string[] = [];
     const cancelled: string[] = [];
@@ -813,17 +769,9 @@ describe("continuous voice media", () => {
       events.push(event);
     });
 
-    const first = adapter.publish({
-      delegationId: "delegation-1",
-      kind: "progress",
-      text: "working on it",
-    });
+    const first = adapter.speak("working on it");
     await tts.waitForSpeak("working on it");
-    const second = adapter.publish({
-      delegationId: "delegation-1",
-      kind: "final",
-      text: "three open sessions",
-    });
+    const second = adapter.speak("three open sessions");
     await turnEnd();
     expect(spoken).toEqual(["working on it"]);
 
@@ -844,7 +792,7 @@ describe("continuous voice media", () => {
     ]);
   });
 
-  it("forwards voice_update text from the call controller to Yuwp publish PCM", async () => {
+  it("plays what the session's agent says as call audio", async () => {
     const calls = makeCalls();
     const stt = new ScriptedSttProvider();
     const tts = new GateableTtsPort();
@@ -871,13 +819,7 @@ describe("continuous voice media", () => {
     stt.emit({ text: "list open sessions", committedText: "list open sessions" });
     await turnEnd();
 
-    const update = {
-      delegationId: "delegation-1",
-      kind: "final" as const,
-      text: "You have three open sessions",
-    };
-    calls.applyDelegationUpdate(started.state.callId, update);
-    const published = coordinator.publish(started.state.callId, update);
+    const published = coordinator.speak(started.state.callId, "You have three open sessions");
     await tts.waitForSpeak("You have three open sessions");
     tts.release("You have three open sessions");
     await published;
@@ -1167,11 +1109,7 @@ describe("continuous voice media", () => {
       events.push(event);
     });
 
-    const speaking = adapter.publish({
-      delegationId: "delegation-1",
-      kind: "progress",
-      text: "working on it",
-    });
+    const speaking = adapter.speak("working on it");
     await tts.waitForSpeak("working on it");
 
     stt.emit({ text: "stop", activeText: "stop" });
@@ -1218,11 +1156,7 @@ describe("continuous voice media", () => {
       frontend: frontend.connection,
     });
 
-    const published = coordinator.publish(started.state.callId, {
-      delegationId: "delegation-speak",
-      kind: "progress",
-      text: "working on it",
-    });
+    const published = coordinator.speak(started.state.callId, "working on it");
     await tts.waitForSpeak("working on it");
     const commit = vi.spyOn(calls, "commitFrontendUtterance");
 
@@ -1288,11 +1222,7 @@ describe("continuous voice media", () => {
       controllerLeaseEpoch: started.state.controllerLeaseEpoch,
       frontend: frontend.connection,
     });
-    const published = coordinator.publish(started.state.callId, {
-      delegationId: "delegation-speak",
-      kind: "progress",
-      text: "Stop worker-1?",
-    });
+    const published = coordinator.speak(started.state.callId, "Stop worker-1?");
     await tts.waitForSpeak("Stop worker-1?");
     const commit = vi.spyOn(harness.calls, "commitFrontendUtterance");
     const submit = vi.spyOn(harness.calls, "submitApprovalTranscript");

@@ -969,6 +969,12 @@ struct ChatView: View {
                 audioPlayer.setSessionContext(session)
             }
             .task(id: sessionId) {
+                // A quick voice session opens straight into its call.
+                guard appNavigation.pendingLiveVoiceSessionId == sessionId else { return }
+                appNavigation.pendingLiveVoiceSessionId = nil
+                startLiveVoice()
+            }
+            .task(id: sessionId) {
                 // Auto-send pending message from QuickSessionSheet.
                 // Keyed on sessionId so it re-fires if the view is reused
                 // for a different session (onChange self-healing path).
@@ -1310,19 +1316,28 @@ struct ChatView: View {
             .environment(\.openChatReader, ChatReaderOpenAction(handler: openTimelineReader))
     }
 
+    /// A call's bar sits above the chat's own footer: Stop, Ask cards, and the queue stay in reach.
     @ViewBuilder
     private var footerArea: some View {
-        if Self.showsLiveVoiceBar(
-            isLive: liveVoiceController.isLive,
-            lastError: liveVoiceController.lastError
-        ) {
-            LiveVoiceBarHost(
-                statusText: liveVoiceController.statusText,
-                isMuted: liveVoiceController.isMuted,
-                onMute: { liveVoiceController.toggleMute() },
-                onEnd: { Task { await liveVoiceController.end() } }
-            )
-        } else if isStopped {
+        VStack(spacing: 8) {
+            if Self.showsLiveVoiceBar(
+                isLive: liveVoiceController.isLive,
+                lastError: liveVoiceController.lastError
+            ) {
+                LiveVoiceBarHost(
+                    statusText: liveVoiceController.statusText,
+                    isMuted: liveVoiceController.isMuted,
+                    onMute: { liveVoiceController.toggleMute() },
+                    onEnd: { Task { await liveVoiceController.end() } }
+                )
+            }
+            sessionFooter
+        }
+    }
+
+    @ViewBuilder
+    private var sessionFooter: some View {
+        if isStopped {
             SessionEndedFooter(
                 session: session,
                 isResuming: actionHandler.isResuming,
@@ -1484,11 +1499,10 @@ struct ChatView: View {
                     placeholderOverride: activeReviewCommentRequest == nil ? nil : "Comment…",
                     sendProgressText: attachmentPreparationText ?? actionHandler.sendProgressText,
                     isStopping: isStopping,
-                    voiceInputManager: voiceInputManager,
+                    // A call owns the microphone; the composer offers neither dictation nor a second call.
+                    voiceInputManager: liveVoiceCallOwnsMic ? nil : voiceInputManager,
                     onPrepareVoiceInput: prepareChatVoiceInput,
-                    onLiveVoiceSelected: {
-                        Task { await liveVoiceController.start(using: connection) }
-                    },
+                    onLiveVoiceSelected: liveVoiceEntry,
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
                     askRequest: composerAskRequest,
@@ -2183,9 +2197,17 @@ struct ChatView: View {
     }
 
     static func showsLiveVoiceBar(isLive: Bool, lastError: String? = nil) -> Bool {
-        // The call lives on the hidden voice-control session, so a stopped chat keeps End.
         // Start failures fail closed but keep the bar until End so the error is visible.
         return isLive || lastError != nil
+    }
+
+    private var liveVoiceCallOwnsMic: Bool { liveVoiceController.isLive }
+
+    /// The composer's Live Voice entry: none during a call, or for a terminal Pi mirror,
+    /// which cannot answer out loud.
+    private var liveVoiceEntry: (() -> Void)? {
+        guard !liveVoiceCallOwnsMic, session?.runtime != .piTui else { return nil }
+        return { startLiveVoice() }
     }
 
     @MainActor
@@ -2469,6 +2491,18 @@ struct ChatView: View {
             sessionId: sessionId,
             onProgress: { attachmentPreparationText = $0 }
         )
+    }
+
+    /// Live Voice talks to this chat's session: its agent hears the caller and answers out loud.
+    private func startLiveVoice() {
+        guard let routeScope = focusedRouteScope else { return }
+        Task {
+            await liveVoiceController.start(
+                sessionId: sessionId,
+                routeScope: routeScope,
+                using: connection
+            )
+        }
     }
 
     private func uploadPreparationErrorMessage(_ error: Error) -> String {
@@ -3174,8 +3208,9 @@ struct ChatView: View {
         let attachments = composerPendingAttachmentsBinding
         let pointers = composerRepoPointersBinding
         let configuration = ExpandedComposerConfiguration(
-            voiceInputManager: voiceInputManager,
+            voiceInputManager: liveVoiceCallOwnsMic ? nil : voiceInputManager,
             onPrepareVoiceInput: prepareChatVoiceInput,
+            onLiveVoiceSelected: liveVoiceEntry,
             onSend: { sendComposerAction(draftClearance: .afterSuccess) },
             onModelTap: { showModelPicker = true },
             onThinkingSelect: { level in

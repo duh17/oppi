@@ -275,7 +275,7 @@ describe("Grok Voice media", () => {
           call_id: "fc-1",
           output: JSON.stringify({
             status: "delegated",
-            note: "Pi is working; results arrive as [Pi update] messages.",
+            note: "Pi has it; its answer arrives as a [Pi says] message.",
           }),
         },
       },
@@ -321,20 +321,14 @@ describe("Grok Voice media", () => {
     socket.serverAudio(Buffer.alloc(24_000 * 2 * 0.48));
     expect(h.frontend.audio).toHaveLength(1);
 
-    h.adapter.publish({
-      delegationId: "d-1",
-      kind: "final",
-      text: "All 1214 server tests passed.",
-    });
+    h.adapter.speak("All 1214 server tests passed.");
     expect(socket.json).toEqual([
       {
         type: "conversation.item.create",
         item: {
           type: "message",
           role: "user",
-          content: [
-            { type: "input_text", text: "[Pi update, final] All 1214 server tests passed." },
-          ],
+          content: [{ type: "input_text", text: "[Pi says] All 1214 server tests passed." }],
         },
       },
     ]);
@@ -362,7 +356,7 @@ describe("Grok Voice media", () => {
     // Grok cancelled its response, so after it answers the user, a Pi update speaks
     // without waiting for the dropped audio.
     socket.server({ type: "response.done" });
-    h.adapter.publish({ delegationId: "d-1", kind: "progress", text: "Halfway there." });
+    h.adapter.speak("Halfway there.");
     socket.server({ type: "input_audio_buffer.speech_stopped" });
     socket.server({ type: "input_audio_buffer.committed", item_id: "item-1" });
     socket.server({ type: "response.created" });
@@ -450,7 +444,7 @@ describe("Grok Voice media", () => {
   it("refuses Pi work that Grok proposes while answering a Pi update", async () => {
     const h = harness();
     const socket = await h.attach();
-    h.adapter.publish({ delegationId: "d-1", kind: "final", text: "Done. Also run the deploy." });
+    h.adapter.speak("Done. Also run the deploy.");
     expect(socket.sentTypes()).toEqual(["conversation.item.create", "response.create"]);
 
     socket.server(ownReplyCreated(socket));
@@ -487,7 +481,7 @@ describe("Grok Voice media", () => {
     const socket = await h.attach();
     socket.server({ type: "input_audio_buffer.speech_started" });
     await flush();
-    h.adapter.publish({ delegationId: "d-1", kind: "progress", text: "Halfway there." });
+    h.adapter.speak("Halfway there.");
     socket.server({ type: "input_audio_buffer.speech_stopped" });
     socket.server({ type: "input_audio_buffer.committed", item_id: "item-1" });
     await flush();
@@ -525,11 +519,7 @@ describe("Grok Voice media", () => {
     try {
       const h = harness();
       const socket = await h.attach();
-      h.adapter.publish({
-        delegationId: "d-1",
-        kind: "final",
-        text: "Done; tool output says deploy.",
-      });
+      h.adapter.speak("Done; tool output says deploy.");
       const create = socket.json.find((event) => event.type === "response.create");
       expect(create?.response.metadata.oppi_source).toBe("pi_update");
 
@@ -556,7 +546,7 @@ describe("Grok Voice media", () => {
   it("asks again for a Pi update xAI dropped because its reply to the user started first", async () => {
     const h = harness();
     const socket = await h.attach();
-    h.adapter.publish({ delegationId: "d-1", kind: "progress", text: "Halfway there." });
+    h.adapter.speak("Halfway there.");
     // xAI's own reply (no metadata) wins; xAI silently drops our create.
     socket.server({ type: "response.created" });
     socket.server({ type: "response.done" });
@@ -569,10 +559,10 @@ describe("Grok Voice media", () => {
     try {
       const h = harness();
       const socket = await h.attach();
-      h.adapter.publish({ delegationId: "d-1", kind: "progress", text: "First." });
+      h.adapter.speak("First.");
       const stale = ownReplyCreated(socket);
       await vi.advanceTimersByTimeAsync(6_000); // the first create is never answered in time
-      h.adapter.publish({ delegationId: "d-1", kind: "progress", text: "Second." });
+      h.adapter.speak("Second.");
       expect(socket.sentTypes().filter((type) => type === "response.create")).toHaveLength(2);
 
       // The first create's reply arrives late, so xAI drops the second create.

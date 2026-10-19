@@ -27,6 +27,13 @@ const MAX_UPDATE_TEXT_LENGTH = 2_000;
 const MAX_APPROVAL_SUMMARY_LENGTH = 1_000;
 const MAX_APPROVAL_TRANSCRIPT_LENGTH = 256;
 
+/** Owner tokens stay valid for ordinary APIs but never become voice controllers. */
+export function authenticatedVoiceDeviceId(
+  principal: { kind: "owner" } | { kind: "device"; deviceId: string },
+): string | undefined {
+  return principal.kind === "device" ? principal.deviceId : undefined;
+}
+
 export interface VoiceCallFrontendConnection {
   connectionId: string;
   authenticatedDeviceId: string;
@@ -315,6 +322,21 @@ export class VoiceCallController {
     return false;
   }
 
+  /** The connection is the attached frontend of an active call. */
+  isCallConnection(connectionId: string): boolean {
+    for (const call of this.calls.values()) {
+      if (call.lifecycle === "active" && call.frontendConnection?.connectionId === connectionId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Held past its token for a call: it may carry only that call. */
+  isAuthExpired(connectionId: string): boolean {
+    return this.authExpiredConnections.has(connectionId);
+  }
+
   disconnectConnection(connectionId: string): void {
     this.authExpiredConnections.delete(connectionId);
     let changed = false;
@@ -462,6 +484,17 @@ export class VoiceCallController {
     });
     this.persist();
     return message;
+  }
+
+  /** The newest thing the caller said that the session has not finished answering. */
+  latestOpenDelegationId(callId: string): string | undefined {
+    const call = this.calls.get(callId);
+    if (!call || call.lifecycle !== "active") return undefined;
+    let latest: string | undefined;
+    for (const delegation of call.delegations.values()) {
+      if (delegation.state !== "completed") latest = delegation.delegationId;
+    }
+    return latest;
   }
 
   applyDelegationUpdate(

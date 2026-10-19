@@ -35,7 +35,6 @@ import {
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { admitSessionRoute } from "./session-route-scope.js";
-import { isDeclaredVoiceControlSession } from "./voice-control-session.js";
 import {
   parseClientCommand,
   parseConversationStreamAttach,
@@ -72,6 +71,21 @@ export interface StreamContext {
   dictationManager?: DictationManager;
   createDictationManager?: () => DictationManager | undefined;
   handleVoiceAudio?: (connectionId: string, pcm: Buffer) => boolean;
+  /**
+   * The connection outlived its access token to keep a Live Voice call going. It carries
+   * that call and nothing else: no other commands in, no session traffic out.
+   */
+  isConnectionAuthExpired?: (connectionId: string) => boolean;
+  /** The connection is the live frontend of a Live Voice call. */
+  isLiveVoiceCallConnection?: (connectionId: string) => boolean;
+}
+
+function isLiveVoiceFrame(msg: { type: string; command?: string }): boolean {
+  return (
+    msg.type.startsWith("voice_") ||
+    msg.type === "error" ||
+    (msg.type === "command_result" && (msg.command?.startsWith("voice_") ?? false))
+  );
 }
 
 // ─── Keepalive ───
@@ -330,7 +344,7 @@ export class BoundSessionStreamMux {
       workspaceId
         ? { scope: "workspace", workspaceId, sessionId }
         : { scope: "control", sessionId },
-      { workspaceMustExist: false, voiceControlStream: true },
+      { workspaceMustExist: false },
     );
     if (admitted.kind !== "ok") {
       ws.close(1008, "Session not found");
@@ -470,6 +484,7 @@ export class BoundSessionStreamMux {
       fromSession = false,
     ): boolean => {
       if (connectionClosed || ws.readyState !== WebSocket.OPEN) return false;
+      if (this.ctx.isConnectionAuthExpired?.(connId) && !isLiveVoiceFrame(msg)) return false;
       if (msg.type !== "tool_update" || !msg.toolCallId || msg.toolCallId !== heldToolCallId) {
         flushToolUpdate();
         heldToolCallId = undefined;
@@ -507,6 +522,13 @@ export class BoundSessionStreamMux {
       send({ ...msg, sessionId }, true);
     };
 
+    // A socket carrying a Live Voice call gets the call, not the session's traffic: that stays on
+    // the chat socket, and its errors and command results are not the call's to act on.
+    const broadcastForSession = (msg: ServerMessage): void => {
+      if (this.ctx.isLiveVoiceCallConnection?.(connId)) return;
+      sendForSession(msg);
+    };
+
     const sendAudio = (pcm: Buffer): void => {
       if (ws.readyState !== WebSocket.OPEN || pcm.length === 0) return;
       ws.send(pcm, { binary: true });
@@ -517,10 +539,10 @@ export class BoundSessionStreamMux {
       liveConnections = new Set();
       this.liveSessionConnections.set(sessionId, liveConnections);
     }
-    liveConnections.add(sendForSession);
+    liveConnections.add(broadcastForSession);
     liveConnectionCleanup.run = () => {
       const connections = this.liveSessionConnections.get(sessionId);
-      connections?.delete(sendForSession);
+      connections?.delete(broadcastForSession);
       if (connections?.size === 0) {
         this.liveSessionConnections.delete(sessionId);
       }
@@ -587,7 +609,7 @@ export class BoundSessionStreamMux {
           bootstrapLiveQueue.push(outbound);
           return;
         }
-        sendForSession(outbound);
+        broadcastForSession(outbound);
       };
       unsubscribeBoundSession = this.ctx.sessionRuntimes.subscribe(sessionId, callback);
       unsubscribed = false;
@@ -708,10 +730,8 @@ export class BoundSessionStreamMux {
                 path: "bound_session_stream",
               });
               const pcm = toBuffer(data);
-              if (
-                isDeclaredVoiceControlSession(session) &&
-                this.ctx.handleVoiceAudio?.(connId, pcm)
-              ) {
+              // Mic audio for a Live Voice call running on this connection.
+              if (this.ctx.handleVoiceAudio?.(connId, pcm)) {
                 metrics?.record("server.ws_binary_received_bytes", pcm.byteLength, {
                   path: "bound_session_stream",
                 });
@@ -752,6 +772,10 @@ export class BoundSessionStreamMux {
             }
 
             const msg = parsed.message;
+            if (this.ctx.isConnectionAuthExpired?.(connId) && !msg.type.startsWith("voice_")) {
+              send({ type: "error", error: "Access expired on this connection", sessionId });
+              return;
+            }
             metrics?.record("server.ws_message_received", 1, {
               type: msg.type,
               path: "bound_session_stream",
@@ -870,7 +894,13 @@ export class BoundSessionStreamMux {
 
                 const targetSession = this.ctx.storage.getSession(sessionId);
                 if (!targetSession) {
-                  send({ type: "error", error: `Session not found: ${sessionId}`, sessionId });
+                  // Deleted under the stream: terminal for chat and for a call riding it.
+                  send({
+                    type: "error",
+                    error: `Session not found: ${sessionId}`,
+                    sessionId,
+                    fatal: true,
+                  });
                   return;
                 }
 

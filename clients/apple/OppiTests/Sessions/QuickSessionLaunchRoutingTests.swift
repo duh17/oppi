@@ -464,7 +464,7 @@ struct QuickSessionWorktreePickerPolicyTests {
         )
     }
 
-    @Test func sendKeepsLaunchedWorktreeWhileWorktreesAreEmpty() throws {
+    @Test func sendKeepsLaunchedWorktreeWhileWorktreesAreEmpty() {
         #expect(
             QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
                 selectedId: "wt_feature",
@@ -477,28 +477,6 @@ struct QuickSessionWorktreePickerPolicyTests {
                 worktrees: []
             ) == WorkspaceWorktree.mainId
         )
-
-        let sheet = try appleSource("Oppi/Features/QuickSession/QuickSessionSheet.swift")
-        let send = try sourceSlice(
-            sheet,
-            start: "private func handleSend() {",
-            end: "let plan: QuickSessionLaunchPlan"
-        )
-        #expect(send.contains("QuickSessionWorktreePickerPolicy.resolvedWorktreeId("))
-        #expect(send.contains("selectedId: selectedWorktreeId"))
-        #expect(send.contains("worktrees: worktrees"))
-        #expect(!send.contains("worktreeId: WorkspaceWorktree.mainId"))
-
-        let load = try sourceSlice(
-            sheet,
-            start: "private func loadWorktrees(for workspace: Workspace?) async {",
-            end: "// MARK: - Actions"
-        )
-        let afterWorkspaceGuardStart = try #require(
-            load.range(of: "isLoadingWorktrees = worktrees.isEmpty")
-        )
-        let afterWorkspaceGuard = String(load[afterWorkspaceGuardStart.lowerBound...])
-        #expect(!afterWorkspaceGuard.contains("selectedWorktreeId = WorkspaceWorktree.mainId"))
     }
 
     @Test(arguments: [

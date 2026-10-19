@@ -33,6 +33,8 @@ struct ExpandedComposerLiveState {
 struct ExpandedComposerConfiguration {
     var voiceInputManager: VoiceInputManager?
     var onPrepareVoiceInput: ((VoiceInputManager) async throws -> Void)?
+    /// Offers Live Voice in the mic's long-press menu (Quick Session starts a voice session).
+    var onLiveVoiceSelected: (() -> Void)?
     var onSend: () -> Void
     var onCancel: (() -> Void)?
     var onModelTap: () -> Void = {}
@@ -324,6 +326,7 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
         attachButton.accessibilityLabel = "Add attachment"
         micButton.addAction(UIAction { [weak self] _ in self?.handleMicTap() }, for: .touchUpInside)
         micButton.accessibilityIdentifier = "expanded.voiceInput"
+        micButton.menuProvider = { [weak self] in self?.voiceEntryMenu() }
         modelButton.addAction(UIAction { [weak self] _ in self?.configuration.onModelTap() }, for: .touchUpInside)
         modelButton.accessibilityIdentifier = "session.toolbar.model"
         modelButton.accessibilityLabel = "Model"
@@ -555,6 +558,15 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
             micButton.accessibilityLabel = presentation.accessibilityLabel
             micButton.accessibilityValue = presentation.accessibilityValue
         }
+        let offersLiveVoice = showsMic && configuration.onLiveVoiceSelected != nil
+        micButton.isContextMenuInteractionEnabled = offersLiveVoice
+        // VoiceOver reaches the same owner action as the long-press menu.
+        micButton.accessibilityCustomActions = offersLiveVoice
+            ? [UIAccessibilityCustomAction(name: "Live Voice") { [weak self] _ in
+                self?.handleLiveVoiceChoice()
+                return true
+            }]
+            : nil
 
         let showsToolbar = configuration.showsSessionToolbar
         modelButton.isHidden = !showsToolbar
@@ -642,6 +654,25 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
             } else {
                 self.applyChrome()
             }
+        }
+    }
+
+    private func voiceEntryMenu() -> UIMenu? {
+        guard configuration.onLiveVoiceSelected != nil else { return nil }
+        return ComposerShared.voiceEntryMenu(
+            identifierPrefix: "expanded",
+            onLiveVoice: { [weak self] in self?.handleLiveVoiceChoice() },
+            onDictation: { [weak self] in self?.handleMicTap() }
+        )
+    }
+
+    /// Live Voice owns the microphone, so an in-progress dictation take ends first. The call
+    /// lives in the chat below, so this editor closes.
+    private func handleLiveVoiceChoice() {
+        Task {
+            await ComposerShared.stopDictationBeforeLiveVoice(manager: voiceInputManager)
+            configuration.onLiveVoiceSelected?()
+            Router.finish(self)
         }
     }
 

@@ -61,7 +61,7 @@ import { notifySandboxWorkspaceActivity } from "./workspace-sandbox-lifecycle.js
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
 import type { VoicePermissionGate } from "./voice-permission-gate.js";
-import { VoiceControlBridgeRegistry } from "./continuous-voice.js";
+import type { LiveVoiceSpeech } from "./live-voice-speech.js";
 
 const log = createLogger({ base: { component: "sessions" } });
 
@@ -127,7 +127,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   /** Injected by the server to arm spoken approval from trusted Oppi permission gates. */
   voicePermissionGate: Pick<VoicePermissionGate, "expectNextConfirm" | "observeRequest"> | null =
     null;
-  readonly voiceControlBridges = new VoiceControlBridgeRegistry();
+  /** Injected by the server: the agent side of Live Voice calls (the `speak` tool). */
+  liveVoiceSpeech: LiveVoiceSpeech | null = null;
 
   private readonly mobileRenderers: MobileRendererRegistry;
   private mobileRenderersLoadStarted = false;
@@ -247,8 +248,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       stopSession: (sessionId) => this.stopSession(sessionId),
       onFirstMessage: (session) => this.onFirstMessage?.(session),
       metrics: this.opsMetrics ?? undefined,
-      getRegisterVoiceControlBridge: () => (sessionId, bridge) =>
-        this.voiceControlBridges.register(sessionId, bridge),
+      getLiveVoiceExtension: () => {
+        const speech = this.liveVoiceSpeech;
+        return speech ? (sessionId) => speech.extension(sessionId) : undefined;
+      },
     });
 
     this.broadcaster = bundle.broadcaster;
@@ -404,6 +407,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       if (data.type === "extension_ui_request") {
         this.voicePermissionGate?.observeRequest(key, data);
       }
+      this.liveVoiceSpeech?.observe(key, data);
       updateSearchIndexForSessionEvent(this.searchIndex, key, data);
     } catch (error: unknown) {
       log.error("sessions.pi_event_handler.failed", {

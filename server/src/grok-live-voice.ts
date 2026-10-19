@@ -2,10 +2,9 @@
  * Grok Voice as the Live Voice media backend.
  *
  * One xAI realtime session (`wss://api.x.ai/v1/realtime`) per attached call. Grok owns
- * listening, turn-taking, spoken replies, and barge-in. Work goes to the hidden Pi
- * voice-control session only when Grok calls `delegate_to_pi`; ordinary speech and
- * transcripts never become Pi prompts. Pi's `voice_update` results come back through
- * `publish` and are added to Grok's conversation so it can relay them in speech.
+ * listening, turn-taking, and barge-in. Anything about the user's work goes to the call's
+ * Pi session when Grok calls `delegate_to_pi`; transcripts never become prompts on their
+ * own. What Pi says with its `speak` tool comes back through `speak` and Grok says it.
  *
  * Media keeps the Live Voice client contract: 16 kHz s16le mono in, 24 kHz s16le mono
  * out, both as raw binary frames on the xAI socket.
@@ -16,7 +15,7 @@
 import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
 
-import type { VoiceDelegationUpdate, VoiceFrontendEventHandler } from "./continuous-voice.js";
+import type { VoiceFrontendEventHandler } from "./continuous-voice.js";
 import type { VoiceMediaAdapter } from "./continuous-voice-media.js";
 import { createLogger } from "./logger.js";
 import { resolveTtsProvider } from "./speech-synthesis.js";
@@ -45,11 +44,10 @@ const RESPONSE_ID_KEY = "oppi_response";
 const TURN_REPLY_WAIT_MS = 5_000;
 
 export const GROK_VOICE_INSTRUCTIONS = [
-  "You are Oppi Live Voice, a hands-free voice front end for Pi, a coding agent running on the user's computer.",
-  "Speak briefly and naturally, like a phone call. No markdown, lists, code, or file paths read aloud character by character.",
-  "You cannot see files, run commands, or check anything yourself.",
-  `When the user asks for anything that needs the computer (code, files, sessions, builds, tests, research, running things), call ${DELEGATE_TOOL} once with a complete, self-contained request, then say in a few words that Pi is on it. Do not call it for small talk or questions you can answer from general knowledge.`,
-  "Messages that begin with [Pi update] come from Pi, not the user. Relay each one in one or two spoken sentences. Never claim work is done, failed, or approved unless a Pi update says so.",
+  "You are the voice of Pi, the user's coding agent, on a phone call. Pi does the thinking and the work; you are its ears and mouth.",
+  "You cannot see files, sessions, or anything on the computer, and you do not know what Pi knows.",
+  `Pass everything the user asks, tells, or wants done to Pi with ${DELEGATE_TOOL}, in the user's own words: questions about their work, code, sessions, status, plans, and follow-ups to what Pi said. Then stay quiet or say a word like "okay". Only answer yourself for a greeting or a pure social reply.`,
+  "Messages that begin with [Pi says] are Pi talking to the user. Say that text to the user as written, in your voice, without adding to it. Never pass [Pi says] text, or anything else Pi said, to Pi: only the user's own spoken words go to Pi.",
   "You cannot approve permission requests. If Pi is blocked on an approval, tell the user to answer it on screen.",
 ].join(" ");
 
@@ -262,16 +260,16 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
     socket.send(pcm);
   }
 
-  /** Adds a Pi result to the conversation and asks Grok to say it once it has finished speaking. */
-  publish(update: VoiceDelegationUpdate): void {
-    const text = update.text.trim();
+  /** Adds what Pi said to the conversation and asks Grok to say it once it has finished speaking. */
+  speak(raw: string): void {
+    const text = raw.trim();
     if (!text || !this.ready) return;
     this.sendEvent({
       type: "conversation.item.create",
       item: {
         type: "message",
         role: "user",
-        content: [{ type: "input_text", text: `[Pi update, ${update.kind}] ${text}` }],
+        content: [{ type: "input_text", text: `[Pi says] ${text}` }],
       },
     });
     this.requestResponse();
@@ -319,13 +317,14 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
               type: "function",
               name: DELEGATE_TOOL,
               description:
-                "Hand a task to Pi, the coding agent on the user's computer. Pi reports back with [Pi update] messages.",
+                "Pass what the user said to Pi, the coding agent on the user's computer. Pi answers with [Pi says] messages.",
               parameters: {
                 type: "object",
                 properties: {
                   request: {
                     type: "string",
-                    description: "The complete, self-contained task for Pi, in the user's words.",
+                    description:
+                      "What the user said, in their words, complete enough to stand alone.",
                   },
                 },
                 required: ["request"],
@@ -495,7 +494,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
           this.stats.delegations += 1;
           output = {
             status: "delegated",
-            note: "Pi is working; results arrive as [Pi update] messages.",
+            note: "Pi has it; its answer arrives as a [Pi says] message.",
           };
         } catch (error) {
           output = {

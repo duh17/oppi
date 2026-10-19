@@ -921,6 +921,26 @@ enum ComposerShared {
         return true
     }
 
+    /// The mic's long-press menu wherever a composer can start Live Voice.
+    static func voiceEntryMenu(
+        identifierPrefix: String,
+        onLiveVoice: @escaping () -> Void,
+        onDictation: @escaping () -> Void
+    ) -> UIMenu {
+        UIMenu(title: "Voice", children: [
+            UIAction(
+                title: "Live Voice",
+                image: UIImage(systemName: "waveform"),
+                identifier: UIAction.Identifier("\(identifierPrefix).voiceEntry.liveVoice")
+            ) { _ in onLiveVoice() },
+            UIAction(
+                title: "Dictation",
+                image: UIImage(systemName: "mic"),
+                identifier: UIAction.Identifier("\(identifierPrefix).voiceEntry.dictation")
+            ) { _ in onDictation() },
+        ])
+    }
+
     static func stopDictationBeforeLiveVoice(manager: VoiceInputManager?) async {
         guard let manager, manager.isRecording || manager.isPreparing else { return }
         await manager.cancelRecording()

@@ -28,6 +28,7 @@ import {
   trackPendingWake,
 } from "../src/sdk-backend.js";
 import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
+import { LiveVoiceSpeech } from "../src/live-voice-speech.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import {
   callerSessionIdentityShellPrefix,
@@ -54,22 +55,6 @@ describe("resolveSdkSessionCwdAsync", () => {
     try {
       const cwd = await resolveSdkSessionCwdAsync(undefined, session, { dataDir });
       expect(cwd).toBe(join(dataDir, "control-sessions", "cwd"));
-      expect(lstatSync(cwd).isDirectory()).toBe(true);
-      expect(lstatSync(cwd).mode & 0o777).toBe(0o700);
-    } finally {
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-
-  it("uses an owner-only internal cwd for declared voice-control sessions", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-voice-cwd-"));
-    const session = {
-      voice: { purpose: "voice-control" as const },
-    } as Pick<Session, "worktreeId" | "control" | "voice">;
-
-    try {
-      const cwd = await resolveSdkSessionCwdAsync(undefined, session, { dataDir });
-      expect(cwd).toBe(join(dataDir, "voice-control-sessions", "cwd"));
       expect(lstatSync(cwd).isDirectory()).toBe(true);
       expect(lstatSync(cwd).mode & 0o777).toBe(0o700);
     } finally {
@@ -305,70 +290,47 @@ describe("SdkBackend control sessions", () => {
   });
 });
 
-describe("SdkBackend voice-control sessions", () => {
-  it("injects voice_update only into the hidden voice-control runtime", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-voice-runtime-"));
-    const voiceSession = makeSession({
-      workspaceId: undefined,
-      voice: { purpose: "voice-control" },
+describe("SdkBackend Live Voice", () => {
+  it("offers its agent speak only while a call is attached and routes what it says", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-live-voice-"));
+    const session = makeSession({ workspaceId: undefined });
+    const spoken: Array<{ sessionId: string; text: string }> = [];
+    const speech = new LiveVoiceSpeech({
+      speak: (sessionId, text) => spoken.push({ sessionId, text }),
+      runEnded: () => {},
     });
-    const controlSession = makeSession({
-      workspaceId: undefined,
-      control: { domain: "agents", intent: "create" },
-    });
-    let voice: SdkBackend | undefined;
-    let control: SdkBackend | undefined;
-
+    let backend: SdkBackend | undefined;
     try {
-      voice = await SdkBackend.create({
-        session: voiceSession,
+      backend = await SdkBackend.create({
+        session,
         dataDir,
         onEvent: vi.fn(),
         onEnd: vi.fn(),
+        liveVoiceExtension: (sessionId) => speech.extension(sessionId),
       });
-      control = await SdkBackend.create({
-        session: controlSession,
-        dataDir,
-        onEvent: vi.fn(),
-        onEnd: vi.fn(),
-      });
+      const agent = backend.session;
+      expect(agent.getToolDefinition("speak")).toBeDefined();
+      expect(agent.getActiveToolNames()).not.toContain("speak");
+      expect(agent.systemPrompt).not.toContain("A Live Voice call is attached");
 
-      expect(voice.session.getToolDefinition("voice_update")).toBeDefined();
-      expect(voice.session.getToolDefinition("oppi")).toBeUndefined();
-      expect(control.session.getToolDefinition("voice_update")).toBeUndefined();
-      expect(control.session.getToolDefinition("oppi")).toBeUndefined();
-      expect(voice.session.sessionManager.getCwd()).toBe(
-        join(dataDir, "voice-control-sessions", "cwd"),
-      );
-    } finally {
-      await voice?.dispose();
-      await control?.dispose();
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
+      speech.setCallAttached(session.id, true);
+      expect(agent.getActiveToolNames()).toContain("speak");
+      expect(agent.systemPrompt).toContain("A Live Voice call is attached");
+      await agent
+        .getToolDefinition("speak")!
+        .execute(
+          "call-1",
+          { text: "Three sessions are running." },
+          undefined,
+          undefined,
+          {} as never,
+        );
+      expect(spoken).toEqual([{ sessionId: session.id, text: "Three sessions are running." }]);
 
-  it("registers the voice-control bridge when the hidden session starts", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-voice-bridge-"));
-    const voiceSession = makeSession({
-      workspaceId: undefined,
-      voice: { purpose: "voice-control" },
-    });
-    const registered: string[] = [];
-    let voice: SdkBackend | undefined;
-    try {
-      voice = await SdkBackend.create({
-        session: voiceSession,
-        dataDir,
-        onEvent: vi.fn(),
-        onEnd: vi.fn(),
-        registerVoiceControlBridge: (sessionId) => {
-          registered.push(sessionId);
-          return () => {};
-        },
-      });
-      expect(registered).toEqual([voiceSession.id]);
+      speech.setCallAttached(session.id, false);
+      expect(agent.getActiveToolNames()).not.toContain("speak");
     } finally {
-      await voice?.dispose();
+      await backend?.dispose();
       rmSync(dataDir, { recursive: true, force: true });
     }
   });

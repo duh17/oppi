@@ -2,15 +2,9 @@ import Foundation
 import Observation
 
 @MainActor
-protocol LiveVoiceSessionGateway: AnyObject {
-    func createVoiceControlSession(purpose: String) async throws -> Session
-    func resumeVoiceControlSession(id: String) async throws -> Session
-}
-
-@MainActor
 protocol LiveVoiceCallChannel: AnyObject {
     var onInboundAudio: (@MainActor (Data) -> Void)? { get set }
-    func open(sessionId: String) -> AsyncStream<ServerMessage>
+    func open(sessionId: String, routeScope: SessionRouteScope) -> AsyncStream<ServerMessage>
     func send(_ message: ClientMessage) async throws
     func sendAudio(_ pcm: Data) async throws
     func close()
@@ -22,20 +16,19 @@ struct LiveVoiceCallIdentity: Equatable, Sendable {
     var eventSeq: Int
 }
 
+/// Remembers the open call per server and session, so returning to the chat rejoins it.
 @MainActor
 protocol LiveVoiceSessionMemory: AnyObject {
-    func sessionId(forServer serverKey: String) -> String?
-    func store(sessionId: String, forServer serverKey: String)
     func callIdentity(forServer serverKey: String) -> LiveVoiceCallIdentity?
     func store(callIdentity: LiveVoiceCallIdentity, forServer serverKey: String)
     func clearCallIdentity(forServer serverKey: String)
 }
 
-/// Owns Live Voice call lifecycle and duplex capture. It does not own the text composer.
+/// Owns a Live Voice call on one chat's session and its duplex capture. It does not own the
+/// text composer. What the caller says arrives in that session; its agent answers out loud.
 @MainActor
 @Observable
 final class LiveVoiceCallController {
-    static let voiceControlPurpose = "voice-control"
     static let keepAliveInterval: Duration = .seconds(10)
 
     private(set) var isLive = false
@@ -45,7 +38,6 @@ final class LiveVoiceCallController {
     private(set) var statusText = "Listening"
     private(set) var lastError: String?
 
-    @ObservationIgnored private var sessions: LiveVoiceSessionGateway?
     @ObservationIgnored private var channel: LiveVoiceCallChannel?
     @ObservationIgnored private var audio: LiveVoiceAudioOwning?
     @ObservationIgnored private var memory: LiveVoiceSessionMemory
@@ -70,14 +62,12 @@ final class LiveVoiceCallController {
     }
 
     init(
-        sessions: LiveVoiceSessionGateway? = nil,
         channel: LiveVoiceCallChannel? = nil,
         audio: LiveVoiceAudioOwning? = nil,
         memory: LiveVoiceSessionMemory = UserDefaultsLiveVoiceSessionMemory(),
         serverKey: String = "default",
         clientCallId: String = UUID().uuidString
     ) {
-        self.sessions = sessions
         self.channel = channel
         self.audio = audio
         self.memory = memory
@@ -87,15 +77,15 @@ final class LiveVoiceCallController {
 
     var isActive: Bool { isLive }
 
-    func start(using connection: ServerConnection) async {
-        bind(connection)
+    func start(sessionId: String, routeScope: SessionRouteScope, using connection: ServerConnection) async {
+        bind(connection, sessionId: sessionId)
         // A reply being read aloud would talk over the call.
         connection.audioPlayer.stop()
-        await start()
+        await start(sessionId: sessionId, routeScope: routeScope)
     }
 
-    func start() async {
-        guard let sessions, let channel else {
+    func start(sessionId: String, routeScope: SessionRouteScope) async {
+        guard let channel else {
             failClosed("Live Voice is not connected to a server.", closeChannel: false)
             return
         }
@@ -121,28 +111,14 @@ final class LiveVoiceCallController {
         isLive = true
         prepareIdentityForNewStart()
 
-        do {
-            let previousSessionId = memory.sessionId(forServer: serverKey)
-            let session = try await resolveSession(using: sessions)
-            guard generation == startGeneration else { return }
-            // A remembered call belongs to the voice session it started on. A new session
-            // (the old one could not resume) cannot attach to it.
-            if session.id != previousSessionId, memory.callIdentity(forServer: serverKey) != nil {
-                forgetStoredCall()
-            }
-            memory.store(sessionId: session.id, forServer: serverKey)
-            let stream = channel.open(sessionId: session.id)
-            await withCheckedContinuation { continuation in
-                startWaiter = StartWaiter(generation: generation, continuation: continuation)
-                consume(stream, generation: generation)
-            }
-            guard generation == startGeneration else { return }
-            if !didConfirmCall {
-                failClosed(lastError ?? "Live Voice stream is unavailable.", closeChannel: true)
-            }
-        } catch {
-            guard generation == startGeneration else { return }
-            failClosed(error.localizedDescription, closeChannel: true)
+        let stream = channel.open(sessionId: sessionId, routeScope: routeScope)
+        await withCheckedContinuation { continuation in
+            startWaiter = StartWaiter(generation: generation, continuation: continuation)
+            consume(stream, generation: generation)
+        }
+        guard generation == startGeneration else { return }
+        if !didConfirmCall {
+            failClosed(lastError ?? "Live Voice stream is unavailable.", closeChannel: true)
         }
     }
 
@@ -175,28 +151,16 @@ final class LiveVoiceCallController {
         case detach
     }
 
-    private func bind(_ connection: ServerConnection) {
-        if let apiClient = connection.apiClient {
-            sessions = APIClientLiveVoiceSessionGateway(apiClient: apiClient)
-        }
+    private func bind(_ connection: ServerConnection, sessionId: String) {
         channel = ServerConnectionLiveVoiceChannel(connection: connection)
         if audio == nil {
             audio = LiveVoiceAudioOwner()
         }
-        serverKey = connection.credentials?.normalizedServerFingerprint
+        let server = connection.credentials?.normalizedServerFingerprint
             ?? connection.credentials?.host
-            ?? serverKey
-    }
-
-    private func resolveSession(using sessions: LiveVoiceSessionGateway) async throws -> Session {
-        if let storedId = memory.sessionId(forServer: serverKey) {
-            do {
-                return try await sessions.resumeVoiceControlSession(id: storedId)
-            } catch {
-                return try await sessions.createVoiceControlSession(purpose: Self.voiceControlPurpose)
-            }
-        }
-        return try await sessions.createVoiceControlSession(purpose: Self.voiceControlPurpose)
+            ?? "default"
+        // A remembered call belongs to the session it was started on.
+        serverKey = "\(server).\(sessionId)"
     }
 
     private func consume(_ stream: AsyncStream<ServerMessage>, generation: UInt64) {
@@ -236,7 +200,9 @@ final class LiveVoiceCallController {
                 memory.clearCallIdentity(forServer: serverKey)
                 failClosed("Live Voice ended.", closeChannel: true)
             }
-        case .commandResult(_, let requestId, let success, _, let error):
+        case .commandResult(let command, let requestId, let success, _, let error):
+            // The session's stream also carries other callers' command results (model, compact).
+            guard command.hasPrefix("voice_") else { return }
             if !success, requestId != nil, requestId == storedAttachRequestId {
                 // The remembered call is gone (ended, or the server no longer has it):
                 // start a new one instead of failing the call the user just asked for.
@@ -252,7 +218,11 @@ final class LiveVoiceCallController {
             if !didConfirmCall, requestId != nil, requestId == pendingRequestId {
                 confirmStart(generation: generation)
             }
-        case .error(let message, _, _):
+        case .error(let message, _, let fatal):
+            // The call rides the session's own stream, which also carries the session's run
+            // errors. Once the call is up, a failed run is the agent's to say out loud, not a
+            // reason to hang up; a fatal error (the session is gone) ends the call.
+            if didConfirmCall, !fatal { return }
             failClosed(message, closeChannel: true)
         case .voiceDelegationUpdate(let update):
             // Status only. Playback stops when the user talks (a new partial transcript);
@@ -544,23 +514,6 @@ final class LiveVoiceCallController {
 }
 
 @MainActor
-final class APIClientLiveVoiceSessionGateway: LiveVoiceSessionGateway {
-    private let apiClient: APIClient
-
-    init(apiClient: APIClient) {
-        self.apiClient = apiClient
-    }
-
-    func createVoiceControlSession(purpose: String) async throws -> Session {
-        try await apiClient.createVoiceControlSession(purpose: purpose).session
-    }
-
-    func resumeVoiceControlSession(id: String) async throws -> Session {
-        try await apiClient.resumeVoiceControlSession(id: id).session
-    }
-}
-
-@MainActor
 final class ServerConnectionLiveVoiceChannel: LiveVoiceCallChannel {
     private let connection: ServerConnection
     private var client: WebSocketClient?
@@ -571,9 +524,12 @@ final class ServerConnectionLiveVoiceChannel: LiveVoiceCallChannel {
         self.connection = connection
     }
 
-    func open(sessionId: String) -> AsyncStream<ServerMessage> {
+    func open(sessionId: String, routeScope: SessionRouteScope) -> AsyncStream<ServerMessage> {
         close()
-        guard let client = connection.makeLiveVoiceWebSocketClient(sessionId: sessionId) else {
+        guard let client = connection.makeLiveVoiceWebSocketClient(
+            sessionId: sessionId,
+            routeScope: routeScope
+        ) else {
             return AsyncStream { $0.finish() }
         }
         self.client = client
@@ -619,15 +575,6 @@ final class UserDefaultsLiveVoiceSessionMemory: LiveVoiceSessionMemory {
         self.defaults = defaults
     }
 
-    func sessionId(forServer serverKey: String) -> String? {
-        let value = defaults.string(forKey: key(for: serverKey))?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value?.isEmpty == false ? value : nil
-    }
-
-    func store(sessionId: String, forServer serverKey: String) {
-        defaults.set(sessionId, forKey: key(for: serverKey))
-    }
-
     func callIdentity(forServer serverKey: String) -> LiveVoiceCallIdentity? {
         let prefix = callKeyPrefix(for: serverKey)
         guard let callId = defaults.string(forKey: prefix + ".callId")?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -655,10 +602,6 @@ final class UserDefaultsLiveVoiceSessionMemory: LiveVoiceSessionMemory {
         defaults.removeObject(forKey: prefix + ".callId")
         defaults.removeObject(forKey: prefix + ".clientCallId")
         defaults.removeObject(forKey: prefix + ".eventSeq")
-    }
-
-    private func key(for serverKey: String) -> String {
-        "oppi.liveVoice.sessionId.\(serverKey)"
     }
 
     private func callKeyPrefix(for serverKey: String) -> String {

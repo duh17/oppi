@@ -1,5 +1,4 @@
 import { isControlRouteSession } from "./control-session.js";
-import { isDeclaredVoiceControlSession } from "./voice-control-session.js";
 import type { Session, Workspace } from "./types.js";
 
 /**
@@ -53,11 +52,6 @@ type SessionMissing = { kind: "session-missing" };
 
 type AdmissionOptions = {
   workspaceMustExist?: boolean;
-  /**
-   * The control stream also carries the hidden Live Voice runtime, which has no
-   * workspace. Its HTTP control routes stay closed to it.
-   */
-  voiceControlStream?: boolean;
 };
 
 // Per-family results list only the failures that family can produce, so each
@@ -103,11 +97,7 @@ export function admitSessionRoute(
 
   const session = store.getSession(route.sessionId);
   if (!session) return { kind: "session-missing" };
-  if (
-    route.scope === "control" &&
-    !isControlRouteSession(session) &&
-    !(options?.voiceControlStream && isDeclaredVoiceControlSession(session))
-  ) {
+  if (route.scope === "control" && !isControlRouteSession(session)) {
     return { kind: "not-control" };
   }
   return { kind: "ok", session };

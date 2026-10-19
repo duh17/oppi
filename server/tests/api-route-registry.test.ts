@@ -55,8 +55,6 @@ const sessionOperationIds = [
   "putSessionAttachmentContent",
   "createWorkspaceSession",
   "createControlSession",
-  "createVoiceControlSession",
-  "resumeVoiceControlSession",
   "getControlSession",
   "getControlSessionTracePage",
   "getControlSessionTraceOutline",

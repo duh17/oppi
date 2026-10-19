@@ -1339,6 +1339,10 @@ final class AppNavigation {
     /// Extracted from `pendingQuickSessionNav` when Quick Session dismisses.
     var pendingQuickSessionAttachments: [PendingAttachment]?
 
+    /// Session whose chat starts Live Voice when it opens (a quick voice session).
+    /// Consumed once by that session's ChatView, then cleared.
+    var pendingLiveVoiceSessionId: String?
+
     // MARK: - Legacy Shell Routing
 
     /// Routes legacy tab selections into the Workspaces-primary navigation stack.
@@ -1892,12 +1896,21 @@ struct QuickSessionNav {
     let sessionId: String
     let autoSendMessage: String?
     let autoSendAttachments: [PendingAttachment]?
+    /// Start Live Voice on the new session once its chat opens.
+    let startsLiveVoice: Bool
 
-    init(target: WorkspaceNavTarget, sessionId: String, autoSendMessage: String? = nil, autoSendAttachments: [PendingAttachment]? = nil) {
+    init(
+        target: WorkspaceNavTarget,
+        sessionId: String,
+        autoSendMessage: String? = nil,
+        autoSendAttachments: [PendingAttachment]? = nil,
+        startsLiveVoice: Bool = false
+    ) {
         self.target = target
         self.sessionId = sessionId
         self.autoSendMessage = autoSendMessage
         self.autoSendAttachments = autoSendAttachments
+        self.startsLiveVoice = startsLiveVoice
     }
 }
 

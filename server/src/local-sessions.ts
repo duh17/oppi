@@ -113,8 +113,8 @@ export function validateCwdAlignment(sessionCwd: string, workspaceHostMount: str
 }
 
 /**
- * Control-session and hidden voice-control Pi artifacts under the current
- * data-dir hidden-session roots must never appear as importable local TUI rows.
+ * Control-session Pi artifacts under the data dir's control-session root must
+ * never appear as importable local TUI rows.
  */
 export function isControlSessionLocalArtifact(
   sessionCwd: string,
@@ -128,11 +128,7 @@ export function isControlSessionLocalArtifact(
 
   const resolvedCwd = resolve(trimmed.replace(/^~/, homedir()));
   const controlRoot = resolve(dataDir.replace(/^~/, homedir()), "control-sessions");
-  if (resolvedCwd === controlRoot || resolvedCwd.startsWith(`${controlRoot}/`)) {
-    return true;
-  }
-  const voiceRoot = resolve(dataDir.replace(/^~/, homedir()), "voice-control-sessions");
-  return resolvedCwd === voiceRoot || resolvedCwd.startsWith(`${voiceRoot}/`);
+  return resolvedCwd === controlRoot || resolvedCwd.startsWith(`${controlRoot}/`);
 }
 
 /** Minimal session header from first line of JSONL. */

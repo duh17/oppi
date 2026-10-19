@@ -5,7 +5,6 @@ import type {
   VoiceFrontend,
   VoiceFrontendEventHandler,
   VoiceFrontendSemanticEvent,
-  VoiceDelegationUpdate,
 } from "./continuous-voice.js";
 import type { SttProvider, SttTranscriptUpdate } from "./stt-provider.js";
 import { createLogger } from "./logger.js";
@@ -63,12 +62,12 @@ export interface VoiceCallMediaAttachInput {
 }
 
 /**
- * Local Live Voice: streaming ASR in, read-aloud TTS out, Pi does the work.
+ * Local Live Voice: streaming ASR in, read-aloud TTS out, the session's agent does the work.
  *
  * A user turn ends at a pause, not at an ASR commit. Streaming ASR (Yuwp R2T2)
  * locks in text every few hundred milliseconds, so a commit is a stable prefix,
  * not the end of what the user is saying. The transcript is cumulative for the
- * call; a turn is the words after the ones already handed to Pi.
+ * call; a turn is the words after the ones already sent to the session.
  */
 export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   private handler: VoiceFrontendEventHandler | undefined;
@@ -114,12 +113,12 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     this.stt.feedAudio(pcm);
   }
 
-  /** Pi updates are spoken in order; a newer one waits for the one playing instead of cutting it off. */
-  publish(update: VoiceDelegationUpdate): Promise<void> {
-    const text = update.text.trim();
+  /** The agent's words are said in order; newer ones wait for the one playing instead of cutting it off. */
+  speak(raw: string): Promise<void> {
+    const text = raw.trim();
     if (!text) return Promise.resolve();
     const generation = this.speechGeneration;
-    const run = (): Promise<void> => this.speak(text, generation);
+    const run = (): Promise<void> => this.say(text, generation);
     const work = this.speechQueue.then(run, run);
     this.speechQueue = work.catch(() => undefined);
     return work;
@@ -137,7 +136,7 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     if (handler) await handler({ type: "disconnected" });
   }
 
-  private async speak(text: string, generation: number): Promise<void> {
+  private async say(text: string, generation: number): Promise<void> {
     if (generation !== this.speechGeneration) return;
     const abort = new AbortController();
     this.speechAbort = abort;
@@ -309,6 +308,8 @@ export class VoiceCallMediaCoordinator {
       calls: VoiceCallController;
       nextUtteranceId?: () => string;
       nextDelegationId?: () => string;
+      /** Calls with media on this session started or stopped: its agent can speak or not. */
+      onSessionMediaChanged?: (sessionId: string, attached: boolean) => void;
     },
   ) {}
 
@@ -320,6 +321,7 @@ export class VoiceCallMediaCoordinator {
     }
     const session: MediaSession = {
       callId: input.callId,
+      sessionId: this.deps.calls.snapshot(input.callId).controlSessionId,
       controllerLeaseEpoch: input.controllerLeaseEpoch,
       frontend: input.frontend,
       adapter,
@@ -342,6 +344,7 @@ export class VoiceCallMediaCoordinator {
       this.sessions.delete(input.frontend.connectionId);
       throw error;
     }
+    this.sessionMediaChanged(session.sessionId);
   }
 
   feedAudio(connectionId: string, pcm: Buffer): boolean {
@@ -356,18 +359,43 @@ export class VoiceCallMediaCoordinator {
     if (!session) return;
     this.sessions.delete(connectionId);
     try {
+      // Stopping commits what the caller said last, so the session still hears it.
       await session.adapter.stop();
     } catch {
       // Adapter shutdown cannot block detach or lease fencing.
     }
+    this.sessionMediaChanged(session.sessionId);
   }
 
-  publish(callId: string, update: VoiceDelegationUpdate): Promise<void> {
+  /** Calls with media running on this session: each one hears what its agent says. */
+  callIdsForSession(sessionId: string): string[] {
+    const callIds = new Set<string>();
+    for (const session of this.sessions.values()) {
+      if (session.sessionId === sessionId) callIds.add(session.callId);
+    }
+    return [...callIds];
+  }
+
+  /** Say the agent's words on the call. */
+  speak(callId: string, text: string): Promise<void> {
     for (const session of this.sessions.values()) {
       if (session.callId !== callId) continue;
-      return Promise.resolve(session.adapter.publish(update));
+      return Promise.resolve(session.adapter.speak(text));
     }
     return Promise.resolve();
+  }
+
+  private sessionMediaChanged(sessionId: string): void {
+    const attached = this.callIdsForSession(sessionId).length > 0;
+    try {
+      this.deps.onSessionMediaChanged?.(sessionId, attached);
+    } catch (error) {
+      // Attach and detach own sockets and paid backends; the agent side cannot break them.
+      log.warn("voice_media.session_media_changed_failed", {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async handleEvent(
@@ -415,6 +443,7 @@ export class VoiceCallMediaCoordinator {
         const connectionId = session.frontend.connectionId;
         if (this.sessions.get(connectionId) !== session) return;
         this.sessions.delete(connectionId);
+        this.sessionMediaChanged(session.sessionId);
         log.warn("voice_media.backend_disconnected", {
           callId: session.callId,
           reason: event.reason,
@@ -474,6 +503,8 @@ export class VoiceCallMediaCoordinator {
 
 interface MediaSession {
   callId: string;
+  /** The session the call talks to. */
+  sessionId: string;
   controllerLeaseEpoch: number;
   frontend: VoiceCallFrontendConnection;
   adapter: VoiceMediaAdapter;

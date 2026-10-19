@@ -294,15 +294,14 @@ describe("access-token expiry and dt_ retirement", { timeout: 30_000 }, () => {
       asr: { sttEndpoint: await silentStreamingStt(), liveVoiceBackend: "yuwp" },
     });
     const device = enroll(storage);
-    const created = await networkPost("/voice-control-sessions", device.token, {
-      purpose: "voice-control",
-    });
+    const workspace = storage.createWorkspace({ name: "Voice", hostMount: dataDir });
+    const created = await networkPost(`/workspaces/${workspace.id}/sessions`, device.token, {});
     const sessionId = (created.body as { session: { id: string } }).session.id;
     shortenAccessTokens(storage, Date.now() - CLOCK_SKEW_MS + 2_000);
 
     const call = await connectStream(
       device.token,
-      `/control-sessions/${sessionId}/stream`,
+      `/workspaces/${workspace.id}/sessions/${sessionId}/stream`,
       "connected",
     );
     const plain = await connectStream(device.token);
@@ -319,6 +318,14 @@ describe("access-token expiry and dt_ retirement", { timeout: 30_000 }, () => {
     // Past the first re-check: the live call still holds the socket.
     await new Promise((resolve) => setTimeout(resolve, 5_500));
     expect(call.ws.readyState).toBe(WebSocket.OPEN);
+
+    // Past its token the socket carries the call only: a prompt is refused, not run.
+    call.ws.send(
+      JSON.stringify({ type: "prompt", message: "delete everything", requestId: "p-1" }),
+    );
+    expect(
+      await call.waitForFrame("error", { error: "Access expired on this connection" }),
+    ).toBeDefined();
 
     call.ws.send(
       JSON.stringify({ type: "voice_call_start", clientCallId: "call-2", requestId: "start-2" }),

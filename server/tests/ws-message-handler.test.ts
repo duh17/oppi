@@ -47,14 +47,6 @@ function makeSession(id = "s1"): Session {
   };
 }
 
-function makeVoiceControlSession(id = "voice-1"): Session {
-  return {
-    ...makeSession(id),
-    workspaceId: undefined,
-    voice: { purpose: "voice-control" },
-  };
-}
-
 function makeHarness(): HandlerHarness {
   const session = makeSession();
   const sent: ServerMessage[] = [];
@@ -74,6 +66,7 @@ function makeHarness(): HandlerHarness {
     isSessionConnected: vi.fn(() => true),
     subscribe: vi.fn(() => () => {}),
     setInactiveSessionModel: vi.fn(async (_id: string, model: string) => ({ ...session, model })),
+    supportsLiveVoice: vi.fn(() => true),
   };
 
   const ensureSessionContextWindow = vi.fn((value: Session) => value);
@@ -325,7 +318,7 @@ describe("WsMessageHandler", () => {
       voiceCalls,
     });
 
-    const voiceSession = makeVoiceControlSession();
+    const voiceSession = makeSession("voice-1");
     await harness.handler.handleClientMessage(
       voiceSession,
       { type: "voice_call_start", clientCallId: "client-call-1", requestId: "voice-1" },
@@ -388,7 +381,7 @@ describe("WsMessageHandler", () => {
     };
     const send = (message: ServerMessage) => harness.sent.push(message);
 
-    const voiceSession = makeVoiceControlSession("tool-session");
+    const voiceSession = makeSession("tool-session");
     await harness.handler.handleClientMessage(
       voiceSession,
       { type: "voice_call_start", clientCallId: "client-approval", requestId: "start" },
@@ -743,7 +736,7 @@ describe("WsMessageHandler", () => {
     }) as typeof process.stderr.write);
 
     try {
-      const voiceSession = makeVoiceControlSession("voice-control-1");
+      const voiceSession = makeSession("voice-control-1");
       await harness.handler.handleClientMessage(
         voiceSession,
         { type: "voice_call_start", clientCallId: "client-call-1", requestId: "voice-attach-1" },

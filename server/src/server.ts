@@ -43,7 +43,7 @@ import { ServerMetricCollector } from "./server-metric-collector.js";
 import { SearchIndex } from "./search-index.js";
 import { JsonlMetricWriter } from "./server-metric-writer.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
-import { VoiceCallController } from "./continuous-voice-call.js";
+import { authenticatedVoiceDeviceId, VoiceCallController } from "./continuous-voice-call.js";
 import {
   ReadAloudLiveVoiceTts,
   selectLiveVoiceMediaAdapter,
@@ -51,6 +51,7 @@ import {
   type VoiceMediaAdapter,
 } from "./continuous-voice-media.js";
 import { isSpeechEnabled } from "./speech-synthesis.js";
+import { LiveVoiceSessionLink } from "./live-voice-speech.js";
 import { FileVoiceCallStore, voiceCallStorePath } from "./voice-call-store.js";
 import { VoiceApprovalBridge } from "./voice-approval-bridge.js";
 import {
@@ -72,7 +73,6 @@ import {
   matchFocusedSessionStreamPath,
   type FocusedSessionStreamPath,
 } from "./session-route-scope.js";
-import { authenticatedVoiceDeviceId } from "./voice-control-session.js";
 import { ServerResourceService } from "./server-resource-service.js";
 import { SessionLifecycleService } from "./session-lifecycle-service.js";
 import {
@@ -649,9 +649,17 @@ export class Server {
       nextCallId: () => randomUUID(),
       persistence: new FileVoiceCallStore(voiceCallStorePath(dataDir)),
       approvalAuthority: voiceApprovalBridge,
-      dispatchDelegation: (sessionId, delegation) =>
-        this.sessions.voiceControlBridges.dispatch(sessionId, delegation),
+      dispatchDelegation: (sessionId, delegation) => liveVoice.dispatch(sessionId, delegation),
     });
+    // What a caller says arrives in the call's session as their message (steering a busy run);
+    // its agent answers with the `speak` tool.
+    const liveVoice = new LiveVoiceSessionLink((sessionId, delegation) =>
+      this.sessionRuntimes.sendPrompt(sessionId, delegation.request, {
+        streamingBehavior: "steer",
+        timestamp: delegation.createdAt,
+      }),
+    );
+    this.sessions.liveVoiceSpeech = liveVoice.speech;
     this.sessions.voicePermissionGate = new VoicePermissionGate({
       bridge: voiceApprovalBridge,
       calls: this.voiceCallController,
@@ -679,13 +687,10 @@ export class Server {
       calls: this.voiceCallController,
       nextUtteranceId: () => randomUUID(),
       nextDelegationId: () => randomUUID(),
+      onSessionMediaChanged: (sessionId, attached) =>
+        liveVoice.sessionMediaChanged(sessionId, attached),
     });
-    this.sessions.voiceControlBridges.setUpdateHandler((sessionId, update) => {
-      const callId = this.voiceCallController.activeCallIdForControlSession(sessionId);
-      if (!callId) return;
-      this.voiceCallController.applyDelegationUpdate(callId, update);
-      void this.voiceMediaCoordinator.publish(callId, update);
-    });
+    liveVoice.connect(this.voiceCallController, this.voiceMediaCoordinator);
     this.wsMessageHandler = new WsMessageHandler({
       sessions: this.sessionRuntimes,
       ensureSessionContextWindow: (targetSession) =>
@@ -717,6 +722,10 @@ export class Server {
       },
       handleVoiceAudio: (connectionId: string, pcm: Buffer) =>
         this.voiceMediaCoordinator.feedAudio(connectionId, pcm),
+      isConnectionAuthExpired: (connectionId: string) =>
+        this.voiceCallController.isAuthExpired(connectionId),
+      isLiveVoiceCallConnection: (connectionId: string) =>
+        this.voiceCallController.isCallConnection(connectionId),
       trackConnection: (ws: WebSocket) => this.trackConnection(ws),
       untrackConnection: (ws: WebSocket) => this.untrackConnection(ws),
       dictationManager: this.dictationManager,
@@ -1998,7 +2007,6 @@ export class Server {
       const sessionId = route.sessionStreamMatch.sessionId;
       const admitted = admitSessionRoute(this.storage, route.sessionStreamMatch, {
         workspaceMustExist: false,
-        voiceControlStream: true,
       });
       if (admitted.kind !== "ok") {
         ws.close(1008, "Session not found");

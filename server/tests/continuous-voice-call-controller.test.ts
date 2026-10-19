@@ -115,7 +115,7 @@ describe("continuous voice call controller", () => {
     expect(controller.holdPastAuthExpiry("connection-b")).toBe(false);
   });
 
-  it("dispatches a committed utterance to the hidden voice-control session", () => {
+  it("dispatches a committed utterance to the call's session", () => {
     const dispatched: Array<{ sessionId: string; request: string }> = [];
     const controller = new VoiceCallController({
       now: () => 1_000,

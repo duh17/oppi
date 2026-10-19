@@ -348,38 +348,6 @@ describe("BoundSessionStreamMux", () => {
     expect(ws.sentOfType("connected")).toHaveLength(0);
   });
 
-  it("opens declared voice-control streams and still rejects workspace and undeclared sessions", async () => {
-    const voice = {
-      ...makeSession("voice-session"),
-      voice: { purpose: "voice-control" as const },
-    };
-    const control = {
-      ...makeSession("control-session"),
-      control: { domain: "agents" as const, intent: "create" as const },
-    };
-    const workspace = makeSession("workspace-session", "w1");
-    const undeclared = makeSession("workspace-less-session");
-    const { ctx } = createMockContext([voice, control, workspace, undeclared]);
-    const mux = new BoundSessionStreamMux(ctx);
-
-    const accepted = new FakeWebSocket();
-    await mux.handleControlWebSocket(voice.id, accepted as unknown as WebSocket);
-    expect(accepted.sentOfType("stream_connected")).toHaveLength(1);
-    expect(accepted.sentOfType("connected", voice.id)).toHaveLength(1);
-    expect(ctx.sessions.startSession).toHaveBeenCalledWith(voice.id, undefined);
-
-    for (const session of [workspace, undeclared]) {
-      const rejected = new FakeWebSocket();
-      await mux.handleControlWebSocket(session.id, rejected as unknown as WebSocket);
-      expect(rejected.closeCode).toBe(1008);
-      expect(rejected.sent).toEqual([]);
-    }
-
-    const controlAccepted = new FakeWebSocket();
-    await mux.handleControlWebSocket(control.id, controlAccepted as unknown as WebSocket);
-    expect(controlAccepted.sentOfType("stream_connected")).toHaveLength(1);
-  });
-
   it("opens declared control streams and rejects both workspace and undeclared sessions", async () => {
     const control = {
       ...makeSession("control-session"),
@@ -1351,23 +1319,15 @@ describe("BoundSessionStreamMux", () => {
     expect(ctx.untrackConnection).toHaveBeenCalled();
   });
 
-  it("routes Live Voice PCM on a voice-control stream without opening dictation", async () => {
-    const session = {
-      ...makeSession("voice-session"),
-      voice: { purpose: "voice-control" as const },
-    };
+  it("routes Live Voice PCM on a session stream carrying a call without opening dictation", async () => {
+    const session = makeSession("sess-bound", "w1");
     const { ctx } = createMockContext([session]);
     const handleVoiceAudio = vi.fn(() => true);
     ctx.handleVoiceAudio = handleVoiceAudio;
     ctx.createDictationManager = vi.fn();
     const mux = new BoundSessionStreamMux(ctx);
     const ws = new FakeWebSocket();
-    await mux.handleControlWebSocket(
-      session.id,
-      ws as unknown as WebSocket,
-      undefined,
-      "paired-device-1",
-    );
+    await mux.handleWebSocket("w1", session.id, ws as unknown as WebSocket, undefined, "phone");
     await drain();
 
     ws.receiveBinary(Buffer.from([1, 2, 3, 4]));
@@ -1381,10 +1341,10 @@ describe("BoundSessionStreamMux", () => {
     expect(ws.sent.filter((message) => message.type === "error")).toHaveLength(0);
   });
 
-  it("still rejects binary frames on ordinary focused session streams", async () => {
+  it("rejects binary frames on a session stream with no call", async () => {
     const session = makeSession("sess-bound", "w1");
     const { ctx } = createMockContext([session]);
-    ctx.handleVoiceAudio = vi.fn(() => true);
+    ctx.handleVoiceAudio = vi.fn(() => false);
     const mux = new BoundSessionStreamMux(ctx);
     const ws = new FakeWebSocket();
     await mux.handleWebSocket("w1", session.id, ws as unknown as WebSocket);
@@ -1393,7 +1353,6 @@ describe("BoundSessionStreamMux", () => {
     ws.receiveBinary(Buffer.from([9, 9]));
     await drain();
 
-    expect(ctx.handleVoiceAudio).not.toHaveBeenCalled();
     expect(ws.sent).toContainEqual(
       expect.objectContaining({
         type: "error",
@@ -1402,11 +1361,33 @@ describe("BoundSessionStreamMux", () => {
     );
   });
 
-  it("sends Live Voice playback PCM as binary on the control stream", async () => {
-    const session = {
-      ...makeSession("voice-session"),
-      voice: { purpose: "voice-control" as const },
+  it("keeps the session's traffic off a socket that carries a Live Voice call", async () => {
+    const session = makeSession("sess-bound", "w1");
+    const { ctx, broadcastTo } = createMockContext([session]);
+    let carriesCall = false;
+    ctx.isLiveVoiceCallConnection = () => carriesCall;
+    let reply: ((msg: ServerMessage) => void) | undefined;
+    ctx.handleClientMessage = async (_session, _msg, send) => {
+      reply = send;
     };
+    const mux = new BoundSessionStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    await mux.handleWebSocket("w1", session.id, ws as unknown as WebSocket, undefined, "phone");
+    await drain();
+    ws.receive({ type: "voice_call_start", clientCallId: "c", requestId: "s" } as ClientMessage);
+    await drain();
+    ws.sent.length = 0;
+
+    carriesCall = true;
+    broadcastTo(session.id, { type: "error", error: "Provider overloaded" } as ServerMessage);
+    broadcastTo(session.id, { type: "text_delta", delta: "hello" } as ServerMessage);
+    reply?.({ type: "voice_delegation_update", text: "Three are running." } as ServerMessage);
+
+    expect(ws.sent.map((message) => message.type)).toEqual(["voice_delegation_update"]);
+  });
+
+  it("sends Live Voice playback PCM as binary on the session stream", async () => {
+    const session = makeSession("sess-bound", "w1");
     const { ctx } = createMockContext([session]);
     let sendAudio: ((pcm: Buffer) => void) | undefined;
     ctx.handleClientMessage = async (_session, _msg, _send, meta) => {
@@ -1414,12 +1395,7 @@ describe("BoundSessionStreamMux", () => {
     };
     const mux = new BoundSessionStreamMux(ctx);
     const ws = new FakeWebSocket();
-    await mux.handleControlWebSocket(
-      session.id,
-      ws as unknown as WebSocket,
-      undefined,
-      "paired-device-1",
-    );
+    await mux.handleWebSocket("w1", session.id, ws as unknown as WebSocket, undefined, "phone");
     await drain();
 
     ws.receive({ type: "reload", sessionId: session.id, requestId: "reload-1" } as ClientMessage);

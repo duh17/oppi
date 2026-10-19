@@ -88,7 +88,7 @@ oppi server restart
 
 Code blocks, images, and URLs are skipped; link labels and list items are read. The server synthesizes a short first passage and then paragraph-sized ones, so playback starts before the whole reply is ready.
 
-Live Voice on the local backend (`asr.liveVoiceBackend` `yuwp`) speaks with this same engine and voice. Without `tts`, a local call listens and shows Pi's replies on screen but stays silent.
+Live Voice on the local backend (`asr.liveVoiceBackend` `yuwp`) speaks with this same engine and voice. Without `tts`, a local call listens and shows the agent's replies on screen but stays silent.
 
 ## Voice extensions
 
@@ -216,7 +216,7 @@ Pi's host MCP commands (`pi mcp list`, `login`, `logout`), which the MCP Servers
 | `asr.provider`                          | `http` or `xai` (restart)                          |
 | `asr.sttModel`                          | HTTP/Yuwp STT model id (restart)                                      |
 | `tts.provider` / `tts.endpoint` / `tts.model` / `tts.voice` / `tts.language` | Read aloud (restart; see [Read aloud](#read-aloud)) |
-| `asr.liveVoiceBackend`                  | Live Voice media: `yuwp` (local ASR from `asr.sttEndpoint`, speech from `tts`) or `grok-voice` (restart; Grok uses the xAI `tts.voice`, else `eve`) |
+| `asr.liveVoiceBackend`                  | Live Voice ears and voice for a call on a session: `yuwp` (local ASR from `asr.sttEndpoint`, speech from `tts`) or `grok-voice` (restart; Grok uses the xAI `tts.voice`, else `eve`) |
 | `runtimeEnv.<NAME>`                     | Host runtime env, including TTS URLs (restart)                      |
 | `extensions.voice.defaultVoiceId`       | Default voice id                                                    |
 | `images.autoResize`                     | Client image preprocessing preference                               |

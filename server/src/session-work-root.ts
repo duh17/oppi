@@ -6,7 +6,6 @@ import { isControlConversation, isControlRouteSession } from "./control-session.
 import { resolveHostPath } from "./host.js";
 import { ensureOwnerOnlyRealDirectory } from "./owner-directory.js";
 import type { Session, Workspace } from "./types.js";
-import { isDeclaredVoiceControlSession } from "./voice-control-session.js";
 import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.js";
 
 /**
@@ -19,8 +18,7 @@ import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.
  *   `workspace`, and `workspace.runtime === "sandbox"` is the one signal that
  *   current-file resolution confines reads to the mount.
  * - control-route session (declared Pi Control, or the durable control
- *   conversation) and the hidden Live Voice control session: a server-owned
- *   owner-only directory under the data dir.
+ *   conversation): a server-owned owner-only directory under the data dir.
  * - any other workspace-less session: no directory (`no-workspace`).
  *
  * `create: false` never touches the filesystem except to look (reads, cleanup).
@@ -36,10 +34,7 @@ export interface SessionWorkRootStore {
   getDataDir(): string;
 }
 
-type WorkRootSession = Pick<
-  Session,
-  "workspaceId" | "worktreeId" | "control" | "serverDurable" | "voice"
->;
+type WorkRootSession = Pick<Session, "workspaceId" | "worktreeId" | "control" | "serverDurable">;
 
 export type SessionWorkRoot =
   | {
@@ -109,9 +104,6 @@ export async function resolveSessionWorkRoot(
       dataDir,
       create,
     );
-  }
-  if (isDeclaredVoiceControlSession(session)) {
-    return controlRoot("voice", dataDir, create);
   }
   if (!workspace) {
     return session.workspaceId ? { kind: "workspace-missing" } : { kind: "no-workspace" };
@@ -195,11 +187,6 @@ const CONTROL_ROOTS = {
     dir: "control-sessions",
     label: "Control session",
     noDataDir: "Control sessions require an Oppi data directory",
-  },
-  voice: {
-    dir: "voice-control-sessions",
-    label: "Voice-control session",
-    noDataDir: "Voice-control sessions require an Oppi data directory",
   },
 } as const;
 

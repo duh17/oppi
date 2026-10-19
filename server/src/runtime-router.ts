@@ -128,6 +128,14 @@ export class SessionRuntimes implements AgentRuntimeTransport {
     return this.oppi.getPromptCacheRuntime(sessionId);
   }
 
+  /**
+   * Whether a Live Voice call can run on the session: the agent needs Oppi's `speak` tool or its
+   * run events to answer out loud, and a terminal mirror has neither.
+   */
+  supportsLiveVoice(sessionId: string): boolean {
+    return !this.isPiTui(this.storage.getSession(sessionId));
+  }
+
   /** Harness ownership membership of a durable session's thread; undefined for every other session. */
   getDurableThread(sessionId: string): ReturnType<SessionManager["getDurableThread"]> {
     return this.oppi.getDurableThread(sessionId);

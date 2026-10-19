@@ -924,7 +924,6 @@
 		70572F803C58C9AA8E668103 /* SessionModelSummaryBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C3C6F2BB913CFE978455DAF /* SessionModelSummaryBuilderTests.swift */; };
 		705C265F868A17116BCF4EF5 /* SSHPTYSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62938FF91403E064BEED9929 /* SSHPTYSession.swift */; };
 		705F800D2EB105CED5E05603 /* OppiShortcutsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEB60EDA15E4DF0B7721D6E8 /* OppiShortcutsProvider.swift */; };
-		7099BB5A43DE48733A66E3A6 /* VoiceControlAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CA792BCE7014006E0140F19 /* VoiceControlAPIClientTests.swift */; };
 		70D8427365941E8DB2D8E855 /* PushEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = C77B5D9B52AF85DDEE510CFF /* PushEnvelope.swift */; };
 		7129C67EC9608442588A2F33 /* OrbMetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79289812FD7C83A5FAF21678 /* OrbMetalView.swift */; };
 		712C0503DF1F2BCD47FCC2B0 /* MacWorkspaceFileBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118B5DE983269414E3D1DF81 /* MacWorkspaceFileBrowserTests.swift */; };
@@ -2999,7 +2998,6 @@
 		6C3C6F2BB913CFE978455DAF /* SessionModelSummaryBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionModelSummaryBuilderTests.swift; sourceTree = "<group>"; };
 		6C590F11E0D08BBA3B4C67B8 /* MarkdownReaderRenderAheadContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownReaderRenderAheadContractTests.swift; sourceTree = "<group>"; };
 		6C829ED8BA0B53B2967CBACB /* MacSessionInboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionInboxTests.swift; sourceTree = "<group>"; };
-		6CA792BCE7014006E0140F19 /* VoiceControlAPIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceControlAPIClientTests.swift; sourceTree = "<group>"; };
 		6CAF2AA157AA7A10C4E16F15 /* ANSIParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ANSIParserTests.swift; sourceTree = "<group>"; };
 		6CCEE15005ADBD66183D70F0 /* SemanticAnnotationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SemanticAnnotationTests.swift; sourceTree = "<group>"; };
 		6CE7F0BBDD813EF8300FA59A /* ChatTimelineCollectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelineCollectionView.swift; sourceTree = "<group>"; };
@@ -4239,7 +4237,6 @@
 				AD1BED11F1546666FD197EE7 /* StreamRecoveryTests.swift */,
 				B889790107D3686FEC5C11AD /* TailnetTests.swift */,
 				B3FD2EAE6117D634A836F3BD /* TLSPinningTests.swift */,
-				6CA792BCE7014006E0140F19 /* VoiceControlAPIClientTests.swift */,
 				87065BBDFC896A8616DC6907 /* WebSocketClientAuthRefreshTests.swift */,
 				A608ECA2AF59D67D5DBC94FF /* WebSocketClientReconnectBackoffTests.swift */,
 				742844DD73D5A735763825D2 /* WebSocketClientSubscriptionTests.swift */,
@@ -8849,7 +8846,6 @@
 				2CE5AFAF660DF776CECD68B1 /* UnifiedDiffVirtualizationTests.swift in Sources */,
 				3853D22799EE7FFA4E6D7686 /* UnifiedPatchParserTests.swift in Sources */,
 				15B71E5BBC1C1EF9769079B1 /* UserTimelineRowContentTests.swift in Sources */,
-				7099BB5A43DE48733A66E3A6 /* VoiceControlAPIClientTests.swift in Sources */,
 				69B14140A0B9AFC14C1CD4DD /* VoiceInputAudioRoutePlannerTests.swift in Sources */,
 				2BFA1F0B14CFFDEED924E9BB /* VoiceInputCorrectionHighlightTests.swift in Sources */,
 				890A4837E29F02C0BD66CAD2 /* VoiceInputManagerTests.swift in Sources */,

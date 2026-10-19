@@ -144,6 +144,10 @@ Push is relay-only and end to end encrypted ([protocol/push/spec.md](../protocol
 
 `PushRegistration` records live on `ServerConfig.pushRegistrations`, one per paired device; revoking the device or rotating the owner token removes them in the same write. The standalone relay is `relay/` (core, Node and Cloudflare adapters); it imports nothing from `server/` or `clients/` and no HPKE or KEM package, which `check-architecture-boundaries.ts --scope relay` enforces. Test vectors in `protocol/push/vectors/` change only through `protocol/push/scripts/generate-vectors.sh` and `npm run push:canary -- --write-capture`.
 
+## Live Voice
+
+A Live Voice call belongs to one ordinary session. The phone opens a second stream to that session (`/workspaces/{id}/sessions/{id}/stream`, or the control path) and sends `voice_call_*` frames plus binary 16 kHz PCM; the server sends call state and binary 24 kHz PCM back on the same socket. Owners: `VoiceCallController` (`continuous-voice-call.ts`) holds call identity, controller lease, and the per-utterance status the phone shows; `VoiceCallMediaCoordinator` (`continuous-voice-media.ts`) runs one media adapter per attached connection (local ASR + read-aloud TTS, or Grok Voice); `LiveVoiceSessionLink` and `LiveVoiceSpeech` (`live-voice-speech.ts`) join the two to the session. What the caller says reaches the session through `sendPrompt` with steering, like a typed message. Classic sessions register a built-in `speak` tool on every resource load, inactive until the session has call media attached; the agent answers out loud with it. A run that ends without `speak` has the opening of its final reply read, and a failed run says so. Terminal mirrors refuse calls. A paired device is the only voice principal; owner tokens never control a call. A call socket kept past its access token carries only that call: other commands are refused and session traffic is not sent.
+
 ## Protocol boundary
 
 Server protocol types live in `server/src/types/protocol.ts` and are re-exported from `server/src/types.ts`. `types.ts` is a stable barrel for the historical `./types.js` import path; it should only re-export type modules.

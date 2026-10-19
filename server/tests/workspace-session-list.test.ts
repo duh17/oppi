@@ -642,7 +642,7 @@ describe("workspace session list routes", () => {
     expect(response.active).toEqual([]);
   });
 
-  it("does not leak hidden voice-control sessions into the global recent list", async () => {
+  it("keeps workspace-less sessions that are not control sessions out of the global recent list", async () => {
     const mock = createMockContext();
     const now = Date.parse("2026-05-13T12:00:00Z");
     mock.storage.listAllWorkspaceSessionSnapshots.mockReturnValue([
@@ -654,7 +654,6 @@ describe("workspace session list routes", () => {
         id: "voice-row",
         workspaceId: undefined,
         lastActivity: now,
-        voice: { purpose: "voice-control" },
       }),
       makeSession({
         id: "control-row",

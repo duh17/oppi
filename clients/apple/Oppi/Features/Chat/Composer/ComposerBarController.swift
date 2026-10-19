@@ -1772,23 +1772,13 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             : nil
     }
 
-    static let liveVoiceMenuIdentifier = UIAction.Identifier("chat.voiceEntry.liveVoice")
-    static let dictationMenuIdentifier = UIAction.Identifier("chat.voiceEntry.dictation")
-
     private func voiceEntryMenu() -> UIMenu? {
         guard host?.content.onLiveVoiceSelected != nil else { return nil }
-        return UIMenu(title: "Voice", children: [
-            UIAction(
-                title: "Live Voice",
-                image: UIImage(systemName: "waveform"),
-                identifier: Self.liveVoiceMenuIdentifier
-            ) { [weak self] _ in self?.handleLiveVoiceChoice() },
-            UIAction(
-                title: "Dictation",
-                image: UIImage(systemName: "mic"),
-                identifier: Self.dictationMenuIdentifier
-            ) { [weak self] _ in self?.handleMicTap() },
-        ])
+        return ComposerShared.voiceEntryMenu(
+            identifierPrefix: "chat",
+            onLiveVoice: { [weak self] in self?.handleLiveVoiceChoice() },
+            onDictation: { [weak self] in self?.handleMicTap() }
+        )
     }
 
     /// Live Voice owns the microphone, so an in-progress dictation take ends first.

@@ -5,120 +5,28 @@ import Testing
 @Suite("LiveVoiceCallController")
 @MainActor
 struct LiveVoiceCallControllerTests {
-    @Test("Start creates a hidden voice-control session, opens its stream, and starts the call")
-    func startCreatesSessionOpensStreamAndStartsCall() async throws {
-        let sessions = FakeLiveVoiceSessionGateway()
+    @Test("Start opens a call stream on the chat's session and starts the call")
+    func startOpensChatSessionStreamAndStartsCall() async throws {
         let channel = FakeLiveVoiceCallChannel()
-        let memory = FakeLiveVoiceSessionMemory()
         let controller = LiveVoiceCallController(
-            sessions: sessions,
             channel: channel,
-            memory: memory,
+            memory: FakeLiveVoiceSessionMemory(),
             serverKey: "server-1",
             clientCallId: "client-call-1"
         )
 
-        let startTask = Task { await controller.start() }
-        await waitUntil { !channel.openedSessionIds.isEmpty }
+        let startTask = Task { await controller.start(sessionId: "sess-1", routeScope: .workspace("ws-1")) }
+        await waitUntil { !channel.opened.isEmpty }
         channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
         await waitUntil { sentTypes(channel.sent) == ["voice_call_start"] }
         channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 1, leaseEpoch: 1)))
         await startTask.value
 
-        #expect(sessions.createdPurposes == ["voice-control"])
-        #expect(sessions.resumedIds.isEmpty)
-        #expect(channel.openedSessionIds == ["voice-created"])
-        #expect(memory.sessionId(forServer: "server-1") == "voice-created")
+        #expect(channel.opened == [OpenedStream(sessionId: "sess-1", routeScope: .workspace("ws-1"))])
         #expect(controller.isLive)
         #expect(sentTypes(channel.sent) == ["voice_call_start"])
         #expect(startPayload(channel.sent.first) == "client-call-1")
         #expect(!containsDeviceId(channel.sent.first))
-    }
-
-    @Test("Start resumes a stored voice-control session instead of creating another")
-    func startResumesStoredSession() async throws {
-        let sessions = FakeLiveVoiceSessionGateway()
-        let channel = FakeLiveVoiceCallChannel()
-        let memory = FakeLiveVoiceSessionMemory()
-        memory.store(sessionId: "voice-existing", forServer: "server-1")
-        let controller = LiveVoiceCallController(
-            sessions: sessions,
-            channel: channel,
-            memory: memory,
-            serverKey: "server-1",
-            clientCallId: "client-call-2"
-        )
-
-        let startTask = Task { await controller.start() }
-        await waitUntil { !channel.openedSessionIds.isEmpty }
-        channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
-        await waitUntil { sentTypes(channel.sent) == ["voice_call_start"] }
-        channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 1, leaseEpoch: 1)))
-        await startTask.value
-
-        #expect(sessions.createdPurposes.isEmpty)
-        #expect(sessions.resumedIds == ["voice-existing"])
-        #expect(channel.openedSessionIds == ["voice-existing"])
-        #expect(controller.isLive)
-    }
-
-    @Test("Start creates a new hidden session when resume fails")
-    func startCreatesWhenResumeFails() async throws {
-        let sessions = FakeLiveVoiceSessionGateway()
-        sessions.resumeError = LiveVoiceTestError.missing
-        let channel = FakeLiveVoiceCallChannel()
-        let memory = FakeLiveVoiceSessionMemory()
-        memory.store(sessionId: "stale-voice", forServer: "server-1")
-        let controller = LiveVoiceCallController(
-            sessions: sessions,
-            channel: channel,
-            memory: memory,
-            serverKey: "server-1",
-            clientCallId: "client-call-3"
-        )
-
-        let startTask = Task { await controller.start() }
-        await waitUntil { !channel.openedSessionIds.isEmpty }
-        channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
-        await waitUntil { sentTypes(channel.sent) == ["voice_call_start"] }
-        channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 1, leaseEpoch: 1)))
-        await startTask.value
-
-        #expect(sessions.resumedIds == ["stale-voice"])
-        #expect(sessions.createdPurposes == ["voice-control"])
-        #expect(channel.openedSessionIds == ["voice-created"])
-        #expect(memory.sessionId(forServer: "server-1") == "voice-created")
-    }
-
-    @Test("A call remembered from a voice session that no longer resumes starts fresh")
-    func staleSessionCallStartsFresh() async throws {
-        let sessions = FakeLiveVoiceSessionGateway()
-        sessions.resumeError = LiveVoiceTestError.missing
-        let channel = FakeLiveVoiceCallChannel()
-        let memory = FakeLiveVoiceSessionMemory()
-        memory.store(sessionId: "stale-voice", forServer: "server-1")
-        memory.store(
-            callIdentity: LiveVoiceCallIdentity(callId: "old-call", clientCallId: "old-client", eventSeq: 9),
-            forServer: "server-1"
-        )
-        let controller = LiveVoiceCallController(
-            sessions: sessions,
-            channel: channel,
-            memory: memory,
-            serverKey: "server-1"
-        )
-
-        let startTask = Task { await controller.start() }
-        await waitUntil { !channel.openedSessionIds.isEmpty }
-        channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
-        await waitUntil { !channel.sent.isEmpty }
-        // Attaching "old-call" here is what failed with "Voice call belongs to a different control session".
-        #expect(sentTypes(channel.sent) == ["voice_call_start"])
-        #expect(startPayload(channel.sent.first) != "old-client")
-        channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 1, leaseEpoch: 1)))
-        await startTask.value
-        #expect(controller.isLive)
-        #expect(controller.lastError == nil)
     }
 
     @Test("A remembered call the server rejects is replaced by a new call, not an error")
@@ -126,8 +34,8 @@ struct LiveVoiceCallControllerTests {
         let harness = try await startedHarness()
         await harness.controller.leave()
 
-        let restart = Task { await harness.controller.start() }
-        await waitUntil { harness.channel.openedSessionIds.count == 2 }
+        let restart = Task { await harness.controller.start(sessionId: "sess-1", routeScope: .workspace("ws-1")) }
+        await waitUntil { harness.channel.opened.count == 2 }
         harness.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
         await waitUntil { sentTypes(harness.channel.sent).contains("voice_call_attach") }
         let attach = harness.channel.sent.last { $0.typeLabel == "voice_call_attach" }
@@ -225,7 +133,7 @@ struct LiveVoiceCallControllerTests {
             .voiceApprovalRequired(
                 VoiceApprovalRequiredMessage(
                     callId: "call-1",
-                    controlSessionId: "voice-created",
+                    controlSessionId: "sess-1",
                     eventSeq: 8,
                     challengeId: "challenge-1",
                     requestId: "request-1",
@@ -352,8 +260,8 @@ struct LiveVoiceCallControllerTests {
         #expect(!harness.controller.isLive)
 
         harness.audio.startError = nil
-        let restart = Task { await harness.controller.start() }
-        await waitUntil { harness.channel.openedSessionIds.count == 2 }
+        let restart = Task { await harness.controller.start(sessionId: "sess-1", routeScope: .workspace("ws-1")) }
+        await waitUntil { harness.channel.opened.count == 2 }
         harness.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
         await waitUntil { harness.channel.sent.filter { $0.typeLabel == "voice_call_start" }.count == 2 }
         let secondStart = harness.channel.sent.last { $0.typeLabel == "voice_call_start" }
@@ -414,8 +322,8 @@ struct LiveVoiceCallControllerTests {
         await harness.controller.end()
         #expect(!harness.controller.isLive)
 
-        let restart = Task { await harness.controller.start() }
-        await waitUntil { harness.channel.openedSessionIds.count == 2 }
+        let restart = Task { await harness.controller.start(sessionId: "sess-1", routeScope: .workspace("ws-1")) }
+        await waitUntil { harness.channel.opened.count == 2 }
         harness.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
         await waitUntil { harness.channel.sent.filter { $0.typeLabel == "voice_call_start" }.count == 2 }
         let secondStart = harness.channel.sent.last { $0.typeLabel == "voice_call_start" }
@@ -437,8 +345,8 @@ struct LiveVoiceCallControllerTests {
         #expect(!harness.controller.isLive)
         #expect(harness.memory.callIdentity(forServer: "server-1")?.callId == "call-1")
 
-        let restart = Task { await harness.controller.start() }
-        await waitUntil { harness.channel.openedSessionIds.count == 2 }
+        let restart = Task { await harness.controller.start(sessionId: "sess-1", routeScope: .workspace("ws-1")) }
+        await waitUntil { harness.channel.opened.count == 2 }
         harness.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
         await waitUntil { sentTypes(harness.channel.sent).contains("voice_call_attach") }
         let attached = attachPayload(harness.channel.sent.last { $0.typeLabel == "voice_call_attach" })
@@ -478,6 +386,51 @@ struct LiveVoiceCallControllerTests {
         ))
     }
 
+    @Test("A session run error during a call leaves the call up")
+    func sessionRunErrorKeepsCall() async throws {
+        let harness = try await startedHarness()
+
+        harness.channel.emit(.error(message: "Provider overloaded", code: nil, fatal: false))
+        harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 2, leaseEpoch: 1)))
+        await waitUntil { harness.controller.callState?.eventSeq == 2 }
+
+        #expect(harness.controller.isLive)
+        #expect(harness.controller.lastError == nil)
+        #expect(!harness.channel.closed)
+        #expect(harness.audio.isCapturing)
+    }
+
+    @Test("Another caller's failed command on the session leaves the call up")
+    func foreignCommandFailureKeepsCall() async throws {
+        let harness = try await startedHarness()
+
+        harness.channel.emit(.commandResult(
+            command: "set_thinking_level",
+            requestId: "chat-request-1",
+            success: false,
+            data: nil,
+            error: "Unsupported thinking level"
+        ))
+        harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 2, leaseEpoch: 1)))
+        await waitUntil { harness.controller.callState?.eventSeq == 2 }
+
+        #expect(harness.controller.isLive)
+        #expect(harness.controller.lastError == nil)
+        #expect(!harness.channel.closed)
+    }
+
+    @Test("The session going away during a call ends it with the reason")
+    func fatalErrorEndsCall() async throws {
+        let harness = try await startedHarness()
+
+        harness.channel.emit(.error(message: "Session not found: sess-1", code: nil, fatal: true))
+        await waitUntil { !harness.controller.isLive }
+
+        #expect(harness.controller.lastError == "Session not found: sess-1")
+        #expect(harness.channel.closed)
+        #expect(!harness.audio.isCapturing)
+    }
+
     @Test("Inbound PCM plays on the duplex owner without ending the call")
     func inboundPcmPlaysWithoutEndingCall() async throws {
         let harness = try await startedHarness()
@@ -498,7 +451,7 @@ struct LiveVoiceCallControllerTests {
             .voiceDelegationUpdate(
                 VoiceDelegationUpdateMessage(
                     callId: "call-1",
-                    controlSessionId: "voice-created",
+                    controlSessionId: "sess-1",
                     eventSeq: 4,
                     delegationId: "delegation-1",
                     utteranceId: "utterance-1",
@@ -532,27 +485,24 @@ struct LiveVoiceCallControllerTests {
     }
 
     private func connectingHarness() async throws -> Harness {
-        let sessions = FakeLiveVoiceSessionGateway()
         let channel = FakeLiveVoiceCallChannel()
         let audio = FakeLiveVoiceAudioOwner()
         let memory = FakeLiveVoiceSessionMemory()
         let controller = LiveVoiceCallController(
-            sessions: sessions,
             channel: channel,
             audio: audio,
             memory: memory,
             serverKey: "server-1",
             clientCallId: "client-call-1"
         )
-        let startTask = Task { await controller.start() }
-        await waitUntil { !channel.openedSessionIds.isEmpty }
+        let startTask = Task { await controller.start(sessionId: "sess-1", routeScope: .workspace("ws-1")) }
+        await waitUntil { !channel.opened.isEmpty }
         channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
         await waitUntil { sentTypes(channel.sent) == ["voice_call_start"] }
         return Harness(
             controller: controller,
             channel: channel,
             audio: audio,
-            sessions: sessions,
             memory: memory,
             startTask: startTask
         )
@@ -573,7 +523,7 @@ struct LiveVoiceCallControllerTests {
     ) -> VoiceCallStateSnapshot {
         VoiceCallStateSnapshot(
             callId: callId,
-            controlSessionId: "voice-created",
+            controlSessionId: "sess-1",
             lifecycle: .active,
             frontend: .attached,
             controllerLeaseEpoch: leaseEpoch,
@@ -593,13 +543,8 @@ private struct Harness {
     let controller: LiveVoiceCallController
     let channel: FakeLiveVoiceCallChannel
     let audio: FakeLiveVoiceAudioOwner
-    let sessions: FakeLiveVoiceSessionGateway
     let memory: FakeLiveVoiceSessionMemory
     let startTask: Task<Void, Never>
-}
-
-private enum LiveVoiceTestError: Error {
-    case missing
 }
 
 @MainActor
@@ -640,42 +585,27 @@ final class FakeLiveVoiceAudioOwner: LiveVoiceAudioOwning {
     }
 }
 
-@MainActor
-private final class FakeLiveVoiceSessionGateway: LiveVoiceSessionGateway {
-    var createdPurposes: [String] = []
-    var resumedIds: [String] = []
-    var resumeError: Error?
+private enum LiveVoiceTestError: Error {
+    case missing
+}
 
-    func createVoiceControlSession(purpose: String) async throws -> Session {
-        createdPurposes.append(purpose)
-        var session = makeTestSession(id: "voice-created", name: "Voice Control")
-        session.voice = VoiceControlSessionMetadata(purpose: purpose)
-        return session
-    }
-
-    func resumeVoiceControlSession(id: String) async throws -> Session {
-        resumedIds.append(id)
-        if let resumeError {
-            throw resumeError
-        }
-        var session = makeTestSession(id: id, name: "Voice Control")
-        session.voice = VoiceControlSessionMetadata(purpose: "voice-control")
-        return session
-    }
+private struct OpenedStream: Equatable {
+    let sessionId: String
+    let routeScope: SessionRouteScope
 }
 
 @MainActor
 private final class FakeLiveVoiceCallChannel: LiveVoiceCallChannel {
     var sent: [ClientMessage] = []
     var sentAudio: [Data] = []
-    var openedSessionIds: [String] = []
+    var opened: [OpenedStream] = []
     var closed = false
     var onInboundAudio: (@MainActor (Data) -> Void)?
     private var continuation: AsyncStream<ServerMessage>.Continuation?
     private var pending: [ServerMessage] = []
 
-    func open(sessionId: String) -> AsyncStream<ServerMessage> {
-        openedSessionIds.append(sessionId)
+    func open(sessionId: String, routeScope: SessionRouteScope) -> AsyncStream<ServerMessage> {
+        opened.append(OpenedStream(sessionId: sessionId, routeScope: routeScope))
         closed = false
         return AsyncStream { continuation in
             self.continuation = continuation
@@ -721,16 +651,7 @@ private final class FakeLiveVoiceCallChannel: LiveVoiceCallChannel {
 
 @MainActor
 private final class FakeLiveVoiceSessionMemory: LiveVoiceSessionMemory {
-    private var values: [String: String] = [:]
     private var identities: [String: LiveVoiceCallIdentity] = [:]
-
-    func sessionId(forServer serverKey: String) -> String? {
-        values[serverKey]
-    }
-
-    func store(sessionId: String, forServer serverKey: String) {
-        values[serverKey] = sessionId
-    }
 
     func callIdentity(forServer serverKey: String) -> LiveVoiceCallIdentity? {
         identities[serverKey]
