@@ -1213,6 +1213,7 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
 
     private func installBarItems(_ bars: BarState, palette: ThemePalette, showsDictation: Bool) {
         let tint = UIColor(palette.fg)
+        let railTint = SessionListBarItems.railTint(palette)
         sidebarToggle = bars.showsSidebarToggle ? WorkspaceSplitSidebarToggle.makeItem(root: root) : nil
         var leading: [UIBarButtonItem] = sidebarToggle.map { [$0] } ?? []
         var trailing: [UIBarButtonItem] = []
@@ -1225,12 +1226,12 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             // text principal would keep a horizontal bar, so the system title stays.
             navigationItem.titleView = nil
             if bars.showsSidebarOpen {
-                trailing.append(SessionListBarItems.sidebarOpen(joinsRail: true, tint: tint, action: openSidebar))
+                trailing.append(SessionListBarItems.sidebarOpen(joinsRail: true, tint: railTint, action: openSidebar))
             }
             if bars.showsCompose {
                 trailing.append(SessionListBarItems.railCompose(
                     showsDictation: showsDictation,
-                    tint: tint,
+                    tint: railTint,
                     onStart: { [weak self] in self?.startQuickSession(dictate: false) },
                     onDictate: { [weak self] in self?.startQuickSession(dictate: true) }
                 ))
@@ -1239,7 +1240,7 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
                 pinned.append(SessionListBarItems.railItem(SessionListBarItems.hosted(switcherHost), priority: .keep))
             }
             if bars.showsNowPlaying {
-                trailing.append(SessionListBarItems.railNowPlaying(tint: tint) { [weak self] in self?.openNowPlaying() })
+                trailing.append(SessionListBarItems.railNowPlaying(tint: railTint) { [weak self] in self?.openNowPlaying() })
             }
             // Bottom-anchored: spacers cannot push a rail item down.
             bottom.append(SessionListBarItems.files(

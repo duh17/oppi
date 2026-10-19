@@ -390,6 +390,14 @@ enum SessionListBarItems {
         SystemVerticalBar.traitIsActive(traits)
     }
 
+    /// The tint of a rail control. SwiftUI toolbar buttons on the vertical rail
+    /// ignored `.foregroundStyle(.themeFg)` and drew in the app tint
+    /// (`.tint(.themeBlue)`); only a menu label or a static label stayed
+    /// `themeFg`. Horizontal bars honor the foreground style and keep `fg`.
+    static func railTint(_ palette: ThemePalette) -> UIColor {
+        UIColor(palette.blue)
+    }
+
     /// Navigation outranks the frequent actions, and an accessory leaves first.
     static func railItem(_ item: UIBarButtonItem, priority: VerticalRailItemPriority) -> UIBarButtonItem {
         if #available(iOS 27.1, *) {
@@ -440,7 +448,10 @@ enum SessionListBarItems {
             primaryAction: UIAction { _ in action() }
         )
         item.isEnabled = isEnabled
-        item.tintColor = UIColor(isEnabled ? palette.fg : palette.fgDim)
+        // The rail draws the app tint; a disabled item dims itself.
+        item.tintColor = railTitle != nil
+            ? railTint(palette)
+            : UIColor(isEnabled ? palette.fg : palette.fgDim)
         item.accessibilityLabel = accessibilityLabel
         item.accessibilityIdentifier = "workspace.files.open"
         return railTitle == nil ? item : railItem(item, priority: .keep)

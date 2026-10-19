@@ -93,6 +93,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
     /// neither renders nor reacts, the way a hosted SwiftUI screen stops.
     private var isOnScreen = false
     private var hasAppeared = false
+    private var isWaitingToAllowSearchHiding = false
     /// The content's appearance work ran and its tasks run (SwiftUI
     /// `onAppear` and `.task`); ends when the screen leaves or locks.
     private var contentIsLive = false
@@ -248,7 +249,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         hasAppeared = true
-        search.hostDidAppear(self)
+        allowSearchToHide()
         // A search asked for while covered starts on return.
         if phase == .content {
             search.setPresented(searchNavigation.isSearchPresented)
@@ -261,6 +262,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
         recordCoverageBeforeGoingQuiet()
         isOnScreen = false
         hasAppeared = false
+        isWaitingToAllowSearchHiding = false
         connectTask?.cancel()
         connectTask = nil
         endContent()
@@ -269,6 +271,9 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         columnWidth = view.bounds.width
+        if isWaitingToAllowSearchHiding {
+            allowSearchToHide()
+        }
     }
 
     override func updateProperties() {
@@ -378,13 +383,26 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
         if next == .content {
             search.install(on: self, alwaysVisible: false)
             if hasAppeared {
-                // The bar starts shown, then hides as the list scrolls.
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    search.hostDidAppear(self)
-                }
+                allowSearchToHide()
             }
         }
+    }
+
+    /// The bar starts shown, then hides as the list scrolls. A bar that is
+    /// still joining the navigation bar when it is told to hide comes in
+    /// collapsed (the Duo rail attaches it a layout pass after the screen
+    /// appears), so the hiding starts once the bar is on screen.
+    private func allowSearchToHide() {
+        guard navigationItem.searchController === search.searchController else {
+            isWaitingToAllowSearchHiding = false
+            return
+        }
+        guard search.searchController.searchBar.window != nil else {
+            isWaitingToAllowSearchHiding = true
+            return
+        }
+        isWaitingToAllowSearchHiding = false
+        search.hostDidAppear(self)
     }
 
     /// Everything the content mounted: tasks, search, bars, overlays, and,
@@ -1894,6 +1912,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
 
     private func installBarItems(_ bars: BarState, palette: ThemePalette) {
         let tint = UIColor(palette.fg)
+        let railTint = SessionListBarItems.railTint(palette)
         sidebarToggle = bars.showsSidebarToggle ? WorkspaceSplitSidebarToggle.makeItem(root: root) : nil
         var leading: [UIBarButtonItem] = sidebarToggle.map { [$0] } ?? []
         var trailing: [UIBarButtonItem] = []
@@ -1913,7 +1932,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
                     image: UIImage(systemName: "sidebar.leading"),
                     primaryAction: showWorkspaces
                 )
-                item.tintColor = tint
+                item.tintColor = railTint
                 item.accessibilityLabel = String(localized: "Show workspaces")
                 item.accessibilityIdentifier = "workspace.sidebar.showWorkspaces"
                 trailing.append(SessionListBarItems.railItem(item, priority: .navigation))
@@ -1921,7 +1940,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
             if bars.showsBottomItems {
                 let compose = SessionListBarItems.railCompose(
                     showsDictation: bars.showsDictation,
-                    tint: tint,
+                    tint: railTint,
                     onStart: { [weak self] in self?.startQuickSession(dictate: false) },
                     onDictate: { [weak self] in self?.startQuickSession(dictate: true) }
                 )
@@ -1945,13 +1964,13 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
                 image: UIImage(systemName: "slider.horizontal.3"),
                 primaryAction: openConfiguration
             )
-            configuration.tintColor = tint
+            configuration.tintColor = railTint
             configuration.accessibilityLabel = bars.configurationLabel
             configuration.accessibilityIdentifier = "workspace.edit.open"
             trailing.append(SessionListBarItems.railItem(configuration, priority: .keep))
             if bars.showsBottomItems {
                 if bars.showsNowPlaying {
-                    trailing.append(SessionListBarItems.railNowPlaying(tint: tint) { [weak self] in self?.openNowPlaying() })
+                    trailing.append(SessionListBarItems.railNowPlaying(tint: railTint) { [weak self] in self?.openNowPlaying() })
                 }
                 // Bottom-anchored: spacers cannot push a rail item down.
                 bottom.append(SessionListBarItems.files(
