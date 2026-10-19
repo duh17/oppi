@@ -1,4 +1,3 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, InlineExtension } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -9,6 +8,8 @@ import type { SessionBackendEvent } from "./pi-events.js";
 import { speakableText, speechPassages } from "./speech-synthesis.js";
 
 const log = createLogger({ base: { component: "live_voice_speech" } });
+
+type RunMessages = Extract<SessionBackendEvent, { type: "agent_end" }>["messages"];
 
 export const SPEAK_TOOL = "speak";
 const MAX_SPOKEN_CHARS = 2_000;
@@ -163,7 +164,7 @@ export class LiveVoiceSpeech {
 }
 
 /** How the run ended, as the caller should hear it. */
-function finalReply(messages: readonly AgentMessage[]): { text: string; failed: boolean } {
+function finalReply(messages: RunMessages): { text: string; failed: boolean } {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
     if (!message || message.role !== "assistant") continue;
