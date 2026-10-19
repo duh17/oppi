@@ -6,6 +6,7 @@ import {
   type PendingUIRequestProvider,
 } from "./session-attention.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
+import { isExtensionUISessionStreamOnlyMethod } from "./extension-ui-contract.js";
 import { startServerPing } from "./stream.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Storage } from "./storage.js";
@@ -140,38 +141,10 @@ function sanitizeSessionErrorMessage(message: string): string {
   return `${normalized.slice(0, MAX_SESSION_ERROR_MESSAGE_LENGTH)}…`;
 }
 
-function notificationCoalescingKey(
-  message: Extract<AppEventMessage, { type: "extension_ui_notification" }>,
-): string | undefined {
-  if (message.statusKey) {
-    return `${message.sessionId}:${message.method}:status:${message.statusKey}`;
-  }
-  if (message.widgetKey) {
-    return `${message.sessionId}:${message.method}:widget:${message.widgetKey}`;
-  }
-  switch (message.method) {
-    case "setTitle":
-      return `${message.sessionId}:${message.method}:title`;
-    case "setWorkingMessage":
-      return `${message.sessionId}:${message.method}:working-message`;
-    case "setWorkingVisible":
-      return `${message.sessionId}:${message.method}:working-visible`;
-    case "setWorkingIndicator":
-      return `${message.sessionId}:${message.method}:working-indicator`;
-    case "setHiddenThinkingLabel":
-      return `${message.sessionId}:${message.method}:hidden-thinking-label`;
-    case "setToolsExpanded":
-      return `${message.sessionId}:${message.method}:tools-expanded`;
-    default:
-      return undefined;
-  }
-}
-
 export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents {
   private connectionSeq = 0;
   private subscribers = new Set<(message: AppEventMessage) => void>();
   private lastSummaryFingerprintBySession = new Map<string, string>();
-  private lastNotificationFingerprintByKey = new Map<string, string>();
 
   constructor(private readonly ctx: AppEventStreamContext) {}
 
@@ -447,6 +420,7 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
         ];
       }
       case "extension_ui_notification": {
+        if (isExtensionUISessionStreamOnlyMethod(event.method)) return [];
         const workspaceId = this.workspaceIdForSession(sessionId);
         return [
           {
@@ -536,10 +510,6 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
       this.lastSummaryFingerprintBySession.set(message.sessionId, fingerprint);
     }
 
-    if (message.type === "extension_ui_notification" && this.shouldDropNotification(message)) {
-      return;
-    }
-
     for (const callback of this.subscribers) {
       try {
         callback(message);
@@ -550,22 +520,6 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
         });
       }
     }
-  }
-
-  private shouldDropNotification(
-    message: Extract<AppEventMessage, { type: "extension_ui_notification" }>,
-  ): boolean {
-    const key = notificationCoalescingKey(message);
-    if (!key) {
-      return false;
-    }
-    const { emittedAt: _emittedAt, ...stable } = message;
-    const fingerprint = JSON.stringify(stable);
-    if (this.lastNotificationFingerprintByKey.get(key) === fingerprint) {
-      return true;
-    }
-    this.lastNotificationFingerprintByKey.set(key, fingerprint);
-    return false;
   }
 
   private summaryMessageFromSession(

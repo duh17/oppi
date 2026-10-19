@@ -1065,11 +1065,11 @@ const APP_EVENT_CANONICAL_EXAMPLES = {
   extension_ui_notification: {
     type: "extension_ui_notification",
     ...appEventSessionBase,
-    method: "setStatus",
-    statusKey: "build",
-    statusText: "Build passed",
+    method: "notify",
     notifyType: "info",
     message: "Build completed",
+    extensionScopeId: "npm:review-helper",
+    extensionDisplayName: "Review Helper",
   },
   workspace_git_changed: {
     type: "workspace_git_changed",

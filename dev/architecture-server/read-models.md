@@ -42,8 +42,8 @@ Session detail uses bounded trace pages and lightweight outline data where possi
 - session summaries,
 - stop requested/confirmed/failed,
 - session errors,
-- extension UI request/settled/notification,
+- extension UI request/settled, and notifications other than session surface and editor methods,
 - workspace git changed,
 - app-event stream connected.
 
-It does not send focused timeline deltas, full session state, queue state, command results, dictation frames, or raw `GitStatus` payloads. On connect it sends `app_events_connected` with `snapshotRequired: true`; clients repair state through HTTP snapshots.
+It does not send focused timeline deltas, full session state, queue state, command results, dictation frames, or raw `GitStatus` payloads. Session surface and editor notifications (`setStatus`, `setWidget`, `setTitle`, the `setWorking*` family, `setHiddenThinkingLabel`, `setToolsExpanded`, `set_editor_text`) stay on that session's stream, which replays the persistent ones on subscribe; only that session's chat shows them, and a busy session can update its working text every second. On connect it sends `app_events_connected` with `snapshotRequired: true`; clients repair state through HTTP snapshots.

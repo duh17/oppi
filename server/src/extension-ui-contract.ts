@@ -20,6 +20,15 @@ export const EXTENSION_UI_FIRE_AND_FORGET_METHODS = new Set([
   "setToolsExpanded",
   "set_editor_text",
 ]);
+/**
+ * Fire-and-forget methods that set one session's surface or editor state. Their clients are
+ * that session's chat, so they travel on its session stream, which replays the persistent ones
+ * on subscribe. The global app event stream drops them: one busy session's per-second working
+ * text otherwise reaches every client and every screen.
+ */
+const EXTENSION_UI_SESSION_STREAM_ONLY_METHODS = new Set(
+  [...EXTENSION_UI_FIRE_AND_FORGET_METHODS].filter((method) => method !== "notify"),
+);
 export const EXTENSION_UI_NATIVE_SURFACE_MAX_BYTES = 64 * 1024;
 export const EXTENSION_UI_NATIVE_SURFACE_MAX_BLOCKS = 80;
 export const EXTENSION_UI_NATIVE_SURFACE_MAX_DEPTH = 6;
@@ -829,6 +838,10 @@ export function parseExtensionUITextResponse(
   response: ExtensionUIResponsePayload,
 ): string | undefined {
   return response.cancelled ? undefined : response.value;
+}
+
+export function isExtensionUISessionStreamOnlyMethod(method: string): boolean {
+  return EXTENSION_UI_SESSION_STREAM_ONLY_METHODS.has(method);
 }
 
 export function isExtensionUIFireAndForgetMethod(method: string): boolean {

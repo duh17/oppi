@@ -257,6 +257,41 @@ describe("AppEventStreamMux", () => {
     expect(untrackConnection).toHaveBeenCalledWith(ws);
   });
 
+  it("keeps session surface notifications on the session stream and forwards notify", () => {
+    const { mux, session } = makeMux();
+    const ws = new FakeWebSocket();
+    mux.handleWebSocket(ws as unknown as WebSocket);
+
+    const surfaces: ServerMessage[] = [
+      { type: "extension_ui_notification", method: "setWorkingMessage", message: "Busy · 3s" },
+      { type: "extension_ui_notification", method: "setStatus", statusKey: "k", statusText: "on" },
+      {
+        type: "extension_ui_notification",
+        method: "setWidget",
+        widgetKey: "w",
+        widgetLines: ["x"],
+      },
+      { type: "extension_ui_notification", method: "set_editor_text", text: "draft" },
+    ];
+    for (const event of surfaces) mux.handleSessionBroadcastEvent({ sessionId: session.id, event });
+    for (const message of ["Build done", "Build done"]) {
+      mux.handleSessionBroadcastEvent({
+        sessionId: session.id,
+        event: { type: "extension_ui_notification", method: "notify", message, notifyType: "info" },
+      });
+    }
+
+    const forwarded = ws.sent.filter(
+      (message): message is Extract<AppEventMessage, { type: "extension_ui_notification" }> =>
+        message.type === "extension_ui_notification",
+    );
+    // Every notify is an event the user should see, so repeats are not coalesced.
+    expect(forwarded.map((message) => [message.method, message.message])).toEqual([
+      ["notify", "Build done"],
+      ["notify", "Build done"],
+    ]);
+  });
+
   it("converts focused git_status to invalidation-only workspace_git_changed", () => {
     const { mux, session } = makeMux();
     const ws = new FakeWebSocket();

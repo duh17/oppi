@@ -527,11 +527,11 @@
       "sessionId": "sess-1",
       "workspaceId": "ws-1",
       "emittedAt": 1791650100000,
-      "method": "setStatus",
-      "statusKey": "build",
-      "statusText": "Build passed",
+      "method": "notify",
       "notifyType": "info",
-      "message": "Build completed"
+      "message": "Build completed",
+      "extensionScopeId": "npm:review-helper",
+      "extensionDisplayName": "Review Helper"
     },
     "workspace_git_changed": {
       "type": "workspace_git_changed",

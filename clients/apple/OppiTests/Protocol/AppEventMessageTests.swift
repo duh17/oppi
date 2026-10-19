@@ -188,8 +188,8 @@ struct AppEventMessageTests {
           "sessionId": "s1",
           "workspaceId": "w1",
           "emittedAt": 1791650000003,
-          "method": "setWidget",
-          "widgetKey": "review",
+          "method": "notify",
+          "message": "Review ready",
           "extensionScopeId": "npm:review-helper",
           "extensionDisplayName": "Review Helper"
         }
@@ -202,8 +202,8 @@ struct AppEventMessageTests {
         #expect(sessionId == "s1")
         #expect(workspaceId == "w1")
         #expect(emittedAt == 1_791_650_000_003)
-        #expect(notification.method == "setWidget")
-        #expect(notification.widgetKey == "review")
+        #expect(notification.method == "notify")
+        #expect(notification.message == "Review ready")
         #expect(notification.extensionScopeId == "npm:review-helper")
         #expect(notification.extensionDisplayName == "Review Helper")
     }

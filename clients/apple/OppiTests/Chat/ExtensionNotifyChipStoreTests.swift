@@ -93,6 +93,24 @@ struct ExtensionNotifyChipStoreTests {
         conn.extensionNotifyChipStore.dismiss(sessionId: "s1")
     }
 
+    /// Surfaces belong to the session stream. An older server still copies
+    /// them onto the app stream; applying those would redraw every chat for
+    /// any session's per-second working text.
+    @Test func appEventWorkingMessageChangesNothing() {
+        let (conn, _) = makeTestConnection(sessionId: "s1")
+        conn.handleAppEvent(
+            .extensionUINotification(
+                notification: notifyNotification(method: "setWorkingMessage", message: "Busy \u{00B7} 3s", notifyType: nil),
+                sessionId: "s1",
+                workspaceId: nil,
+                emittedAt: 0
+            )
+        )
+
+        #expect(conn.extensionSurfaceBySession["s1"] == nil)
+        #expect(conn.extensionNotifyChipStore.state(for: "s1") == nil)
+    }
+
     @Test func backgroundSessionAppEventInsertsOneChip() {
         let (conn, _) = makeTestConnection(sessionId: "s1")
         conn.handleAppEvent(

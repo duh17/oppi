@@ -69,12 +69,7 @@ extension ServerConnection {
             }
 
         case .extensionUINotification(let notification, let sessionId, _, _):
-            applyExtensionUINotification(
-                notification,
-                sessionId: sessionId,
-                isActiveSession: isFocusedSession(sessionId),
-                fromAppEvent: true
-            )
+            applyAppEventExtensionNotification(notification, sessionId: sessionId)
 
         case .workspaceGitChanged(let workspaceId, let worktreeId, _, _, _):
             invalidateWorkspaceCaches(workspaceId: workspaceId, worktreeId: worktreeId)

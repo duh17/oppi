@@ -173,24 +173,14 @@ extension ServerConnection {
 
     // MARK: - Extension Surface
 
-    /// Notify chips are inserted only from app events. Session-stream frames
-    /// still update editor text and persistent surfaces.
+    /// Session-stream frames own editor text and persistent surfaces; the server
+    /// replays the surfaces on subscribe. Notify chips come only from app events.
     func applyExtensionUINotification(
         _ notification: ExtensionUINotification,
         sessionId: String,
-        isActiveSession: Bool,
-        fromAppEvent: Bool = false
+        isActiveSession: Bool
     ) {
         switch notification.method {
-        case "notify":
-            guard fromAppEvent else { return }
-            applyNotifyChip(
-                message: notification.message,
-                notifyType: notification.notifyType,
-                displayName: notification.extensionDisplayName,
-                sessionId: sessionId
-            )
-
         case "set_editor_text":
             guard isActiveSession, let text = notification.text else { return }
             chatState.stageExtensionEditorText(text: text, sessionId: sessionId)
@@ -208,7 +198,35 @@ extension ServerConnection {
             storeExtensionSurface(surface, for: sessionId)
 
         default:
-            guard fromAppEvent else { return }
+            return
+        }
+    }
+
+    /// App-event notifications are notify chips for any session. The server
+    /// keeps surface and editor methods on the session stream, so an older
+    /// server's copies here are ignored rather than applied twice.
+    func applyAppEventExtensionNotification(_ notification: ExtensionUINotification, sessionId: String) {
+        switch notification.method {
+        case "set_editor_text",
+             "setStatus",
+             "setWidget",
+             "setTitle",
+             "setWorkingMessage",
+             "setWorkingVisible",
+             "setWorkingIndicator",
+             "setHiddenThinkingLabel",
+             "setToolsExpanded":
+            return
+
+        case "notify":
+            applyNotifyChip(
+                message: notification.message,
+                notifyType: notification.notifyType,
+                displayName: notification.extensionDisplayName,
+                sessionId: sessionId
+            )
+
+        default:
             applyNotifyChip(
                 message: notification.message ?? notification.notifyType,
                 notifyType: notification.notifyType,
