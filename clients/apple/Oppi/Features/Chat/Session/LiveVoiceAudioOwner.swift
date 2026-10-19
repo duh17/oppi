@@ -1,6 +1,7 @@
 import Accelerate
 @preconcurrency import AVFoundation
 import Foundation
+import Synchronization
 
 /// Duplex capture owner for Live Voice. Mute stops the input tap.
 ///
@@ -11,6 +12,8 @@ protocol LiveVoiceAudioOwning: AnyObject {
     var isCapturing: Bool { get }
     var openedDictationStream: Bool { get }
     var onPCM: (@MainActor (Data) -> Void)? { get set }
+    /// True while the agent's reply is playing, false once it has gone quiet.
+    var onPlaybackActiveChange: (@MainActor (Bool) -> Void)? { get set }
     func start() async throws
     func setMuted(_ muted: Bool)
     func play(_ pcm: Data)
@@ -27,6 +30,7 @@ protocol LiveVoiceCaptureEngine: AnyObject {
 
 @MainActor
 protocol LiveVoicePlaybackEngine: AnyObject {
+    var onPlaybackActiveChange: (@MainActor (Bool) -> Void)? { get set }
     func play(_ pcm: Data)
     func stopPlayback()
     func teardown()
@@ -37,6 +41,10 @@ final class LiveVoiceAudioOwner: LiveVoiceAudioOwning {
     private(set) var isCapturing = false
     let openedDictationStream = false
     var onPCM: (@MainActor (Data) -> Void)?
+    var onPlaybackActiveChange: (@MainActor (Bool) -> Void)? {
+        get { playback?.onPlaybackActiveChange }
+        set { playback?.onPlaybackActiveChange = newValue }
+    }
 
     private let engine: LiveVoiceCaptureEngine
     private let playback: LiveVoicePlaybackEngine?
@@ -44,7 +52,7 @@ final class LiveVoiceAudioOwner: LiveVoiceAudioOwning {
     private var muted = false
 
     init(
-        engine: LiveVoiceCaptureEngine = LiveVoiceDuplexCaptureEngine(),
+        engine: LiveVoiceCaptureEngine,
         playback: LiveVoicePlaybackEngine? = nil
     ) {
         self.engine = engine
@@ -138,6 +146,8 @@ struct LiveVoicePlaybackScheduler {
     static let replyGap: TimeInterval = 1.0
 
     private(set) var stats = Stats()
+    /// A reply is on its way out of the speaker: started and not yet drained or flushed.
+    var isPlaying: Bool { !priming }
     private var priming = true
     private var heldFrames = 0
     private var queuedFrames = 0
@@ -195,10 +205,45 @@ struct LiveVoicePlaybackScheduler {
     }
 }
 
+/// The call's latest mic and playback spectra for the composer's orb.
+///
+/// The audio taps write it on their own threads, with the same analyzer dictation uses and
+/// no allocation; the orb reads it once per drawn frame. Nothing here waits on the UI, so a
+/// call in the background or with the screen off does the same audio work as before.
+final class LiveVoiceAudioMeter: Sendable {
+    struct Levels: Equatable, Sendable {
+        var mic = VoiceSpectrumFrame.zero
+        var playback = VoiceSpectrumFrame.zero
+    }
+
+    private let levels = Mutex(Levels())
+
+    var current: Levels { levels.withLock { $0 } }
+
+    func publishMic(_ frame: VoiceSpectrumFrame) {
+        levels.withLock { $0.mic = frame }
+    }
+
+    func publishPlayback(_ frame: VoiceSpectrumFrame) {
+        levels.withLock { $0.playback = frame }
+    }
+
+    func reset() {
+        levels.withLock { $0 = Levels() }
+    }
+}
+
 /// One play-and-record session so Live Voice capture can coexist with playback.
 @MainActor
 final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlaybackEngine {
+    /// A pause this long ends a reply. Shorter gaps fall between two sentences of one reply.
+    private static let quietAfterReply: Duration = .milliseconds(600)
+
     private(set) var isCapturing = false
+    var onPlaybackActiveChange: (@MainActor (Bool) -> Void)?
+    private let meter: LiveVoiceAudioMeter
+    private var reportedPlaying = false
+    private var quietTask: Task<Void, Never>?
     private var audioEngine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
     private var playbackFormat: AVAudioFormat?
@@ -212,6 +257,10 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
     private var onPCM: (@Sendable (Data) -> Void)?
     private var observers: [NSObjectProtocol] = []
     private var recoveries = 0
+
+    init(meter: LiveVoiceAudioMeter) {
+        self.meter = meter
+    }
 
     func start(onPCM: @escaping @Sendable (Data) -> Void) throws {
         // The session is set up here, once per capture start, never per played chunk.
@@ -231,7 +280,7 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
         enableEchoCancellation(on: engine)
         // Install the mic tap on a bare engine. Attaching the 24 kHz playback
         // graph first makes inputNode.outputFormat report 0 Hz on device.
-        try LiveVoiceCaptureEngineHelper.installTap(engine: engine, onPCM: onPCM)
+        try LiveVoiceCaptureEngineHelper.installTap(engine: engine, meter: meter, onPCM: onPCM)
         tapInstalled = true
         try attachPlayback(to: engine)
         if !engine.isRunning {
@@ -247,6 +296,8 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
             tapInstalled = false
         }
         isCapturing = false
+        // A removed tap sends no more frames; the orb must not hold the last word.
+        meter.publishMic(.zero)
     }
 
     func stopPlayback() {
@@ -261,6 +312,34 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
         scheduler.flush(userTalked: userTalked)
         player?.stop()
         player?.reset()
+        // Dropped audio is over now, not after the quiet delay: the user is talking.
+        quietTask?.cancel()
+        quietTask = nil
+        setPlaybackActive(false)
+    }
+
+    /// Reports a reply starting at once and ending only after `quietAfterReply` of silence,
+    /// so the gap between two sentences does not flip the call back to listening.
+    private func reportPlaybackActivity() {
+        if scheduler.isPlaying {
+            quietTask?.cancel()
+            quietTask = nil
+            setPlaybackActive(true)
+            return
+        }
+        guard reportedPlaying, quietTask == nil else { return }
+        quietTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.quietAfterReply)
+            guard let self, !Task.isCancelled else { return }
+            self.quietTask = nil
+            if !self.scheduler.isPlaying { self.setPlaybackActive(false) }
+        }
+    }
+
+    private func setPlaybackActive(_ active: Bool) {
+        guard reportedPlaying != active else { return }
+        reportedPlaying = active
+        onPlaybackActiveChange?(active)
     }
 
     func teardown() {
@@ -272,11 +351,13 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
         stopPlayback()
         audioEngine?.stop()
         if let player {
+            player.removeTap(onBus: 0)
             audioEngine?.detach(player)
         }
         player = nil
         playbackFormat = nil
         audioEngine = nil
+        meter.reset()
         Self.logCallAudio(stats, echoCancellation: echoCancellation, recoveries: recoveries)
         scheduler = LiveVoicePlaybackScheduler()
         echoCancellation = false
@@ -322,6 +403,7 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
         held.removeAll()
         for buffer in buffers { schedule(buffer, on: player) }
         if !player.isPlaying { player.play() }
+        reportPlaybackActivity()
     }
 
     private func schedule(_ buffer: AVAudioPCMBuffer, on player: AVAudioPlayerNode) {
@@ -331,6 +413,7 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
             Task { @MainActor in
                 guard let self, self.generation == generation else { return }
                 self.scheduler.played(frames: frames, at: ProcessInfo.processInfo.systemUptime)
+                self.reportPlaybackActivity()
             }
         }
     }
@@ -369,7 +452,7 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
             if tapInstalled { engine.inputNode.removeTap(onBus: 0) }
             tapInstalled = false
             do {
-                try LiveVoiceCaptureEngineHelper.installTap(engine: engine, onPCM: onPCM)
+                try LiveVoiceCaptureEngineHelper.installTap(engine: engine, meter: meter, onPCM: onPCM)
                 tapInstalled = true
             } catch {
                 Self.logRestartFailure(reason: reason, step: "mic_tap", error: error)
@@ -456,6 +539,7 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
         }
         engine.attach(playerNode)
         engine.connect(playerNode, to: engine.mainMixerNode, format: format)
+        try LiveVoiceCaptureEngineHelper.installPlaybackTap(player: playerNode, format: format, meter: meter)
         player = playerNode
         playbackFormat = format
     }
@@ -476,7 +560,24 @@ enum LiveVoiceCaptureEngineHelper {
         throw VoiceInputError.internalError("Microphone input format unavailable")
     }
 
-    static func installTap(engine: AVAudioEngine, onPCM: @escaping @Sendable (Data) -> Void) throws {
+    /// The agent's voice as it leaves the speaker, measured like the mic so the orb moves
+    /// with whichever side is talking.
+    static func installPlaybackTap(
+        player: AVAudioPlayerNode,
+        format: AVAudioFormat,
+        meter: LiveVoiceAudioMeter
+    ) throws {
+        let spectrum = try VoiceSpectrumAnalyzer()
+        player.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            meter.publishPlayback(spectrum.analyze(buffer))
+        }
+    }
+
+    static func installTap(
+        engine: AVAudioEngine,
+        meter: LiveVoiceAudioMeter,
+        onPCM: @escaping @Sendable (Data) -> Void
+    ) throws {
         let inputNode = engine.inputNode
         let inputFormat = try resolvedHardwareFormat(
             outputFormat: inputNode.outputFormat(forBus: 0),
@@ -491,6 +592,8 @@ enum LiveVoiceCaptureEngineHelper {
         ) else {
             throw VoiceInputError.internalError("Cannot create Live Voice 16kHz mono format")
         }
+        // Spectrum from the native-rate tap, as dictation measures it.
+        let spectrum = try VoiceSpectrumAnalyzer()
 
         let converter: AVAudioConverter?
         if inputFormat != targetFormat {
@@ -503,6 +606,7 @@ enum LiveVoiceCaptureEngineHelper {
         }
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, _ in
+            meter.publishMic(spectrum.analyze(buffer))
             let outputBuffer: AVAudioPCMBuffer
             if let converter {
                 let frameCapacity = AVAudioFrameCount(ceil(

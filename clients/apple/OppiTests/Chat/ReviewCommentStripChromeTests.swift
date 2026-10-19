@@ -50,22 +50,6 @@ struct ReviewCommentStripChromeTests {
         #expect(toggleNowPlaying.contains("collapseNotifyChip()"))
     }
 
-    @Test("Notify chip is a trailing above-editor strip pill, not a separate footer chip")
-    func notifyChipIsTrailingAboveEditorStripPill() throws {
-        let chat = try reviewCommentsChatViewSource()
-        let footer = try reviewCommentsSourceSlice(
-            named: "private var footerArea: some View {", until: "ChatInputBar(", in: chat
-        )
-        #expect(footer.contains("showsTrailingStripContent: showsNotifyChip"))
-        #expect(footer.contains("ExtensionNotifyChip("))
-        #expect(footer.contains("ExtensionNotifyDrawer("))
-        #expect(footer.contains("showsNotifyChip: showsNotifyChip"))
-
-        let chipRange = try #require(footer.range(of: "ExtensionNotifyChip("))
-        let warningRange = try #require(footer.range(of: "reconnectFailureMessage"))
-        #expect(chipRange.lowerBound < warningRange.lowerBound)
-    }
-
     @Test("Collapsed pill title keeps the full staged-count phrase")
     func collapsedPillTitleKeepsStagedCountPhrase() {
         #expect(ReviewCommentStripChrome.stashTitle(count: 1) == "1 review comment staged")

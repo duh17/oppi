@@ -829,7 +829,7 @@ struct ChatView: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                footerArea
+                sessionFooter
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
             }
             .overlay(alignment: .bottomTrailing) {
@@ -970,12 +970,14 @@ struct ChatView: View {
                 audioPlayer.setSessionContext(session)
             }
             .task(id: sessionId) {
-                // A quick voice session opens straight into its call.
-                guard appNavigation.pendingLiveVoiceSessionId == sessionId else { return }
-                appNavigation.pendingLiveVoiceSessionId = nil
-                startLiveVoice()
-            }
-            .task(id: sessionId) {
+                // A quick voice session opens straight into its call. The call takes the
+                // composer first, so the quick message below lands in it and sends during
+                // the call instead of being set aside as a draft.
+                if appNavigation.pendingLiveVoiceSessionId == sessionId {
+                    appNavigation.pendingLiveVoiceSessionId = nil
+                    startLiveVoice()
+                }
+
                 // Auto-send pending message from QuickSessionSheet.
                 // Keyed on sessionId so it re-fires if the view is reused
                 // for a different session (onChange self-healing path).
@@ -1034,6 +1036,12 @@ struct ChatView: View {
                 handleExtensionEditorTextUpdate()
             }
             .onChange(of: activeComposerAskRequest?.id) { _, _ in
+                synchronizeComposerMode()
+            }
+            .onChange(of: liveVoiceController.holdsComposer) { _, holds in
+                // The draft set aside when the call started returns when it ends.
+                guard !holds else { return }
+                composerDraftController.restoreSetAsideMessage()
                 synchronizeComposerMode()
             }
             .onChange(of: extensionSurfaceState?.toolsExpanded) { _, _ in
@@ -1317,25 +1325,6 @@ struct ChatView: View {
             .environment(\.openChatReader, ChatReaderOpenAction(handler: openTimelineReader))
     }
 
-    /// A call's bar sits above the chat's own footer: Stop, Ask cards, and the queue stay in reach.
-    @ViewBuilder
-    private var footerArea: some View {
-        VStack(spacing: 8) {
-            if Self.showsLiveVoiceBar(
-                isLive: liveVoiceController.isLive,
-                lastError: liveVoiceController.lastError
-            ) {
-                LiveVoiceBarHost(
-                    statusText: liveVoiceController.statusText,
-                    isMuted: liveVoiceController.isMuted,
-                    onMute: { liveVoiceController.toggleMute() },
-                    onEnd: { Task { await liveVoiceController.end() } }
-                )
-            }
-            sessionFooter
-        }
-    }
-
     @ViewBuilder
     private var sessionFooter: some View {
         if isStopped {
@@ -1504,6 +1493,7 @@ struct ChatView: View {
                     voiceInputManager: liveVoiceCallOwnsMic ? nil : voiceInputManager,
                     onPrepareVoiceInput: prepareChatVoiceInput,
                     onLiveVoiceSelected: liveVoiceEntry,
+                    liveVoiceCall: liveVoiceController.composerCall,
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
                     askRequest: composerAskRequest,
@@ -2169,39 +2159,6 @@ struct ChatView: View {
         phase == .inactive || phase == .background
     }
 
-    /// Hosts the UIKit call bar in ChatView's SwiftUI footer.
-    private struct LiveVoiceBarHost: UIViewRepresentable {
-        let statusText: String
-        let isMuted: Bool
-        let onMute: () -> Void
-        let onEnd: () -> Void
-
-        func makeUIView(context: Context) -> LiveVoiceBarView {
-            LiveVoiceBarView()
-        }
-
-        func updateUIView(_ bar: LiveVoiceBarView, context: Context) {
-            bar.onMute = onMute
-            bar.onEnd = onEnd
-            bar.apply(statusText: statusText, isMuted: isMuted)
-        }
-
-        func sizeThatFits(_ proposal: ProposedViewSize, uiView: LiveVoiceBarView, context: Context) -> CGSize? {
-            let width = proposal.width ?? uiView.bounds.width
-            let height = uiView.systemLayoutSizeFitting(
-                CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
-                withHorizontalFittingPriority: .required,
-                verticalFittingPriority: .fittingSizeLevel
-            ).height
-            return CGSize(width: width, height: height)
-        }
-    }
-
-    static func showsLiveVoiceBar(isLive: Bool, lastError: String? = nil) -> Bool {
-        // Start failures fail closed but keep the bar until End so the error is visible.
-        return isLive || lastError != nil
-    }
-
     private var liveVoiceCallOwnsMic: Bool { liveVoiceController.isLive }
 
     /// The composer's Live Voice entry: none during a call, or for a terminal Pi mirror,
@@ -2497,6 +2454,12 @@ struct ChatView: View {
     /// Live Voice talks to this chat's session: its agent hears the caller and answers out loud.
     private func startLiveVoice() {
         guard let routeScope = focusedRouteScope else { return }
+        // The call starts with an empty field, now rather than on the next render, so a
+        // message placed in the composer right after (a Quick Session's first) is the
+        // call's own and sends, not a draft set aside.
+        composerDraftController.setAsideMessage()
+        composerTextBeforeRecording = nil
+        synchronizeComposerMode()
         Task {
             await liveVoiceController.start(
                 sessionId: sessionId,

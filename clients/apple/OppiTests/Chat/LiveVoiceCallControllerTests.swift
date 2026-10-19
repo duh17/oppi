@@ -131,8 +131,8 @@ struct LiveVoiceCallControllerTests {
             callId: "call-1", eventSeq: 3, leaseEpoch: 1,
             partialTranscript: "check the server tests", delegations: [stopped]
         )))
-        await waitUntil { harness.controller.statusText == "check the server tests" }
-        #expect(harness.controller.statusText == "check the server tests")
+        await waitUntil { harness.controller.partialTranscript == "check the server tests" }
+        #expect(harness.controller.statusText == "Listening")
 
         harness.channel.emit(.voiceCallState(Self.snapshot(
             callId: "call-1", eventSeq: 4, leaseEpoch: 1,
@@ -254,17 +254,64 @@ struct LiveVoiceCallControllerTests {
         #expect(sentTypes(harness.channel.sent) == ["voice_call_start"])
     }
 
-    @Test("Partial Yuwp transcripts update the Live Voice bar without a client dictation stream")
-    func partialTranscriptUpdatesStatus() async throws {
+    @Test("Partial Yuwp transcripts reach the composer without a client dictation stream, and clear once sent")
+    func partialTranscriptUpdatesComposer() async throws {
         let harness = try await startedHarness()
         harness.channel.emit(
             .voiceCallState(
-                Self.snapshot(callId: "call-1", eventSeq: 2, leaseEpoch: 1, partialTranscript: "list open")
+                Self.snapshot(callId: "call-1", eventSeq: 2, leaseEpoch: 1, partialTranscript: "  list open ")
             )
         )
-        await waitUntil { harness.controller.statusText == "list open" }
+        await waitUntil { harness.controller.partialTranscript == "list open" }
+        #expect(harness.controller.composerStatus == "Listening")
         #expect(harness.controller.isLive)
         #expect(!harness.audio.openedDictationStream)
+
+        harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 3, leaseEpoch: 1)))
+        await waitUntil { harness.controller.callState?.eventSeq == 3 }
+        #expect(harness.controller.partialTranscript.isEmpty)
+    }
+
+    @Test("The composer says Speaking while the reply plays and Muted while muted, unless an approval or a dropped link needs saying")
+    func composerStatusFollowsPlayback() async throws {
+        let harness = try await startedHarness()
+        #expect(harness.controller.composerStatus == "Listening")
+
+        harness.audio.setPlaybackActive(true)
+        #expect(harness.controller.isSpeaking)
+        #expect(harness.controller.composerStatus == "Speaking")
+
+        harness.channel.emit(.voiceApprovalRequired(VoiceApprovalRequiredMessage(
+            callId: "call-1", controlSessionId: "sess-1", eventSeq: 2, challengeId: "challenge-1",
+            requestId: "request-1", summary: "Allow the test command?", targetRefs: [], expiresAt: 9_000
+        )))
+        await waitUntil { harness.controller.approvalSummary != nil }
+        #expect(harness.controller.composerStatus == "Allow the test command?")
+
+        harness.channel.emit(.voiceApprovalResult(VoiceApprovalResultMessage(
+            callId: "call-1", controlSessionId: "sess-1", eventSeq: 3, challengeId: "challenge-1",
+            outcome: .delivered, decision: nil, reason: nil
+        )))
+        await waitUntil { harness.controller.approvalSummary == nil }
+        #expect(harness.controller.composerStatus == "Speaking")
+
+        harness.channel.emit(.voiceCallState(Self.snapshot(
+            callId: "call-1", eventSeq: 4, leaseEpoch: 1, frontend: .detached
+        )))
+        await waitUntil { harness.controller.callState?.eventSeq == 4 }
+        #expect(harness.controller.composerStatus == "Reconnecting")
+
+        harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 5, leaseEpoch: 1)))
+        await waitUntil { harness.controller.callState?.eventSeq == 5 }
+        harness.audio.setPlaybackActive(false)
+        #expect(harness.controller.composerStatus == "Listening")
+        harness.controller.toggleMute()
+        #expect(harness.controller.composerStatus == "Muted")
+        harness.controller.toggleMute()
+
+        harness.audio.setPlaybackActive(true)
+        await harness.controller.end()
+        #expect(!harness.controller.isSpeaking)
     }
 
     @Test("User partial transcript flushes leftover scheduled playback")
@@ -282,7 +329,7 @@ struct LiveVoiceCallControllerTests {
         await waitUntil { harness.audio.playbackStops > stopsBefore }
 
         #expect(harness.controller.isLive)
-        #expect(harness.controller.statusText == "stop")
+        #expect(harness.controller.partialTranscript == "stop")
         #expect(harness.audio.isCapturing)
         #expect(!harness.controller.isMuted)
     }
@@ -313,10 +360,7 @@ struct LiveVoiceCallControllerTests {
         #expect(harness.controller.lastError != nil)
         #expect(harness.controller.statusText == harness.controller.lastError)
         #expect(harness.controller.statusText != "Listening")
-        #expect(ChatView.showsLiveVoiceBar(
-            isLive: harness.controller.isLive,
-            lastError: harness.controller.lastError
-        ))
+        #expect(harness.controller.holdsComposer)
         #expect(sentTypes(harness.channel.sent).contains("voice_call_end"))
         #expect(leasePayload(harness.channel.sent.last { $0.typeLabel == "voice_call_end" })?.0 == "call-1")
         #expect(harness.channel.closed)
@@ -326,10 +370,7 @@ struct LiveVoiceCallControllerTests {
         await harness.controller.end()
         #expect(harness.controller.lastError == nil)
         #expect(harness.controller.statusText == "Listening")
-        #expect(!ChatView.showsLiveVoiceBar(
-            isLive: harness.controller.isLive,
-            lastError: harness.controller.lastError
-        ))
+        #expect(!harness.controller.holdsComposer)
     }
 
     @Test("A second start after capture failure mints a new client call id")
@@ -382,20 +423,14 @@ struct LiveVoiceCallControllerTests {
         #expect(harness.controller.lastError?.contains("already exists") == true)
         #expect(harness.controller.statusText == harness.controller.lastError)
         #expect(harness.controller.statusText != "Listening")
-        #expect(ChatView.showsLiveVoiceBar(
-            isLive: harness.controller.isLive,
-            lastError: harness.controller.lastError
-        ))
+        #expect(harness.controller.holdsComposer)
         #expect(harness.channel.closed)
         #expect(!harness.audio.isCapturing)
 
         await harness.controller.end()
         #expect(harness.controller.lastError == nil)
         #expect(harness.controller.statusText == "Listening")
-        #expect(!ChatView.showsLiveVoiceBar(
-            isLive: harness.controller.isLive,
-            lastError: harness.controller.lastError
-        ))
+        #expect(!harness.controller.holdsComposer)
     }
 
     @Test("A second start after End mints a new client call id")
@@ -456,19 +491,13 @@ struct LiveVoiceCallControllerTests {
         #expect(!harness.controller.isLive)
         #expect(harness.controller.lastError == "Continuous voice control is unavailable")
         #expect(harness.controller.statusText == "Continuous voice control is unavailable")
-        #expect(ChatView.showsLiveVoiceBar(
-            isLive: harness.controller.isLive,
-            lastError: harness.controller.lastError
-        ))
+        #expect(harness.controller.holdsComposer)
         #expect(harness.channel.closed)
         #expect(!harness.audio.isCapturing)
 
         await harness.controller.end()
         #expect(harness.controller.lastError == nil)
-        #expect(!ChatView.showsLiveVoiceBar(
-            isLive: harness.controller.isLive,
-            lastError: harness.controller.lastError
-        ))
+        #expect(!harness.controller.holdsComposer)
     }
 
     @Test("A session run error during a call leaves the call up")
@@ -605,6 +634,7 @@ struct LiveVoiceCallControllerTests {
         callId: String,
         eventSeq: Int,
         leaseEpoch: Int,
+        frontend: VoiceCallFrontendState = .attached,
         partialTranscript: String? = nil,
         delegations: [VoiceCallDelegationSnapshot] = []
     ) -> VoiceCallStateSnapshot {
@@ -612,7 +642,7 @@ struct LiveVoiceCallControllerTests {
             callId: callId,
             controlSessionId: "sess-1",
             lifecycle: .active,
-            frontend: .attached,
+            frontend: frontend,
             controllerLeaseEpoch: leaseEpoch,
             controllerLeaseExpiresAt: 30_000,
             eventSeq: eventSeq,
@@ -654,6 +684,7 @@ final class FakeLiveVoiceAudioOwner: LiveVoiceAudioOwning {
     private(set) var isCapturing = false
     let openedDictationStream = false
     var onPCM: (@MainActor (Data) -> Void)?
+    var onPlaybackActiveChange: (@MainActor (Bool) -> Void)?
     var startError: Error?
     private(set) var played: [Data] = []
     private(set) var playbackStops = 0
@@ -684,6 +715,10 @@ final class FakeLiveVoiceAudioOwner: LiveVoiceAudioOwning {
     func emit(_ data: Data) {
         guard isCapturing else { return }
         onPCM?(data)
+    }
+
+    func setPlaybackActive(_ active: Bool) {
+        onPlaybackActiveChange?(active)
     }
 }
 

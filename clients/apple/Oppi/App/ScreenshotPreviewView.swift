@@ -121,6 +121,12 @@ struct ScreenshotPreviewView: View {
             ExtensionSurfacePreview()
         case "chat-input-attachment-containment":
             ChatInputAttachmentContainmentPreview()
+        case "live-voice-composer":
+            LiveVoiceComposerPreview(pinned: nil)
+        case "live-voice-composer-connecting", "live-voice-composer-listening", "live-voice-composer-talking", "live-voice-composer-speaking", "live-voice-composer-muted", "live-voice-composer-restored":
+            LiveVoiceComposerPreview(pinned: LiveVoiceComposerPreview.Step(
+                rawValue: String(ScreenshotPreviewConfig.screen.dropFirst("live-voice-composer-".count))
+            ))
         case "extension-notify-chip-info":
             ExtensionNotifyChipScreenshotPreview(mode: .collapsedInfo)
         case "extension-notify-chip-error":

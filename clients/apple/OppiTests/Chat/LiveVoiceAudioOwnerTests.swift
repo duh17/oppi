@@ -98,7 +98,10 @@ struct LiveVoicePlaybackSchedulerTests {
         var scheduler = LiveVoicePlaybackScheduler()
         do { let decision = scheduler.receive(frames: chunk, at: 0); #expect(decision == .hold) }
         do { let decision = scheduler.receive(frames: chunk, at: 0.05); #expect(decision == .hold) }
+        // Held audio is not speech yet: the call still shows Listening.
+        #expect(!scheduler.isPlaying)
         do { let decision = scheduler.receive(frames: chunk, at: 0.1); #expect(decision == .startWithHeld) }
+        #expect(scheduler.isPlaying)
         do { let decision = scheduler.receive(frames: chunk, at: 0.15); #expect(decision == .schedule) }
         do { let started = scheduler.primeTimedOut(); #expect(!started) }
     }
@@ -115,7 +118,10 @@ struct LiveVoicePlaybackSchedulerTests {
     func countsUnderrunAndReprimes() {
         var scheduler = LiveVoicePlaybackScheduler()
         for i in 0..<3 { _ = scheduler.receive(frames: chunk, at: Double(i) * 0.01) }
-        scheduler.played(frames: chunk * 3, at: 0.2)
+        scheduler.played(frames: chunk * 2, at: 0.15)
+        #expect(scheduler.isPlaying)
+        scheduler.played(frames: chunk, at: 0.2)
+        #expect(!scheduler.isPlaying)
         do { let decision = scheduler.receive(frames: chunk, at: 0.5); #expect(decision == .hold) }
         #expect(scheduler.stats.underruns == 1)
         #expect(scheduler.stats.maxGapMs == 480)
@@ -134,6 +140,7 @@ struct LiveVoicePlaybackSchedulerTests {
         var scheduler = LiveVoicePlaybackScheduler()
         _ = scheduler.receive(frames: chunk * 3, at: 0)
         scheduler.flush(userTalked: true)
+        #expect(!scheduler.isPlaying)
         scheduler.flush(userTalked: true)
         #expect(scheduler.stats.flushes == 1)
         _ = scheduler.receive(frames: chunk * 3, at: 0.4)
@@ -146,6 +153,7 @@ struct LiveVoicePlaybackSchedulerTests {
 
 @MainActor
 private final class FakeLiveVoicePlaybackEngine: LiveVoicePlaybackEngine {
+    var onPlaybackActiveChange: (@MainActor (Bool) -> Void)?
     private(set) var played: [Data] = []
     private(set) var stops = 0
     private(set) var teardowns = 0

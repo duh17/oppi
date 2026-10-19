@@ -25,7 +25,8 @@ protocol LiveVoiceSessionMemory: AnyObject {
 }
 
 /// Owns a Live Voice call on one chat's session and its duplex capture. It does not own the
-/// text composer. What the caller says arrives in that session; its agent answers out loud.
+/// text composer, which shows the call (`holdsComposer`). What the caller says arrives in
+/// that session; its agent answers out loud.
 @MainActor
 @Observable
 final class LiveVoiceCallController {
@@ -36,8 +37,53 @@ final class LiveVoiceCallController {
     private(set) var isMuted = false
     private(set) var callState: VoiceCallStateSnapshot?
     private(set) var approvalSummary: String?
+    /// The call's own state: connecting, listening, the agent's progress, an approval to
+    /// answer, or why the call failed. What the user is saying is `partialTranscript`.
     private(set) var statusText = "Listening"
     private(set) var lastError: String?
+    /// The agent's reply is playing.
+    private(set) var isSpeaking = false
+    /// Mic and playback levels for the composer's orb; outlives each call's audio.
+    @ObservationIgnored let meter = LiveVoiceAudioMeter()
+
+    /// The composer is the call surface while the call is up, and after a failed call until
+    /// End, so the reason stays on screen.
+    var holdsComposer: Bool { isLive || lastError != nil }
+
+    /// What the user is saying right now, before the server sends it as their message.
+    var partialTranscript: String {
+        callState?.partialTranscript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    /// The composer's placeholder during a call.
+    var composerStatus: String {
+        // An approval or a dropped frontend outranks the voice; the reply keeps playing.
+        guard isLive, approvalSummary == nil, callState?.frontend == .attached else {
+            return statusText
+        }
+        if isSpeaking { return "Speaking" }
+        // Muted replaces only plain listening; the agent's progress still shows.
+        if isMuted, statusText == Self.listening { return "Muted" }
+        return statusText
+    }
+
+    private static let listening = "Listening"
+
+    /// The chat input bar's call surface; nil once the call has let go of the composer.
+    var composerCall: ComposerLiveVoiceCall? {
+        guard holdsComposer else { return nil }
+        return ComposerLiveVoiceCall(
+            isLive: isLive,
+            isConnecting: isLive && callState == nil,
+            isMuted: isMuted,
+            isSpeaking: isSpeaking,
+            status: composerStatus,
+            transcript: partialTranscript,
+            meter: meter,
+            onToggleMute: { [weak self] in self?.toggleMute() },
+            onEnd: { [weak self] in Task { await self?.end() } }
+        )
+    }
 
     @ObservationIgnored private var channel: LiveVoiceCallChannel?
     @ObservationIgnored private var audio: LiveVoiceAudioOwning?
@@ -101,6 +147,10 @@ final class LiveVoiceCallController {
         keepAliveTask?.cancel()
         keepAliveTask = nil
         audio?.stopPlayback()
+        isSpeaking = false
+        audio?.onPlaybackActiveChange = { [weak self] active in
+            self?.isSpeaking = active
+        }
         channel.onInboundAudio = { [weak self] data in
             self?.audio?.play(data)
         }
@@ -160,7 +210,7 @@ final class LiveVoiceCallController {
     private func bind(_ connection: ServerConnection, sessionId: String) {
         channel = ServerConnectionLiveVoiceChannel(connection: connection)
         if audio == nil {
-            audio = LiveVoiceAudioOwner()
+            audio = LiveVoiceAudioOwner(engine: LiveVoiceDuplexCaptureEngine(meter: meter))
         }
         let server = connection.credentials?.normalizedServerFingerprint
             ?? connection.credentials?.host
@@ -247,8 +297,9 @@ final class LiveVoiceCallController {
                 statusText = update.text
             }
         case .voiceApprovalRequired(let required):
-            approvalSummary = required.summary
-            statusText = LiveVoiceBarView.statusText(approvalSummary: required.summary)
+            let summary = required.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            approvalSummary = summary.isEmpty ? nil : summary
+            statusText = approvalSummary ?? "Listening"
         case .voiceApprovalResult:
             approvalSummary = nil
             statusText = callState.map(Self.statusText(for:)) ?? "Listening"
@@ -286,10 +337,10 @@ final class LiveVoiceCallController {
         if snapshot.frontend == .detached {
             return "Reconnecting"
         }
-        // What the user is saying right now wins over any older outcome.
+        // The user talking now outranks any older outcome; their words fill the field.
         let partial = snapshot.partialTranscript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !partial.isEmpty {
-            return partial
+            return "Listening"
         }
         // Only the newest request's failure is news; a later request supersedes an old one.
         if let latest = snapshot.delegations.last, latest.state == .blocked,
@@ -492,6 +543,7 @@ final class LiveVoiceCallController {
         audio?.onPCM = nil
         audio?.stopPlayback()
         audio?.stop()
+        isSpeaking = false
     }
 
     private func failClosed(_ message: String, closeChannel: Bool) {

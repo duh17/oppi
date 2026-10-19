@@ -47,7 +47,7 @@ final class ChatComposerDraftController {
     var pendingAttachments: [PendingAttachment] {
         didSet {
             if isEphemeral, store != nil {
-                discardImportedFiles(in: oldValue, retaining: pendingAttachments)
+                discardImportedFiles(in: oldValue, retaining: pendingAttachments + (setAside?.attachments ?? []))
             }
             guard !isApplyingVisiblePayload, mode == .message else { return }
             messagePayload.attachments = pendingAttachments.map(\.composerDraftMetadata)
@@ -73,6 +73,10 @@ final class ChatComposerDraftController {
     /// ack, failure, or any different edit.
     @ObservationIgnored private var dispatchedVisibleClearEcho: String?
     @ObservationIgnored private var dispatchedVisibleClearEchoUntil: Date?
+    /// The message draft set aside while a Live Voice call holds the composer. The store
+    /// keeps it, untouched by the call's own typing and sends, so a crash mid-call still
+    /// restores it.
+    @ObservationIgnored private var setAside: (payload: ComposerDraftPayload, attachments: [PendingAttachment])?
 
     init(
         initialText: String = "",
@@ -169,7 +173,37 @@ final class ChatComposerDraftController {
 
     isolated deinit {
         guard isEphemeral else { return }
-        discardImportedFiles(pendingAttachments)
+        discardImportedFiles(pendingAttachments + (setAside?.attachments ?? []))
+    }
+
+    /// A Live Voice call starts with an empty field. The draft typed before it waits, and
+    /// anything typed during the call is an ordinary message that sends as usual.
+    func setAsideMessage() {
+        guard setAside == nil else { return }
+        setAside = (messagePayload, pendingAttachments)
+        messagePayload = .empty
+        isApplyingVisiblePayload = true
+        pendingAttachments = []
+        isApplyingVisiblePayload = false
+        if mode == .message {
+            applyVisiblePayload(.empty)
+        }
+    }
+
+    /// The call ended: the draft from before it comes back, ahead of anything typed during
+    /// the call and not sent.
+    func restoreSetAsideMessage() {
+        guard let setAside else { return }
+        self.setAside = nil
+        let restoredAttachments = Self.combinedAttachments(failed: setAside.attachments, current: pendingAttachments)
+        messagePayload = Self.combinedPayload(failed: setAside.payload, current: messagePayload)
+        isApplyingVisiblePayload = true
+        pendingAttachments = restoredAttachments
+        isApplyingVisiblePayload = false
+        persistMessagePayload()
+        if mode == .message {
+            applyVisiblePayload(messagePayload)
+        }
     }
 
     func setMode(
@@ -287,7 +321,8 @@ final class ChatComposerDraftController {
             payload: messagePayload,
             pendingAttachments: pendingAttachments,
             revision: revision,
-            wasEphemeral: isEphemeral,
+            // A send during a call leaves the stored, set-aside draft alone.
+            wasEphemeral: isEphemeral || setAside != nil,
             draftClearance: draftClearance
         )
         activeSubmissionID = submissionID
@@ -482,7 +517,7 @@ final class ChatComposerDraftController {
     }
 
     private func persistMessagePayload() {
-        guard !isEphemeral, let key, let store else { return }
+        guard !isEphemeral, setAside == nil, let key, let store else { return }
         if messagePayload.isEmpty {
             store.clearDraft(for: key)
         } else {

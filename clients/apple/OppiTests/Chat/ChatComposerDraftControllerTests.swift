@@ -926,6 +926,40 @@ struct ChatComposerDraftControllerTests {
         #expect(!FileManager.default.fileExists(atPath: draftURL.path))
     }
 
+    @Test func liveVoiceCallSetsDraftAsideAndRestoresItWhenTheCallEnds() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let controller = ChatComposerDraftController(initialText: "draft before the call")
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        controller.setAsideMessage()
+        #expect(controller.text.isEmpty)
+        // A crash mid-call still finds the draft from before it.
+        #expect(store.record(for: key)?.payload.text == "draft before the call")
+
+        // Typing and sending during the call is an ordinary message and leaves the stored draft.
+        controller.updateVisibleText("typed on the call", for: .message)
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.clearVisibleTextForDispatchedSubmission(submission)
+        controller.completeSubmission(submission)
+        #expect(controller.text.isEmpty)
+        #expect(store.record(for: key)?.payload.text == "draft before the call")
+
+        // Unsent text from the call follows the restored draft.
+        controller.updateVisibleText("still typing", for: .message)
+        controller.restoreSetAsideMessage()
+        #expect(controller.text == "draft before the call\n\nstill typing")
+        #expect(store.record(for: key)?.payload.text == "draft before the call\n\nstill typing")
+
+        // Restore is once per call.
+        controller.clearMessage()
+        controller.restoreSetAsideMessage()
+        #expect(controller.text.isEmpty)
+    }
+
     @Test func ephemeralSessionDraftRemainsMemoryOnly() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

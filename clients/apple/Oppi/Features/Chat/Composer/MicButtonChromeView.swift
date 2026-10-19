@@ -3,9 +3,9 @@ import UIKit
 
 /// UIKit companion to `MicButtonLabel`.
 ///
-/// Owns only the shared mic button chrome: idle mic, recording language/cloud
-/// indicator with audio-reactive ring, and processing spinner. Callers own the
-/// recording route and action wiring.
+/// Owns only the shared mic button chrome: idle or muted mic, recording
+/// language/cloud indicator with audio-reactive ring or orb, and processing
+/// spinner. Callers own the recording route and action wiring.
 @MainActor
 final class MicButtonChromeView: UIControl {
     private let fillView = UIView()
@@ -23,7 +23,14 @@ final class MicButtonChromeView: UIControl {
     private var isRecording = false
     private var isPreparing = false
     private var isProcessing = false
+    private var isMuted = false
+    /// Shown inside the ring while listening, in place of the language (a Live Voice call).
+    private var listeningSymbol: String?
+    private var showsOrb = false
     private var voiceSpectrum: VoiceSpectrumFrame = .zero
+    /// Levels read once per frame instead of pushed through `apply` (a Live Voice call).
+    private var liveSpectrum: (@MainActor () -> VoiceSpectrumFrame)?
+    nonisolated(unsafe) private var liveLink: CADisplayLink?
     private var languageLabel: String?
     private var accentColor = UIColor(ThemeRuntimeState.currentPalette().blue)
     private var engineBadge: MicButtonLabel.EngineBadge = .auto
@@ -107,12 +114,18 @@ final class MicButtonChromeView: UIControl {
         engineBadge: MicButtonLabel.EngineBadge,
         diameter: CGFloat = 44,
         animated: Bool = true,
-        isPreparing: Bool = false
+        isPreparing: Bool = false,
+        isMuted: Bool = false,
+        listeningSymbol: String? = nil
     ) {
         self.isRecording = isRecording
         self.isPreparing = isPreparing
         self.isProcessing = isProcessing
-        self.voiceSpectrum = voiceSpectrum
+        self.isMuted = isMuted
+        self.listeningSymbol = listeningSymbol
+        if liveSpectrum == nil {
+            self.voiceSpectrum = voiceSpectrum
+        }
         self.languageLabel = languageLabel
         self.accentColor = accentColor
         self.engineBadge = engineBadge
@@ -122,6 +135,7 @@ final class MicButtonChromeView: UIControl {
             invalidateIntrinsicContentSize()
         }
         updateAppearance(animated: animated)
+        updateLiveLink()
     }
 
     private func setup() {
@@ -188,8 +202,63 @@ final class MicButtonChromeView: UIControl {
     }
 
     deinit {
+        liveLink?.invalidate()
         if let dictationStyleObserver {
             NotificationCenter.default.removeObserver(dictationStyleObserver)
+        }
+    }
+
+    /// Drives the ring or orb from `source` while recording, read at up to 30 fps while the
+    /// button is on screen. Off screen, hidden, or in the background nothing reads it.
+    func setLiveSpectrumSource(_ source: (@MainActor () -> VoiceSpectrumFrame)?) {
+        liveSpectrum = source
+        if source == nil, liveLink != nil {
+            voiceSpectrum = .zero
+            applyVoiceLevel(animated: false)
+        }
+        updateLiveLink()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        updateLiveLink()
+    }
+
+    override var isHidden: Bool {
+        didSet { updateLiveLink() }
+    }
+
+    private func updateLiveLink() {
+        let wantsLink = liveSpectrum != nil && isRecording && window != nil && !isHidden
+        if !wantsLink {
+            liveLink?.invalidate()
+            liveLink = nil
+            return
+        }
+        guard liveLink == nil else { return }
+        let link = CADisplayLink(target: LiveLinkTarget(owner: self), selector: #selector(LiveLinkTarget.tick))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 15, maximum: 30, preferred: 30)
+        link.add(to: .main, forMode: .common)
+        liveLink = link
+    }
+
+    fileprivate func readLiveSpectrum() {
+        guard let liveSpectrum else { return }
+        voiceSpectrum = liveSpectrum()
+        applyVoiceLevel(animated: true)
+    }
+
+    /// The display link retains its target; this one does not retain the button.
+    @MainActor
+    private final class LiveLinkTarget: NSObject {
+        weak var owner: MicButtonChromeView?
+
+        init(owner: MicButtonChromeView) {
+            self.owner = owner
+        }
+
+        @objc func tick() {
+            owner?.readLiveSpectrum()
         }
     }
 
@@ -202,13 +271,10 @@ final class MicButtonChromeView: UIControl {
         let palette = ThemeRuntimeState.currentPalette()
         let indicator = indicatorColor(palette: palette)
         let listeningChrome = isRecording || isPreparing
-        let spectrum = isRecording ? voiceSpectrum : .zero
-        let clampedLevel = CGFloat(min(max(spectrum.level, 0), 1))
-        let lineWidth = isRecording ? 1.5 + clampedLevel * 2.0 : 1
         var bgR: CGFloat = 0, bgG: CGFloat = 0, bgB: CGFloat = 0, bgA: CGFloat = 0
         UIColor(palette.bg).getRed(&bgR, green: &bgG, blue: &bgB, alpha: &bgA)
 
-        let showsOrb = listeningChrome && !isProcessing && dictationStyle.orbStyle != nil
+        showsOrb = listeningChrome && !isProcessing && dictationStyle.orbStyle != nil
         fillView.isHidden = showsOrb
         fillView.backgroundColor = showsOrb ? .clear : UIColor(palette.bgHighlight)
         ringLayer.isHidden = showsOrb
@@ -221,7 +287,6 @@ final class MicButtonChromeView: UIControl {
             if !orbView.tintUIColor.isEqual(indicator) {
                 orbView.tintUIColor = indicator
             }
-            orbView.voiceSpectrum = spectrum
             orbView.isDarkBackground = OrbTint.isDarkBackground(red: bgR, green: bgG, blue: bgB)
         }
         ringLayer.strokeColor = (isRecording
@@ -229,17 +294,7 @@ final class MicButtonChromeView: UIControl {
             : indicator.withAlphaComponent(engineBadge == .auto ? 0.35 : 0.6)
         ).cgColor
         ringLayer.fillColor = UIColor.clear.cgColor
-
-        if animated, !showsOrb {
-            let animation = CABasicAnimation(keyPath: "lineWidth")
-            animation.fromValue = ringLayer.presentation()?.lineWidth ?? ringLayer.lineWidth
-            animation.toValue = lineWidth
-            animation.duration = 0.1
-            animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            ringLayer.add(animation, forKey: "lineWidth")
-        }
-        ringLayer.lineWidth = lineWidth
-        setNeedsLayout()
+        applyVoiceLevel(animated: animated)
 
         if isProcessing {
             imageView.isHidden = true
@@ -268,7 +323,15 @@ final class MicButtonChromeView: UIControl {
         }
 
         if listeningChrome {
-            if engineBadge == .remote {
+            if let listeningSymbol {
+                imageView.isHidden = false
+                imageView.image = UIImage(
+                    systemName: listeningSymbol,
+                    withConfiguration: UIImage.SymbolConfiguration(pointSize: diameter * 0.4, weight: .bold)
+                )
+                imageView.tintColor = indicator
+                textLabel.isHidden = true
+            } else if engineBadge == .remote {
                 imageView.isHidden = false
                 imageView.image = UIImage(
                     systemName: "cloud",
@@ -286,12 +349,34 @@ final class MicButtonChromeView: UIControl {
         } else {
             imageView.isHidden = false
             imageView.image = UIImage(
-                systemName: "mic",
+                systemName: isMuted ? "mic.slash" : "mic",
                 withConfiguration: UIImage.SymbolConfiguration(pointSize: diameter * 0.47, weight: .bold)
             )
-            imageView.tintColor = indicator.withAlphaComponent(engineBadge == .auto ? 0.75 : 1)
+            imageView.tintColor = isMuted
+                ? UIColor(palette.fg)
+                : indicator.withAlphaComponent(engineBadge == .auto ? 0.75 : 1)
             textLabel.isHidden = true
         }
+    }
+
+    /// The parts that move with the voice: the orb's spectrum or the ring's width.
+    private func applyVoiceLevel(animated: Bool) {
+        let spectrum = isRecording ? voiceSpectrum : .zero
+        if dictationStyle.orbStyle != nil {
+            orbView.voiceSpectrum = spectrum
+        }
+        let clampedLevel = CGFloat(min(max(spectrum.level, 0), 1))
+        let lineWidth = isRecording ? 1.5 + clampedLevel * 2.0 : 1
+        if animated, !showsOrb {
+            let animation = CABasicAnimation(keyPath: "lineWidth")
+            animation.fromValue = ringLayer.presentation()?.lineWidth ?? ringLayer.lineWidth
+            animation.toValue = lineWidth
+            animation.duration = 0.1
+            animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            ringLayer.add(animation, forKey: "lineWidth")
+        }
+        ringLayer.lineWidth = lineWidth
+        setNeedsLayout()
     }
 
     private func indicatorColor(palette: ThemePalette) -> UIColor {

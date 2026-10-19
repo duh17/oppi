@@ -252,4 +252,171 @@ struct QuickSessionDictationComposerPreview: View {
         }
     }
 }
+
+// MARK: - Live Voice Composer Preview
+
+/// A Live Voice call in the chat input bar, with a synthetic meter standing in for the
+/// call's audio taps. `live-voice-composer` walks a whole call (draft set aside, connect,
+/// listen, talk, reply, mute, end with the draft back); the suffixed screens hold one step.
+/// `SCREENSHOT_DICTATION_STYLE` (`ring`, `breathing`, `composing`) picks the indicator.
+struct LiveVoiceComposerPreview: View {
+    enum Step: String, CaseIterable {
+        case draft, connecting, listening, talking, speaking, muted, restored
+    }
+
+    let pinned: Step?
+
+    @State private var draft = ChatComposerDraftController(initialText: "Draft from before the call")
+    @State private var step: Step = .draft
+    @State private var transcript = ""
+    @State private var textBeforeRecording: String?
+    @State private var attachments: [PendingAttachment] = []
+    @State private var repoPointers: [PendingFileReference] = []
+    @State private var busyBehavior: StreamingBehavior = .steer
+    private let meter = LiveVoiceAudioMeter()
+
+    private static let spoken = "check whether the server tests pass on main"
+
+    init(pinned: Step?) {
+        self.pinned = pinned
+        if let style = ProcessInfo.processInfo.environment["SCREENSHOT_DICTATION_STYLE"] {
+            ScreenshotVolatileDefaults.apply([AppPreferenceStore.Appearance.dictationIndicatorStyleKey: style])
+        }
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.themeBg.ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Live Voice in the composer")
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+                Text("Step: \(step.rawValue)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.themeComment)
+                    .accessibilityIdentifier("liveVoice.preview.step")
+                Spacer()
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            ChatInputBar(
+                text: Binding(
+                    get: { draft.text },
+                    set: { draft.updateVisibleText($0, for: .message) }
+                ),
+                textBeforeRecording: $textBeforeRecording,
+                pendingAttachments: $attachments,
+                pendingRepoPointers: $repoPointers,
+                isBusy: false,
+                busyStreamingBehavior: $busyBehavior,
+                isSending: false,
+                sendProgressText: nil,
+                isStopping: false,
+                liveVoiceCall: call,
+                showForceStop: false,
+                isForceStopInFlight: false,
+                slashCommands: [],
+                fileSuggestions: [],
+                onFileSuggestionQuery: nil,
+                onSend: {},
+                onStop: {},
+                onForceStop: {},
+                onExpand: {},
+                externalFocusRequestID: 0,
+                appliesOuterPadding: false,
+                actionRow: .previewModelThinking
+            )
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
+        }
+        .accessibilityIdentifier("screenshot.ready")
+        .task { await run() }
+    }
+
+    private var call: ComposerLiveVoiceCall? {
+        switch step {
+        case .draft, .restored:
+            return nil
+        case .connecting, .listening, .talking, .speaking, .muted:
+            return ComposerLiveVoiceCall(
+                isLive: true,
+                isConnecting: step == .connecting,
+                isMuted: step == .muted,
+                isSpeaking: step == .speaking,
+                status: status,
+                transcript: step == .talking ? transcript : "",
+                meter: meter,
+                onToggleMute: {},
+                onEnd: {}
+            )
+        }
+    }
+
+    private var status: String {
+        switch step {
+        case .connecting: "Connecting"
+        case .speaking: "Speaking"
+        case .muted: "Muted"
+        default: "Listening"
+        }
+    }
+
+    private func enter(_ next: Step) {
+        let wasInCall = call != nil
+        step = next
+        let inCall = call != nil
+        if inCall, !wasInCall { draft.setAsideMessage() }
+        if !inCall, wasInCall { draft.restoreSetAsideMessage() }
+    }
+
+    private func run() async {
+        let feed = Task { await feedMeter() }
+        defer { feed.cancel() }
+        if let pinned {
+            if pinned == .restored { enter(.listening) }
+            if pinned == .talking { transcript = Self.spoken }
+            enter(pinned)
+            try? await Task.sleep(for: .seconds(3_600))
+            return
+        }
+        let script: [(Step, Duration)] = [
+            (.draft, .seconds(2)), (.connecting, .seconds(1.5)), (.listening, .seconds(2)),
+            (.talking, .zero), (.speaking, .seconds(4)), (.muted, .seconds(2.5)), (.restored, .seconds(3)),
+        ]
+        for (next, hold) in script {
+            enter(next)
+            if next == .talking {
+                let words = Self.spoken.split(separator: " ")
+                for count in 1...words.count {
+                    transcript = words.prefix(count).joined(separator: " ")
+                    try? await Task.sleep(for: .milliseconds(350))
+                }
+                try? await Task.sleep(for: .seconds(1))
+                transcript = ""
+            }
+            try? await Task.sleep(for: hold)
+            guard !Task.isCancelled else { return }
+        }
+    }
+
+    /// Speech-like levels at the tap's cadence: the mic while the user talks, the reply's
+    /// voice while the agent speaks, room quiet otherwise.
+    private func feedMeter() async {
+        let start = Date()
+        while !Task.isCancelled {
+            let t = Date().timeIntervalSince(start)
+            let syllable = Float(abs(sin(t * 7.3)) * (0.55 + 0.45 * abs(sin(t * 1.7))))
+            var voice = VoiceSpectrumFrame(level: 0.15 + 0.7 * syllable, flux: 6 * syllable)
+            for band in 0..<5 {
+                voice.bands[band] = Float(0.2 + 0.8 * abs(sin(t * (3.1 + Double(band) * 1.9) + Double(band))))
+                    * syllable
+            }
+            meter.publishMic(step == .talking ? voice : .zero)
+            meter.publishPlayback(step == .speaking ? voice : .zero)
+            try? await Task.sleep(for: .milliseconds(21))
+        }
+    }
+}
 #endif

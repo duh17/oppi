@@ -2,6 +2,30 @@ import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
 
+/// A Live Voice call running in the chat input bar. The mic slot shows the dictation ring
+/// or orb, live, and a tap mutes; the field shows what the user is saying until it is sent;
+/// End takes the send slot, with Send beside it once something is typed.
+@MainActor
+struct ComposerLiveVoiceCall {
+    static let muteIdentifier = "chat.liveVoice.mute"
+    static let endIdentifier = "chat.liveVoice.end"
+    static let stateIdentifier = "chat.liveVoice.state"
+
+    /// False after a failed call: the reason stays in the field until End.
+    var isLive: Bool
+    var isConnecting: Bool
+    var isMuted: Bool
+    /// The agent's reply is playing; the orb follows its voice in the agent's color.
+    var isSpeaking: Bool
+    /// The placeholder: the call's state, an approval to answer, or why it failed.
+    var status: String
+    /// What the user is saying, read-only until the server sends it as their message.
+    var transcript: String
+    var meter: LiveVoiceAudioMeter
+    var onToggleMute: () -> Void
+    var onEnd: () -> Void
+}
+
 /// Snapshot the representable lowers into UIKit. No SwiftUI types.
 @MainActor
 struct ComposerBarContent {
@@ -20,6 +44,8 @@ struct ComposerBarContent {
     var voiceInputManager: VoiceInputManager?
     /// Non-nil adds Live Voice to the mic button's long-press menu; tap stays dictation.
     var onLiveVoiceSelected: (() -> Void)? = nil
+    /// Non-nil while a Live Voice call runs in this bar.
+    var liveVoiceCall: ComposerLiveVoiceCall? = nil
     var showForceStop: Bool
     var isForceStopInFlight: Bool
     var askRequest: AskRequest?
@@ -652,6 +678,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     private let textView = PastableUITextView()
     private var textHeightConstraint: NSLayoutConstraint?
     private let primaryButton = ComposerCircleActionButton()
+    private let endCallButton = ComposerCircleActionButton()
     private let busyTipContainer = UIView()
     private var busyTipHeightConstraint: NSLayoutConstraint?
     private var busyTipChild: UIViewController?
@@ -1022,8 +1049,11 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         textRow.addArrangedSubview(micButton)
         textRow.addArrangedSubview(textContainer)
         textRow.addArrangedSubview(primaryButton)
+        textRow.addArrangedSubview(endCallButton)
         micButton.setContentHuggingPriority(.required, for: .horizontal)
         primaryButton.setContentHuggingPriority(.required, for: .horizontal)
+        endCallButton.setContentHuggingPriority(.required, for: .horizontal)
+        endCallButton.isHidden = true
 
         let tipHeight = busyTipContainer.heightAnchor.constraint(equalToConstant: 0)
         busyTipHeightConstraint = tipHeight
@@ -1204,6 +1234,9 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         micButton.addAction(UIAction { [weak self] _ in self?.handleMicTap() }, for: .touchUpInside)
         micButton.menuProvider = { [weak self] in self?.voiceEntryMenu() }
         primaryButton.addAction(UIAction { [weak self] _ in self?.handlePrimaryAction() }, for: .touchUpInside)
+        endCallButton.addAction(UIAction { [weak self] _ in
+            self?.host?.content.liveVoiceCall?.onEnd()
+        }, for: .touchUpInside)
         forceStopButton.addAction(UIAction { [weak self] _ in self?.host?.performForceStop() }, for: .touchUpInside)
         expandInActionRow.addAction(UIAction { [weak self] _ in self?.host?.performExpand() }, for: .touchUpInside)
         overlayExpand.addAction(UIAction { [weak self] _ in self?.host?.performExpand() }, for: .touchUpInside)
@@ -1222,8 +1255,9 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         trailingAttachButton.accessibilityLabel = "Add attachment"
         busyModeButton.accessibilityIdentifier = "chat.busyMode"
         busyModeButton.accessibilityLabel = "Busy send mode"
-        micButton.accessibilityIdentifier = "chat.voiceInput"
         primaryButton.accessibilityIdentifier = "chat.send"
+        endCallButton.accessibilityIdentifier = ComposerLiveVoiceCall.endIdentifier
+        endCallButton.accessibilityLabel = "End call"
         expandInActionRow.accessibilityIdentifier = "chat.expand"
         overlayExpand.accessibilityIdentifier = "chat.expand"
     }
@@ -1336,9 +1370,10 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         spacer.isHidden = keyHeight > 0
 
         applyActionPills(content.actionRow, colors: colors, showActionRow: showActionRow)
-        applyTextView(content: content, colors: colors)
+        // Buttons first: the draft's width depends on which of them show.
         applyPrimaryButton(content: content, colors: colors)
         applyMicChrome()
+        applyTextView(content: content, colors: colors)
         refreshPresentedPopover(content.actionRow)
 
         refreshAskCard()
@@ -1557,14 +1592,23 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     }
 
     private func applyTextView(content: ComposerBarContent, colors: ComposerThemeColors) {
-        let display = composerDisplayText
-        let visible = ComposerShared.visibleComposerText(display)
-        placeholderLabel.text = content.placeholderOverride ?? ChatInputBar.composerPlaceholder(
+        // A call's live transcript stands in for the draft until it is sent; the draft
+        // comes back when the user stops talking.
+        let transcript = callTranscript
+        let visible = transcript ?? ComposerShared.visibleComposerText(composerDisplayText)
+        let callStatus = content.askRequest == nil && content.placeholderOverride == nil
+            ? content.liveVoiceCall?.status
+            : nil
+        placeholderLabel.text = callStatus ?? content.placeholderOverride ?? ChatInputBar.composerPlaceholder(
             askRequest: content.askRequest,
             pendingReviewCommentCount: content.pendingReviewCommentCount,
             isBusy: content.isBusy,
             busyStreamingBehavior: content.busyStreamingBehavior
         )
+        // A long status (an approval, the agent's progress) stays on the draft's line.
+        placeholderLabel.numberOfLines = callStatus == nil ? 0 : 1
+        placeholderLabel.lineBreakMode = .byTruncatingTail
+        placeholderLabel.accessibilityIdentifier = content.liveVoiceCall == nil ? nil : ComposerLiveVoiceCall.stateIdentifier
         placeholderLabel.textColor = colors.comment
         placeholderLabel.isHidden = !visible.isEmpty
         let accent = content.isBusy ? colors.purple : colors.blue
@@ -1576,17 +1620,21 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             visible,
             font: UIFont.preferredFont(forTextStyle: .body),
             baseColor: colors.fg,
-            volatileSuffixLength: ComposerShared.volatileSuffixLength(
-                manager: content.voiceInputManager,
-                owner: .inlineComposer
-            ),
-            volatileColor: accent,
-            volatileBackgroundColor: accent.withAlphaComponent(0.20),
-            correctionRanges: ComposerShared.correctionRanges(
-                manager: content.voiceInputManager,
-                textBeforeRecording: content.textBeforeRecording,
-                owner: .inlineComposer
-            ),
+            // The whole transcript is still being heard; it reads like dictation's live words.
+            volatileSuffixLength: transcript?.count
+                ?? ComposerShared.volatileSuffixLength(
+                    manager: content.voiceInputManager,
+                    owner: .inlineComposer
+                ),
+            volatileColor: transcript == nil ? accent : colors.blue,
+            volatileBackgroundColor: (transcript == nil ? accent : colors.blue).withAlphaComponent(0.20),
+            correctionRanges: transcript == nil
+                ? ComposerShared.correctionRanges(
+                    manager: content.voiceInputManager,
+                    textBeforeRecording: content.textBeforeRecording,
+                    owner: .inlineComposer
+                )
+                : [],
             correctionUnderlineColor: colors.orange,
             scrollCaretToVisible: true
         )
@@ -1638,7 +1686,8 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         let rowPad: CGFloat = composerHorizontalPadding * 2
         let showsMic = !micButton.isHidden
         let mic: CGFloat = showsMic ? ComposerInputMetrics.controlDiameter + 8 : 0
-        let send: CGFloat = ComposerInputMetrics.controlDiameter + 8
+        let trailingButtons = [primaryButton, endCallButton].filter { !$0.isHidden }.count
+        let send = CGFloat(trailingButtons) * (ComposerInputMetrics.controlDiameter + 8)
         let textWidth = proposedWidth - outer - rowPad - mic - send
         // Before the first layout pass the bar has no width; SwiftUI measures
         // it again at a real width.
@@ -1743,9 +1792,49 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             primaryButton.accessibilityIdentifier = "chat.stop"
             primaryButton.accessibilityLabel = content.isStopping ? "Stopping" : "Stop response"
         }
+        applyCallButtons(content: content, colors: colors, kind: kind, canSend: canSend, inFlight: inFlight)
+    }
+
+    /// During a call End holds the send slot. Send joins it for a typed draft and Ignore for
+    /// an Ask card; Stop and the empty Send stay out so End is the one red button.
+    private func applyCallButtons(
+        content: ComposerBarContent,
+        colors: ComposerThemeColors,
+        kind: ChatInputPrimaryActionKind,
+        canSend: Bool,
+        inFlight: Bool
+    ) {
+        guard content.liveVoiceCall != nil else {
+            primaryButton.isHidden = false
+            endCallButton.isHidden = true
+            return
+        }
+        switch kind {
+        case .send:
+            primaryButton.isHidden = !(canSend || inFlight) || callTranscript != nil
+        case .ignoreAsk:
+            primaryButton.isHidden = false
+        case .stop:
+            primaryButton.isHidden = true
+        }
+        endCallButton.isHidden = false
+        endCallButton.apply(
+            systemImage: "phone.down.fill",
+            fill: colors.red,
+            stroke: colors.red.withAlphaComponent(0.9),
+            foreground: ComposerColorContrast.foreground(for: colors.red, fg: colors.fg, bg: colors.bg),
+            showsProgress: false,
+            symbol: UIImage.SymbolConfiguration(pointSize: 14, weight: .bold)
+        )
     }
 
     private func applyMicChrome() {
+        if let call = host?.content.liveVoiceCall, let colors = host?.content.colors {
+            applyCallMicChrome(call, colors: colors)
+            return
+        }
+        micButton.setLiveSpectrumSource(nil)
+        micButton.accessibilityIdentifier = "chat.voiceInput"
         guard let host, let manager = host.content.voiceInputManager else {
             micButton.isHidden = true
             return
@@ -1770,6 +1859,41 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
                 return true
             }]
             : nil
+    }
+
+    /// The dictation ring or orb, following the user's mic while they have the floor and the
+    /// agent's voice, in the agent's color, while its reply plays. A tap mutes.
+    private func applyCallMicChrome(_ call: ComposerLiveVoiceCall, colors: ComposerThemeColors) {
+        micButton.isHidden = false
+        let hears = call.isLive && !call.isMuted
+        let speaking = call.isSpeaking
+        let meter = call.meter
+        var source: (@MainActor () -> VoiceSpectrumFrame)?
+        if hears, !call.isConnecting {
+            source = {
+                let levels = meter.current
+                return speaking ? levels.playback : levels.mic
+            }
+        }
+        micButton.setLiveSpectrumSource(source)
+        micButton.apply(
+            isRecording: hears && !call.isConnecting,
+            isProcessing: false,
+            voiceSpectrum: .zero,
+            languageLabel: nil,
+            accentColor: speaking ? colors.purple : colors.blue,
+            engineBadge: .onDevice,
+            diameter: ComposerInputMetrics.controlDiameter,
+            isPreparing: hears && call.isConnecting,
+            isMuted: call.isMuted,
+            listeningSymbol: "waveform"
+        )
+        micButton.isEnabled = call.isLive
+        micButton.accessibilityIdentifier = ComposerLiveVoiceCall.muteIdentifier
+        micButton.accessibilityLabel = call.isMuted ? "Unmute" : "Mute"
+        micButton.accessibilityValue = call.isMuted ? "Muted" : call.status
+        micButton.isContextMenuInteractionEnabled = false
+        micButton.accessibilityCustomActions = nil
     }
 
     private func voiceEntryMenu() -> UIMenu? {
@@ -1825,6 +1949,12 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         (host?.content.isSending ?? false) || isFinishingVoiceBeforeSend
     }
 
+    /// A call's live transcript while the user is talking; nil when the draft shows.
+    private var callTranscript: String? {
+        guard let transcript = host?.content.liveVoiceCall?.transcript, !transcript.isEmpty else { return nil }
+        return transcript
+    }
+
     private var isCurrentAskSubmitted: Bool {
         askClearing.submittedRequestID != nil && askClearing.submittedRequestID == host?.content.askRequest?.id
     }
@@ -1868,7 +1998,8 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     }
 
     private func handleSend() {
-        guard !isSendInFlight else { return }
+        // While the user talks the field shows their words, not the draft Send would send.
+        guard !isSendInFlight, callTranscript == nil else { return }
         if let manager = host?.content.voiceInputManager,
            ComposerShared.ownsVoiceInput(manager, owner: .inlineComposer),
            manager.isRecording || manager.isPreparing {
@@ -1983,6 +2114,10 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     }
 
     private func handleMicTap() {
+        if let call = host?.content.liveVoiceCall {
+            call.onToggleMute()
+            return
+        }
         Task {
             guard let manager = host?.content.voiceInputManager else { return }
             guard ComposerShared.canControlVoiceInput(manager, owner: .inlineComposer) else { return }
@@ -2150,7 +2285,13 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         applyChrome()
     }
 
+    /// A call's live transcript is display-only; typing waits until the user stops talking.
+    func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        callTranscript == nil
+    }
+
     func textViewDidChange(_ textView: UITextView) {
+        guard callTranscript == nil else { return }
         let incoming = textView.text ?? ""
         if let pastable = textView as? PastableUITextView,
            !pastable.shouldCommitUserEdit(incoming) {
