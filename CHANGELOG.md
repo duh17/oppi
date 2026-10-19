@@ -90,6 +90,7 @@ Example:
 ### Fixed
 
 - **Client:** Very large Mermaid diagrams, such as a long flowchart chain, a big sequence diagram, or a deep mindmap, render as diagrams in chat and the Markdown reader instead of showing their source.
+- **Client:** A running `write` of a Markdown file keeps updating as it streams, in the expanded row and in the full-screen reader opened from it. Before, both stopped after the first few lines.
 - **Client:** Pairing by QR code or **Connect Manually** with a server you already paired, whose identity has since changed, now asks you to confirm a trust reset ("Server identity changed"), as invite links, Tailscale, and SSH pairing already did, instead of an ordinary trust prompt.
 - **Server:** With `asr.provider` set to `xai` but no xAI sign-in or API key, the app no longer offers server dictation that fails on every take.
 - **Client:** A message sent from Quick Session no longer comes back as the draft the next time you open Quick Session.
