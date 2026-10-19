@@ -541,8 +541,25 @@ enum WorkspaceReviewDiffHunkBuilder {
             }
 
             if !removed.isEmpty, !added.isEmpty {
-                let removedWords = removed.map { WordLine(lines[$0].text) }
-                let addedWords = added.map { WordLine(lines[$0].text) }
+                // Tokenized on first look: pass 1 reads at most `wordPairLookahead`
+                // candidates per removed line, so most lines of a big block never are.
+                var removedWords = [WordLine?](repeating: nil, count: removed.count)
+                var addedWords = [WordLine?](repeating: nil, count: added.count)
+                func removedWord(_ index: Int) -> WordLine {
+                    if let word = removedWords[index] { return word }
+                    let word = WordLine(lines[removed[index]].text)
+                    removedWords[index] = word
+                    return word
+                }
+                func addedWord(_ index: Int) -> WordLine {
+                    if let word = addedWords[index] { return word }
+                    let word = WordLine(lines[added[index]].text)
+                    addedWords[index] = word
+                    return word
+                }
+                func identical(_ removedIndex: Int, _ addedIndex: Int) -> Bool {
+                    lines[removed[removedIndex]].text == lines[added[addedIndex]].text
+                }
                 func apply(_ spans: WordSpans, removed removedIndex: Int, added addedIndex: Int) {
                     if !spans.old.isEmpty { lines[removed[removedIndex]] = lines[removed[removedIndex]].withSpans(spans.old) }
                     if !spans.new.isEmpty { lines[added[addedIndex]] = lines[added[addedIndex]].withSpans(spans.new) }
@@ -552,11 +569,14 @@ enum WorkspaceReviewDiffHunkBuilder {
                 var nextAdded = 0
                 for removedIndex in removed.indices {
                     let searchEnd = min(added.count, nextAdded + wordPairLookahead)
-                    for candidate in nextAdded..<max(nextAdded, searchEnd) {
-                        guard let spans = similarLineWordSpans(removedWords[removedIndex], addedWords[candidate], budget: &budget) else {
-                            continue
+                    for candidate in nextAdded..<searchEnd {
+                        // Identical text is fully similar with nothing to mark.
+                        if !identical(removedIndex, candidate) {
+                            guard let spans = similarLineWordSpans(removedWord(removedIndex), addedWord(candidate), budget: &budget) else {
+                                continue
+                            }
+                            apply(spans, removed: removedIndex, added: candidate)
                         }
-                        apply(spans, removed: removedIndex, added: candidate)
                         pairs.append((removedIndex, candidate))
                         nextAdded = candidate + 1
                         break
@@ -571,7 +591,8 @@ enum WorkspaceReviewDiffHunkBuilder {
                         for offset in 1...gap {
                             let removedIndex = previousRemoved + offset
                             let addedIndex = previousAdded + offset
-                            if let spans = fewChangeWordSpans(removedWords[removedIndex], addedWords[addedIndex], budget: &budget) {
+                            if !identical(removedIndex, addedIndex),
+                               let spans = fewChangeWordSpans(removedWord(removedIndex), addedWord(addedIndex), budget: &budget) {
                                 apply(spans, removed: removedIndex, added: addedIndex)
                             }
                         }
@@ -733,6 +754,10 @@ enum WorkspaceReviewDiffHunkBuilder {
 
     /// Token LCS. Which tokens of each side are in the common subsequence, or
     /// nil when the table would exceed `maxCells` or the diff's remaining budget.
+    ///
+    /// The shared prefix and suffix match first and cost nothing, as in the
+    /// server's matcher, so a one-word edit in a long paragraph only tables
+    /// the edited middle.
     private static func matchTokens(
         _ oldTokens: [Token],
         _ newTokens: [Token],
@@ -741,15 +766,34 @@ enum WorkspaceReviewDiffHunkBuilder {
     ) -> (old: [Bool], new: [Bool])? {
         let m = oldTokens.count
         let n = newTokens.count
-        let cells = m * n
+        var oldMatched = Array(repeating: false, count: m)
+        var newMatched = Array(repeating: false, count: n)
+        var prefix = 0
+        while prefix < m, prefix < n, oldTokens[prefix].value == newTokens[prefix].value {
+            oldMatched[prefix] = true
+            newMatched[prefix] = true
+            prefix += 1
+        }
+        var suffix = 0
+        while suffix < m - prefix, suffix < n - prefix,
+              oldTokens[m - 1 - suffix].value == newTokens[n - 1 - suffix].value {
+            oldMatched[m - 1 - suffix] = true
+            newMatched[n - 1 - suffix] = true
+            suffix += 1
+        }
+
+        let rows = m - prefix - suffix
+        let columns = n - prefix - suffix
+        let cells = rows * columns
         guard cells <= maxCells, cells <= budget else { return nil }
         budget -= cells
+        guard rows > 0, columns > 0 else { return (oldMatched, newMatched) }
 
-        // Build LCS table
-        var dp = Array(repeating: Array(repeating: 0, count: n + 1), count: m + 1)
-        for i in 0..<m {
-            for j in 0..<n {
-                if oldTokens[i].value == newTokens[j].value {
+        // LCS table over the middle; `dp[i][j]` covers its first i old and j new tokens.
+        var dp = Array(repeating: Array(repeating: 0, count: columns + 1), count: rows + 1)
+        for i in 0..<rows {
+            for j in 0..<columns {
+                if oldTokens[prefix + i].value == newTokens[prefix + j].value {
                     dp[i + 1][j + 1] = dp[i][j] + 1
                 } else {
                     dp[i + 1][j + 1] = max(dp[i][j + 1], dp[i + 1][j])
@@ -758,14 +802,11 @@ enum WorkspaceReviewDiffHunkBuilder {
         }
 
         // Backtrace, marking matched tokens.
-        var oldMatched = Array(repeating: false, count: m)
-        var newMatched = Array(repeating: false, count: n)
-        var i = m, j = n
-
+        var i = rows, j = columns
         while i > 0, j > 0 {
-            if oldTokens[i - 1].value == newTokens[j - 1].value {
-                oldMatched[i - 1] = true
-                newMatched[j - 1] = true
+            if oldTokens[prefix + i - 1].value == newTokens[prefix + j - 1].value {
+                oldMatched[prefix + i - 1] = true
+                newMatched[prefix + j - 1] = true
                 i -= 1; j -= 1
             } else if dp[i][j - 1] >= dp[i - 1][j] {
                 j -= 1

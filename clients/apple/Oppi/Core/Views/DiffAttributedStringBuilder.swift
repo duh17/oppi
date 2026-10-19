@@ -510,7 +510,7 @@ enum DiffAttributedStringBuilder {
 
         for info in lineInfos where !info.wordRuns.isEmpty {
             let wordBg = rows.wordBackground(for: info.kind)
-            for run in info.wordRuns where NSMaxRange(run) <= info.codeLen {
+            for run in info.wordRuns {
                 result.addAttribute(.backgroundColor, value: wordBg, range: NSRange(location: info.codeStart + run.location, length: run.length))
             }
         }

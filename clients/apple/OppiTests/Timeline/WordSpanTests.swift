@@ -132,6 +132,17 @@ struct WordSpanTests {
         #expect(runs.map { (edit.text as NSString).substring(with: $0) } == [", keepsLineStart: Bool = false"])
     }
 
+    /// A one-word edit in a long paragraph marks that word, as server diffs do.
+    @Test func longParagraphEditMarksOnlyTheChangedWord() throws {
+        let words = (0..<150).map { "word\($0)" }
+        var edited = words
+        edited[120] = "changed"
+        let lines = DiffEngine.compute(old: words.joined(separator: " "), new: edited.joined(separator: " "))
+        let added = try #require(WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines).flatMap(\.lines).first { $0.kind == .added })
+        let spans = try #require(added.spans)
+        #expect(spans.map { (added.text as NSString).substring(with: NSRange(location: $0.start, length: $0.end - $0.start)) } == ["changed"])
+    }
+
     /// Two short lines that share little text still mark words when only a
     /// few places change.
     @Test func shortUnrelatedLookingEditKeepsWordSpans() throws {
