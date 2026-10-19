@@ -886,6 +886,7 @@ final class VimEngine {
                 let lineCount = CodeTextEditing.lineContents(text, in: CodeTextEditing.lineBlock(text, selection: range)).count
                 guard lineCount * count * (indentation.unit as NSString).length <= Self.maxEditLength else {
                     message = "Too much to indent"
+                    place(clampNormal(cursor))
                     return
                 }
             }
@@ -1035,6 +1036,9 @@ final class VimEngine {
         let first = lineStart(cursor)
         var line = first
         var joined = text.substring(with: NSRange(location: first, length: contentsEnd(first) - first))
+        // UTF-16 length kept alongside: re-measuring a growing non-ASCII
+        // String each pass would make `9999J` quadratic.
+        var joinedLength = contentsEnd(first) - first
         var lastJoin: Int?
         var count = 1
         while count < lines {
@@ -1044,11 +1048,15 @@ final class VimEngine {
             var body = text.substring(with: NSRange(location: line, length: contentsEnd(line) - line))
             if spaces {
                 body = String(body.drop { $0 == " " || $0 == "\t" })
-                while let last = joined.last, last == " " || last == "\t" { joined.removeLast() }
+                while let last = joined.last, last == " " || last == "\t" {
+                    joined.removeLast()
+                    joinedLength -= 1
+                }
             }
             let separator = spaces && !body.isEmpty && !body.hasPrefix(")") && !joined.isEmpty ? " " : ""
-            lastJoin = first + (joined as NSString).length
+            lastJoin = first + joinedLength
             joined += separator + body
+            joinedLength += separator.utf16.count + body.utf16.count
             count += 1
         }
         guard let lastJoin else { return }
@@ -1136,7 +1144,7 @@ final class VimEngine {
         guard let buffer else { return nil }
         let text = buffer.vimText
         let length = text.length
-        // Line numbers (`G`, `gg`) read `explicitCount` as typed; loops use the clamp.
+        // Line numbers (`G`, `gg`) read `explicitCount` as the line itself.
         let count = max(1, explicitCount ?? 1)
         var position = start
         /// Step `count` times, stopping as soon as a step makes no progress,
@@ -1262,10 +1270,12 @@ final class VimEngine {
             }
             return MotionTarget(position: found, kind: .exclusive)
         case .searchWord(let forward):
-            guard let word = wordUnderCursor(start) else { return nil }
+            guard let (word, wordStart) = wordUnderCursor(start) else { return nil }
             let pattern = "\\<" + NSRegularExpression.escapedPattern(for: word) + "\\>"
             lastSearch = (pattern, forward)
-            guard let found = search(pattern, forward: forward, from: position, count: count) else { return nil }
+            // From the word's start, as Vim does, so `#` never lands on the
+            // word the cursor is already in.
+            guard let found = search(pattern, forward: forward, from: wordStart, count: count) else { return nil }
             return MotionTarget(position: found, kind: .exclusive)
         case .nextLine, .previousLine, .currentLine:
             let delta = motion == .nextLine ? count : (motion == .previousLine ? -count : count - 1)
@@ -1429,7 +1439,8 @@ final class VimEngine {
         return position
     }
 
-    private func wordUnderCursor(_ offset: Int) -> String? {
+    /// The keyword under (or after) the cursor and where it starts.
+    private func wordUnderCursor(_ offset: Int) -> (word: String, start: Int)? {
         guard let buffer else { return nil }
         let text = buffer.vimText
         var start = offset
@@ -1438,7 +1449,7 @@ final class VimEngine {
         var end = start
         while start > lineStart(offset), wordClass(start - 1, big: false) == 2 { start -= 1 }
         while end < contentsEnd(offset), wordClass(end, big: false) == 2 { end += 1 }
-        return text.substring(with: NSRange(location: start, length: end - start))
+        return (text.substring(with: NSRange(location: start, length: end - start)), start)
     }
 
     // MARK: - Text objects

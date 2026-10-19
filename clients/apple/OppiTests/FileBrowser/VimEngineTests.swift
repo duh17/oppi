@@ -291,6 +291,19 @@ struct VimEngineTests {
         let indent = VimHarness("|" + lines).send("V199j9999>")
         #expect(indent.engine.message == "Too much to indent")
         #expect(indent.buffer.text as String == lines)
+        #expect(indent.engine.mode == .normal)
+        #expect(indent.buffer.selection.length == 0, "a refused indent leaves no selection behind")
+    }
+
+    @Test func joinPlacesTheCursorInNonASCIIText() {
+        #expect(vim("|caf\u{e9}\n  d\u{e9}j\u{e0}\nvu", "3J") == "caf\u{e9} d\u{e9}j\u{e0}| vu")
+        #expect(vim("|\u{1F600}\n  x", "J") == "\u{1F600}| x")
+    }
+
+    @Test func starAndHashSkipTheWordUnderTheCursor() {
+        #expect(vim("bar x foo b|ar", "#") == "|bar x foo bar")
+        #expect(vim("bar bar bar b|ar", "2#") == "bar |bar bar bar")
+        #expect(vim("f|oo x foo", "*") == "foo x |foo")
     }
 
     /// A counted command is one edit, so one `u` undoes all of it.
@@ -333,8 +346,8 @@ struct VimEngineTests {
         #expect(harness.rendered == "a |x b x c x")
     }
 
-    /// Repeat counts are clamped, line numbers are not: `G` reaches any line.
-    @Test func lineJumpsReachPastTheRepeatClamp() {
+    /// A count before `G`/`gg` is the line itself, on files of any length.
+    @Test func lineJumpsReachAnyLine() {
         let text = (1...12_000).map { "line \($0)" }.joined(separator: "\n")
         let harness = VimHarness("|" + text)
         harness.send("10001G")
