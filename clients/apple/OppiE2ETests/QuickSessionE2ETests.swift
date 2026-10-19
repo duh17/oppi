@@ -206,9 +206,8 @@ final class QuickSessionE2ETests: E2ETestCase {
         XCTAssertTrue(waitForElementToExist(sessionList, timeout: 20), "Sessions inbox did not appear")
 
         openQuickSession()
-        let incognito = app.buttons["quickSession.incognito"]
-        tap(incognito, named: "incognito pill", timeout: 5)
-        XCTAssertEqual(incognito.value as? String, "On", "Incognito pill did not turn on")
+        // The toggle trait makes the pill a switch to XCUITest.
+        tap(app.switches["quickSession.incognito"], named: "incognito pill", timeout: 5)
 
         let marker = "E2E_QS_INCOGNITO \(UUID().uuidString.prefix(8))"
         replaceText(in: app.textViews["chat.input"], with: marker)

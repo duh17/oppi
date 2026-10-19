@@ -766,6 +766,25 @@ final class AppNavigation {
         }
     }
 
+    /// True while the workspace route still holds this session's chat, under
+    /// anything pushed above it. False once it was popped or replaced. The
+    /// route is the source of truth; UIKit's moving flags miss a shell route
+    /// swap and see a lock-cover swap as a removal.
+    func routeContainsSession(_ sessionId: String) -> Bool {
+        let elements: [ChatCoveringRouteElement]
+        switch workspaceNavigationPresentation {
+        case .stack:
+            elements = workspaceStackRouteElements.map(Self.coveringElement(from:))
+        case .split:
+            elements = (splitDetailTarget.map { [Self.coveringElement(from: $0)] } ?? [])
+                + splitDetailPathElements.map(Self.coveringElement(from:))
+        }
+        return elements.contains { element in
+            if case .session(let stackedSessionId) = element { return stackedSessionId == sessionId }
+            return false
+        }
+    }
+
     func openChatReader(_ target: ChatReaderNavTarget) {
         selectedTab = .workspaces
         switch workspaceNavigationPresentation {

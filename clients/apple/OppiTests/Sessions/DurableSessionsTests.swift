@@ -67,13 +67,12 @@ struct DurableSessionsTests {
         }
     }
 
-    @Test func incognitoLaunchRunsClassicWithAReasonEvenWhenDurableWasChosen() {
+    @Test func incognitoLaunchRunsClassicWithoutAnEnginePillEvenWhenDurableWasChosen() {
         for chose in [nil, SessionEngine.durable] {
             let incognito = decide(experiment: true, offered: true, durableDefault: true, incognito: true, chose: chose)
             #expect(incognito.engine == .classic)
-            #expect(incognito.showsPill)
+            #expect(!incognito.showsPill)
             #expect(!incognito.canToggle)
-            #expect(incognito.classicReason == DurableSessions.incognitoClassicReason)
         }
     }
 

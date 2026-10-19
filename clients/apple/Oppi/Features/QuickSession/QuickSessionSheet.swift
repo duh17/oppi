@@ -972,9 +972,12 @@ struct QuickSessionSheet: View {
             .frame(minHeight: 17)
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
-            .background(incognitoChosen ? Color.themePurple.opacity(0.14) : .clear, in: Capsule())
+            .background(
+                incognitoChosen ? AnyShapeStyle(.themePurple.opacity(0.14)) : AnyShapeStyle(.clear),
+                in: Capsule()
+            )
             .glassEffect(.regular, in: Capsule())
-            .frame(minHeight: ComposerInputMetrics.controlDiameter)
+            .frame(minWidth: ComposerInputMetrics.controlDiameter, minHeight: ComposerInputMetrics.controlDiameter)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

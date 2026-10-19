@@ -41,6 +41,32 @@ struct ChatCoveredLifetimeTests {
         #expect(store.payload(for: second.id) != nil)
     }
 
+    /// An incognito session ends when its chat leaves the route, so every
+    /// remount of the same chat must keep the session in the route.
+    @Test func sessionStaysInRouteAcrossReopenCoverAndShellSwapUntilPopped() {
+        let navigation = AppNavigation()
+        navigation.openWorkspaceSession(
+            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1", workspaceId: "workspace-1")
+        )
+        #expect(navigation.routeContainsSession("session-1"))
+        #expect(!navigation.routeContainsSession("other-session"))
+
+        // A notification or URL reopening the same session rebuilds its route.
+        navigation.setWorkspaceSessionPath(serverId: "server-1", sessionId: "session-1", workspaceId: "workspace-1")
+        #expect(navigation.routeContainsSession("session-1"))
+
+        navigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        #expect(navigation.routeContainsSession("session-1"))
+
+        navigation.setWorkspaceNavigationPresentation(.split)
+        #expect(navigation.routeContainsSession("session-1"))
+        navigation.setWorkspaceNavigationPresentation(.stack)
+        #expect(navigation.routeContainsSession("session-1"))
+
+        navigation.popWorkspaceStack(toDepth: 0)
+        #expect(!navigation.routeContainsSession("session-1"))
+    }
+
     @Test func containsChatReaderTracksStackedAndPoppedTargets() {
         let navigation = AppNavigation()
         navigation.openWorkspaceSession(

@@ -1077,10 +1077,6 @@ struct WorkspaceDetailView: View {
             )
             sessionStore.upsert(response.session)
             isCreating = false
-            // The creator opens a new Incognito session without being asked.
-            if let currentServerId {
-                ScopedLockService.shared.noteCreated(.session(response.session, serverId: currentServerId))
-            }
             routeToSession(response.session.id)
         } catch {
             self.error = error.localizedDescription
