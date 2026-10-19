@@ -534,7 +534,10 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
       harness: f.harness,
       conversationId: id,
       renderers: new MobileRendererRegistry(),
-      send: (frame) => client.apply(wire(frame)),
+      send: (frame) => {
+        client.frames.push({ ...wire(frame), receivedAt: Date.now() });
+        client.apply(wire(frame));
+      },
       onLost: () => (lost += 1),
     });
     subscriptions.add(client.subscription);
@@ -561,12 +564,38 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
       });
     }, context);
     await settle();
+    expect(client.frames.length).toBeGreaterThan(0);
     expect(client.frames.length).toBe(before);
+    expect(client.entries.some((entry) => entry.kind === "pi.reset")).toBe(false);
 
     // Re-attaching from the cursor, as SessionHost does, opens a fresh room that has the store's state.
     const resumed = await attach(f, client.tip, client);
     expect(resumed.entries.map((entry) => entry.kind)).toEqual(["pi.reset"]);
     await expectConverged(f, resumed);
+  });
+
+  it("leaves no subscription behind when an attach fails to start", async () => {
+    const f = await fixture([]);
+    const id = f.conversation.id;
+    await f.conversation.commit(async (tx) => {
+      await tx.appendEntry(id, { kind: "oppi.notice", model: "malformed" as never });
+    }, context);
+    const frames: ConversationStreamServerMessage[] = [];
+    // The snapshot cannot project the malformed entry, so the attach fails.
+    await expect(
+      attachConversationStream({
+        harness: f.harness,
+        conversationId: id,
+        renderers: new MobileRendererRegistry(),
+        send: (frame) => frames.push(frame),
+      }),
+    ).rejects.toThrow();
+    await f.conversation.commit(async (tx) => {
+      await tx.appendEntry(id, { kind: "oppi.notice", data: { card: { title: "later" } } });
+    }, context);
+    await settle();
+    // The failed attach is not owned by anyone: it must not keep receiving frames.
+    expect(frames).toEqual([]);
   });
 
   it("shows input and display cards like trace history, including card metadata that lands late", async () => {

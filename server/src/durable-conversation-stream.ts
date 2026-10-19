@@ -690,7 +690,14 @@ export async function attachConversationStream(options: {
     if (room.presenting) continue;
     const subscription = new ConversationStreamSubscription(room, options.send, options.onLost);
     room.join(subscription);
-    subscription.start(options.afterEntryId);
+    try {
+      subscription.start(options.afterEntryId);
+    } catch (error) {
+      // No owner will ever dispose a subscription whose attach failed; leaving it in the
+      // room would send it frames, and each retry would leak another.
+      subscription.dispose();
+      throw error;
+    }
     return subscription;
   }
 }
