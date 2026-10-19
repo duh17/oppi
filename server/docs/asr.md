@@ -53,7 +53,7 @@ oppi config validate
 }
 ```
 
-`GET /server/info` advertises `dictationStream` when `asr.provider` is `xai`, or when a valid HTTP backend has a non-empty `asr.sttEndpoint`. An unreachable Yuwp endpoint is a fatal `dictation_error` after the client starts dictation. Missing xAI credentials fail at start the same way.
+`GET /server/info` advertises `dictationStream` only while dictation is `ready`: `asr.provider` is `xai` with an xAI credential, or a non-empty HTTP `asr.sttEndpoint` answers the server's reachability probe. Otherwise the app records on-device. See [Voice backend health](../../docs/server-configuration.md#voice-backend-health). An endpoint that goes down between probes is a fatal `dictation_error` after the client starts dictation.
 
 Restart the Oppi server after changing `asr`.
 

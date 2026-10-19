@@ -155,6 +155,7 @@ import {
   type SttGetAuth,
 } from "./create-stt-provider.js";
 import { GrokVoiceMediaAdapter, grokVoiceFromTts } from "./grok-live-voice.js";
+import { VoiceBackendHealth } from "./voice-backend-health.js";
 import { StreamingSttProvider } from "./stt-provider.js";
 import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
@@ -536,6 +537,8 @@ export class Server {
   private wsMessageHandler!: WsMessageHandler;
   private voiceCallController!: VoiceCallController;
   private voiceMediaCoordinator!: VoiceCallMediaCoordinator;
+  /** Whether each voice feature's backend can serve; behind /server/info voice capabilities. */
+  private voiceBackendHealth!: VoiceBackendHealth;
   // Dictation pipeline capability source for ASR streams
   private dictationManager: DictationManager | undefined;
   private dictationConfig: DictationConfig | undefined;
@@ -683,6 +686,13 @@ export class Server {
       };
       this.dictationManager = this.createDictationManager();
     }
+    // Same sources each feature uses: dictation and read aloud the loaded config, Live Voice
+    // the settings on disk that each call reads.
+    this.voiceBackendHealth = new VoiceBackendHealth({
+      loadedConfig: () => this.storage.getConfig(),
+      voiceConfig: () => this.storage.readVoiceConfig(),
+      getAuth: async (providerId) => this.modelRuntime?.getAuth(providerId),
+    });
     this.voiceMediaCoordinator = new VoiceCallMediaCoordinator({
       createAdapter: () => this.createLiveVoiceMediaAdapter(),
       calls: this.voiceCallController,
@@ -1019,6 +1029,7 @@ export class Server {
         });
       },
       getProviderAuth: async (providerId) => this.modelRuntime?.getAuth(providerId),
+      voiceBackendHealth: this.voiceBackendHealth,
       searchIndex: this.searchIndex ?? undefined,
       appEvents: this.appEventStreamMux,
       serverStartedAt: Date.now(),
@@ -1103,6 +1114,8 @@ export class Server {
       this.scheduleRunner.start();
       this.liveActivityNotifier.start();
       this.resumeSessionsAfterRestartInBackground();
+      // One-shot probes so the first /server/info rarely reads `checking`; no timer.
+      void this.voiceBackendHealth.refresh();
 
       // Background: warm the search index without monopolizing the event loop.
       if (this.searchIndex) {
@@ -1465,7 +1478,10 @@ export class Server {
             )
         : undefined,
       // Local calls speak like read aloud: same engine, same voice.
-      tts: tts && isSpeechEnabled(tts) ? new ReadAloudLiveVoiceTts(tts, { getAuth }) : undefined,
+      tts:
+        tts && isSpeechEnabled(tts)
+          ? new ReadAloudLiveVoiceTts(tts, { getAuth, observer: this.voiceBackendHealth })
+          : undefined,
       // Same xAI credential path as Grok dictation and read aloud: sign-in first, then API key.
       createGrokVoice: () =>
         new GrokVoiceMediaAdapter({

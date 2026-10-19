@@ -23,7 +23,7 @@ final class SessionContentAccess {
 
     private let currentAPIClient: @MainActor () -> APIClient?
     private let currentServerId: @MainActor () -> String?
-    private let currentSpeechAvailable: @MainActor () -> Bool
+    private let speechRequestFailed: @MainActor () -> Void
     private let sessionStore: SessionStore
     private let workspaceStore: WorkspaceStore
     private let readinessPoll: Duration
@@ -31,14 +31,14 @@ final class SessionContentAccess {
     init(
         apiClient: @escaping @MainActor () -> APIClient?,
         serverId: @escaping @MainActor () -> String?,
-        speechAvailable: @escaping @MainActor () -> Bool = { false },
+        speechRequestFailed: @escaping @MainActor () -> Void = {},
         sessionStore: SessionStore,
         workspaceStore: WorkspaceStore,
         readinessPoll: Duration = SessionContentAccess.defaultReadinessPoll
     ) {
         self.currentAPIClient = apiClient
         self.currentServerId = serverId
-        self.currentSpeechAvailable = speechAvailable
+        self.speechRequestFailed = speechRequestFailed
         self.sessionStore = sessionStore
         self.workspaceStore = workspaceStore
         self.readinessPoll = readinessPoll
@@ -104,11 +104,23 @@ final class SessionContentAccess {
 
     // MARK: - Read aloud
 
-    /// Reads message text aloud through the server's TTS provider. Nil when the
-    /// server does not offer read aloud or no client is installed right now.
+    /// Reads message text aloud through the server's TTS provider. Nil when no client is
+    /// installed right now; whether to offer read aloud at all is the timeline's
+    /// `readAloudAvailable` (`capabilities.speech`). A failed request reports back so the
+    /// connection reloads capabilities: a backend that went away hides the speaker.
     func speechReader() -> ((_ text: String) async throws -> SpeechAudioStream)? {
-        guard currentSpeechAvailable(), let apiClient = currentAPIClient() else { return nil }
-        return { text in try await apiClient.speech(text: text) }
+        guard let apiClient = currentAPIClient() else { return nil }
+        let failed = speechRequestFailed
+        return { text in
+            do {
+                return try await apiClient.speech(text: text)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                await failed()
+                throw error
+            }
+        }
     }
 
     // MARK: - Session files

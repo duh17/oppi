@@ -2150,7 +2150,7 @@ struct VoiceInputManagerTests {
         )
         manager.setEngineMode(.remote)
         let conn = ServerConnection()
-        conn.setServerDictationAvailableForTesting(true)
+        conn.setSplitStreamCapabilitiesForTesting(dictationStream: true)
         manager.setServerConnection(conn)
 
         try? await manager.startRecording(source: "test")
@@ -2281,7 +2281,7 @@ struct VoiceInputManagerTests {
         manager.setServerCredentials(ServerCredentials(
             host: "localhost", port: 7749, token: "test-token", name: "test", scheme: .http
         ))
-        manager.setServerConnection(ServerConnection())
+        manager.setServerConnection(serverDictationConnection())
 
         try await manager.startRecording(keyboardLanguage: "en-US", source: "inline_mic_tap")
 
@@ -2316,7 +2316,7 @@ struct VoiceInputManagerTests {
         manager.setServerCredentials(ServerCredentials(
             host: "localhost", port: 7749, token: "test-token", name: "test", scheme: .http
         ))
-        manager.setServerConnection(ServerConnection())
+        manager.setServerConnection(serverDictationConnection())
         await #expect(throws: NSError.self) { try await manager.startRecording(source: "test") }
         #expect(provider.prepareSessionCallCount == (isAudioError ? 2 : 1))
         #expect(provider.makeSessionCallCount == (isAudioError ? 2 : 1))
@@ -2379,8 +2379,10 @@ struct VoiceInputManagerTests {
         #expect(systemAccess.deactivateAudioSessionCallCount == 0)
     }
 
-    /// Remote mode without server dictation available fails clearly instead of falling back.
-    @Test func remoteModeWithoutAsrFailsClearly() async {
+    /// Engine Server while the server's dictation backend is not ready (no connection, or no
+    /// `capabilities.dictationStream`): the take uses on-device dictation instead of failing.
+    @Test(arguments: [false, true])
+    func remoteModeWithoutServerDictationFallsBackToOnDevice(connected: Bool) async {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
 
@@ -2392,19 +2394,29 @@ struct VoiceInputManagerTests {
             systemAccess: systemAccess
         )
         manager.setEngineMode(.remote)
-        // No connection / no serverDictationAvailable — should fail clearly.
+        if connected {
+            let credentials = ServerCredentials(
+                host: "localhost", port: 7749, token: "test-token", name: "test-server", scheme: .http
+            )
+            manager.setServerCredentials(credentials)
+            let conn = ServerConnection()
+            _ = conn.configure(credentials: credentials)
+            // Connected, but the server reports its dictation backend down.
+            conn.setSplitStreamCapabilitiesForTesting(dictationStream: false)
+            manager.setServerConnection(conn)
+        }
 
         try? await manager.startRecording(source: "test")
 
         #expect(serverProvider.prepareSessionCallCount == 0)
-        #expect(onDeviceProvider.prepareSessionCallCount == 0)
-        #expect(manager.state == .error("Server dictation is not connected. Connect to an Oppi server first."))
+        #expect(onDeviceProvider.prepareSessionCallCount == 1)
+        #expect(manager.activeEngine == .classicDictation)
+        #expect(manager.state == .recording)
+        await manager.cancelRecording()
     }
 
-    /// Credentials + a connection are enough for remote mode to try the server-bound
-    /// `/dictation/stream` endpoint. Availability errors should come from that stream,
-    /// not from a stale capability preflight.
-    @Test func remoteModeWithCredentialsAttemptsServerProviderWithoutCapabilityPreflight() async throws {
+    /// A server that advertises dictation gets the take; errors come from its stream.
+    @Test func remoteModeWithAdvertisedServerDictationUsesServerProvider() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
 
@@ -2425,6 +2437,7 @@ struct VoiceInputManagerTests {
         manager.setServerCredentials(credentials)
         let conn = ServerConnection()
         _ = conn.configure(credentials: credentials)
+        conn.setSplitStreamCapabilitiesForTesting(dictationStream: true)
         manager.setServerConnection(conn)
 
         try await manager.startRecording(source: "test")
@@ -2460,7 +2473,7 @@ struct VoiceInputManagerTests {
         ))
 
         let conn = ServerConnection()
-        conn.setServerDictationAvailableForTesting(true)
+        conn.setSplitStreamCapabilitiesForTesting(dictationStream: true)
         manager.setServerConnection(conn)
 
         try? await manager.startRecording(source: "test")
@@ -3187,4 +3200,12 @@ private final class CaptureFailureTestDraft {
 @MainActor
 private func captureFailureSubviews(_ root: UIView) -> [UIView] {
     [root] + root.subviews.flatMap { captureFailureSubviews($0) }
+}
+
+/// A connection whose server advertises dictation (`capabilities.dictationStream`).
+@MainActor
+private func serverDictationConnection() -> ServerConnection {
+    let connection = ServerConnection()
+    connection.setSplitStreamCapabilitiesForTesting(dictationStream: true)
+    return connection
 }

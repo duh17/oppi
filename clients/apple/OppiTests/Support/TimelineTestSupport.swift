@@ -490,7 +490,8 @@ func makeTimelineConfiguration(
     sessionManager: ChatSessionManager? = nil,
     hasOlderServerPage: Bool = false,
     openDestination: ChatTimelineOpenDestination? = nil,
-    loadOlderPage: (@MainActor () async -> Bool)? = nil
+    loadOlderPage: (@MainActor () async -> Bool)? = nil,
+    readAloudAvailable: Bool = false
 ) -> ChatTimelineConfiguration {
     ChatTimelineConfiguration(
         items: items,
@@ -505,6 +506,7 @@ func makeTimelineConfiguration(
         sessionId: sessionId,
         serverId: serverId,
         workspaceId: workspaceId,
+        readAloudAvailable: readAloudAvailable,
         routeScope: routeScope,
         onFork: { _ in },
         onBackSwipe: onBackSwipe,

@@ -34,6 +34,10 @@ struct ServerAboutPage: View {
                 Text("Pi SDK is the embedded Pi coding-agent package that runs Oppi sessions. Pi TUI is the installed pi CLI on this host.")
             }
 
+            if let voiceBackends = model.info?.voiceBackends, !voiceBackends.isEmpty {
+                voiceSection(voiceBackends)
+            }
+
             if model.info != nil {
                 updateSection
             }
@@ -51,6 +55,40 @@ struct ServerAboutPage: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(ServerUpdatePresentation.confirmationMessage(busySessionTitles: busySessionTitles))
+        }
+    }
+
+    /// One row per voice feature, as the server reports it: label, state, target, and why.
+    private func voiceSection(_ backends: [ServerInfo.VoiceBackend]) -> some View {
+        Section {
+            ForEach(backends) { backend in
+                let presentation = VoiceBackendPresentation(backend.health)
+                VStack(alignment: .leading, spacing: 2) {
+                    LabeledContent(backend.label) {
+                        Label(presentation.title, systemImage: presentation.symbol)
+                            .foregroundStyle(presentation.isAvailable ? .themeGreen : .themeFgDim)
+                    }
+                    if let target = backend.target, !target.isEmpty {
+                        Text(target)
+                            .font(.footnote.monospaced())
+                            .foregroundStyle(.themeFgDim)
+                            .textSelection(.enabled)
+                    }
+                    if let detail = backend.detail, !detail.isEmpty {
+                        Text(detail)
+                            .font(.footnote)
+                            .foregroundStyle(.themeFgDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("server.about.voice.\(backend.feature)")
+            }
+        } header: {
+            Text("Voice")
+        } footer: {
+            Text("A voice feature shows in chats only while its backend is ready.")
         }
     }
 
@@ -170,5 +208,37 @@ struct ServerAboutPage: View {
             copiedManualCommand = true
         }
         .accessibilityIdentifier("server.update.manualCopy")
+    }
+}
+
+/// How About This Server shows a voice backend's state. Generic over features and providers:
+/// the label, target, and detail come from the server as sent.
+struct VoiceBackendPresentation: Equatable {
+    let title: String
+    let symbol: String
+    /// The feature shows in chats.
+    let isAvailable: Bool
+
+    init(_ health: ServerInfo.VoiceBackend.Health) {
+        switch health {
+        case .ready:
+            self.init(title: "Ready", symbol: "checkmark.circle.fill", isAvailable: true)
+        case .checking:
+            self.init(title: "Checking", symbol: "clock", isAvailable: false)
+        case .unreachable:
+            self.init(title: "Not reachable", symbol: "exclamationmark.triangle", isAvailable: false)
+        case .needsCredentials:
+            self.init(title: "Needs sign-in", symbol: "key", isAvailable: false)
+        case .notConfigured:
+            self.init(title: "Not set up", symbol: "minus.circle", isAvailable: false)
+        case .unknown:
+            self.init(title: "Not available", symbol: "questionmark.circle", isAvailable: false)
+        }
+    }
+
+    private init(title: String, symbol: String, isAvailable: Bool) {
+        self.title = title
+        self.symbol = symbol
+        self.isAvailable = isAvailable
     }
 }

@@ -48,7 +48,8 @@ extension ChatTimelineController {
     /// does not offer read aloud. Playback state comes from the shared audio
     /// player; its state notifications reconfigure this row.
     private func assistantSpeech(itemID: String, text: String) -> AssistantMessageSpeech? {
-        guard let audioPlayer, let read = sessionContent?.speechReader() else { return nil }
+        guard readAloudAvailable, let audioPlayer,
+              let read = sessionContent?.speechReader() else { return nil }
         let playbackID = AudioPlayerService.speechPlaybackItemID(forMessageID: itemID)
         let state: AssistantMessageSpeech.State = if audioPlayer.playingItemID == playbackID {
             .playing

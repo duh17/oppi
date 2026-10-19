@@ -582,7 +582,16 @@ export type ServerMessage =
   // ── Connection ──
   (
     | { type: "connected"; session: Session; currentSeq?: number; runtimeEpoch?: string }
-    | { type: "stream_connected"; userName: string; serverDictationAvailable: boolean }
+    | {
+        type: "stream_connected";
+        userName: string;
+        /**
+         * Server dictation is configured (a dictation manager exists). Informational: the app
+         * routes dictation by `/server/info` `capabilities.dictationStream`, which also needs
+         * the backend to answer (`VoiceBackendHealth`).
+         */
+        serverDictationAvailable: boolean;
+      }
     | { type: "state"; session: Session }
     | { type: "session_summary"; summary: SessionSummary }
     | { type: "session_ended"; reason: string }

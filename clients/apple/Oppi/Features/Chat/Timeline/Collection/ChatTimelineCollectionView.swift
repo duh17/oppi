@@ -37,6 +37,9 @@ struct ChatTimelineConfiguration {
     let workspaceId: String?
     let agentId: String?
     let agentIcon: IconChoice?
+    /// The server reads replies aloud (`capabilities.speech`): finished assistant rows show
+    /// the speaker. A change reconfigures them.
+    let readAloudAvailable: Bool
     let routeScope: SessionRouteScope?
     let onFork: (String) -> Void
     let onOpenCurrentFile: (String) -> Void
@@ -98,6 +101,7 @@ struct ChatTimelineConfiguration {
         workspaceId: String?,
         agentId: String? = nil,
         agentIcon: IconChoice? = nil,
+        readAloudAvailable: Bool = false,
         routeScope: SessionRouteScope? = nil,
         onFork: @escaping (String) -> Void,
         onOpenCurrentFile: @escaping (String) -> Void = { _ in },
@@ -149,6 +153,7 @@ struct ChatTimelineConfiguration {
         self.workspaceId = workspaceId
         self.agentId = agentId
         self.agentIcon = agentIcon
+        self.readAloudAvailable = readAloudAvailable
         self.routeScope = routeScope
             ?? workspaceId.map(SessionRouteScope.workspace)
         self.onFork = onFork
@@ -441,6 +446,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         get { context.sessionContent }
         set { context.sessionContent = newValue }
     }
+
+    var readAloudAvailable: Bool { context.readAloudAvailable }
 
     var iconAssetCache: IconAssetCache? {
         get { context.iconAssetCache }
@@ -998,7 +1005,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
 
     func apply(configuration: ChatTimelineConfiguration, to collectionView: UICollectionView) {
         let sessionScopeChanged = context.didChangeSessionScope(for: configuration)
-        let agentPresentationChanged = context.didChangeAgentPresentation(for: configuration)
+        let assistantPresentationChanged = context.didChangeAssistantPresentation(for: configuration)
         let chromeStyleChanged = context.didChangeChromeStyle(for: configuration)
         workLineReplacementIDByPreviousID = Dictionary(uniqueKeysWithValues:
             previousWorkLineByID.compactMap { previousID, previousLine in
@@ -1071,7 +1078,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         // when that scope appears or changes, even if ChatItem values are
         // identical, so expanded media retries with the current workspace.
         let globalAppearanceChanged = themeChanged || sessionScopeChanged || chromeStyleChanged
-        let appearanceChanged = globalAppearanceChanged || agentPresentationChanged
+        let appearanceChanged = globalAppearanceChanged || assistantPresentationChanged
 
         // Only update backgroundColor when theme changed or on first apply.
         if themeChanged {
@@ -1366,7 +1373,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         currentItemByID = applyPlan.nextItemByID
 
         var forceReconfigureIDs = Array(toolArgsChangedIDs)
-        if agentPresentationChanged {
+        if assistantPresentationChanged {
             forceReconfigureIDs.append(contentsOf:
                 TimelineSnapshotApplier.assistantPresentationItemIDs(
                     nextIDs: applyPlan.nextIDs,

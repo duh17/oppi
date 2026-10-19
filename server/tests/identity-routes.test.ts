@@ -337,7 +337,6 @@ describe("identity module", () => {
   it("includes uploadProtocol in GET /server/info", async () => {
     const ctx = {
       storage: {
-        readVoiceConfig: vi.fn(() => ({})),
         getConfig: vi.fn(() => ({
           configVersion: 2,
           uploadStore: {
@@ -414,7 +413,6 @@ describe("identity module", () => {
       const ctx = {
         storage: {
           getConfig: vi.fn(() => ({ configVersion: 2 })),
-          readVoiceConfig: vi.fn(() => ({})),
           listWorkspaces: vi.fn(() => []),
           listSessions: vi.fn(() => []),
         },
@@ -460,7 +458,6 @@ describe("identity module", () => {
     const ctx = {
       storage: {
         getConfig: vi.fn(() => ({ configVersion: 1 })),
-        readVoiceConfig: vi.fn(() => ({})),
         listWorkspaces: vi.fn(() => []),
         listSessions: vi.fn(() => []),
       },
@@ -504,7 +501,6 @@ describe("identity module", () => {
       const ctx = {
         storage: {
           getConfig: vi.fn(() => ({ configVersion: 1 })),
-          readVoiceConfig: vi.fn(() => ({})),
           listWorkspaces: vi.fn(() => []),
           listSessions: vi.fn(() => []),
         },

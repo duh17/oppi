@@ -781,7 +781,6 @@ async function getCapabilities(config: Record<string, unknown>): Promise<{
 }> {
   const ctx = {
     storage: {
-      readVoiceConfig: () => ({}),
       getConfig: () => ({
         configVersion: 2,
         uploadStore: { maxFileBytes: 1, maxTurnBytes: 2 },

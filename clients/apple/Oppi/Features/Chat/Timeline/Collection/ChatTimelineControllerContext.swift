@@ -7,6 +7,7 @@ final class ChatTimelineControllerContext {
     var workspaceId: String?
     var agentId: String?
     var agentIcon: IconChoice?
+    var readAloudAvailable = false
     var chromeStyle: ChatTimelineChromeStyle = .standard
     var routeScope: SessionRouteScope?
     var onFork: ((String) -> Void)?
@@ -36,10 +37,12 @@ final class ChatTimelineControllerContext {
             || routeScope != configuration.routeScope
     }
 
-    func didChangeAgentPresentation(
+    /// What every assistant row shows besides its message: the agent's icon and the speaker.
+    func didChangeAssistantPresentation(
         for configuration: ChatTimelineConfiguration
     ) -> Bool {
         agentId != configuration.agentId || agentIcon != configuration.agentIcon
+            || readAloudAvailable != configuration.readAloudAvailable
     }
 
     /// Chrome changes row geometry, so cached heights are stale with it.
@@ -53,6 +56,7 @@ final class ChatTimelineControllerContext {
         workspaceId = configuration.workspaceId
         agentId = configuration.agentId
         agentIcon = configuration.agentIcon
+        readAloudAvailable = configuration.readAloudAvailable
         chromeStyle = configuration.chromeStyle
         routeScope = configuration.routeScope
         onFork = configuration.onFork

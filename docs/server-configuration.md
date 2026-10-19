@@ -41,7 +41,7 @@ oppi server restart
 - Set `asr.provider` to `xai`, or set a non-empty Yuwp-compatible `asr.sttEndpoint`, to enable server dictation. Unset those to disable.
 - Yuwp and xAI stream real partials. OpenAI batch dictation is not supported; replace old `openai` / `openai-codex` ASR config with Yuwp/http or xAI. Invalid provider config disables dictation on startup. Codex LLM/auth/quota behavior is unchanged. See [Dictation / ASR](../server/docs/asr.md).
 - Leftover `asr.backend: pi-extension` and `asr.extension` values are ignored on load.
-- The Apple app learns dictation availability from the server identity payload after pairing. The server offers `xai` dictation only while it has an xAI credential (sign-in, stored API key, or `XAI_API_KEY`).
+- The Apple app uses server dictation only while the server advertises it: an `http` backend must answer, and `xai` needs an xAI credential (sign-in, stored API key, or `XAI_API_KEY`). Otherwise the mic records on-device. See [Voice backend health](#voice-backend-health).
 
 Inspect:
 
@@ -66,7 +66,7 @@ Agents can inspect past sessions and add selected phrases with `oppi dictionary`
 
 ## Read aloud
 
-The speaker button under an assistant reply reads it aloud through the server; it turns into a stop button while that reply plays. It appears once `tts` is configured and the server restarts; the app picks it up when it reconnects. An `xai` provider also needs an xAI credential (sign-in, stored API key, or `XAI_API_KEY`), or the button stays hidden. The server does not probe an `http` endpoint: if that backend is down, tapping the button shows the error under the reply.
+The speaker button under an assistant reply reads it aloud through the server; it turns into a stop button while that reply plays. It appears once `tts` is configured, the server restarts, and the backend is ready: an `http` backend must answer, and an `xai` provider needs an xAI credential (sign-in, stored API key, or `XAI_API_KEY`). See [Voice backend health](#voice-backend-health).
 
 | Key            | Value |
 | -------------- | ----- |
@@ -90,18 +90,38 @@ Code blocks, images, and URLs are skipped; link labels and list items are read. 
 
 Live Voice on the local backend (`asr.liveVoiceBackend` `yuwp`) speaks with this same engine and voice. Without `tts`, a local call listens and shows the agent's replies on screen but stays silent.
 
-### Live Voice availability
+## Voice backend health
 
-The app offers Live Voice (the long-press choice on the composer mic, in a chat and in Quick Session) only when `GET /server/info` advertises `capabilities.liveVoice`. The server advertises it while the configured backend can start a call:
+The app shows a voice feature only while its backend can serve it. For each feature, `GET /server/info` reports one state in `voiceBackends` and advertises the matching capability only when that state is `ready`:
 
-| `asr.liveVoiceBackend` | Advertised when |
-| ---------------------- | --------------- |
-| `yuwp` (default)       | `asr.sttEndpoint` is non-empty |
-| `grok-voice`           | an xAI credential resolves (sign-in, stored API key, or `XAI_API_KEY`) |
+| Feature | Capability | Backend |
+| ------- | ---------- | ------- |
+| Dictation (server engine) | `dictationStream` | `asr` the server loaded at start |
+| Read aloud (speaker under replies) | `speech` | `tts` the server loaded at start |
+| Live Voice (long-press on the composer mic, in a chat and in Quick Session) | `liveVoice` | `asr.liveVoiceBackend` and `tts` on disk, read again for each request and each call, so `oppi config set` applies without a restart |
 
-The server does not probe a Yuwp endpoint or Grok Voice, so a backend that is down still fails when the call starts. A server that does not advertise `liveVoice`, such as one older than 0.53.0, shows no Live Voice choice.
+| State | Meaning |
+| ----- | ------- |
+| `not_configured` | Config names no backend. |
+| `needs_credentials` | An xAI backend has no sign-in, stored API key, or `XAI_API_KEY`. |
+| `checking` | An HTTP backend has no reachability result yet. |
+| `unreachable` | An HTTP backend did not answer: connection refused, DNS failure, no answer within 1.5 s, or the last real request could not connect. |
+| `ready` | Configured, credentialed, and an HTTP backend answered. |
 
-The server reads `asr` and `tts` from disk on each `/server/info` request, the same as each new call, so a change with `oppi config set` takes effect without a restart. The app reads `/server/info` when it connects to the server, including each reconnect, and keeps those capabilities until the next connect. An open app therefore shows or hides the choice after its next reconnect or relaunch, not the moment you change the setting. A choice that is still showing after the backend went away fails at call start with the server's error.
+How the server decides:
+
+- **xAI** backends are cloud services. A credential makes them `ready`; the server does not probe them.
+- **HTTP** backends get one `GET` to the endpoint origin. Any HTTP response counts as reachable, so a wrong path (404) looks `ready` and a wrong port reads `unreachable`. Results are cached per origin for 15 seconds; dictation and local Live Voice share the `asr.sttEndpoint` result.
+- `/server/info` never waits for a probe. It answers from the cache and, when an origin's result is missing or older than 15 seconds, starts one background probe that concurrent requests share. The server probes every configured origin once at start and runs no timer.
+- Read aloud and Live Voice replies report back. A request that cannot connect marks its origin `unreachable` at once. A successful request marks it `ready`. An HTTP error from a backend that answered keeps it `ready` and sets `detail` to the failure (for example `Last request failed: TTS backend returned 404: ...`) until a request succeeds.
+- Local Live Voice (`yuwp`, the default) needs `asr.sttEndpoint` reachable. When `tts` is configured, the voice must also be ready, and `detail` names the voice backend when it is not. Without `tts`, a call runs silent, so only `asr` counts. `grok-voice` needs an xAI credential.
+- A read aloud that cannot reach its backend returns `Read aloud backend at <endpoint> is not reachable`.
+
+What the app does:
+
+- It reads `/server/info` when it connects, each time it returns to the foreground, and after a read aloud fails. The speaker disappears after a failure and comes back once the backend answers again and the app reloads.
+- The mic always works. With Engine set to Server, a take uses server dictation only while `dictationStream` is advertised; otherwise it records with on-device dictation. `stream_connected.serverDictationAvailable` only says dictation is configured; the app does not route by it.
+- **Server Settings → About This Server → Voice** lists each `voiceBackends` entry with its label, state, target, and detail. The section is hidden for a server that sends no `voiceBackends`. A server that omits a capability, such as one older than 0.53.0, shows no matching control.
 
 ## Voice extensions
 
@@ -229,7 +249,7 @@ Pi's host MCP commands (`pi mcp list`, `login`, `logout`), which the MCP Servers
 | `asr.provider`                          | `http` or `xai` (restart)                          |
 | `asr.sttModel`                          | HTTP/Yuwp STT model id (restart)                                      |
 | `tts.provider` / `tts.endpoint` / `tts.model` / `tts.voice` / `tts.language` | Read aloud (restart; see [Read aloud](#read-aloud)) |
-| `asr.liveVoiceBackend`                  | Live Voice ears and voice for a call on a session: `yuwp` (local ASR from `asr.sttEndpoint`, speech from `tts`) or `grok-voice` (no restart: each new call reads `asr` and `tts` from disk; Grok uses the xAI `tts.voice`, else `eve`). The app offers Live Voice only when this backend is set up; see [Live Voice availability](#live-voice-availability) |
+| `asr.liveVoiceBackend`                  | Live Voice ears and voice for a call on a session: `yuwp` (local ASR from `asr.sttEndpoint`, speech from `tts`) or `grok-voice` (no restart: each new call reads `asr` and `tts` from disk; Grok uses the xAI `tts.voice`, else `eve`). The app offers Live Voice only while this backend is ready; see [Voice backend health](#voice-backend-health) |
 | `runtimeEnv.<NAME>`                     | Host runtime env, including TTS URLs (restart)                      |
 | `extensions.voice.defaultVoiceId`       | Default voice id                                                    |
 | `images.autoResize`                     | Client image preprocessing preference                               |

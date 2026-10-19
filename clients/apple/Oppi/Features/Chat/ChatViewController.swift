@@ -959,6 +959,7 @@ final class ChatViewController: UIViewController {
             workspaceId: timelineWorkspaceId,
             agentId: session?.launch?.agentId,
             agentIcon: session?.launch?.agentIcon,
+            readAloudAvailable: connection.speechAvailable,
             routeScope: focusedRouteScope,
             onFork: { [weak self] in self?.forkFromMessage($0) },
             onOpenCurrentFile: { [weak self] in self?.openCurrentToolFile(path: $0) },
@@ -1011,6 +1012,7 @@ final class ChatViewController: UIViewController {
             workspaceId: timelineWorkspaceId,
             agentId: session?.launch?.agentId,
             agentIcon: session?.launch?.agentIcon,
+            readAloudAvailable: connection.speechAvailable,
             routeScope: focusedRouteScope,
             model: session?.model,
             topOverlap: timelineTopOverlap,
@@ -2635,6 +2637,8 @@ private struct ChatTimelineChromeKey: Equatable {
     let workspaceId: String?
     let agentId: String?
     let agentIcon: IconChoice?
+    /// `capabilities.speech`: reloaded on foreground and after a failed read aloud.
+    let readAloudAvailable: Bool
     let routeScope: SessionRouteScope?
     let model: String?
     let topOverlap: CGFloat

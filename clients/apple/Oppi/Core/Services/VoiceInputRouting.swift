@@ -17,25 +17,23 @@ final class VoiceInputRouteResolver {
         self.isAvailable = isAvailable
     }
 
+    /// `serverDictationAvailable` is the server's `capabilities.dictationStream`: its
+    /// dictation backend is configured and answering. Engine Server (and the legacy Auto,
+    /// which the settings UI no longer offers) use the server only then; otherwise the take
+    /// falls back to on-device dictation, which always works, instead of failing.
     func resolveEngine(
         mode: VoiceInputManager.EngineMode,
         fallback: VoiceInputManager.TranscriptionEngine,
         locale: Locale = .current,
-        serverCredentials: ServerCredentials? = nil,
         serverDictationAvailable: Bool = false
     ) async -> VoiceInputManager.TranscriptionEngine {
         switch mode {
-        case .onDevice:
-            return await resolveOnDeviceEngine(preferred: fallback, locale: locale)
-        case .remote:
-            return .serverDictation
-        case .auto:
-            // Legacy path: prefer server dictation whenever a server is in play.
-            // The settings UI no longer exposes Auto because dictation routing
-            // should be explicit, but stale preferences may still exist.
-            if serverCredentials != nil || serverDictationAvailable {
+        case .remote, .auto:
+            if serverDictationAvailable {
                 return .serverDictation
             }
+            return await resolveOnDeviceEngine(preferred: fallback, locale: locale)
+        case .onDevice:
             return await resolveOnDeviceEngine(preferred: fallback, locale: locale)
         }
     }

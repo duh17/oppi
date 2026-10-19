@@ -902,15 +902,18 @@ final class VoiceInputManager {
     }
 
     // MARK: - Locale Resolution
-    /// Resolve the effective engine, considering mode + server availability.
-    private func effectiveEngine(for locale: Locale) async -> TranscriptionEngine {
+    /// Resolve the effective engine, considering mode + server availability. Server dictation
+    /// needs `connection`'s `capabilities.dictationStream`; without it the take goes on-device.
+    private func effectiveEngine(
+        for locale: Locale,
+        connection: ServerConnection?
+    ) async -> TranscriptionEngine {
         let fallback = Self.preferredEngine(for: locale)
         let resolved = await routeResolver.resolveEngine(
             mode: engineMode,
             fallback: fallback,
             locale: locale,
-            serverCredentials: serverCredentials,
-            serverDictationAvailable: serverConnection?.serverDictationAvailable ?? false
+            serverDictationAvailable: connection?.dictationStreamAvailable ?? false
         )
 
         // Tests and previews often register only one on-device provider. Keep
@@ -970,7 +973,7 @@ final class VoiceInputManager {
     func prewarm(keyboardLanguage: String? = nil, source: String = "unknown") async {
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)
         let localeID = locale.identifier(.bcp47)
-        let engine = await effectiveEngine(for: locale)
+        let engine = await effectiveEngine(for: locale, connection: serverConnection)
         let metricAnnotation = VoiceMetricAnnotation(
             engine: engine.logName,
             locale: localeID,
@@ -1121,7 +1124,7 @@ final class VoiceInputManager {
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)
         let localeID = locale.identifier(.bcp47)
         activeLanguageLabel = Self.languageLabel(for: locale)
-        let engine = await effectiveEngine(for: locale)
+        let engine = await effectiveEngine(for: locale, connection: frozenTake.connection)
         guard activeStartRequestID == requestID, state == .preparingModel else {
             ownsOperation = false
             throw CancellationError()

@@ -254,15 +254,15 @@ final class ServerConnection {
         }
     }
 
-    /// Whether the server has server dictation configured (remote dictation server or another STT backend).
-    /// Updated from server capabilities and `stream_connected` messages.
-    private(set) var serverDictationAvailable = false
     /// Last capabilities snapshot from `/server/info`; nil until loaded and after a transport reset.
     /// The `*Available` flags below read it.
     private(set) var serverCapabilities: ServerInfo.Capabilities?
     /// Set when the dictation stream endpoint answered 404/405/426/501. Overrides the snapshot's
     /// dictation flag until the next capabilities load or transport reset.
     private var dictationStreamUnsupportedByEndpoint = false
+    /// Server dictation can take a recording: the server's dictation backend answers
+    /// (`capabilities.dictationStream`). The one source for dictation routing;
+    /// `stream_connected.serverDictationAvailable` only says dictation is configured.
     var dictationStreamAvailable: Bool {
         !dictationStreamUnsupportedByEndpoint && serverCapabilities?.dictationStream?.version ?? 0 >= 1
     }
@@ -311,7 +311,11 @@ final class ServerConnection {
     @ObservationIgnored private(set) lazy var sessionContent = SessionContentAccess(
         apiClient: { [weak self] in self?.apiClient },
         serverId: { [weak self] in self?.currentServerId },
-        speechAvailable: { [weak self] in self?.speechAvailable == true },
+        // A failed read aloud may mean its backend went away: reload `capabilities.speech`
+        // (single-flight with every other capability refresh).
+        speechRequestFailed: { [weak self] in
+            Task { await self?.refreshStreamCapabilities() }
+        },
         sessionStore: sessionStore,
         workspaceStore: workspaceStore
     )
@@ -1359,7 +1363,6 @@ final class ServerConnection {
         sessionEventContinuations.removeAll()
         sessionUsageMetricSnapshots.removeAll()
         sessionUsageMetricLastEmittedAt.removeAll()
-        serverDictationAvailable = false
         clearFocusedSessionStreamEndpoint()
         wsClient?.disconnect()
 
@@ -1390,7 +1393,9 @@ final class ServerConnection {
                 let info = try await apiClient.serverInfo()
                 guard self.streamCapabilitiesGeneration == generation else { return }
 
-                self.applyStreamCapabilities(info, startAppEventStream: true)
+                // A reload of loaded capabilities (foreground, failed read aloud) leaves a
+                // running app-event stream alone; foreground recovery restarts a stopped one.
+                self.applyStreamCapabilities(info, startAppEventStream: !hadLoadedCapabilities)
             } catch {
                 guard self.streamCapabilitiesGeneration == generation else { return }
                 // Do not let a transient handoff failure permanently poison stream
@@ -1446,9 +1451,6 @@ final class ServerConnection {
             .missingRequiredSplitStreamCapabilities(in: capabilities)
         streamCapabilitiesRefreshFailed = false
         streamCapabilitiesLoaded = true
-        if dictationStreamAvailable {
-            setServerDictationAvailableFromCapabilities(true)
-        }
         if startAppEventStream {
             if appEventStreamAvailable {
                 startAppEventStreamIfAvailable()
@@ -1740,8 +1742,7 @@ final class ServerConnection {
         }
 
         // Handle stream-level events (no sessionId)
-        if case .streamConnected(_, let available) = message {
-            serverDictationAvailable = available
+        if case .streamConnected = message {
             sessionStreamCoordinator.clearSessionBootstrap()
             handleStreamReconnected()
             return
@@ -2882,10 +2883,6 @@ final class ServerConnection {
         MessageSender.telemetryErrorKind(from: error)
     }
 
-    func setServerDictationAvailableFromCapabilities(_ available: Bool) {
-        serverDictationAvailable = available
-    }
-
     func makeDictationStreamClient() -> DictationStreamClient? {
         guard let selection = endpointSelection,
               let credentials else { return nil }
@@ -3087,12 +3084,6 @@ final class ServerConnection {
     /// Install a fixture-backed client so API-driven pages render without a server.
     func setPreviewAPIClient(_ client: APIClient) {
         apiClient = client
-    }
-
-    // periphery:ignore - used by VoiceInputManagerTests via @testable import
-    /// Override server dictation availability for testing.
-    func setServerDictationAvailableForTesting(_ available: Bool) {
-        serverDictationAvailable = available
     }
 
     // periphery:ignore - used by stream coordinator tests via @testable import

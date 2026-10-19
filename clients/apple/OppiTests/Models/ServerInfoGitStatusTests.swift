@@ -112,6 +112,62 @@ struct ServerInfoTests {
         #expect(decoded.capabilities?.hasRequiredSplitStreamCapabilities == true)
     }
 
+    @Test func decodeVoiceBackendsIncludingUnknownState() throws {
+        func info(_ voiceBackends: String) -> Data {
+            Data("""
+            {
+              "name": "oppi", "version": "0.53.0", "uptime": 1, "os": "darwin", "arch": "arm64",
+              "hostname": "h", "nodeVersion": "v24", "piVersion": "1", "configVersion": 2,
+              "capabilities": { "sessionStream": { "version": 1 } },
+              "stats": { "workspaceCount": 0, "activeSessionCount": 0, "totalSessionCount": 0,
+                         "skillCount": 0, "modelCount": 0 }
+              \(voiceBackends)
+            }
+            """.utf8)
+        }
+
+        let decoded = try JSONDecoder().decode(ServerInfo.self, from: info("""
+        , "voiceBackends": [
+          { "feature": "dictation", "label": "Dictation", "state": "ready",
+            "target": "http://127.0.0.1:7936", "checkedAt": 1792431234567 },
+          { "feature": "speech", "label": "Read aloud", "state": "unreachable",
+            "target": "http://127.0.0.1:7938", "detail": "connect ECONNREFUSED 127.0.0.1:7938" },
+          { "feature": "liveVoice", "label": "Live Voice", "state": "warming_up" },
+          { "feature": "karaoke", "label": "Karaoke", "state": "needs_credentials", "target": "xAI" }
+        ]
+        """))
+        let backends = try #require(decoded.voiceBackends)
+        #expect(backends.map(\.label) == ["Dictation", "Read aloud", "Live Voice", "Karaoke"])
+        #expect(backends.map(\.health) == [.ready, .unreachable, .unknown, .needsCredentials])
+        #expect(backends[0].checkedAt == 1_792_431_234_567)
+        #expect(backends[1].detail == "connect ECONNREFUSED 127.0.0.1:7938")
+        #expect(backends[2].target == nil && backends[2].detail == nil)
+
+        // An older server sends no list: the About page hides the Voice section.
+        #expect(try JSONDecoder().decode(ServerInfo.self, from: info("")).voiceBackends == nil)
+    }
+
+    /// About This Server → Voice: only `ready` reads as available; an unknown state
+    /// from a newer server reads as not available.
+    @Test func voiceBackendPresentationMapsEveryState() {
+        func presentation(_ state: String) -> VoiceBackendPresentation {
+            VoiceBackendPresentation(ServerInfo.VoiceBackend(feature: "f", label: "F", state: state).health)
+        }
+        let cases: [(String, String, Bool)] = [
+            ("ready", "Ready", true),
+            ("checking", "Checking", false),
+            ("unreachable", "Not reachable", false),
+            ("needs_credentials", "Needs sign-in", false),
+            ("not_configured", "Not set up", false),
+            ("degraded", "Not available", false),
+        ]
+        for (state, title, available) in cases {
+            #expect(presentation(state).title == title, "\(state)")
+            #expect(presentation(state).isAvailable == available, "\(state)")
+        }
+        #expect(Set(cases.map { presentation($0.0).symbol }).count == cases.count)
+    }
+
     @Test func requiredSplitStreamCapabilitiesIgnoreOptionalAudio() {
         let capabilities = ServerInfo.Capabilities(
             sessionStream: .init(version: 1),

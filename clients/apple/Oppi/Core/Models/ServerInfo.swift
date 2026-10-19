@@ -21,6 +21,45 @@ struct ServerInfo: Codable, Sendable, Equatable {
     let capabilities: Capabilities?
     let stats: ServerStats
     var update: UpdateInfo? = nil
+    /// Each voice feature's backend state, for About This Server → Voice. Nil from a
+    /// server that does not report it; the section is then hidden.
+    var voiceBackends: [VoiceBackend]? = nil
+
+    /// One `voiceBackends` entry. Labels and text come from the server; the app maps only
+    /// `state` to a title and symbol (`VoiceBackendPresentation`).
+    struct VoiceBackend: Codable, Sendable, Equatable, Identifiable {
+        let feature: String
+        let label: String
+        /// Kept as sent so a state this app does not know still decodes.
+        let state: String
+        var target: String? = nil
+        var detail: String? = nil
+        /// Epoch ms of the last reachability result.
+        var checkedAt: Double? = nil
+
+        var id: String { feature }
+
+        enum Health: Equatable {
+            case ready
+            case checking
+            case unreachable
+            case needsCredentials
+            case notConfigured
+            /// A state from a newer server: shown as not available.
+            case unknown
+        }
+
+        var health: Health {
+            switch state {
+            case "ready": .ready
+            case "checking": .checking
+            case "unreachable": .unreachable
+            case "needs_credentials": .needsCredentials
+            case "not_configured": .notConfigured
+            default: .unknown
+            }
+        }
+    }
 
     struct UpdateInfo: Codable, Sendable, Equatable {
         let installKind: String

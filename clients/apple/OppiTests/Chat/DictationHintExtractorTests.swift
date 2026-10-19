@@ -826,6 +826,7 @@ private func testDictationServer(host: String) -> (credentials: ServerCredential
     let credentials = testCredentials(host: host)
     let connection = ServerConnection()
     _ = connection.configure(credentials: credentials)
+    connection.setSplitStreamCapabilitiesForTesting(dictationStream: true)
     return (credentials, connection)
 }
 

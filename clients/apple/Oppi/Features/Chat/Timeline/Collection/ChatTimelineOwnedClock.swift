@@ -334,6 +334,7 @@ extension ChatTimelineController {
             || previous.extensionHiddenThinkingLabel != next.extensionHiddenThinkingLabel
             || previous.agentId != next.agentId
             || previous.agentIcon != next.agentIcon
+            || previous.readAloudAvailable != next.readAloudAvailable
             || previous.iconAssetCache !== next.iconAssetCache
             || previous.topOverlap != next.topOverlap
             || previous.bottomOverlap != next.bottomOverlap

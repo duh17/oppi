@@ -12,11 +12,7 @@
  * audio is normalized to 16-bit little-endian PCM at the provider's own rate.
  */
 
-import {
-  hasVoiceProviderCredential,
-  resolveSttBearerToken,
-  type SttGetAuth,
-} from "./create-stt-provider.js";
+import { resolveSttBearerToken, type SttGetAuth } from "./create-stt-provider.js";
 import type { ServerConfig } from "./types.js";
 
 export type TtsConfig = NonNullable<ServerConfig["tts"]>;
@@ -59,21 +55,14 @@ export function resolveTtsProvider(tts: TtsConfig | undefined): TtsProviderId | 
   return "http";
 }
 
-/** True when `tts` names a read-aloud backend. Credentials are checked by `isSpeechReady`. */
+/**
+ * True when `tts` names a read-aloud backend. Credentials and reachability are judged by
+ * `VoiceBackendHealth`.
+ */
 export function isSpeechEnabled(tts: TtsConfig | undefined): boolean {
   const provider = resolveTtsProvider(tts);
   if (provider === "xai") return true;
   return provider === "http" && (tts?.endpoint?.trim().length ?? 0) > 0;
-}
-
-/** True when read aloud is configured and can authenticate (advertised as `capabilities.speech`). */
-export async function isSpeechReady(
-  tts: TtsConfig | undefined,
-  getAuth?: SttGetAuth,
-): Promise<boolean> {
-  const provider = resolveTtsProvider(tts);
-  if (!provider || !isSpeechEnabled(tts)) return false;
-  return hasVoiceProviderCredential(provider, getAuth);
 }
 
 // ─── Text ───
@@ -270,11 +259,24 @@ function toPcm16(data: Buffer, tag: number, bits: number): Buffer {
 
 // ─── Providers ───
 
+/**
+ * Told how each real request to an HTTP TTS backend went, so voice backend health follows
+ * actual use between probes (`VoiceBackendHealth`).
+ */
+export interface SpeechBackendObserver {
+  requestSucceeded(endpoint: string): void;
+  /** The backend answered with an error. It is reachable. */
+  requestFailed(endpoint: string, message: string): void;
+  /** The request never reached the backend (refused, DNS, reset before a response). */
+  connectFailed(endpoint: string, error: unknown): void;
+}
+
 export interface SpeechDeps {
   fetchFn?: typeof globalThis.fetch;
   getAuth?: SttGetAuth;
   /** Test seam for credentials; production resolves Pi/Oppi provider auth. */
   resolveApiKey?: (providerId: "xai") => Promise<string | undefined>;
+  observer?: SpeechBackendObserver;
 }
 
 type Synthesize = (text: string, signal: AbortSignal) => Promise<PcmAudio>;
@@ -316,19 +318,36 @@ function createSynthesizer(tts: TtsConfig | undefined, deps: SpeechDeps): Synthe
   }
 
   const endpoint = (tts.endpoint ?? "").trim().replace(/\/+$/, "");
+  const observer = deps.observer;
   return async (text, signal) => {
-    const response = await fetchFn(`${endpoint}/v1/audio/speech`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...(tts.model ? { model: tts.model } : {}),
-        input: text,
-        ...(tts.voice ? { voice: tts.voice } : {}),
-        response_format: "wav",
-      }),
-      signal,
-    });
-    return decodeWavToPcm16(await readOk(response, "TTS backend"));
+    let response: Response;
+    try {
+      response = await fetchFn(`${endpoint}/v1/audio/speech`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(tts.model ? { model: tts.model } : {}),
+          input: text,
+          ...(tts.voice ? { voice: tts.voice } : {}),
+          response_format: "wav",
+        }),
+        signal,
+      });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      observer?.connectFailed(endpoint, error);
+      throw new SpeechError(503, `Read aloud backend at ${endpoint} is not reachable`);
+    }
+    try {
+      const audio = decodeWavToPcm16(await readOk(response, "TTS backend"));
+      observer?.requestSucceeded(endpoint);
+      return audio;
+    } catch (error) {
+      if (!signal.aborted && error instanceof SpeechError) {
+        observer?.requestFailed(endpoint, error.message);
+      }
+      throw error;
+    }
   };
 }
 

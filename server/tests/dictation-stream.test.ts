@@ -1,16 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { isDictationStreamEnabled } from "../src/dictation-types.js";
-import { createRouteHelpers } from "../src/routes/http.js";
-import { createIdentityRoutes } from "../src/routes/identity.js";
-import type { RouteContext } from "../src/routes/types.js";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
-import { ConfigStore } from "../src/storage/config-store.js";
-import { makeResponse } from "./harness/route-test-helpers.js";
 
 const tempDirs: string[] = [];
 
@@ -25,61 +20,6 @@ function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
-}
-
-type VoiceCapabilities = {
-  dictationStream?: { version: number };
-  speech?: { version: number };
-  liveVoice?: { version: number };
-};
-
-const signedInToXai = async () => ({ auth: { apiKey: "xai-test-key" } });
-
-async function getServerInfo(
-  asr: unknown,
-  options: {
-    tts?: unknown;
-    getProviderAuth?: RouteContext["getProviderAuth"];
-    readVoiceConfig?: () => { asr?: unknown };
-  } = {},
-): Promise<VoiceCapabilities> {
-  const ctx = {
-    getProviderAuth: options.getProviderAuth,
-    storage: {
-      getConfig: () => ({
-        configVersion: 2,
-        asr,
-        tts: options.tts,
-        uploadStore: { maxFileBytes: 1, maxTurnBytes: 2 },
-        images: { autoResize: false },
-      }),
-      readVoiceConfig: options.readVoiceConfig ?? (() => ({ asr })),
-      listWorkspaces: () => [],
-      listSessions: () => [],
-      getDataDir: () => tempDirs[0] ?? tmpdir(),
-    },
-    sessions: { getActiveSessionIds: () => new Set(), durableSessionsAvailable: () => false, conversationStreamAvailable: () => false },
-    sessionRuntimes: { getActiveSessionIds: () => new Set() },
-    skillRegistry: { list: () => [] },
-    getModelCatalog: () => [],
-    serverStartedAt: Date.now(),
-    serverVersion: "test",
-    piVersion: "test",
-  } as unknown as RouteContext;
-
-  const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
-  const res = makeResponse();
-  const handled = await dispatch({
-    method: "GET",
-    path: "/server/info",
-    url: new URL("http://localhost/server/info"),
-    req: {} as never,
-    res: res as never,
-  });
-  expect(handled).toBe(true);
-  expect(res.statusCode).toBe(200);
-  const body = JSON.parse(res.body) as { capabilities: VoiceCapabilities };
-  return body.capabilities;
 }
 
 type ServerDictationInternals = {
@@ -129,131 +69,6 @@ describe("isDictationStreamEnabled", () => {
         sttEndpoint: "http://127.0.0.1:7936",
       }),
     ).toBe(true);
-  });
-});
-
-describe("GET /server/info dictationStream", () => {
-  // A developer's XAI_API_KEY must not count as a sign-in.
-  beforeEach(() => vi.stubEnv("XAI_API_KEY", ""));
-  afterEach(() => vi.unstubAllEnvs());
-
-  it("advertises when omitted backend has a non-empty sttEndpoint", async () => {
-    const capabilities = await getServerInfo({ sttEndpoint: "http://127.0.0.1:7936" });
-    expect(capabilities.dictationStream).toEqual({ version: 1 });
-  });
-
-  it("does not advertise a pi-extension backend without sttEndpoint", async () => {
-    const capabilities = await getServerInfo({
-      backend: "pi-extension",
-      extension: "@earendil-works/pi-transcribe",
-    });
-    expect(capabilities.dictationStream).toBeUndefined();
-  });
-
-  it("advertises HTTP when sttEndpoint is set even if leftover backend is pi-extension", async () => {
-    const capabilities = await getServerInfo({
-      backend: "pi-extension",
-      extension: "@earendil-works/pi-transcribe",
-      sttEndpoint: "http://127.0.0.1:7936",
-    });
-    expect(capabilities.dictationStream).toEqual({ version: 1 });
-  });
-
-  it("advertises signed-in xai but not removed OpenAI providers", async () => {
-    const signedIn = { getProviderAuth: signedInToXai };
-    expect((await getServerInfo({ provider: "openai-codex" }, signedIn)).dictationStream).toBeUndefined();
-    expect((await getServerInfo({ provider: "openai" }, signedIn)).dictationStream).toBeUndefined();
-    expect((await getServerInfo({ provider: "xai" }, signedIn)).dictationStream).toEqual({
-      version: 1,
-    });
-  });
-
-  it("does not advertise xai without an xAI credential", async () => {
-    const signedOut = { getProviderAuth: async () => undefined };
-    expect((await getServerInfo({ provider: "xai" }, signedOut)).dictationStream).toBeUndefined();
-  });
-
-  it("accepts XAI_API_KEY as the xAI credential", async () => {
-    vi.stubEnv("XAI_API_KEY", "xai-env-key");
-    expect((await getServerInfo({ provider: "xai" })).dictationStream).toEqual({ version: 1 });
-  });
-});
-
-describe("GET /server/info speech", () => {
-  beforeEach(() => vi.stubEnv("XAI_API_KEY", ""));
-  afterEach(() => vi.unstubAllEnvs());
-
-  it("advertises an HTTP backend with an endpoint, without credentials", async () => {
-    const info = await getServerInfo(undefined, {
-      tts: { provider: "http", endpoint: "http://127.0.0.1:7938" },
-    });
-    expect(info.speech).toEqual({ version: 1 });
-  });
-
-  it("does not advertise without tts or with an HTTP provider missing its endpoint", async () => {
-    expect((await getServerInfo(undefined)).speech).toBeUndefined();
-    expect((await getServerInfo(undefined, { tts: { provider: "http" } })).speech).toBeUndefined();
-  });
-
-  it("advertises xai only when signed in to xAI", async () => {
-    const tts = { provider: "xai", voice: "eve" };
-    expect(
-      (await getServerInfo(undefined, { tts, getProviderAuth: async () => undefined })).speech,
-    ).toBeUndefined();
-    expect((await getServerInfo(undefined, { tts, getProviderAuth: signedInToXai })).speech).toEqual(
-      { version: 1 },
-    );
-  });
-});
-
-describe("GET /server/info liveVoice", () => {
-  beforeEach(() => vi.stubEnv("XAI_API_KEY", ""));
-  afterEach(() => vi.unstubAllEnvs());
-
-  const liveVoice = async (
-    asr: unknown,
-    getProviderAuth?: RouteContext["getProviderAuth"],
-  ) => (await getServerInfo(undefined, { readVoiceConfig: () => ({ asr }), getProviderAuth })).liveVoice;
-
-  it("advertises the local backend only with an ASR endpoint", async () => {
-    expect(await liveVoice(undefined)).toBeUndefined();
-    expect(await liveVoice({ liveVoiceBackend: "yuwp" })).toBeUndefined();
-    expect(await liveVoice({ liveVoiceBackend: "yuwp", sttEndpoint: "  " })).toBeUndefined();
-    expect(await liveVoice({ liveVoiceBackend: "yuwp", sttEndpoint: "http://127.0.0.1:7936" })).toEqual({
-      version: 1,
-    });
-    // yuwp is the default backend.
-    expect(await liveVoice({ sttEndpoint: "http://127.0.0.1:7936" })).toEqual({ version: 1 });
-  });
-
-  it("advertises Grok Voice only with an xAI credential, whatever asr.sttEndpoint says", async () => {
-    const asr = { liveVoiceBackend: "grok-voice" };
-    expect(await liveVoice(asr, async () => undefined)).toBeUndefined();
-    expect(await liveVoice(asr, signedInToXai)).toEqual({ version: 1 });
-    expect(
-      await liveVoice({ ...asr, sttEndpoint: "http://127.0.0.1:7936" }, async () => undefined),
-    ).toBeUndefined();
-  });
-
-  it("accepts XAI_API_KEY as the Grok Voice credential", async () => {
-    vi.stubEnv("XAI_API_KEY", "xai-env-key");
-    expect(await liveVoice({ liveVoiceBackend: "grok-voice" })).toEqual({ version: 1 });
-  });
-
-  it("follows voice settings saved after the server loaded its config", async () => {
-    const dataDir = tempDir("oppi-live-voice-capability-");
-    const server = new ConfigStore(dataDir);
-    server.updateConfig({ asr: { liveVoiceBackend: "yuwp" } });
-    const readVoiceConfig = () => server.readVoiceConfig();
-    const advertised = async () => (await getServerInfo(undefined, { readVoiceConfig })).liveVoice;
-
-    expect(await advertised()).toBeUndefined();
-
-    // `oppi config set` runs in its own process with its own store; no server restart.
-    new ConfigStore(dataDir).updateConfig({
-      asr: { liveVoiceBackend: "yuwp", sttEndpoint: "http://127.0.0.1:7936" },
-    });
-    expect(await advertised()).toEqual({ version: 1 });
   });
 });
 

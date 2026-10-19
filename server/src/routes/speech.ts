@@ -42,6 +42,7 @@ export function createSpeechRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
 
       const speech = await startSpeech(ctx.storage.getConfig().tts, text, abort.signal, {
         getAuth: ctx.getProviderAuth,
+        observer: ctx.voiceBackendHealth,
       });
       if (abort.signal.aborted) return true;
       res.writeHead(200, {

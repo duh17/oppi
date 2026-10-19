@@ -2141,16 +2141,6 @@ struct StreamLifecycleTests {
                 "Should clear all session continuations")
     }
 
-    @Test func disconnectStreamResetsAsrAvailability() {
-        let (conn, _) = makeTestConnection()
-        conn.setServerDictationAvailableForTesting(true)
-
-        conn.disconnectStream()
-
-        #expect(conn.serverDictationAvailable == false,
-                "disconnectStream should clear stale serverDictationAvailable state")
-    }
-
     // MARK: - stream_connected refresh handling
 
     @Test func streamConnectedMessageTriggersRefresh() {

@@ -21,6 +21,7 @@ import type { PushSender } from "../push/push-sender.js";
 import type { DevicePairing } from "../device-pairing.js";
 import type { ServerResourceRecord } from "../server-metrics-history.js";
 import type { SttGetAuth } from "../create-stt-provider.js";
+import type { VoiceBackendHealth } from "../voice-backend-health.js";
 
 /** The resource sampler behind the Server Metrics page. */
 export interface ServerMetricsControl {
@@ -52,6 +53,12 @@ export interface RouteContext {
   getProviderQuotasStatus?: () => Promise<ProviderQuotasStatus>;
   /** Configured provider credentials (API key or refreshed OAuth token), e.g. xAI for read aloud. */
   getProviderAuth?: SttGetAuth;
+  /**
+   * Voice backend states behind `capabilities.dictationStream`/`speech`/`liveVoice` and
+   * `voiceBackends`; also told how each read-aloud request went. Optional so route tests can
+   * omit it; without it no voice feature is advertised.
+   */
+  voiceBackendHealth?: VoiceBackendHealth;
   searchIndex?: SearchIndex;
   appEvents?: AppEventEmitter;
   serverStartedAt: number;

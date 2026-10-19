@@ -238,6 +238,40 @@ struct ChatTimelineCoordinatorTests {
         )
     }
 
+    /// The speaker under a finished reply follows `capabilities.speech` as the chat pushes
+    /// it, so a backend that goes away or comes back updates rows already on screen.
+    @MainActor
+    @Test func assistantSpeakerFollowsReadAloudAvailability() throws {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        harness.connection.setAPIClientForTesting(APIClient(
+            baseURL: URL(string: "http://test.local:7749")!,
+            token: "sk_test"
+        ))
+        let reply = ChatItem.assistantMessage(id: "assistant-1", text: "Done.", timestamp: Date())
+        func apply(readAloud: Bool) throws -> AssistantMessageSpeech? {
+            harness.coordinator.apply(
+                configuration: makeTimelineConfiguration(
+                    items: [reply],
+                    sessionId: "session-a",
+                    reducer: harness.reducer,
+                    toolOutputStore: harness.toolOutputStore,
+                    toolArgsStore: harness.toolArgsStore,
+                    connection: harness.connection,
+                    scrollController: harness.scrollController,
+                    audioPlayer: harness.audioPlayer,
+                    readAloudAvailable: readAloud
+                ),
+                to: harness.collectionView
+            )
+            let cell = try configuredTimelineCell(in: harness.collectionView, item: 0)
+            return try #require(cell.contentConfiguration as? AssistantTimelineRowConfiguration).speech
+        }
+
+        #expect(try apply(readAloud: false) == nil)
+        #expect(try apply(readAloud: true) != nil)
+        #expect(try apply(readAloud: false) == nil)
+    }
+
     @MainActor
     @Test func assistantMarkdownRowsRenderNatively() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")

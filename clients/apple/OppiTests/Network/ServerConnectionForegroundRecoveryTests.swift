@@ -208,6 +208,67 @@ struct ServerConnectionForegroundRecoveryTests {
         #expect(endLevel != nil)
     }
 
+    /// Voice features follow their backend: foreground recovery reloads capabilities that are
+    /// already loaded, and a failed read aloud reloads them too, so the speaker goes away with
+    /// its backend and comes back with it.
+    @Test func voiceCapabilitiesReloadOnForegroundAndAfterFailedReadAloud() async throws {
+        let speechBackendUp = VoiceBackendSwitch()
+        VoiceCapabilityURLProtocol.handler = { request in
+            let url = try #require(request.url)
+            if url.path == "/server/info" {
+                let base = foregroundRecoveryServerInfo()
+                let info = ServerInfo(
+                    name: base.name, version: base.version, uptime: base.uptime, os: base.os,
+                    arch: base.arch, hostname: base.hostname, nodeVersion: base.nodeVersion,
+                    piVersion: base.piVersion, configVersion: base.configVersion,
+                    identity: nil, uploadProtocol: nil, images: nil,
+                    capabilities: .init(
+                        sessionStream: .init(version: 1),
+                        dictationStream: nil,
+                        appEventStream: nil,
+                        extensionNativeUI: nil,
+                        speech: speechBackendUp.isUp ? .init(version: 1) : nil
+                    ),
+                    stats: base.stats
+                )
+                return (try JSONEncoder().encode(info), 200)
+            }
+            if url.path == "/speech" {
+                return (Data(#"{"error":"Read aloud backend is not reachable"}"#.utf8), 503)
+            }
+            return (Data(#"{"error":"not found"}"#.utf8), 404)
+        }
+        defer { VoiceCapabilityURLProtocol.handler = nil }
+
+        let conn = ServerConnection()
+        conn.configure(credentials: ServerCredentials(
+            host: "test.local", port: 7749, token: "sk_test", name: "Test"
+        ))
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [VoiceCapabilityURLProtocol.self]
+        conn.setAPIClientForTesting(APIClient(
+            baseURL: URL(string: "http://test.local:7749")!,
+            token: "sk_test",
+            configuration: config
+        ))
+        conn.setSplitStreamCapabilitiesForTesting(speech: true)
+
+        // The backend stopped while the app was away.
+        speechBackendUp.isUp = false
+        await conn.reconnectIfNeeded()
+        #expect(!conn.speechAvailable)
+
+        speechBackendUp.isUp = true
+        await conn.reconnectIfNeeded()
+        #expect(conn.speechAvailable)
+
+        // It stops again; the next read aloud fails and takes the speaker with it.
+        speechBackendUp.isUp = false
+        let read = try #require(conn.sessionContent.speechReader())
+        await #expect(throws: (any Error).self) { _ = try await read("Hello.") }
+        #expect(await waitForMainActorCondition { !conn.speechAvailable })
+    }
+
     private func makeForegroundRecoveryConnection() -> ServerConnection {
         let conn = ServerConnection()
         conn.configure(credentials: ServerCredentials(
@@ -263,6 +324,41 @@ private func foregroundRecoveryServerInfo() -> ServerInfo {
             modelCount: 0
         )
     )
+}
+
+private final class VoiceBackendSwitch: @unchecked Sendable {
+    var isUp = true
+}
+
+/// Serves `/server/info` and `/speech` for the one test that installs a handler.
+private final class VoiceCapabilityURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var handler: ((URLRequest) throws -> (Data, Int))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.handler, let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+            return
+        }
+        do {
+            let (data, status) = try handler(request)
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: status,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }
 
 private final class ForegroundRecoveryFailingURLProtocol: URLProtocol, @unchecked Sendable {

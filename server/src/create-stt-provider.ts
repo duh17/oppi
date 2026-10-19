@@ -6,11 +6,7 @@
  */
 
 import { readStoredCredential } from "@earendil-works/pi-coding-agent";
-import {
-  isDictationStreamEnabled,
-  resolveAsrProvider,
-  type DictationConfig,
-} from "./dictation-types.js";
+import { resolveAsrProvider, type DictationConfig } from "./dictation-types.js";
 import { StreamingSttProvider, type SttProvider } from "./stt-provider.js";
 import {
   DEFAULT_XAI_STT_ENDPOINT,
@@ -77,8 +73,8 @@ export async function resolveSttBearerToken(
 /**
  * Whether a configured voice provider has its credentials: xAI needs a sign-in,
  * stored key, or XAI_API_KEY; an HTTP backend needs only its endpoint.
- * `/server/info` advertises voice capabilities only when this holds, so the app
- * never shows a voice control that would fail for a missing login.
+ * `VoiceBackendHealth` reports an xAI backend without one as `needs_credentials`, so the
+ * app never shows a voice control that would fail for a missing login.
  */
 export async function hasVoiceProviderCredential(
   provider: "http" | "xai",
@@ -86,16 +82,6 @@ export async function hasVoiceProviderCredential(
 ): Promise<boolean> {
   if (provider !== "xai") return true;
   return (await resolveSttBearerToken("xai", { getAuth })) !== undefined;
-}
-
-/** True when server dictation is configured and can authenticate (`capabilities.dictationStream`). */
-export async function isDictationStreamReady(
-  asr: Parameters<typeof isDictationStreamEnabled>[0],
-  getAuth?: SttGetAuth,
-): Promise<boolean> {
-  const provider = resolveAsrProvider(asr);
-  if (!provider || !isDictationStreamEnabled(asr)) return false;
-  return hasVoiceProviderCredential(provider, getAuth);
 }
 
 export function createSttProvider(
