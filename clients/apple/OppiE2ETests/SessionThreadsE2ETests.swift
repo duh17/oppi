@@ -376,14 +376,16 @@ final class SessionThreadsE2ETests: E2ETestCase {
                 .press(forDuration: 0.05, thenDragTo: target.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)))
             assertStillOnInbox("leading drag on the \(name)")
             dismissSidebarIfOpen()
+            // UIKit swipe actions have no accessibility identifier; the open
+            // swipe exposes them by their visible titles.
             target.swipeLeft()
             XCTAssertTrue(
-                app.buttons["session.stop.\(orchestrator)"].waitForExistence(timeout: 5),
+                app.buttons["Stop"].waitForExistence(timeout: 5),
                 "Trailing swipe on the \(name) did not expose Stop"
             )
             assertStillOnInbox("trailing swipe on the \(name)")
             target.swipeRight()
-            XCTAssertTrue(waitForNonExistence(app.buttons["session.stop.\(orchestrator)"], timeout: 5), "Swipe did not close")
+            XCTAssertTrue(waitForNonExistence(app.buttons["Stop"], timeout: 5), "Swipe did not close")
         }
 
         // One tap on the strip opens Thread detail, not the root chat.

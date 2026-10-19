@@ -124,20 +124,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         )
         add.accessibilityIdentifier = "sshTerminal.host.add"
         navigationItem.rightBarButtonItem = add
-        if showsSidebarToggle {
-            let visible = HostFactory.root(near: self)?.navigation.splitColumnVisibility != .detailOnly
-            let toggle = UIBarButtonItem(
-                title: visible ? "Hide Sidebar" : "Show Sidebar",
-                image: UIImage(systemName: "sidebar.leading"),
-                primaryAction: UIAction { [weak self] _ in
-                    guard let self else { return }
-                    guard let navigation = HostFactory.root(near: self)?.navigation else { return }
-                    navigation.splitColumnVisibility = navigation.splitColumnVisibility == .detailOnly ? .all : .detailOnly
-                    self.installBarItems()
-                }
-            )
-            toggle.accessibilityIdentifier = "workspace.split.sidebarToggle"
-            navigationItem.leftBarButtonItem = toggle
+        if showsSidebarToggle, let root = HostFactory.root(near: self) {
+            navigationItem.leftBarButtonItem = WorkspaceSplitSidebarToggle.makeItem(root: root)
         }
     }
 

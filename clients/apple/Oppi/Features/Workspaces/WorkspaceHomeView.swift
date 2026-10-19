@@ -42,7 +42,7 @@ func sortedWorkspacesForList(
 }
 
 /// Shared accessibility identifiers for workspace-open controls.
-/// Production mounts `SessionInboxView`; this namespace keeps the existing
+/// Production mounts `SessionInboxViewController`; this namespace keeps the existing
 /// identifier helper without a dead SwiftUI screen.
 enum WorkspaceHomeView {
     static func workspaceOpenAccessibilityIdentifier(workspaceName: String) -> String {
@@ -833,19 +833,6 @@ struct ServerSwitcherPill: View {
                 .controlSize(.mini)
                 .tint(connectionState.tintColor)
         }
-    }
-}
-
-/// Keeps a leading control in the top-left corner when a side rail exists.
-@ToolbarContentBuilder
-func topLeadingToolbarItem<Content: View>(
-    @ViewBuilder content: @escaping () -> Content
-) -> some ToolbarContent {
-    if #available(iOS 27.1, *) {
-        ToolbarItem(placement: .topBarLeading, content: content)
-            .axisBehavior(.horizontalOnly)
-    } else {
-        ToolbarItem(placement: .topBarLeading, content: content)
     }
 }
 

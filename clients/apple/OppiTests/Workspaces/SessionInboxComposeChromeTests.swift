@@ -26,57 +26,6 @@ struct SessionInboxComposeChromeTests {
         #expect(!SessionInboxComposeChrome.canOpenFiles(hasServer: false))
     }
 
-    @Test func allSessionsFolderOpensHostHomeBrowser() throws {
-        let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
-        #expect(inbox.contains("SessionInboxComposeChrome.canOpenFiles(hasServer: activeServerId != nil)"))
-        #expect(inbox.contains("FileBrowserNavTarget.hostHome(serverId: activeServerId)"))
-        #expect(!inbox.contains("canOpenWorkspaceFiles"))
-        #expect(!inbox.contains("guard let workspaceTarget else { return }"))
-    }
-
-    @Test func inboxWiresSharedCapsulesInsteadOfCreateNowPencil() throws {
-        let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
-        let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
-        let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
-        let sheet = try appleSource("Oppi/Features/QuickSession/QuickSessionSheet.swift")
-        #expect(inbox.contains("compactQuickSessionBar"))
-        #expect(inbox.contains("SessionInboxComposeLauncher"))
-        #expect(inbox.contains("inboxFolderButton"))
-        #expect(workspace.contains("compactQuickSessionBar"))
-        #expect(workspace.contains("SessionInboxComposeLauncher"))
-        #expect(workspace.contains("SessionInboxFolderToolbarButton"))
-        #expect(chrome.contains("workspace.quickSession.dictate"))
-        #expect(chrome.contains("workspace.quickSession.start"))
-        #expect(chrome.contains("workspace.files.open"))
-        #expect(chrome.contains("Dictate Quick Session"))
-        #expect(chrome.contains("Start Quick Session"))
-        #expect(chrome.contains(SessionInboxComposeChrome.compactBarPlaceholder))
-        #expect(!chrome.contains("glassEffect"))
-        #expect(!inbox.contains("sharedBackgroundVisibility"))
-        #expect(!inbox.contains("dictationQuickSessionButton"))
-        #expect(!inbox.contains("square.and.pencil"))
-        #expect(!inbox.contains("workspace.newSession"))
-        #expect(!workspace.contains("square.and.pencil"))
-        #expect(!workspace.contains("workspace.newSession"))
-        #expect(!inbox.contains("ToolbarSpacer(.fixed, placement: .bottomBar)"))
-        #expect(!workspace.contains("ToolbarSpacer(.fixed, placement: .bottomBar)"))
-        #expect(sheet.contains("composerDictationRequestID += 1"))
-        #expect(sheet.contains("externalDictationRequestID: composerDictationRequestID"))
-        #expect(sheet.contains("afterComposerReady"))
-        #expect(!sheet.contains("startInboxDictation"))
-        #expect(!sheet.contains(".constant("))
-        let bar = try appleSource("Oppi/Features/Chat/Composer/ChatInputBar.swift")
-        #expect(bar.contains(".task(id: externalDictationRequestID)"))
-        #expect(bar.contains("startExternalDictationIfRequested"))
-        #expect(sheet.contains(".onDisappear"))
-        #expect(sheet.contains("cancelVoiceInputOnDismiss"))
-        #expect(sheet.contains("VoiceInputManager.shared"))
-        #expect(!sheet.contains("VoiceInputManager()"))
-        let control = try appleSource("Oppi/Features/ControlSessions/GuidedControlSessionComposer.swift")
-        #expect(control.contains("VoiceInputManager.shared"))
-        #expect(!control.contains("VoiceInputManager()"))
-    }
-
     @Test func disabledFolderUsesUnavailableForegroundInTheSameCapsule() throws {
         let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
         let button = try sourceSlice(
@@ -150,46 +99,6 @@ struct SessionInboxComposeChromeTests {
                 expands: false
             ) == nil
         )
-    }
-
-    @Test func bothSessionListToolbarsUseSharedMessageCapsulePolicy() throws {
-        let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
-        let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
-        let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
-
-        #expect(chrome.contains("static func expandsMessageCapsule("))
-        #expect(chrome.contains("static func messageCapsuleMinWidth("))
-        #expect(chrome.contains("messageCapsuleFolderReserve"))
-        #expect(chrome.contains("messageCapsuleMinWidthFloor"))
-        #expect(chrome.contains("width: minWidth"))
-        #expect(!chrome.contains("Spacer(minLength:"))
-        #expect(!chrome.contains(".infinity"))
-        #expect(inbox.contains("ToolbarSpacer(.flexible, placement: .bottomBar)"))
-        #expect(workspace.contains("ToolbarSpacer(.flexible, placement: .bottomBar)"))
-        #expect(!inbox.contains("ToolbarSpacer(.fixed, placement: .bottomBar)"))
-        #expect(!workspace.contains("ToolbarSpacer(.fixed, placement: .bottomBar)"))
-    }
-
-    @Test func bothSessionListToolbarsPutMessageLeadingAndFolderTrailing() throws {
-        let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
-        let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
-        let inboxToolbar = try sourceSlice(
-            inbox,
-            start: "private func toolbarContent(railEdge: HorizontalEdge?) -> some ToolbarContent {",
-            end: "private func serverSwitcher"
-        )
-        let workspaceToolbar = try sourceSlice(
-            workspace,
-            start: "if !isNavigatingDeeperInWorkspaceStack {",
-            end: "private func startQuickSession(dictate: Bool)"
-        )
-        let inboxCompose = try #require(inboxToolbar.range(of: "compactQuickSessionBar"))
-        let inboxFolder = try #require(inboxToolbar.range(of: "inboxFolderButton"))
-        let workspaceCompose = try #require(workspaceToolbar.range(of: "compactQuickSessionBar"))
-        let workspaceFolder = try #require(workspaceToolbar.range(of: "workspaceFilesToolbarItem"))
-
-        #expect(inboxCompose.lowerBound < inboxFolder.lowerBound)
-        #expect(workspaceCompose.lowerBound < workspaceFolder.lowerBound)
     }
 
     @Test func compactComposeBarPlacesMicLeadingLikeChatInput() throws {

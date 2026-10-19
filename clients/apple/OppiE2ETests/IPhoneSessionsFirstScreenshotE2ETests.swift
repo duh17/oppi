@@ -161,25 +161,36 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertTrue(sessionList.exists, "Leading session-row swipe navigated away from All Sessions")
         XCTAssertFalse(app.collectionViews["chat.timeline"].exists, "Leading session-row swipe opened chat")
 
+        // UIKit swipe actions have no accessibility identifier; the open
+        // swipe exposes them by their visible titles. The open row's frame
+        // follows its content left, so `swipeRight()` would start inside the
+        // workspace drawer's leading-edge zone; close from the visible part.
+        let closeSwipe = { (element: XCUIElement) in
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                .press(
+                    forDuration: 0.05,
+                    thenDragTo: element.coordinate(withNormalizedOffset: CGVector(dx: 1.0, dy: 0.5))
+                )
+        }
         row.swipeLeft()
         XCTAssertTrue(
-            app.buttons["session.stop.\(sessionId)"].waitForExistence(timeout: 5),
+            app.buttons["Stop"].waitForExistence(timeout: 5),
             "Trailing session-row swipe did not expose Stop"
         )
-        row.swipeRight()
+        closeSwipe(row)
 
         let stoppedRow = app.buttons["session.nav.\(stoppedSessionId)"]
         XCTAssertTrue(stoppedRow.waitForExistence(timeout: 10), "Seeded stopped session row did not appear")
         stoppedRow.swipeLeft()
         XCTAssertTrue(
-            app.buttons["session.resume.\(stoppedSessionId)"].waitForExistence(timeout: 5),
+            app.buttons["Resume"].waitForExistence(timeout: 5),
             "Trailing stopped-session swipe did not expose Resume"
         )
         XCTAssertTrue(
-            app.buttons["session.delete.\(stoppedSessionId)"].waitForExistence(timeout: 5),
+            app.buttons["Delete"].waitForExistence(timeout: 5),
             "Trailing stopped-session swipe did not expose Delete"
         )
-        stoppedRow.swipeRight()
+        closeSwipe(stoppedRow)
 
         tap(row, named: "session row")
         XCTAssertTrue(

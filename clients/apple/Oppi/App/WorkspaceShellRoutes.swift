@@ -2,8 +2,9 @@ import SwiftUI
 
 // The SwiftUI content of the workspace shell's routes. UIKit owns the stacks
 // (`ShellRouter.swift`, `WorkspaceShellController.swift`). Most routes are a
-// `ShellRouteView` hosted through `HostFactory`; a session's chat
-// (`ChatRouteViewController`) and SSH Terminal's host list are UIKit screens.
+// `ShellRouteView` hosted through `HostFactory`; All Sessions, a session's
+// chat (`ChatRouteViewController`), and SSH Terminal's host list are UIKit
+// screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -14,6 +15,13 @@ enum ShellRouteScreens {
         root: AppRootEnvironment,
         openSidebar: (() -> Void)?
     ) -> UIViewController {
+        if route == .inbox {
+            return SessionInboxViewController(
+                root: root,
+                onOpenSidebar: openSidebar,
+                showsSidebarToggle: placement == .splitDetailRoot
+            )
+        }
         if case .utility(.sshTerminal) = route {
             let screen = SSHTerminalHostListViewController(showsSidebarToggle: placement == .splitDetailRoot)
             screen.traitOverrides.appRootEnvironment = root
@@ -34,6 +42,11 @@ enum ShellRouteScreens {
         placement: ShellRoutePlacement,
         openSidebar: (() -> Void)?
     ) {
+        if let inbox = screen as? SessionInboxViewController {
+            inbox.onOpenSidebar = openSidebar
+            inbox.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
         if let list = screen as? SSHTerminalHostListViewController {
             list.showsSidebarToggle = placement == .splitDetailRoot
             return
@@ -115,7 +128,8 @@ struct ShellRouteView: View {
     private var content: some View {
         switch route {
         case .inbox:
-            SessionInboxView(onOpenSidebar: openSidebar)
+            // The shell hosts this route as SessionInboxViewController.
+            EmptyView()
         case .sidebar:
             WorkspaceSidebarView()
         case .workspace(let target):

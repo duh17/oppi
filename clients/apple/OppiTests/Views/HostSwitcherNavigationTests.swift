@@ -152,16 +152,6 @@ struct SessionInboxHostChangeTests {
         #expect(store.completedServerQuery == nil)
     }
 
-    @Test func inboxOnSwitchStillPopsToAllSessions() throws {
-        let source = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
-        let slice = try sourceSlice(
-            source,
-            start: "private func switchVisibleServer() {",
-            end: "private func refreshVisibleServer() async {"
-        )
-        #expect(slice.contains("showAllWorkspaceSessions()"))
-    }
-
     private func makeSearchClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [TestURLProtocol.self]

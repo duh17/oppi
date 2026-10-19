@@ -29,10 +29,25 @@ struct SessionListEntryRow: View {
     /// Workspace name to show for a session outside this list's workspace; nil hides it.
     let foreignWorkspaceName: (Session) -> String?
     let actions: SessionListRowActions
+    /// In a UIKit collection cell the collection owns the row-body tap
+    /// (selection), the trailing swipes, and the long-press menu
+    /// (`SessionListRowMenus`). The row keeps its accessibility activation and
+    /// the Thread strip or link taps; a SwiftUI tap, swipe, or menu here would
+    /// compete with the cell's.
+    var isInCollectionCell = false
 
     @State private var locks = ScopedLockService.shared
 
+    @ViewBuilder
     var body: some View {
+        if isInCollectionCell {
+            content
+        } else {
+            content.sessionRowActions(entry.session, actions: actions)
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 6) {
             rowBody
             if let thread = entry.thread {
@@ -65,7 +80,6 @@ struct SessionListEntryRow: View {
                     .accessibilityIdentifier("thread.link.\(entry.session.id)")
             }
         }
-        .sessionRowActions(entry.session, actions: actions)
     }
 
     private var rowBody: some View {
@@ -77,15 +91,55 @@ struct SessionListEntryRow: View {
             hidesDetails: target.map(locks.isLocked) ?? false
         )
             .contentShape(Rectangle())
-            // A plain Button can still commit after a horizontal drag loses to
-            // the List's swipe recognizer. Use an actual tap recognizer so row
-            // navigation fails as soon as either swipe direction becomes a drag.
-            .onTapGesture { actions.open(session) }
+            .modifier(SessionRowOpenTap(isEnabled: !isInCollectionCell) { actions.open(session) })
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { actions.open(session) }
             .accessibilityIdentifier("session.nav.\(session.id)")
             .accessibilityValue(status(session).isBlocked ? status(session).label : "")
+    }
+}
+
+extension SessionListEntryRow {
+    /// The row as a UIKit list cell's content. The values come from the
+    /// list's snapshot, so the cell changes only when the list reconfigures
+    /// its item. `connection` overrides the active server's scoped stores for
+    /// a list that shows another server (a workspace on its own server).
+    static func cellConfiguration(
+        _ row: SessionListRowContent,
+        actions: SessionListRowActions,
+        root: AppRootEnvironment,
+        connection: ServerConnection? = nil
+    ) -> any UIContentConfiguration {
+        UIHostingConfiguration {
+            SessionListEntryRow(
+                entry: row.entry,
+                presentation: { _ in row.presentation },
+                status: row.status(of:),
+                foreignWorkspaceName: { row.foreignWorkspaceNames[$0.id] },
+                actions: actions,
+                isInCollectionCell: true
+            )
+            .appRootEnvironment(root)
+            .withServerScopedEnvironment(connection ?? root.coordinator.activeConnection)
+        }
+    }
+}
+
+/// A plain Button can still commit after a horizontal drag loses to the
+/// List's swipe recognizer. An actual tap recognizer makes row navigation fail
+/// as soon as either swipe direction becomes a drag.
+private struct SessionRowOpenTap: ViewModifier {
+    let isEnabled: Bool
+    let action: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.onTapGesture(perform: action)
+        } else {
+            content
+        }
     }
 }
 

@@ -613,7 +613,7 @@ private struct RouterModalSitesPreview: View {
         case "stash":
             RouterModalSitesStashPage()
         case "inbox-now-playing":
-            RouterPreviewStack(root: root) { SessionInboxView() }
+            RouterPreviewControllerStack(root: root) { SessionInboxViewController(root: root) }
                 .ignoresSafeArea()
         case "workspace-now-playing":
             RouterPreviewStack(root: root) { WorkspaceDetailView(workspace: RouterModalSitesFixtures.workspaces[0]) }

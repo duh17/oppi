@@ -95,20 +95,36 @@ struct ProviderSetupPromptCard: View {
     }
 }
 
-struct ProviderSetupPromptListSection<Content: View>: View {
-    let content: Content
-
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
+/// A setup card as a UIKit session-list cell's content, inset from the row
+/// edges. The list gives the cell a clear background and no separator.
+@MainActor
+enum ProviderSetupPromptListRow {
+    static func serverVersion(
+        root: AppRootEnvironment,
+        onOpen: @escaping () -> Void
+    ) -> any UIContentConfiguration {
+        row(ServerVersionPromptCard(onOpen: onOpen), root: root)
     }
 
-    var body: some View {
-        Section {
-            content
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-        }
+    static func providerSetup(
+        root: AppRootEnvironment,
+        message: String,
+        openAccessibilityIdentifier: String,
+        onConfigure: @escaping () -> Void
+    ) -> any UIContentConfiguration {
+        row(
+            ProviderSetupPromptCard(
+                message: message,
+                openAccessibilityIdentifier: openAccessibilityIdentifier,
+                onConfigure: onConfigure
+            ),
+            root: root
+        )
+    }
+
+    private static func row<Card: View>(_ card: Card, root: AppRootEnvironment) -> any UIContentConfiguration {
+        UIHostingConfiguration { card.appRootEnvironment(root) }
+            .margins(.all, EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
     }
 }
 

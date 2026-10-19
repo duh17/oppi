@@ -340,3 +340,87 @@ struct SessionInboxNowPlayingRailButton: View {
             .accessibilityIdentifier("sessionList.nowPlaying.rail")
     }
 }
+
+/// SwiftUI bar controls and the now-playing player for UIKit session lists.
+/// Each control returns its host so the list updates it in place (`updating`)
+/// instead of rebuilding the bar item.
+@MainActor
+enum SessionListHostedChrome {
+    /// The bottom bar's Message capsule.
+    static func composeCapsule(
+        updating host: HostedContentController?,
+        root: AppRootEnvironment,
+        showsDictation: Bool,
+        hasActivePlayback: Bool,
+        columnWidth: CGFloat,
+        onStart: @escaping () -> Void,
+        onDictate: @escaping () -> Void
+    ) -> HostedContentController {
+        let content = SessionInboxComposeLauncher(
+            joinsVerticalRail: false,
+            showsDictation: showsDictation,
+            hasActivePlayback: hasActivePlayback,
+            columnWidth: columnWidth,
+            trailingReserve: SessionInboxComposeChrome.messageCapsuleFolderReserve,
+            onStart: onStart,
+            onDictate: onDictate
+        )
+        return barHost(host, content: content, root: root)
+    }
+
+    /// The bottom bar's now-playing pill.
+    static func nowPlayingPill(
+        updating host: HostedContentController?,
+        root: AppRootEnvironment,
+        audioPlayer: AudioPlayerService,
+        density: InAppNowPlayingChrome.PillDensity,
+        onOpen: @escaping () -> Void
+    ) -> HostedContentController {
+        let content = InAppNowPlayingPill(
+            audioPlayer: audioPlayer,
+            accessibilityPrefix: "sessionList.nowPlaying",
+            density: density,
+            onOpen: onOpen
+        )
+        return barHost(host, content: content, root: root)
+    }
+
+    /// The server switcher pill and its menu (All Sessions).
+    static func serverSwitcher(
+        updating host: HostedContentController?,
+        root: AppRootEnvironment,
+        current: PairedServer,
+        fitsVerticalRail: Bool,
+        onSwitch: @escaping (PairedServer) -> Void
+    ) -> HostedContentController {
+        let content = HostSwitcherMenu(
+            current: current,
+            destination: .inbox,
+            fitsVerticalRail: fitsVerticalRail,
+            onSwitch: onSwitch
+        )
+        return barHost(host, content: content, root: root)
+    }
+
+    /// The full-screen player over the list.
+    static func presentNowPlayingPlayer(_ audioPlayer: AudioPlayerService, from presenter: UIViewController) {
+        Router.present(presentation: .fullScreen, from: presenter) {
+            InAppNowPlayingPlayerScreen(audioPlayer: audioPlayer)
+        }
+    }
+
+    private static func barHost<Content: View>(
+        _ host: HostedContentController?,
+        content: Content,
+        root: AppRootEnvironment
+    ) -> HostedContentController {
+        if let host {
+            host.setContent(content)
+            return host
+        }
+        let host = HostFactory.content(content, root: root)
+        host.sizingOptions = .intrinsicContentSize
+        host.view.backgroundColor = .clear
+        return host
+    }
+}
