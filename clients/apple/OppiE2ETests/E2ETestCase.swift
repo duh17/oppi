@@ -180,16 +180,21 @@ class E2ETestCase: XCTestCase {
             return
         }
 
-        // The launch hints open the workspace and can push its auto-created
-        // chat right after. For a moment during that push neither surface is
-        // queryable; a single check there sent launch down the workspace-list
-        // path while the chat was arriving.
-        let surfaceDeadline = Date().addingTimeInterval(3)
-        while Date() < surfaceDeadline {
+        // OPPI_E2E_AUTO_OPEN_WORKSPACE makes the app open the workspace itself a
+        // moment after the inbox paints, and can push its auto-created chat
+        // right after. Wait for that instead of racing it with manual
+        // navigation: for a moment during the push neither surface is
+        // queryable, and a single check there sent launch down the
+        // workspace-list path while the chat was arriving.
+        let autoOpenDeadline = Date().addingTimeInterval(10)
+        while Date() < autoOpenDeadline {
             if workspaceDetailSurfaceExists(in: application) || chatSessionSurfaceExists(in: application) {
                 return
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        if workspaceDetailSurfaceExists(in: application) || chatSessionSurfaceExists(in: application) {
+            return
         }
 
         // Find and open the e2e-workspace. The row body expands previews; the
@@ -198,7 +203,12 @@ class E2ETestCase: XCTestCase {
         let openWorkspaceButton = application.buttons["workspace.open.e2e-workspace"]
         if !waitForElementToExist(openWorkspaceButton, timeout: 10) {
             // Pull to refresh as fallback — then poll again instead of sleeping.
-            workspaceListElement(in: application).swipeDown()
+            let workspaceList = workspaceListElement(in: application)
+            guard workspaceList.exists else {
+                XCTFail("Workspace 'e2e-workspace' open button did not appear and no scrollable workspace list exists to refresh (auto-open did not land within 10s)")
+                return
+            }
+            workspaceList.swipeDown()
         }
         XCTAssertTrue(
             waitForElementToExist(openWorkspaceButton, timeout: 10),
