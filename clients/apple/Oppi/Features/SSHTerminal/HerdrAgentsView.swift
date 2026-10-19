@@ -16,7 +16,7 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
         case empty
         case loading
         case workspace(id: String, label: String, focused: Bool)
-        case agent(id: String, name: String, subtitle: String?, tab: String?, focused: Bool, status: HerdrSnapshot.Status)
+        case agent(id: String, name: String, subtitle: String?, tab: String?, focused: Bool, status: SessionStatusKind?)
     }
 
     init(monitor: HerdrMonitor, channel: SSHTerminalChannel) {
@@ -121,14 +121,13 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
             content.textProperties.color = UIColor(palette.fg)
             content.textProperties.font = Self.font(focused: focused)
             cell.accessibilityValue = focused ? "Focused" : ""
-        case .agent(_, let name, let subtitle, let tab, let focused, let status):
+        case .agent(_, let name, let subtitle, let tab, let focused, let kind):
             content.text = name
             content.secondaryText = [subtitle, tab.map { "tab \($0)" }].compactMap { $0 }.joined(separator: " · ")
             content.textProperties.color = UIColor(palette.fg)
             content.textProperties.font = Self.font(focused: focused)
             content.secondaryTextProperties.color = UIColor(palette.comment)
             // Same mark and label as the status glyph and session rows.
-            let kind = status.sessionStatus
             cell.mark.isHidden = kind == nil
             if let kind {
                 cell.mark.apply(status: kind, themeID: themeID, reduceMotion: UIAccessibility.isReduceMotionEnabled)
@@ -180,7 +179,7 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
                             subtitle: agent.subtitle,
                             tab: snapshotValue.tabLabel(agent.tabID),
                             focused: agent.focused,
-                            status: agent.status
+                            status: snapshotValue.status(of: agent)
                         ),
                     ], toSection: workspace.id)
                 }

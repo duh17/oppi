@@ -307,6 +307,26 @@ struct SSHTerminalProgramStatusPresentationTests {
         #expect(HerdrSnapshot.Status.done.sessionStatus?.label == "Done")
     }
 
+    /// A pane's own OSC 7501 records lead, rolled up like terminal records,
+    /// so Herdr no longer flattens a permission prompt into a question.
+    @Test func herdrPaneRecordsLeadHerdrsDetectedState() throws {
+        let json = #"""
+        {"workspaces":[],"tabs":[],
+         "agents":[
+          {"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","agent":"claude","agent_status":"blocked","focused":true},
+          {"pane_id":"w1:p2","workspace_id":"w1","tab_id":"w1:t1","agent":"pi","agent_status":"done","focused":false},
+          {"pane_id":"w1:p3","workspace_id":"w1","tab_id":"w1:t1","agent":"grok","agent_status":"blocked","focused":false}],
+         "panes":[
+          {"pane_id":"w1:p1","program_status":[{"id":"","state":"working","app":"claude"},{"id":"bash","state":"blocked","kind":"permission"}]},
+          {"pane_id":"w1:p2","program_status":[{"id":"","state":"blocked","kind":"later-kind","app":"pi"}]},
+          {"pane_id":"w1:p3"}]}
+        """#
+        let snapshot = try JSONDecoder().decode(HerdrSnapshot.self, from: Data(json.utf8))
+        let status = snapshot.agents.map { snapshot.status(of: $0) }
+        #expect(status == [.needsApproval, .question, .question], "child permission wins; unknown kind is a question; no records falls back")
+        #expect(snapshot.needsAttention == 3)
+    }
+
     private func herdr(focused: Bool) throws -> HerdrSnapshot {
         let json = #"{"workspaces":[],"tabs":[],"agents":[{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","agent":"pi","agent_status":"working","focused":\#(focused)}]}"#
         return try JSONDecoder().decode(HerdrSnapshot.self, from: Data(json.utf8))

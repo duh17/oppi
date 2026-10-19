@@ -14,16 +14,35 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
 
         /// Herdr's states are OSC 7501's, so they read through the same
         /// resolver as sessions and terminal records. Herdr reports no blocked
-        /// kind, so `blocked` is a question; an unknown state stays nil. Herdr
-        /// keeps its own seen ledger: its `done` is already unseen and turns
-        /// `idle` once looked at, so every outcome it reports counts as unseen.
+        /// kind, so `blocked` is a question; an unknown state stays nil.
         var sessionStatus: SessionStatusKind? {
-            SessionStatusKind.resolve(
-                state: ProgramStatusState(rawValue: rawValue),
-                kind: nil,
-                since: .distantFuture,
-                seenAt: nil
-            )
+            HerdrSnapshot.resolve(state: ProgramStatusState(rawValue: rawValue), kind: nil)
+        }
+    }
+
+    /// One OSC 7501 record Herdr passes on, unverified, for a pane's program
+    /// (`program_status`, proposed in herdrdev/herdr#5172): the same record
+    /// tree the terminal keeps from libghostty. The empty id is the program
+    /// itself; `/` separates a child record from its parent.
+    struct ProgramRecord: Decodable, Equatable, Hashable, Sendable {
+        let id: String
+        let state: ProgramStatusState
+        let kind: ProgramStatusKind?
+        let message: String?
+    }
+
+    struct Pane: Decodable, Equatable, Sendable {
+        let paneID: String
+        let programStatus: [ProgramRecord]
+
+        enum CodingKeys: String, CodingKey {
+            case paneID = "pane_id", programStatus = "program_status"
+        }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            paneID = try container.decode(String.self, forKey: .paneID)
+            programStatus = try container.decodeIfPresent([ProgramRecord].self, forKey: .programStatus) ?? []
         }
     }
 
@@ -76,9 +95,40 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
     let workspaces: [Workspace]
     let tabs: [Tab]
     let agents: [Agent]
+    /// Only panes whose program reported OSC 7501 matter here; Herdr
+    /// versions without the records leave every list empty.
+    let panes: [Pane]
 
-    /// Agents Herdr sees at an approval or question UI.
-    var needsAttention: Int { agents.filter { $0.status == .blocked }.count }
+    enum CodingKeys: String, CodingKey {
+        case workspaces, tabs, agents, panes
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        workspaces = try container.decode([Workspace].self, forKey: .workspaces)
+        tabs = try container.decode([Tab].self, forKey: .tabs)
+        agents = try container.decode([Agent].self, forKey: .agents)
+        panes = try container.decodeIfPresent([Pane].self, forKey: .panes) ?? []
+    }
+
+    /// Herdr keeps its own seen ledger: a done or error it still reports is
+    /// one nobody has looked at, so every outcome counts as unseen.
+    private static func resolve(state: ProgramStatusState, kind: ProgramStatusKind?) -> SessionStatusKind? {
+        SessionStatusKind.resolve(state: state, kind: kind, since: .distantFuture, seenAt: nil)
+    }
+
+    /// An agent's status. The pane's own OSC 7501 records lead, rolled up the
+    /// way the terminal rolls up its records, so a blocked kind survives
+    /// Herdr; Herdr's detected state covers panes that do not report.
+    func status(of agent: Agent) -> SessionStatusKind? {
+        let records = panes.first { $0.paneID == agent.paneID }?.programStatus ?? []
+        let root = records.first { $0.id.isEmpty }.flatMap { Self.resolve(state: $0.state, kind: $0.kind) }
+        let others = records.filter { !$0.id.isEmpty }.compactMap { Self.resolve(state: $0.state, kind: $0.kind) }
+        return SessionStatusRollup(root: root, others: others).headline ?? agent.status.sessionStatus
+    }
+
+    /// Agents waiting at an approval, question, or sign-in.
+    var needsAttention: Int { agents.filter { status(of: $0)?.isBlocked == true }.count }
     /// The agent in Herdr's focused pane, if that pane runs one.
     var focusedAgent: Agent? { agents.first { $0.focused } }
 
