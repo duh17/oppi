@@ -399,12 +399,10 @@ enum WorkspaceReviewDiffHunkBuilder {
     private static let wordPairLookahead = 8
     /// Most changed places per side for a positional pair that is not similar.
     private static let wordFallbackMaxRegions = 3
-    /// Token-LCS cells for one similar pair.
-    private static let maxTokenDiffCells = 40_000
-    /// Token-LCS cells for one positional fallback pair: a few dozen token edits.
-    private static let wordFallbackMaxCells = 4_096
-    /// Token-LCS cells for one whole diff; past it, remaining lines stay line-level.
-    private static let wordDiffMaxCells = 4_000_000
+    /// `SequenceDiff` steps for one positional fallback pair: a few dozen token edits.
+    private static let wordFallbackMaxCost = 4_096
+    /// `SequenceDiff` steps for one whole diff; past it, remaining lines stay line-level.
+    private static let wordDiffMaxCost = 4_000_000
 
     /// Build hunks from diff lines with word-level change spans.
     ///
@@ -521,7 +519,9 @@ enum WorkspaceReviewDiffHunkBuilder {
     /// Lines that pair with nothing stay line-level.
     private static func applyWordLevelHighlights(_ lines: inout [WorkspaceReviewDiffLine]) {
         var index = 0
-        var budget = wordDiffMaxCells
+        var budget = wordDiffMaxCost
+        // Tokens interned per diff, so the matcher compares integers.
+        var tokenIDs: [String: Int] = [:]
 
         while index < lines.count {
             guard lines[index].kind != .context else {
@@ -547,13 +547,13 @@ enum WorkspaceReviewDiffHunkBuilder {
                 var addedWords = [WordLine?](repeating: nil, count: added.count)
                 func removedWord(_ index: Int) -> WordLine {
                     if let word = removedWords[index] { return word }
-                    let word = WordLine(lines[removed[index]].text)
+                    let word = WordLine(lines[removed[index]].text, ids: &tokenIDs)
                     removedWords[index] = word
                     return word
                 }
                 func addedWord(_ index: Int) -> WordLine {
                     if let word = addedWords[index] { return word }
-                    let word = WordLine(lines[added[index]].text)
+                    let word = WordLine(lines[added[index]].text, ids: &tokenIDs)
                     addedWords[index] = word
                     return word
                 }
@@ -619,10 +619,18 @@ enum WorkspaceReviewDiffHunkBuilder {
     /// Tokenized line text with its non-whitespace length, the unit of similarity.
     private struct WordLine {
         let tokens: [Token]
+        /// Token texts interned for `SequenceDiff`.
+        let ids: [Int]
         let contentChars: Int
 
-        init(_ text: String) {
+        init(_ text: String, ids table: inout [String: Int]) {
             tokens = WorkspaceReviewDiffHunkBuilder.tokenize(text)
+            ids = tokens.map { token in
+                if let id = table[token.value] { return id }
+                let id = table.count
+                table[token.value] = id
+                return id
+            }
             contentChars = tokens.reduce(0) { $0 + ($1.isSpace ? 0 : $1.end - $1.start) }
         }
     }
@@ -723,14 +731,16 @@ enum WorkspaceReviewDiffHunkBuilder {
             counts[token.value] = available - 1
             bound += token.end - token.start
         }
-        guard similar(bound),
-              let match = matchTokens(old.tokens, new.tokens, maxCells: maxTokenDiffCells, budget: &budget) else { return nil }
+        guard budget > 0, similar(bound) else { return nil }
+        let match = SequenceDiff.match(old.ids, new.ids, maxCost: budget)
+        budget -= match.cost
+        guard match.exact else { return nil }
         var shared = 0
-        for (index, token) in old.tokens.enumerated() where match.old[index] && !token.isSpace {
+        for (index, token) in old.tokens.enumerated() where match.oldMatched[index] && !token.isSpace {
             shared += token.end - token.start
         }
         guard similar(shared) else { return nil }
-        return (unmatchedSpans(old.tokens, match.old), unmatchedSpans(new.tokens, match.new))
+        return (unmatchedSpans(old.tokens, match.oldMatched), unmatchedSpans(new.tokens, match.newMatched))
     }
 
     /// Word spans for a positional pair that failed the similarity test, kept
@@ -738,10 +748,11 @@ enum WorkspaceReviewDiffHunkBuilder {
     /// Short edits such as `foo()` -> `bar()` share little text yet read best
     /// with words marked; unrelated lines change many places and stay line-level.
     private static func fewChangeWordSpans(_ old: WordLine, _ new: WordLine, budget: inout Int) -> WordSpans? {
-        guard let match = matchTokens(old.tokens, new.tokens, maxCells: wordFallbackMaxCells, budget: &budget) else {
-            return nil
-        }
-        let spans = (unmatchedSpans(old.tokens, match.old), unmatchedSpans(new.tokens, match.new))
+        guard budget > 0 else { return nil }
+        let match = SequenceDiff.match(old.ids, new.ids, maxCost: min(wordFallbackMaxCost, budget))
+        budget -= match.cost
+        guard match.exact else { return nil }
+        let spans = (unmatchedSpans(old.tokens, match.oldMatched), unmatchedSpans(new.tokens, match.newMatched))
         guard spans.0.count <= wordFallbackMaxRegions, spans.1.count <= wordFallbackMaxRegions else { return nil }
         return spans
     }
@@ -750,71 +761,6 @@ enum WorkspaceReviewDiffHunkBuilder {
         mergeSpans(tokens.indices.compactMap { index in
             matched[index] ? nil : WorkspaceReviewDiffSpan(start: tokens[index].start, end: tokens[index].end, kind: .changed)
         })
-    }
-
-    /// Token LCS. Which tokens of each side are in the common subsequence, or
-    /// nil when the table would exceed `maxCells` or the diff's remaining budget.
-    ///
-    /// The shared prefix and suffix match first and cost nothing, as in the
-    /// server's matcher, so a one-word edit in a long paragraph only tables
-    /// the edited middle.
-    private static func matchTokens(
-        _ oldTokens: [Token],
-        _ newTokens: [Token],
-        maxCells: Int,
-        budget: inout Int
-    ) -> (old: [Bool], new: [Bool])? {
-        let m = oldTokens.count
-        let n = newTokens.count
-        var oldMatched = Array(repeating: false, count: m)
-        var newMatched = Array(repeating: false, count: n)
-        var prefix = 0
-        while prefix < m, prefix < n, oldTokens[prefix].value == newTokens[prefix].value {
-            oldMatched[prefix] = true
-            newMatched[prefix] = true
-            prefix += 1
-        }
-        var suffix = 0
-        while suffix < m - prefix, suffix < n - prefix,
-              oldTokens[m - 1 - suffix].value == newTokens[n - 1 - suffix].value {
-            oldMatched[m - 1 - suffix] = true
-            newMatched[n - 1 - suffix] = true
-            suffix += 1
-        }
-
-        let rows = m - prefix - suffix
-        let columns = n - prefix - suffix
-        let cells = rows * columns
-        guard cells <= maxCells, cells <= budget else { return nil }
-        budget -= cells
-        guard rows > 0, columns > 0 else { return (oldMatched, newMatched) }
-
-        // LCS table over the middle; `dp[i][j]` covers its first i old and j new tokens.
-        var dp = Array(repeating: Array(repeating: 0, count: columns + 1), count: rows + 1)
-        for i in 0..<rows {
-            for j in 0..<columns {
-                if oldTokens[prefix + i].value == newTokens[prefix + j].value {
-                    dp[i + 1][j + 1] = dp[i][j] + 1
-                } else {
-                    dp[i + 1][j + 1] = max(dp[i][j + 1], dp[i + 1][j])
-                }
-            }
-        }
-
-        // Backtrace, marking matched tokens.
-        var i = rows, j = columns
-        while i > 0, j > 0 {
-            if oldTokens[prefix + i - 1].value == newTokens[prefix + j - 1].value {
-                oldMatched[prefix + i - 1] = true
-                newMatched[prefix + j - 1] = true
-                i -= 1; j -= 1
-            } else if dp[i][j - 1] >= dp[i - 1][j] {
-                j -= 1
-            } else {
-                i -= 1
-            }
-        }
-        return (oldMatched, newMatched)
     }
 
     private static func mergeSpans(_ spans: [WorkspaceReviewDiffSpan]) -> [WorkspaceReviewDiffSpan] {

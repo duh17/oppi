@@ -143,6 +143,18 @@ struct WordSpanTests {
         #expect(spans.map { (added.text as NSString).substring(with: NSRange(location: $0.start, length: $0.end - $0.start)) } == ["changed"])
     }
 
+    /// Edits far apart in one long line still mark just those words.
+    @Test func longParagraphWithDistantEditsMarksEachWord() throws {
+        let words = (0..<150).map { "word\($0)" }
+        var edited = words
+        edited[2] = "first"
+        edited[147] = "last"
+        let lines = DiffEngine.compute(old: words.joined(separator: " "), new: edited.joined(separator: " "))
+        let added = try #require(WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines).flatMap(\.lines).first { $0.kind == .added })
+        let spans = try #require(added.spans)
+        #expect(spans.map { (added.text as NSString).substring(with: NSRange(location: $0.start, length: $0.end - $0.start)) } == ["first", "last"])
+    }
+
     /// Two short lines that share little text still mark words when only a
     /// few places change.
     @Test func shortUnrelatedLookingEditKeepsWordSpans() throws {
