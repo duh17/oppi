@@ -229,6 +229,11 @@ export class Storage {
     return this.configStore.getConfigPath();
   }
 
+  /** Voice settings as saved on disk now; see ConfigStore.readVoiceConfig. */
+  readVoiceConfig(): Pick<ServerConfig, "asr" | "tts"> {
+    return this.configStore.readVoiceConfig();
+  }
+
   updateConfig(updates: Partial<ServerConfig>): void {
     this.configStore.updateConfig(updates);
   }

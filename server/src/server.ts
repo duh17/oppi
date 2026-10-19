@@ -1446,11 +1446,11 @@ export class Server {
     );
   }
 
+  /** Built per call from the voice settings on disk, so a call picks up changes without a restart. */
   private createLiveVoiceMediaAdapter(): VoiceMediaAdapter {
-    const asr = this.storage.getConfig().asr;
-    const endpoint = this.dictationConfig?.sttEndpoint ?? asr?.sttEndpoint;
-    const model = this.dictationConfig?.sttModel ?? DEFAULT_DICTATION_CONFIG.sttModel;
-    const tts = this.storage.getConfig().tts;
+    const { asr, tts } = this.storage.readVoiceConfig();
+    const endpoint = asr?.sttEndpoint?.trim() || undefined;
+    const model = asr?.sttModel?.trim() || DEFAULT_DICTATION_CONFIG.sttModel;
     const getAuth: SttGetAuth = async (providerId) => this.modelRuntime?.getAuth(providerId);
     return selectLiveVoiceMediaAdapter({
       liveVoiceBackend: asr?.liveVoiceBackend,

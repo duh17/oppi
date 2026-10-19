@@ -1413,6 +1413,26 @@ export class ConfigStore {
     return this.configPath;
   }
 
+  /**
+   * Voice settings as saved on disk now. `oppi config set` writes the file from another
+   * process, and a Live Voice call reads them when it starts, so a changed voice backend,
+   * ASR endpoint, or TTS voice applies to the next call without a server restart. Falls back
+   * to the loaded settings when the file cannot be read or parsed.
+   */
+  readVoiceConfig(): Pick<ServerConfig, "asr" | "tts"> {
+    try {
+      const raw = JSON.parse(readFileSync(this.configPath, "utf-8")) as unknown;
+      const { config } = normalizeConfig(raw, this.dataDir, false);
+      return { asr: config.asr, tts: config.tts };
+    } catch (error) {
+      log.warn("config_store.voice_config_read.failed", {
+        configPath: this.configPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { asr: this.config.asr, tts: this.config.tts };
+    }
+  }
+
   getDataDir(): string {
     return this.dataDir;
   }
