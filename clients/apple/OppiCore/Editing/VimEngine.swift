@@ -136,9 +136,12 @@ final class VimEngine {
 
     var pendingDisplay: String { pendingKeys.map(\.display).joined() }
 
-    static let maxCount = 9_999
+    /// Typed counts stop at seven digits so count arithmetic cannot overflow;
+    /// this is not a behavior limit (a file holds far fewer lines).
     static let maxLineCount = 9_999_999
-    static let maxPasteLength = 2_097_152
+    /// Largest text a single paste or Visual indent may build (a file is at
+    /// most 1 MiB).
+    static let maxEditLength = 2_097_152
 
     /// The Vim cursor. In Visual mode the selection's moving end, which the
     /// buffer's selection range alone does not tell.
@@ -347,8 +350,7 @@ final class VimEngine {
                 digits.append(character)
                 index += 1
             }
-            // Kept as typed (a line number for `G`); work that repeats clamps
-            // it to `maxCount` where it runs.
+            // Kept as typed; `maxLineCount` only guards the count arithmetic.
             return digits.isEmpty ? nil : min(Int(digits.prefix(7)) ?? 1, Self.maxLineCount)
         }
 
@@ -598,9 +600,12 @@ final class VimEngine {
 
     private func execute(_ command: Command, keys: [VimKey]) -> [VimHostRequest] {
         guard let buffer else { return [] }
-        // Repetitions are clamped so `999999999p` cannot allocate gigabytes or
-        // spin the main thread; `G` and `dd` counts stay as typed.
-        let count = min(max(1, command.count ?? 1), Self.maxCount)
+        // Counts are never clamped. Every counted command makes at most one
+        // buffer edit, and its loops stop when they stop making progress, so
+        // work is bounded by the text, not the count. Only paste and Visual
+        // indent can grow the text past the document; both check
+        // `maxEditLength` before building anything.
+        let count = max(1, command.count ?? 1)
         switch command.action {
         case .motion(let motion) where Self.isVertical(motion):
             // `j`/`k` remember the column they started from.
@@ -634,7 +639,7 @@ final class VimEngine {
             let text = buffer.vimText
             let startLine = lineStart(cursor)
             var end = startLine
-            for _ in 1..<max(1, command.count ?? 1) {
+            for _ in 1..<count {
                 let nextLine = lineEnd(end)
                 guard nextLine > end, nextLine < text.length else { break }
                 end = nextLine
@@ -693,17 +698,23 @@ final class VimEngine {
             beginChange(nil, keys: keys)
             let text = buffer.vimText
             var end = cursor
-            for _ in 0..<count where end < contentsEnd(cursor) { end = next(end, in: text) }
+            var toggled = 0
+            while toggled < count, end < contentsEnd(cursor) {
+                end = next(end, in: text)
+                toggled += 1
+            }
             guard end > cursor else { return [] }
             let range = NSRange(location: cursor, length: end - cursor)
             buffer.vimReplace(range, with: Self.toggledCase(text.substring(with: range)))
             place(clampNormal(end))
             endChange()
         case .undo:
-            for _ in 0..<count where !buffer.vimUndo() { break }
+            var undone = 0
+            while undone < count, buffer.vimUndo() { undone += 1 }
             place(clampNormal(min(buffer.vimSelection.location, buffer.vimText.length)))
         case .redo:
-            for _ in 0..<count where !buffer.vimRedo() { break }
+            var redone = 0
+            while redone < count, buffer.vimRedo() { redone += 1 }
             place(clampNormal(min(buffer.vimSelection.location, buffer.vimText.length)))
         case .repeatChange:
             repeatLastChange(count: command.count)
@@ -869,17 +880,19 @@ final class VimEngine {
                 enterInsert(at: start)
             }
         case .indent, .outdent:
+            // `{count}>` indents `count` levels in one edit.
             let indentation = buffer.vimIndentation
-            var edit: CodeTextEdit? = nil
-            for _ in 0..<max(1, count) {
-                let current = buffer.vimText
-                let lines = edit.map { NSRange(location: $0.range.location, length: ($0.replacement as NSString).length) } ?? range
-                edit = op == .indent
-                    ? CodeTextEditing.indent(current, selection: lines, indentation: indentation)
-                    : CodeTextEditing.outdent(current, selection: lines, indentation: indentation)
-                guard let edit else { break }
-                buffer.vimReplace(edit.range, with: edit.replacement)
+            if op == .indent {
+                let lineCount = CodeTextEditing.lineContents(text, in: CodeTextEditing.lineBlock(text, selection: range)).count
+                guard lineCount * count * (indentation.unit as NSString).length <= Self.maxEditLength else {
+                    message = "Too much to indent"
+                    return
+                }
             }
+            let edit = op == .indent
+                ? CodeTextEditing.indent(text, selection: range, indentation: indentation, levels: count)
+                : CodeTextEditing.outdent(text, selection: range, indentation: indentation, levels: count)
+            if let edit { buffer.vimReplace(edit.range, with: edit.replacement) }
             place(firstNonBlank(lineStart(start)))
             endChange()
         case .lower, .upper, .toggleCase:
@@ -954,7 +967,7 @@ final class VimEngine {
     private func paste(after: Bool, count: Int) {
         guard let buffer, !register.text.isEmpty else { return }
         // A file can be at most 1 MiB; never build a paste far past that.
-        guard (register.text as NSString).length * count <= Self.maxPasteLength else {
+        guard (register.text as NSString).length * count <= Self.maxEditLength else {
             message = "Too much to paste"
             return
         }
@@ -1012,28 +1025,35 @@ final class VimEngine {
         place(clampNormal(range.location))
     }
 
+    /// Join `lines` lines starting at the cursor's as one edit. `J` drops the
+    /// next line's indentation and the current trailing blanks and puts one
+    /// space between (none before `)` or an empty line); `gJ` joins as is.
+    /// The cursor lands on the last join.
     private func join(lines: Int, spaces: Bool) {
         guard let buffer else { return }
-        for _ in 1..<lines {
-            let text = buffer.vimText
-            let end = contentsEnd(cursor)
-            let nextStart = lineEnd(cursor)
-            guard nextStart > end, nextStart <= text.length, end < text.length else { break }
-            var firstText = nextStart
+        let text = buffer.vimText
+        let first = lineStart(cursor)
+        var line = first
+        var joined = text.substring(with: NSRange(location: first, length: contentsEnd(first) - first))
+        var lastJoin: Int?
+        var count = 1
+        while count < lines {
+            let next = lineEnd(line)
+            guard next > contentsEnd(line), contentsEnd(line) < text.length else { break }
+            line = next
+            var body = text.substring(with: NSRange(location: line, length: contentsEnd(line) - line))
             if spaces {
-                while firstText < contentsEnd(nextStart), CodeText.isBlank(text.character(at: firstText)) { firstText += 1 }
+                body = String(body.drop { $0 == " " || $0 == "\t" })
+                while let last = joined.last, last == " " || last == "\t" { joined.removeLast() }
             }
-            var trimmedEnd = end
-            if spaces {
-                while trimmedEnd > lineStart(cursor), CodeText.isBlank(text.character(at: trimmedEnd - 1)) { trimmedEnd -= 1 }
-            }
-            let nextIsEmpty = firstText >= contentsEnd(nextStart)
-            let closes = !nextIsEmpty && text.character(at: firstText) == 0x29
-            let separator = spaces && !nextIsEmpty && !closes && trimmedEnd > lineStart(cursor) ? " " : ""
-            buffer.vimReplace(NSRange(location: trimmedEnd, length: firstText - trimmedEnd), with: separator)
-            place(trimmedEnd)
+            let separator = spaces && !body.isEmpty && !body.hasPrefix(")") && !joined.isEmpty ? " " : ""
+            lastJoin = first + (joined as NSString).length
+            joined += separator + body
+            count += 1
         }
-        place(clampNormal(cursor))
+        guard let lastJoin else { return }
+        buffer.vimReplace(NSRange(location: first, length: contentsEnd(line) - first), with: joined)
+        place(clampNormal(lastJoin))
     }
 
     private func replaceCharacters(with character: Character, count: Int) {
@@ -1117,15 +1137,29 @@ final class VimEngine {
         let text = buffer.vimText
         let length = text.length
         // Line numbers (`G`, `gg`) read `explicitCount` as typed; loops use the clamp.
-        let count = min(max(1, explicitCount ?? 1), Self.maxCount)
+        let count = max(1, explicitCount ?? 1)
         var position = start
+        /// Step `count` times, stopping as soon as a step makes no progress,
+        /// so the work is bounded by the text, not the count.
+        func repeated(_ step: (Int) -> Int) -> Int {
+            var current = start
+            var steps = 0
+            while steps < count {
+                let next = step(current)
+                if next == current { break }
+                current = next
+                steps += 1
+            }
+            return current
+        }
         switch motion {
         case .left:
-            for _ in 0..<count where position > lineStart(start) { position = previous(position, in: text) }
+            let first = lineStart(start)
+            position = repeated { $0 > first ? self.previous($0, in: text) : $0 }
             return position == start ? nil : MotionTarget(position: position, kind: .exclusive)
         case .right:
             let limit = forOperator ? contentsEnd(start) : lastCharacter(start)
-            for _ in 0..<count where position < limit { position = next(position, in: text) }
+            position = repeated { $0 < limit ? self.next($0, in: text) : $0 }
             return position == start ? nil : MotionTarget(position: min(position, limit), kind: .exclusive)
         case .down, .up:
             return verticalTarget(lines: motion == .down ? count : -count, from: start)
@@ -1134,19 +1168,23 @@ final class VimEngine {
             let lines = (motion == .halfPageDown || motion == .halfPageUp) ? max(1, page / 2) * count : max(1, page - 2) * count
             return verticalTarget(lines: (motion == .halfPageDown || motion == .pageDown) ? lines : -lines, from: start)
         case .wordForward(let big):
-            for step in 0..<count {
+            var step = 0
+            while step < count {
                 let stops = forOperator && step == count - 1
-                position = wordForward(from: position, big: big, stopAtLineEnd: stops)
+                let next = wordForward(from: position, big: big, stopAtLineEnd: stops)
+                step += 1
+                if next == position { break }
+                position = next
             }
             return MotionTarget(position: min(position, length), kind: .exclusive)
         case .wordBackward(let big):
-            for _ in 0..<count { position = wordBackward(from: position, big: big) }
+            position = repeated { self.wordBackward(from: $0, big: big) }
             return position == start ? nil : MotionTarget(position: position, kind: .exclusive)
         case .wordEnd(let big):
-            for _ in 0..<count { position = wordEnd(from: position, big: big) }
+            position = repeated { min(self.wordEnd(from: $0, big: big), max(0, length - 1)) }
             return MotionTarget(position: min(position, max(0, length - 1)), kind: .inclusive)
         case .wordEndBackward(let big):
-            for _ in 0..<count { position = wordEndBackward(from: position, big: big) }
+            position = repeated { self.wordEndBackward(from: $0, big: big) }
             return MotionTarget(position: position, kind: .inclusive)
         case .lineStart:
             return MotionTarget(position: lineStart(start), kind: .exclusive)
@@ -1176,6 +1214,7 @@ final class VimEngine {
         case .paragraphForward:
             var line = lineStart(start)
             for _ in 0..<count {
+                if line >= length { break }
                 // Leave the blank lines we are on, then stop at the next blank.
                 while line < length, isBlankLine(line) { line = lineEnd(line) }
                 while line < length, !isBlankLine(line) {
@@ -1190,6 +1229,7 @@ final class VimEngine {
         case .paragraphBackward:
             var line = lineStart(start)
             for _ in 0..<count {
+                if line == 0 { break }
                 while line > 0, isBlankLine(line) { line = lineStart(line - 1) }
                 while line > 0, !isBlankLine(line) { line = lineStart(line - 1) }
             }
@@ -1217,20 +1257,16 @@ final class VimEngine {
                 message = "No previous search"
                 return nil
             }
-            for _ in 0..<count {
-                guard let found = search(lastSearch.pattern, forward: lastSearch.forward != reverse, from: position) else { return nil }
-                position = found
+            guard let found = search(lastSearch.pattern, forward: lastSearch.forward != reverse, from: position, count: count) else {
+                return nil
             }
-            return MotionTarget(position: position, kind: .exclusive)
+            return MotionTarget(position: found, kind: .exclusive)
         case .searchWord(let forward):
             guard let word = wordUnderCursor(start) else { return nil }
             let pattern = "\\<" + NSRegularExpression.escapedPattern(for: word) + "\\>"
             lastSearch = (pattern, forward)
-            for _ in 0..<count {
-                guard let found = search(pattern, forward: forward, from: position) else { return nil }
-                position = found
-            }
-            return MotionTarget(position: position, kind: .exclusive)
+            guard let found = search(pattern, forward: forward, from: position, count: count) else { return nil }
+            return MotionTarget(position: found, kind: .exclusive)
         case .nextLine, .previousLine, .currentLine:
             let delta = motion == .nextLine ? count : (motion == .previousLine ? -count : count - 1)
             guard let target = verticalTarget(lines: delta, from: start) else { return nil }
@@ -1551,28 +1587,31 @@ final class VimEngine {
             ?? (try? NSRegularExpression(pattern: NSRegularExpression.escapedPattern(for: pattern), options: options))
     }
 
-    private func search(_ pattern: String, forward: Bool, from offset: Int) -> Int? {
+    /// The `count`th match after (or before) `offset`, wrapping around the
+    /// document. One scan finds every match; the count only indexes into
+    /// them, so `9999n` costs the same as `n`.
+    private func search(_ pattern: String, forward: Bool, from offset: Int, count: Int = 1) -> Int? {
         guard let buffer, let regex = regex(for: pattern) else { return nil }
         let text = buffer.vimText
-        let source = text as String
-        let length = text.length
-        if forward {
-            let after = min(offset + 1, length)
-            if let match = regex.firstMatch(in: source, range: NSRange(location: after, length: length - after)) {
-                return match.range.location
+        let starts = regex.matches(in: text as String, range: NSRange(location: 0, length: text.length)).map(\.range.location)
+        if !starts.isEmpty {
+            let total = starts.count
+            let steps = max(1, count) - 1
+            let wrapped: Bool
+            let index: Int
+            if forward {
+                let first = starts.firstIndex { $0 > offset }
+                let target = (first ?? 0) + steps
+                wrapped = first == nil || target >= total
+                index = target % total
+            } else {
+                let last = starts.lastIndex { $0 < offset }
+                let target = (last ?? total - 1) - steps
+                wrapped = last == nil || target < 0
+                index = (target % total + total) % total
             }
-            if let match = regex.firstMatch(in: source, range: NSRange(location: 0, length: min(after, length))) {
-                message = "Search wrapped"
-                return match.range.location
-            }
-        } else {
-            if let match = regex.matches(in: source, range: NSRange(location: 0, length: min(offset, length))).last {
-                return match.range.location
-            }
-            if let match = regex.matches(in: source, range: NSRange(location: offset, length: length - offset)).last {
-                message = "Search wrapped"
-                return match.range.location
-            }
+            if wrapped { message = "Search wrapped" }
+            return starts[index]
         }
         message = "Pattern not found: \(pattern)"
         return nil

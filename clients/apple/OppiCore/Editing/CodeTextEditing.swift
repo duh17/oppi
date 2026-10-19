@@ -245,25 +245,32 @@ enum CodeTextEditing {
 
     // MARK: - Indent
 
-    /// Prefix one level on every non-empty line of the selection's block.
-    static func indent(_ text: NSString, selection: NSRange, indentation: CodeIndentation) -> CodeTextEdit {
+    /// Prefix `levels` levels on every non-empty line of the selection's block.
+    static func indent(_ text: NSString, selection: NSRange, indentation: CodeIndentation, levels: Int = 1) -> CodeTextEdit {
         let block = lineBlock(text, selection: selection)
-        let unit = indentation.unit
+        let unit = String(repeating: indentation.unit, count: max(1, levels))
         return transformLines(text, block: block, selection: selection) { _, contents in
             contents.isEmpty ? (contents, 0) : (unit + contents, 0)
         }
     }
 
-    /// Remove up to one level from every line of the selection's block.
-    static func outdent(_ text: NSString, selection: NSRange, indentation: CodeIndentation) -> CodeTextEdit? {
+    /// Remove up to `levels` levels from every line of the selection's block.
+    static func outdent(_ text: NSString, selection: NSRange, indentation: CodeIndentation, levels: Int = 1) -> CodeTextEdit? {
         let block = lineBlock(text, selection: selection)
         let edit = transformLines(text, block: block, selection: selection) { _, contents in
             let units = Array(contents.utf16)
-            if units.first == CodeText.tab {
-                return (String(utf16CodeUnits: Array(units.dropFirst()), count: units.count - 1), 0)
-            }
             var removed = 0
-            while removed < indentation.width, removed < units.count, units[removed] == CodeText.space { removed += 1 }
+            // One level is a tab or up to `width` spaces; stop once a line has none left.
+            for _ in 0..<max(1, levels) {
+                if removed < units.count, units[removed] == CodeText.tab {
+                    removed += 1
+                    continue
+                }
+                var spaces = 0
+                while spaces < indentation.width, removed + spaces < units.count, units[removed + spaces] == CodeText.space { spaces += 1 }
+                if spaces == 0 { break }
+                removed += spaces
+            }
             return (String(utf16CodeUnits: Array(units.dropFirst(removed)), count: units.count - removed), 0)
         }
         return edit.replacement == text.substring(with: edit.range) ? nil : edit

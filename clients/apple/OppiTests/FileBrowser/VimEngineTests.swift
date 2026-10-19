@@ -280,9 +280,57 @@ struct VimEngineTests {
         #expect(harness.yanked == ["one\n", "z"])
     }
 
-    @Test func hugeCountsAreClamped() {
-        let harness = VimHarness("|abc").send("yy999999999p")
-        #expect(CodeLineIndex(harness.buffer.text).lineCount == VimEngine.maxCount + 1)
+    /// Counts are literal; only text that would outgrow any file is refused,
+    /// before it is built.
+    @Test func countsThatWouldOutgrowAFileAreRefused() {
+        let paste = VimHarness("|abc").send("yy999999999p")
+        #expect(paste.engine.message == "Too much to paste")
+        #expect(paste.rendered == "|abc")
+
+        let lines = (1...300).map { "line \($0)" }.joined(separator: "\n")
+        let indent = VimHarness("|" + lines).send("V199j9999>")
+        #expect(indent.engine.message == "Too much to indent")
+        #expect(indent.buffer.text as String == lines)
+    }
+
+    /// A counted command is one edit, so one `u` undoes all of it.
+    @Test func countedCommandsAreOneUndoStep() {
+        let indent = VimHarness("|a\nb\nc").send("Vj3>")
+        #expect(indent.buffer.text as String == "      a\n      b\nc")
+        indent.send("u")
+        #expect(indent.buffer.text as String == "a\nb\nc")
+
+        let outdent = VimHarness("|      a\n    b").send("Vj2<")
+        #expect(outdent.buffer.text as String == "  a\nb")
+
+        let join = VimHarness("|a\n  b\nc)\n\nd").send("9999J")
+        #expect(join.buffer.text as String == "a b c) d")
+        join.send("u")
+        #expect(join.buffer.text as String == "a\n  b\nc)\n\nd")
+    }
+
+    @Test func lineCountsMeanTheSameForEveryOperator() {
+        let text = (1...10_000).map { "line \($0)" }.joined(separator: "\n")
+        let byLines = VimHarness("|" + text).send("12000dd").buffer.text as String
+        let byMotion = VimHarness("|" + text).send("d12000j").buffer.text as String
+        #expect(byLines == byMotion)
+        #expect(VimHarness("|" + text).send("12000j").rendered.hasSuffix("|line 10000"))
+    }
+
+    @Test func searchCountsIndexMatchesAndWrap() {
+        let harness = VimHarness("|a x b x c x")
+        _ = harness.command("/", "x")
+        #expect(harness.rendered == "a |x b x c x")
+        harness.send("2n")
+        #expect(harness.rendered == "a x b x c |x")
+        harness.send("5n")
+        #expect(harness.rendered == "a x b |x c x")
+        #expect(harness.engine.message == "Search wrapped")
+        // 9,999,999 is a multiple of the 3 matches: a full number of laps.
+        harness.send("9999999N")
+        #expect(harness.rendered == "a x b |x c x")
+        harness.send("N")
+        #expect(harness.rendered == "a |x b x c x")
     }
 
     /// Repeat counts are clamped, line numbers are not: `G` reaches any line.
