@@ -1558,6 +1558,42 @@ struct ChatInputBarTests {
         }
     }
 
+    @Test("A long Live Voice status truncates; the mic and End keep their size, and the mic carries the state")
+    func longLiveVoiceStatusKeepsCallControls() throws {
+        let host = ComposerBarTestHost()
+        host.content.alwaysShowActionRow = false
+        let failure = "Grok Voice needs an xAI sign-in or API key before a call can start on this server"
+        host.content.liveVoiceCall = ComposerLiveVoiceCall(
+            isLive: false, isConnecting: false, isMuted: false, isSpeaking: false,
+            status: failure, transcript: "", meter: LiveVoiceAudioMeter(),
+            onToggleMute: {}, onEnd: {}
+        )
+        let (controller, window) = Self.mountComposer(host)
+        defer { window.rootViewController = nil; window.isHidden = true }
+
+        let diameter = ComposerInputMetrics.controlDiameter
+        let mic = try #require(descendant(in: controller.view, identifier: ComposerLiveVoiceCall.muteIdentifier))
+        let end = try #require(descendant(in: controller.view, identifier: ComposerLiveVoiceCall.endIdentifier))
+        let status = try #require(descendant(in: controller.view, identifier: ComposerLiveVoiceCall.stateIdentifier) as? UILabel)
+        #expect(abs(mic.bounds.width - diameter) < 0.5, "mic squeezed to \(mic.bounds.width)")
+        #expect(abs(end.bounds.width - diameter) < 0.5, "End squeezed to \(end.bounds.width)")
+        #expect(!mic.isHidden && !end.isHidden && !status.isHidden)
+        #expect(status.intrinsicContentSize.width > status.bounds.width, "status should truncate at 390 pt")
+        #expect(mic.accessibilityValue == failure)
+
+        // The visible status gives way to what the user is saying; the mic still has the state.
+        host.content.liveVoiceCall?.isLive = true
+        host.content.liveVoiceCall?.status = "Listening"
+        host.content.liveVoiceCall?.transcript = "check the server tests"
+        controller.apply()
+        window.layoutIfNeeded()
+        #expect(status.isHidden)
+        #expect(mic.accessibilityValue == "Listening")
+        host.content.liveVoiceCall?.isMuted = true
+        controller.apply()
+        #expect(mic.accessibilityValue == "Muted")
+    }
+
     @Test("A short Ask sizes the slot to the card without scrolling")
     func shortAskSizesSlotToCard() throws {
         let host = ComposerBarTestHost()

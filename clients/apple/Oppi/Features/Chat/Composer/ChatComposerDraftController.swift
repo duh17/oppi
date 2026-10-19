@@ -77,6 +77,9 @@ final class ChatComposerDraftController {
     /// keeps it, untouched by the call's own typing and sends, so a crash mid-call still
     /// restores it.
     @ObservationIgnored private var setAside: (payload: ComposerDraftPayload, attachments: [PendingAttachment])?
+    /// The call ended while a message sent during it awaited the server. Its text is still
+    /// the message payload until then, so the draft comes back once that send settles.
+    @ObservationIgnored private var restoresSetAsideAfterSubmission = false
 
     init(
         initialText: String = "",
@@ -179,6 +182,8 @@ final class ChatComposerDraftController {
     /// A Live Voice call starts with an empty field. The draft typed before it waits, and
     /// anything typed during the call is an ordinary message that sends as usual.
     func setAsideMessage() {
+        // A new call before the last one's send settled keeps the same draft aside.
+        restoresSetAsideAfterSubmission = false
         guard setAside == nil else { return }
         setAside = (messagePayload, pendingAttachments)
         messagePayload = .empty
@@ -191,9 +196,15 @@ final class ChatComposerDraftController {
     }
 
     /// The call ended: the draft from before it comes back, ahead of anything typed during
-    /// the call and not sent.
+    /// the call and not sent. A send still in flight settles first: a delivered message must
+    /// not come back as part of the draft, and a failed one returns after it.
     func restoreSetAsideMessage() {
         guard let setAside else { return }
+        guard activeSubmissionID == nil else {
+            restoresSetAsideAfterSubmission = true
+            return
+        }
+        restoresSetAsideAfterSubmission = false
         self.setAside = nil
         let restoredAttachments = Self.combinedAttachments(failed: setAside.attachments, current: pendingAttachments)
         messagePayload = Self.combinedPayload(failed: setAside.payload, current: messagePayload)
@@ -372,6 +383,7 @@ final class ChatComposerDraftController {
     @discardableResult
     func completeSubmission(_ snapshot: SubmissionSnapshot) -> Bool {
         let ownsActiveSubmission = activeSubmissionID == snapshot.id
+        defer { restoreSetAsideIfSettled() }
         let submittedAttachmentIDs = Set(
             snapshot.payload.attachments.map(\.id) + snapshot.pendingAttachments.map(\.id)
         )
@@ -448,6 +460,7 @@ final class ChatComposerDraftController {
 
     func failSubmission(_ snapshot: SubmissionSnapshot) {
         guard activeSubmissionID == snapshot.id, key == snapshot.key else { return }
+        defer { restoreSetAsideIfSettled() }
         activeSubmissionID = nil
         isSubmissionInFlight = false
         dispatchedVisibleClearEcho = nil
@@ -492,6 +505,11 @@ final class ChatComposerDraftController {
         if mode == .message {
             applyVisiblePayload(messagePayload)
         }
+    }
+
+    private func restoreSetAsideIfSettled() {
+        guard restoresSetAsideAfterSubmission, activeSubmissionID == nil else { return }
+        restoreSetAsideMessage()
     }
 
     private func shouldIgnoreDispatchedVisibleEcho(_ newText: String, for newMode: Mode) -> Bool {

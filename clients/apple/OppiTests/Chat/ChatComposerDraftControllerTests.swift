@@ -960,6 +960,64 @@ struct ChatComposerDraftControllerTests {
         #expect(controller.text.isEmpty)
     }
 
+    @Test func callEndingBeforeAMidCallSendIsAcknowledgedRestoresOnlyThePreCallDraft() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let file = PendingAttachment.localFile(name: "notes.txt", data: Data("notes".utf8), mimeType: "text/plain")
+        let controller = ChatComposerDraftController()
+        controller.attach(store: store, key: key, isEphemeral: false)
+        controller.setPendingAttachments([file])
+        controller.text = "draft before the call"
+
+        controller.setAsideMessage()
+        controller.updateVisibleText("sent on the call", for: .message)
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.clearVisibleTextForDispatchedSubmission(submission)
+        // End lands before the server acknowledges the send.
+        controller.restoreSetAsideMessage()
+        controller.completeSubmission(submission)
+
+        #expect(controller.text == "draft before the call")
+        #expect(controller.pendingAttachments.map(\.id) == [file.id])
+        #expect(store.record(for: key)?.payload.text == "draft before the call")
+        #expect(store.record(for: key)?.payload.attachments.map(\.id) == [file.id])
+
+        await store.flush()
+        let reloadedStore = fixture.makeStore()
+        await reloadedStore.load()
+        let relaunched = ChatComposerDraftController()
+        relaunched.attach(store: reloadedStore, key: key, isEphemeral: false)
+        #expect(relaunched.text == "draft before the call")
+        #expect(relaunched.pendingAttachments.map(\.displayName) == ["notes.txt"])
+    }
+
+    @Test func callEndingBeforeAMidCallSendFailsRestoresTheDraftThenTheFailedMessage() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let file = PendingAttachment.localFile(name: "notes.txt", data: Data("notes".utf8), mimeType: "text/plain")
+        let controller = ChatComposerDraftController()
+        controller.attach(store: store, key: key, isEphemeral: false)
+        controller.setPendingAttachments([file])
+        controller.text = "draft before the call"
+
+        controller.setAsideMessage()
+        controller.updateVisibleText("sent on the call", for: .message)
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.clearVisibleTextForDispatchedSubmission(submission)
+        controller.restoreSetAsideMessage()
+        controller.failSubmission(submission)
+
+        #expect(controller.text == "draft before the call\n\nsent on the call")
+        #expect(controller.pendingAttachments.map(\.id) == [file.id])
+        #expect(store.record(for: key)?.payload.text == "draft before the call\n\nsent on the call")
+    }
+
     @Test func ephemeralSessionDraftRemainsMemoryOnly() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

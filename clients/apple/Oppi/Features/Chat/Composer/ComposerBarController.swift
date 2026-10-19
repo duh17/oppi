@@ -1043,6 +1043,8 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         textHeightConstraint = textHeight
         textHeight.isActive = true
         textContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // A one-line call status truncates; it must not squeeze the mic or End.
+        placeholderLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentCompressionResistancePriority(.required, for: .vertical)
         textView.setContentHuggingPriority(.required, for: .vertical)
 

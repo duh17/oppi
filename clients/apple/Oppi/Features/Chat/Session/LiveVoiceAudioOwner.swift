@@ -537,9 +537,16 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
         ) else {
             throw VoiceInputError.internalError("Cannot create Live Voice playback format")
         }
+        // Everything that can throw comes first, so a failure leaves no node on the engine.
+        let spectrum = try VoiceSpectrumAnalyzer()
         engine.attach(playerNode)
         engine.connect(playerNode, to: engine.mainMixerNode, format: format)
-        try LiveVoiceCaptureEngineHelper.installPlaybackTap(player: playerNode, format: format, meter: meter)
+        LiveVoiceCaptureEngineHelper.installPlaybackTap(
+            player: playerNode,
+            format: format,
+            spectrum: spectrum,
+            meter: meter
+        )
         player = playerNode
         playbackFormat = format
     }
@@ -565,9 +572,9 @@ enum LiveVoiceCaptureEngineHelper {
     static func installPlaybackTap(
         player: AVAudioPlayerNode,
         format: AVAudioFormat,
+        spectrum: VoiceSpectrumAnalyzer,
         meter: LiveVoiceAudioMeter
-    ) throws {
-        let spectrum = try VoiceSpectrumAnalyzer()
+    ) {
         player.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
             meter.publishPlayback(spectrum.analyze(buffer))
         }
