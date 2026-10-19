@@ -8,15 +8,36 @@ import SwiftUI
 /// says what the relay can and cannot see (protocol/push/spec.md §6). The Live Activity is
 /// opt-in too and shows counts only. With push on, the server also keeps the card current
 /// while Oppi is closed; without push the card updates only while Oppi is open.
+///
+/// Anything that makes data leave the device asks first (docs/privacy.md, "The push relay"
+/// and "Live Activities"): turning push on, and turning Live Activities on while push is on.
+/// Turning Live Activities on with push off sends nothing, so it asks nothing.
 struct ServerNotificationsSection: View {
     let serverId: String
     let connection: ServerConnection?
 
     @State private var pushEnabled = false
     @State private var liveActivityEnabled = false
-    @State private var showDisclosure = false
+    @State private var consent: Consent?
     @State private var status: Status = .idle
     @State private var liveActivityStatus: Status = .idle
+
+    /// What the user is being asked to agree to before it takes effect. The relay host is
+    /// captured when the alert is shown: the connection can drop while it is up, and the
+    /// message must not change or go blank.
+    enum Consent: Equatable {
+        /// Push on. `withCounts`: Live Activities is already on, so the card's counts go too.
+        case push(relayHost: String, withCounts: Bool)
+        /// Live Activities on while push is already on.
+        case liveActivity(relayHost: String)
+
+        var title: String {
+            switch self {
+            case .push: String(localized: "Turn On Push Notifications?")
+            case .liveActivity: String(localized: "Turn On Live Activities?")
+            }
+        }
+    }
 
     enum Status: Equatable {
         case idle
@@ -34,6 +55,18 @@ struct ServerNotificationsSection: View {
         APNsEnvironment.current == .production && !DCAppAttestService.shared.isSupported
     }
 
+    /// The relay host is unknown while the server is offline or reconnecting.
+    private static func hostForConsent(_ relayHost: String?) -> String {
+        relayHost ?? String(localized: "the push relay")
+    }
+
+    /// The consent to show before turning Live Activities on, or nil when nothing leaves the
+    /// device: counts reach the relay for any server whose push is on, even while it is offline
+    /// (the server sends them once it reconnects), so only `pushEnabled` decides.
+    static func consentForLiveActivityOn(pushEnabled: Bool, relayHost: String?) -> Consent? {
+        pushEnabled ? .liveActivity(relayHost: hostForConsent(relayHost)) : nil
+    }
+
     var body: some View {
         Section {
             if relayHost != nil {
@@ -41,7 +74,10 @@ struct ServerNotificationsSection: View {
                     get: { pushEnabled },
                     set: { newValue in
                         if newValue {
-                            showDisclosure = true
+                            consent = .push(
+                                relayHost: Self.hostForConsent(relayHost),
+                                withCounts: liveActivityEnabled
+                            )
                         } else {
                             turnPushOff()
                         }
@@ -63,7 +99,14 @@ struct ServerNotificationsSection: View {
             }
             Toggle(isOn: Binding(
                 get: { liveActivityEnabled },
-                set: { setLiveActivity($0) }
+                set: { newValue in
+                    if newValue,
+                       let needed = Self.consentForLiveActivityOn(pushEnabled: pushEnabled, relayHost: relayHost) {
+                        consent = needed
+                    } else {
+                        setLiveActivity(newValue)
+                    }
+                }
             )) {
                 SettingsRowLabel(String(localized: "Live Activities"), systemImage: "platter.filled.bottom.iphone")
             }
@@ -96,18 +139,37 @@ struct ServerNotificationsSection: View {
             pushEnabled = PushRegistration.isEnabled(serverId: serverId)
             liveActivityEnabled = LiveActivitySettings.isEnabled(serverId: serverId)
         }
-        .alert("Turn On Push Notifications?", isPresented: $showDisclosure) {
-            Button("Turn On") { turnPushOn() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            if let relayHost {
-                Text(Self.disclosure(relayHost: relayHost))
+        .alert(
+            consent?.title ?? "",
+            isPresented: Binding(get: { consent != nil }, set: { if !$0 { consent = nil } }),
+            presenting: consent
+        ) { pending in
+            Button("Turn On") {
+                switch pending {
+                case .push: turnPushOn()
+                case .liveActivity: setLiveActivity(true)
+                }
             }
+            Button("Cancel", role: .cancel) {}
+            // An alert cannot hold a link. This button closes it without turning anything on;
+            // the user reads the policy, then turns the setting on again.
+            Button("Privacy Policy") { AppSupportLinks.open(AppSupportLinks.privacyPolicyURL) }
+        } message: { pending in
+            Text(Self.message(for: pending))
         }
     }
 
-    static func disclosure(relayHost: String) -> String {
-        String(localized: "Alerts from this server travel through \(relayHost) and Apple. Their content is encrypted on your server to a key that only this device holds. The relay and Apple can see this device's push token, when each alert is sent, and your server's network address. They cannot read titles, session names, or questions.")
+    /// Agrees with docs/privacy.md, "The push relay", "Apple" and "Live Activities". Describes
+    /// Oppi's relay (the App Store and TestFlight relay); the doc says so too.
+    static func message(for consent: Consent) -> String {
+        switch consent {
+        case .push(let relayHost, let withCounts):
+            let base = String(localized: "Alerts travel through \(relayHost) on Cloudflare, then Apple, encrypted so only this device can read them. All three see this device's push token and when alerts are sent; only the relay and Cloudflare see your server's IP address. App Attest checks with Apple that this is Oppi, so Apple learns this install uses push.")
+            guard withCounts else { return base }
+            return base + " " + String(localized: "The Live Activity's two counts also reach all three unencrypted, up to once a minute.")
+        case .liveActivity(let relayHost):
+            return String(localized: "To keep the card current while Oppi is closed, its two counts go to \(relayHost), Cloudflare, and Apple unencrypted, up to once a minute. No names or other text.")
+        }
     }
 
     /// Push (when the server offers it), then the Live Activity, which depends on push to stay
