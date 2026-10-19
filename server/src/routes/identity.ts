@@ -12,8 +12,8 @@ import { normalizeDeviceName, parseDevicePublicKey } from "../storage/device-aut
 import { inviteHostForTlsMode, proveSameTailscaleUser } from "../tailscale-whois.js";
 import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
-import { isDictationStreamEnabled } from "../dictation-types.js";
-import { isSpeechEnabled } from "../speech-synthesis.js";
+import { isDictationStreamReady } from "../create-stt-provider.js";
+import { isSpeechReady } from "../speech-synthesis.js";
 import { MAX_WORKSPACE_FILE_EDIT_BYTES } from "../file-serving-policy.js";
 import { isDeviceAccessPrincipal, type RequestPrincipal } from "../request-principal.js";
 import { checkPushRegistration } from "../push/registration.js";
@@ -426,6 +426,11 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
 
     const piCliVersion = typeof ctx.piCliVersion === "string" ? ctx.piCliVersion.trim() : "";
     const update = ctx.serverUpdate?.infoSnapshot();
+    // Voice controls appear only when their provider is configured and, for xAI, signed in.
+    const [dictationReady, speechReady] = await Promise.all([
+      isDictationStreamReady(config.asr, ctx.getProviderAuth),
+      isSpeechReady(config.tts, ctx.getProviderAuth),
+    ]);
     helpers.json(res, {
       name: hostname(),
       version: ctx.serverVersion,
@@ -456,9 +461,9 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
           maxBytes: MAX_WORKSPACE_FILE_EDIT_BYTES,
         } satisfies WorkspaceFileEditingCapability,
         appEventStream: { version: 1 },
-        dictationStream: isDictationStreamEnabled(config.asr) ? { version: 1 } : undefined,
+        dictationStream: dictationReady ? { version: 1 } : undefined,
         // `POST /speech` reads messages aloud with the configured `tts` provider.
-        speech: isSpeechEnabled(config.tts) ? { version: 1 } : undefined,
+        speech: speechReady ? { version: 1 } : undefined,
         // Create requests may ask for engine "durable" (experimental.serverDurable).
         durableSessions: ctx.sessions.durableSessionsAvailable() ? { version: 1 } : undefined,
         // Experimental: `attach` on a durable session's focused stream sends snapshot/update.

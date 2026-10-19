@@ -12,7 +12,11 @@
  * audio is normalized to 16-bit little-endian PCM at the provider's own rate.
  */
 
-import { resolveSttBearerToken, type SttGetAuth } from "./create-stt-provider.js";
+import {
+  hasVoiceProviderCredential,
+  resolveSttBearerToken,
+  type SttGetAuth,
+} from "./create-stt-provider.js";
 import type { ServerConfig } from "./types.js";
 
 export type TtsConfig = NonNullable<ServerConfig["tts"]>;
@@ -55,11 +59,21 @@ export function resolveTtsProvider(tts: TtsConfig | undefined): TtsProviderId | 
   return "http";
 }
 
-/** True when the server can read messages aloud (advertised as `capabilities.speech`). */
+/** True when `tts` names a read-aloud backend. Credentials are checked by `isSpeechReady`. */
 export function isSpeechEnabled(tts: TtsConfig | undefined): boolean {
   const provider = resolveTtsProvider(tts);
   if (provider === "xai") return true;
   return provider === "http" && (tts?.endpoint?.trim().length ?? 0) > 0;
+}
+
+/** True when read aloud is configured and can authenticate (advertised as `capabilities.speech`). */
+export async function isSpeechReady(
+  tts: TtsConfig | undefined,
+  getAuth?: SttGetAuth,
+): Promise<boolean> {
+  const provider = resolveTtsProvider(tts);
+  if (!provider || !isSpeechEnabled(tts)) return false;
+  return hasVoiceProviderCredential(provider, getAuth);
 }
 
 // ─── Text ───

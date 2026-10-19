@@ -41,7 +41,7 @@ oppi server restart
 - Set `asr.provider` to `xai`, or set a non-empty Yuwp-compatible `asr.sttEndpoint`, to enable server dictation. Unset those to disable.
 - Yuwp and xAI stream real partials. OpenAI batch dictation is not supported; replace old `openai` / `openai-codex` ASR config with Yuwp/http or xAI. Invalid provider config disables dictation on startup. Codex LLM/auth/quota behavior is unchanged. See [Dictation / ASR](../server/docs/asr.md).
 - Leftover `asr.backend: pi-extension` and `asr.extension` values are ignored on load.
-- The Apple app learns dictation availability from the server identity payload after pairing.
+- The Apple app learns dictation availability from the server identity payload after pairing. The server offers `xai` dictation only while it has an xAI credential (sign-in, stored API key, or `XAI_API_KEY`).
 
 Inspect:
 
@@ -66,7 +66,7 @@ Agents can inspect past sessions and add selected phrases with `oppi dictionary`
 
 ## Read aloud
 
-The speaker button under an assistant reply reads it aloud through the server. It appears once `tts` is configured and the server restarts; the app picks it up when it reconnects.
+The speaker button under an assistant reply reads it aloud through the server; it turns into a stop button while that reply plays. It appears once `tts` is configured and the server restarts; the app picks it up when it reconnects. An `xai` provider also needs an xAI credential (sign-in, stored API key, or `XAI_API_KEY`), or the button stays hidden. The server does not probe an `http` endpoint: if that backend is down, tapping the button shows the error under the reply.
 
 | Key            | Value |
 | -------------- | ----- |

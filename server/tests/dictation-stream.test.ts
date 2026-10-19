@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,14 +26,24 @@ function tempDir(prefix: string): string {
   return dir;
 }
 
-async function getServerInfo(asr: unknown): Promise<{
+type VoiceCapabilities = {
   dictationStream?: { version: number };
-}> {
+  speech?: { version: number };
+};
+
+const signedInToXai = async () => ({ auth: { apiKey: "xai-test-key" } });
+
+async function getServerInfo(
+  asr: unknown,
+  options: { tts?: unknown; getProviderAuth?: RouteContext["getProviderAuth"] } = {},
+): Promise<VoiceCapabilities> {
   const ctx = {
+    getProviderAuth: options.getProviderAuth,
     storage: {
       getConfig: () => ({
         configVersion: 2,
         asr,
+        tts: options.tts,
         uploadStore: { maxFileBytes: 1, maxTurnBytes: 2 },
         images: { autoResize: false },
       }),
@@ -61,9 +71,7 @@ async function getServerInfo(asr: unknown): Promise<{
   });
   expect(handled).toBe(true);
   expect(res.statusCode).toBe(200);
-  const body = JSON.parse(res.body) as {
-    capabilities: { dictationStream?: { version: number } };
-  };
+  const body = JSON.parse(res.body) as { capabilities: VoiceCapabilities };
   return body.capabilities;
 }
 
@@ -118,6 +126,10 @@ describe("isDictationStreamEnabled", () => {
 });
 
 describe("GET /server/info dictationStream", () => {
+  // A developer's XAI_API_KEY must not count as a sign-in.
+  beforeEach(() => vi.stubEnv("XAI_API_KEY", ""));
+  afterEach(() => vi.unstubAllEnvs());
+
   it("advertises when omitted backend has a non-empty sttEndpoint", async () => {
     const capabilities = await getServerInfo({ sttEndpoint: "http://127.0.0.1:7936" });
     expect(capabilities.dictationStream).toEqual({ version: 1 });
@@ -140,12 +152,50 @@ describe("GET /server/info dictationStream", () => {
     expect(capabilities.dictationStream).toEqual({ version: 1 });
   });
 
-  it("advertises xai but not removed OpenAI providers", async () => {
-    expect((await getServerInfo({ provider: "openai-codex" })).dictationStream).toBeUndefined();
-    expect((await getServerInfo({ provider: "openai" })).dictationStream).toBeUndefined();
-    expect((await getServerInfo({ provider: "xai" })).dictationStream).toEqual({
+  it("advertises signed-in xai but not removed OpenAI providers", async () => {
+    const signedIn = { getProviderAuth: signedInToXai };
+    expect((await getServerInfo({ provider: "openai-codex" }, signedIn)).dictationStream).toBeUndefined();
+    expect((await getServerInfo({ provider: "openai" }, signedIn)).dictationStream).toBeUndefined();
+    expect((await getServerInfo({ provider: "xai" }, signedIn)).dictationStream).toEqual({
       version: 1,
     });
+  });
+
+  it("does not advertise xai without an xAI credential", async () => {
+    const signedOut = { getProviderAuth: async () => undefined };
+    expect((await getServerInfo({ provider: "xai" }, signedOut)).dictationStream).toBeUndefined();
+  });
+
+  it("accepts XAI_API_KEY as the xAI credential", async () => {
+    vi.stubEnv("XAI_API_KEY", "xai-env-key");
+    expect((await getServerInfo({ provider: "xai" })).dictationStream).toEqual({ version: 1 });
+  });
+});
+
+describe("GET /server/info speech", () => {
+  beforeEach(() => vi.stubEnv("XAI_API_KEY", ""));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("advertises an HTTP backend with an endpoint, without credentials", async () => {
+    const info = await getServerInfo(undefined, {
+      tts: { provider: "http", endpoint: "http://127.0.0.1:7938" },
+    });
+    expect(info.speech).toEqual({ version: 1 });
+  });
+
+  it("does not advertise without tts or with an HTTP provider missing its endpoint", async () => {
+    expect((await getServerInfo(undefined)).speech).toBeUndefined();
+    expect((await getServerInfo(undefined, { tts: { provider: "http" } })).speech).toBeUndefined();
+  });
+
+  it("advertises xai only when signed in to xAI", async () => {
+    const tts = { provider: "xai", voice: "eve" };
+    expect(
+      (await getServerInfo(undefined, { tts, getProviderAuth: async () => undefined })).speech,
+    ).toBeUndefined();
+    expect((await getServerInfo(undefined, { tts, getProviderAuth: signedInToXai })).speech).toEqual(
+      { version: 1 },
+    );
   });
 });
 
