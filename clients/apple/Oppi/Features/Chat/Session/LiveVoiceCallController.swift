@@ -29,7 +29,8 @@ protocol LiveVoiceSessionMemory: AnyObject {
 @MainActor
 @Observable
 final class LiveVoiceCallController {
-    static let keepAliveInterval: Duration = .seconds(10)
+    /// Well inside the server's 30-second controller lease.
+    private let keepAliveInterval: Duration
 
     private(set) var isLive = false
     private(set) var isMuted = false
@@ -66,8 +67,10 @@ final class LiveVoiceCallController {
         audio: LiveVoiceAudioOwning? = nil,
         memory: LiveVoiceSessionMemory = UserDefaultsLiveVoiceSessionMemory(),
         serverKey: String = "default",
-        clientCallId: String = UUID().uuidString
+        clientCallId: String = UUID().uuidString,
+        keepAliveInterval: Duration = .seconds(10)
     ) {
+        self.keepAliveInterval = keepAliveInterval
         self.channel = channel
         self.audio = audio
         self.memory = memory
@@ -94,6 +97,7 @@ final class LiveVoiceCallController {
         let generation = startGeneration
         consumeTask?.cancel()
         keepAliveTask?.cancel()
+        keepAliveTask = nil
         audio?.stopPlayback()
         channel.onInboundAudio = { [weak self] data in
             self?.audio?.play(data)
@@ -252,6 +256,7 @@ final class LiveVoiceCallController {
             isLive = false
             statusText = "Listening"
             keepAliveTask?.cancel()
+            keepAliveTask = nil
             memory.clearCallIdentity(forServer: serverKey)
             return
         }
@@ -282,9 +287,10 @@ final class LiveVoiceCallController {
 
     private func startKeepAlive(generation: UInt64) {
         keepAliveTask?.cancel()
+        let interval = keepAliveInterval
         keepAliveTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: Self.keepAliveInterval)
+                try? await Task.sleep(for: interval)
                 guard let self, generation == self.startGeneration, !Task.isCancelled else { return }
                 await self.sendKeepAliveNow()
             }
@@ -418,7 +424,12 @@ final class LiveVoiceCallController {
 
     private func confirmStart(generation: UInt64) {
         didConfirmCall = true
-        startKeepAlive(generation: generation)
+        // Every call state (each partial transcript while the user talks) confirms the call.
+        // Restarting the timer here would starve the keepalive during long speech and let
+        // the server's lease expire under a live call.
+        if keepAliveTask == nil {
+            startKeepAlive(generation: generation)
+        }
         resumeStartWaiter(generation: generation)
     }
 

@@ -90,6 +90,22 @@ struct LiveVoiceCallControllerTests {
         #expect(!containsDeviceId(harness.channel.sent.last))
     }
 
+    @Test("Keepalive keeps its cadence while the user talks and call states stream in")
+    func keepaliveSurvivesStreamingCallStates() async throws {
+        let harness = try await startedHarness(keepAliveInterval: .milliseconds(100))
+
+        // Partial transcripts arrive as call states far faster than the keepalive interval.
+        for seq in 2...25 {
+            harness.channel.emit(.voiceCallState(
+                Self.snapshot(callId: "call-1", eventSeq: seq, leaseEpoch: 1, partialTranscript: "word \(seq)")
+            ))
+            try await Task.sleep(for: .milliseconds(30))
+        }
+
+        let keepalives = sentTypes(harness.channel.sent).filter { $0 == "voice_call_keepalive" }
+        #expect(keepalives.count >= 3)
+    }
+
     @Test("End ends the call and restores the composer")
     func endEndsCall() async throws {
         let harness = try await startedHarness()
@@ -484,7 +500,7 @@ struct LiveVoiceCallControllerTests {
         #expect(!harness.controller.isLive)
     }
 
-    private func connectingHarness() async throws -> Harness {
+    private func connectingHarness(keepAliveInterval: Duration = .seconds(10)) async throws -> Harness {
         let channel = FakeLiveVoiceCallChannel()
         let audio = FakeLiveVoiceAudioOwner()
         let memory = FakeLiveVoiceSessionMemory()
@@ -493,7 +509,8 @@ struct LiveVoiceCallControllerTests {
             audio: audio,
             memory: memory,
             serverKey: "server-1",
-            clientCallId: "client-call-1"
+            clientCallId: "client-call-1",
+            keepAliveInterval: keepAliveInterval
         )
         let startTask = Task { await controller.start(sessionId: "sess-1", routeScope: .workspace("ws-1")) }
         await waitUntil { !channel.opened.isEmpty }
@@ -508,8 +525,8 @@ struct LiveVoiceCallControllerTests {
         )
     }
 
-    private func startedHarness() async throws -> Harness {
-        let harness = try await connectingHarness()
+    private func startedHarness(keepAliveInterval: Duration = .seconds(10)) async throws -> Harness {
+        let harness = try await connectingHarness(keepAliveInterval: keepAliveInterval)
         harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 1, leaseEpoch: 1)))
         await harness.startTask.value
         return harness
