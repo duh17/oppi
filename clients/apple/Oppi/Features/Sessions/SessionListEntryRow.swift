@@ -116,8 +116,10 @@ extension SessionListEntryRow {
                 foreignWorkspaceName: { row.foreignWorkspaceNames[$0.id] },
                 actions: actions
             )
-            .appRootEnvironment(root)
+            // Inside the root's environment: the inner value wins, so the
+            // list's own connection overrides the active server's.
             .withServerScopedEnvironment(connection ?? root.coordinator.activeConnection)
+            .appRootEnvironment(root)
         }
     }
 }

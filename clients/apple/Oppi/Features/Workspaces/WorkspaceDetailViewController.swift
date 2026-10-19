@@ -258,6 +258,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        recordCoverageBeforeGoingQuiet()
         isOnScreen = false
         hasAppeared = false
         connectTask?.cancel()
@@ -562,6 +563,17 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
 
     private var hasSessionSearchQuery: Bool {
         SessionListSearchPresentation.hasQuery(searchNavigation.searchText)
+    }
+
+    /// A covered screen stops reacting, and no update pass is guaranteed
+    /// between the push and here (a non-animated push, a route restore). Take
+    /// the covered state now so Back always sees covered then uncovered and
+    /// presents the search again.
+    private func recordCoverageBeforeGoingQuiet() {
+        guard phase == .content, isSearchListCoveredByDestination else { return }
+        applySearchNavigation(.coverageChanged(isCovered: true))
+        observed?.stackCount = navigation.workspaceStackRouteElements.count
+        observed?.splitDetailTarget = navigation.splitDetailTarget
     }
 
     private var isSearchListCoveredByDestination: Bool {

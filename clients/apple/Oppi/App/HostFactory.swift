@@ -440,6 +440,10 @@ final class ScreenNavigator {
     /// workspace's context bars open a quick-action chat with `push`). The
     /// leaf gets it with
     /// `.environment(\.screenNavigator, navigator)`.
+    ///
+    /// Push and present only. The leaf does not own the screen, so `finish()`
+    /// would pop the whole UIKit screen, and `routerSearchable` would install
+    /// a second search controller over the screen's own.
     static func forUIKitScreen(_ screen: UIViewController, root: AppRootEnvironment) -> ScreenNavigator {
         let navigator = ScreenNavigator(root: root)
         navigator.controller = screen

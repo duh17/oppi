@@ -143,21 +143,18 @@ struct ShellRouteView: View {
         }
     }
 
+    private var mountedByUIKitScreen: EmptyView {
+        preconditionFailure("mounted by ShellRouteScreens.make")
+    }
+
     @ViewBuilder
     private var content: some View {
         switch route {
-        case .inbox:
-            // The shell hosts this route as SessionInboxViewController.
-            EmptyView()
-        case .sidebar:
-            // The shell mounts this route as WorkspaceSidebarViewController.
-            EmptyView()
-        case .workspace:
-            // The shell mounts this route as WorkspaceDetailViewController.
-            EmptyView()
-        case .session:
-            // The shell hosts this route as ChatRouteViewController.
-            EmptyView()
+        case .inbox, .sidebar, .workspace, .session:
+            // UIKit screens (SessionInboxViewController,
+            // WorkspaceSidebarViewController, WorkspaceDetailViewController,
+            // ChatRouteViewController).
+            mountedByUIKitScreen
         case .fileBrowser(let target):
             WorkspaceFileBrowserDestinationView(target: target)
         case .linkedFile(let target):

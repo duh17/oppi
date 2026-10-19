@@ -211,6 +211,7 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        recordCoverageBeforeGoingQuiet()
         isOnScreen = false
         serverTask?.cancel()
         serverTask = nil
@@ -486,7 +487,7 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
         let current = Observed(
             searchText: navigation.inboxSessionSearch.searchText,
             isSearchPresented: navigation.inboxSessionSearch.isSearchPresented,
-            coverage: "\(navigation.workspaceStackRouteElements.count):\(navigation.workspaceNavigationPresentation):\(navigation.splitDetailTarget != nil)",
+            coverage: currentCoverageKey,
             activeServerId: coordinator.activeServerId,
             stackCount: navigation.workspaceStackRouteElements.count,
             splitPathCount: navigation.splitDetailPathElements.count
@@ -534,6 +535,22 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             _ = await (refresh, providers)
             applyE2ELaunchHintsIfNeeded()
         }
+    }
+
+    private var currentCoverageKey: String {
+        "\(navigation.workspaceStackRouteElements.count):\(navigation.workspaceNavigationPresentation):\(navigation.splitDetailTarget != nil)"
+    }
+
+    /// A covered screen stops reacting, and no update pass is guaranteed
+    /// between the push and here (a non-animated push, a route restore). Take
+    /// the covered state now so Back always sees covered then uncovered and
+    /// presents the search again.
+    private func recordCoverageBeforeGoingQuiet() {
+        guard isSearchListCoveredByDestination else { return }
+        applySearchNavigation(.coverageChanged(isCovered: true))
+        observed?.coverage = currentCoverageKey
+        observed?.stackCount = navigation.workspaceStackRouteElements.count
+        observed?.splitPathCount = navigation.splitDetailPathElements.count
     }
 
     private var isSearchListCoveredByDestination: Bool {

@@ -445,8 +445,9 @@ final class WorkspaceSidebarViewController: UIViewController {
         }
         applyBackground(to: cell, paintsSelection: paintsSelection, isSelected: isSelected, palette: palette)
         // After the content configuration: a list cell makes itself the
-        // element once it has content.
-        cell.isAccessibilityElement = cell.element.isHidden
+        // element once it has content. The unavailable notice stays a
+        // container so its label and Retry button are separate elements.
+        cell.isAccessibilityElement = cell.element.isHidden && item != .unavailable
     }
 
     private func configureUtility(_ cell: SidebarListCell, row: UtilityRow, palette: ThemePalette) {
