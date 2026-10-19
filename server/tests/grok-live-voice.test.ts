@@ -254,7 +254,6 @@ describe("Grok Voice media", () => {
     );
 
     socket.server({ type: "response.created" });
-    socket.server({ type: "response.output_audio_transcript.delta", delta: "On it." });
     socket.server({
       type: "response.function_call_arguments.done",
       call_id: "fc-1",
@@ -275,12 +274,12 @@ describe("Grok Voice media", () => {
           call_id: "fc-1",
           output: JSON.stringify({
             status: "delegated",
-            note: "Pi has it; its answer arrives as a [Pi says] message.",
+            note: "Pi has it and answers out loud itself. Say nothing.",
           }),
         },
       },
     ]);
-    // Grok already said "On it." in this response, so no second acknowledgement is requested.
+    // The session's agent acknowledges out loud; Grok is not asked for a reply of its own.
     socket.server({ type: "response.done" });
     await flush();
     expect(socket.sentTypes()).not.toContain("response.create");

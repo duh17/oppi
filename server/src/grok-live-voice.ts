@@ -46,7 +46,7 @@ const TURN_REPLY_WAIT_MS = 5_000;
 export const GROK_VOICE_INSTRUCTIONS = [
   "You are the voice of Pi, the user's coding agent, on a phone call. Pi does the thinking and the work; you are its ears and mouth.",
   "You cannot see files, sessions, or anything on the computer, and you do not know what Pi knows.",
-  `Pass everything the user asks, tells, or wants done to Pi with ${DELEGATE_TOOL}, in the user's own words: questions about their work, code, sessions, status, plans, and follow-ups to what Pi said. Then stay quiet or say a word like "okay". Only answer yourself for a greeting or a pure social reply.`,
+  `Pass everything the user asks, tells, or wants done to Pi with ${DELEGATE_TOOL}, in the user's own words: questions about their work, code, sessions, status, plans, and follow-ups to what Pi said. After you pass something to Pi, say nothing at all: no "okay", no "on it". Pi answers out loud itself. Only answer yourself for a greeting or a pure social reply.`,
   "Messages that begin with [Pi says] are Pi talking to the user. Say that text to the user as written, in your voice, without adding to it. Never pass [Pi says] text, or anything else Pi said, to Pi: only the user's own spoken words go to Pi.",
   "You cannot approve permission requests. If Pi is blocked on an approval, tell the user to answer it on screen.",
 ].join(" ");
@@ -106,8 +106,6 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   private responseActive = false;
   /** The user finished a turn and xAI's own server-VAD reply has not been created yet. */
   private replyExpected = false;
-  /** The in-flight response produced speech, so a delegation needs no second acknowledgement. */
-  private respondedWithSpeech = false;
   private assistantSpeaking = false;
   private responseWanted = false;
   private responseTimer: ReturnType<typeof setTimeout> | undefined;
@@ -391,7 +389,6 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         this.stats.lastOutputAt = 0; // gaps are measured within one reply
         this.stats.replyFirstOutputAt = 0;
         this.stats.replyOutputMs = 0;
-        this.respondedWithSpeech = false;
         const metadata = event.response?.metadata;
         const ours = metadata?.[RESPONSE_SOURCE_KEY] === OWN_RESPONSE_SOURCE;
         this.responseFromAdapter = ours;
@@ -412,9 +409,6 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         }
         return;
       }
-      case "response.output_audio_transcript.delta":
-        this.respondedWithSpeech = true;
-        return;
       case "response.function_call_arguments.done":
         await this.handleFunctionCall(event);
         return;
@@ -494,7 +488,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
           this.stats.delegations += 1;
           output = {
             status: "delegated",
-            note: "Pi has it; its answer arrives as a [Pi says] message.",
+            note: "Pi has it and answers out loud itself. Say nothing.",
           };
         } catch (error) {
           output = {
@@ -508,10 +502,11 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
       type: "conversation.item.create",
       item: { type: "function_call_output", call_id: callId, output: JSON.stringify(output) },
     });
-    // Grok usually says "on it" in the same response; a second response would repeat it.
-    // A refused adapter reply gets no follow-up, so Pi output cannot loop through Grok.
+    // A handed-off request needs no reply from Grok: the session's agent acknowledges it out
+    // loud first. Only a failed handoff asks Grok to say so. A refused adapter reply gets no
+    // follow-up, so Pi output cannot loop through Grok.
     if (this.responseFromAdapter) return;
-    if (!this.respondedWithSpeech || output.status === "error") this.requestResponse();
+    if (output.status === "error") this.requestResponse();
   }
 
   /** Waits for the current response and the phone's queued audio before speaking again. */
