@@ -1250,22 +1250,36 @@ struct QuickSessionSheet: View {
     }
 
     /// A Live Voice start picks its workspace and checks the server's voice backend right
-    /// away, so on a cold launch it first waits, briefly, for the server's capabilities and
-    /// workspace list.
+    /// away, so it first gets the server's current answer and, on a cold launch, waits
+    /// briefly for the workspace list.
     private func awaitServerCatalog(serverId: String?) async {
         guard let serverId, let connection = coordinator.connection(for: serverId) else { return }
-        let ready: @MainActor @Sendable () -> Bool = {
+        // The capabilities held may predate a server restart or update: coming to the
+        // foreground (an Action Button press) re-reads them without waiting. Read them now
+        // (joining a read in flight), so the call is judged on the server as it is.
+        await connection.refreshStreamCapabilities()
+        if Task.isCancelled { return }
+        await waitUntil(timeout: .seconds(10)) {
             connection.serverCapabilities != nil && connection.workspaceStore.isLoaded
         }
-        guard !ready() else { return }
+        // A server that just started may still be checking its voice backend; its
+        // capability follows the follow-up read about two seconds later.
+        await waitUntil(timeout: .seconds(4)) { connection.liveVoiceAvailable }
+    }
+
+    /// Returns once `condition` holds or `timeout` passes; closing the sheet ends it at once.
+    private func waitUntil(
+        timeout: Duration,
+        _ condition: @escaping @MainActor @Sendable () -> Bool
+    ) async {
+        guard !condition() else { return }
         let observer = Task { @MainActor in
-            for await isReady in Observations(ready) where isReady { return }
+            for await met in Observations(condition) where met { return }
         }
         let deadline = Task {
-            try? await Task.sleep(for: .seconds(10))
+            try? await Task.sleep(for: timeout)
             observer.cancel()
         }
-        // Closing the sheet during the wait ends it at once.
         await withTaskCancellationHandler {
             await observer.value
         } onCancel: {
