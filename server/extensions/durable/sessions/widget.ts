@@ -26,11 +26,12 @@ import {
 // the same helpers, published through the `oppi.extension-ui` notification slots. Rows link to
 // `oppi://session/<id>`, which the app already opens.
 //
-// Refresh follows the documents; there is no timer. Each shown child's `pi.live` (busy) and
-// `oppi.extension-ui` (an open dialog: needs attention) are watched in process; a write happens
-// only when a row changes. Model and context usage come from the child's newest assistant entry,
-// read when the child is first shown and when a run ends, so a working child shows the usage of
-// its previous answer.
+// Refresh follows the documents; there is no ticking timer. Each shown child's `pi.live` (busy,
+// and its current activity) and `oppi.extension-ui` (an open dialog: needs attention) are
+// watched in process; a write happens only when a row changes. Model and context usage come from
+// the child's newest assistant entry, read when the child is first shown and when a run ends, so
+// a working child shows the usage of its previous answer. A change of activity alone is written
+// at most every `ACTIVITY_INTERVAL_MS`: streamed text changes it with every partial.
 
 /** Rows the pill shows: the newest children, in spawn order. */
 const MAX_ROWS = 8;
@@ -38,6 +39,10 @@ const MAX_ROWS = 8;
 const STARTING_RETRY_MS = 1_000;
 /** Entries read back for a child's newest assistant message. */
 const ANSWER_SCAN = 50;
+/** Least time between writes that change only rows' current activity. */
+export const ACTIVITY_INTERVAL_MS = 2_000;
+/** Longest activity line, in characters. */
+const ACTIVITY_MAX = 120;
 
 const PROVENANCE = {
   extensionScopeId: "repo:subagents",
@@ -57,6 +62,8 @@ type Watched = {
   live?: DocumentWatch<LiveState>;
   ui?: DocumentWatch<UIState>;
   busy: boolean;
+  /** `currentActivity` of the child's `pi.live`, as of its last change. */
+  activity?: string;
   asking: boolean;
   /** No `pi.live` yet, and the task that hands the child its first input is still live. */
   starting: boolean;
@@ -71,6 +78,33 @@ type Watched = {
 
 /** A child bound to its Session; until then it has no link and no row. */
 type Shown = Child & { sessionId: string };
+
+/**
+ * What a busy child is doing, from its `pi.live`: the newest running tool's name, else the last
+ * line of text of the answer it is generating. Undefined while idle, waiting, or only thinking.
+ */
+export function currentActivity(live: Readonly<LiveState> | null | undefined): string | undefined {
+  if (live?.run === undefined) return undefined;
+  const running = (live.tools ?? []).filter((slot) => slot.status === "running").at(-1);
+  if (running) return clip(`Running ${running.name}`);
+  const content = (live.generation?.message as { content?: unknown } | undefined)?.content;
+  if (!Array.isArray(content)) return undefined;
+  for (let index = content.length - 1; index >= 0; index--) {
+    const block = content[index] as { type?: unknown; text?: unknown } | undefined;
+    if (block?.type !== "text" || typeof block.text !== "string") continue;
+    const line = block.text
+      .split("\n")
+      .map((candidate) => candidate.trim())
+      .filter((candidate) => candidate.length > 0)
+      .at(-1);
+    if (line) return clip(line);
+  }
+  return undefined;
+}
+
+function clip(line: string): string {
+  return line.length > ACTIVITY_MAX ? `${line.slice(0, ACTIVITY_MAX - 1)}\u2026` : line;
+}
 
 function asking(ui: Readonly<UIState> | null): boolean {
   return Object.values(ui?.requests ?? {}).some((entry) => !entry.response);
@@ -185,6 +219,23 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
         dirty = true;
         wake?.();
       };
+      // A change of activity alone waits for the interval since the last write pass began. The
+      // timer exists only while a child is busy and its newest activity is unwritten: going idle
+      // is a busy edge, written at once, and every pass takes the pending activity with it.
+      // Counting from the pass's start, a change during a pass's commit waits out the interval
+      // too instead of writing again right after it.
+      let lastWrite = 0;
+      let activityTimer: ReturnType<typeof setTimeout> | undefined;
+      const markActivity = (): void => {
+        if (dirty || activityTimer) return;
+        activityTimer = setTimeout(
+          () => {
+            activityTimer = undefined;
+            mark();
+          },
+          Math.max(0, lastWrite + ACTIVITY_INTERVAL_MS - Date.now()),
+        );
+      };
       list.start(async () => mark());
 
       /** Watch what is missing of a shown child. `pi.live` exists only once its first run starts. */
@@ -194,13 +245,21 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
           if (live) {
             entry.live = live;
             entry.busy = live.value?.run !== undefined;
+            entry.activity = currentActivity(live.value);
             // A first run that started and ended before this watch has an answer to read.
             entry.stale = true;
             live.start(async (value) => {
               const busy = value?.run !== undefined;
-              if (busy === entry.busy) return;
+              const activity = currentActivity(value);
+              if (busy === entry.busy) {
+                if (activity === entry.activity) return;
+                entry.activity = activity;
+                markActivity();
+                return;
+              }
               if (!busy) entry.stale = true;
               entry.busy = busy;
+              entry.activity = activity;
               mark();
             });
           }
@@ -229,6 +288,10 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
       try {
         while (!runtime.signal.aborted) {
           dirty = false;
+          // This pass writes every row's current activity.
+          clearTimeout(activityTimer);
+          activityTimer = undefined;
+          lastWrite = Date.now();
           const calls = list.value?.calls ?? {};
           // Conversation ids ascend in spawn order; key order would put numeric names first.
           const shown = Object.entries(list.value?.children ?? {})
@@ -291,6 +354,7 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
                   ? { contextTokens: answer.contextTokens }
                   : {}),
                 ...(window ? { contextWindow: window } : {}),
+                ...(entry.busy && entry.activity ? { activity: entry.activity } : {}),
               });
             }
             const ui = await tx.doc(DurableUI, parent);
@@ -328,6 +392,7 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
           });
         }
       } finally {
+        clearTimeout(activityTimer);
         await list.stop();
         await Promise.all([...watched.values()].map(release));
       }

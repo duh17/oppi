@@ -25,6 +25,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { createDurableSessions } from "../extensions/durable/sessions/durable.js";
 import { Subagents } from "../extensions/durable/sessions/contract.js";
+import { ACTIVITY_INTERVAL_MS } from "../extensions/durable/sessions/widget.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import { OppiAgentDoc } from "../src/durable-agent.js";
 import {
@@ -115,7 +116,10 @@ const subagentCall = (action: string, args: Record<string, unknown> = {}) =>
   toolCall("subagent", { action, ...args });
 const spawnCall = (args: Record<string, unknown>) => subagentCall("spawn", args);
 
-async function fixture(responses: FauxResponseStep[], options?: { serverDurable?: boolean }) {
+async function fixture(
+  responses: FauxResponseStep[],
+  options?: { serverDurable?: boolean; tokensPerSecond?: number },
+) {
   const dir = mkdtempSync(join(tmpdir(), "oppi-durable-sessions-test-"));
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
@@ -123,7 +127,10 @@ async function fixture(responses: FauxResponseStep[], options?: { serverDurable?
     modelsStorePath: join(dir, "models-cache.json"),
     refreshOnCreate: false,
   });
-  const faux = fauxProvider({ models: [{ id: "faux-1" }, { id: "faux-2" }] });
+  const faux = fauxProvider({
+    models: [{ id: "faux-1" }, { id: "faux-2" }],
+    ...(options?.tokensPerSecond ? { tokensPerSecond: options.tokensPerSecond } : {}),
+  });
   faux.setResponses(responses);
   models.registerNativeProvider(faux.provider);
   await models.setRuntimeApiKey("faux", "test-only-faux-credential");
@@ -623,6 +630,94 @@ describe("durable-native threads", () => {
     againGate.open();
     await until(async () => (await row())?.state === "success", "done again");
   });
+
+  it("shows what a working child does in its pill row, writing a new activity at most every two seconds", async () => {
+    let gatePath = "";
+    // About six seconds at 40 tokens a second: several activity intervals.
+    const answer = Array.from({ length: 60 }, (_, index) => `progress line ${index + 1}`).join(
+      "\n",
+    );
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult" && last.toolName === "bash")
+          return fauxAssistantMessage(answer);
+        if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
+        if (text.includes("Delegate"))
+          return spawnCall({ task: "CHILD_TASK activity", name: "Busy" });
+        return toolCall("bash", {
+          command: `for i in $(seq 1 400); do [ -f '${gatePath}' ] && break; echo waiting $i; sleep 0.05; done`,
+        });
+      }),
+      { tokensPerSecond: 40 },
+    );
+    gatePath = join(f.dir, "activity-gate");
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await f.manager.sendPrompt(f.parent.id, "Delegate in the background");
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await until(() => f.storage.listSessions().length === 2, "the child session");
+    const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    const childConversation = conversationOf(f.storage, child);
+    const row = async () =>
+      (
+        (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
+          "widget:subagents"
+        ]?.nativeSurface as { blocks: Array<{ rows: Array<Record<string, unknown>> }> } | undefined
+      )?.blocks[0]?.rows[0];
+
+    // A running tool: its name, after the context use of an answer the row has read, if any.
+    // Its output streams without a write, as the activity holds.
+    const activity = async () =>
+      /(?:^|\u00b7 )([^\u00b7]+)$/.exec(String((await row())?.detail))?.[1];
+    await until(async () => (await activity()) === "Running bash", "the running tool");
+
+    // Streamed text: its last line, in writes at least the interval apart.
+    const widgetWrites: number[] = [];
+    let liveChanges = 0;
+    let lastWidget: string | undefined;
+    const unsubscribe = harness.subscribeCommits((publication) => {
+      for (const change of publication.changes) {
+        if (change.type !== "document" || change.record.key !== undefined) continue;
+        if (
+          change.conversationId === childConversation &&
+          change.record.kind === LiveDoc.definition.kind
+        )
+          liveChanges += 1;
+        if (
+          change.conversationId !== parentConversation ||
+          change.record.kind !== DurableUI.definition.kind
+        )
+          continue;
+        const widget = JSON.stringify(
+          (change.value as { notifications?: Record<string, unknown> } | undefined)
+            ?.notifications?.["widget:subagents"],
+        );
+        if (widget !== lastWidget) widgetWrites.push(Date.now());
+        lastWidget = widget;
+      }
+    });
+    writeFileSync(gatePath, "");
+    // A write takes the partial as it is, so the line can be cut mid-word ("progress li").
+    const lines = answer.split("\n");
+    await until(async () => {
+      const shown = await activity();
+      return !!shown && shown !== "Running bash" && lines.some((line) => line.startsWith(shown));
+    }, "a line of the streaming answer");
+    await until(async () => (await row())?.state === "success", "a done row");
+    unsubscribe();
+    // Idle: no activity, only the answer's context use.
+    expect((await row())?.detail).toMatch(/^\d+%$/);
+    // The answer streamed through many `pi.live` commits; the row followed in a few writes.
+    expect(liveChanges).toBeGreaterThan(10);
+    const gaps = widgetWrites.slice(1).map((at, index) => at - widgetWrites[index]!);
+    // Every write but the last (Done, the busy edge) waited out the interval. Passes are spaced
+    // from their start, so a slower commit before a faster one shortens the gap between commits
+    // a little; per-delta writes would be 100 ms apart.
+    expect(widgetWrites.length).toBeGreaterThanOrEqual(3);
+    for (const gap of gaps.slice(0, -1))
+      expect(gap).toBeGreaterThanOrEqual(ACTIVITY_INTERVAL_MS - 500);
+  }, 30_000);
 
   it("shows a child stopped before its first answer as done, not working", async () => {
     const f = await fixture(

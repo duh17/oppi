@@ -16,6 +16,8 @@ export interface Subagent {
 	model?: string;
 	contextTokens?: number;
 	contextWindow?: number;
+	/** What a working child is doing right now: its running tool or its last line of text. */
+	activity?: string;
 }
 
 export interface SubagentRow {
@@ -228,7 +230,7 @@ export function subagentRows(subagents: Subagent[]): SubagentRow[] {
 			id: item.id,
 			title: item.title,
 			subtitle: [statusLabel(item.state), model].filter(Boolean).join(" · "),
-			detail: usage ?? item.subtitle,
+			detail: item.activity ? [usage, item.activity].filter(Boolean).join(" · ") : (usage ?? item.subtitle),
 			state: item.state,
 			link: item.link,
 			...(progress !== undefined ? { progress } : {}),
