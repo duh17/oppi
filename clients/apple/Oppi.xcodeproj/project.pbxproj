@@ -346,6 +346,7 @@
 		27C916FFCA1B1D732BE77244 /* WorkspaceReviewModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376DA8883745F7A7707D5E33 /* WorkspaceReviewModelsTests.swift */; };
 		27D8BB02E0110646BAD7213D /* VoiceInputSessionMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B78713D9528ECB1CE85A99E3 /* VoiceInputSessionMonitor.swift */; };
 		281BD69B050C285A3C3038E2 /* MacAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 246887EF1C0D7E5579B2E271 /* MacAPIClientTests.swift */; };
+		281EB453A96073EFF4A25721 /* QuickSessionPillTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37658BA9C13D8FF30DD5228F /* QuickSessionPillTests.swift */; };
 		28298F9A3040D53876537396 /* MacSessionFilePreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACC3F681DE7BFDB5229A93E1 /* MacSessionFilePreviewTests.swift */; };
 		283AC16F11C68ABC91CF7964 /* MathSymbolTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEF14619D93642F1C82BC9D9 /* MathSymbolTable.swift */; };
 		284EBB337482A486864B7DC0 /* ElevatedSurfaceOpacityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E7191944EB6FBA435CA06CD /* ElevatedSurfaceOpacityTests.swift */; };
@@ -2678,6 +2679,7 @@
 		36E71AACA21A30564350BCC9 /* ServerBadgePage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerBadgePage.swift; sourceTree = "<group>"; };
 		36F8AFDEA09CB278CA3F6C01 /* StreamingRenderPolicyResourcePressureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingRenderPolicyResourcePressureTests.swift; sourceTree = "<group>"; };
 		3759285EA4A0192F99DD2BF1 /* AskOppiIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskOppiIntent.swift; sourceTree = "<group>"; };
+		37658BA9C13D8FF30DD5228F /* QuickSessionPillTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickSessionPillTests.swift; sourceTree = "<group>"; };
 		376DA8883745F7A7707D5E33 /* WorkspaceReviewModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceReviewModelsTests.swift; sourceTree = "<group>"; };
 		3792E8E3EC34593F7D500E32 /* TeXMathParserConformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeXMathParserConformanceTests.swift; sourceTree = "<group>"; };
 		37EE84CB3D966367B3AA8FA0 /* APIClient+Mcp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "APIClient+Mcp.swift"; sourceTree = "<group>"; };
@@ -5748,6 +5750,7 @@
 				45A91CBC3B1179BE7063A317 /* MetricKitSerializerTests.swift */,
 				7A0A577B2D90028AB1A708C8 /* OppiAppCacheLaunchTests.swift */,
 				A9B3C92E3C9194A0DA0C9ED6 /* PairedServerTests.swift */,
+				37658BA9C13D8FF30DD5228F /* QuickSessionPillTests.swift */,
 				7EFAD77DED3095BFB941D9FB /* QuickSessionTriggerTests.swift */,
 				3DE2EBB31EF5354A5CD88B58 /* QuietModePreferencesTests.swift */,
 				DAFFC4B66E8BB36C7CD3F28F /* RemotePushTests.swift */,
@@ -8679,6 +8682,7 @@
 				E802D100937E349F8EBB55B6 /* PushPairingPlaintextTests.swift in Sources */,
 				1675943F4B794D2E6AB63284 /* QuickCommentTemplateTests.swift in Sources */,
 				C296A66E88AD68FFA5425B3E /* QuickSessionLaunchRoutingTests.swift in Sources */,
+				281EB453A96073EFF4A25721 /* QuickSessionPillTests.swift in Sources */,
 				D902D8A0C2E8ECC1C266AAA3 /* QuickSessionSortTests.swift in Sources */,
 				9B85EAC132D8856BA9FDA24E /* QuickSessionTriggerTests.swift in Sources */,
 				8003B3A716DA54AC996640F7 /* QuietModePreferencesTests.swift in Sources */,

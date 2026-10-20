@@ -262,7 +262,6 @@ final class QuickSessionViewController: UIViewController {
         incognitoPill.accessibilityIdentifier = "quickSession.incognito"
         incognitoPill.accessibilityLabel = "Incognito"
         incognitoPill.accessibilityHint = "An incognito session keeps no history and is deleted when you leave it"
-        incognitoPill.accessibilityTraits = [.button, .toggleButton]
         incognitoPill.setContentCompressionResistancePriority(.required, for: .horizontal)
         incognitoPill.addAction(UIAction { [weak self] _ in self?.model.toggleIncognito() }, for: .primaryActionTriggered)
         for pill in [workspacePill, worktreePill, threadPill, enginePill, incognitoPill] {

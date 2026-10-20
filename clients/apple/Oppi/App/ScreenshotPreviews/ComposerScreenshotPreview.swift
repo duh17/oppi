@@ -2,8 +2,12 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Quick Session Dictation Composer Preview
+// MARK: - Live Voice Composer Preview
 
+/// A Live Voice call in the chat input bar, with a synthetic meter standing in for the
+/// call's audio taps. `live-voice-composer` walks a whole call (draft set aside, connect,
+/// listen, talk, reply, mute, end with the draft back); the suffixed screens hold one step.
+/// `SCREENSHOT_DICTATION_STYLE` (`ring`, `breathing`, `composing`) picks the indicator.
 struct LiveVoiceComposerPreview: UIViewControllerRepresentable {
     enum Step: String, CaseIterable {
         case draft, connecting, listening, talking, speaking, muted, restored
