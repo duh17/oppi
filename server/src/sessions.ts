@@ -85,7 +85,12 @@ type ActiveSession = SessionStartActiveSession;
 
 // ─── Session Manager ───
 
-import type { DurableExtensionReport, DurableHarness, SessionHost } from "./durable-harness.js";
+import type {
+  DurableExtensionListing,
+  DurableExtensionReport,
+  DurableHarness,
+  SessionHost,
+} from "./durable-harness.js";
 import { isControlConversation } from "./control-session.js";
 import {
   DURABLE_STORE_MISSING,
@@ -165,6 +170,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         const runtime = new DurableHarness(storage.getDataDir());
         runtime.onHostOpened = (host) => this.fenceStopped([host]);
         runtime.onHostRecovered = (host, failure) => this.recoverDurableSessions(host, failure);
+        runtime.bindDisabledExtensions(
+          () => storage.getConfig().experimental?.durableExtensions?.disabled ?? [],
+        );
         runtime.bindThreads(
           new DurableThreads({
             runtime,
@@ -636,6 +644,46 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   async reloadDurableExtensions(): Promise<DurableExtensionReport | undefined> {
     if (!this.durableHarness) return undefined;
     return (await this.durableHarness).reloadExtensions();
+  }
+
+  /**
+   * The durable extensions workspace sessions may select, each with whether it is enabled.
+   * `undefined` when this server has no Harness.
+   */
+  async listDurableExtensions(): Promise<DurableExtensionListing[] | undefined> {
+    if (!this.durableHarness) return undefined;
+    const harness = await this.durableHarness;
+    await harness.ensureShared();
+    return harness.listExtensions();
+  }
+
+  /**
+   * Enable or disable a loaded durable extension by name in the server config
+   * (`experimental.durableExtensions.disabled`). New sessions follow at once; a bound session
+   * at its next attach. `undefined` when this server has no Harness; `null` for an unknown name.
+   */
+  async setDurableExtensionEnabled(
+    name: string,
+    enabled: boolean,
+  ): Promise<DurableExtensionListing | null | undefined> {
+    const listing = await this.listDurableExtensions();
+    if (!listing) return undefined;
+    const found = listing.find((extension) => extension.name === name);
+    if (!found) return null;
+    // From the file as it is now: `oppi config set` writes it from another process.
+    this.storage.mutateConfig((latest) => {
+      const experimental = latest.experimental ?? {};
+      const others = (experimental.durableExtensions?.disabled ?? []).filter(
+        (disabled) => disabled !== name,
+      );
+      return {
+        experimental: {
+          ...experimental,
+          durableExtensions: { disabled: enabled ? others : [...others, name] },
+        },
+      };
+    });
+    return { ...found, enabled };
   }
 
   /**

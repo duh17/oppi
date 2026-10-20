@@ -5,7 +5,11 @@ import {
   type LiveState,
 } from "@earendil-works/pi-durable";
 import { DurableUI, type UINotification } from "oppi/durable";
-import { WORKING_WORDS_TASK, WordsOwner } from "./contract.js";
+import {
+  WORKING_WORDS_EXTENSION,
+  WORKING_WORDS_TASK,
+  WordsOwner,
+} from "./contract.js";
 
 // Durable port of the global `working-message` Pi extension: an activity
 // phrase plus elapsed time while busy, chosen deterministically per run.
@@ -313,7 +317,7 @@ const Words = defineTask<null, { phase: "watch" }, null>({
 });
 
 export const DurableWorkingWords = defineExtension({
-  name: "working-words",
+  name: WORKING_WORDS_EXTENSION,
   tasks: [Words],
 });
 

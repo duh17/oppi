@@ -118,9 +118,15 @@ export interface ServerConfig {
     enabled: boolean;
   };
 
-  /** Opt-in runtime experiments. Requires a server restart. */
+  /** Opt-in runtime experiments. Each needs a server restart unless its comment says otherwise. */
   experimental?: {
     serverDurable?: boolean;
+    /**
+     * Durable extensions workspace sessions leave out, by name (built-ins and Pi packages'
+     * durable entries). Read at each use, no restart; a bound session drops one at its next
+     * attach. Write it with `oppi extensions enable|disable`, which the running server sees.
+     */
+    durableExtensions?: { disabled?: string[] };
     /** Mac → Node live H.264 view lane. Default off. */
     desktopLiveView?: boolean;
   };

@@ -329,11 +329,16 @@ function normalizeConfig(
       errors.push("config.experimental: expected object");
     } else {
       for (const key of Object.keys(obj.experimental)) {
-        if (key !== "serverDurable" && key !== "desktopLiveView" && strictUnknown) {
+        if (
+          key !== "serverDurable" &&
+          key !== "desktopLiveView" &&
+          key !== "durableExtensions" &&
+          strictUnknown
+        ) {
           errors.push(`config.experimental.${key}: unknown key`);
         }
       }
-      const experimental: { serverDurable?: boolean; desktopLiveView?: boolean } = {};
+      const experimental: NonNullable<ServerConfig["experimental"]> = {};
       if ("serverDurable" in obj.experimental) {
         if (typeof obj.experimental.serverDurable !== "boolean") {
           errors.push("config.experimental.serverDurable: expected boolean");
@@ -346,6 +351,25 @@ function normalizeConfig(
           errors.push("config.experimental.desktopLiveView: expected boolean");
         } else {
           experimental.desktopLiveView = obj.experimental.desktopLiveView;
+        }
+      }
+      if ("durableExtensions" in obj.experimental) {
+        const value = obj.experimental.durableExtensions;
+        const disabled = isRecord(value) ? value.disabled : undefined;
+        if (
+          !isRecord(value) ||
+          Object.keys(value).some((key) => key !== "disabled") ||
+          (disabled !== undefined &&
+            (!Array.isArray(disabled) ||
+              disabled.some((name) => typeof name !== "string" || name.length === 0)))
+        ) {
+          errors.push(
+            "config.experimental.durableExtensions: expected { disabled?: non-empty string[] }",
+          );
+        } else {
+          experimental.durableExtensions = disabled
+            ? { disabled: [...new Set(disabled as string[])] }
+            : {};
         }
       }
       if (Object.keys(experimental).length > 0) {

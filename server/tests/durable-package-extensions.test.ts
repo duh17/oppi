@@ -21,6 +21,7 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationId, Harness } from "@earendil-works/pi-durable";
+import { WordsOwner } from "../extensions/durable/working-words/contract.js";
 import {
   DurableHarness,
   SessionHost,
@@ -176,6 +177,23 @@ async function fixture(responses: FauxResponseStep[]) {
     manager,
     session,
     harness: async (): Promise<Harness> => (await opening.mock.results.at(-1)!.value).harness,
+    /** One request to the durable extension routes, as the CLI sends it. */
+    async route(
+      method: string,
+      path: string,
+      body?: unknown,
+    ): Promise<{ status: number; body: Record<string, unknown> }> {
+      const res = makeResponse();
+      const handled = await routes({
+        method,
+        path,
+        url: new URL(`http://localhost${path}`),
+        req: makeRequest(body),
+        res,
+      });
+      expect(handled).toBe(true);
+      return { status: res.statusCode, body: JSON.parse(res.body) as Record<string, unknown> };
+    },
     /** `POST /durable/extensions/reload`, as `oppi extensions reload` sends it. */
     async reload(): Promise<DurableExtensionReport> {
       const res = makeResponse();
@@ -221,6 +239,93 @@ async function toolResults(harness: Harness, id: ConversationId) {
 }
 
 describe("durable extensions from Pi packages", () => {
+  it("turns a package's and a built-in's durable extension off and on for workspace sessions", async () => {
+    writePackage("probe");
+    const f = await fixture(callsTool("probe_version"));
+    await f.manager.startSession(f.session.id, f.workspace);
+    const conversation = f.storage.getSession(f.session.id)!.serverDurable!
+      .conversationId as ConversationId;
+    const offered = async (): Promise<string[]> =>
+      (await (await (await f.harness()).conversation(conversation, context))!.agent(context)).tools
+        .map((tool) => tool.name)
+        .filter((name) => name === "probe_version" || name.startsWith("sqlite_"));
+    const reattach = async (): Promise<void> => {
+      await f.manager.stopSession(f.session.id);
+      await f.manager.startSession(f.session.id, f.workspace);
+    };
+    expect(await offered()).toEqual(["sqlite_schema", "sqlite_query", "probe_version"]);
+
+    for (const name of ["probe", "sql-explorer"]) {
+      const off = await f.route("PUT", `/durable/extensions/${name}/enabled`, { enabled: false });
+      expect(off).toMatchObject({ status: 200, body: { extension: { name, enabled: false } } });
+    }
+    expect(f.storage.getConfig().experimental?.durableExtensions).toEqual({
+      disabled: ["probe", "sql-explorer"],
+    });
+    const listed = (await f.route("GET", "/durable/extensions")).body.extensions as Array<{
+      name: string;
+      enabled: boolean;
+      builtIn: boolean;
+    }>;
+    expect(listed.filter((extension) => !extension.enabled)).toEqual([
+      expect.objectContaining({ name: "sql-explorer", builtIn: true }),
+      expect.objectContaining({ name: "probe", builtIn: false }),
+    ]);
+    expect(listed.map((extension) => extension.name)).not.toContain("oppi.control");
+
+    // An open session keeps what it has until it attaches again.
+    expect(await offered()).toEqual(["sqlite_schema", "sqlite_query", "probe_version"]);
+    await reattach();
+    expect(await offered()).toEqual([]);
+    await prompt(f.manager, f.session.id, "Which version?");
+    expect((await toolResults(await f.harness(), conversation)).at(-1)).toMatchObject({
+      toolName: "probe_version",
+      isError: true,
+    });
+
+    expect(
+      await f.route("PUT", "/durable/extensions/probe/enabled", { enabled: true }),
+    ).toMatchObject({ status: 200, body: { extension: { name: "probe", enabled: true } } });
+    await reattach();
+    expect(await offered()).toEqual(["probe_version"]);
+    await prompt(f.manager, f.session.id, "Which version now?");
+    expect((await toolResults(await f.harness(), conversation)).at(-1)).toMatchObject({
+      toolName: "probe_version",
+      isError: false,
+      text: "v1",
+    });
+
+    expect(
+      await f.route("PUT", "/durable/extensions/missing/enabled", { enabled: false }),
+    ).toMatchObject({ status: 404 });
+
+    // A new session starts without what is off; working-words has no tools, only a ticker.
+    expect(
+      await f.route("PUT", "/durable/extensions/working-words/enabled", { enabled: false }),
+    ).toMatchObject({ status: 200 });
+    expect(f.storage.getConfig().experimental).toEqual({
+      serverDurable: true,
+      durableExtensions: { disabled: ["sql-explorer", "working-words"] },
+    });
+    const fresh = f.storage.createSession("Fresh", "faux/faux-1");
+    fresh.serverDurable = { storeId: fresh.id };
+    fresh.workspaceId = f.workspace.id;
+    f.storage.saveSession(fresh);
+    await f.manager.startSession(fresh.id, f.workspace);
+    const freshHarness = await f.harness();
+    const freshConversation = f.storage.getSession(fresh.id)!.serverDurable!
+      .conversationId as ConversationId;
+    const freshAgent = await (await freshHarness.conversation(freshConversation, context))!.agent(
+      context,
+    );
+    expect(freshAgent.tools.map((tool) => tool.name)).toContain("probe_version");
+    expect(freshAgent.tools.map((tool) => tool.name)).not.toContain("sqlite_query");
+    expect(freshAgent.extensions.map((extension) => extension.name)).not.toContain("working-words");
+    expect(
+      (await freshHarness.snapshot(WordsOwner, freshConversation, context))?.task,
+    ).toBeUndefined();
+  });
+
   it("offers a package's tool to a durable session and runs the reloaded code without a restart", async () => {
     writePackage("probe");
     const f = await fixture(callsTool("probe_version"));

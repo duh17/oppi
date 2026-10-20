@@ -14,6 +14,9 @@ import {
 /** Name of the ticker task the durable entry registers. */
 export const WORKING_WORDS_TASK = "oppi.working-words";
 
+/** Name of the durable extension; the server starts its ticker only while it is enabled. */
+export const WORKING_WORDS_EXTENSION = "working-words";
+
 // `run` survives restart so elapsed time keeps counting from the real start.
 export const WordsOwner = defineDoc<{
   task?: TaskId;

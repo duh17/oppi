@@ -88,6 +88,7 @@ import {
 } from "./durable-failure-cards.js";
 import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
 import {
+  WORKING_WORDS_EXTENSION,
   WORKING_WORDS_TASK,
   ensureWorkingWords,
 } from "../extensions/durable/working-words/contract.js";
@@ -186,7 +187,7 @@ interface LaunchedAs {
  * dropped-tools one: it is stored with the session, so a launch nobody watched still shows it.
  */
 function recordSkippedExtensionsWarning(session: Session, skipped: readonly string[]): void {
-  const warning = `Selected Agent Extensions have no durable version and are not loaded in this session: ${skipped.join(", ")}. Edit the Agent's selected Extensions, or start it Classic, to use them.`;
+  const warning = `Selected Agent Extensions are not loaded in this durable session (no durable version, or turned off with oppi extensions disable): ${skipped.join(", ")}. Edit the Agent's selected Extensions, or start it Classic, to use them.`;
   if (session.warnings?.includes(warning)) return;
   session.warnings = [...(session.warnings ?? []), warning];
   log.warn("durable_agent.extensions_skipped", {
@@ -441,6 +442,7 @@ export class DurableBackend implements AgentBackend {
       base: [...host.runtime.builtInsFor(runtime), ...host.runtime.packageExtensionsFor(runtime)],
       loaded: host.runtime.loadedPackages,
       classic: host.runtime.classicExtensions,
+      enabled: (name) => host.runtime.isExtensionEnabled(name),
       sessions: host.runtime.sessionsExtension,
       spawn,
       grant,
@@ -476,7 +478,11 @@ export class DurableBackend implements AgentBackend {
       ? []
       : exact
         ? host.runtime.loadedPackages
-            .filter((loaded) => exact.includes(loaded.extension.name))
+            .filter(
+              (loaded) =>
+                exact.includes(loaded.extension.name) &&
+                host.runtime.isExtensionEnabled(loaded.extension.name),
+            )
             .map((loaded) => loaded.extension)
         : host.runtime.packageExtensionsFor(sandbox ? "sandbox" : "host");
     // A child without the `allowNestedDelegation` grant has no `subagent` tool.
@@ -578,11 +584,15 @@ export class DurableBackend implements AgentBackend {
     // Stdio MCP servers run in this VM; they connect at `attach` below.
     if (target.sandboxEnv) options.host.bindSandboxEnv(conversation.id, target.sandboxEnv);
     await syncProjectContext(conversation, resources);
-    const words = host.runtime.installedTask(WORKING_WORDS_TASK);
-    await conversation.commit(
-      (tx) => ensureWorkingWords(tx, conversation.id, words),
-      BACKGROUND_CONTEXT,
-    );
+    // Its ticker runs from the registry, not the selection, so turning it off means not starting
+    // it. The control conversation keeps its fixed selection.
+    if (control || host.runtime.isExtensionEnabled(WORKING_WORDS_EXTENSION)) {
+      const words = host.runtime.installedTask(WORKING_WORDS_TASK);
+      await conversation.commit(
+        (tx) => ensureWorkingWords(tx, conversation.id, words),
+        BACKGROUND_CONTEXT,
+      );
+    }
     // The subagent pill's watcher is a ticker: an idle store retires it and a Stop fence
     // aborts it. A conversation with children gets it back here.
     const subagents = await harness.snapshot(Subagents, conversation.id, BACKGROUND_CONTEXT);

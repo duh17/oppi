@@ -142,15 +142,16 @@ const TOOL_SEARCH_EXTENSION_ID = `${BUILTIN_EXTENSION_PATH_PREFIX}tool-search`;
  * session's own MCP extension, which brings durable's `tool_search` (it searches MCP tools, so
  * `builtin:tool-search` needs `builtin:mcp`). An ID whose durable version Oppi bundles is in every
  * session already. Any other ID must belong to a Pi package whose durable entry is loaded for this
- * runtime. The rest, `builtin:codemode` among them (durable sessions have no codemode; MCP tools
- * classic reaches through it load through `tool_search`), are `skipped` by name: the session
- * starts without them and warns.
+ * runtime and enabled. The rest, `builtin:codemode` among them (durable sessions have no codemode;
+ * MCP tools classic reaches through it load through `tool_search`), are `skipped` by name: the
+ * session starts without them and warns.
  */
 export function resolveDurableExtensionSelection(
   extensionIds: readonly string[],
   loaded: readonly LoadedDurableExtension[],
   classic: ClassicExtensionIndex,
   runtime: "host" | "sandbox",
+  enabled: (name: string) => boolean,
 ): { packages: LoadedDurableExtension[]; mcp: boolean; skipped: string[] } {
   const ids = new Set(extensionIds);
   const mcp = ids.has(MCP_EXTENSION_ID);
@@ -161,7 +162,7 @@ export function resolveDurableExtensionSelection(
     if (id === MCP_EXTENSION_ID || (id === TOOL_SEARCH_EXTENSION_ID && mcp)) continue;
     if (classic.bundled.has(id)) continue;
     const found = loaded.find((candidate) => candidate.extensionIds.includes(id));
-    if (found?.runtimes.includes(runtime)) {
+    if (found?.runtimes.includes(runtime) && enabled(found.extension.name)) {
       if (!packages.includes(found)) packages.push(found);
       continue;
     }
@@ -195,6 +196,8 @@ interface DurableAgentInput {
   /** Every loaded Pi package durable extension. */
   loaded: readonly LoadedDurableExtension[];
   classic: ClassicExtensionIndex;
+  /** Whether the server enables the durable extension of this name (`isExtensionEnabled`). */
+  enabled: (name: string) => boolean;
   /** Oppi's extension that offers `subagent`. */
   sessions: Extension;
   spawn: boolean;
@@ -238,18 +241,25 @@ export function resolveDurableAgent(input: DurableAgentInput): {
   const selection =
     extensionIds === undefined
       ? undefined
-      : resolveDurableExtensionSelection(extensionIds, loaded, input.classic, runtime);
+      : resolveDurableExtensionSelection(
+          extensionIds,
+          loaded,
+          input.classic,
+          runtime,
+          input.enabled,
+        );
   const packages = !saved
     ? []
     : (selection?.packages ?? loaded.filter((entry) => entry.runtimes.includes(runtime))).map(
         (entry) => entry.extension,
       );
+  // A disabled extension leaves every selection, a child's copy of its parent's included.
   const extensions = [
     ...kept,
     ...(input.spawn ? [input.sessions] : []),
     ...(input.notifies ? [input.notify] : []),
     ...packages,
-  ];
+  ].filter((extension) => input.enabled(extension.name));
 
   const policy: DurableToolPolicy | undefined =
     input.policy ??

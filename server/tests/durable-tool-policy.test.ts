@@ -36,6 +36,7 @@ function toolsFor(policy: Policy): string[] {
     base: [CodingTools, DurableSandboxTools, DurableAsk],
     loaded: [],
     classic: { bundled: new Set(), names: new Map() },
+    enabled: () => true,
     sessions: defineExtension({ name: "oppi.sessions" }),
     spawn: false,
     grant: false,

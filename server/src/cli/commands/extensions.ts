@@ -1,5 +1,5 @@
 import * as c from "../../ansi.js";
-import type { DurableExtensionReport } from "../../durable-harness.js";
+import type { DurableExtensionListing, DurableExtensionReport } from "../../durable-harness.js";
 import { createLocalApiCommandContext } from "../command-support.js";
 import type { LocalApiConnection } from "../local-api-client.js";
 import {
@@ -11,7 +11,16 @@ import {
 } from "../output.js";
 import { apiStatus } from "../resources.js";
 
-/** `oppi extensions reload`: reload durable extensions from Pi packages in the running server. */
+function listingLine(extension: DurableExtensionListing): string {
+  const state = extension.enabled ? c.green("on ") : c.dim("off");
+  const origin = extension.builtIn ? "built-in" : "package";
+  const tools = extension.tools.length ? extension.tools.join(", ") : "no tools";
+  return `${state}  ${extension.name}  ${c.dim(`${origin} \u00b7 ${tools}`)}`;
+}
+
+/**
+ * `oppi extensions list|enable|disable|reload`: the durable extensions of the running server.
+ */
 export async function cmdExtensions(
   connection: LocalApiConnection,
   action: string | undefined,
@@ -22,13 +31,34 @@ export async function cmdExtensions(
   const json = flags.json === "true";
   const { call, output } = createLocalApiCommandContext(connection, json, signal);
   try {
-    if (action !== "reload" || positional.length > 0)
-      throw new Error("Usage: oppi extensions reload");
     const unsupported = Object.keys(flags).filter((flag) => flag !== "json");
     if (unsupported.length > 0)
       throw new Error(
-        `Unsupported flag for 'extensions reload': --${unsupported.sort().join(", --")}`,
+        `Unsupported flag for 'extensions ${action ?? ""}': --${unsupported.sort().join(", --")}`,
       );
+    if (action === "list" && positional.length === 0) {
+      const { extensions } = await call<{ extensions: DurableExtensionListing[] }>(
+        "/durable/extensions",
+      );
+      output({ extensions }, () => {
+        for (const extension of extensions) writeHumanLine(listingLine(extension));
+      });
+      return;
+    }
+    const [name] = positional;
+    if ((action === "enable" || action === "disable") && name && positional.length === 1) {
+      const { extension } = await call<{ extension: DurableExtensionListing }>(
+        `/durable/extensions/${encodeURIComponent(name)}/enabled`,
+        { method: "PUT", body: { enabled: action === "enable" } },
+      );
+      output({ extension }, () => {
+        writeHumanLine(listingLine(extension));
+        writeHumanLine(c.dim("New sessions follow now; open sessions at their next attach."));
+      });
+      return;
+    }
+    if (action !== "reload" || positional.length > 0)
+      throw new Error("Usage: oppi extensions list | enable <name> | disable <name> | reload");
     const report = await call<DurableExtensionReport>("/durable/extensions/reload", {
       method: "POST",
       body: {},
@@ -56,7 +86,7 @@ export async function cmdExtensions(
     // JSON callers read `errors` from the ok envelope; a terminal gets a failing exit code.
     if (report.errors.length && !json) setCapturedCliExitCode(1);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Extension reload failed";
+    const message = error instanceof Error ? error.message : "Extension command failed";
     if (json)
       writeJsonEnvelope({
         ok: false,

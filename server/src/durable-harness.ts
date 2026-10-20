@@ -156,6 +156,11 @@ export interface DurableExtensionSummary {
   builtIn: boolean;
 }
 
+/** A durable extension workspace sessions may select, and whether the server enables it. */
+export interface DurableExtensionListing extends DurableExtensionSummary {
+  enabled: boolean;
+}
+
 /** What one load of the bundled and Pi packages' durable entries did to the registry. */
 export interface DurableExtensionReport {
   /** Installed from this load; a name that was already installed was replaced in place. */
@@ -1175,6 +1180,7 @@ export class DurableHarness {
   /** Extensions from the durable entries of enabled Pi packages, in load order. */
   private packageExtensions: readonly LoadedDurableExtension[] = [];
   private classic: ClassicExtensionIndex = { bundled: new Set(), names: new Map() };
+  private disabledExtensions: () => readonly string[] = () => [];
   /** One load or reload at a time. */
   private extensionLoad: Promise<unknown> = Promise.resolve();
   private shared?: Promise<{
@@ -1251,22 +1257,48 @@ export class DurableHarness {
     return [
       CodingTools,
       ...this.bundled
-        .filter((builtIn) => builtIn.extension.name !== CONTROL_EXTENSION)
+        .filter(
+          (builtIn) =>
+            builtIn.extension.name !== CONTROL_EXTENSION &&
+            this.isExtensionEnabled(builtIn.extension.name),
+        )
         .map((builtIn) => builtIn.extension),
     ];
   }
 
-  /** What a new session of `runtime` starts from: CodingTools and the built-ins it allows. */
+  /** What a new session of `runtime` starts from: CodingTools and the enabled built-ins it allows. */
   builtInsFor(runtime: DurableExtensionRuntime): Extension[] {
     return [
       CodingTools,
       ...this.bundled
         .filter(
           (builtIn) =>
-            builtIn.runtimes.includes(runtime) && builtIn.extension.name !== CONTROL_EXTENSION,
+            builtIn.runtimes.includes(runtime) &&
+            builtIn.extension.name !== CONTROL_EXTENSION &&
+            this.isExtensionEnabled(builtIn.extension.name),
         )
         .map((builtIn) => builtIn.extension),
     ];
+  }
+
+  /**
+   * Whether workspace sessions select the durable extension `name`, built-in or from a Pi package
+   * (`experimental.durableExtensions.disabled`, read at each use). A disabled extension stays
+   * installed, so its pending tasks still find their definition; new sessions leave it out and a
+   * bound one drops it at its next attach. The control conversation keeps its exact selection.
+   */
+  isExtensionEnabled(name: string): boolean {
+    return !this.disabledExtensions().includes(name);
+  }
+
+  /** Every loaded durable extension a session may select, built-ins first, and whether it is on. */
+  listExtensions(): DurableExtensionListing[] {
+    return [
+      ...this.bundled
+        .filter((builtIn) => builtIn.extension.name !== CONTROL_EXTENSION)
+        .map((builtIn) => summarize(builtIn, true)),
+      ...this.packageExtensions.map((loaded) => summarize(loaded, false)),
+    ].map((summary) => ({ ...summary, enabled: this.isExtensionEnabled(summary.name) }));
   }
 
   /**
@@ -1280,6 +1312,7 @@ export class DurableHarness {
         (builtIn) =>
           builtIn.runtimes.includes("host") &&
           builtIn.runtimes.includes("sandbox") &&
+          this.isExtensionEnabled(builtIn.extension.name) &&
           (spawn || builtIn.extension.name !== SESSIONS_EXTENSION) &&
           (notifies || builtIn.extension.name !== NOTIFY_EXTENSION),
       )
@@ -1292,6 +1325,10 @@ export class DurableHarness {
 
   bindThreads(threads: DurableThreads): void {
     this.threads = threads;
+  }
+  /** The server config's disabled durable extension names, read at each use. */
+  bindDisabledExtensions(read: () => readonly string[]): void {
+    this.disabledExtensions = read;
   }
   bindControl(control: DurableControlCli): void {
     this.control = control;
@@ -1329,7 +1366,10 @@ export class DurableHarness {
    */
   packageExtensionsFor(runtime: DurableExtensionRuntime): Extension[] {
     return this.packageExtensions
-      .filter((loaded) => loaded.runtimes.includes(runtime))
+      .filter(
+        (loaded) =>
+          loaded.runtimes.includes(runtime) && this.isExtensionEnabled(loaded.extension.name),
+      )
       .map((loaded) => loaded.extension);
   }
 
@@ -1443,7 +1483,12 @@ export class DurableHarness {
       };
     }
     const result = await loadDurableExtensions(discovered.packages, {
-      ...reservedBy([...this.defaultExtensions, ...this.controlExtensions]),
+      // Every built-in, enabled or not: a package must not take a disabled built-in's name.
+      ...reservedBy([
+        CodingTools,
+        ...this.bundled.map((builtIn) => builtIn.extension),
+        this.controlCodemode,
+      ]),
       // This load replaces or removes the previous packages' extensions, and their tasks with them.
       tasks: installedTasks(registry, new Set(previous.map((old) => old.extension.name))),
     });
@@ -1569,7 +1614,7 @@ export class DurableHarness {
     }
     await this.loadExtensions(registry, true);
     this.registry = registry;
-    this.runSettings = harnessSettings(settings, this.defaultExtensions);
+    this.runSettings = harnessSettings(settings, () => this.defaultExtensions);
     return { models, registry, settings: this.runSettings };
   }
 
@@ -1757,9 +1802,16 @@ function installPackages(
 
 // Pi v1 experimental/durable/harness-setup.ts: read policy at each use,
 // without writing user settings or copying run policy onto conversations.
-function harnessSettings(settings: SettingsManager, extensions: Extension[]): HarnessSettings {
+function harnessSettings(
+  settings: SettingsManager,
+  extensions: () => Extension[],
+): HarnessSettings {
   return {
-    extensions,
+    // A getter like the rest: pi-durable resolves settings at each use, so enabling or disabling
+    // an extension reaches every `{ add, remove }` selection without reopening the Harness.
+    get extensions() {
+      return extensions();
+    },
     get stream() {
       const provider = settings.getProviderRetrySettings();
       const idle = settings.getHttpIdleTimeoutMs();

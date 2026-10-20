@@ -90,7 +90,7 @@ const HELP_TOPICS: HelpTopic[] = [
       },
       {
         name: "extensions",
-        summary: "reload durable extensions from Pi packages (experimental.serverDurable)",
+        summary: "list, enable, disable, or reload durable extensions (experimental.serverDurable)",
       },
       { name: "wait", summary: "poll session state until a condition is true" },
       { name: "token", summary: "rotate the owner bearer token" },
@@ -2014,18 +2014,56 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["extensions"],
     title: "Durable extensions",
-    summary: "Reload durable extensions from Pi packages into the running server.",
-    usage: "oppi extensions reload [--json]",
+    summary: "List, enable, disable, and reload the durable extensions of the running server.",
+    usage: "oppi extensions <list|enable|disable|reload> [name] [--json]",
     description: [
       "Durable sessions load Oppi's bundled durable packages and the durable entry of each enabled user-scope Pi package, declared in package.json 'oppi.durable' ({ entry, runtimes }). The server loads them when its durable store opens and again on reload, without a restart.",
     ],
     subcommands: [
+      { name: "list", summary: "show every durable extension and whether it is on" },
+      { name: "enable", summary: "let workspace sessions select a durable extension again" },
+      { name: "disable", summary: "leave a durable extension out of workspace sessions" },
       { name: "reload", summary: "re-read every durable entry and replace the installed code" },
     ],
     notes: [
       "Requires experimental.serverDurable; the server refuses with HTTP 409 while it has no durable store.",
     ],
-    examples: [{ command: "oppi extensions reload" }],
+    examples: [{ command: "oppi extensions list" }, { command: "oppi extensions reload" }],
+  },
+  {
+    path: ["extensions", "list"],
+    title: "List durable extensions",
+    summary: "Show the durable extensions workspace sessions may select.",
+    usage: "oppi extensions list [--json]",
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    notes: [
+      "Built-ins first, then Pi packages' durable entries. The control conversation's own selection is not listed.",
+      "JSON data: extensions, each with name, entry, runtimes, tools, builtIn, enabled.",
+    ],
+    examples: [{ command: "oppi extensions list --json" }],
+  },
+  {
+    path: ["extensions", "enable"],
+    title: "Enable a durable extension",
+    summary: "Let workspace sessions select a durable extension again.",
+    usage: "oppi extensions enable <name> [--json]",
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    notes: [
+      "Writes experimental.durableExtensions.disabled in the server config. New sessions follow at once; an open session at its next attach (open, resume, or server restart). No restart needed.",
+    ],
+    examples: [{ command: "oppi extensions enable sql-explorer" }],
+  },
+  {
+    path: ["extensions", "disable"],
+    title: "Disable a durable extension",
+    summary: "Leave a durable extension out of workspace sessions.",
+    usage: "oppi extensions disable <name> [--json]",
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    notes: [
+      "The extension stays installed so its pending work can finish; sessions just stop selecting it and its tools. A saved Agent that selects it starts without it and gets a session warning.",
+      "Writes experimental.durableExtensions.disabled in the server config. New sessions follow at once; an open session at its next attach. No restart needed.",
+    ],
+    examples: [{ command: "oppi extensions disable sql-explorer" }],
   },
   {
     path: ["extensions", "reload"],

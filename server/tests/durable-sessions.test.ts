@@ -1583,7 +1583,7 @@ describe("durable engine on create requests", () => {
     });
     // The session row says what it runs without, once, also after another attach.
     const warnings = [
-      "Selected Agent Extensions have no durable version and are not loaded in this session: commit-trailer, extension_missing, codemode. Edit the Agent's selected Extensions, or start it Classic, to use them.",
+      "Selected Agent Extensions are not loaded in this durable session (no durable version, or turned off with oppi extensions disable): commit-trailer, extension_missing, codemode. Edit the Agent's selected Extensions, or start it Classic, to use them.",
     ];
     expect(f.storage.getSession(pluggedId)?.warnings).toEqual(warnings);
     await f.manager.stopSession(pluggedId);

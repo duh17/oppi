@@ -1038,6 +1038,20 @@ const rawApiRouteSpecs = [
     auth: "owner",
   },
   {
+    method: "GET",
+    path: "/durable/extensions",
+    operationId: "listDurableExtensions",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "PUT",
+    path: "/durable/extensions/{name}/enabled",
+    operationId: "setDurableExtensionEnabled",
+    surface: "core",
+    auth: "owner",
+  },
+  {
     method: "POST",
     path: "/durable/extensions/reload",
     operationId: "reloadDurableExtensions",
