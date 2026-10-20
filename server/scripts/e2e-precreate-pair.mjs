@@ -7,7 +7,7 @@
  * status and response body to stderr so the failure is not swallowed.
  *
  * With E2E_BOOTSTRAP_CREDENTIAL_FILE set, also writes the enrolled device id,
- * access token, and private key there (mode 0600) so e2e-pairing-approver.mjs
+ * access token, its expiry, and private key there (mode 0600) so e2e-pairing-approver.mjs
  * can approve the app's pairing as this already-paired device.
  */
 import { generateKeyPairSync } from "node:crypto";
@@ -44,10 +44,11 @@ export function interpretPairResponse(status, text) {
   }
   const accessToken = json && typeof json.accessToken === "string" ? json.accessToken : "";
   const deviceId = json && typeof json.deviceId === "string" ? json.deviceId : "";
-  if (status !== 200 || !accessToken || !deviceId) {
+  const expiresAt = json && typeof json.expiresAt === "number" ? json.expiresAt : 0;
+  if (status !== 200 || !accessToken || !deviceId || !expiresAt) {
     return { ok: false, error: `status=${status} body=${text}` };
   }
-  return { ok: true, accessToken, deviceId };
+  return { ok: true, accessToken, deviceId, expiresAt };
 }
 
 function requiredEnv(name) {
@@ -90,8 +91,8 @@ async function main() {
     process.exit(1);
   }
   if (credentialFile) {
-    const { deviceId, accessToken, privateKey } = result;
-    writeFileSync(credentialFile, JSON.stringify({ deviceId, accessToken, privateKey }), {
+    const { deviceId, accessToken, expiresAt, privateKey } = result;
+    writeFileSync(credentialFile, JSON.stringify({ deviceId, accessToken, expiresAt, privateKey }), {
       mode: 0o600,
     });
   }

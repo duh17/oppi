@@ -7,7 +7,8 @@
  * build, waits for an approval from an already-paired device. This process is
  * that device: it polls GET /auth/pairing-approvals and approves each request
  * with a P-256 signature through the real API, refreshing its access token with
- * the same key when it expires. It runs until its parent exits or it is killed.
+ * the same key a minute before it expires (and on a 401 as a backstop). It runs
+ * until its parent exits or it is killed.
  *
  * Env: E2E_BASE_URL, E2E_BOOTSTRAP_CREDENTIAL_FILE (from e2e-precreate-pair.mjs).
  */
@@ -17,6 +18,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const POLL_MS = 500;
+
+/** Refresh this long before expiry, like `bindE2EAccessTokenFile` in e2e/harness.ts. */
+const REFRESH_SKEW_MS = 60_000;
 
 /** Matches pairingApprovalMessage in src/device-pairing.ts. */
 export function approvalSignature(privateKey, approvalId, keyThumbprint) {
@@ -48,10 +52,12 @@ export function createApprover({
   credential,
   log = console.log,
   onAccessToken = () => {},
+  now = Date.now,
 }) {
   const base = baseURL.replace(/\/$/, "");
   const privateKey = createPrivateKey({ key: credential.privateKey, format: "jwk" });
   let accessToken = credential.accessToken;
+  let expiresAt = credential.expiresAt;
   const settled = new Set();
 
   async function post(path, body, token) {
@@ -83,12 +89,20 @@ export function createApprover({
         `refresh failed: status=${refreshed.status} body=${await refreshed.text()}`,
       );
     }
-    accessToken = (await refreshed.json()).accessToken;
+    const next = await refreshed.json();
+    if (typeof next.accessToken !== "string" || typeof next.expiresAt !== "number") {
+      throw new FatalError(`refresh response lacks accessToken/expiresAt: ${JSON.stringify(next)}`);
+    }
+    accessToken = next.accessToken;
+    expiresAt = next.expiresAt;
     onAccessToken(accessToken);
     log("[e2e-approver] refreshed access token");
   }
 
   async function listApprovals() {
+    if (now() >= expiresAt - REFRESH_SKEW_MS) {
+      await refreshAccessToken();
+    }
     const get = () =>
       fetch(`${base}/auth/pairing-approvals`, {
         headers: { Authorization: `Bearer ${accessToken}` },
