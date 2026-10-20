@@ -318,6 +318,12 @@ final class QuickSessionPillButton: UIButton {
         }
     }
 
+    /// False for a pill whose tap does nothing (the fixed Classic engine), so
+    /// a press does not suggest it will.
+    var dimsWhenPressed = true {
+        didSet { updateAlpha() }
+    }
+
     override var isHighlighted: Bool {
         didSet { updateAlpha() }
     }
@@ -327,7 +333,7 @@ final class QuickSessionPillButton: UIButton {
     }
 
     private func updateAlpha() {
-        alpha = isEnabled ? (isHighlighted ? 0.82 : 1) : 0.45
+        alpha = isEnabled ? (isHighlighted && dimsWhenPressed ? 0.82 : 1) : 0.45
     }
 
     func apply(_ content: Content, colors: ComposerThemeColors) {

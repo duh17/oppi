@@ -27,7 +27,10 @@ final class QuickSessionViewController: UIViewController {
     let close: () -> Void
 
     let composer = ChatComposerOwner()
-    private let scrim = QuickSessionScrim()
+    /// The dimmed backdrop; a tap on it closes Quick Session. The viewport and
+    /// stacked panel sit over it and take their own touches, so a touch that
+    /// content passes on never reaches the scrim.
+    private let scrim = UIButton()
     private let viewport = UIScrollView()
     let contentStack = UIStackView()
     let errorPanel = QuickSessionErrorPanel()
@@ -207,10 +210,6 @@ final class QuickSessionViewController: UIViewController {
         // Dismiss action; the scrim stays out of its way.
         scrim.isAccessibilityElement = false
         scrim.accessibilityIdentifier = "quickSession.overlay"
-        scrim.contentFrames = { [weak self] in
-            guard let self else { return [] }
-            return [self.viewport, self.stackedPanel].filter { !$0.isHidden }.map(\.frame)
-        }
         scrim.addAction(UIAction { [weak self] _ in self?.close() }, for: .primaryActionTriggered)
         scrim.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scrim)
@@ -413,25 +412,6 @@ extension QuickSessionViewController: UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard model.isInitialized, !viewport.isDecelerating, let touched = touch.view else { return false }
         return [viewport, contentStack, destinationRowContainer, destinationRow].contains { $0 === touched }
-    }
-}
-
-/// The dimmed scrim behind Quick Session: a tap on it closes Quick Session.
-/// It sits under everything, so a touch that a view in the content passes
-/// on (disabled until setup ends, or a label) would reach it and close
-/// Quick Session, cancelling setup with a Shortcut's content or a Live Voice
-/// start. So it takes no point inside the visible content (the viewport and
-/// the accessibility-size panel); a touch there that nothing else takes ends
-/// on Quick Session's root view and does nothing.
-@MainActor
-private final class QuickSessionScrim: UIButton {
-    var contentFrames: () -> [CGRect] = { [] }
-
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        guard super.point(inside: point, with: event) else { return false }
-        // The scrim fills its superview, so its points and the content's
-        // frames share one coordinate space.
-        return !contentFrames().contains { $0.contains(point) }
     }
 }
 

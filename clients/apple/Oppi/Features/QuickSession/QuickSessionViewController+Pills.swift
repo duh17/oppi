@@ -81,6 +81,8 @@ extension QuickSessionViewController {
             ), colors: colors)
             incognitoPill.accessibilityValue = on ? "On" : "Off"
             incognitoPill.isEnabled = enabled
+            // Fixed traits replace the button's own, which would have said "dimmed".
+            incognitoPill.accessibilityTraits = enabled ? [.button, .toggleButton] : [.button, .toggleButton, .notEnabled]
         }
     }
 
@@ -101,8 +103,9 @@ extension QuickSessionViewController {
         // A fixed Classic still takes its touches, as a label; its tap does
         // nothing (`toggleEngine`). Passed on, the touch landed on the row's
         // empty space, whose tap closes Quick Session.
+        enginePill.dimsWhenPressed = decision.canToggle
         if decision.canToggle {
-            enginePill.accessibilityTraits = .button
+            enginePill.accessibilityTraits = enabled ? .button : [.button, .notEnabled]
             enginePill.accessibilityLabel = isDurable ? "Durable session" : "Classic session"
             enginePill.accessibilityHint = isDurable ? "Switches this session to Classic" : "Switches this session to Durable"
             enginePill.isEnabled = enabled
