@@ -7,8 +7,8 @@ import UIKit
 /// content focused on session rows and uses small row context instead of a
 /// workspace header card. It reads the app's stores in `updateProperties()`,
 /// builds a value per row, and applies a diffable snapshot keyed by session
-/// id; only rows whose values changed reconfigure. Rows are SwiftUI
-/// (`SessionListEntryRow`) hosted per cell; taps, swipes, and the long-press
+/// id; only rows whose values changed reconfigure. Rows are
+/// `SessionListEntryConfiguration` cells; taps, swipes, and the long-press
 /// menu belong to the collection view.
 final class SessionInboxViewController: UIViewController, UICollectionViewDelegate {
     /// Opens the workspace drawer; set only at the compact root.
@@ -70,6 +70,7 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
     private var headers: [Section: Header] = [:]
     private var itemsById: [String: InboxItem] = [:]
     private var lastThemeID: ThemeID?
+    private var rowDisplay = SessionRowDisplay.standard
     private var hasAppliedSnapshot = false
 
     // Bars.
@@ -240,13 +241,18 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             titleLabel.textColor = UIColor(themeID.palette.fg)
         }
 
+        // The saved row appearance (Settings, Sessions, Session Rows) repaints every row.
+        let display = root.sessionRows.display
+        let displayChanged = display != rowDisplay
+        rowDisplay = display
+
         let state = readState()
         let searchState = state.search
         search.searchController.hidesNavigationBarDuringPresentation = !state.toolbar.avoidsHidingContentWhileSearching
         search.setText(searchState.searchText)
         search.setPresented(searchState.isSearchPresented)
 
-        applySnapshot(state, reconfigureAll: themeChanged)
+        applySnapshot(state, reconfigureAll: themeChanged || displayChanged)
         syncBars(state)
     }
 
@@ -448,7 +454,13 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             presentation = SessionRowPresentationBuilder.make(session: entry.session)
         }
         // Every All Sessions row already names its workspace.
-        return SessionListRowContent(entry: entry, presentation: presentation, statuses: statuses)
+        return SessionListRowContent(
+            entry: entry,
+            presentation: presentation,
+            statuses: statuses,
+            lockBadges: SessionListRowContent.lockBadges(of: entry, target: rowActions.lockTarget),
+            isDurable: SessionListRowContent.isDurable(entry.session)
+        )
     }
 
     private func isStoppedDayExpanded(_ groupID: String, day: Date) -> Bool {
@@ -654,9 +666,15 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
     private func installDataSource() {
         let sessionCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
             guard let self, let row = rows[item] else { return }
-            cell.contentConfiguration = SessionListEntryRow.cellConfiguration(row, actions: rowActions, root: root)
+            cell.contentConfiguration = SessionListEntryConfiguration(
+                row: row,
+                display: rowDisplay,
+                themeID: root.themeStore.activeThemeID,
+                iconAssetCache: coordinator.activeConnection.iconAssetCache,
+                actions: rowActions
+            )
             cell.backgroundConfiguration = rowBackground()
-            // No tap highlight, as the SwiftUI rows had none.
+            // No tap highlight, as the rows have always had none.
             cell.automaticallyUpdatesBackgroundConfiguration = false
         }
         let stateCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
@@ -805,7 +823,7 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
         switch row {
         case .serverVersion(let serverId):
             cell.backgroundConfiguration = .clear()
-            cell.contentConfiguration = ProviderSetupPromptListRow.serverVersion(root: root) { [weak self] in
+            cell.contentConfiguration = ServerVersionPromptConfiguration(themeID: root.themeStore.activeThemeID) { [weak self] in
                 self?.navigation.openHostSwitcherDestination(.serverSettings, serverId: serverId)
             }
         case .providerSetup(let serverId, let serverName):

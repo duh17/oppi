@@ -4,6 +4,7 @@ struct SettingsSessionsPage: View {
     @State private var autoTitleProvider = AppPreferences.Session.autoTitleProvider
     @State private var rowDensity = AppPreferences.SessionRows.display.density
     @Environment(\.screenNavigator) private var navigator
+    @Environment(\.appRootEnvironment) private var root
 
     var body: some View {
         List {
@@ -19,7 +20,10 @@ struct SettingsSessionsPage: View {
 
             Section {
                 SettingsIndexActionRow(value: rowDensity.label) {
-                    navigator.push { SessionRowDisplayEditor() }
+                    guard let root else {
+                        return assertionFailure("Session Rows needs the app root above Sessions")
+                    }
+                    navigator.push(SessionRowDisplayEditorViewController(root: root))
                 } label: {
                     Text("Session Rows")
                 }

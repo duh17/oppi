@@ -11,9 +11,8 @@ import UIKit
 /// reconfigures only the rows whose content changed.
 ///
 /// Destinations, the disclosure, state rows, and the footer are native list
-/// cells. The workspace row stays SwiftUI, hosted per cell
-/// (`WorkspaceSidebarRow.contentConfiguration`): runtime icon, lock badge,
-/// status indicator, and git line.
+/// cells. The workspace row (`WorkspaceSidebarRowConfiguration`) draws the
+/// runtime icon, lock badge, status counts, and git line.
 final class WorkspaceSidebarViewController: UIViewController {
     private let root: AppRootEnvironment
     private let onSelect: (() -> Void)?
@@ -107,7 +106,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         footerList = FooterListView(frame: .zero, collectionViewLayout: Self.listLayout(topInset: 2, bottomInset: 8))
         footerHeight = footerList.heightAnchor.constraint(equalToConstant: 112)
         super.init(nibName: nil, bundle: nil)
-        // Controllers presented from here and the hosted rows find the root.
+        // Controllers presented from here find the root.
         traitOverrides.appRootEnvironment = root
         navigationItem.largeTitleDisplayMode = .never
     }
@@ -401,13 +400,14 @@ final class WorkspaceSidebarViewController: UIViewController {
         case .workspace(let id):
             guard let row = model.workspaces[id] else { return }
             let workspace = row.target.workspace
-            cell.contentConfiguration = WorkspaceSidebarRow.contentConfiguration(
-                root: root,
+            cell.contentConfiguration = WorkspaceSidebarRowConfiguration(
                 workspace: workspace,
                 status: row.status,
                 gitSummary: row.gitSummary,
                 isSelected: row.isSelected,
-                lockBadge: row.lockBadge
+                lockBadge: row.lockBadge,
+                themeID: appliedThemeID ?? root.themeStore.activeThemeID,
+                iconAssetCache: root.coordinator.activeConnection.iconAssetCache
             )
             cell.element.accessibilityIdentifier = WorkspaceHomeView.workspaceOpenAccessibilityIdentifier(
                 workspaceName: workspace.name
@@ -540,7 +540,7 @@ final class WorkspaceSidebarViewController: UIViewController {
     }
 
     /// Selected destinations paint the theme's wash; every row dims while
-    /// touched. The hosted workspace row paints its own selection.
+    /// touched. The workspace row paints its own selection.
     private func applyBackground(
         to cell: SidebarListCell,
         paintsSelection: Bool,
@@ -690,7 +690,7 @@ final class SidebarListCell: UICollectionViewListCell {
         bringSubviewToFront(element)
     }
 
-    /// The content (a hosted SwiftUI row) never takes the tap.
+    /// The content never takes the tap.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
         return hit != nil && !element.isHidden ? element : hit

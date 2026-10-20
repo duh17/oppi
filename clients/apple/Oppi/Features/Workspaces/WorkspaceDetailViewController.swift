@@ -34,8 +34,9 @@ enum WorkspaceDetailLoadErrorPolicy {
 /// worktree through that server's connection. It reads the stores in
 /// `updateProperties()`, builds a value per row, and applies a diffable
 /// snapshot keyed by session id; only rows whose values changed reconfigure.
-/// Session and local-session rows are SwiftUI hosted per cell; taps, swipes,
-/// and the long-press menu belong to the collection view.
+/// Session rows are `SessionListEntryConfiguration` cells and local-session
+/// rows `LocalSessionRowConfiguration`; taps, swipes, and the long-press menu
+/// belong to the collection view.
 ///
 /// The shell keeps one screen per server and workspace id; a refreshed
 /// `Workspace` value for it arrives through `update(workspace:)`.
@@ -108,6 +109,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
     private var stateRows: [Item: StateRow] = [:]
     private var headers: [Section: Header] = [:]
     private var lastThemeID: ThemeID?
+    private var rowDisplay = SessionRowDisplay.standard
     private var hasAppliedSnapshot = false
 
     // Overlays and bars.
@@ -305,12 +307,17 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
         }
 
         reactToChanges(connection)
+        // The saved row appearance (Settings, Sessions, Session Rows) repaints every row.
+        let display = root.sessionRows.display
+        let displayChanged = display != rowDisplay
+        rowDisplay = display
+
         let detail = readState(connection)
         search.searchController.hidesNavigationBarDuringPresentation = !detail.toolbar.avoidsHidingContentWhileSearching
         search.setText(detail.search.searchText)
         search.setPresented(detail.search.isSearchPresented)
 
-        applySnapshot(detail, reconfigureAll: themeChanged)
+        applySnapshot(detail, reconfigureAll: themeChanged || displayChanged)
         syncOverlays(detail)
         syncBars(detail)
     }
@@ -788,7 +795,9 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
             entry: entry,
             presentation: presentation,
             statuses: statuses,
-            foreignWorkspaceNames: foreignNames
+            foreignWorkspaceNames: foreignNames,
+            lockBadges: SessionListRowContent.lockBadges(of: entry, target: rowActions.lockTarget),
+            isDurable: SessionListRowContent.isDurable(session)
         )
     }
 
@@ -848,23 +857,24 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
     private func installDataSource() {
         let sessionCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
             guard let self, let row = rows[item] else { return }
-            cell.contentConfiguration = SessionListEntryRow.cellConfiguration(
-                row,
-                actions: rowActions,
-                root: root,
-                connection: connection
+            cell.contentConfiguration = SessionListEntryConfiguration(
+                row: row,
+                display: rowDisplay,
+                themeID: root.themeStore.activeThemeID,
+                iconAssetCache: connection?.iconAssetCache,
+                actions: rowActions
             )
             cell.backgroundConfiguration = rowBackground()
-            // No tap highlight, as the SwiftUI rows had none.
+            // No tap highlight, as the rows have always had none.
             cell.automaticallyUpdatesBackgroundConfiguration = false
         }
         let localCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
             guard let self, let row = localRows[item] else { return }
             let local = row.session
-            cell.contentConfiguration = LocalSessionRow.cellConfiguration(
-                local,
+            cell.contentConfiguration = LocalSessionRowConfiguration(
+                session: local,
                 isEnabled: row.isEnabled,
-                root: root
+                themeID: root.themeStore.activeThemeID
             ) { [weak self] in
                 Task { await self?.importAndResumeLocal(local) }
             }

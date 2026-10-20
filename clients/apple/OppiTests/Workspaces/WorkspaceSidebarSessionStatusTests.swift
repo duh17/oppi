@@ -157,19 +157,23 @@ struct WorkspaceSidebarSessionStatusTests {
     }
 
     @MainActor
-    @Test func rendersPriorityMetricsWithinTheNarrowTrailingBudget() throws {
+    @Test func rendersPriorityMetricsWithinTheNarrowTrailingBudget() {
         let status = WorkspaceSidebarSessionStatus(sessions: [
             makeTestSession(id: "error", status: .error, messageCount: 1, firstMessage: "Failed"),
             makeTestSession(id: "working", status: .busy, messageCount: 1, firstMessage: "Working"),
             makeTestSession(id: "done", status: .ready, messageCount: 1, firstMessage: "Finished"),
         ])
-        let renderer = ImageRenderer(
-            content: WorkspaceSidebarSessionStatusIndicator(status: status)
+        let text = WorkspaceSidebarRowContentView.statusText(
+            status,
+            colors: ComposerThemeColors(palette: ThemeID.dark.palette)
         )
-        renderer.scale = 3
+        let size = text.boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin],
+            context: nil
+        ).size
 
-        let image = try #require(renderer.uiImage)
-        #expect(image.size.width <= 64)
-        #expect(image.size.height <= 44)
+        #expect(size.width <= 64)
+        #expect(size.height <= 44)
     }
 }

@@ -95,8 +95,6 @@ struct ScreenshotPreviewView: View {
             AskCardTallScrollPreview()
         case "model-providers-quota-inline":
             ModelProvidersQuotaPreview()
-        case "workspace-sidebar-git-status":
-            WorkspaceSidebarGitStatusPreview()
         case "tool-call-document":
             ToolCallDocumentPreview(direct: false)
         case "tool-call-document-mcp":

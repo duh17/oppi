@@ -1,4 +1,4 @@
-import SwiftUI
+import UIKit
 
 // MARK: - Preview subject
 
@@ -10,10 +10,6 @@ struct SessionRowPreviewSubject {
         let rollup: SessionThreadRollup
         /// Status of each member, fixed when the subject is built.
         let statuses: [String: SessionStatusKind]
-
-        func status(_ session: Session) -> SessionStatusKind {
-            statuses[session.id] ?? SessionThreadStatus.withoutSeenState(session)
-        }
     }
 
     let presentation: SessionRowPresentation
@@ -142,151 +138,397 @@ struct SessionRowPreviewSubject {
 /// Session Rows settings page: an inert preview drawn by the production row
 /// and Thread strip, pinned above the controls. Changes apply immediately, so
 /// the preview and every session list repaint as you toggle.
-struct SessionRowDisplayEditor: View {
-    @Environment(\.theme) private var theme
-    @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(AppNavigation.self) private var navigation
+final class SessionRowDisplayEditorViewController: UIViewController {
+    private enum Section: Hashable {
+        case density
+        case details
+        case thread
+        case restore
+    }
 
-    @State private var draft = AppPreferences.SessionRows.display
-    @State private var sample = SessionRowPreviewSubject.sample()
-    @State private var loaded: SessionRowPreviewSubject?
-    @State private var didCaptureLoaded = false
-    @State private var usesLoaded = false
+    private enum Item: Hashable {
+        case density
+        case toggle(Toggle)
+        case restore
+    }
+
+    private enum Toggle: String, CaseIterable {
+        case model, time, context, cost, files, compactions, agentSummary, laneGraph
+
+        var title: String {
+            switch self {
+            case .model: "Model"
+            case .time: "Time"
+            case .context: "Context Usage"
+            case .cost: "Cost"
+            case .files: "Files Touched"
+            case .compactions: "Compactions"
+            case .agentSummary: "Agent Summary"
+            case .laneGraph: "Lane Graph"
+            }
+        }
+
+        var keyPath: WritableKeyPath<SessionRowDisplay, Bool> {
+            switch self {
+            case .model: \.showsModel
+            case .time: \.showsTime
+            case .context: \.showsContextUsage
+            case .cost: \.showsCost
+            case .files: \.showsFilesTouched
+            case .compactions: \.showsCompactions
+            case .agentSummary: \.showsThreadAgentSummary
+            case .laneGraph: \.showsThreadLaneGraph
+            }
+        }
+    }
+
+    private let root: AppRootEnvironment
+    private let collectionView = ControlScreenList.makeCollectionView()
+    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
+
+    private let previewPane = UIStackView()
+    private let previewLabel = UILabel()
+    private let previewBox = UIStackView()
+    private let previewRow = SessionRowView(combinesAccessibility: false)
+    private let previewStrip = SessionThreadStripView()
+    private let previewNote = UILabel()
+    private let previewData = UISegmentedControl(items: [String(localized: "Sample"), String(localized: "My session")])
+    private let previewDivider = UIView()
+
+    private var draft = AppPreferences.SessionRows.display {
+        didSet {
+            guard draft != oldValue else { return }
+            AppPreferences.SessionRows.setDisplay(draft)
+            setNeedsUpdateProperties()
+        }
+    }
+    private let sample = SessionRowPreviewSubject.sample()
+    private var loaded: SessionRowPreviewSubject?
+    private var usesLoaded = false {
+        didSet { setNeedsUpdateProperties() }
+    }
+    private var appliedThreadsEnabled: Bool?
+    private var switches: [Toggle: UISwitch] = [:]
 
     private var subject: SessionRowPreviewSubject {
         usesLoaded ? (loaded ?? sample) : sample
     }
 
-    var body: some View {
-        List {
-            densitySection
-            detailsSection
-            if navigation.sessionThreadsEnabled {
-                threadSection
-            }
-            Section {
-                Button("Restore Defaults") {
-                    draft = .standard
-                }
-                .disabled(draft == .standard)
-                .accessibilityIdentifier("sessionRows.restore")
-            }
+    init(root: AppRootEnvironment) {
+        self.root = root
+        super.init(nibName: nil, bundle: nil)
+        title = String(localized: "Session Rows")
+        navigationItem.largeTitleDisplayMode = .never
+        // The editor reads the loaded thread once, when it opens.
+        loaded = SessionRowPreviewSubject.loaded(from: root.coordinator.activeConnection)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        buildPreviewPane()
+        collectionView.setCollectionViewLayout(
+            ControlScreenList.layout(appearance: .insetGrouped, headers: true, footers: true),
+            animated: false
+        )
+        collectionView.accessibilityIdentifier = "sessionRows.form"
+        // The first section sits a SwiftUI section gap below the preview.
+        collectionView.contentInset.top = 14
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(collectionView)
+        let maxWidth = collectionView.widthAnchor.constraint(lessThanOrEqualToConstant: IPadReadableContentWidth.form)
+        let fillWidth = collectionView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        fillWidth.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            previewPane.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            previewPane.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            previewPane.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            collectionView.topAnchor.constraint(equalTo: previewPane.bottomAnchor),
+            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            collectionView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            maxWidth,
+            fillWidth,
+        ])
+        installDataSource()
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        let themeStore = root.themeStore
+        ControlScreenList.applyTheme(themeStore, to: self, collectionView: collectionView)
+        let themeID = themeStore.activeThemeID
+        let colors = SessionRowStyle.for(themeID).colors
+        previewPane.backgroundColor = themeStore.backgroundColor
+        previewLabel.textColor = colors.comment
+        previewNote.textColor = colors.comment
+        previewDivider.backgroundColor = .separator
+
+        let threadsEnabled = root.navigation.sessionThreadsEnabled
+        let subject = subject
+        previewLabel.text = usesLoaded
+            ? String(localized: "PREVIEW \u{00B7} SNAPSHOT OF A LOADED SESSION")
+            : String(localized: "PREVIEW \u{00B7} SAMPLE DATA")
+        previewRow.apply(
+            SessionRowView.Content(presentation: subject.presentation),
+            display: draft,
+            themeID: themeID,
+            iconAssetCache: root.coordinator.activeConnection.iconAssetCache
+        )
+        if threadsEnabled, let thread = subject.thread {
+            previewStrip.isHidden = false
+            previewStrip.apply(
+                SessionThreadStripView.Content(rollup: thread.rollup, statuses: thread.statuses),
+                display: draft,
+                style: SessionRowStyle.for(themeID),
+                iconAssetCache: root.coordinator.activeConnection.iconAssetCache
+            )
+        } else {
+            previewStrip.isHidden = true
         }
-        .settingsPage("Session Rows")
-        .accessibilityIdentifier("sessionRows.form")
-        .safeAreaInset(edge: .top, spacing: 0) {
-            previewPane
+        if threadsEnabled, usesLoaded, subject.thread == nil {
+            previewNote.text = String(localized: "This session has no child sessions, so thread options do not show here.")
+        } else if !usesLoaded {
+            previewNote.text = String(localized: "Not your sessions. Nothing is fetched or opened for this preview.")
+        } else {
+            previewNote.text = String(localized: "Already loaded on this device. Nothing is fetched or opened for this preview.")
         }
-        .onChange(of: draft) { _, newValue in
-            AppPreferences.SessionRows.setDisplay(newValue)
-        }
-        .onAppear {
-            guard !didCaptureLoaded else { return }
-            didCaptureLoaded = true
-            loaded = SessionRowPreviewSubject.loaded(from: coordinator.activeConnection)
-        }
+        previewData.isHidden = loaded == nil
+        previewData.selectedSegmentIndex = usesLoaded ? 1 : 0
+
+        applySnapshot(threadsEnabled: threadsEnabled)
     }
 
     // MARK: Preview
 
-    private var previewPane: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(usesLoaded ? "PREVIEW · SNAPSHOT OF A LOADED SESSION" : "PREVIEW · SAMPLE DATA")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.themeComment)
-                .accessibilityIdentifier("sessionRows.preview.label")
+    private func buildPreviewPane() {
+        previewLabel.font = SessionRowText.font(.caption1, .semibold)
+        previewLabel.adjustsFontForContentSizeCategory = true
+        previewLabel.accessibilityIdentifier = "sessionRows.preview.label"
 
-            // Inert: the production row and strip with no navigation, swipe, or
-            // other actions attached, and no hit testing.
-            VStack(alignment: .leading, spacing: 6) {
-                SessionRow(presentation: subject.presentation)
-                if navigation.sessionThreadsEnabled, let thread = subject.thread {
-                    SessionThreadStrip(rollup: thread.rollup, status: thread.status)
-                        .padding(.leading, SessionThreadStrip.rowInset)
-                }
-            }
-            .environment(\.sessionRowDisplay, draft)
-            .allowsHitTesting(false)
-            // Contain first: an identifier on a plain container overrides its children's.
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("sessionRows.preview")
+        // Inert: the production row and strip with no navigation, swipe, or
+        // other actions attached, and no hit testing.
+        previewStrip.accessibilityTraits = []
+        previewBox.axis = .vertical
+        previewBox.alignment = .trailing
+        previewBox.spacing = 6
+        previewBox.isUserInteractionEnabled = false
+        previewBox.addArrangedSubview(previewRow)
+        previewBox.addArrangedSubview(previewStrip)
+        previewStrip.translatesAutoresizingMaskIntoConstraints = false
+        previewRow.widthAnchor.constraint(equalTo: previewBox.widthAnchor).isActive = true
+        previewStrip.widthAnchor.constraint(
+            equalTo: previewBox.widthAnchor,
+            constant: -SessionThreadStripView.rowInset
+        ).isActive = true
+        previewBox.accessibilityContainerType = .semanticGroup
+        previewBox.accessibilityIdentifier = "sessionRows.preview"
 
-            if navigation.sessionThreadsEnabled, usesLoaded, subject.thread == nil {
-                Text("This session has no child sessions, so thread options do not show here.")
-                    .font(.footnote)
-                    .foregroundStyle(.themeComment)
-            } else if !usesLoaded {
-                Text("Not your sessions. Nothing is fetched or opened for this preview.")
-                    .font(.footnote)
-                    .foregroundStyle(.themeComment)
-            } else {
-                Text("Already loaded on this device. Nothing is fetched or opened for this preview.")
-                    .font(.footnote)
-                    .foregroundStyle(.themeComment)
-            }
+        previewNote.font = SessionRowText.font(.footnote)
+        previewNote.adjustsFontForContentSizeCategory = true
+        previewNote.numberOfLines = 0
 
-            if loaded != nil {
-                Picker("Preview data", selection: $usesLoaded) {
-                    Text("Sample").tag(false)
-                    Text("My session").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("sessionRows.previewData")
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.bg.primary)
-        .overlay(alignment: .bottom) { Divider() }
+        previewData.accessibilityIdentifier = "sessionRows.previewData"
+        previewData.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            usesLoaded = previewData.selectedSegmentIndex == 1
+        }, for: .valueChanged)
+
+        previewPane.axis = .vertical
+        previewPane.alignment = .fill
+        previewPane.spacing = 8
+        previewPane.isLayoutMarginsRelativeArrangement = true
+        previewPane.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16)
+        [previewLabel, previewBox, previewNote, previewData].forEach(previewPane.addArrangedSubview)
+        previewPane.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(previewPane)
+
+        previewDivider.translatesAutoresizingMaskIntoConstraints = false
+        previewPane.addSubview(previewDivider)
+        NSLayoutConstraint.activate([
+            previewDivider.leadingAnchor.constraint(equalTo: previewPane.leadingAnchor),
+            previewDivider.trailingAnchor.constraint(equalTo: previewPane.trailingAnchor),
+            previewDivider.bottomAnchor.constraint(equalTo: previewPane.bottomAnchor),
+            previewDivider.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+        ])
     }
 
     // MARK: Controls
 
-    private var densitySection: some View {
-        Section {
-            Picker("Density", selection: $draft.density) {
-                ForEach(SessionRowDisplay.Density.allCases) { density in
-                    Text(density.label).tag(density)
-                }
+    private func installDataSource() {
+        let toggleCell = UICollectionView.CellRegistration<UICollectionViewListCell, Toggle> { [weak self] cell, _, toggle in
+            self?.configure(cell, toggle: toggle)
+        }
+        let densityCell = UICollectionView.CellRegistration<SessionRowsDensityCell, Item> { [weak self] cell, _, _ in
+            guard let self else { return }
+            cell.configure(selected: draft.density) { [weak self] density in self?.draft.density = density }
+        }
+        let restoreCell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, _ in
+            guard let self else { return }
+            let enabled = draft != .standard
+            ControlScreenList.buttonRow(
+                cell,
+                identifier: "sessionRows.restore",
+                label: String(localized: "Restore Defaults"),
+                enabled: enabled
+            ) { [weak self] in self?.draft = .standard }
+            // The row's traits are set explicitly, so a disabled Restore says so itself.
+            if !enabled { cell.element.accessibilityTraits.insert(.notEnabled) }
+            var content = UIListContentConfiguration.cell()
+            content.text = String(localized: "Restore Defaults")
+            content.textProperties.color = enabled ? UIColor(root.themeStore.activeThemeID.palette.blue) : .tertiaryLabel
+            cell.contentConfiguration = content
+        }
+        let dataSource = UICollectionViewDiffableDataSource<Section, Item>(
+            collectionView: collectionView
+        ) { collectionView, indexPath, item in
+            switch item {
+            case .density:
+                collectionView.dequeueConfiguredReusableCell(using: densityCell, for: indexPath, item: item)
+            case .toggle(let toggle):
+                collectionView.dequeueConfiguredReusableCell(using: toggleCell, for: indexPath, item: toggle)
+            case .restore:
+                collectionView.dequeueConfiguredReusableCell(using: restoreCell, for: indexPath, item: item)
             }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("sessionRows.density")
-        } footer: {
-            Text(draft.density == .compact
-                ? "Compact tightens spacing and joins details on one line only when they all fit. It never hides or shortens a detail you turned on."
-                : "Standard stacks details in two rows with roomier spacing.")
+        }
+        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
+            elementKind: UICollectionView.elementKindSectionHeader
+        ) { [weak self] view, _, indexPath in
+            var content = UIListContentConfiguration.header()
+            content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section).flatMap(Self.headerText)
+            view.contentConfiguration = content
+        }
+        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
+            elementKind: UICollectionView.elementKindSectionFooter
+        ) { [weak self] view, _, indexPath in
+            guard let self else { return }
+            var content = UIListContentConfiguration.footer()
+            content.text = self.dataSource?.sectionIdentifier(for: indexPath.section).flatMap(footerText)
+            view.contentConfiguration = content
+        }
+        dataSource.supplementaryViewProvider = { collectionView, kind, indexPath in
+            kind == UICollectionView.elementKindSectionHeader
+                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
+                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
+        }
+        self.dataSource = dataSource
+    }
+
+    private func applySnapshot(threadsEnabled: Bool) {
+        guard let dataSource else { return }
+        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+        snapshot.appendSections([.density, .details])
+        snapshot.appendItems([.density], toSection: .density)
+        snapshot.appendItems([.model, .time, .context, .cost, .files, .compactions].map(Item.toggle), toSection: .details)
+        if threadsEnabled {
+            snapshot.appendSections([.thread])
+            snapshot.appendItems([.agentSummary, .laneGraph].map(Item.toggle), toSection: .thread)
+        }
+        snapshot.appendSections([.restore])
+        snapshot.appendItems([.restore], toSection: .restore)
+        // Every control and the density footer follow the draft.
+        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        dataSource.apply(snapshot, animatingDifferences: appliedThreadsEnabled != nil && appliedThreadsEnabled != threadsEnabled)
+        appliedThreadsEnabled = threadsEnabled
+        refreshFooters()
+    }
+
+    /// Reconfiguring items leaves supplementary views as they were.
+    private func refreshFooters() {
+        let kind = UICollectionView.elementKindSectionFooter
+        for indexPath in collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind) {
+            guard let footer = collectionView.supplementaryView(forElementKind: kind, at: indexPath) as? UICollectionViewListCell,
+                  let section = dataSource?.sectionIdentifier(for: indexPath.section) else { continue }
+            var content = UIListContentConfiguration.footer()
+            content.text = footerText(section)
+            footer.contentConfiguration = content
         }
     }
 
-    private var detailsSection: some View {
-        Section {
-            toggle("Model", isOn: $draft.showsModel, id: "model")
-            toggle("Time", isOn: $draft.showsTime, id: "time")
-            toggle("Context Usage", isOn: $draft.showsContextUsage, id: "context")
-            toggle("Cost", isOn: $draft.showsCost, id: "cost")
-            toggle("Files Touched", isOn: $draft.showsFilesTouched, id: "files")
-            toggle("Compactions", isOn: $draft.showsCompactions, id: "compactions")
-        } header: {
-            Text("Details")
-        } footer: {
-            Text("Details keep this order. Title, status, questions, Incognito, workspace, and search matches always show.")
+    private static func headerText(_ section: Section) -> String? {
+        switch section {
+        case .details: String(localized: "Details")
+        case .thread: String(localized: "Thread Rows")
+        case .density, .restore: nil
         }
     }
 
-    private var threadSection: some View {
-        Section {
-            toggle("Agent Summary", isOn: $draft.showsThreadAgentSummary, id: "agentSummary")
-            toggle("Lane Graph", isOn: $draft.showsThreadLaneGraph, id: "laneGraph")
-        } header: {
-            Text("Thread Rows")
-        } footer: {
-            Text("The Thread control, a child's question, and who is working always show. Cost in the Thread row follows Cost above.")
+    private func footerText(_ section: Section) -> String? {
+        switch section {
+        case .density:
+            draft.density == .compact
+                ? String(localized: "Compact tightens spacing and joins details on one line only when they all fit. It never hides or shortens a detail you turned on.")
+                : String(localized: "Standard stacks details in two rows with roomier spacing.")
+        case .details:
+            String(localized: "Details keep this order. Title, status, questions, Incognito, workspace, and search matches always show.")
+        case .thread:
+            String(localized: "The Thread control, a child's question, and who is working always show. Cost in the Thread row follows Cost above.")
+        case .restore:
+            nil
         }
     }
 
-    private func toggle(_ title: String, isOn: Binding<Bool>, id: String) -> some View {
-        Toggle(title, isOn: isOn)
-            .accessibilityIdentifier("sessionRows.toggle.\(id)")
+    /// One switch per control, kept across reconfigures so a flip animates.
+    private func toggleSwitch(_ toggle: Toggle) -> UISwitch {
+        if let control = switches[toggle] { return control }
+        let control = UISwitch()
+        // The app tint SwiftUI toggles drew in.
+        control.onTintColor = UIColor(root.themeStore.activeThemeID.palette.blue)
+        control.accessibilityIdentifier = "sessionRows.toggle.\(toggle.rawValue)"
+        control.accessibilityLabel = toggle.title
+        control.addAction(UIAction { [weak self, weak control] _ in
+            guard let self, let control else { return }
+            draft[keyPath: toggle.keyPath] = control.isOn
+        }, for: .valueChanged)
+        switches[toggle] = control
+        return control
+    }
+
+    private func configure(_ cell: UICollectionViewListCell, toggle: Toggle) {
+        var content = UIListContentConfiguration.cell()
+        content.text = toggle.title
+        content.textProperties.color = UIColor(root.themeStore.activeThemeID.palette.fg)
+        cell.contentConfiguration = content
+        let control = toggleSwitch(toggle)
+        if control.isOn != draft[keyPath: toggle.keyPath] {
+            control.setOn(draft[keyPath: toggle.keyPath], animated: control.window != nil)
+        }
+        cell.accessories = [.customView(configuration: .init(customView: control, placement: .trailing()))]
+        cell.accessibilityElements = [control]
+    }
+}
+
+/// The Density picker: a segmented control across the row.
+final class SessionRowsDensityCell: UICollectionViewListCell {
+    private let control = UISegmentedControl(items: SessionRowDisplay.Density.allCases.map(\.label))
+    private var onChange: ((SessionRowDisplay.Density) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        control.accessibilityIdentifier = "sessionRows.density"
+        control.accessibilityLabel = String(localized: "Density")
+        control.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            onChange?(SessionRowDisplay.Density.allCases[control.selectedSegmentIndex])
+        }, for: .valueChanged)
+        control.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(control)
+        let margins = contentView.layoutMarginsGuide
+        NSLayoutConstraint.activate([
+            control.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
+            control.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
+            control.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
+            control.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -14),
+        ])
+        accessibilityElements = [control]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func configure(selected: SessionRowDisplay.Density, onChange: @escaping (SessionRowDisplay.Density) -> Void) {
+        self.onChange = onChange
+        control.selectedSegmentIndex = SessionRowDisplay.Density.allCases.firstIndex(of: selected) ?? 0
     }
 }

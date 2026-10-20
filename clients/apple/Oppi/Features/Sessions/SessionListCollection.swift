@@ -1,10 +1,9 @@
 import UIKit
 
 // UIKit pieces every session list shares (All Sessions, a workspace's
-// sessions): the values a hosted row draws, the trailing swipes and long-press
-// menu, the delete confirmation and error alert, the section header (titled or
-// expandable), and the bar items. The row itself stays SwiftUI
-// (`SessionListEntryRow.cellConfiguration`), hosted per cell.
+// sessions): the values a row draws, the trailing swipes and long-press menu,
+// the delete confirmation and error alert, the section header (titled or
+// expandable), and the bar items. The row is `SessionListEntryConfiguration`.
 
 /// What one session-list cell draws, computed by the list in
 /// `updateProperties()`. A list reconfigures an item only when this changes.
@@ -17,9 +16,37 @@ struct SessionListRowContent: Equatable {
     let statuses: [String: SessionStatusKind]
     /// Workspace names to show for sessions outside the list's workspace.
     var foreignWorkspaceNames: [String: String] = [:]
+    /// Lock badge of every drawn session that has one (`lockBadges(of:target:)`).
+    var lockBadges: [String: ScopedLockState] = [:]
+    /// Durable Sessions experiment: the row session runs on the durable engine.
+    var isDurable = false
 
     func status(of session: Session) -> SessionStatusKind {
         statuses[session.id] ?? SessionStatusKind.resolve(session: session, seenAt: nil)
+    }
+
+    func lockBadge(of session: Session) -> ScopedLockState {
+        lockBadges[session.id] ?? .none
+    }
+
+    /// Lock badges for the sessions an entry draws. Read in `updateProperties()`,
+    /// so a lock or unlock reconfigures the row.
+    @MainActor
+    static func lockBadges(
+        of entry: SessionListEntry,
+        target: (Session) -> ScopedLockTarget?
+    ) -> [String: ScopedLockState] {
+        var badges: [String: ScopedLockState] = [:]
+        for session in drawnSessions(of: entry) {
+            guard let target = target(session) else { continue }
+            let badge = ScopedLockService.shared.badge(target)
+            if badge != .none { badges[session.id] = badge }
+        }
+        return badges
+    }
+
+    static func isDurable(_ session: Session) -> Bool {
+        AppPreferences.Experiments.durableSessionsEnabled && session.engine == .durable
     }
 
     /// Every session whose status the entry draws.

@@ -1,4 +1,5 @@
-import SwiftUI
+import Foundation
+import Observation
 
 /// Device-local choices for how session rows look. This is display only: it
 /// never changes which sessions are listed, their status, or what is sent to
@@ -40,9 +41,9 @@ struct SessionRowDisplay: Equatable, Codable, Sendable {
     var isCompact: Bool { density == .compact }
 }
 
-/// The saved row appearance, live. The app root injects `display` into every
-/// screen's environment, so a Customize Rows save reaches screens that are
-/// already up, pushed ones included.
+/// The saved row appearance, live. The session lists read `display` in
+/// `updateProperties()`, so a Session Rows save reaches lists that are
+/// already up, covered ones included.
 @MainActor @Observable
 final class SessionRowDisplayStore {
     private(set) var display: SessionRowDisplay
@@ -65,18 +66,5 @@ final class SessionRowDisplayStore {
     /// A fixed appearance, for previews and tests.
     init(fixed display: SessionRowDisplay) {
         self.display = display
-    }
-}
-
-private struct SessionRowDisplayKey: EnvironmentKey {
-    static let defaultValue = SessionRowDisplay.standard
-}
-
-extension EnvironmentValues {
-    /// Saved row appearance, injected once at the app root. The Customize Rows
-    /// editor overrides it locally so its preview uses the draft.
-    var sessionRowDisplay: SessionRowDisplay {
-        get { self[SessionRowDisplayKey.self] }
-        set { self[SessionRowDisplayKey.self] = newValue }
     }
 }

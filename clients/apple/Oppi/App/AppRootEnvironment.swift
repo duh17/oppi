@@ -185,7 +185,6 @@ private struct AppRootEnvironmentModifier: ViewModifier {
             .environment(\.composerDraftStore, root.composerDraftStore)
             .environment(\.theme, root.themeStore.appTheme)
             .environment(\.themeID, root.themeStore.activeThemeID)
-            .environment(\.sessionRowDisplay, root.sessionRows.display)
             .environment(\.scenePhase, AppScenePhase.shared.phase)
             .environment(\.appRootEnvironment, root)
             .tint(.themeBlue)

@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// What a session list does when its rows are used. Each list supplies its own
@@ -16,302 +15,251 @@ struct SessionListRowActions {
     let lockTarget: (Session) -> ScopedLockTarget?
 }
 
-/// What deleting a session asks and how its swipe button behaves.
+/// What deleting a session asks.
 enum SessionDeleteConfirmationPolicy {
-    /// Delete only asks (the confirmation deletes), so its swipe is not destructive.
-    static let swipeButtonRole: ButtonRole? = nil
-
     static func deleteMessage(for session: Session) -> String {
         "This permanently deletes SQLite session metadata, local pi JSONL trace files for this session, chat attachment copies under .pi/attachments/\(session.id), generated media attachments served by Oppi, this device's cached timeline copy, and its local message draft."
     }
 }
 
-/// One session-list entry, drawn the same in All Sessions and workspace lists,
-/// hosted in a UIKit list cell: the session row, then its Thread strip or a
-/// link to the thread it belongs to. The collection owns the row-body tap
-/// (selection), the trailing swipes, and the long-press menu
-/// (`SessionListRowMenus`); a SwiftUI tap, swipe, or menu here would compete
-/// with the cell's. The row keeps its accessibility activation, and the strip
-/// or link opens Thread detail with its own tap recognizer, so a swipe on it
-/// cancels navigation.
-struct SessionListEntryRow: View {
-    let entry: SessionListEntry
-    let presentation: (Session) -> SessionRowPresentation
-    /// Status of any session in the entry: its own seen state and pending asks applied.
-    let status: (Session) -> SessionStatusKind
-    /// Workspace name to show for a session outside this list's workspace; nil hides it.
-    let foreignWorkspaceName: (Session) -> String?
+/// One session-list entry, drawn the same in All Sessions and workspace lists:
+/// the session row, then its Thread strip or a link to the thread it belongs
+/// to. The collection owns the row-body tap (selection), the trailing swipes,
+/// and the long-press menu (`SessionListRowMenus`). The row keeps its
+/// accessibility activation, and the strip or link opens Thread detail as a
+/// control of its own, so a swipe on it cancels navigation.
+struct SessionListEntryConfiguration: UIContentConfiguration {
+    let row: SessionListRowContent
+    let display: SessionRowDisplay
+    let themeID: ThemeID
+    /// The list's server's icon cache, for saved-Agent Genmoji.
+    let iconAssetCache: IconAssetCache?
     let actions: SessionListRowActions
 
-    @State private var locks = ScopedLockService.shared
+    func makeContentView() -> any UIView & UIContentView {
+        SessionListEntryContentView(configuration: self)
+    }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            rowBody
-            if let thread = entry.thread {
-                let blockedMember = thread.descendants.first { status($0).isBlocked }
-                let rootTarget = actions.lockTarget(thread.root)
-                SessionThreadStrip(
-                    rollup: thread,
-                    status: status,
-                    hidesDetails: rootTarget.map(locks.isLocked) ?? false,
-                    hidesCost: thread.members.contains { member in
-                        actions.lockTarget(member).map(locks.isLocked) ?? false
-                    }
-                )
-                    .padding(.leading, SessionThreadStrip.rowInset)
-                    .onTapGesture { actions.openThread(thread.root) }
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAction { actions.openThread(thread.root) }
-                    .accessibilityIdentifier("thread.nav.\(thread.root.id)")
-                    .accessibilityValue(blockedMember.map { status($0).label } ?? "")
-            } else if let root = entry.outsideRoot {
-                SessionThreadLink(
-                    root: root,
-                    workspaceName: foreignWorkspaceName(root),
-                    lockBadge: actions.lockTarget(root).map(locks.badge) ?? .none
-                )
-                    .padding(.leading, SessionThreadStrip.rowInset)
-                    .onTapGesture { actions.openThread(root) }
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAction { actions.openThread(root) }
-                    .accessibilityIdentifier("thread.link.\(entry.session.id)")
-            }
+    func updated(for state: any UIConfigurationState) -> Self {
+        self
+    }
+}
+
+final class SessionListEntryContentView: UIView, UIContentView {
+    private let stack = UIStackView()
+    private let rowView = SessionRowView(combinesAccessibility: true)
+    private let stripView = SessionThreadStripView()
+    private let linkView = SessionThreadLinkView()
+    private var applied: SessionListEntryConfiguration
+
+    var configuration: UIContentConfiguration {
+        get { applied }
+        set {
+            guard let configuration = newValue as? SessionListEntryConfiguration else { return }
+            apply(configuration)
         }
     }
 
-    private var rowBody: some View {
+    init(configuration: SessionListEntryConfiguration) {
+        applied = configuration
+        super.init(frame: .zero)
+        rowView.accessibilityTraits = .button
+        rowView.onActivate = { [weak self] in
+            guard let self else { return }
+            applied.actions.open(applied.row.entry.session)
+        }
+        stripView.addAction(UIAction { [weak self] _ in self?.openThread() }, for: .touchUpInside)
+        linkView.addAction(UIAction { [weak self] _ in self?.openThread() }, for: .touchUpInside)
+
+        stack.axis = .vertical
+        stack.alignment = .trailing
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(rowView)
+        stack.addArrangedSubview(stripView)
+        stack.addArrangedSubview(linkView)
+        addSubview(stack)
+        // The list's own leading and trailing margins; the vertical inset the
+        // hosted SwiftUI rows had.
+        directionalLayoutMargins = .zero
+        preservesSuperviewLayoutMargins = true
+        let margins = layoutMarginsGuide
+        // The cell is as tall as its content: stack views fit loosely, so a
+        // tall proposed size would otherwise stretch them.
+        let hug = heightAnchor.constraint(equalToConstant: 0)
+        hug.priority = .defaultLow
+        NSLayoutConstraint.activate([
+            hug,
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: Self.verticalInset),
+            bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: Self.verticalInset),
+            stack.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
+        ])
+        rowView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        for view in [stripView, linkView] as [UIView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -SessionThreadStripView.rowInset).isActive = true
+        }
+        apply(configuration)
+    }
+
+    static let verticalInset: CGFloat = 15
+
+    /// The separator starts under the title, past the identity icon.
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        guard let cell = superview as? UICollectionViewListCell else { return }
+        cell.separatorLayoutGuide.leadingAnchor.constraint(equalTo: rowView.textLeadingAnchor).isActive = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    private func apply(_ configuration: SessionListEntryConfiguration) {
+        applied = configuration
+        let row = configuration.row
+        let entry = row.entry
         let session = entry.session
-        let target = actions.lockTarget(session)
-        return SessionRow(
-            presentation: presentation(session),
-            lockBadge: target.map(locks.badge) ?? .none,
-            hidesDetails: target.map(locks.isLocked) ?? false
+        let style = SessionRowStyle.for(configuration.themeID)
+        let status = row.status(of: session)
+
+        rowView.apply(
+            SessionRowView.Content(
+                presentation: row.presentation,
+                lockBadge: row.lockBadge(of: session),
+                hidesDetails: row.lockBadge(of: session) == .locked,
+                isDurable: row.isDurable
+            ),
+            display: configuration.display,
+            themeID: configuration.themeID,
+            iconAssetCache: configuration.iconAssetCache
         )
-            .contentShape(Rectangle())
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { actions.open(session) }
-            .accessibilityIdentifier("session.nav.\(session.id)")
-            .accessibilityValue(status(session).isBlocked ? status(session).label : "")
-    }
-}
+        rowView.accessibilityIdentifier = "session.nav.\(session.id)"
+        rowView.accessibilityValue = status.isBlocked ? status.label : ""
 
-extension SessionListEntryRow {
-    /// The row as a UIKit list cell's content. The values come from the
-    /// list's snapshot, so the cell changes only when the list reconfigures
-    /// its item. `connection` overrides the active server's scoped stores for
-    /// a list that shows another server (a workspace on its own server).
-    static func cellConfiguration(
-        _ row: SessionListRowContent,
-        actions: SessionListRowActions,
-        root: AppRootEnvironment,
-        connection: ServerConnection? = nil
-    ) -> any UIContentConfiguration {
-        UIHostingConfiguration {
-            SessionListEntryRow(
-                entry: row.entry,
-                presentation: { _ in row.presentation },
-                status: row.status(of:),
-                foreignWorkspaceName: { row.foreignWorkspaceNames[$0.id] },
-                actions: actions
+        if let thread = entry.thread {
+            stripView.isHidden = false
+            stripView.accessibilityIdentifier = "thread.nav.\(thread.root.id)"
+            stripView.apply(
+                SessionThreadStripView.Content(
+                    rollup: thread,
+                    statuses: row.statuses,
+                    hidesDetails: row.lockBadge(of: thread.root) == .locked,
+                    hidesCost: thread.members.contains { row.lockBadge(of: $0) == .locked }
+                ),
+                display: configuration.display,
+                style: style,
+                iconAssetCache: configuration.iconAssetCache
             )
-            // Inside the root's environment: the inner value wins, so the
-            // list's own connection overrides the active server's.
-            .withServerScopedEnvironment(connection ?? root.coordinator.activeConnection)
-            .appRootEnvironment(root)
-        }
-    }
-}
-
-extension View {
-    /// The SwiftUI long-press menu and Mail-style swipes for a session row
-    /// outside a UIKit list (Thread detail's member rows). UIKit session
-    /// lists use `SessionListRowMenus`.
-    func sessionRowActions(_ session: Session, actions: SessionListRowActions) -> some View {
-        modifier(SessionRowActionsModifier(session: session, actions: actions))
-    }
-}
-
-/// Long-press menu (Open, Stop/Resume, Lock/Unlock, Copy Session ID, Delete)
-/// and trailing swipes for a SwiftUI session row, matching
-/// `SessionListRowMenus`. Swipe left is lifecycle: full
-/// swipe stops; a stopped row offers Resume and Delete with no full swipe, so
-/// a swipe never starts or deletes a session without a deliberate tap. There
-/// is no leading swipe: a row's leading-edge drag belongs to the workspace
-/// sidebar, and Lock/Unlock lives only in the long-press menu.
-private struct SessionRowActionsModifier: ViewModifier {
-    let session: Session
-    let actions: SessionListRowActions
-
-    @State private var locks = ScopedLockService.shared
-
-    private var lockTarget: ScopedLockTarget? {
-        actions.lockTarget(session)
-    }
-
-    private var lockScope: ScopedLockScope? {
-        lockTarget?.scope
-    }
-
-    private var isStopped: Bool { session.status == .stopped }
-    /// Incognito sessions cannot resume.
-    private var canResume: Bool { isStopped && session.ephemeral != true }
-
-    func body(content: Content) -> some View {
-        content
-            .contextMenu { menu }
-            .swipeActions(edge: .trailing, allowsFullSwipe: !isStopped) { trailingSwipe }
-    }
-
-    // MARK: Menu
-
-    /// System menu rows: plain outline symbols, no tint, like Mail and Files.
-    @ViewBuilder
-    private var menu: some View {
-        Button {
-            actions.open(session)
-        } label: {
-            Label("Open", systemImage: "bubble.left.and.text.bubble.right")
-        }
-        if isStopped {
-            if canResume { resumeButton(.menu) }
         } else {
-            stopButton(.menu)
+            stripView.isHidden = true
         }
-        if let lockScope { lockButton(lockScope) }
-        Button {
-            UIPasteboard.general.string = session.id
-            AppHaptics.impact(style: .light, intensity: 0.8)
-            TransientConfirmationPill.show(String(localized: "Session ID Copied"))
-        } label: {
-            Label("Copy Session ID", systemImage: "doc.on.doc")
-        }
-        .accessibilityIdentifier("session.copyId.\(session.id)")
-        if isStopped, let delete = actions.delete(session) {
-            Divider()
-            Button(role: .destructive, action: delete) {
-                Label("Delete", systemImage: "trash")
-            }
-            .accessibilityIdentifier("session.menuDelete.\(session.id)")
-        }
-    }
 
-    // MARK: Swipes
-
-    /// Stop anything not stopped (idle included); Resume or Delete a stopped session.
-    @ViewBuilder
-    private var trailingSwipe: some View {
-        if isStopped {
-            if canResume { resumeButton(.swipe) }
-            if let delete = actions.delete(session) {
-                Button(role: SessionDeleteConfirmationPolicy.swipeButtonRole, action: delete) {
-                    Label("Delete", systemImage: "trash.fill")
-                }
-                .tint(.themeRed)
-                .accessibilityIdentifier("session.delete.\(session.id)")
-            }
+        if entry.thread == nil, let root = entry.outsideRoot {
+            linkView.isHidden = false
+            linkView.apply(
+                root: root,
+                workspaceName: row.foreignWorkspaceNames[root.id],
+                lockBadge: row.lockBadge(of: root),
+                display: configuration.display,
+                colors: style.colors
+            )
+            linkView.accessibilityIdentifier = "thread.link.\(session.id)"
         } else {
-            stopButton(.swipe)
+            linkView.isHidden = true
         }
+        accessibilityElements = [rowView, stripView, linkView].filter { !$0.isHidden }
     }
 
-    // MARK: Buttons
-
-    /// Swipe buttons are filled glyphs on a tinted background; menu rows use
-    /// the outline symbol and the system menu color.
-    private enum Placement {
-        case menu
-        case swipe
+    private func openThread() {
+        let entry = applied.row.entry
+        guard let root = entry.thread?.root ?? entry.outsideRoot else { return }
+        applied.actions.openThread(root)
     }
 
-    private func stopButton(_ placement: Placement) -> some View {
-        Button {
-            actions.stop(session)
-        } label: {
-            Label("Stop", systemImage: placement == .swipe ? "stop.fill" : "stop.circle")
-        }
-        .swipeTint(.themeOrange, placement == .swipe)
-        .accessibilityIdentifier("session.stop.\(session.id)")
-    }
-
-    private func resumeButton(_ placement: Placement) -> some View {
-        Button {
-            actions.resume(session)
-        } label: {
-            Label("Resume", systemImage: placement == .swipe ? "play.fill" : "play.circle")
-        }
-        .swipeTint(.themeGreen, placement == .swipe)
-        .accessibilityIdentifier("session.resume.\(session.id)")
-    }
-
-    /// Menu only. Lock never asks; Unlock removes the lock and asks for device authentication.
-    @ViewBuilder
-    private func lockButton(_ scope: ScopedLockScope) -> some View {
-        if locks.isFlagged(scope) {
-            Button {
-                Task { await locks.removeLock(scope) }
-            } label: {
-                Label("Unlock", systemImage: "lock.open")
-            }
-            .accessibilityIdentifier("session.unlock.\(session.id)")
-        } else {
-            Button {
-                locks.lock(scope, workspaceId: lockTarget?.workspaceId)
-            } label: {
-                Label("Lock", systemImage: "lock")
-            }
-            .accessibilityIdentifier("session.lock.\(session.id)")
-        }
-    }
-}
-
-private extension View {
-    /// Menu rows keep the system menu color; only swipe buttons are tinted.
-    @ViewBuilder
-    func swipeTint(_ style: ThemeShapeStyle, _ isSwipe: Bool) -> some View {
-        if isSwipe { tint(style) } else { self }
+    override func systemLayoutSizeFitting(
+        _ targetSize: CGSize,
+        withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+        verticalFittingPriority: UILayoutPriority
+    ) -> CGSize {
+        // Compact density decides its rows from the width before sizing.
+        let margins = superview?.directionalLayoutMargins ?? .zero
+        rowView.prepareLayout(width: targetSize.width - margins.leading - margins.trailing)
+        return super.systemLayoutSizeFitting(
+            targetSize,
+            withHorizontalFittingPriority: horizontalFittingPriority,
+            verticalFittingPriority: verticalFittingPriority
+        )
     }
 }
 
 /// One-line link under a session whose thread is rooted in another list, such
 /// as another workspace or worktree. Styled like the Thread strip label.
-struct SessionThreadLink: View {
-    @Environment(\.sessionRowDisplay) private var display
+final class SessionThreadLinkView: UIControl {
+    private let stack = UIStackView()
+    private let glyph = UIImageView()
+    private let titleLabel = UILabel()
+    private let detailLabel = UILabel()
+    private let lockLabel = UILabel()
+    private let chevron = UIImageView()
+    private var verticalPadding: [NSLayoutConstraint] = []
 
-    let root: Session
-    /// Root's workspace when it differs from the list's; nil hides it.
-    let workspaceName: String?
-    var lockBadge: ScopedLockState = .none
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        layer.cornerRadius = 8
+        layer.cornerCurve = .continuous
 
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "point.3.connected.trianglepath.dotted")
-            Text("In thread")
-            Text(detail)
-                .fontWeight(.regular)
-                .foregroundStyle(.themeComment)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            LockBadge(state: lockBadge)
-            Spacer(minLength: 4)
-            Image(systemName: "chevron.right")
-                .foregroundStyle(.themeComment)
+        let font = SessionRowText.font(.caption1, .semibold)
+        glyph.image = SessionRowText.symbolImage("point.3.connected.trianglepath.dotted", style: .caption1, weight: .semibold)
+        titleLabel.text = String(localized: "In thread")
+        titleLabel.font = font
+        detailLabel.font = SessionRowText.font(.caption1)
+        detailLabel.lineBreakMode = .byTruncatingMiddle
+        detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        chevron.image = SessionRowText.symbolImage("chevron.right", style: .caption1, weight: .semibold)
+        for view in [glyph, titleLabel, lockLabel, chevron] as [UIView] {
+            view.setContentCompressionResistancePriority(.required, for: .horizontal)
+            view.setContentHuggingPriority(.required, for: .horizontal)
         }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.themeBlue)
-        .lineLimit(1)
-        .padding(.horizontal, 8)
-        .padding(.vertical, display.isCompact ? 4 : 6)
-        // Sits just under a row that opens chat; keep a comfortable target of its own.
-        .frame(minHeight: 32)
-        .background(.themeBgHighlight.opacity(0.45), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("In thread from \(root.displayTitle)" + (workspaceName.map { " in \($0)" } ?? ""))
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 6
+        stack.isUserInteractionEnabled = false
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        [glyph, titleLabel, detailLabel, lockLabel, SessionRowSpacer(minWidth: 4), chevron].forEach(stack.addArrangedSubview)
+        addSubview(stack)
+        let top = stack.topAnchor.constraint(equalTo: topAnchor, constant: 6)
+        let bottom = bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: 6)
+        verticalPadding = [top, bottom]
+        NSLayoutConstraint.activate([
+            top, bottom,
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            // Sits just under a row that opens chat; keep a comfortable target of its own.
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
+        ])
     }
 
-    private var detail: String {
-        (["· \(root.displayTitle)"] + [workspaceName].compactMap { $0 }).joined(separator: " · ")
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(
+        root: Session,
+        workspaceName: String?,
+        lockBadge: ScopedLockState,
+        display: SessionRowDisplay,
+        colors: ComposerThemeColors
+    ) {
+        backgroundColor = colors.bgHighlight.withAlphaComponent(0.45)
+        for constraint in verticalPadding { constraint.constant = display.isCompact ? 4 : 6 }
+        glyph.tintColor = colors.blue
+        titleLabel.textColor = colors.blue
+        detailLabel.text = (["· \(root.displayTitle)"] + [workspaceName].compactMap { $0 }).joined(separator: " · ")
+        detailLabel.textColor = colors.comment
+        SessionRowText.setLockBadge(lockBadge, on: lockLabel, color: colors.comment)
+        chevron.tintColor = colors.comment
+        accessibilityLabel = "In thread from \(root.displayTitle)" + (workspaceName.map { " in \($0)" } ?? "")
     }
 }

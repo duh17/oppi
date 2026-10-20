@@ -115,9 +115,6 @@
     "clients/apple/Oppi/App/WorkspaceShellRoutes.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/App/WorkspaceSidebarGitStatusPreview.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Extensions/Color+Theme.swift": {
       "import SwiftUI": 1
     },
@@ -404,21 +401,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Servers/ServerSettingsRootView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Sessions/LocalSessionRow.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Sessions/SessionListEntryRow.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Sessions/SessionRow.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Sessions/SessionRowDisplay.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Sessions/SessionRowDisplayEditor.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Sessions/SessionStatusPill.swift": {

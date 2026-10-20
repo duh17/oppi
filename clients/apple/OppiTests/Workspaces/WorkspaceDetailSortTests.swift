@@ -168,10 +168,6 @@ struct WorkspaceDetailSortTests {
         #expect(sorted.map(\.id) == ["older", "newer"])
     }
 
-    @Test func deleteSwipeActionOnlyOpensConfirmation() {
-        #expect(SessionDeleteConfirmationPolicy.swipeButtonRole == nil)
-    }
-
     @Test func knownWorkspaceNotFoundDoesNotPresentBlockingLoadError() {
         let shouldPresent = WorkspaceDetailLoadErrorPolicy.shouldPresent(
             error: APIError.server(status: 404, message: "Workspace not found"),

@@ -1,119 +1,35 @@
 import SwiftUI
 
-// MARK: - Inbox thread strip
-
-/// A thread member that waits on the person, with what it waits for.
-struct SessionThreadBlockedMember: Equatable {
-    let session: Session
-    let status: SessionStatusKind
-}
-
-/// Thread control under a thread root row: who is working, optional lane
-/// graph and Agent summary, and totals. The caller makes it the tap target
-/// that opens Thread detail; the root row above it opens the root chat.
-///
-/// Agent summary and totals count every member, root included, so they agree
-/// with the lane graph. The status counts and the working line cover the
-/// children only: the root row above already shows its own status.
-///
-/// Display choices only hide the lane graph, the Agent summary, and the cost
-/// total. The chevron, a blocked child, who is working, and the status
-/// counts always stay.
-struct SessionThreadStrip: View {
-    @Environment(\.sessionRowDisplay) private var display
-    @Environment(\.theme) private var theme
-
-    /// Leading inset that lines the strip up under the root row's identity icon.
-    static let rowInset: CGFloat = 18
-
-    let rollup: SessionThreadRollup
-    /// This device's status for each member: its seen state and pending asks applied.
-    let status: (Session) -> SessionStatusKind
-    /// Locked root: names and counts only, no lane graph, Agents, or cost.
-    var hidesDetails = false
-    /// A locked member: its cost stays out of the total.
-    var hidesCost = false
-
-    private var statusRollup: SessionStatusRollup { rollup.statusRollup(status: status) }
-
-    /// A blocked child, shown so the user knows where to answer.
-    private var blockedMember: SessionThreadBlockedMember? {
-        rollup.descendants.first { status($0).isBlocked }
-            .map { SessionThreadBlockedMember(session: $0, status: status($0)) }
-    }
-
-    var body: some View {
-        let working = rollup.descendants.filter(SessionThreadGrouping.isWorking)
-        VStack(alignment: .leading, spacing: display.isCompact ? 2 : 4) {
-            if let blockedMember {
-                Label(
-                    "\(blockedMember.status.label) · \(blockedMember.session.displayTitle)",
-                    systemImage: blockedMember.status.badgeSymbol
-                )
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(blockedMember.status.tint(theme))
-                    .lineLimit(1)
-            } else if !working.isEmpty {
-                Text(working.map(\.displayTitle).joined(separator: " · ") + " working")
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(.themeBlue)
-                    .lineLimit(1)
-            }
-            if display.showsThreadLaneGraph, !hidesDetails {
-                SessionThreadLaneGraphView(
-                    members: rollup.members,
-                    rootId: rollup.root.id,
-                    status: status
-                )
-                    .frame(maxWidth: 260, alignment: .leading)
-            }
-            HStack(alignment: .center, spacing: 8) {
-                if display.showsThreadAgentSummary, !hidesDetails {
-                    SessionThreadAgentCluster(groups: SessionThreadAgentGroup.groups(rollup.members), maxGroups: 3)
-                        // Natural single-line width: the summary truncates, never wraps "+N" or collapses "×N".
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-                Text(summary)
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-                    .lineLimit(1)
-                    .layoutPriority(1)
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeComment)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, display.isCompact ? 4 : 6)
-        .background(.themeBgHighlight.opacity(0.45), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilitySummary)
-    }
-
-    private var summary: String {
-        var parts: [String] = []
-        if !statusRollup.summaryText.isEmpty { parts.append(statusRollup.summaryText) }
-        // Same rule as a row: unknown or zero cost is absent, never "$0.00".
-        if display.showsCost, !hidesDetails, !hidesCost, rollup.totalCost > 0 {
-            parts.append(String(format: "$%.2f", rollup.totalCost))
-        }
-        if rollup.workspaceCount > 1 {
-            parts.append("\(rollup.workspaceCount) workspaces")
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    private var accessibilitySummary: String {
-        let blocked = blockedMember.map { "\($0.status.label) from \($0.session.displayTitle). " } ?? ""
-        let headline = statusRollup.headline.map { "\($0.label). " } ?? ""
-        return blocked + headline + "Thread with \(rollup.members.count) sessions, \(summary)"
-    }
-
-}
-
 // MARK: - Agent identity
+
+/// The session's identity icon (`SessionGridBadgeView`) for the SwiftUI thread views.
+struct SessionIdentityIconView: UIViewRepresentable {
+    @Environment(\.iconAssetCache) private var iconAssetCache
+
+    let sessionId: String
+    var agentId: String?
+    var agentIcon: IconChoice?
+
+    func makeUIView(context: Context) -> SessionGridBadgeView {
+        let view = SessionGridBadgeView()
+        view.isAccessibilityElement = true
+        view.accessibilityTraits = .image
+        return view
+    }
+
+    func updateUIView(_ view: SessionGridBadgeView, context: Context) {
+        view.configure(
+            sessionId: sessionId,
+            agentId: agentId,
+            agentIcon: agentIcon,
+            iconAssetCache: iconAssetCache
+        )
+    }
+
+    static func dismantleUIView(_ view: SessionGridBadgeView, coordinator: Void) {
+        view.prepareForReuse()
+    }
+}
 
 /// Session's Agent icon (Pi avatar when none) with its status dot.
 struct SessionThreadIdentityBadge: View {
@@ -320,104 +236,6 @@ struct SessionThreadWaterfallView: View {
             case (nil, nil):
                 break
             }
-        }
-    }
-}
-
-// MARK: - Horizontal lane graph
-
-/// Git-graph style thread overview: event order runs left to right, each
-/// session has a lane from its launch to its last recorded activity, and
-/// children branch from their parent's lane and merge back there. This
-/// summarizes the thread; it is not an exact execution span. Working sessions
-/// end in a pulsing dot at the right edge.
-struct SessionThreadLaneGraphView: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    let members: [Session]
-    let rootId: String
-    let status: (Session) -> SessionStatusKind
-    var maxLanes = 4
-
-    static let laneSpacing: CGFloat = 6
-    static let inset: CGFloat = 4
-
-    var body: some View {
-        let graph = SessionThreadLaneGraph.layout(members: members, rootId: rootId, now: Date(), maxLanes: maxLanes, status: status)
-        let height = CGFloat(max(graph.laneCount, 1) - 1) * Self.laneSpacing + Self.inset * 2
-        HStack(spacing: 4) {
-            GeometryReader { proxy in
-                let width = proxy.size.width
-                ZStack(alignment: .topLeading) {
-                    Canvas { context, size in draw(graph, in: &context, size: size) }
-                    ForEach(graph.segments.filter(\.isWorking)) { segment in
-                        pulse(color: segment.status.tint(theme))
-                            .position(
-                                x: width - Self.inset,
-                                y: Self.inset + CGFloat(segment.lane) * Self.laneSpacing
-                            )
-                    }
-                }
-            }
-            .frame(height: height)
-            if graph.hiddenLaneCount > 0 {
-                Text("+\(graph.hiddenLaneCount)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.themeComment)
-            }
-        }
-        .accessibilityHidden(true)
-    }
-
-    private func draw(_ graph: SessionThreadLaneGraph, in context: inout GraphicsContext, size: CGSize) {
-        let usable = max(size.width - Self.inset * 2, 1)
-        func x(_ value: Double) -> CGFloat { Self.inset + CGFloat(value) * usable }
-        func y(_ lane: Int) -> CGFloat { Self.inset + CGFloat(lane) * Self.laneSpacing }
-        let bend: CGFloat = 5
-        let solid = StrokeStyle(lineWidth: 1.6, lineCap: .round)
-        let dashed = StrokeStyle(lineWidth: 1.6, lineCap: .round, dash: [1.5, 3])
-
-        for segment in graph.segments {
-            let color = segment.status.tint(theme)
-            let startX = x(segment.start)
-            let endX = max(x(segment.end), startX + 2)
-            let laneY = y(segment.lane)
-
-            guard let parentLane = segment.parentLane else {
-                // Root lane: solid while it works, dashed while it waits on children.
-                let idleX = segment.idleFrom.map { max(x($0), startX) } ?? endX
-                context.stroke(Path { $0.move(to: CGPoint(x: startX, y: laneY)); $0.addLine(to: CGPoint(x: idleX, y: laneY)) },
-                               with: .color(color), style: solid)
-                if idleX < endX {
-                    context.stroke(Path { $0.move(to: CGPoint(x: idleX, y: laneY)); $0.addLine(to: CGPoint(x: endX, y: laneY)) },
-                                   with: .color(color), style: dashed)
-                }
-                continue
-            }
-
-            let parentY = y(parentLane)
-            let opacity = segment.isStopped ? 0.55 : 1
-            var path = Path()
-            path.move(to: CGPoint(x: startX, y: parentY))
-            if parentY != laneY {
-                path.addQuadCurve(to: CGPoint(x: startX + bend, y: laneY), control: CGPoint(x: startX, y: laneY))
-            }
-            path.addLine(to: CGPoint(x: endX, y: laneY))
-            if segment.isStopped, parentY != laneY {
-                path.addQuadCurve(to: CGPoint(x: endX + bend, y: parentY), control: CGPoint(x: endX + bend, y: laneY))
-            }
-            context.stroke(path, with: .color(color.opacity(opacity)), style: solid)
-        }
-    }
-
-    @ViewBuilder
-    private func pulse(color: Color) -> some View {
-        let dot = Circle().fill(color).frame(width: 5, height: 5)
-        if reduceMotion {
-            dot
-        } else {
-            dot.phaseAnimator([1.0, 0.35]) { view, phase in view.opacity(phase) }
         }
     }
 }
@@ -1598,3 +1416,157 @@ struct SessionChipFlowLayout: Layout {
         return (CGSize(width: widest, height: y + rowHeight), origins)
     }
 }
+
+// MARK: - Row actions
+
+extension View {
+    /// The SwiftUI long-press menu and Mail-style swipes for a session row
+    /// outside a UIKit list (Thread detail's member rows). UIKit session
+    /// lists use `SessionListRowMenus`.
+    func sessionRowActions(_ session: Session, actions: SessionListRowActions) -> some View {
+        modifier(SessionRowActionsModifier(session: session, actions: actions))
+    }
+}
+
+/// Long-press menu (Open, Stop/Resume, Lock/Unlock, Copy Session ID, Delete)
+/// and trailing swipes for a SwiftUI session row, matching
+/// `SessionListRowMenus`. Swipe left is lifecycle: full
+/// swipe stops; a stopped row offers Resume and Delete with no full swipe, so
+/// a swipe never starts or deletes a session without a deliberate tap. There
+/// is no leading swipe: a row's leading-edge drag belongs to the workspace
+/// sidebar, and Lock/Unlock lives only in the long-press menu.
+private struct SessionRowActionsModifier: ViewModifier {
+    let session: Session
+    let actions: SessionListRowActions
+
+    @State private var locks = ScopedLockService.shared
+
+    private var lockTarget: ScopedLockTarget? {
+        actions.lockTarget(session)
+    }
+
+    private var lockScope: ScopedLockScope? {
+        lockTarget?.scope
+    }
+
+    private var isStopped: Bool { session.status == .stopped }
+    /// Incognito sessions cannot resume.
+    private var canResume: Bool { isStopped && session.ephemeral != true }
+
+    func body(content: Content) -> some View {
+        content
+            .contextMenu { menu }
+            .swipeActions(edge: .trailing, allowsFullSwipe: !isStopped) { trailingSwipe }
+    }
+
+    // MARK: Menu
+
+    /// System menu rows: plain outline symbols, no tint, like Mail and Files.
+    @ViewBuilder
+    private var menu: some View {
+        Button {
+            actions.open(session)
+        } label: {
+            Label("Open", systemImage: "bubble.left.and.text.bubble.right")
+        }
+        if isStopped {
+            if canResume { resumeButton(.menu) }
+        } else {
+            stopButton(.menu)
+        }
+        if let lockScope { lockButton(lockScope) }
+        Button {
+            UIPasteboard.general.string = session.id
+            AppHaptics.impact(style: .light, intensity: 0.8)
+            TransientConfirmationPill.show(String(localized: "Session ID Copied"))
+        } label: {
+            Label("Copy Session ID", systemImage: "doc.on.doc")
+        }
+        .accessibilityIdentifier("session.copyId.\(session.id)")
+        if isStopped, let delete = actions.delete(session) {
+            Divider()
+            Button(role: .destructive, action: delete) {
+                Label("Delete", systemImage: "trash")
+            }
+            .accessibilityIdentifier("session.menuDelete.\(session.id)")
+        }
+    }
+
+    // MARK: Swipes
+
+    /// Stop anything not stopped (idle included); Resume or Delete a stopped session.
+    @ViewBuilder
+    private var trailingSwipe: some View {
+        if isStopped {
+            if canResume { resumeButton(.swipe) }
+            if let delete = actions.delete(session) {
+                // Delete only asks (the confirmation deletes), so its swipe is not destructive.
+                Button(action: delete) {
+                    Label("Delete", systemImage: "trash.fill")
+                }
+                .tint(.themeRed)
+                .accessibilityIdentifier("session.delete.\(session.id)")
+            }
+        } else {
+            stopButton(.swipe)
+        }
+    }
+
+    // MARK: Buttons
+
+    /// Swipe buttons are filled glyphs on a tinted background; menu rows use
+    /// the outline symbol and the system menu color.
+    private enum Placement {
+        case menu
+        case swipe
+    }
+
+    private func stopButton(_ placement: Placement) -> some View {
+        Button {
+            actions.stop(session)
+        } label: {
+            Label("Stop", systemImage: placement == .swipe ? "stop.fill" : "stop.circle")
+        }
+        .swipeTint(.themeOrange, placement == .swipe)
+        .accessibilityIdentifier("session.stop.\(session.id)")
+    }
+
+    private func resumeButton(_ placement: Placement) -> some View {
+        Button {
+            actions.resume(session)
+        } label: {
+            Label("Resume", systemImage: placement == .swipe ? "play.fill" : "play.circle")
+        }
+        .swipeTint(.themeGreen, placement == .swipe)
+        .accessibilityIdentifier("session.resume.\(session.id)")
+    }
+
+    /// Menu only. Lock never asks; Unlock removes the lock and asks for device authentication.
+    @ViewBuilder
+    private func lockButton(_ scope: ScopedLockScope) -> some View {
+        if locks.isFlagged(scope) {
+            Button {
+                Task { await locks.removeLock(scope) }
+            } label: {
+                Label("Unlock", systemImage: "lock.open")
+            }
+            .accessibilityIdentifier("session.unlock.\(session.id)")
+        } else {
+            Button {
+                locks.lock(scope, workspaceId: lockTarget?.workspaceId)
+            } label: {
+                Label("Lock", systemImage: "lock")
+            }
+            .accessibilityIdentifier("session.lock.\(session.id)")
+        }
+    }
+}
+
+private extension View {
+    /// Menu rows keep the system menu color; only swipe buttons are tinted.
+    @ViewBuilder
+    func swipeTint(_ style: ThemeShapeStyle, _ isSwipe: Bool) -> some View {
+        if isSwipe { tint(style) } else { self }
+    }
+}
+

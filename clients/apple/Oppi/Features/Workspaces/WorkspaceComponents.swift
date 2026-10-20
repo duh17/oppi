@@ -355,196 +355,202 @@ struct WorkspaceServerStatusPresentation: Equatable, Sendable {
 
 // MARK: - Workspace sidebar row
 
-struct WorkspaceSidebarRow: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.themeID) private var themeID
-
+/// A workspace in the sidebar: its icon, name and lock, session status
+/// counts, description, and git summary. A locked workspace shows its name
+/// only. The sidebar cell's button (`SidebarRowElement`) takes the tap and
+/// speaks for the row.
+struct WorkspaceSidebarRowConfiguration: UIContentConfiguration {
     let workspace: Workspace
     let status: WorkspaceSidebarSessionStatus
     let gitSummary: WorkspaceSidebarGitSummary?
     let isSelected: Bool
     let lockBadge: ScopedLockState
+    let themeID: ThemeID
+    let iconAssetCache: IconAssetCache?
 
-    init(
-        workspace: Workspace,
-        status: WorkspaceSidebarSessionStatus,
-        gitSummary: WorkspaceSidebarGitSummary? = nil,
-        isSelected: Bool,
-        lockBadge: ScopedLockState = .none
-    ) {
-        self.workspace = workspace
-        self.status = status
-        self.gitSummary = gitSummary
-        self.isSelected = isSelected
-        self.lockBadge = lockBadge
+    func makeContentView() -> any UIView & UIContentView {
+        WorkspaceSidebarRowContentView(configuration: self)
     }
 
-    /// A locked workspace shows its name only.
-    private var hidesDetails: Bool { lockBadge == .locked }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            WorkspaceRuntimeIcon(workspace: workspace, size: 26, frameSize: 32)
-                .padding(.top, 1)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        Text(workspace.name)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(.themeFg)
-                            .lineLimit(1)
-                        LockBadge(state: lockBadge)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                    if status.isVisible, !hidesDetails {
-                        WorkspaceSidebarSessionStatusIndicator(status: status)
-                    }
-                }
-
-                if !hidesDetails, let description = workspace.description, !description.isEmpty {
-                    Text(description)
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                if !hidesDetails, let gitSummary, gitSummary.isVisible {
-                    WorkspaceSidebarGitStatusLine(summary: gitSummary)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(1)
-        }
-        .frame(minHeight: 44)
-        .padding(.vertical, 5)
-        .padding(.horizontal, 8)
-        .background {
-            if isSelected {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(theme.text.primary.opacity(0.08))
-            }
-        }
-        .contentShape(Rectangle())
-        .id(themeID)
+    func updated(for state: any UIConfigurationState) -> Self {
+        self
     }
 }
 
-struct WorkspaceSidebarGitStatusLine: View {
-    let summary: WorkspaceSidebarGitSummary
+final class WorkspaceSidebarRowContentView: UIView, UIContentView {
+    private let selection = UIView()
+    /// A 26 pt workspace mark drawn at 78 % of its 26 pt box (`IconChoiceView`),
+    /// centered in 32 pt with the sandbox lock (`WorkspaceRuntimeIcon`).
+    private let icon = IconChoiceUIView(size: 26 * 0.78, frameSize: 32)
+    private let nameLabel = UILabel()
+    private let lockLabel = UILabel()
+    private let statusLabel = UILabel()
+    private let descriptionLabel = UILabel()
+    private let gitLabel = UILabel()
+    private var applied: WorkspaceSidebarRowConfiguration
 
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 9) {
-            if summary.changedCount > 0 {
-                metric(
-                    text: "\(SessionFormatting.compactCount(summary.changedCount)) changes",
-                    symbol: "circle.fill",
-                    tint: .themeOrange,
-                    symbolScale: .small
-                )
-            }
-
-            if summary.aheadCount > 0 {
-                metric(
-                    text: "\(SessionFormatting.compactCount(summary.aheadCount))",
-                    symbol: "arrow.up",
-                    tint: .themeBlue
-                )
-            }
-
-            if summary.behindCount > 0 {
-                metric(
-                    text: "\(SessionFormatting.compactCount(summary.behindCount))",
-                    symbol: "arrow.down",
-                    tint: .themeOrange
-                )
-            }
+    var configuration: UIContentConfiguration {
+        get { applied }
+        set {
+            guard let configuration = newValue as? WorkspaceSidebarRowConfiguration else { return }
+            apply(configuration)
         }
-        .font(.caption2.weight(.medium))
-        .lineLimit(1)
-        .minimumScaleFactor(0.75)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(summary.accessibilityValue)
     }
 
-    private func metric(
-        text: String,
-        symbol: String,
-        tint: ThemeShapeStyle,
-        symbolScale: Image.Scale = .medium
-    ) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 3) {
-            Image(systemName: symbol)
-                .imageScale(symbolScale)
-            Text(text)
-                .monospacedDigit()
-        }
-        .foregroundStyle(tint)
+    init(configuration: WorkspaceSidebarRowConfiguration) {
+        applied = configuration
+        super.init(frame: .zero)
+        isAccessibilityElement = false
+        accessibilityElementsHidden = true
+
+        selection.layer.cornerRadius = 12
+        selection.layer.cornerCurve = .continuous
+        selection.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(selection)
+
+        nameLabel.font = SessionRowText.font(.body, .semibold)
+        nameLabel.adjustsFontForContentSizeCategory = true
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        lockLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        lockLabel.setContentHuggingPriority(.required, for: .horizontal)
+        statusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        statusLabel.setContentHuggingPriority(.required, for: .horizontal)
+        let nameRow = UIStackView(arrangedSubviews: [nameLabel, lockLabel, SessionRowSpacer(minWidth: 0), statusLabel])
+        nameRow.alignment = .firstBaseline
+        nameRow.spacing = 5
+        nameRow.setCustomSpacing(8, after: lockLabel)
+        descriptionLabel.font = SessionRowText.font(.caption1)
+        descriptionLabel.adjustsFontForContentSizeCategory = true
+        gitLabel.adjustsFontSizeToFitWidth = true
+        gitLabel.minimumScaleFactor = 0.75
+        let column = UIStackView(arrangedSubviews: [nameRow, descriptionLabel, gitLabel])
+        column.axis = .vertical
+        column.spacing = 3
+
+        // The content is centered in at least 44 pt, inside 5 pt of vertical padding.
+        let content = UIView()
+        for view in [content, icon, column] { view.translatesAutoresizingMaskIntoConstraints = false }
+        content.addSubview(icon)
+        content.addSubview(column)
+        addSubview(content)
+        let hug = content.heightAnchor.constraint(equalToConstant: 0)
+        hug.priority = .defaultLow
+        // The row is as short as its content allows, never shorter than 54 pt.
+        let rowHug = heightAnchor.constraint(equalToConstant: 54)
+        rowHug.priority = .defaultLow
+        NSLayoutConstraint.activate([
+            selection.topAnchor.constraint(equalTo: topAnchor),
+            selection.bottomAnchor.constraint(equalTo: bottomAnchor),
+            selection.leadingAnchor.constraint(equalTo: leadingAnchor),
+            selection.trailingAnchor.constraint(equalTo: trailingAnchor),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            content.centerYAnchor.constraint(equalTo: centerYAnchor),
+            content.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 5),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 54),
+            hug,
+            rowHug,
+            icon.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            icon.topAnchor.constraint(equalTo: content.topAnchor, constant: 1),
+            content.bottomAnchor.constraint(greaterThanOrEqualTo: icon.bottomAnchor),
+            column.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+            column.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            column.topAnchor.constraint(equalTo: content.topAnchor),
+            content.bottomAnchor.constraint(greaterThanOrEqualTo: column.bottomAnchor),
+        ])
+        apply(configuration)
     }
-}
 
-struct WorkspaceSidebarSessionStatusIndicator: View {
-    let status: WorkspaceSidebarSessionStatus
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 
-    var body: some View {
-        HStack(alignment: .center, spacing: 7) {
-            if status.attentionCount > 0 {
-                metric(
-                    symbol: "exclamationmark.triangle.fill",
-                    count: status.attentionCount,
-                    tint: status.errorCount > 0 ? .themeRed : .themeOrange
-                )
-            }
+    private func apply(_ configuration: WorkspaceSidebarRowConfiguration) {
+        applied = configuration
+        let workspace = configuration.workspace
+        let colors = SessionRowStyle.for(configuration.themeID).colors
+        // A locked workspace shows its name only.
+        let hidesDetails = configuration.lockBadge == .locked
 
-            if status.workingCount > 0 {
-                metric(symbol: "bolt.fill", count: status.workingCount, tint: .themeBlue)
-            }
+        selection.isHidden = !configuration.isSelected
+        selection.backgroundColor = colors.fg.withAlphaComponent(0.08)
+        icon.apply(
+            .choice(workspace.icon, purpose: .workspace, sandbox: workspace.runtime == .sandbox),
+            colors: colors,
+            assetCache: configuration.iconAssetCache
+        )
+        nameLabel.text = workspace.name
+        nameLabel.textColor = colors.fg
+        SessionRowText.setLockBadge(configuration.lockBadge, on: lockLabel, color: colors.comment)
 
-            if status.showsDone {
-                metric(symbol: "checkmark", count: status.doneCount, tint: .themeGreen)
-            }
+        let status = configuration.status
+        statusLabel.isHidden = !status.isVisible || hidesDetails
+        statusLabel.attributedText = Self.statusText(status, colors: colors)
+
+        let description = workspace.description ?? ""
+        descriptionLabel.isHidden = hidesDetails || description.isEmpty
+        descriptionLabel.text = description
+        descriptionLabel.textColor = colors.comment
+
+        if !hidesDetails, let git = configuration.gitSummary, git.isVisible {
+            gitLabel.isHidden = false
+            gitLabel.attributedText = Self.gitText(git, colors: colors)
+        } else {
+            gitLabel.isHidden = true
         }
-        .font(.caption2.weight(.semibold))
-        .fixedSize(horizontal: true, vertical: false)
-        .accessibilityHidden(true)
     }
 
-    private func metric(symbol: String, count: Int, tint: ThemeShapeStyle) -> some View {
-        HStack(alignment: .center, spacing: 2) {
-            Image(systemName: symbol)
-                .imageScale(.small)
-
-            Text(SessionFormatting.compactCount(count))
-                .monospacedDigit()
+    /// Attention, working, and done counts, each a small glyph and its count.
+    static func statusText(_ status: WorkspaceSidebarSessionStatus, colors: ComposerThemeColors) -> NSAttributedString {
+        var metrics: [(String, Int, UIColor)] = []
+        if status.attentionCount > 0 {
+            metrics.append(("exclamationmark.triangle.fill", status.attentionCount, status.errorCount > 0 ? colors.red : colors.orange))
         }
-        .foregroundStyle(tint)
-        .lineLimit(1)
+        if status.workingCount > 0 { metrics.append(("bolt.fill", status.workingCount, colors.blue)) }
+        if status.showsDone { metrics.append(("checkmark", status.doneCount, colors.green)) }
+        return metricLine(
+            metrics.map { (symbol: $0.0, text: SessionFormatting.compactCount($0.1), color: $0.2, small: true) },
+            weight: .semibold,
+            itemSpacing: 7,
+            glyphSpacing: 2
+        )
     }
-}
 
-extension WorkspaceSidebarRow {
-    /// The row as cell content for the UIKit sidebar (`WorkspaceSidebarViewController`).
-    @MainActor
-    static func contentConfiguration(
-        root: AppRootEnvironment,
-        workspace: Workspace,
-        status: WorkspaceSidebarSessionStatus,
-        gitSummary: WorkspaceSidebarGitSummary?,
-        isSelected: Bool,
-        lockBadge: ScopedLockState
-    ) -> UIContentConfiguration {
-        UIHostingConfiguration {
-            WorkspaceSidebarRow(
-                workspace: workspace,
-                status: status,
-                gitSummary: gitSummary,
-                isSelected: isSelected,
-                lockBadge: lockBadge
-            )
-            .appRootEnvironment(root)
+    /// Changes, ahead, and behind.
+    private static func gitText(_ summary: WorkspaceSidebarGitSummary, colors: ComposerThemeColors) -> NSAttributedString {
+        var metrics: [(symbol: String, text: String, color: UIColor, small: Bool)] = []
+        if summary.changedCount > 0 {
+            metrics.append(("circle.fill", "\(SessionFormatting.compactCount(summary.changedCount)) changes", colors.orange, true))
         }
-        .margins(.all, 0)
+        if summary.aheadCount > 0 {
+            metrics.append(("arrow.up", SessionFormatting.compactCount(summary.aheadCount), colors.blue, false))
+        }
+        if summary.behindCount > 0 {
+            metrics.append(("arrow.down", SessionFormatting.compactCount(summary.behindCount), colors.orange, false))
+        }
+        return metricLine(metrics, weight: .medium, itemSpacing: 9, glyphSpacing: 3)
+    }
+
+    private static func metricLine(
+        _ metrics: [(symbol: String, text: String, color: UIColor, small: Bool)],
+        weight: UIFont.Weight,
+        itemSpacing: CGFloat,
+        glyphSpacing: CGFloat
+    ) -> NSAttributedString {
+        let font = SessionRowText.font(.caption2, weight, monospacedDigits: true)
+        let result = NSMutableAttributedString()
+        for (index, metric) in metrics.enumerated() {
+            let configuration = UIImage.SymbolConfiguration(font: font, scale: metric.small ? .small : .medium)
+            if let image = UIImage(systemName: metric.symbol, withConfiguration: configuration)?
+                .withTintColor(metric.color, renderingMode: .alwaysOriginal) {
+                result.append(NSAttributedString(attachment: NSTextAttachment(image: image)))
+                result.addAttribute(.font, value: font, range: NSRange(location: result.length - 1, length: 1))
+                result.append(SessionRowText.gap(glyphSpacing, font: font))
+            }
+            result.append(NSAttributedString(string: metric.text, attributes: [.font: font, .foregroundColor: metric.color]))
+            if index < metrics.count - 1 {
+                result.addAttribute(.kern, value: itemSpacing, range: NSRange(location: result.length - 1, length: 1))
+            }
+        }
+        return result
     }
 }
