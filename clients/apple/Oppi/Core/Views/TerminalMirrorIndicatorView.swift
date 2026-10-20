@@ -26,49 +26,9 @@ struct TerminalMirrorIndicatorPresentation: Equatable {
     }
 }
 
-struct TerminalMirrorIndicatorView: View {
-    let presentation: TerminalMirrorIndicatorPresentation
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var breathing = false
-
-    private var shouldAnimate: Bool {
-        presentation.isAnimated && !reduceMotion
-    }
-
-    private var iconOpacity: Double {
-        guard shouldAnimate else { return 0.88 }
-        return breathing ? 0.98 : 0.90
-    }
-
-    var body: some View {
-        Image(systemName: "terminal.fill")
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(presentation.color)
-            .opacity(iconOpacity)
-            .frame(width: 18, height: 16, alignment: .trailing)
-            .accessibilityLabel(presentation.accessibilityLabel)
-            .onAppear(perform: updateBreathing)
-            .onChange(of: shouldAnimate) { _, _ in
-                updateBreathing()
-            }
-    }
-
-    private func updateBreathing() {
-        guard shouldAnimate else {
-            breathing = false
-            return
-        }
-
-        breathing = false
-        withAnimation(ThemeMotion.animation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true), reduceMotion: reduceMotion)) {
-            breathing = true
-        }
-    }
-}
-
-/// `TerminalMirrorIndicatorView` in UIKit: the pi-tui glyph, breathing while
-/// the mirror is live unless Reduce Motion is on. Session rows draw it.
+/// The pi-tui mirror mark: a terminal glyph, green and breathing while the
+/// mirror is live (unless Reduce Motion is on), gray while it is offline.
+/// Session rows and the chat title draw it.
 final class TerminalMirrorIndicatorUIView: UIImageView {
     static let size = CGSize(width: 18, height: 16)
 
@@ -91,11 +51,7 @@ final class TerminalMirrorIndicatorUIView: UIImageView {
     required init?(coder: NSCoder) { nil }
 
     func apply(_ presentation: TerminalMirrorIndicatorPresentation) {
-        image = UIImage(
-            systemName: "terminal.fill",
-            withConfiguration: UIImage.SymbolConfiguration(textStyle: .caption2)
-                .applying(UIImage.SymbolConfiguration(weight: .semibold))
-        )
+        image = .scaledSymbol("terminal.fill", style: .caption2, weight: .semibold)
         tintColor = UIColor(presentation.color)
         accessibilityLabel = presentation.accessibilityLabel
         isAnimated = presentation.isAnimated
@@ -107,9 +63,12 @@ final class TerminalMirrorIndicatorUIView: UIImageView {
         updateBreathing()
     }
 
+    /// A running breath keeps going across reapplies, so frequent updates do not restart it.
     private func updateBreathing() {
+        let breathes = isAnimated && !UIAccessibility.isReduceMotionEnabled && window != nil
+        if breathes, layer.animation(forKey: "breathing") != nil { return }
         layer.removeAnimation(forKey: "breathing")
-        guard isAnimated, !UIAccessibility.isReduceMotionEnabled, window != nil else {
+        guard breathes else {
             alpha = 0.88
             return
         }

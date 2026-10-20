@@ -237,6 +237,7 @@ final class SessionThreadAgentClusterView: UIStackView {
 
     private static func styleCount(_ label: UILabel) {
         label.font = .scaled(.caption2, monospacedDigits: true)
+        label.adjustsFontForContentSizeCategory = true
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
     }
 }

@@ -728,7 +728,7 @@ final class ChatTitleView: UIView {
     )
     private let nameLabel = ExtensionChromeFont.label(.subheadline, .semibold)
     private let costLabel = UILabel()
-    private let mirror = TerminalMirrorGlyphView()
+    private let mirror = TerminalMirrorIndicatorUIView()
     private let durableLabel = ExtensionChromeFont.label(.caption2, .semibold)
     private let subtitleLabel = ExtensionChromeFont.label(.caption2)
     private var maxWidth: NSLayoutConstraint?
@@ -858,47 +858,6 @@ final class ChatTitleView: UIView {
         } else {
             piTile.backgroundColor = colors.comment.withAlphaComponent(0.10)
             piIcon.apply(.piAvatar, colors: colors)
-        }
-    }
-}
-
-/// The pi-tui mirror mark: a terminal glyph, green and breathing while the
-/// mirror is connected, gray while it is offline.
-private final class TerminalMirrorGlyphView: UIImageView {
-    private var breathing = false
-
-    init() {
-        super.init(frame: .zero)
-        contentMode = .right
-        isAccessibilityElement = true
-        NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 18),
-            heightAnchor.constraint(equalToConstant: 16),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func apply(_ presentation: TerminalMirrorIndicatorPresentation) {
-        image = ExtensionChromeFont.symbol("terminal.fill", .caption2, .semibold, color: UIColor(presentation.color))
-        accessibilityLabel = presentation.accessibilityLabel
-        let animates = presentation.isAnimated && !UIAccessibility.isReduceMotionEnabled
-        guard animates != breathing || layer.animation(forKey: "breathing") == nil else { return }
-        breathing = animates
-        layer.removeAnimation(forKey: "breathing")
-        if animates {
-            alpha = 0.90
-            let pulse = CABasicAnimation(keyPath: "opacity")
-            pulse.fromValue = 0.90
-            pulse.toValue = 0.98
-            pulse.duration = 2.4
-            pulse.autoreverses = true
-            pulse.repeatCount = .infinity
-            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            layer.add(pulse, forKey: "breathing")
-        } else {
-            alpha = 0.88
         }
     }
 }
