@@ -19,29 +19,6 @@ struct ComposerBarTests {
         }
     }
 
-    @Test("The chat composer offers Live Voice only when the server advertises it")
-    func liveVoiceEntryFollowsServerCapability() {
-        let (connection, _) = makeTestConnection(sessionId: "live-voice-entry")
-        let chat = ChatViewController(
-            sessionId: "live-voice-entry",
-            connection: connection,
-            navigation: AppNavigation()
-        )
-
-        // A server older than 0.53.0, or one whose voice backend is not set up, advertises nothing.
-        connection.setSplitStreamCapabilitiesForTesting(liveVoice: false)
-        #expect(!connection.liveVoiceAvailable)
-        #expect(chat.liveVoiceEntry == nil)
-
-        connection.setSplitStreamCapabilitiesForTesting(liveVoice: true)
-        #expect(connection.liveVoiceAvailable)
-        #expect(chat.liveVoiceEntry != nil)
-
-        // The next connect reads /server/info again; a backend that went away hides the entry.
-        connection.setSplitStreamCapabilitiesForTesting(liveVoice: false)
-        #expect(chat.liveVoiceEntry == nil)
-    }
-
     /// Chrome updates run inside a rotation's animation. Empty updates that
     /// hide an already hidden panel must not keep it hidden once it has rows.
     @Test("Suggestion panel shows on the first update after animated empty updates")

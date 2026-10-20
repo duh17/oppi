@@ -31,7 +31,8 @@ extension QuickSessionModel {
             loadStoredDraft()
         }
 
-        if startsLiveVoice {
+        // With the experiment off no call starts, so there is no server answer to wait for.
+        if startsLiveVoice, AppPreferences.Experiments.liveVoiceEnabled {
             await awaitServerCatalog(serverId: launchContext?.serverId ?? coordinator.activeServerId)
             if Task.isCancelled { return }
         }
@@ -117,6 +118,12 @@ extension QuickSessionModel {
     /// has its target, exactly as if the user had tapped Live Voice. Anything that keeps it
     /// from launching stays on screen as the sheet's error, with the sheet open to fix it.
     private func startRequestedLiveVoice(requestedAgentId: String?) {
+        // The Live Voice control and the Shortcuts open Quick Session before they can read
+        // Settings, so a call asked for with the experiment off ends here, with the reason.
+        guard AppPreferences.Experiments.liveVoiceEnabled else {
+            error = "Live Voice is an experiment. Turn it on in Settings → Experiments."
+            return
+        }
         // The call starts unattended, so it starts only where it was asked to: never in a
         // fallback workspace or with another Agent the user did not see picked.
         guard liveVoicePickIsRequested, selectedWorkspace != nil else {

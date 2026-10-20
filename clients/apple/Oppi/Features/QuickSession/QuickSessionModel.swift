@@ -302,10 +302,11 @@ final class QuickSessionModel {
         return coordinator.activeConnection
     }
 
-    /// Starts the session and opens it straight into a Live Voice call; none while the
-    /// selected server's voice backend is not set up.
+    /// Starts the session and opens it straight into a Live Voice call; none while the Live
+    /// Voice experiment is off or the selected server's voice backend is not set up.
     var liveVoiceEntry: (() -> Void)? {
-        guard selectedServerConnection()?.liveVoiceAvailable == true else { return nil }
+        guard AppPreferences.Experiments.liveVoiceEnabled,
+              selectedServerConnection()?.liveVoiceAvailable == true else { return nil }
         return { [weak self] in self?.handleSend(startsLiveVoice: true) }
     }
 

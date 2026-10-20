@@ -85,9 +85,13 @@ struct SettingsView: View {
                     SettingsPrivacyPage()
                 }
                 .accessibilityIdentifier("settings.row.privacy")
-                SettingsIndexRow("Experiments", systemImage: "flask", value: experimentsSummary) {
-                    SettingsExperimentsPage()
+                SettingsIndexActionRow(value: experimentsSummary) {
+                    navigator.push(SettingsExperimentsViewController(navigation: navigation))
+                } label: {
+                    SettingsRowLabel("Experiments", systemImage: "flask")
                 }
+                .accessibilityLabel("Experiments")
+                .accessibilityValue(experimentsSummary)
                 .accessibilityIdentifier("settings.row.experiments")
                 SettingsIndexRow("Storage & About", systemImage: "internaldrive", value: cacheSizeText) {
                     SettingsStoragePage()
@@ -176,7 +180,7 @@ struct SettingsView: View {
     }
 
     private var experimentsSummary: String {
-        let count = SettingsExperimentsPage.enabledCount(
+        let count = SettingsExperimentsViewController.enabledCount(
             sessionThreadsEnabled: navigation.sessionThreadsEnabled
         )
         return "\(count) on"

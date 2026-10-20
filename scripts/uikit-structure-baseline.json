@@ -496,9 +496,6 @@
     "clients/apple/Oppi/Features/Settings/SettingsChatPage.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Settings/SettingsExperimentsPage.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Settings/SettingsGeneralPage.swift": {
       "import SwiftUI": 1
     },

@@ -1913,10 +1913,12 @@ final class ChatViewController: UIViewController {
 
     var liveVoiceCallOwnsMic: Bool { liveVoiceController.isLive }
 
-    /// The composer's Live Voice entry: none during a call, for a terminal Pi mirror, which
-    /// cannot answer out loud, or when the server's voice backend is not set up.
+    /// The composer's Live Voice entry: none while the Live Voice experiment is off, during a
+    /// call, for a terminal Pi mirror, which cannot answer out loud, or when the server's voice
+    /// backend is not set up.
     var liveVoiceEntry: (() -> Void)? {
-        guard connection.liveVoiceAvailable, !liveVoiceCallOwnsMic, session?.runtime != .piTui else {
+        guard AppPreferences.Experiments.liveVoiceEnabled, connection.liveVoiceAvailable,
+              !liveVoiceCallOwnsMic, session?.runtime != .piTui else {
             return nil
         }
         return { [weak self] in self?.startLiveVoice() }
