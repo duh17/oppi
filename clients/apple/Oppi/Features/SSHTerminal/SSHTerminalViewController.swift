@@ -1107,7 +1107,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             HerdrAgentsViewController(monitor: herdr, channel: channel),
             presentation: .sheet.detents([.medium(), .large()]).inNavigation(),
             from: self,
-            theme: HostFactory.root(near: self)?.themeStore,
             onDismiss: { [weak self] in
                 self?.presentingHerdr = false
                 self?.herdr.watching = false
@@ -1127,7 +1126,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             presentation: .popover.keepsPopoverInCompactWidth(),
             from: self,
             sourceView: statusGlyph,
-            theme: HostFactory.root(near: self)?.themeStore,
             onDismiss: { [weak self] in self?.presentingStatusDetail = false }
         )
     }

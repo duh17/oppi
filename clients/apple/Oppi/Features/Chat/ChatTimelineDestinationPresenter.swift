@@ -30,9 +30,7 @@ struct ChatTimelineDestinationPresenter {
         Router.present(
             viewer,
             presentation: .largeViewer(for: request.sourceView.traitCollection).inNavigation(),
-            from: request.presenter,
-            theme: HostFactory.root(near: request.presenter)?.themeStore,
-            onDismiss: nil
+            from: request.presenter
         )
     }
 
@@ -74,9 +72,7 @@ struct ChatTimelineDestinationPresenter {
         Router.present(
             viewer,
             presentation: .largeViewer(for: request.sourceView.traitCollection).inNavigation(),
-            from: request.presenter,
-            theme: HostFactory.root(near: request.presenter)?.themeStore,
-            onDismiss: nil
+            from: request.presenter
         )
     }
 

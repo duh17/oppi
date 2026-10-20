@@ -968,7 +968,6 @@ final class AskCardViewController: UIViewController {
                 cornerRadius: 28
             ),
             from: self,
-            theme: HostFactory.root(near: self)?.themeStore,
             onDismiss: { [weak self] in
                 self?.expanded = nil
             }

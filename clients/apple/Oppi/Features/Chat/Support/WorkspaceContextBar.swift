@@ -1331,7 +1331,6 @@ final class WorkspaceContextBarView: UIView {
             screen,
             presentation: .sheet.inNavigation(),
             from: presenter,
-            theme: HostFactory.root(near: self)?.themeStore,
             onDismiss: { [weak self] in self?.presentedReview = nil }
         )
     }

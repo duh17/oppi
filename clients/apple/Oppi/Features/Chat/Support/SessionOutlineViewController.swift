@@ -667,7 +667,6 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
             sheet,
             presentation: .sheet.inNavigation(),
             from: self,
-            theme: HostFactory.root(near: self)?.themeStore,
             onDismiss: { [weak self] in
                 // Cancel and swipe-down drop the pending switch; Navigate
                 // has already taken it.

@@ -888,7 +888,7 @@ final class AgentNativeEditViewController: UIViewController, UICollectionViewDel
                 AppPreferences.RecentModels.record(draft.model)
             }
         )
-        Router.present(picker, presentation: .sheet.inNavigation(), from: self, theme: root.themeStore, onDismiss: nil)
+        Router.present(picker, presentation: .sheet.inNavigation(), from: self, theme: root.themeStore)
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {

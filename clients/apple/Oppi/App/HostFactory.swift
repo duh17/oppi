@@ -118,21 +118,6 @@ extension Router {
         )
         return screen
     }
-
-    /// Hosts `content` as a screen and pushes it onto the navigation
-    /// controller that holds `host`, with the app root published above it.
-    /// Presenter-local values go on `content` explicitly.
-    static func push<Content: View>(
-        from host: UIViewController,
-        bars: ScreenBars = ScreenBars(),
-        @ViewBuilder content: @escaping () -> Content
-    ) {
-        guard let root = HostFactory.root(near: host) else {
-            assertionFailure("Router.push needs appRootEnvironment(_:) above \(type(of: host))")
-            return
-        }
-        push(HostFactory.screen(root: root, bars: bars, content: content), from: host)
-    }
 }
 
 extension ThemeStore {
@@ -378,23 +363,6 @@ final class ScreenNavigator {
         let navigator = ScreenNavigator(root: root)
         navigator.controller = screen
         return navigator
-    }
-
-    /// Presents a modal screen above this one. `content` runs in the new
-    /// screen's graph; `onDismiss` runs after any dismissal.
-    func present<Content: View>(
-        _ presentation: ModalPresentation = .sheet,
-        onDismiss: (() -> Void)? = nil,
-        @ViewBuilder content: @escaping () -> Content
-    ) {
-        guard let controller, let root else { return unattached("present") }
-        Router.present(
-            root: root,
-            presentation: presentation,
-            from: controller,
-            onDismiss: onDismiss,
-            content: content
-        )
     }
 
     /// Pushes a screen onto the navigation controller that holds this one.

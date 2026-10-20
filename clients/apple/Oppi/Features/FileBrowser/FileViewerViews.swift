@@ -142,9 +142,7 @@ final class ReviewCommentStashFloatingButton {
         Router.present(
             sheet,
             presentation: .sheet.inNavigation(),
-            from: presenter,
-            theme: HostFactory.root(near: presenter)?.themeStore,
-            onDismiss: nil
+            from: presenter
         )
         self.sheet = sheet
     }

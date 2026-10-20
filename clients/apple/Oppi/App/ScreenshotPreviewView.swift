@@ -424,6 +424,7 @@ private struct RouterRoutesMenu: View {
     @Environment(ServerConnection.self) private var connection
     @State private var dismissedModals = 0
     @State private var editingAgent: StoredAgentDefinition?
+    @State private var editsSchedule = false
     @State private var saves = RouterRoutesSaves.shared
 
     var body: some View {
@@ -453,16 +454,17 @@ private struct RouterRoutesMenu: View {
             )
 
             Button("Edit Schedule") {
-                navigator.present(
-                    .fullScreen.inNavigation(),
-                    onDismiss: { dismissedModals += 1 },
-                    content: {
-                        ScheduleNativeEditView(schedule: RouterRoutesFixtures.schedule) { _, _ in }
-                            .environment(\.apiClient, RouterRoutesFixtures.api)
-                    }
-                )
+                editsSchedule = true
             }
             .accessibilityIdentifier("routerRoutes.editSchedule")
+            .routerModal(
+                isPresented: $editsSchedule,
+                presentation: .fullScreen.inNavigation(),
+                onDismiss: { dismissedModals += 1 }
+            ) {
+                ScheduleNativeEditView(schedule: RouterRoutesFixtures.schedule) { _, _ in }
+                    .environment(\.apiClient, RouterRoutesFixtures.api)
+            }
 
             Section("Last save sent") {
                 Text(saves.lastSave)

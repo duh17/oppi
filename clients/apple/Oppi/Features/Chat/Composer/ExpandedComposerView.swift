@@ -740,9 +740,7 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
             picker,
             presentation: .popover.arrowDirections(.down).keepsPopoverInCompactWidth(),
             from: self,
-            sourceView: thinkingButton,
-            theme: HostFactory.root(near: self)?.themeStore,
-            onDismiss: nil
+            sourceView: thinkingButton
         )
     }
 

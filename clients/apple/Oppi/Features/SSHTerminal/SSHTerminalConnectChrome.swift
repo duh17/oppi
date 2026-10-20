@@ -139,7 +139,6 @@ final class SSHTerminalConnectChrome {
             screen,
             presentation: .sheet.detents([.medium()]).inNavigation(),
             from: host,
-            theme: HostFactory.root(near: host)?.themeStore,
             onDismiss: { [weak self] in
                 self?.passwordScreen = nil
                 self?.session.password = ""
@@ -180,7 +179,6 @@ final class SSHTerminalConnectChrome {
             screen,
             presentation: .sheet.detents([.medium(), .large()]).inNavigation(),
             from: host,
-            theme: HostFactory.root(near: host)?.themeStore,
             onDismiss: { [weak self] in
                 self?.trustScreen = nil
             }

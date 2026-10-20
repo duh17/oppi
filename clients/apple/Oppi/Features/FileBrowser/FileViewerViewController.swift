@@ -1366,7 +1366,6 @@ final class FileViewerViewController: UIViewController {
             review,
             presentation: .sheet.inNavigation(),
             from: self,
-            theme: HostFactory.root(near: self)?.themeStore,
             onDismiss: { [weak self] in self?.conflictReview = nil }
         )
     }

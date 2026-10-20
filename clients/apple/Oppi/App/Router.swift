@@ -202,20 +202,21 @@ enum Router {
     ///
     /// `screen` must be a `RouterModalContainer` unless the presentation wraps
     /// it in navigation. `onDismiss` runs after UIKit finished dismissing it,
-    /// however that happened. `theme` drives the navigation container's color
-    /// scheme; hosted screens follow the theme themselves.
+    /// however that happened. The navigation container follows the color
+    /// scheme of `theme`, else of the app root above `presenter`; hosted
+    /// screens follow the theme themselves.
     static func present(
         _ screen: UIViewController,
         presentation: ModalPresentation,
         from presenter: UIViewController,
         sourceView: UIView? = nil,
-        theme: ThemeStore?,
-        onDismiss: (() -> Void)?
+        theme: ThemeStore? = nil,
+        onDismiss: (() -> Void)? = nil
     ) {
         let container: RouterModalContainer
         if presentation.navigation != nil {
             let navigation = RouterNavigationController(rootViewController: screen)
-            if let theme {
+            if let theme = theme ?? HostFactory.root(near: presenter)?.themeStore {
                 navigation.interfaceStyle = { theme.userInterfaceStyle }
             }
             container = navigation

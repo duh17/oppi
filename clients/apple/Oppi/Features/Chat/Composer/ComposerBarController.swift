@@ -2256,7 +2256,6 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             presentation: .popover.arrowDirections(.down).keepsPopoverInCompactWidth(),
             from: self,
             sourceView: source,
-            theme: HostFactory.root(near: self)?.themeStore,
             onDismiss: { [weak self] in
                 self?.presentedPicker = nil
                 self?.presentedActionID = nil

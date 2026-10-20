@@ -793,14 +793,16 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     // review scope go on explicitly.
 
     private func openSkill(_ name: String) {
+        guard let root = HostFactory.root(near: self) else { return }
         let cwd = model.skillCwd
         let connection = connection
         let scope = reviewCommentSelectionScope
-        Router.push(from: self) {
+        let page = HostFactory.screen(root: root) {
             SkillDetailView(skillName: name, cwd: cwd)
                 .withServerScopedEnvironment(connection)
                 .environment(\.reviewCommentSelectionScope, scope)
         }
+        Router.push(page, from: self)
     }
 
     private func openHostFile(_ path: String) {
@@ -856,7 +858,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
             onSessionPrepared: { [weak self] target in self?.openEditSession(target) }
         )
         editSheet = sheet
-        Router.present(sheet, presentation: .sheet.inNavigation(), from: self, theme: root.themeStore, onDismiss: nil)
+        Router.present(sheet, presentation: .sheet.inNavigation(), from: self)
     }
 
     private func openEditSession(_ target: WorkspaceSessionNavTarget) {

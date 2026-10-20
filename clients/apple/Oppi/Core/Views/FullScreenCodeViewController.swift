@@ -1330,9 +1330,7 @@ final class FullScreenCodeViewController: UIViewController {
         Router.present(
             sheet,
             presentation: .pageSheet.inNavigation(),
-            from: self,
-            theme: HostFactory.root(near: self)?.themeStore,
-            onDismiss: nil
+            from: self
         )
         presentedStashSheet = sheet
     }
