@@ -17,7 +17,6 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
     private var expectedPid: String?
 
     override var e2eStartsInAutoCreatedChat: Bool { true }
-    override var e2eChatWorkspaceName: String { workspaceName }
     override var e2eRequiresFreshLaunch: Bool { true }
 
     override func configureE2ELaunch(_ application: XCUIApplication) {

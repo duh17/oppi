@@ -72,10 +72,11 @@ class E2ETestCase: XCTestCase {
         .portrait
     }
 
-    /// The workspace `e2eStartsInAutoCreatedChat` expects the chat to be in.
-    /// Override in a class whose launch opens its own workspace.
-    var e2eChatWorkspaceName: String {
-        "e2e-workspace"
+    /// The workspace `e2eStartsInAutoCreatedChat` expects the chat to be in:
+    /// the one the launch opens, so a class that opens its own workspace in
+    /// `configureE2ELaunch` needs nothing more.
+    private var e2eChatWorkspaceName: String {
+        app.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] ?? "e2e-workspace"
     }
 
     /// Override to add launch environment or arguments before the app starts.
@@ -452,7 +453,7 @@ class E2ETestCase: XCTestCase {
         dismissExtensionSheetIfNeeded(timeout: 1)
 
         if waitForChatSessionSurface(in: app, timeout: 3) {
-            if openChatIsInE2EWorkspace(), openChatIsUncovered() {
+            if try openChatIsInE2EWorkspace(), openChatIsUncovered() {
                 return
             }
             Self._app?.terminate()
@@ -479,15 +480,15 @@ class E2ETestCase: XCTestCase {
     }
 
     /// Whether the focused chat's session belongs to `e2eChatWorkspaceName`.
-    private func openChatIsInE2EWorkspace() -> Bool {
+    private func openChatIsInE2EWorkspace() throws -> Bool {
         let focused = app.staticTexts["e2e.ws.focusedSession"]
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline, !focused.exists || focused.label == "none" || focused.label.isEmpty {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        guard focused.exists, focused.label != "none",
-              let session = try? e2eSession(sessionId: focused.label),
-              let workspaceId = try? e2eWorkspaceId(named: e2eChatWorkspaceName) else { return false }
+        guard focused.exists, focused.label != "none" else { return false }
+        let session = try e2eSession(sessionId: focused.label)
+        let workspaceId = try e2eWorkspaceId(named: e2eChatWorkspaceName)
         return session["workspaceId"] as? String == workspaceId
     }
 
