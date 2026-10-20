@@ -27,6 +27,9 @@ final class MarkdownPrewarmer {
         textsToCache.reserveCapacity(min(Self.maxMessages, assistantTexts.count))
 
         let themeID = ThemeRuntimeState.currentThemeID()
+        // Captured with the theme: if AppFont rebuilds mid-build, these
+        // entries land under the old revision and never serve stale fonts.
+        let typographyRevision = AppFont.revision
 
         // Prefer newest assistant messages first, with conservative size limits.
         // Use utf8.count (O(1)) instead of String.count (O(n)) for size checks.
@@ -59,13 +62,22 @@ final class MarkdownPrewarmer {
         prewarmTask = Task.detached(priority: .utility) {
             for text in textsToCache {
                 if Task.isCancelled { return }
-                if MarkdownSegmentCache.shared.get(text, themeID: themeID) != nil { continue }
+                if MarkdownSegmentCache.shared.get(
+                    text,
+                    themeID: themeID,
+                    typographyRevision: typographyRevision
+                ) != nil { continue }
 
                 let blocks = parseCommonMark(text)
                 if Task.isCancelled { return }
 
                 let segments = FlatSegment.build(from: blocks, themeID: themeID)
-                MarkdownSegmentCache.shared.set(text, themeID: themeID, segments: segments)
+                MarkdownSegmentCache.shared.set(
+                    text,
+                    themeID: themeID,
+                    typographyRevision: typographyRevision,
+                    segments: segments
+                )
             }
         }
     }

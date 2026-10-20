@@ -13,7 +13,7 @@ private final class CodeLineNumberGutterView: UIView {
         let showsHighlightMarker: Bool
     }
 
-    var font: UIFont = FullScreenCodeTypography.codeFont {
+    var font: UIFont = AppFont.monoMedium {
         didSet { setNeedsDisplay() }
     }
 

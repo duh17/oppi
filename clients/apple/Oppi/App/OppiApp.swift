@@ -538,9 +538,13 @@ final class OppiApp {
         observeAppEvent(UIApplication.didReceiveMemoryWarningNotification) { app, _ in
             app.handleMemoryWarning()
         }
-        observeAppEvent(FontPreferences.didChangeNotification) { _, _ in
+        observeAppEvent(AppFont.didRebuildNotification) { _, _ in
             MarkdownSegmentCache.shared.clearAll()
             ToolRowRenderCache.evictAll()
+        }
+        // Message fonts bake the Dynamic Type size in at rebuild.
+        observeAppEvent(UIContentSizeCategory.didChangeNotification) { _, _ in
+            AppFont.rebuild()
         }
         observeAppEvent(.inviteDeepLinkTapped) { app, notification in
             guard let url = notification.object as? URL else { return }

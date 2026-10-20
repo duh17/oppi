@@ -61,7 +61,7 @@ enum ToolRowTextRenderer {
         return ANSIOutputPresentation(
             attributedText: withMonospaceFont(
                 SyntaxHighlighter.highlight(text, language: language),
-                font: ToolFont.regular
+                font: AppFont.monoMedium
             ),
             plainText: nil
         )
@@ -104,8 +104,8 @@ enum ToolRowTextRenderer {
         let lineNumberColor = UIColor(palette.comment).withAlphaComponent(0.55)
         let separatorColor = UIColor(palette.comment).withAlphaComponent(0.35)
         let foregroundColor = UIColor(palette.fg)
-        let codeFont = ToolFont.regular
-        let lineNumberFont = ToolFont.small
+        let codeFont = AppFont.monoMedium
+        let lineNumberFont = AppFont.monoSmall
 
         // Phase 1: Build the full guttered text using NSMutableString (avoids
         // Swift String += copy-on-write overhead). Track per-line offsets manually
@@ -257,7 +257,7 @@ enum ToolRowTextRenderer {
     ) -> NSAttributedString {
         withMonospaceFont(
             SyntaxHighlighter.highlight(text, language: .shell, themeID: themeID),
-            font: ToolFont.regular
+            font: AppFont.monoMedium
         )
     }
 
@@ -279,7 +279,7 @@ enum ToolRowTextRenderer {
             return shellHighlighted(text, themeID: themeID)
         }
 
-        let font = ToolFont.regular
+        let font = AppFont.monoMedium
         let result = NSMutableAttributedString()
 
         for segment in segments {
@@ -317,7 +317,7 @@ enum ToolRowTextRenderer {
         let base = NSMutableAttributedString(
             string: title,
             attributes: [
-                .font: ToolFont.title,
+                .font: AppFont.monoMediumSemibold,
                 .foregroundColor: UIColor(Color.themeFg),
             ]
         )

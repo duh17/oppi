@@ -15,7 +15,7 @@ enum ToolTimelineRowRenderMetrics {
 
         guard maxLineLength > 0 else { return 1 }
 
-        let font = ToolFont.regular
+        let font = AppFont.monoMedium
         let charWidth = ("0" as NSString).size(withAttributes: [.font: font]).width
         return ceil(charWidth * CGFloat(maxLineLength)) + 12
     }

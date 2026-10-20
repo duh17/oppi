@@ -176,7 +176,7 @@ final class NativeExpandedReadMediaView: UIView {
 
         if let filePath, !filePath.isEmpty, !(hasRenderedImage && hasImageReadBoilerplate), !(hasRenderedVideo && hasVideoReadBoilerplate) {
             let pathLabel = UILabel()
-            pathLabel.font = ToolFont.small
+            pathLabel.font = AppFont.monoSmall
             pathLabel.textColor = UIColor(palette.comment)
             pathLabel.numberOfLines = 1
             pathLabel.lineBreakMode = .byTruncatingMiddle
@@ -186,7 +186,7 @@ final class NativeExpandedReadMediaView: UIView {
 
         if !displayText.isEmpty {
             let textLabel = UILabel()
-            textLabel.font = ToolFont.regular
+            textLabel.font = AppFont.monoMedium
             textLabel.textColor = UIColor(isError ? palette.red : palette.fg)
             textLabel.numberOfLines = 0
             textLabel.text = String(displayText.prefix(3_000))
@@ -197,7 +197,7 @@ final class NativeExpandedReadMediaView: UIView {
         if totalImageCount > 0 {
             if totalImageCount > 1 || !displayText.isEmpty {
                 let countLabel = UILabel()
-                countLabel.font = ToolFont.smallBold
+                countLabel.font = AppFont.monoSmallSemibold
                 countLabel.textColor = UIColor(palette.comment)
                 countLabel.text = totalImageCount == 1 ? "Image" : "Images (\(totalImageCount))"
                 contentStack.addArrangedSubview(countLabel)
@@ -226,7 +226,7 @@ final class NativeExpandedReadMediaView: UIView {
             }
             if totalImageCount > renderedCount {
                 let more = UILabel()
-                more.font = ToolFont.small
+                more.font = AppFont.monoSmall
                 more.textColor = UIColor(palette.comment)
                 more.text = "+\(totalImageCount - renderedCount) more image attachment(s)"
                 contentStack.addArrangedSubview(more)
@@ -236,7 +236,7 @@ final class NativeExpandedReadMediaView: UIView {
         let totalVideoCount = videoAttachments.count + (shouldRenderFetchedVideo ? 1 : 0)
         if totalVideoCount > 0 {
             let countLabel = UILabel()
-            countLabel.font = ToolFont.smallBold
+            countLabel.font = AppFont.monoSmallSemibold
             countLabel.textColor = UIColor(palette.comment)
             countLabel.text = totalVideoCount == 1 ? "Video" : "Videos (\(totalVideoCount))"
             contentStack.addArrangedSubview(countLabel)
@@ -286,7 +286,7 @@ final class NativeExpandedReadMediaView: UIView {
 
             if totalVideoCount > renderedCount {
                 let more = UILabel()
-                more.font = ToolFont.small
+                more.font = AppFont.monoSmall
                 more.textColor = UIColor(palette.comment)
                 more.text = "+\(totalVideoCount - renderedCount) more video attachment(s)"
                 contentStack.addArrangedSubview(more)
@@ -295,7 +295,7 @@ final class NativeExpandedReadMediaView: UIView {
 
         if !parsed.audio.isEmpty {
             let countLabel = UILabel()
-            countLabel.font = ToolFont.smallBold
+            countLabel.font = AppFont.monoSmallSemibold
             countLabel.textColor = UIColor(palette.comment)
             countLabel.text = "Audio (\(parsed.audio.count))"
             contentStack.addArrangedSubview(countLabel)
@@ -315,7 +315,7 @@ final class NativeExpandedReadMediaView: UIView {
             }
             if parsed.audio.count > 6 {
                 let more = UILabel()
-                more.font = ToolFont.small
+                more.font = AppFont.monoSmall
                 more.textColor = UIColor(palette.comment)
                 more.text = "+\(parsed.audio.count - 6) more audio attachment(s)"
                 contentStack.addArrangedSubview(more)
@@ -324,7 +324,7 @@ final class NativeExpandedReadMediaView: UIView {
 
         if displayText.isEmpty && displayImages.isEmpty && imageAttachments.isEmpty && videoAttachments.isEmpty && parsed.audio.isEmpty && !shouldRenderFetchedSVG && !shouldRenderFetchedVideo {
             let empty = UILabel()
-            empty.font = ToolFont.regular
+            empty.font = AppFont.monoMedium
             empty.textColor = UIColor(palette.comment)
             empty.numberOfLines = 0
             empty.text = "No readable media output"
@@ -369,17 +369,17 @@ final class NativeExpandedReadMediaView: UIView {
         svgModeControl.backgroundColor = UIColor(palette.bgDark)
         svgModeControl.setTitleTextAttributes([
             .foregroundColor: UIColor(palette.comment),
-            .font: ToolFont.smallBold,
+            .font: AppFont.monoSmallSemibold,
         ], for: .normal)
         svgModeControl.setTitleTextAttributes([
             .foregroundColor: UIColor(palette.fg),
-            .font: ToolFont.smallBold,
+            .font: AppFont.monoSmallSemibold,
         ], for: .selected)
     }
 
     private func makeSourceCard(source: String, palette: ThemePalette) -> UIView {
         let label = UILabel()
-        label.font = ToolFont.small
+        label.font = AppFont.monoSmall
         label.textColor = UIColor(palette.fg)
         label.numberOfLines = 0
         label.lineBreakMode = .byCharWrapping
@@ -462,10 +462,10 @@ private func configureExpandedMediaAttachmentRow(
     labelsStack.alignment = .leading
     labelsStack.spacing = 2
 
-    titleLabel.font = ToolFont.regular
+    titleLabel.font = AppFont.monoMedium
     titleLabel.numberOfLines = 1
     titleLabel.lineBreakMode = .byTruncatingMiddle
-    subtitleLabel.font = ToolFont.small
+    subtitleLabel.font = AppFont.monoSmall
     subtitleLabel.numberOfLines = 1
     subtitleLabel.lineBreakMode = .byTruncatingTail
 
@@ -1234,7 +1234,7 @@ final class NativeExpandedInlineImageView: UIView {
 
         failureLabel.translatesAutoresizingMaskIntoConstraints = false
         failureLabel.text = "Image unavailable"
-        failureLabel.font = ToolFont.small
+        failureLabel.font = AppFont.monoSmall
         failureLabel.textColor = UIColor(Color.themeComment)
         failureLabel.textAlignment = .center
         failureLabel.isHidden = true
@@ -1242,7 +1242,7 @@ final class NativeExpandedInlineImageView: UIView {
 
         overflowLabel.translatesAutoresizingMaskIntoConstraints = false
         overflowLabel.text = "Tap to open full image"
-        overflowLabel.font = ToolFont.small
+        overflowLabel.font = AppFont.monoSmall
         overflowLabel.textColor = UIColor(Color.themeFg)
         overflowLabel.backgroundColor = UIColor(ThemeSurfaceStyle.resolve(.opaqueCard).fill)
         overflowLabel.layer.cornerRadius = 6

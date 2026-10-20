@@ -918,16 +918,15 @@ enum CodeWrapControl {
 }
 
 enum FullScreenCodeTypography {
-    static var codeFont: UIFont { AppFont.monoMedium }
-
     static func codeFont(for preferences: FullScreenReaderPreferences) -> UIFont {
-        scaledFont(codeFont, scale: preferences.textScale)
+        scaledFont(AppFont.monoMedium, scale: preferences.textScale)
     }
 
+    /// The reader scale is already clamped by `FullScreenReaderPreferences`,
+    /// so the result stays proportional at every Dynamic Type size.
     static func scaledFont(_ font: UIFont, scale: CGFloat) -> UIFont {
         guard scale != 1 else { return font }
-        let pointSize = min(40, max(8, font.pointSize * scale))
-        return font.withSize(pointSize)
+        return font.withSize(font.pointSize * scale)
     }
 }
 
@@ -944,7 +943,7 @@ enum FullScreenDiffTextStyle {
         let mutable = NSMutableAttributedString(attributedString: attributedText)
         let fullRange = NSRange(location: 0, length: mutable.length)
         attributedText.enumerateAttribute(.font, in: fullRange) { value, range, _ in
-            let font = (value as? UIFont) ?? FullScreenCodeTypography.codeFont
+            let font = (value as? UIFont) ?? AppFont.monoMedium
             mutable.addAttribute(
                 .font,
                 value: FullScreenCodeTypography.scaledFont(font, scale: preferences.textScale),
@@ -1022,7 +1021,7 @@ protocol FullScreenReaderConfigurable: AnyObject {
 
 func fullScreenAttributedCodeText(
     from attributed: NSAttributedString,
-    font: UIFont = FullScreenCodeTypography.codeFont
+    font: UIFont = AppFont.monoMedium
 ) -> NSAttributedString {
     let mutable = NSMutableAttributedString(attributedString: attributed)
     let fullRange = NSRange(location: 0, length: mutable.length)
@@ -1118,7 +1117,7 @@ enum FullScreenLineAnchorLayout {
 
         let layoutManager = textView.layoutManager
         layoutManager.ensureLayout(for: textView.textContainer)
-        let font = textView.font ?? FullScreenCodeTypography.codeFont
+        let font = textView.font ?? AppFont.monoMedium
         let viewportWidth = max(
             1,
             textView.bounds.width - textView.textContainerInset.left - textView.textContainerInset.right

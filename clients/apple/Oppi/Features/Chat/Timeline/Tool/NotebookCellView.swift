@@ -345,7 +345,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         }
         if !plan.metadata.isEmpty {
             let meta = UILabel()
-            meta.font = scaled(ToolFont.small)
+            meta.font = scaled(AppFont.monoSmall)
             meta.textColor = UIColor(palette.fgDim)
             meta.numberOfLines = isReader ? 0 : 2
             meta.text = plan.metadata.joined(separator: "\n")
@@ -631,7 +631,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         // Name and arguments share one label so they wrap together in the
         // reader and truncate together inline.
         let text = NSMutableAttributedString(string: call.name, attributes: [
-            .font: scaled(ToolFont.title),
+            .font: scaled(AppFont.monoMediumSemibold),
             .foregroundColor: UIColor(palette.fg),
         ])
         if let arguments = call.arguments {
@@ -652,7 +652,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         column.spacing = 2
         if let error = call.error {
             let errorLabel = UILabel()
-            errorLabel.font = scaled(ToolFont.small)
+            errorLabel.font = scaled(AppFont.monoSmall)
             errorLabel.textColor = UIColor(palette.red)
             errorLabel.numberOfLines = isReader ? 0 : 2
             errorLabel.text = error
@@ -662,7 +662,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         row.addArrangedSubview(column)
         if let duration = call.duration {
             let time = UILabel()
-            time.font = scaled(ToolFont.small)
+            time.font = scaled(AppFont.monoSmall)
             time.textColor = UIColor(palette.comment)
             time.text = duration
             time.setContentHuggingPriority(.required, for: .horizontal)
@@ -678,7 +678,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
     // MARK: - Pieces
 
     /// Code and printed output. The reader scales it with Viewing Options.
-    private var codeFont: UIFont { scaled(ToolFont.regular) }
+    private var codeFont: UIFont { scaled(AppFont.monoMedium) }
 
     private func scaled(_ font: UIFont) -> UIFont {
         isReader ? FullScreenCodeTypography.scaledFont(font, scale: readerPreferences.textScale) : font
@@ -726,7 +726,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
     private func sectionCaption(_ text: String, color: Color) -> UILabel {
         let label = UILabel()
         label.attributedText = NSAttributedString(string: text, attributes: [
-            .font: scaled(ToolFont.smallBold),
+            .font: scaled(AppFont.monoSmallSemibold),
             .foregroundColor: UIColor(color),
             .kern: 1.2,
         ])
@@ -740,7 +740,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
 
     private func caption(_ text: String, color: Color) -> UILabel {
         let label = UILabel()
-        label.font = scaled(ToolFont.small)
+        label.font = scaled(AppFont.monoSmall)
         label.textColor = UIColor(color)
         label.numberOfLines = 0
         label.text = text

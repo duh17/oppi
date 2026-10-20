@@ -1,44 +1,78 @@
 import SwiftUI
 import UIKit
 
-/// Centralized font constants for the entire app.
+/// The one owner of resolved UIKit fonts for reading surfaces.
 ///
-/// UIKit code uses `AppFont.mono*` / `AppFont.system*` constants.
-/// SwiftUI code uses `Font.app*` constants (defined in extension below).
-/// Tool-specific code can continue using `ToolFont.*` which delegates here.
+/// Two families of roles, each with one in-app size control:
+/// - Code roles (`mono*`): the selected code font at fixed 100% sizes times
+///   Code Text Size. Dynamic Type does not scale them; dense code, diffs,
+///   and the terminal grid use the in-app control instead.
+/// - Message roles (`message*`): system body (Dynamic Type) times Message
+///   Text Size, with headings and inline code as fixed ratios of the body.
 ///
-/// Monospaced fonts are dynamic — rebuilt when the user changes font preferences.
-/// System fonts remain static.
+/// Full-screen readers multiply these by their own reader text scale.
+/// SwiftUI chrome uses the `Font.app*` constants below.
 enum AppFont {
-    // MARK: - Monospaced (dynamic, based on FontPreferences)
+    // MARK: - Code roles (selected code font × Code Text Size)
     //
     // `nonisolated(unsafe)` because these are written only from @MainActor
-    // (rebuild()) and read from @MainActor UI code. UIFont is immutable once
-    // created, so a stale read during a font-preference transition is harmless.
+    // (rebuild()) and read from UI code plus the detached MarkdownPrewarmer.
+    // UIFont is immutable once created; the prewarmer keys its cache entries
+    // by the `revision` it captured on main, so a read that straddles a
+    // rebuild is never served as current.
 
-    /// Code-small — line numbers, counters, secondary labels
-    nonisolated(unsafe) private(set) static var monoSmall = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-    nonisolated(unsafe) private(set) static var monoSmallSemibold = UIFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
+    /// 11pt at 100% — line numbers, counters, secondary labels
+    nonisolated(unsafe) private(set) static var monoSmall = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    nonisolated(unsafe) private(set) static var monoSmallSemibold = UIFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
 
-    /// Code-regular — code content, output text, ANSI terminal, language labels
-    nonisolated(unsafe) private(set) static var mono = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-    nonisolated(unsafe) private(set) static var monoBold = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
+    /// 12pt at 100% — ANSI terminal output, labels, raw HTML blocks
+    nonisolated(unsafe) private(set) static var mono = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    nonisolated(unsafe) private(set) static var monoBold = UIFont.monospacedSystemFont(ofSize: 12, weight: .bold)
 
-    /// Code-medium — code blocks, diff content, file paths, section headers
-    nonisolated(unsafe) private(set) static var monoMedium = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-    nonisolated(unsafe) private(set) static var monoMediumBold = UIFont.monospacedSystemFont(ofSize: 12, weight: .bold)
-    nonisolated(unsafe) private(set) static var monoMediumSemibold = UIFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
+    /// 13pt at 100% — code blocks, tool output, diffs, full-screen code, terminal
+    nonisolated(unsafe) private(set) static var monoMedium = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    nonisolated(unsafe) private(set) static var monoMediumBold = UIFont.monospacedSystemFont(ofSize: 13, weight: .bold)
+    nonisolated(unsafe) private(set) static var monoMediumSemibold = UIFont.monospacedSystemFont(ofSize: 13, weight: .semibold)
 
-    /// 15pt — prompt icons, spinner characters
+    /// 14pt at 100% — the file editor
+    nonisolated(unsafe) private(set) static var monoEditor = UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+
+    /// 15pt at 100% — source shown inside rendered documents and exports
+    nonisolated(unsafe) private(set) static var monoDocument = UIFont.monospacedSystemFont(ofSize: 15, weight: .regular)
+
+    /// Fixed 15pt in the code font — prompt icons, spinner characters
     nonisolated(unsafe) private(set) static var monoLarge = UIFont.monospacedSystemFont(ofSize: 15, weight: .regular)
     nonisolated(unsafe) private(set) static var monoLargeSemibold = UIFont.monospacedSystemFont(ofSize: 15, weight: .semibold)
 
-    /// 17pt — assistant icon
-    nonisolated(unsafe) private(set) static var monoXL = UIFont.monospacedSystemFont(ofSize: 17, weight: .semibold)
+    // MARK: - Message roles (Dynamic Type body × Message Text Size)
 
     /// Message body font — system body by default, or the selected mono font
     /// when `FontPreferences.useMonoForMessages` is enabled.
     nonisolated(unsafe) private(set) static var messageBody: UIFont = .preferredFont(forTextStyle: .body)
+
+    /// Inline code inside message prose, in the code font at Apple's
+    /// subheadline-to-body ratio (15/17). It sits in a body line, so it
+    /// follows the body's Dynamic Type and Message Text Size, not Code Text Size.
+    nonisolated(unsafe) private(set) static var messageInlineCode = UIFont.monospacedSystemFont(ofSize: 15, weight: .regular)
+
+    /// Markdown headings H1–H6, sized as fixed ratios of `messageBody`
+    /// (21, 19, 17, 17, 15, 15 at a 17pt body) so hierarchy holds at every
+    /// Dynamic Type size and Message Text Size.
+    nonisolated(unsafe) private(set) static var messageHeadings: [UIFont] = makeMessageHeadings(bodySize: 17)
+
+    /// Heading font for a markdown heading level; levels past 6 use H6.
+    static func messageHeading(level: Int) -> UIFont {
+        messageHeadings[min(max(level, 1), messageHeadings.count) - 1]
+    }
+
+    /// Changes on every `rebuild()`. Render configurations that cache
+    /// attributed text compare it so a font change re-renders visible rows.
+    nonisolated(unsafe) private(set) static var revision: UInt64 = 0
+
+    /// Posted on the main thread at the end of every `rebuild()`, after the
+    /// new fonts are readable. Font consumers observe this, not the store's
+    /// preference notification, which fires before the rebuild.
+    static let didRebuildNotification = Notification.Name("AppFontDidRebuild")
 
     // MARK: - System (UIKit, non-monospaced) — these don't change
 
@@ -53,26 +87,30 @@ enum AppFont {
 
     // MARK: - Rebuild
 
-    /// Rebuild all dynamic font constants from current preferences.
-    /// Called on startup and when font preferences change.
+    /// Rebuild all dynamic font constants from current preferences and the
+    /// current Dynamic Type size. Called on startup, when font preferences
+    /// change, and when the content size category changes.
     @MainActor
     static func rebuild() {
         let family = FontPreferences.codeFont
+        // Unrounded, so every 5% step of the Code Text Size slider changes size.
+        let codeScale = FontPreferences.codeTextScale
+        func code(_ size: CGFloat, _ weight: UIFont.Weight) -> UIFont {
+            family.font(size: size * codeScale, weight: weight)
+        }
 
-        monoSmall = family.font(size: FontPreferences.codePointSize(baseSize: 10), weight: .regular)
-        monoSmallSemibold = family.font(size: FontPreferences.codePointSize(baseSize: 10), weight: .semibold)
-
-        mono = family.font(size: FontPreferences.codePointSize(baseSize: 11), weight: .regular)
-        monoBold = family.font(size: FontPreferences.codePointSize(baseSize: 11), weight: .bold)
-
-        monoMedium = family.font(size: FontPreferences.codePointSize(baseSize: 12), weight: .regular)
-        monoMediumBold = family.font(size: FontPreferences.codePointSize(baseSize: 12), weight: .bold)
-        monoMediumSemibold = family.font(size: FontPreferences.codePointSize(baseSize: 12), weight: .semibold)
+        monoSmall = code(11, .regular)
+        monoSmallSemibold = code(11, .semibold)
+        mono = code(12, .regular)
+        monoBold = code(12, .bold)
+        monoMedium = code(13, .regular)
+        monoMediumBold = code(13, .bold)
+        monoMediumSemibold = code(13, .semibold)
+        monoEditor = code(14, .regular)
+        monoDocument = code(15, .regular)
 
         monoLarge = family.font(size: 15, weight: .regular)
         monoLargeSemibold = family.font(size: 15, weight: .semibold)
-
-        monoXL = family.font(size: 17, weight: .semibold)
 
         // Message body
         let bodyFont = UIFont.preferredFont(forTextStyle: .body)
@@ -82,6 +120,17 @@ enum AppFont {
         } else {
             messageBody = bodyFont.withSize(messagePointSize)
         }
+        messageInlineCode = family.font(size: messagePointSize * 15 / 17, weight: .regular)
+        messageHeadings = makeMessageHeadings(bodySize: messagePointSize)
+        revision &+= 1
+        NotificationCenter.default.post(name: didRebuildNotification, object: nil)
+    }
+
+    private static func makeMessageHeadings(bodySize: CGFloat) -> [UIFont] {
+        let levels: [(size: CGFloat, weight: UIFont.Weight)] = [
+            (21, .bold), (19, .semibold), (17, .semibold), (17, .medium), (15, .medium), (15, .regular),
+        ]
+        return levels.map { .systemFont(ofSize: bodySize * $0.size / 17, weight: $0.weight) }
     }
 }
 
@@ -92,9 +141,6 @@ extension Font {
 
     /// 7pt bold — unread counts, context badges
     static let appBadgeCount = Font.system(size: 7, weight: .bold)
-
-    /// 7pt semibold rounded — context usage percentage
-    static let appBadgeCountRounded = Font.system(size: 7, weight: .semibold, design: .rounded)
 
     /// 8pt bold — small count badges
     static let appBadge = Font.system(size: 8, weight: .bold)
@@ -116,21 +162,8 @@ extension Font {
     /// 11pt semibold — toolbar labels, session titles
     static let appCaption = Font.system(size: 11, weight: .semibold)
 
-    /// Configured monospaced — raw/code content in SwiftUI views
-    static var appCaptionMono: Font {
-        Self.system(size: FontPreferences.codePointSize(baseSize: 11), design: .monospaced)
-    }
-
     /// 12pt regular — workspace names, context labels
     static let appLabel = Font.system(size: 12)
-
-    // -- Action / button fonts --
-
-    /// 14pt bold — secondary action buttons
-    static let appActionBold = Font.system(size: 14, weight: .bold)
-
-    /// 15pt bold — primary send buttons
-    static let appButton = Font.system(size: 15, weight: .bold)
 
     // -- Settings / section headers --
 

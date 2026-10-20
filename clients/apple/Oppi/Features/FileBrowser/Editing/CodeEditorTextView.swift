@@ -120,7 +120,7 @@ final class CodeEditorTextView: UITextView {
 
     override var font: UIFont? {
         didSet {
-            gutter.codeFont = font ?? .monospacedSystemFont(ofSize: 15, weight: .regular)
+            gutter.codeFont = font ?? AppFont.monoEditor
             updateInsets()
         }
     }
@@ -242,7 +242,7 @@ final class CodeEditorTextView: UITextView {
     }
 
     private func updateInsets() {
-        let font = self.font ?? .monospacedSystemFont(ofSize: 15, weight: .regular)
+        let font = self.font ?? AppFont.monoEditor
         let numberFont = CodeEditorGutterView.numberFont(for: font)
         let digitWidth = ("8" as NSString).size(withAttributes: [.font: numberFont]).width
         gutterWidth = showsLineNumbers ? ceil(CGFloat(digits(for: lineIndex.lineCount)) * digitWidth + 22) : 0
@@ -339,7 +339,7 @@ final class CodeEditorTextView: UITextView {
             blockCursor.isHidden = true
             return
         }
-        let font = self.font ?? .monospacedSystemFont(ofSize: 15, weight: .regular)
+        let font = self.font ?? AppFont.monoEditor
         let width = max(2, ("M" as NSString).size(withAttributes: [.font: font]).width)
         blockCursor.isHidden = false
         blockCursor.frame = CGRect(x: caret.minX, y: caret.minY, width: width, height: caret.height)
@@ -373,7 +373,7 @@ final class CodeEditorTextView: UITextView {
 /// the text changes. The view is pinned to the viewport by its text view.
 final class CodeEditorGutterView: UIView {
     weak var textView: CodeEditorTextView?
-    var codeFont = UIFont.monospacedSystemFont(ofSize: 15, weight: .regular) {
+    var codeFont = AppFont.monoEditor {
         didSet { setNeedsDisplay() }
     }
 

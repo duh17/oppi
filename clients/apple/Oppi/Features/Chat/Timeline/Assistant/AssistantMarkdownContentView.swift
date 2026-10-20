@@ -82,6 +82,9 @@ final class AssistantMarkdownContentView: UIView {
         /// Timeline-owned thermal/power snapshot. Export and full-screen readers
         /// keep full decorative work; live chat consults StreamingRenderPolicy.
         let resourcePressure: StreamingRenderPolicy.ResourcePressure
+        /// `AppFont.revision` when the configuration was made. Rendered text
+        /// bakes fonts in, so a font or Dynamic Type change must re-render.
+        let typographyRevision = AppFont.revision
 
         private init(
             content: String,
@@ -164,6 +167,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.perfSurface == rhs.perfSurface
                 && lhs.renderingMode == rhs.renderingMode
                 && lhs.resourcePressure == rhs.resourcePressure
+                && lhs.typographyRevision == rhs.typographyRevision
         }
 
         @MainActor

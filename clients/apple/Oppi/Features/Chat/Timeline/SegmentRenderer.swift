@@ -25,9 +25,9 @@ enum SegmentRenderer {
     private static func font(for style: StyledSegment.Style?) -> UIFont {
         switch style {
         case .bold:
-            return ToolFont.title
+            return AppFont.monoMediumSemibold
         default:
-            return ToolFont.titleRegular
+            return AppFont.monoMedium
         }
     }
 
@@ -105,7 +105,7 @@ enum SegmentRenderer {
         let result = NSMutableAttributedString()
         for segment in segments {
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: segment.style == .bold ? ToolFont.smallBold : ToolFont.small,
+                .font: segment.style == .bold ? AppFont.monoSmallSemibold : AppFont.monoSmall,
                 .foregroundColor: color(for: segment.style),
             ]
             result.append(NSAttributedString(string: segment.text, attributes: attrs))

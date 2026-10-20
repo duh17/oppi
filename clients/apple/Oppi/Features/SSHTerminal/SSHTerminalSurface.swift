@@ -73,7 +73,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// paint without `onPictureChange`; this still sees them.
     var didDrawFrame: () -> Void = {}
     var paintedChangeCount = -1
-    /// Rebuilt when Code Font, Code Text Size, or the Nerd Font symbols change;
+    /// Rebuilt when `AppFont` rebuilds (Code Font or Code Text Size change);
     /// a new cell size resizes the remote terminal on the next layout.
     private var metrics = SSHTerminalCellMetrics.codeFont()
     var cellSize: CGSize { metrics.cellSize }
@@ -202,13 +202,12 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             self.requestDisplayLink()
         }
         NotificationCenter.default.addObserver(self, selector: #selector(fontPreferencesChanged),
-                                               name: FontPreferences.didChangeNotification, object: nil)
+                                               name: AppFont.didRebuildNotification, object: nil)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// Posted on the main thread after a Code Font or Code Text Size change and
-    /// when Nerd Font symbols finish installing.
+    /// Posted on the main thread after `AppFont` rebuilds.
     @objc private func fontPreferencesChanged() {
         metrics = SSHTerminalCellMetrics.codeFont()
         renderer?.setMetrics(metrics, scale: max(traitCollection.displayScale, 1))

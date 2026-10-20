@@ -62,7 +62,7 @@ struct ToolRowCodeRenderStrategyTests {
         let label = UITextView()
         label.attributedText = NSAttributedString(
             string: previous,
-            attributes: [sentinel: "kept", .font: ToolFont.regular]
+            attributes: [sentinel: "kept", .font: AppFont.monoMedium]
         )
 
         let result = render(
@@ -121,7 +121,7 @@ struct ToolRowCodeRenderStrategyTests {
         let label = UITextView()
         label.attributedText = NSAttributedString(
             string: previous,
-            attributes: [sentinel: "removed", .font: ToolFont.regular]
+            attributes: [sentinel: "removed", .font: AppFont.monoMedium]
         )
 
         let result = render(
@@ -153,7 +153,7 @@ struct ToolRowCodeRenderStrategyTests {
         let label = UITextView()
         label.attributedText = NSAttributedString(
             string: previous,
-            attributes: [sentinel: "replaced", .font: ToolFont.regular]
+            attributes: [sentinel: "replaced", .font: AppFont.monoMedium]
         )
 
         let result = render(

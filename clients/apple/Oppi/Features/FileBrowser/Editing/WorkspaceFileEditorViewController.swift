@@ -193,7 +193,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
     }
 
     private var editorFont: UIFont {
-        FontPreferences.scaledCodeFont(baseSize: 13, textStyle: .body)
+        AppFont.monoEditor
     }
 
     private var highlightStyle: CodeEditorHighlighter.Style {
@@ -205,7 +205,6 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.accessibilityIdentifier = "workspace-file-editor.text"
         textView.font = editorFont
-        textView.adjustsFontForContentSizeCategory = true
         textView.alwaysBounceVertical = true
         textView.keyboardDismissMode = .interactive
         // Source text: no smart punctuation, autocorrect, capitalization, or predictions.
@@ -265,7 +264,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(fontDidChange),
-            name: FontPreferences.didChangeNotification,
+            name: AppFont.didRebuildNotification,
             object: nil
         )
         setNeedsUpdateProperties()

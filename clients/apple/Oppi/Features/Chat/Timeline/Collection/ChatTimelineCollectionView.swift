@@ -323,6 +323,12 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         )
         NotificationCenter.default.addObserver(
             self,
+            selector: #selector(handleFontsDidChange),
+            name: AppFont.didRebuildNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
             selector: #selector(handleTimelineMemoryWarning),
             name: UIApplication.didReceiveMemoryWarningNotification,
             object: nil
@@ -785,6 +791,20 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         )
     }
 
+    /// Font preference and Dynamic Type changes rebuild `AppFont`; visible
+    /// rows baked the old fonts into their rendered text, and every cached
+    /// row height was measured with them.
+    @objc
+    private func handleFontsDidChange() {
+        guard let collectionView else { return }
+        (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?
+            .removeAllCachedHeights()
+        reconfigureVisibleRowsAfterAppearanceChange(
+            collectionView: collectionView,
+            expectedThemeID: nil
+        )
+    }
+
     @objc
     func handleSpeakerAccessibilityDidChange() {
         guard let collectionView else { return }
@@ -840,8 +860,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         )
     }
 
-    /// Theme and Increase Contrast / Differentiate Without Color changes
-    /// are posted while SwiftUI may be in a scene update. Defer one
+    /// Theme, font, and Increase Contrast / Differentiate Without Color
+    /// changes are posted while SwiftUI may be in a scene update. Defer one
     /// run-loop turn and refresh visible rows; reused offscreen cells pick
     /// up the current chrome when configured.
     private func reconfigureVisibleRowsAfterAppearanceChange(

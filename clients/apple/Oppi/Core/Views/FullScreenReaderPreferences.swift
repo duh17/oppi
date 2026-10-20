@@ -94,10 +94,11 @@ enum FullScreenReaderSpacing: String, Codable, CaseIterable, Equatable {
         }
     }
 
+    /// Extra leading on top of the font's own. Standard adds none, which is
+    /// also how markdown renders when every reader preference is at default.
     var markdownLineSpacing: CGFloat {
         switch self {
-        case .compact: return 0
-        case .standard: return 1.5
+        case .compact, .standard: return 0
         case .relaxed: return 4
         }
     }

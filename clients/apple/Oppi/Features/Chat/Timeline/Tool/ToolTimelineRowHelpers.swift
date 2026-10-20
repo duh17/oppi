@@ -907,7 +907,7 @@ enum ToolTimelineRowUIHelpers {
         if textView.textContainer.lineBreakMode == .byClipping,
            let clippedHeight = clippedUniformLineCountHeight(
             text,
-            font: textView.font ?? ToolFont.regular,
+            font: textView.font ?? AppFont.monoMedium,
             inset: inset
            ) {
             return clippedHeight

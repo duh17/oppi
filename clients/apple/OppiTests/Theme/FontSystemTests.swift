@@ -252,21 +252,23 @@ struct FontPreferencesTests {
         AppFont.rebuild()
 
         #expect(FontPreferences.codeTextScale == FontPreferences.standardCodeTextScale)
-        #expect(FontPreferences.codePointSize(baseSize: 10) == 11)
-        #expect(FontPreferences.codePointSize(baseSize: 11) == 12)
-        #expect(FontPreferences.codePointSize(baseSize: 12) == 13)
         #expect(AppFont.monoSmall.pointSize == 11)
         #expect(AppFont.mono.pointSize == 12)
         #expect(AppFont.monoMedium.pointSize == 13)
+        #expect(AppFont.monoEditor.pointSize == 14)
+        #expect(AppFont.monoDocument.pointSize == 15)
     }
 
-    @Test func codePointSizeUsesDeviceLocalScale() {
+    @Test func everyCodeTextSizeStepChangesCodeFonts() {
         let defaults = captureCodeTextDefaults()
         defer { restoreCodeTextDefaults(defaults) }
 
-        FontPreferences.setCodeTextScale(1.25)
-        #expect(FontPreferences.codePointSize(baseSize: 10) == 14)
-        #expect(FontPreferences.codePointSize(baseSize: 11) == 15)
+        var previous: CGFloat = 0
+        for step in stride(from: FontPreferences.minimumCodeTextScale, through: FontPreferences.maximumCodeTextScale, by: 0.05) {
+            FontPreferences.setCodeTextScale(step)
+            #expect(AppFont.monoMedium.pointSize > previous, "No size change at \(step)")
+            previous = AppFont.monoMedium.pointSize
+        }
     }
 
     @Test func storedEffectiveScaleMapsCurrentReadableSizeToOneHundredPercent() {
@@ -278,7 +280,8 @@ struct FontPreferencesTests {
         UserDefaults.standard.removeObject(forKey: "codeFontSize")
 
         #expect(FontPreferences.codeTextScale == 1.0)
-        #expect(FontPreferences.codePointSize(baseSize: 11) == 12)
+        AppFont.rebuild()
+        #expect(AppFont.mono.pointSize == 12)
     }
 
     @Test func storedCodeFontSizePresetsMapToScale() {
@@ -301,7 +304,7 @@ struct FontPreferencesTests {
         defer { FontPreferences.setCodeFont(original) }
 
         let expectation = NotificationCenter.default.notifications(
-            named: FontPreferences.didChangeNotification
+            named: AppFont.didRebuildNotification
         )
 
         FontPreferences.setCodeFont(.cascadiaCode)
@@ -320,7 +323,7 @@ struct FontPreferencesTests {
         defer { FontPreferences.setUseMonoForMessages(original) }
 
         let expectation = NotificationCenter.default.notifications(
-            named: FontPreferences.didChangeNotification
+            named: AppFont.didRebuildNotification
         )
 
         FontPreferences.setUseMonoForMessages(!original)
@@ -338,7 +341,7 @@ struct FontPreferencesTests {
         defer { restoreCodeTextDefaults(defaults) }
 
         let expectation = NotificationCenter.default.notifications(
-            named: FontPreferences.didChangeNotification
+            named: AppFont.didRebuildNotification
         )
 
         FontPreferences.setCodeTextScale(1.2)
@@ -356,7 +359,7 @@ struct FontPreferencesTests {
         defer { restoreCodeTextDefaults(defaults) }
 
         let expectation = NotificationCenter.default.notifications(
-            named: FontPreferences.didChangeNotification
+            named: AppFont.didRebuildNotification
         )
 
         FontPreferences.setMessageTextScale(1.15)
@@ -397,7 +400,6 @@ struct AppFontRebuildTests {
         #expect(AppFont.monoMediumSemibold.pointSize == AppFont.monoMedium.pointSize)
         #expect(AppFont.monoLarge.pointSize == 15)
         #expect(AppFont.monoLargeSemibold.pointSize == 15)
-        #expect(AppFont.monoXL.pointSize == 17)
     }
 
     @Test func rebuildWithBundledFontChangesMonoConstants() {
@@ -475,46 +477,32 @@ struct AppFontRebuildTests {
         #expect(abs(AppFont.messageBody.pointSize - expected) < 0.01)
     }
 
+    @Test func headingsAndInlineCodeKeepTheirRatioToTheBodyAtEveryMessageSize() {
+        let defaults = captureCodeTextDefaults()
+        let originalMono = FontPreferences.useMonoForMessages
+        defer {
+            FontPreferences.setUseMonoForMessages(originalMono)
+            restoreCodeTextDefaults(defaults)
+        }
+
+        FontPreferences.setUseMonoForMessages(false)
+        for scale in [FontPreferences.minimumMessageTextScale, 1.0, FontPreferences.maximumMessageTextScale] {
+            FontPreferences.setMessageTextScale(scale)
+            let body = AppFont.messageBody.pointSize
+            #expect(abs(AppFont.messageHeading(level: 1).pointSize - body * 21 / 17) < 0.01)
+            #expect(abs(AppFont.messageHeading(level: 3).pointSize - body) < 0.01)
+            #expect(abs(AppFont.messageHeading(level: 6).pointSize - body * 15 / 17) < 0.01)
+            #expect(abs(AppFont.messageInlineCode.pointSize - body * 15 / 17) < 0.01)
+        }
+        #expect(AppFont.messageHeading(level: 9) == AppFont.messageHeading(level: 6))
+    }
+
     // MARK: - System fonts are static
 
     @Test func systemFontConstantsAreFixedSize() {
         #expect(AppFont.systemSmall.pointSize == 11)
         #expect(AppFont.systemFeedback.pointSize == 13)
         #expect(AppFont.systemFeedbackMedium.pointSize == 14)
-    }
-}
-
-@Suite("ToolFont text scale")
-@MainActor
-struct ToolFontTextScaleTests {
-    @Test func defaultUsesReadableToolFontSizes() {
-        let defaults = captureCodeTextDefaults()
-        defer { restoreCodeTextDefaults(defaults) }
-
-        UserDefaults.standard.removeObject(forKey: "codeTextRelativeScale")
-        UserDefaults.standard.removeObject(forKey: "codeTextScale")
-        UserDefaults.standard.removeObject(forKey: "codeFontSize")
-        AppFont.rebuild()
-
-        #expect(ToolFont.pointSize(baseSize: 10) == 11)
-        #expect(ToolFont.pointSize(baseSize: 11) == 12)
-        #expect(ToolFont.pointSize(baseSize: 12) == 13)
-    }
-
-    @Test func regularToolOutputFontUsesConfiguredScale() {
-        let originalFamily = FontPreferences.codeFont
-        let defaults = captureCodeTextDefaults()
-        defer {
-            FontPreferences.setCodeFont(originalFamily)
-            restoreCodeTextDefaults(defaults)
-        }
-
-        FontPreferences.setCodeFont(.system)
-        FontPreferences.setCodeTextScale(1.45)
-
-        let font = ToolFont.regular
-
-        #expect(font.pointSize == AppFont.monoMedium.pointSize)
     }
 }
 

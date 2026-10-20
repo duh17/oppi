@@ -169,7 +169,7 @@ struct FollowTailBench {
         textView.isScrollEnabled = false
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
-        textView.font = ToolFont.regular
+        textView.font = AppFont.monoMedium
         textView.textContainer.lineBreakMode = wrapping ? .byCharWrapping : .byClipping
         textView.textContainer.size = CGSize(
             width: wrapping ? 180 : 4_000,
@@ -201,7 +201,7 @@ struct FollowTailBench {
     ) {
         let kind: ContentKind = unicode ? .unicodeCode : .unwrappedCode
         let text = makeContent(lineCount: lineCount, kind: kind)
-        let font = ToolFont.regular
+        let font = AppFont.monoMedium
         let attributed = NSAttributedString(string: text, attributes: [.font: font])
         let width = wrappingWidth ?? 4_000
         let size = CGSize(width: width, height: .greatestFiniteMagnitude)

@@ -4,9 +4,8 @@ import Metal
 import QuartzCore
 import UIKit
 
-/// Code Font / Code Text Size, with Nerd Font symbols as a fallback once
-/// they are installed. A 12pt base is 13pt at 100%, the terminal's size
-/// before it followed Code Text Size.
+/// The terminal grid uses `AppFont.monoMedium` (13pt at 100% Code Text Size),
+/// with Nerd Font symbols as a fallback once they are installed.
 struct SSHTerminalCellMetrics {
     let cellSize: CGSize
     let font: UIFont
@@ -22,12 +21,7 @@ struct SSHTerminalCellMetrics {
     }
 
     static func codeFont() -> SSHTerminalCellMetrics {
-        let family = FontPreferences.codeFont
-        let size = FontPreferences.codePointSize(baseSize: 12)
-        return SSHTerminalCellMetrics(
-            font: family.font(size: size, weight: .regular),
-            boldFont: family.font(size: size, weight: .bold)
-        )
+        SSHTerminalCellMetrics(font: AppFont.monoMedium, boldFont: AppFont.monoMediumBold)
     }
 }
 

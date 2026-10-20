@@ -38,7 +38,7 @@ struct FollowTailMeasureTests {
 
     @Test func productionCharWrappingUsesContainerWidthNotLineCount() {
         let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
-        let textView = makeExpandedTextView(font: ToolFont.regular)
+        let textView = makeExpandedTextView(font: AppFont.monoMedium)
         textView.textContainer.lineBreakMode = .byCharWrapping
         textView.textContainer.size = CGSize(width: 180, height: CGFloat.greatestFiniteMagnitude)
         textView.text = String(repeating: "word ", count: 80)
@@ -62,7 +62,7 @@ struct FollowTailMeasureTests {
             lineBreakMode: .byClipping,
             containerWidth: 4_000
         )
-        let lineHeight = ToolFont.regular.lineHeight
+        let lineHeight = AppFont.monoMedium.lineHeight
         #expect(withTrailing > withoutTrailing + (lineHeight * 0.5))
         #expect(withTrailing < withoutTrailing + lineHeight + 2)
     }
@@ -93,7 +93,7 @@ struct FollowTailMeasureTests {
             lineBreakMode: .byClipping,
             containerWidth: 8_000
         )
-        let lineHeight = ToolFont.regular.lineHeight
+        let lineHeight = AppFont.monoMedium.lineHeight
         #expect(height < lineHeight * 2.5)
         #expect(height > lineHeight * 0.5)
     }
@@ -135,21 +135,21 @@ struct FollowTailMeasureTests {
         let attributed = NSMutableAttributedString()
         attributed.append(NSAttributedString(
             string: "AAAA\nBBBB\n",
-            attributes: [.font: ToolFont.regular]
+            attributes: [.font: AppFont.monoMedium]
         ))
         attributed.append(NSAttributedString(
             string: "CCCC\nDDDD",
-            attributes: [.font: ToolFont.small]
+            attributes: [.font: AppFont.monoSmall]
         ))
         assertClippedFollowTailMatchesIndependentGeometry(
             attributedText: attributed,
-            font: ToolFont.regular,
+            font: AppFont.monoMedium,
             containerWidth: 4_000,
             label: "mixedFontLaterRuns"
         )
         assertNaiveLineCountDivergesFromIndependentGeometry(
             attributedText: attributed,
-            font: ToolFont.regular,
+            font: AppFont.monoMedium,
             containerWidth: 4_000,
             expectedLines: 4
         )
@@ -159,7 +159,7 @@ struct FollowTailMeasureTests {
         let string = "AAAA\nBBBB\nCCCC\nDDDD"
         let attributed = NSMutableAttributedString(
             string: string,
-            attributes: [.font: ToolFont.regular]
+            attributes: [.font: AppFont.monoMedium]
         )
         let ns = string as NSString
         var index = 0
@@ -186,13 +186,13 @@ struct FollowTailMeasureTests {
         }
         assertClippedFollowTailMatchesIndependentGeometry(
             attributedText: attributed,
-            font: ToolFont.regular,
+            font: AppFont.monoMedium,
             containerWidth: 4_000,
             label: "laterParagraphSpacing"
         )
         assertNaiveLineCountDivergesFromIndependentGeometry(
             attributedText: attributed,
-            font: ToolFont.regular,
+            font: AppFont.monoMedium,
             containerWidth: 4_000,
             expectedLines: 4
         )
@@ -205,7 +205,7 @@ struct FollowTailMeasureTests {
             lineBreakMode: .byCharWrapping,
             containerWidth: 180
         )
-        let lineHeight = ToolFont.regular.lineHeight
+        let lineHeight = AppFont.monoMedium.lineHeight
         #expect(height > lineHeight * 4)
     }
 
@@ -373,7 +373,7 @@ struct FollowTailMeasureTests {
         containerWidth: CGFloat
     ) -> (scrollView: UIScrollView, textView: UITextView) {
         let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
-        let textView = makeExpandedTextView(font: ToolFont.regular)
+        let textView = makeExpandedTextView(font: AppFont.monoMedium)
         textView.textContainer.lineBreakMode = lineBreakMode
         textView.textContainer.size = CGSize(
             width: containerWidth,

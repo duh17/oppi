@@ -2,16 +2,15 @@ import UIKit
 
 /// User-configurable font preferences, persisted via UserDefaults.
 ///
-/// Two independent axes:
 /// - `codeFont`: monospaced font for code blocks, tool output, diffs, inline code
 /// - `codeTextScale`: local text scale for dense monospaced/code surfaces
 /// - `messageTextScale`: local text scale for chat message body text
 /// - `useMonoForMessages`: when true, applies the code font to message body text too
 ///
 /// Keys and scales live in UIKit-free `FontPreferenceStore`. This type owns
-/// UIFont loading and the AppFont rebuild lifecycle.
+/// UIFont loading and the AppFont rebuild lifecycle; read resolved fonts
+/// from `AppFont`.
 enum FontPreferences {
-    static let didChangeNotification = FontPreferenceStore.didChangeNotification
     static var minimumCodeTextScale: CGFloat { CGFloat(FontPreferenceStore.minimumCodeTextScale) }
     static var standardCodeTextScale: CGFloat { CGFloat(FontPreferenceStore.standardCodeTextScale) }
     static var maximumCodeTextScale: CGFloat { CGFloat(FontPreferenceStore.maximumCodeTextScale) }
@@ -38,23 +37,13 @@ enum FontPreferences {
         AppFont.rebuild()
     }
 
-    static func clampedCodeTextScale(_ scale: CGFloat) -> CGFloat {
-        CGFloat(FontPreferenceStore.clampedCodeTextScale(Double(scale)))
-    }
-
-    static func codePointSize(baseSize: CGFloat) -> CGFloat {
-        codePointSize(baseSize: baseSize, codeTextScale: codeTextScale)
-    }
-
+    /// Point size for a candidate scale before it is saved. Only the SwiftUI
+    /// Settings preview uses it; live code text reads `AppFont.mono*`.
     static func codePointSize(baseSize: CGFloat, codeTextScale: CGFloat) -> CGFloat {
         CGFloat(FontPreferenceStore.codePointSize(
             baseSize: Double(baseSize),
             codeTextScale: Double(codeTextScale)
         ))
-    }
-
-    static func effectiveCodeTextScale(_ codeTextScale: CGFloat) -> CGFloat {
-        CGFloat(FontPreferenceStore.effectiveCodeTextScale(Double(codeTextScale)))
     }
 
     // MARK: - Message Text Scale
@@ -71,10 +60,6 @@ enum FontPreferences {
         AppFont.rebuild()
     }
 
-    static func clampedMessageTextScale(_ scale: CGFloat) -> CGFloat {
-        CGFloat(FontPreferenceStore.clampedMessageTextScale(Double(scale)))
-    }
-
     static func messagePointSize(baseSize: CGFloat) -> CGFloat {
         CGFloat(FontPreferenceStore.messagePointSize(baseSize: Double(baseSize)))
     }
@@ -84,23 +69,6 @@ enum FontPreferences {
             baseSize: Double(baseSize),
             messageTextScale: Double(messageTextScale)
         ))
-    }
-
-    static func scaledCodeFont(
-        baseSize: CGFloat,
-        textStyle: UIFont.TextStyle,
-        weight: UIFont.Weight = .regular,
-        compatibleWith traitCollection: UITraitCollection? = nil
-    ) -> UIFont {
-        let baseFont = codeFont.font(
-            size: codePointSize(baseSize: baseSize),
-            weight: weight
-        )
-        let metrics = UIFontMetrics(forTextStyle: textStyle)
-        if let traitCollection {
-            return metrics.scaledFont(for: baseFont, compatibleWith: traitCollection)
-        }
-        return metrics.scaledFont(for: baseFont)
     }
 
     /// Current code font family.

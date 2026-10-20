@@ -211,7 +211,7 @@ Options affect only the current viewer family. Changing terminal wrapping does n
 
 The **Text Size** slider scales the current viewer from 85% to 135% of its standard reader size.
 
-The scale applies on top of Oppi's existing font choices and Dynamic Type behavior. Code-like content keeps monospaced fonts. Markdown keeps native text styling for headings, links, inline code, lists, and quotes.
+The scale applies on top of the sizes from **Settings → Text**. Markdown and thinking text start from the chat message size (system Dynamic Type × **Message Text Size**); headings and inline code keep the same proportion to the body at every size. Code-like content starts from **Code Text Size** and does not follow Dynamic Type. Markdown keeps native text styling for headings, links, inline code, lists, and quotes. **Spacing → Standard** adds no extra line spacing; **Relaxed** adds some.
 
 ## Wrapping
 

@@ -797,7 +797,7 @@ enum DocumentRenderPipeline {
         textView.isScrollEnabled = false
         textView.textContainerInset = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
         textView.textContainer.lineFragmentPadding = 0
-        textView.font = FontPreferences.scaledCodeFont(baseSize: 14, textStyle: .body)
+        textView.font = AppFont.monoDocument
         textView.textColor = UIColor(palette.fg)
         textView.text = source
         textView.accessibilityLabel = source
@@ -961,7 +961,7 @@ enum DocumentRenderPipeline {
         NSAttributedString(
             string: source,
             attributes: [
-                .font: FontPreferences.scaledCodeFont(baseSize: 14, textStyle: .body),
+                .font: AppFont.monoDocument,
                 .foregroundColor: UIColor.label,
             ]
         )

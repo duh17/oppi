@@ -229,19 +229,19 @@ struct ToolRowCodeRenderStrategy {
         label.textStorage.append(NSAttributedString(
             string: suffix,
             attributes: [
-                .font: ToolFont.regular,
+                .font: AppFont.monoMedium,
                 .foregroundColor: UIColor(.themeFg),
             ]
         ))
         label.textColor = UIColor(.themeFg)
-        label.font = ToolFont.regular
+        label.font = AppFont.monoMedium
     }
 
     private static func applyPlainText(_ text: String, to label: UITextView) {
         label.attributedText = nil
         label.text = text
         label.textColor = UIColor(.themeFg)
-        label.font = ToolFont.regular
+        label.font = AppFont.monoMedium
     }
 
     static func languageCategory(

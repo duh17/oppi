@@ -801,7 +801,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
     private func configureTerminalTextView(_ tv: UITextView) {
         tv.translatesAutoresizingMaskIntoConstraints = false
-        tv.font = ToolFont.regular
+        tv.font = AppFont.monoMedium
         tv.isEditable = false
         tv.isScrollEnabled = false
         tv.isSelectable = false

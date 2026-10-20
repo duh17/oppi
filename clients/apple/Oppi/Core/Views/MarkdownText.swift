@@ -46,6 +46,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
     func get(
         _ content: String,
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
+        typographyRevision: UInt64 = AppFont.revision,
         serverID: String? = nil,
         workspaceID: String? = nil,
         sessionID: String? = nil,
@@ -57,6 +58,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         let key = stableKey(
             for: content,
             themeID: themeID,
+            typographyRevision: typographyRevision,
             serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
@@ -76,6 +78,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
     func set(
         _ content: String,
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
+        typographyRevision: UInt64 = AppFont.revision,
         serverID: String? = nil,
         workspaceID: String? = nil,
         sessionID: String? = nil,
@@ -90,6 +93,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         let key = stableKey(
             for: content,
             themeID: themeID,
+            typographyRevision: typographyRevision,
             serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
@@ -137,6 +141,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
     private func stableKey(
         for content: String,
         themeID: ThemeID,
+        typographyRevision: UInt64,
         serverID: String? = nil,
         workspaceID: String? = nil,
         sessionID: String? = nil,
@@ -163,6 +168,9 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         mix(serverBaseURL?.absoluteString, separator: 0xFB)
         mix(sourceDirectory, separator: 0xFA)
         mix(worktreeId, separator: 0xF8)
+        // Segments bake fonts in, so entries from before a font rebuild miss.
+        hash ^= typographyRevision
+        hash &*= 1_099_511_628_211
         mix(content, separator: 0xF9)
         return hash
     }
@@ -554,8 +562,7 @@ enum FlatSegment: Sendable {
             items: [[MarkdownBlock]],
             lineRange: ClosedRange<Int>?,
             markerForItem: (Int) -> AttributedString,
-            continuationForItem: (Int) -> AttributedString,
-            transformItemContent: (inout AttributedString, Int) -> Void = { _, _ in }
+            continuationForItem: (Int) -> AttributedString
         ) {
             var textLines: [AttributedString] = []
             textLines.reserveCapacity(items.count)
@@ -579,14 +586,11 @@ enum FlatSegment: Sendable {
 
                 func appendItemText(_ content: AttributedString) {
                     guard !content.characters.isEmpty else { return }
-                    var rendered = content
-                    transformItemContent(&rendered, itemIndex)
-                    guard !rendered.characters.isEmpty else { return }
 
                     let prefix = itemHasPrefix ? continuationForItem(itemIndex) : markerForItem(itemIndex)
                     let continuation = continuationForItem(itemIndex)
                     var line = prefix
-                    line.append(Self.prefixLines(afterFirstIn: rendered, with: continuation))
+                    line.append(Self.prefixLines(afterFirstIn: content, with: continuation))
                     textLines.append(line)
                     itemHasPrefix = true
                     emittedAnyRenderable = true
@@ -647,7 +651,6 @@ enum FlatSegment: Sendable {
                     case .orderedList(let start, let nestedItems):
                         let nestedBlock = MarkdownBlock.orderedList(start: start, nestedItems)
                         if Self.containsStandaloneListBlock(nestedBlock) {
-                            let nestedListFont = Self.listBodyFont()
                             flushListTextLines()
                             flushPendingText()
                             appendListBlock(
@@ -657,19 +660,14 @@ enum FlatSegment: Sendable {
                                     let markerText = "    \(start + nestedIndex). "
                                     var marker = AttributedString(markerText)
                                     marker.uiKit.foregroundColor = UIColor(palette.mdListBullet)
-                                    marker.uiKit.font = nestedListFont
+                                    marker.uiKit.font = AppFont.messageBody
                                     return marker
                                 },
                                 continuationForItem: { nestedIndex in
                                     let markerText = "    \(start + nestedIndex). "
-                                    var continuation = AttributedString(
-                                        String(repeating: " ", count: markerText.count)
-                                    )
-                                    continuation.uiKit.font = nestedListFont
+                                    var continuation = AttributedString(String(repeating: " ", count: markerText.count))
+                                    continuation.uiKit.font = AppFont.messageBody
                                     return continuation
-                                },
-                                transformItemContent: { content, _ in
-                                    Self.applyListFont(to: &content, listFont: nestedListFont)
                                 }
                             )
                         } else {
@@ -823,7 +821,6 @@ enum FlatSegment: Sendable {
                 )
 
             case .orderedList(let start, let items):
-                let listFont = Self.listBodyFont()
                 appendListBlock(
                     items: items,
                     lineRange: lineRange,
@@ -831,17 +828,14 @@ enum FlatSegment: Sendable {
                         let markerText = "  \(start + itemIndex). "
                         var marker = AttributedString(markerText)
                         marker.uiKit.foregroundColor = UIColor(palette.mdListBullet)
-                        marker.uiKit.font = listFont
+                        marker.uiKit.font = AppFont.messageBody
                         return marker
                     },
                     continuationForItem: { itemIndex in
                         let markerText = "  \(start + itemIndex). "
                         var continuation = AttributedString(String(repeating: " ", count: markerText.count))
-                        continuation.uiKit.font = listFont
+                        continuation.uiKit.font = AppFont.messageBody
                         return continuation
-                    },
-                    transformItemContent: { content, _ in
-                        Self.applyListFont(to: &content, listFont: listFont)
                     }
                 )
 
@@ -1207,7 +1201,7 @@ enum FlatSegment: Sendable {
 
             case .code(let code):
                 var rendered = AttributedString(code)
-                rendered.uiKit.font = monospacedFont(forTextStyle: .subheadline)
+                rendered.uiKit.font = AppFont.messageInlineCode
                 rendered.uiKit.foregroundColor = UIColor(palette.mdCode)
                 rendered.uiKit.backgroundColor = UIColor(palette.bgHighlight)
                 result.attributed.append(rendered)
@@ -2000,7 +1994,7 @@ enum FlatSegment: Sendable {
 
             case .codeBlock(_, let code):
                 let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
-                let codeFont = Self.monospacedFont(forTextStyle: .subheadline, baseSize: 12)
+                let codeFont = AppFont.monoMedium
                 appendAttributed(NSAttributedString(string: trimmed, attributes: [
                     .font: codeFont,
                     .foregroundColor: UIColor(palette.mdCode),
@@ -2033,7 +2027,7 @@ enum FlatSegment: Sendable {
     ) -> AttributedString {
         switch block {
         case .heading(let level, let inlines):
-            let font = Self.headingFont(level: level)
+            let font = AppFont.messageHeading(level: level)
             let color = Self.headingColor(level: level, palette: palette)
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.paragraphSpacingBefore = Self.headingSpacingAbove(level: level)
@@ -2122,19 +2116,16 @@ enum FlatSegment: Sendable {
             return result
 
         case .orderedList(let start, let items):
-            let listFont = Self.listBodyFont()
             var result = AttributedString()
             for (i, blocks) in items.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 var num = AttributedString("  \(start + i). ")
                 num.uiKit.foregroundColor = UIColor(palette.mdListBullet)
-                num.uiKit.font = listFont
+                num.uiKit.font = AppFont.messageBody
                 result.append(num)
                 for (j, block) in blocks.enumerated() {
                     if j > 0 { result.append(AttributedString("\n     ")) }
-                    var content = attributedString(for: block, palette: palette, defaultTextColor: defaultTextColor)
-                    Self.applyListFont(to: &content, listFont: listFont)
-                    result.append(content)
+                    result.append(attributedString(for: block, palette: palette, defaultTextColor: defaultTextColor))
                 }
             }
             return result
@@ -2166,7 +2157,7 @@ enum FlatSegment: Sendable {
 
         case .htmlBlock(let html):
             var result = AttributedString(html.trimmingCharacters(in: .whitespacesAndNewlines))
-            result.uiKit.font = Self.monospacedFont(forTextStyle: .caption1)
+            result.uiKit.font = AppFont.mono
             result.uiKit.foregroundColor = UIColor(palette.comment)
             return result
 
@@ -2356,7 +2347,7 @@ enum FlatSegment: Sendable {
             case .code(let code):
                 text += code
                 let end = text.utf8.count
-                let codeFont = Self.monospacedFont(forTextStyle: .subheadline)
+                let codeFont = AppFont.messageInlineCode
                 let codeFg = UIColor(palette.mdCode)
                 let codeBg = UIColor(palette.bgHighlight)
                 attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
@@ -2465,7 +2456,7 @@ enum FlatSegment: Sendable {
             return result
         case .code(let code):
             var result = AttributedString(code)
-            result.uiKit.font = monospacedFont(forTextStyle: .subheadline)
+            result.uiKit.font = AppFont.messageInlineCode
             result.uiKit.foregroundColor = UIColor(palette.mdCode)
             result.uiKit.backgroundColor = UIColor(palette.bgHighlight)
             return result
@@ -2671,7 +2662,7 @@ enum FlatSegment: Sendable {
             return result
         case .code(let code):
             var result = AttributedString(code)
-            result.uiKit.font = monospacedFont(forTextStyle: .subheadline)
+            result.uiKit.font = AppFont.messageInlineCode
             result.uiKit.foregroundColor = UIColor(palette.mdCode)
             result.uiKit.backgroundColor = UIColor(palette.bgHighlight)
             return result
@@ -2708,18 +2699,6 @@ enum FlatSegment: Sendable {
 
     // MARK: - UIFont Helpers
 
-    private static func headingFont(level: Int) -> UIFont {
-        let metrics = UIFontMetrics(forTextStyle: .body)
-        switch level {
-        case 1: return metrics.scaledFont(for: .systemFont(ofSize: 21, weight: .bold))
-        case 2: return metrics.scaledFont(for: .systemFont(ofSize: 19, weight: .semibold))
-        case 3: return metrics.scaledFont(for: .systemFont(ofSize: 17, weight: .semibold))
-        case 4: return metrics.scaledFont(for: .systemFont(ofSize: 17, weight: .medium))
-        case 5: return metrics.scaledFont(for: .systemFont(ofSize: 15, weight: .medium))
-        default: return metrics.scaledFont(for: .systemFont(ofSize: 15, weight: .regular))
-        }
-    }
-
     private static func headingColor(level: Int, palette: ThemePalette) -> UIColor {
         switch level {
         case 1, 2: return UIColor(palette.mdHeading)
@@ -2736,42 +2715,6 @@ enum FlatSegment: Sendable {
         case 3: return 12
         case 4: return 8
         default: return 6
-        }
-    }
-
-    private static func monospacedFont(forTextStyle style: UIFont.TextStyle) -> UIFont {
-        monospacedFont(forTextStyle: style, baseSize: style == .caption1 ? 11 : 12)
-    }
-
-    private static func monospacedFont(forTextStyle style: UIFont.TextStyle, baseSize: CGFloat) -> UIFont {
-        FontPreferences.scaledCodeFont(baseSize: baseSize, textStyle: style)
-    }
-
-    /// Body font bumped one point for list items (Dynamic Type aware).
-    private static func listBodyFont() -> UIFont {
-        let bodySize = AppFont.messageBody.pointSize
-        // If using mono for messages, return the mono font at body+1 size
-        if FontPreferences.useMonoForMessages {
-            return FontPreferences.codeFont.font(size: bodySize + 1, weight: .regular)
-        }
-        return UIFontMetrics(forTextStyle: .body).scaledFont(
-            for: .systemFont(ofSize: bodySize + 1)
-        )
-    }
-
-    /// Replace body-sized fonts in an attributed string with the list font.
-    /// Preserves monospace (inline code) and other special fonts.
-    private static func applyListFont(to content: inout AttributedString, listFont: UIFont) {
-        let bodySize = AppFont.messageBody.pointSize
-        for run in content.runs {
-            if let font = run.uiKit.font {
-                if font.pointSize == bodySize,
-                   !font.fontDescriptor.symbolicTraits.contains(.traitMonoSpace) {
-                    content[run.range].uiKit.font = listFont
-                }
-            } else {
-                content[run.range].uiKit.font = listFont
-            }
         }
     }
 }

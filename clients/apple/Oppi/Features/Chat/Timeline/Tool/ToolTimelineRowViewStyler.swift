@@ -29,7 +29,7 @@ enum ToolTimelineRowViewStyler {
         toolImageView.isHidden = true
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = ToolFont.title
+        titleLabel.font = AppFont.monoMediumSemibold
         titleLabel.textColor = UIColor(Color.themeToolTitle)
         titleLabel.numberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
@@ -53,24 +53,24 @@ enum ToolTimelineRowViewStyler {
         languageBadgeIconView.setContentHuggingPriority(.required, for: .horizontal)
         // Size constraints are set by ToolTimelineRowLayoutBuilder.makeLanguageBadgeConstraints()
 
-        addedLabel.font = ToolFont.regularBold
+        addedLabel.font = AppFont.monoMediumBold
         addedLabel.textColor = UIColor(Color.themeDiffAdded)
         addedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         addedLabel.setContentHuggingPriority(.required, for: .horizontal)
 
-        removedLabel.font = ToolFont.regularBold
+        removedLabel.font = AppFont.monoMediumBold
         removedLabel.textColor = UIColor(Color.themeDiffRemoved)
         removedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         removedLabel.setContentHuggingPriority(.required, for: .horizontal)
 
-        trailingLabel.font = ToolFont.regular
+        trailingLabel.font = AppFont.monoMedium
         trailingLabel.textColor = UIColor(Color.themeComment)
         trailingLabel.numberOfLines = 1
         trailingLabel.lineBreakMode = .byTruncatingTail
         trailingLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         trailingLabel.setContentHuggingPriority(.required, for: .horizontal)
 
-        elapsedLabel.font = ToolFont.small
+        elapsedLabel.font = AppFont.monoSmall
         elapsedLabel.textColor = UIColor(Color.themeComment)
         elapsedLabel.numberOfLines = 1
         elapsedLabel.isHidden = true
@@ -79,7 +79,7 @@ enum ToolTimelineRowViewStyler {
     }
 
     static func stylePreviewLabel(_ previewLabel: UILabel) {
-        previewLabel.font = ToolFont.regular
+        previewLabel.font = AppFont.monoMedium
         previewLabel.textColor = UIColor(Color.themeToolOutput)
         previewLabel.numberOfLines = 3
     }
@@ -168,7 +168,7 @@ enum ToolTimelineRowViewStyler {
         expandedScrollView.rightEdgeEffect.isHidden = true
 
         expandedLabel.translatesAutoresizingMaskIntoConstraints = false
-        expandedLabel.font = ToolFont.regular
+        expandedLabel.font = AppFont.monoMedium
         expandedLabel.isEditable = false
         expandedLabel.isScrollEnabled = false
         expandedLabel.isSelectable = false

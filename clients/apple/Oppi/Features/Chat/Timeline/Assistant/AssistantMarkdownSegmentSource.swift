@@ -11,6 +11,7 @@ final class AssistantMarkdownSegmentSource {
         let serverBaseURL: URL?
         let sourceDirectory: String?
         let worktreeId: String?
+        let typographyRevision: UInt64
     }
 
     /// UIKit-specific paint cache layered over the shared block parser.
@@ -67,6 +68,7 @@ final class AssistantMarkdownSegmentSource {
            let cached = MarkdownSegmentCache.shared.get(
                content,
                themeID: config.themeID,
+               typographyRevision: config.typographyRevision,
                serverID: identity.serverID,
                workspaceID: identity.workspaceID,
                sessionID: identity.sessionID,
@@ -109,6 +111,7 @@ final class AssistantMarkdownSegmentSource {
             MarkdownSegmentCache.shared.set(
                 content,
                 themeID: config.themeID,
+                typographyRevision: config.typographyRevision,
                 serverID: identity.serverID,
                 workspaceID: identity.workspaceID,
                 sessionID: identity.sessionID,
@@ -193,7 +196,8 @@ final class AssistantMarkdownSegmentSource {
             sessionID: identity.sessionID,
             serverBaseURL: identity.serverBaseURL,
             sourceDirectory: config.sourceDirectory,
-            worktreeId: identity.worktreeId
+            worktreeId: identity.worktreeId,
+            typographyRevision: config.typographyRevision
         )
         let parseStart = MarkdownStreamingPerf.timestampNs()
         let parsed = streamingParser.parse(config.content)
