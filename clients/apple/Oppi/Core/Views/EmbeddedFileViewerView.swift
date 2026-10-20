@@ -696,31 +696,6 @@ extension Binding where Value == FullScreenMarkdownViewportRestoreState {
     }
 }
 
-/// Embeds ``FullScreenCodeViewController`` in a pushed screen.
-///
-/// The UIKit view controller provides its own internal `UINavigationController`
-/// with Liquid Glass floating pills — identical chrome to the sheet presentation
-/// used by the timeline full-screen viewer. The hosting SwiftUI view should hide
-/// its navigation bar (`.toolbarVisibility(.hidden, for: .navigationBar)`) to
-/// avoid double nav bars.
-///
-/// The dismiss (back) button calls SwiftUI's `dismiss()` to pop the navigation.
-///
-/// Review comment selection routing: reads from `\.reviewCommentSelectionScope`
-/// in the SwiftUI environment when no explicit router is provided. This means new
-/// callers get comment routing for free as long as the environment is set by an
-/// ancestor.
-///
-/// Usage:
-/// ```swift
-/// NavigationLink {
-///     EmbeddedFileViewerView(
-///         content: .fromText(text, filePath: path)
-///     )
-///     .ignoresSafeArea(edges: .top)
-///     .toolbarVisibility(.hidden, for: .navigationBar)
-/// } label: { ... }
-/// ```
 /// The host navigation bar of a screen that shows the reader's own chrome
 /// for some content (`hidesBar` true) and the host bar for the rest. Settled
 /// content asks for `.visible`, not `.automatic`: in a screen hosted on a
@@ -748,6 +723,31 @@ extension View {
     }
 }
 
+/// Embeds ``FullScreenCodeViewController`` in a pushed screen.
+///
+/// The UIKit view controller provides its own internal `UINavigationController`
+/// with Liquid Glass floating pills — identical chrome to the sheet presentation
+/// used by the timeline full-screen viewer. The hosting SwiftUI view should hide
+/// its navigation bar (`.toolbarVisibility(.hidden, for: .navigationBar)`) to
+/// avoid double nav bars.
+///
+/// The dismiss (back) button calls SwiftUI's `dismiss()` to pop the navigation.
+///
+/// Review comment selection routing: reads from `\.reviewCommentSelectionScope`
+/// in the SwiftUI environment when no explicit router is provided. This means new
+/// callers get comment routing for free as long as the environment is set by an
+/// ancestor.
+///
+/// Usage:
+/// ```swift
+/// NavigationLink {
+///     EmbeddedFileViewerView(
+///         content: .fromText(text, filePath: path)
+///     )
+///     .ignoresSafeArea(edges: .top)
+///     .toolbarVisibility(.hidden, for: .navigationBar)
+/// } label: { ... }
+/// ```
 struct EmbeddedFileViewerView: UIViewControllerRepresentable {
     let content: FullScreenCodeContent
     var reviewCommentSelectionContext: ReviewCommentSelectionContext?

@@ -93,7 +93,7 @@ Example:
 
 ### Fixed
 
-- **Client:** Editing a file opened from a chat's **Files → All** shows the editor's bar again, with Done, Preview, and the save status. Before, the bar stayed hidden and the only way out was swiping the sheet away.
+- **Client:** Editing a file opened from a chat's **Files → All** shows the editor's bar again, with Done, Preview, and the save status. Before, the bar stayed hidden and the only way out was swiping the sheet away. Going to the next file from a text file to an image or an unreadable file, in **Files → All** or **Files → Changed**, also shows its title, Back, and Share again.
 - **Client:** A single tap inside an expanded tool row, such as beside a call in a code cell or on an audio message, no longer collapses the row; only the header does. A double-tap anywhere in a code cell now opens the full-screen reader.
 - **Client:** Every tool row now expands and collapses at once, with no motion. Code cells, Markdown file reads, and extension results no longer bounce while their content settles, matching `bash` and `edit`.
 - **Server:** `oppi session send --follow-up` and `--steer` no longer fail with "requires an active streaming turn" when the session is idle or finishes its turn just before the send. An idle session is prompted right away; a busy one queues or steers as before.
