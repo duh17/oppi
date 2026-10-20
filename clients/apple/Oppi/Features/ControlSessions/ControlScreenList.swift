@@ -84,6 +84,8 @@ enum ControlScreenList {
         resetElement(cell)
         cell.element.isHidden = false
         cell.element.isEnabled = enabled
+        // The traits are set explicitly, so a disabled row says so itself.
+        cell.element.accessibilityTraits = enabled ? .button : [.button, .notEnabled]
         cell.element.menu = contextMenu
         cell.element.isContextMenuInteractionEnabled = contextMenu != nil
         cell.element.accessibilityIdentifier = identifier
@@ -170,23 +172,6 @@ enum ControlScreenList {
         config.secondaryText = description
         config.secondaryTextProperties.color = UIColor(palette.comment)
         return config
-    }
-
-    /// Font for a text style at a weight, following Dynamic Type.
-    static func font(_ style: UIFont.TextStyle, _ weight: UIFont.Weight = .regular) -> UIFont {
-        AskUIFont.preferred(style, weight: weight)
-    }
-
-    /// `font` with digits of one width (a version, a relative date), scaled
-    /// once from the style's default size as `AskUIFont` does.
-    static func monospacedDigitFont(_ style: UIFont.TextStyle, _ weight: UIFont.Weight = .regular) -> UIFont {
-        let base = UIFont.preferredFont(
-            forTextStyle: style,
-            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
-        )
-        return UIFontMetrics(forTextStyle: style).scaledFont(
-            for: .monospacedDigitSystemFont(ofSize: base.pointSize, weight: weight)
-        )
     }
 
     /// Presents an action sheet over `screen`, centered when it pops over.

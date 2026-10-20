@@ -13,7 +13,7 @@ final class ModelPickerCell: UICollectionViewListCell {
 
     private let row = SessionOutlineRowElement()
     private let nameLabel = UILabel()
-    private let currentBadge = SessionOutlineBadgeLabel()
+    private let currentBadge = InsetLabel.outlineBadge()
     private let idLabel = UILabel()
     private let contextLabel = UILabel()
     private let checkmark = UIImageView()
@@ -246,8 +246,7 @@ final class ModelPickerHeaderView: UICollectionReusableView {
         )
         pills.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for badge in badges {
-            let pill = SessionOutlineBadgeLabel()
-            pill.insets = UIEdgeInsets(top: 3, left: 7, bottom: 3, right: 7)
+            let pill = InsetLabel(insets: UIEdgeInsets(top: 3, left: 7, bottom: 3, right: 7), capsule: true)
             let color = Self.tone(badge.tone, palette: palette)
             pill.text = badge.label
             pill.font = .monospacedDigitSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .semibold)

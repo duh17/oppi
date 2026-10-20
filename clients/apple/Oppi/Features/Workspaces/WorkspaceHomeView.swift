@@ -449,7 +449,7 @@ struct HostSwitcherMenu: View {
 /// The server switcher's one owner: the servers it lists, how each row reads,
 /// the connection row, the destinations, and what choosing one does. The
 /// SwiftUI menu (Settings and admin toolbars) and the session lists' UIKit
-/// menu (`SessionListBarItems.serverSwitcher`) only render it.
+/// menu (`SessionListServerSwitcher`) only render it.
 @MainActor
 struct HostSwitcherModel {
     let coordinator: ConnectionCoordinator

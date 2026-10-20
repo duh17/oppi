@@ -42,7 +42,7 @@ final class ReviewFileSummaryBarView: UIView {
         nameLabel.font = AskUIFont.preferred(.subheadline, weight: .semibold)
         parentLabel.font = UIFont.preferredFont(forTextStyle: .caption2)
         parentLabel.lineBreakMode = .byTruncatingMiddle
-        let countFont = ControlScreenList.monospacedDigitFont(.caption2, .semibold)
+        let countFont = UIFont.scaled(.caption2, .semibold, monospacedDigits: true)
         for label in [nameLabel, parentLabel, addedLabel, removedLabel] {
             label.adjustsFontForContentSizeCategory = true
             label.numberOfLines = 1

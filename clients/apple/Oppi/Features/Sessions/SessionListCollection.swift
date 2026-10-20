@@ -542,8 +542,8 @@ enum SessionListBarItems {
 /// it opens, so it always lists current states.
 @MainActor
 final class SessionListServerSwitcher {
-    private(set) var model: HostSwitcherModel
-    private let pill = ServerSwitcherPillButton()
+    private var model: HostSwitcherModel
+    private lazy var pill = ServerSwitcherPillButton()
     private(set) var item: UIBarButtonItem
     /// The rail item and the bar pill are different items; a change makes a new switcher.
     let joinsRail: Bool
@@ -551,13 +551,14 @@ final class SessionListServerSwitcher {
     init(model: HostSwitcherModel, joinsRail: Bool) {
         self.model = model
         self.joinsRail = joinsRail
-        let menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak pill] completion in
-            completion(pill?.menuElements() ?? [])
+        item = UIBarButtonItem()
+        let menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
+            completion(self?.menuElements() ?? [])
         }])
         if joinsRail {
-            item = UIBarButtonItem(image: nil, menu: menu)
+            item.menu = menu
         } else {
-            item = UIBarButtonItem(customView: pill)
+            item.customView = pill
             pill.menu = menu
             pill.showsMenuAsPrimaryAction = true
         }
@@ -567,7 +568,6 @@ final class SessionListServerSwitcher {
     /// Repaints the pill from the model's current state. Call from `updateProperties()`.
     func update(_ model: HostSwitcherModel) {
         self.model = model
-        pill.model = model
         let state = model.badgeState(for: model.current)
         let colors = SessionRowStyle.for(ThemeRuntimeState.currentThemeID()).colors
         if joinsRail {
@@ -579,12 +579,45 @@ final class SessionListServerSwitcher {
             pill.apply(model, state: state, colors: colors)
         }
     }
+
+    /// Servers, the Connection row, then the destinations. A menu draws its
+    /// glyphs in its own color, so they carry the app blue themselves, as the
+    /// SwiftUI menu's did.
+    private func menuElements() -> [UIMenuElement] {
+        let model = model
+        let blue = SessionRowStyle.for(ThemeRuntimeState.currentThemeID()).colors.blue
+        func glyph(_ name: String) -> UIImage? {
+            UIImage(systemName: name)?.withTintColor(blue, renderingMode: .alwaysOriginal)
+        }
+        let servers: [UIMenuElement] = model.servers.map { server in
+            let action = UIAction(title: model.menuTitle(for: server), image: glyph(model.menuImage(for: server))) { _ in
+                model.switchHost(server)
+            }
+            action.accessibilityValue = model.menuAccessibilityValue(for: server)
+            return action
+        }
+        let connection = model.connection
+        let connectionRow = UIAction(title: connection.title, image: glyph(connection.systemImage)) { _ in
+            model.retryConnection()
+        }
+        let destinations: [UIMenuElement] = model.destinations.map { item in
+            let action = UIAction(title: item.menuTitle, image: glyph(item.systemImage)) { _ in
+                model.open(item)
+            }
+            action.accessibilityIdentifier = item.accessibilityIdentifier
+            return action
+        }
+        return [
+            UIMenu(options: .displayInline, children: servers),
+            UIMenu(title: String(localized: "Connection"), options: .displayInline, children: [connectionRow]),
+            UIMenu(options: .displayInline, children: destinations),
+        ]
+    }
 }
 
 /// The horizontal bar's pill: server badge, name, lock, a connection word
 /// while not connected, and the chevron. The bar draws the capsule.
 final class ServerSwitcherPillButton: UIButton {
-    var model: HostSwitcherModel?
     private let stack = UIStackView()
     private let badge = UIView()
     private let badgeSymbol = UIImageView()
@@ -602,10 +635,10 @@ final class ServerSwitcherPillButton: UIButton {
         badgeSymbol.translatesAutoresizingMaskIntoConstraints = false
         badgeSymbol.contentMode = .center
         badge.addSubview(badgeSymbol)
-        nameLabel.font = SessionRowText.font(.caption1, .semibold)
-        stateLabel.font = SessionRowText.font(.caption2, .semibold)
+        nameLabel.font = .scaled(.caption1, .semibold)
+        stateLabel.font = .scaled(.caption2, .semibold)
         spinner.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
-        chevron.image = SessionRowText.symbolImage("chevron.down", style: .caption2, weight: .semibold)
+        chevron.image = .scaledSymbol("chevron.down", style: .caption2, weight: .semibold)
         stack.axis = .horizontal
         stack.alignment = .center
         stack.spacing = 6
@@ -655,38 +688,8 @@ final class ServerSwitcherPillButton: UIButton {
         stateLabel.text = state.title
         stateLabel.textColor = tint
         chevron.tintColor = colors.comment
-        // The menu's glyphs take the app tint, as the SwiftUI menu's did.
-        tintColor = colors.blue
         accessibilityLabel = model.accessibilityLabel
         accessibilityValue = state.title
-    }
-
-    /// Servers, the Connection row, then the destinations.
-    func menuElements() -> [UIMenuElement] {
-        guard let model else { return [] }
-        let servers: [UIMenuElement] = model.servers.map { server in
-            let action = UIAction(title: model.menuTitle(for: server), image: UIImage(systemName: model.menuImage(for: server))) { _ in
-                model.switchHost(server)
-            }
-            action.accessibilityValue = model.menuAccessibilityValue(for: server)
-            return action
-        }
-        let connection = model.connection
-        let connectionRow = UIAction(title: connection.title, image: UIImage(systemName: connection.systemImage)) { _ in
-            model.retryConnection()
-        }
-        let destinations: [UIMenuElement] = model.destinations.map { item in
-            let action = UIAction(title: item.menuTitle, image: UIImage(systemName: item.systemImage)) { _ in
-                model.open(item)
-            }
-            action.accessibilityIdentifier = item.accessibilityIdentifier
-            return action
-        }
-        return [
-            UIMenu(options: .displayInline, children: servers),
-            UIMenu(title: String(localized: "Connection"), options: .displayInline, children: [connectionRow]),
-            UIMenu(options: .displayInline, children: destinations),
-        ]
     }
 }
 

@@ -48,8 +48,9 @@ struct SessionListEntryConfiguration: UIContentConfiguration {
 final class SessionListEntryContentView: UIView, UIContentView {
     private let stack = UIStackView()
     private let rowView = SessionRowView(combinesAccessibility: true)
-    private let stripView = SessionThreadStripView()
-    private let linkView = SessionThreadLinkView()
+    /// Made on first use: most rows have neither.
+    private var stripView: SessionThreadStripView?
+    private var linkView: SessionThreadLinkView?
     private var applied: SessionListEntryConfiguration
 
     var configuration: UIContentConfiguration {
@@ -68,16 +69,11 @@ final class SessionListEntryContentView: UIView, UIContentView {
             guard let self else { return }
             applied.actions.open(applied.row.entry.session)
         }
-        stripView.addAction(UIAction { [weak self] _ in self?.openThread() }, for: .touchUpInside)
-        linkView.addAction(UIAction { [weak self] _ in self?.openThread() }, for: .touchUpInside)
-
         stack.axis = .vertical
         stack.alignment = .trailing
         stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(rowView)
-        stack.addArrangedSubview(stripView)
-        stack.addArrangedSubview(linkView)
         addSubview(stack)
         // The list's own leading and trailing margins; the vertical inset the
         // hosted SwiftUI rows had.
@@ -96,11 +92,16 @@ final class SessionListEntryContentView: UIView, UIContentView {
             stack.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
         ])
         rowView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        for view in [stripView, linkView] as [UIView] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -SessionThreadStripView.rowInset).isActive = true
-        }
         apply(configuration)
+    }
+
+    /// A Thread control under the row, inset to line up under its icon, that opens the thread.
+    private func addThreadControl<Control: UIControl>(_ control: Control) -> Control {
+        control.addAction(UIAction { [weak self] _ in self?.openThread() }, for: .touchUpInside)
+        control.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(control)
+        control.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -SessionThreadStripView.rowInset).isActive = true
+        return control
     }
 
     static let verticalInset: CGFloat = 15
@@ -138,6 +139,8 @@ final class SessionListEntryContentView: UIView, UIContentView {
         rowView.accessibilityValue = status.isBlocked ? status.label : ""
 
         if let thread = entry.thread {
+            let stripView = stripView ?? addThreadControl(SessionThreadStripView())
+            self.stripView = stripView
             stripView.isHidden = false
             stripView.accessibilityIdentifier = "thread.nav.\(thread.root.id)"
             stripView.apply(
@@ -152,10 +155,12 @@ final class SessionListEntryContentView: UIView, UIContentView {
                 iconAssetCache: configuration.iconAssetCache
             )
         } else {
-            stripView.isHidden = true
+            stripView?.isHidden = true
         }
 
         if entry.thread == nil, let root = entry.outsideRoot {
+            let linkView = linkView ?? addThreadControl(SessionThreadLinkView())
+            self.linkView = linkView
             linkView.isHidden = false
             linkView.apply(
                 root: root,
@@ -166,9 +171,9 @@ final class SessionListEntryContentView: UIView, UIContentView {
             )
             linkView.accessibilityIdentifier = "thread.link.\(session.id)"
         } else {
-            linkView.isHidden = true
+            linkView?.isHidden = true
         }
-        accessibilityElements = [rowView, stripView, linkView].filter { !$0.isHidden }
+        accessibilityElements = ([rowView, stripView, linkView] as [UIView?]).compactMap { $0 }.filter { !$0.isHidden }
     }
 
     private func openThread() {
@@ -211,14 +216,14 @@ final class SessionThreadLinkView: UIControl {
         layer.cornerRadius = 8
         layer.cornerCurve = .continuous
 
-        let font = SessionRowText.font(.caption1, .semibold)
-        glyph.image = SessionRowText.symbolImage("point.3.connected.trianglepath.dotted", style: .caption1, weight: .semibold)
+        let font = UIFont.scaled(.caption1, .semibold)
+        glyph.image = UIImage.scaledSymbol("point.3.connected.trianglepath.dotted", style: .caption1, weight: .semibold)
         titleLabel.text = String(localized: "In thread")
         titleLabel.font = font
-        detailLabel.font = SessionRowText.font(.caption1)
+        detailLabel.font = UIFont.scaled(.caption1)
         detailLabel.lineBreakMode = .byTruncatingMiddle
         detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        chevron.image = SessionRowText.symbolImage("chevron.right", style: .caption1, weight: .semibold)
+        chevron.image = UIImage.scaledSymbol("chevron.right", style: .caption1, weight: .semibold)
         for view in [glyph, titleLabel, lockLabel, chevron] as [UIView] {
             view.setContentCompressionResistancePriority(.required, for: .horizontal)
             view.setContentHuggingPriority(.required, for: .horizontal)

@@ -56,7 +56,7 @@ final class SessionThreadStripView: UIControl {
         layer.cornerCurve = .continuous
 
         headline.adjustsFontForContentSizeCategory = true
-        hiddenLanesLabel.font = SessionRowText.font(.caption2, monospacedDigits: true)
+        hiddenLanesLabel.font = UIFont.scaled(.caption2, monospacedDigits: true)
         hiddenLanesLabel.setContentHuggingPriority(.required, for: .horizontal)
         graphRow.axis = .horizontal
         graphRow.alignment = .center
@@ -67,10 +67,10 @@ final class SessionThreadStripView: UIControl {
         let graphFill = graphRow.widthAnchor.constraint(equalToConstant: 260)
         graphFill.priority = .defaultHigh
 
-        summaryLabel.font = SessionRowText.font(.caption1)
+        summaryLabel.font = UIFont.scaled(.caption1)
         summaryLabel.adjustsFontForContentSizeCategory = true
         summaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        chevron.image = SessionRowText.symbolImage("chevron.right", style: .caption1, weight: .semibold)
+        chevron.image = UIImage.scaledSymbol("chevron.right", style: .caption1, weight: .semibold)
         chevron.setContentHuggingPriority(.required, for: .horizontal)
         chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
         agents.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -122,7 +122,7 @@ final class SessionThreadStripView: UIControl {
             headline.isHidden = false
             headline.attributedText = NSAttributedString(
                 string: working.map(\.displayTitle).joined(separator: " · ") + " working",
-                attributes: [.font: SessionRowText.font(.footnote, .medium), .foregroundColor: colors.blue]
+                attributes: [.font: UIFont.scaled(.footnote, .medium), .foregroundColor: colors.blue]
             )
             headline.lineBreakMode = .byTruncatingTail
         } else {
@@ -175,7 +175,11 @@ final class SessionThreadStripView: UIControl {
 // MARK: - Agent cluster
 
 /// Agents present in a group of sessions, largest first: 🛠️×15 🔬×12 +2.
+/// Item views are reused by position across reconfigures.
 final class SessionThreadAgentClusterView: UIStackView {
+    private var items: [(stack: UIStackView, icon: SessionGridBadgeView, count: UILabel)] = []
+    private let overflow = UILabel()
+
     init() {
         super.init(frame: .zero)
         axis = .horizontal
@@ -183,6 +187,8 @@ final class SessionThreadAgentClusterView: UIStackView {
         spacing = 6
         isAccessibilityElement = false
         accessibilityElementsHidden = true
+        Self.styleCount(overflow)
+        addArrangedSubview(overflow)
     }
 
     @available(*, unavailable)
@@ -194,43 +200,44 @@ final class SessionThreadAgentClusterView: UIStackView {
         colors: ComposerThemeColors,
         iconAssetCache: IconAssetCache?
     ) {
-        arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let font = SessionRowText.font(.caption2, monospacedDigits: true)
-        for group in groups.prefix(maxGroups) {
-            let item = UIStackView()
-            item.axis = .horizontal
-            item.alignment = .center
-            item.spacing = 2
+        let shown = Array(groups.prefix(maxGroups))
+        while items.count < shown.count {
             let icon = SessionGridBadgeView()
             icon.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 icon.widthAnchor.constraint(equalToConstant: 14),
                 icon.heightAnchor.constraint(equalToConstant: 14),
             ])
-            icon.configure(
+            let count = UILabel()
+            Self.styleCount(count)
+            let stack = UIStackView(arrangedSubviews: [icon, count])
+            stack.alignment = .center
+            stack.spacing = 2
+            insertArrangedSubview(stack, at: items.count)
+            items.append((stack, icon, count))
+        }
+        for (index, item) in items.enumerated() {
+            item.stack.isHidden = index >= shown.count
+            guard index < shown.count else { continue }
+            let group = shown[index]
+            item.icon.configure(
                 sessionId: group.sampleSessionId,
                 agentId: group.agentId,
                 agentIcon: group.agentIcon,
                 iconAssetCache: iconAssetCache
             )
-            item.addArrangedSubview(icon)
-            if group.count > 1 {
-                item.addArrangedSubview(Self.label("×\(group.count)", font: font, color: colors.comment))
-            }
-            addArrangedSubview(item)
+            item.count.isHidden = group.count <= 1
+            item.count.text = "×\(group.count)"
+            item.count.textColor = colors.comment
         }
-        if groups.count > maxGroups {
-            addArrangedSubview(Self.label("+\(groups.count - maxGroups)", font: font, color: colors.comment))
-        }
+        overflow.isHidden = groups.count <= maxGroups
+        overflow.text = "+\(groups.count - maxGroups)"
+        overflow.textColor = colors.comment
     }
 
-    private static func label(_ text: String, font: UIFont, color: UIColor) -> UILabel {
-        let label = UILabel()
-        label.text = text
-        label.font = font
-        label.textColor = color
+    private static func styleCount(_ label: UILabel) {
+        label.font = .scaled(.caption2, monospacedDigits: true)
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
-        return label
     }
 }
 

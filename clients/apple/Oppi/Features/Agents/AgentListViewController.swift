@@ -210,7 +210,7 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
                 icon.heightAnchor.constraint(equalToConstant: 30).isActive = true
                 let updated = UILabel()
                 updated.text = agent.updatedAt.relativeString()
-                updated.font = ControlScreenList.monospacedDigitFont(.caption2)
+                updated.font = UIFont.scaled(.caption2, monospacedDigits: true)
                 updated.adjustsFontForContentSizeCategory = true
                 updated.textColor = UIColor(palette.comment)
                 updated.setContentCompressionResistancePriority(.required, for: .horizontal)

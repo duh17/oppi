@@ -45,7 +45,7 @@ final class SessionOutlineEntryCell: UICollectionViewListCell {
     let row = SessionOutlineRowElement()
     let summaryLabel = UILabel()
     private let iconView = UIImageView()
-    private let compactionBadge = SessionOutlineBadgeLabel()
+    private let compactionBadge = InsetLabel.outlineBadge()
     private let requestedLabel = UILabel()
     private let addedLabel = UILabel()
     private let removedLabel = UILabel()
@@ -217,33 +217,10 @@ final class SessionOutlineEntryCell: UICollectionViewListCell {
     }
 }
 
-/// A capsule badge (Compaction, the model picker's current and quota pills).
-final class SessionOutlineBadgeLabel: UILabel {
-    var insets = UIEdgeInsets(top: 2, left: 6, bottom: 2, right: 6)
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        adjustsFontForContentSizeCategory = true
-        layer.masksToBounds = true
-        setContentHuggingPriority(.required, for: .horizontal)
-        setContentCompressionResistancePriority(.required, for: .horizontal)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override var intrinsicContentSize: CGSize {
-        let size = super.intrinsicContentSize
-        return CGSize(width: size.width + insets.left + insets.right, height: size.height + insets.top + insets.bottom)
-    }
-
-    override func drawText(in rect: CGRect) {
-        super.drawText(in: rect.inset(by: insets))
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        layer.cornerRadius = bounds.height / 2
+extension InsetLabel {
+    /// A capsule badge (Compaction, the model picker's current pill).
+    static func outlineBadge() -> InsetLabel {
+        InsetLabel(insets: UIEdgeInsets(top: 2, left: 6, bottom: 2, right: 6), capsule: true)
     }
 }
 

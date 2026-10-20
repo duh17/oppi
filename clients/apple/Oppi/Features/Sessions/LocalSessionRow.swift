@@ -24,7 +24,7 @@ final class LocalSessionRowContentView: UIView, UIContentView {
     private let icon = SessionGridBadgeView()
     private let titleLabel = UILabel()
     private let timeLabel = UILabel()
-    private let badgeLabel = SessionRowInsetLabel()
+    private let badgeLabel = InsetLabel(insets: UIEdgeInsets(top: 1, left: 5, bottom: 1, right: 5), capsule: false)
     private let providerIcon = UIImageView()
     private let modelLabel = UILabel()
     private let countLabel = UILabel()
@@ -48,10 +48,10 @@ final class LocalSessionRowContentView: UIView, UIContentView {
         iconContainer.translatesAutoresizingMaskIntoConstraints = false
         iconContainer.addSubview(icon)
 
-        titleLabel.font = SessionRowText.font(.body)
+        titleLabel.font = UIFont.scaled(.body)
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        timeLabel.font = SessionRowText.font(.caption2)
+        timeLabel.font = UIFont.scaled(.caption2)
         timeLabel.adjustsFontForContentSizeCategory = true
         timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         timeLabel.setContentHuggingPriority(.required, for: .horizontal)
@@ -60,15 +60,12 @@ final class LocalSessionRowContentView: UIView, UIContentView {
         titleRow.spacing = 8
 
         badgeLabel.text = String(localized: "Terminal")
-        badgeLabel.font = SessionRowText.font(.caption2, .medium)
-        badgeLabel.insets = UIEdgeInsets(top: 1, left: 5, bottom: 1, right: 5)
+        badgeLabel.font = UIFont.scaled(.caption2, .medium)
         badgeLabel.layer.cornerRadius = 3
-        badgeLabel.layer.masksToBounds = true
-        badgeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         providerIcon.contentMode = .scaleAspectFit
         providerIcon.translatesAutoresizingMaskIntoConstraints = false
         for label in [modelLabel, countLabel] {
-            label.font = SessionRowText.font(.caption1)
+            label.font = UIFont.scaled(.caption1)
             label.adjustsFontForContentSizeCategory = true
         }
         modelLabel.lineBreakMode = .byTruncatingMiddle
@@ -161,21 +158,5 @@ final class LocalSessionRowContentView: UIView, UIContentView {
         guard applied.isEnabled else { return false }
         applied.onImport()
         return true
-    }
-}
-
-/// A label drawn with padding around its text, for small capsule badges.
-class SessionRowInsetLabel: UILabel {
-    var insets = UIEdgeInsets.zero {
-        didSet { invalidateIntrinsicContentSize() }
-    }
-
-    override func drawText(in rect: CGRect) {
-        super.drawText(in: rect.inset(by: insets))
-    }
-
-    override var intrinsicContentSize: CGSize {
-        let size = super.intrinsicContentSize
-        return CGSize(width: size.width + insets.left + insets.right, height: size.height + insets.top + insets.bottom)
     }
 }

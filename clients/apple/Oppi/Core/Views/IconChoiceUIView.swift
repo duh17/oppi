@@ -12,7 +12,7 @@ final class IconChoiceUIView: UIView {
     enum Content: Equatable {
         case choice(IconChoice?, purpose: Purpose, sandbox: Bool)
         case piAvatar
-        case symbol(String, color: UIColor, style: UIFont.TextStyle, weight: UIImage.SymbolWeight)
+        case symbol(String, color: UIColor, style: UIFont.TextStyle, weight: UIFont.Weight)
 
         enum Purpose: Equatable {
             case agent
@@ -103,7 +103,7 @@ final class IconChoiceUIView: UIView {
             imageView.contentMode = .scaleAspectFit
             imageView.image = PiAvatarRenderer.render(size: frameSize * 2)
         case .symbol(let name, let color, let style, let weight):
-            imageView.image = quickSessionSymbol(name, style: style, weight: weight, color: color)
+            imageView.image = UIImage.scaledSymbol(name, style: style, weight: weight, color: color)
         case .choice(let choice, let purpose, let sandbox):
             sandboxMark.isHidden = !sandbox
             if sandbox { sandboxMark.image = sandboxImage() }

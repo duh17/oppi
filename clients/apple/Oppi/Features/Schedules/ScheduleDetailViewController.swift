@@ -425,7 +425,7 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
             if opensSession {
                 let chevron = UIImageView(image: UIImage(
                     systemName: "chevron.forward",
-                    withConfiguration: UIImage.SymbolConfiguration(font: ControlScreenList.font(.footnote, .semibold))
+                    withConfiguration: UIImage.SymbolConfiguration(font: UIFont.scaled(.footnote, .semibold))
                 ))
                 chevron.tintColor = UIColor(palette.comment)
                 chevron.setContentHuggingPriority(.required, for: .horizontal)

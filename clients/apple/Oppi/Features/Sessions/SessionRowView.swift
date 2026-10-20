@@ -65,7 +65,7 @@ final class SessionRowView: UIView {
 
     private let metricsCluster = UIStackView()
     private let gauge = SessionContextGaugeView()
-    private let incognitoBadge = SessionIncognitoBadgeView()
+    private let incognitoBadge = InsetLabel(insets: UIEdgeInsets(top: 1, left: 6, bottom: 1, right: 6), capsule: true)
     private let costLabel = UILabel()
     private let filesLabel = UILabel()
 
@@ -133,7 +133,9 @@ final class SessionRowView: UIView {
         } else {
             applyDetails(presentation, status: status)
         }
-        arrangeDetailRows(joined: false)
+        // Compact decides its rows from the width (`prepareLayout`); keeping the
+        // last arrangement until then avoids a relayout on every reconfigure.
+        if !display.isCompact || content.hidesDetails { arrangeDetailRows(joined: false) }
         setNeedsLayout()
         if window != nil { startClock() }
     }
@@ -146,7 +148,7 @@ final class SessionRowView: UIView {
         costLabel.isHidden = true
         filesLabel.isHidden = true
         incognitoBadge.isHidden = !isIncognito
-        incognitoBadge.apply(style.colors)
+        applyIncognito()
         metricsCluster.isHidden = !isIncognito
         applyStatus(status)
     }
@@ -197,7 +199,7 @@ final class SessionRowView: UIView {
         let worktree = SessionWorktreeIndicatorPresentation(session: session)
         worktreeIcon.isHidden = worktree == nil
         if let worktree {
-            worktreeIcon.image = SessionRowText.symbolImage("arrow.triangle.branch", style: .caption2, weight: .semibold)
+            worktreeIcon.image = UIImage.scaledSymbol("arrow.triangle.branch", style: .caption2, weight: .semibold)
             worktreeIcon.tintColor = colors.purple
             worktreeIcon.accessibilityLabel = worktree.accessibilityLabel
             worktreeIcon.accessibilityValue = worktree.worktreeId
@@ -223,7 +225,7 @@ final class SessionRowView: UIView {
         if let percent { gauge.apply(percent: percent, colors: colors) }
 
         incognitoBadge.isHidden = session.ephemeral != true
-        if !incognitoBadge.isHidden { incognitoBadge.apply(colors) }
+        applyIncognito()
 
         let showsCost = display.showsCost && session.cost > 0
         costLabel.isHidden = !showsCost
@@ -250,13 +252,25 @@ final class SessionRowView: UIView {
         let tint = style.tint(status)
         blockedBadge.isHidden = !status.isBlocked
         if status.isBlocked {
-            blockedBadge.image = SessionRowText.symbolImage(status.badgeSymbol, style: .caption1, weight: .regular)
+            blockedBadge.image = UIImage.scaledSymbol(status.badgeSymbol, style: .caption1, weight: .regular)
             blockedBadge.tintColor = tint
             blockedBadge.accessibilityIdentifier = content.map { "session.attentionBadge.\($0.presentation.session.id)" }
         }
         statusLabel.text = status.label
-        statusLabel.font = SessionRowText.font(.caption2, status.needsAttention ? .semibold : .medium)
+        statusLabel.font = UIFont.scaled(.caption2, status.needsAttention ? .semibold : .medium)
         statusLabel.textColor = tint
+    }
+
+    /// "Incognito" with its eye glyph on a purple capsule.
+    private func applyIncognito() {
+        guard !incognitoBadge.isHidden else { return }
+        let purple = style.colors.purple
+        incognitoBadge.attributedText = SessionRowText.symbolAndText(
+            "eye.slash.fill", "Incognito", style: .caption2, symbolWeight: .medium, textWeight: .medium,
+            spacing: 4, color: purple
+        )
+        incognitoBadge.backgroundColor = purple.withAlphaComponent(0.14)
+        incognitoBadge.accessibilityLabel = "Incognito session"
     }
 
     private func contextPercent(_ session: Session) -> Double? {
@@ -380,10 +394,10 @@ final class SessionRowView: UIView {
         guard let session = content?.presentation.session else { return }
         let now = Date()
         if let started = currentTurnStartedAt {
-            timeLabel.font = SessionRowText.font(.caption2, monospacedDigits: true)
+            timeLabel.font = UIFont.scaled(.caption2, monospacedDigits: true)
             timeLabel.text = SessionFormatting.durationString(since: started, now: now)
         } else {
-            timeLabel.font = SessionRowText.font(.caption2)
+            timeLabel.font = UIFont.scaled(.caption2)
             timeLabel.text = (session.lastAgentReplyAt ?? session.lastActivity).relativeString(relativeTo: now)
         }
     }
@@ -396,50 +410,28 @@ final class SessionRowView: UIView {
         return true
     }
 
+    /// The facts a list row shows, in reading order.
+    private var facts: [UIView] {
+        [
+            icon, titleLabel, lockLabel, durableLabel, timeLabel, snippetLabel,
+            workspaceLabel, providerIcon, modelLabel, compactionLabel, worktreeIcon, attentionLabel, mirrorIndicator,
+            gauge.valueLabel, incognitoBadge, costLabel, filesLabel, statusLabel,
+        ].filter(\.isShownForAutomation)
+    }
 
-
-    /// UI tests also see each visible fact inside a list row, as they saw the
-    /// SwiftUI row's texts; VoiceOver reads the one combined element.
+    /// UI tests also see each visible fact, as they saw the SwiftUI row's
+    /// texts; VoiceOver reads the one combined element.
     override var automationElements: [Any]? {
-        get {
-            guard combinesAccessibility else { return super.automationElements }
-            let facts: [UIView] = [
-                titleLabel, lockLabel, durableLabel, timeLabel, snippetLabel,
-                workspaceLabel, modelLabel, compactionLabel, worktreeIcon, attentionLabel, mirrorIndicator,
-                gauge.valueLabel, incognitoBadge, costLabel, filesLabel, statusLabel,
-            ]
-            return facts.filter(\.isShownForAutomation)
-        }
+        get { combinesAccessibility ? facts : super.automationElements }
         set { super.automationElements = newValue }
     }
 
-    /// The visible facts in reading order, as SwiftUI's combined row spoke them.
+    /// The visible facts joined, as SwiftUI's combined row spoke them. A
+    /// provider without a logo speaks its monogram, as `ProviderIcon` did.
     override var accessibilityLabel: String? {
         get {
             guard combinesAccessibility else { return super.accessibilityLabel }
-            var parts: [String?] = [icon.accessibilityLabel, titleLabel.text]
-            parts.append(lockLabel.isHidden ? nil : lockLabel.accessibilityLabel)
-            parts.append(durableLabel.isHidden ? nil : durableLabel.accessibilityLabel)
-            parts.append(timeLabel.isHidden ? nil : timeLabel.text)
-            parts.append(snippetLabel.isHidden ? nil : snippetLabel.attributedText?.string)
-            if !contextCluster.isHidden {
-                parts.append(workspaceLabel.isHidden ? nil : workspaceLabel.accessibilityLabel)
-                // A provider without a logo speaks its monogram, as `ProviderIcon` did.
-                parts.append(modelStack.isHidden || providerIcon.isHidden ? nil : providerIcon.accessibilityLabel)
-                parts.append(modelStack.isHidden ? nil : modelLabel.text)
-                parts.append(compactionLabel.isHidden ? nil : compactionLabel.accessibilityLabel)
-                parts.append(worktreeIcon.isHidden ? nil : worktreeIcon.accessibilityLabel)
-                parts.append(attentionLabel.isHidden ? nil : attentionLabel.text)
-            }
-            parts.append(mirrorIndicator.isHidden ? nil : mirrorIndicator.accessibilityLabel)
-            if !metricsCluster.isHidden {
-                parts.append(gauge.isHidden ? nil : gauge.accessibilityLabel)
-                parts.append(incognitoBadge.isHidden ? nil : incognitoBadge.accessibilityLabel)
-                parts.append(costLabel.isHidden ? nil : costLabel.text)
-                parts.append(filesLabel.isHidden ? nil : filesLabel.accessibilityLabel)
-            }
-            parts.append(statusLabel.text)
-            return parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
+            return facts.compactMap(\.accessibilityLabel).filter { !$0.isEmpty }.joined(separator: ", ")
         }
         set { super.accessibilityLabel = newValue }
     }
@@ -461,7 +453,7 @@ final class SessionRowView: UIView {
         iconContainer.addSubview(attentionDot)
         addSubview(iconContainer)
 
-        titleLabel.font = SessionRowText.font(.body)
+        titleLabel.font = UIFont.scaled(.body)
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -486,7 +478,7 @@ final class SessionRowView: UIView {
         // Context cluster.
         providerIcon.contentMode = .scaleAspectFit
         providerIcon.translatesAutoresizingMaskIntoConstraints = false
-        modelLabel.font = SessionRowText.font(.caption2)
+        modelLabel.font = UIFont.scaled(.caption2)
         modelLabel.adjustsFontForContentSizeCategory = true
         modelLabel.lineBreakMode = .byTruncatingMiddle
         modelLabel.setContentCompressionResistancePriority(.defaultLow + 1, for: .horizontal)
@@ -500,7 +492,7 @@ final class SessionRowView: UIView {
         worktreeIcon.contentMode = .center
         worktreeIcon.isAccessibilityElement = true
         worktreeIcon.translatesAutoresizingMaskIntoConstraints = false
-        attentionLabel.font = SessionRowText.font(.caption2)
+        attentionLabel.font = UIFont.scaled(.caption2)
         attentionLabel.adjustsFontForContentSizeCategory = true
         attentionLabel.lineBreakMode = .byTruncatingMiddle
         attentionLabel.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
@@ -510,7 +502,7 @@ final class SessionRowView: UIView {
         [workspaceLabel, modelStack, compactionLabel, worktreeIcon, attentionLabel].forEach(contextCluster.addArrangedSubview)
 
         // Metrics cluster: caption, dimmed, one line.
-        costLabel.font = SessionRowText.font(.caption1, monospacedDigits: true)
+        costLabel.font = UIFont.scaled(.caption1, monospacedDigits: true)
         costLabel.adjustsFontForContentSizeCategory = true
         filesLabel.isAccessibilityElement = true
         metricsCluster.axis = .horizontal
@@ -610,10 +602,10 @@ final class SessionRowWorkspaceView: UIStackView {
     required init(coder: NSCoder) { fatalError("Not supported") }
 
     func apply(_ workspace: String, color: UIColor) {
-        glyph.image = SessionRowText.symbolImage("folder", style: .caption2, weight: .semibold)
+        glyph.image = UIImage.scaledSymbol("folder", style: .caption2, weight: .semibold)
         glyph.tintColor = color
         nameLabel.text = workspace
-        nameLabel.font = SessionRowText.font(.caption2, .medium)
+        nameLabel.font = UIFont.scaled(.caption2, .medium)
         nameLabel.textColor = color
         accessibilityLabel = "Workspace \(workspace)"
     }
@@ -663,7 +655,6 @@ final class SessionContextGaugeView: UIStackView {
     private let fill = UIView()
     private let fillWidth: NSLayoutConstraint
     let valueLabel = UILabel()
-    private var label: UILabel { valueLabel }
 
     init() {
         fillWidth = fill.widthAnchor.constraint(equalToConstant: 0)
@@ -684,10 +675,10 @@ final class SessionContextGaugeView: UIStackView {
             fill.bottomAnchor.constraint(equalTo: track.bottomAnchor),
             fillWidth,
         ])
-        label.font = SessionRowText.font(.caption1, monospacedDigits: true)
-        label.adjustsFontForContentSizeCategory = true
+        valueLabel.font = UIFont.scaled(.caption1, monospacedDigits: true)
+        valueLabel.adjustsFontForContentSizeCategory = true
         addArrangedSubview(track)
-        addArrangedSubview(label)
+        addArrangedSubview(valueLabel)
     }
 
     @available(*, unavailable)
@@ -698,41 +689,8 @@ final class SessionContextGaugeView: UIStackView {
         track.backgroundColor = colors.bgHighlight
         fill.backgroundColor = clamped > 0.9 ? colors.red : clamped > 0.7 ? colors.orange : colors.green
         fillWidth.constant = 24 * clamped
-        label.text = "\(Int((clamped * 100).rounded()))%"
-        label.textColor = colors.comment
-    }
-
-    override var accessibilityLabel: String? {
-        get { label.text }
-        set {}
-    }
-}
-
-/// "Incognito" with its eye glyph on a purple capsule.
-final class SessionIncognitoBadgeView: SessionRowInsetLabel {
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isAccessibilityElement = true
-        accessibilityLabel = "Incognito session"
-        insets = UIEdgeInsets(top: 1, left: 6, bottom: 1, right: 6)
-        layer.masksToBounds = true
-        setContentCompressionResistancePriority(.required, for: .horizontal)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func apply(_ colors: ComposerThemeColors) {
-        attributedText = SessionRowText.symbolAndText(
-            "eye.slash.fill", "Incognito", style: .caption2, symbolWeight: .medium, textWeight: .medium,
-            spacing: 4, color: colors.purple
-        )
-        backgroundColor = colors.purple.withAlphaComponent(0.14)
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        layer.cornerRadius = bounds.height / 2
+        valueLabel.text = "\(Int((clamped * 100).rounded()))%"
+        valueLabel.textColor = colors.comment
     }
 }
 
@@ -780,58 +738,36 @@ final class SessionRowStyle {
     }
 }
 
-/// Fonts, glyphs, and attributed text for session rows and their Thread strip.
+/// Glyphs and attributed text for session rows, their Thread strip, and the
+/// workspace sidebar.
 @MainActor
 enum SessionRowText {
-    /// Rows configure while the list scrolls, so fonts, glyphs, and tinted
-    /// glyphs are built once per text size and reused.
-    private static var fonts: [String: UIFont] = [:]
+    /// Rows configure while the list scrolls, so tinted glyphs are built once
+    /// per text size and reused.
     private static var glyphs: [String: NSAttributedString] = [:]
-    private static var cachedSizeCategory: UIContentSizeCategory?
+    private static var glyphsCategory: UIContentSizeCategory?
 
-    private static func cacheKey(_ parts: Any...) -> String {
+    /// A glyph at the text style's size and weight, in `color`, on the text's line.
+    static func symbol(
+        _ name: String,
+        style: UIFont.TextStyle,
+        weight: UIFont.Weight,
+        scale: UIImage.SymbolScale = .default,
+        color: UIColor
+    ) -> NSAttributedString {
         let category = UIApplication.shared.preferredContentSizeCategory
-        if category != cachedSizeCategory {
-            cachedSizeCategory = category
-            fonts.removeAll()
+        if category != glyphsCategory {
+            glyphsCategory = category
             glyphs.removeAll()
         }
-        return parts.map { "\($0)" }.joined(separator: "|")
-    }
-
-    static func font(
-        _ style: UIFont.TextStyle,
-        _ weight: UIFont.Weight = .regular,
-        monospacedDigits: Bool = false
-    ) -> UIFont {
-        let key = cacheKey(style.rawValue, weight.rawValue, monospacedDigits)
-        if let cached = fonts[key] { return cached }
-        var font = UIFont.quickSessionFont(style, weight: weight)
-        if monospacedDigits {
-            let descriptor = font.fontDescriptor.addingAttributes([
-                .featureSettings: [[
-                    UIFontDescriptor.FeatureKey.type: kNumberSpacingType,
-                    UIFontDescriptor.FeatureKey.selector: kMonospacedNumbersSelector,
-                ]],
-            ])
-            font = UIFont(descriptor: descriptor, size: font.pointSize)
-        }
-        fonts[key] = font
-        return font
-    }
-
-    static func symbolImage(_ name: String, style: UIFont.TextStyle, weight: UIFont.Weight) -> UIImage? {
-        UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(font: font(style, weight)))
-    }
-
-    static func symbol(_ name: String, style: UIFont.TextStyle, weight: UIFont.Weight, color: UIColor) -> NSAttributedString {
-        let key = cacheKey(name, style.rawValue, weight.rawValue, color)
+        let key = "\(name)|\(style.rawValue)|\(weight.rawValue)|\(scale.rawValue)|\(color)"
         if let cached = glyphs[key] { return cached }
-        guard let image = symbolImage(name, style: style, weight: weight)?
+        let font = UIFont.scaled(style, weight)
+        guard let image = UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(font: font, scale: scale))?
             .withTintColor(color, renderingMode: .alwaysOriginal) else { return NSAttributedString() }
         let glyph = NSMutableAttributedString(attachment: NSTextAttachment(image: image))
         // The glyph's line takes the text style's height, not the label's default font.
-        glyph.addAttribute(.font, value: font(style, weight), range: NSRange(location: 0, length: glyph.length))
+        glyph.addAttribute(.font, value: font, range: NSRange(location: 0, length: glyph.length))
         glyphs[key] = glyph
         return glyph
     }
@@ -854,14 +790,17 @@ enum SessionRowText {
         textStyle: UIFont.TextStyle? = nil,
         symbolWeight: UIFont.Weight,
         textWeight: UIFont.Weight,
+        symbolScale: UIImage.SymbolScale = .default,
         monospacedDigits: Bool = false,
         spacing: CGFloat = 3,
         color: UIColor
     ) -> NSAttributedString {
-        let result = NSMutableAttributedString(attributedString: symbol(symbolName, style: style, weight: symbolWeight, color: color))
-        result.append(gap(spacing, font: font(style, symbolWeight)))
+        let result = NSMutableAttributedString(
+            attributedString: symbol(symbolName, style: style, weight: symbolWeight, scale: symbolScale, color: color)
+        )
+        result.append(gap(spacing, font: .scaled(style, symbolWeight)))
         result.append(NSAttributedString(string: text, attributes: [
-            .font: font(textStyle ?? style, textWeight, monospacedDigits: monospacedDigits),
+            .font: UIFont.scaled(textStyle ?? style, textWeight, monospacedDigits: monospacedDigits),
             .foregroundColor: color,
         ]))
         return result
@@ -885,8 +824,8 @@ enum SessionRowText {
     /// A search snippet with its matched runs bold in the theme's yellow.
     static func snippet(_ snippet: AttributedString, color: UIColor, highlight: UIColor) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        let regular = font(.caption1)
-        let bold = font(.caption1, .bold)
+        let regular = UIFont.scaled(.caption1)
+        let bold = UIFont.scaled(.caption1, .bold)
         for run in snippet.runs {
             let matched = run.inlinePresentationIntent?.contains(.stronglyEmphasized) == true
             result.append(NSAttributedString(string: String(snippet[run.range].characters), attributes: [

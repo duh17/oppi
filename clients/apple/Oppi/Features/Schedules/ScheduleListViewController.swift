@@ -298,7 +298,7 @@ enum ScheduleCardView {
         let cadence = ControlRowViews.label(nil, style: .caption1, weight: .semibold, color: UIColor(palette.blue), lines: 1)
         cadence.attributedText = NSAttributedString(
             string: schedule.trigger.scheduleScreenCadence,
-            attributes: [.kern: 0.7, .font: ControlScreenList.font(.caption1, .semibold), .foregroundColor: UIColor(palette.blue)]
+            attributes: [.kern: 0.7, .font: UIFont.scaled(.caption1, .semibold), .foregroundColor: UIColor(palette.blue)]
         )
         var top: [UIView] = [cadence, ControlRowViews.spacer()]
         if schedule.status != .active {

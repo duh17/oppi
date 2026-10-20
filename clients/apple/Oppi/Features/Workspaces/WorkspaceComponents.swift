@@ -408,7 +408,7 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
         selection.translatesAutoresizingMaskIntoConstraints = false
         addSubview(selection)
 
-        nameLabel.font = SessionRowText.font(.body, .semibold)
+        nameLabel.font = UIFont.scaled(.body, .semibold)
         nameLabel.adjustsFontForContentSizeCategory = true
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         lockLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -419,7 +419,7 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
         nameRow.alignment = .firstBaseline
         nameRow.spacing = 5
         nameRow.setCustomSpacing(8, after: lockLabel)
-        descriptionLabel.font = SessionRowText.font(.caption1)
+        descriptionLabel.font = UIFont.scaled(.caption1)
         descriptionLabel.adjustsFontForContentSizeCategory = true
         gitLabel.adjustsFontSizeToFitWidth = true
         gitLabel.minimumScaleFactor = 0.75
@@ -530,26 +530,21 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
         return metricLine(metrics, weight: .medium, itemSpacing: 9, glyphSpacing: 3)
     }
 
+    /// Each metric a small glyph and its text (`SessionRowText.symbolAndText`),
+    /// `itemSpacing` apart.
     private static func metricLine(
         _ metrics: [(symbol: String, text: String, color: UIColor, small: Bool)],
         weight: UIFont.Weight,
         itemSpacing: CGFloat,
         glyphSpacing: CGFloat
     ) -> NSAttributedString {
-        let font = SessionRowText.font(.caption2, weight, monospacedDigits: true)
         let result = NSMutableAttributedString()
-        for (index, metric) in metrics.enumerated() {
-            let configuration = UIImage.SymbolConfiguration(font: font, scale: metric.small ? .small : .medium)
-            if let image = UIImage(systemName: metric.symbol, withConfiguration: configuration)?
-                .withTintColor(metric.color, renderingMode: .alwaysOriginal) {
-                result.append(NSAttributedString(attachment: NSTextAttachment(image: image)))
-                result.addAttribute(.font, value: font, range: NSRange(location: result.length - 1, length: 1))
-                result.append(SessionRowText.gap(glyphSpacing, font: font))
-            }
-            result.append(NSAttributedString(string: metric.text, attributes: [.font: font, .foregroundColor: metric.color]))
-            if index < metrics.count - 1 {
-                result.addAttribute(.kern, value: itemSpacing, range: NSRange(location: result.length - 1, length: 1))
-            }
+        for metric in metrics {
+            if result.length > 0 { result.append(SessionRowText.gap(itemSpacing, font: .scaled(.caption2, weight))) }
+            result.append(SessionRowText.symbolAndText(
+                metric.symbol, metric.text, style: .caption2, symbolWeight: weight, textWeight: weight,
+                symbolScale: metric.small ? .small : .medium, monospacedDigits: true, spacing: glyphSpacing, color: metric.color
+            ))
         }
         return result
     }

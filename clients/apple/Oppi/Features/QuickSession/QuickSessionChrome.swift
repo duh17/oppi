@@ -3,33 +3,6 @@ import UIKit
 // UIKit pieces of Quick Session's chrome: the destination pills above the
 // composer (their icons are `IconChoiceUIView`) and the launch error panel.
 
-extension UIFont {
-    /// The text style's font at `weight`, scaled for Dynamic Type.
-    static func quickSessionFont(_ style: UIFont.TextStyle, weight: UIFont.Weight = .regular) -> UIFont {
-        let base = preferredFont(forTextStyle: style)
-        let descriptor = base.fontDescriptor.addingAttributes([
-            .traits: [UIFontDescriptor.TraitKey.weight: weight],
-        ])
-        return UIFont(descriptor: descriptor, size: base.pointSize)
-    }
-}
-
-/// An SF Symbol at a text style's size and weight, in `color`.
-@MainActor
-func quickSessionSymbol(
-    _ name: String,
-    style: UIFont.TextStyle,
-    weight: UIImage.SymbolWeight,
-    color: UIColor
-) -> UIImage? {
-    let configuration = UIImage.SymbolConfiguration(
-        font: UIFont.preferredFont(forTextStyle: style),
-        scale: .default
-    ).applying(UIImage.SymbolConfiguration(weight: weight))
-    return UIImage(systemName: name, withConfiguration: configuration)?
-        .withTintColor(color, renderingMode: .alwaysOriginal)
-}
-
 // MARK: - Pill
 
 /// A glass capsule above (or, at accessibility text sizes, below) the
@@ -79,10 +52,10 @@ final class QuickSessionPillButton: UIButton {
                 view.bottomAnchor.constraint(equalTo: capsule.bottomAnchor),
             ])
         }
-        captionLabel.font = .quickSessionFont(.caption2, weight: .semibold)
+        captionLabel.font = UIFont.scaled(.caption2, .semibold)
         captionLabel.lineBreakMode = .byTruncatingTail
         captionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        detailLabel.font = .quickSessionFont(.caption2, weight: .semibold)
+        detailLabel.font = UIFont.scaled(.caption2, .semibold)
         detailLabel.lineBreakMode = .byTruncatingTail
         detailLabel.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
         trailingView.contentMode = .center
@@ -175,7 +148,7 @@ final class QuickSessionPillButton: UIButton {
         detailLabel.isHidden = content.detail == nil
         if let symbol = content.trailingSymbol {
             trailingView.isHidden = false
-            trailingView.image = quickSessionSymbol(
+            trailingView.image = UIImage.scaledSymbol(
                 symbol,
                 style: .caption2,
                 weight: .semibold,
@@ -249,7 +222,7 @@ final class QuickSessionErrorPanel: UIView {
         colors: ComposerThemeColors
     ) {
         backgroundColor = colors.red.withAlphaComponent(0.08)
-        iconView.image = quickSessionSymbol("exclamationmark.triangle.fill", style: .caption1, weight: .regular, color: colors.red)
+        iconView.image = UIImage.scaledSymbol("exclamationmark.triangle.fill", style: .caption1, weight: .regular, color: colors.red)
         messageLabel.text = message
         messageLabel.textColor = colors.red
         messageLabel.superview?.accessibilityLabel = message

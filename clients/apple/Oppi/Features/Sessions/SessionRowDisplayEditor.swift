@@ -303,7 +303,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
     // MARK: Preview
 
     private func buildPreviewPane() {
-        previewLabel.font = SessionRowText.font(.caption1, .semibold)
+        previewLabel.font = UIFont.scaled(.caption1, .semibold)
         previewLabel.adjustsFontForContentSizeCategory = true
         previewLabel.accessibilityIdentifier = "sessionRows.preview.label"
 
@@ -325,7 +325,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         previewBox.accessibilityContainerType = .semanticGroup
         previewBox.accessibilityIdentifier = "sessionRows.preview"
 
-        previewNote.font = SessionRowText.font(.footnote)
+        previewNote.font = UIFont.scaled(.footnote)
         previewNote.adjustsFontForContentSizeCategory = true
         previewNote.numberOfLines = 0
 
@@ -373,8 +373,6 @@ final class SessionRowDisplayEditorViewController: UIViewController {
                 label: String(localized: "Restore Defaults"),
                 enabled: enabled
             ) { [weak self] in self?.draft = .standard }
-            // The row's traits are set explicitly, so a disabled Restore says so itself.
-            if !enabled { cell.element.accessibilityTraits.insert(.notEnabled) }
             var content = UIListContentConfiguration.cell()
             content.text = String(localized: "Restore Defaults")
             content.textProperties.color = enabled ? UIColor(root.themeStore.activeThemeID.palette.blue) : .tertiaryLabel
@@ -473,8 +471,6 @@ final class SessionRowDisplayEditorViewController: UIViewController {
     private func toggleSwitch(_ toggle: Toggle) -> UISwitch {
         if let control = switches[toggle] { return control }
         let control = UISwitch()
-        // The app tint SwiftUI toggles drew in.
-        control.onTintColor = UIColor(root.themeStore.activeThemeID.palette.blue)
         control.accessibilityIdentifier = "sessionRows.toggle.\(toggle.rawValue)"
         control.accessibilityLabel = toggle.title
         control.addAction(UIAction { [weak self, weak control] _ in
@@ -491,6 +487,8 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         content.textProperties.color = UIColor(root.themeStore.activeThemeID.palette.fg)
         cell.contentConfiguration = content
         let control = toggleSwitch(toggle)
+        // The app tint SwiftUI toggles drew in, following the theme.
+        control.onTintColor = UIColor(root.themeStore.activeThemeID.palette.blue)
         if control.isOn != draft[keyPath: toggle.keyPath] {
             control.setOn(draft[keyPath: toggle.keyPath], animated: control.window != nil)
         }

@@ -193,7 +193,7 @@ final class QuickSessionPickerController: UIViewController, RouterModalContainer
             row.alignment = .center
             stack.addArrangedSubview(padded(row, insets: NSDirectionalEdgeInsets(top: 18, leading: 18, bottom: 18, trailing: 18)))
         case .empty(let title, let systemImage, let message):
-            let icon = UIImageView(image: quickSessionSymbol(systemImage, style: .body, weight: .semibold, color: colors.fg))
+            let icon = UIImageView(image: UIImage.scaledSymbol(systemImage, style: .body, weight: .semibold, color: colors.fg))
             let titleLabel = label(title, style: .body, weight: .semibold, color: colors.fg)
             let titleRow = UIStackView(arrangedSubviews: [icon, titleLabel])
             titleRow.spacing = 8
@@ -269,7 +269,7 @@ final class QuickSessionPickerController: UIViewController, RouterModalContainer
     ) -> UILabel {
         let label = UILabel()
         label.text = text
-        label.font = .quickSessionFont(style, weight: weight)
+        label.font = UIFont.scaled(style, weight)
         label.textColor = color
         label.numberOfLines = 0
         return label
@@ -331,7 +331,7 @@ private final class QuickSessionPickerRowButton: UIButton {
         icon.apply(row.icon, colors: colors, assetCache: row.iconAssetCache)
         let title = UILabel()
         title.text = row.title
-        title.font = .quickSessionFont(style.titleStyle, weight: style.titleWeight)
+        title.font = UIFont.scaled(style.titleStyle, style.titleWeight)
         title.textColor = colors.fg
         title.lineBreakMode = .byTruncatingTail
         let labels = UIStackView(arrangedSubviews: [title])
@@ -346,7 +346,7 @@ private final class QuickSessionPickerRowButton: UIButton {
             detail.numberOfLines = style.subtitleLines
             labels.addArrangedSubview(detail)
         }
-        let check = UIImageView(image: quickSessionSymbol(
+        let check = UIImageView(image: UIImage.scaledSymbol(
             "checkmark",
             style: style.checkmarkStyle,
             weight: .semibold,

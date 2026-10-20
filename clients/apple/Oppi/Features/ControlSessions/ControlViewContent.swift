@@ -71,7 +71,7 @@ enum ControlRowViews {
     ) -> UILabel {
         let label = UILabel()
         label.text = text
-        label.font = ControlScreenList.font(style, weight)
+        label.font = UIFont.scaled(style, weight)
         label.adjustsFontForContentSizeCategory = true
         label.textColor = color
         label.numberOfLines = lines
@@ -89,7 +89,7 @@ enum ControlRowViews {
     ) -> UITextView {
         let view = UITextView()
         view.text = text
-        view.font = ControlScreenList.font(style, weight)
+        view.font = UIFont.scaled(style, weight)
         view.adjustsFontForContentSizeCategory = true
         view.textColor = color
         view.isEditable = false
@@ -113,7 +113,7 @@ enum ControlRowViews {
         symbolColor: UIColor? = nil,
         lines: Int = 0
     ) -> UILabel {
-        let font = ControlScreenList.font(style, weight)
+        let font = UIFont.scaled(style, weight)
         let attributed = NSMutableAttributedString()
         if let image = UIImage(systemName: systemImage, withConfiguration: UIImage.SymbolConfiguration(font: font))?
             .withTintColor(symbolColor ?? color, renderingMode: .alwaysOriginal) {
@@ -184,7 +184,7 @@ final class ControlStatusPill: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        label.font = ControlScreenList.font(.caption2, .medium)
+        label.font = UIFont.scaled(.caption2, .medium)
         label.adjustsFontForContentSizeCategory = true
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
@@ -212,7 +212,7 @@ final class ControlStatusPill: UIView {
         label.text = text
         label.textColor = tone
         if monospacedDigit {
-            label.font = ControlScreenList.monospacedDigitFont(.caption2, .medium)
+            label.font = UIFont.scaled(.caption2, .medium, monospacedDigits: true)
         }
         backgroundColor = emphasis == .quiet
             ? UIColor(palette.fg).withAlphaComponent(0.08)
