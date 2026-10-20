@@ -496,7 +496,7 @@
     "clients/apple/Oppi/Features/Onboarding/WhatsNewView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/QuickSession/QuickSessionSheet.swift": {
+    "clients/apple/Oppi/Features/QuickSession/QuickSessionModelPicker.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Review/CommitDetailView.swift": {

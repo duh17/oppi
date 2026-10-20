@@ -45,8 +45,9 @@ protocol ChatComposerSource: AnyObject {
 /// The chat input bar in UIKit: `ComposerBarController` with the dictation
 /// failure notice above it and the busy-mode tip in its slot, the inline
 /// voice wiring, focus and dictation requests, and the expanded composer.
-/// The screen embeds this controller as a child (the SSH terminal embeds
-/// `ComposerBarController` the same way) and supplies a `ChatComposerSource`.
+/// A screen (the chat, Quick Session) embeds this controller as a child (the
+/// SSH terminal embeds `ComposerBarController` the same way) and supplies a
+/// `ChatComposerSource`.
 @MainActor
 final class ChatComposerOwner: UIViewController, ComposerBarHosting {
     weak var source: ChatComposerSource?
@@ -159,11 +160,16 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
         bar.apply()
     }
 
-    /// Starts dictation for `owner` (the review-comment menu) when the mic is idle.
+    /// Starts dictation for `owner` (the review-comment menu, Quick Session's
+    /// dictation start) when the mic is idle.
     func requestDictation(owner: ComposerShared.VoiceInputOwner) {
         dictationTask?.cancel()
         dictationTask = Task { [weak self] in
-            guard let self, let manager = self.current?.voiceInputManager else { return }
+            guard let self else { return }
+            // The screen may have just handed the composer its microphone
+            // (Quick Session claims it as it opens): read the source first.
+            self.updatePropertiesIfNeeded()
+            guard let manager = self.current?.voiceInputManager else { return }
             guard ComposerShared.canControlVoiceInput(manager, owner: owner) else { return }
             guard ComposerShared.micTapAction(for: manager.state) == .start else { return }
             await self.startOwnedVoiceInput(owner: owner)

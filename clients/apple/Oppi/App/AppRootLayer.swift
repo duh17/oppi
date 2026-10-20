@@ -3,20 +3,14 @@ import UIKit
 
 /// The app root's SwiftUI layer, under the UIKit content
 /// (`AppRootViewController`): app-wide modals (extension dialogs and notices,
-/// What's New, pairing approvals, workspace creation the shell starts),
-/// app-wide event handlers, and the Quick Session overlay. While Quick
-/// Session is up the root brings this layer to the front.
+/// What's New, pairing approvals, workspace creation the shell starts) and
+/// app-wide event handlers.
 struct AppRootLayer: View {
     let root: AppRootEnvironment
 
     @Environment(ServerConnection.self) private var connection
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
-    @Environment(\.composerDraftStore) private var composerDraftStore
-    @State private var quickSessionTrigger = QuickSessionTrigger.shared
-    /// Last external Quick Session request presented or dropped; each is handled at most once.
-    @State private var handledQuickSessionRequestID = 0
-    @State private var quickSessionLaunchAccessibilityElement: AnyObject?
 
     var body: some View {
         @Bindable var nav = navigation
@@ -80,24 +74,6 @@ struct AppRootLayer: View {
             .routerModal(isPresented: $nav.showWhatsNew, presentation: .fullScreen) {
                 WhatsNewScreen()
             }
-            .overlay {
-                if nav.showQuickSession {
-                    QuickSessionOverlay(onDismiss: dismissQuickSession)
-                }
-            }
-            .onChange(of: quickSessionTrigger.presentationRequestID) { _, newValue in
-                presentQuickSessionIfPossible(requestID: newValue)
-            }
-            .onChange(of: nav.showQuickSession) { wasShowing, isShowing in
-                guard !wasShowing, isShowing else { return }
-                captureQuickSessionLaunchAccessibilityElement()
-            }
-            .onChange(of: navigation.launchPhase) { _, _ in
-                presentQuickSessionIfPossible(requestID: quickSessionTrigger.presentationRequestID)
-            }
-            .onChange(of: navigation.showOnboarding) { _, _ in
-                presentQuickSessionIfPossible(requestID: quickSessionTrigger.presentationRequestID)
-            }
             .onChange(of: navigation.selectedTab) { _, _ in
                 navigation.routeLegacySelectedTabIfNeeded()
             }
@@ -144,115 +120,6 @@ struct AppRootLayer: View {
         )
         guard let restoreServerId else { return }
         _ = coordinator.restoreActiveServer(restoreServerId)
-    }
-
-    private func presentQuickSessionIfPossible(requestID: Int) {
-        guard requestID > handledQuickSessionRequestID else { return }
-        guard navigation.launchPhase == .ready, !navigation.showOnboarding else { return }
-        handledQuickSessionRequestID = requestID
-        // A Quick Session the user already opened wins. Drop the request, so a start
-        // (possibly a Live Voice call) never opens later on its own.
-        guard !navigation.showQuickSession else {
-            _ = QuickSessionTrigger.shared.consumePendingStart()
-            return
-        }
-        QuickSessionTrigger.shared.isPresented = true
-        navigation.presentQuickSession(
-            QuickSessionTrigger.shared.consumePendingStart() ?? QuickSessionStart(),
-            from: .intent
-        )
-    }
-
-    private func dismissQuickSession() {
-        guard navigation.showQuickSession else { return }
-        let launchAccessibilityElement = navigation.pendingQuickSessionNav == nil
-            ? quickSessionLaunchAccessibilityElement
-            : nil
-        quickSessionLaunchAccessibilityElement = nil
-        composerDraftStore?.saveQuickSessionLifecycleFallback()
-        navigation.pendingQuickSessionStart = nil
-        navigation.showQuickSession = false
-        QuickSessionTrigger.shared.isPresented = false
-        Task { @MainActor in
-            await completePendingQuickSessionNavigation()
-        }
-
-        // A custom overlay has no presentation controller to restore focus.
-        // Return VoiceOver to the exact launch button it focused before the
-        // modal appeared; sending a nil argument would let the system guess.
-        if let launchAccessibilityElement {
-            DispatchQueue.main.async {
-                UIAccessibility.post(
-                    notification: .screenChanged,
-                    argument: launchAccessibilityElement
-                )
-            }
-        }
-    }
-
-    private func captureQuickSessionLaunchAccessibilityElement() {
-        guard let focusedElement = UIAccessibility.focusedElement(using: .notificationVoiceOver),
-              let identifiedElement = focusedElement as? UIAccessibilityIdentification,
-              let identifier = identifiedElement.accessibilityIdentifier,
-              ["workspace.quickSession.start", "agents.detail.launch"].contains(identifier) else {
-            quickSessionLaunchAccessibilityElement = nil
-            return
-        }
-        quickSessionLaunchAccessibilityElement = focusedElement as AnyObject
-    }
-
-    private func completePendingQuickSessionNavigation() async {
-        guard let pending = navigation.pendingQuickSessionNav else { return }
-
-        // A session started in a locked workspace or server opens only after
-        // device authentication. On cancel the unsent message waits in that
-        // session's composer instead of riding along to the next chat opened.
-        let lockTarget = ScopedLockService.shared.sessionTarget(
-            serverId: pending.target.serverId,
-            sessionId: pending.sessionId,
-            workspaceId: pending.target.workspace.id
-        )
-        guard await ScopedLockService.shared.authorize(lockTarget) else {
-            navigation.pendingQuickSessionNav = nil
-            if let message = pending.autoSendMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !message.isEmpty,
-               let key = ComposerDraftKey(
-                   serverID: pending.target.serverId,
-                   workspaceID: pending.target.workspace.id,
-                   sessionID: pending.sessionId
-               ) {
-                composerDraftStore?.setDraft(
-                    ComposerDraftPayload(text: message, repoPointers: [], attachments: []),
-                    for: key
-                )
-            }
-            return
-        }
-
-        // Switch server FIRST so coordinator.activeConnection (and all
-        // environment-injected stores) reflect the target server by the time
-        // ChatViewController renders. Without this, cross-server quick sessions can
-        // capture the OLD connection in the chat's session entry.
-        guard await coordinator.switchToServerReady(pending.target.serverId) else {
-            return
-        }
-        navigation.pendingQuickSessionNav = nil
-
-        // Keep the existing send path intact. ChatViewController will upload any pending
-        // local attachments and dispatch the message through the focused stream.
-        navigation.pendingQuickSessionMessage = pending.autoSendMessage
-        navigation.pendingQuickSessionAttachments = pending.autoSendAttachments
-        navigation.pendingLiveVoiceSessionId = pending.startsLiveVoice ? pending.sessionId : nil
-
-        // Quick Session is just "new session from here". Preserve the current
-        // compact stack, or select the session detail column on iPad.
-        navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
-                serverId: pending.target.serverId,
-                sessionId: pending.sessionId
-            ),
-            workspace: pending.target
-        )
     }
 }
 

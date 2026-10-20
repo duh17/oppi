@@ -664,7 +664,7 @@ struct DictationHintWiringTests {
         #expect(takeBeforeReconfigure?.composerGeneration == voiceComposerGeneration)
 
         // Production selectWorkspace → configureVoiceInputForSelectedServer.
-        // Must use the view's stored generation, not a stashed G1 copy.
+        // Must use the model's stored generation, not a stashed G1 copy.
         voiceComposerGeneration = configureQuickSessionVoiceInput(
             manager: manager,
             serverId: "qs-2",
@@ -775,29 +775,6 @@ struct DictationContextualStringBoundsTests {
         #expect(DictationContextualStrings.prepared([tooLong, "ok"]).contains("ok"))
         #expect(!DictationContextualStrings.prepared([tooLong, "ok"]).contains(tooLong))
     }
-
-    @Test func conversationFreeComposersClaimStandaloneHints() throws {
-        let quick = try appleSource("Oppi/Features/QuickSession/QuickSessionSheet.swift")
-        #expect(quick.contains("ComposerShared.prepareStandaloneVoiceInput("))
-        #expect(quick.contains("ownedGeneration: voiceComposerGeneration"))
-        #expect(quick.contains("endComposer(generation:"))
-        #expect(quick.contains("Task.isCancelled"))
-        #expect(quick.contains("takeIdentityForDismissedComposer("))
-        #expect(quick.contains("matching: takeIdentity"))
-        let control = try appleSource("Oppi/Features/ControlSessions/GuidedControlSessionComposer.swift")
-        #expect(control.contains("ComposerShared.prepareStandaloneVoiceInput("))
-        #expect(control.contains("ownedGeneration: voiceComposerGeneration"))
-        #expect(control.contains("endComposer(generation:"))
-        #expect(control.contains("Task.isCancelled"))
-        #expect(control.contains("takeIdentityForDismissedComposer("))
-        #expect(control.contains("matching: takeIdentity"))
-        let shared = try appleSource("Oppi/Features/Chat/Composer/ComposerShared.swift")
-        #expect(shared.contains("beginStandaloneComposer("))
-        #expect(shared.contains("ownedGeneration"))
-        #expect(shared.contains("activateConversationComposer("))
-        #expect(shared.contains("cancelRecording(matching:"))
-        #expect(shared.contains("takeIdentityForDismissedComposer("))
-    }
 }
 
 @MainActor
@@ -843,7 +820,7 @@ private func restorePreference(_ value: Any?, forKey key: String) {
 }
 
 /// Production Quick Session configureVoiceInputForSelectedServer bookkeeping.
-/// Passes the view's stored generation through the standalone claim helper.
+/// Passes the model's stored generation through the standalone claim helper.
 @MainActor
 private func configureQuickSessionVoiceInput(
     manager: VoiceInputManager,
@@ -860,7 +837,7 @@ private func configureQuickSessionVoiceInput(
     )
 }
 
-/// Production Quick Session onDisappear identity path.
+/// Production Quick Session teardown identity path.
 @MainActor
 private func dismissQuickSessionComposer(
     manager: VoiceInputManager,

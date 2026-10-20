@@ -82,27 +82,6 @@ struct QuickSessionSkillSlashCommandTests {
     }
 }
 
-@Suite("Quick Session File Mentions")
-struct QuickSessionFileMentionWiringTests {
-    @Test func bothComposersUseSelectedCheckoutSuggestions() throws {
-        let sheet = try appleSource("Oppi/Features/QuickSession/QuickSessionSheet.swift")
-        let inline = try sourceSlice(sheet, start: "ChatInputBar(", end: ".padding(.top, 6)")
-        #expect(inline.contains("fileSuggestions: selectedChatState.fileSuggestions"))
-        #expect(inline.contains("onFileSuggestionQuery: updateFileSuggestions"))
-        #expect(!inline.contains("fileSuggestions: []"))
-        #expect(!inline.contains("onFileSuggestionQuery: nil"))
-
-        let index = try sourceSlice(sheet, start: "private var fileIndexLoadKey:", end: "var body: some View")
-        #expect(index.contains("QuickSessionWorktreePickerPolicy.resolvedWorktreeId("))
-        #expect(index.contains("serverId: selectedServerId"))
-        #expect(index.contains("workspaceId: selectedWorkspace?.id"))
-        #expect(sheet.contains(".task(id: fileIndexLoadKey)"))
-        #expect(sheet.contains("connection.fileIndexStore.ensureLoaded("))
-        #expect(sheet.contains("connection.fetchFileSuggestions(query: query)"))
-        #expect(sheet.contains("connection.clearFileSuggestions()"))
-    }
-}
-
 @Suite("Quick Session Launch Routing")
 struct QuickSessionLaunchRoutingTests {
     @Test func plainPiAllowsEmptyPromptWithoutAutoSend() throws {
@@ -755,29 +734,4 @@ struct NewSessionThinkingPresentationTests {
             ) == .medium
         )
     }
-}
-
-private func appleSource(_ relativePath: String) throws -> String {
-    let sourceURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: relativePath)
-    return try String(contentsOf: sourceURL, encoding: .utf8)
-}
-
-private func sourceSlice(_ source: String, start: String, end: String) throws -> String {
-    guard let startRange = source.range(of: start) else {
-        Issue.record("Missing source start \(start)")
-        throw SourceSliceError.missingMarker(start)
-    }
-    guard let endRange = source.range(of: end, range: startRange.upperBound..<source.endIndex) else {
-        Issue.record("Missing source end \(end)")
-        throw SourceSliceError.missingMarker(end)
-    }
-    return String(source[startRange.lowerBound..<endRange.lowerBound])
-}
-
-private enum SourceSliceError: Error {
-    case missingMarker(String)
 }

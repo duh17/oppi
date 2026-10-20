@@ -202,6 +202,85 @@ struct QuickSessionOpenIntentTests {
 }
 }
 
+// MARK: - Quick Session presentation
+
+// Nested in the serialized trigger suite: both drive the shared `QuickSessionTrigger`.
+extension QuickSessionTriggerTests {
+/// The app root's handling of external Quick Session requests (Control widget,
+/// App Intents, Shortcuts).
+@Suite("QuickSessionPresentation")
+@MainActor
+struct QuickSessionPresentationTests {
+    /// The presentation holds its host weakly, as the app root owns both; the
+    /// caller keeps the host.
+    private func makePresentation(host: UIViewController) -> (QuickSessionPresentation, AppNavigation) {
+        let trigger = QuickSessionTrigger.shared
+        trigger.isPresented = false
+        _ = trigger.consumePendingStart()
+        let root = makeTestAppRoot()
+        let presentation = QuickSessionPresentation(root: root, host: host)
+        return (presentation, root.navigation)
+    }
+
+    /// A request made while Oppi launches (a Control Center press on a cold
+    /// start) opens Quick Session with its start once the shell is up, never
+    /// over the launch backdrop or onboarding.
+    @Test func requestWaitsForTheShellThenOpensWithItsStart() {
+        let host = UIViewController()
+        let (presentation, navigation) = makePresentation(host: host)
+        let start = QuickSessionStart(mode: .liveVoice)
+        QuickSessionTrigger.shared.requestPresentation(start)
+
+        presentation.update()
+        #expect(!navigation.showQuickSession, "Opened while the launch was resolving")
+
+        navigation.launchPhase = .ready
+        presentation.update()
+        #expect(!navigation.showQuickSession, "Opened over onboarding")
+
+        navigation.showOnboarding = false
+        presentation.update()
+        #expect(navigation.showQuickSession)
+        #expect(navigation.pendingQuickSessionStart == start)
+        #expect(presentation.controller?.parent === host)
+
+        presentation.controller?.model.onDismiss()
+        presentation.update()
+        #expect(!navigation.showQuickSession)
+        #expect(!QuickSessionTrigger.shared.isPresented)
+        #expect(presentation.controller == nil)
+        #expect(host.children.isEmpty)
+        presentation.update()
+        #expect(!navigation.showQuickSession, "A handled request opened Quick Session again")
+    }
+
+    /// A Quick Session the user already opened wins: a request that arrives
+    /// meanwhile (possibly a Live Voice call) is dropped, not saved to open
+    /// on its own after the user closes it.
+    @Test func requestWhileOpenIsDropped() {
+        let host = UIViewController()
+        let (presentation, navigation) = makePresentation(host: host)
+        navigation.revealPairedServerShell()
+        let typed = QuickSessionStart()
+        navigation.presentQuickSession(typed, from: .sessionListBar)
+        presentation.update()
+        #expect(presentation.controller?.parent === host)
+
+        QuickSessionTrigger.shared.requestPresentation(QuickSessionStart(mode: .liveVoice))
+        presentation.update()
+        #expect(QuickSessionTrigger.shared.consumePendingStart() == nil)
+        #expect(navigation.pendingQuickSessionStart == typed)
+
+        presentation.controller?.model.onDismiss()
+        presentation.update()
+        presentation.update()
+        #expect(!navigation.showQuickSession, "The dropped request opened after the user closed Quick Session")
+        #expect(presentation.controller == nil)
+        #expect(host.children.isEmpty)
+    }
+}
+}
+
 // MARK: - ThinkingLevelEnum (Intent type)
 
 @Suite("ThinkingLevelEnum")
@@ -563,48 +642,122 @@ struct QuickSessionDraftIntakeTests {
     }
 }
 
-// MARK: - Quick Session overlay layout
+// MARK: - Quick Session saved draft
 
-@Suite("QuickSessionOverlayLayout")
-struct QuickSessionOverlayLayoutTests {
-    @Test func accessibilityTextStacksActionControls() {
-        #expect(QuickSessionOverlayLayout.stacksActionControls(for: .accessibility1))
-        #expect(QuickSessionOverlayLayout.stacksActionControls(for: .accessibility5))
+/// Quick Session's saved draft as it comes back into the composer: when
+/// Quick Session opens, and when a Live Voice start that set the draft aside
+/// stops with an error.
+@Suite("Quick Session saved draft")
+@MainActor
+struct QuickSessionSavedDraftTests {
+    @Test func reopeningKeepsTheSavedImageVideoAndFileReference() async throws {
+        let fixture = try await SavedDraftFixture.make()
+        defer { fixture.remove() }
+        let model = QuickSessionModel(root: makeTestAppRoot(composerDraftStore: fixture.store))
+
+        model.loadStoredDraft()
+
+        #expect(model.text == "saved draft")
+        #expect(model.pendingAttachments.map(\.id) == ["photo-1", "video-1"])
+        #expect(model.pendingRepoPointers.map(\.path) == ["Sources/App.swift"])
+        // Reopening is not an edit: the saved draft and its files stay saved.
+        fixture.expectSavedDraft(text: "saved draft")
     }
 
-    @Test func standardTextKeepsCompactActionControls() {
-        #expect(!QuickSessionOverlayLayout.stacksActionControls(for: .large))
-        #expect(!QuickSessionOverlayLayout.stacksActionControls(for: .xxxLarge))
-    }
+    @Test func failedLiveVoiceStartBringsBackTheSavedDraftWithItsFiles() async throws {
+        let fixture = try await SavedDraftFixture.make()
+        defer { fixture.remove() }
+        let model = QuickSessionModel(root: makeTestAppRoot(composerDraftStore: fixture.store))
+        // A Live Voice start sets the saved draft aside and brings its own text.
+        model.keepsStoredDraft = true
+        model.text = "call text"
 
-    @Test func compactHeightBoundsComposerAndEnablesScrolling() {
-        let viewport = QuickSessionOverlayLayout.viewport(
-            contentHeight: 260,
-            availableHeight: 180
+        model.error = "Live Voice isn't set up on this server."
+
+        #expect(model.text == "saved draft\ncall text")
+        #expect(model.pendingAttachments.map(\.id) == ["photo-1", "video-1"])
+        #expect(model.pendingRepoPointers.map(\.path) == ["Sources/App.swift"])
+        fixture.expectSavedDraft(text: "saved draft\ncall text")
+    }
+}
+
+/// A draft store holding a saved Quick Session draft: text, an image kept as
+/// bytes, a video kept as a file, and a file reference.
+@MainActor
+private struct SavedDraftFixture {
+    let rootURL: URL
+    let store: ComposerDraftStore
+    let photoBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x00])
+    let videoBytes = Data(repeating: 0x5A, count: 2048)
+
+    static func make() async throws -> SavedDraftFixture {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appending(path: "QuickSessionSavedDraft-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let store = ComposerDraftStore(
+            fileURL: rootURL.appending(path: "drafts.json", directoryHint: .notDirectory),
+            saveDelay: .seconds(60)
         )
-
-        #expect(viewport.height == 168)
-        #expect(viewport.requiresScrolling)
+        await store.load()
+        let fixture = SavedDraftFixture(rootURL: rootURL, store: store)
+        let clip = rootURL.appending(path: "clip.mp4", directoryHint: .notDirectory)
+        try fixture.videoBytes.write(to: clip)
+        let importedClip = try store.importAttachmentFile(from: clip)
+        _ = try #require(store.setQuickSessionDraft(
+            ComposerDraftPayload(
+                text: "saved draft",
+                repoPointers: [
+                    ComposerDraftRepoPointer(
+                        path: "Sources/App.swift",
+                        isDirectory: false,
+                        kind: .workspaceFile,
+                        displayPrefix: nil
+                    ),
+                ],
+                attachments: [
+                    .init(
+                        id: "photo-1",
+                        displayName: "photo.png",
+                        mimeType: "image/png",
+                        source: .image,
+                        relativePath: nil,
+                        sizeBytes: fixture.photoBytes.count
+                    ),
+                    .init(
+                        id: "video-1",
+                        displayName: "clip.mp4",
+                        mimeType: "video/mp4",
+                        source: .localFile,
+                        relativePath: nil,
+                        sizeBytes: fixture.videoBytes.count
+                    ),
+                ]
+            ),
+            attachmentData: ["photo-1": fixture.photoBytes],
+            attachmentFiles: ["video-1": importedClip]
+        ))
+        return fixture
     }
 
-    @Test func accessibilityTextContentUsesTheSameBoundedFallback() {
-        let viewport = QuickSessionOverlayLayout.viewport(
-            contentHeight: 480,
-            availableHeight: 320
+    /// The store still holds the draft with `text`, both files on disk, and the reference.
+    func expectSavedDraft(text: String, sourceLocation: SourceLocation = #_sourceLocation) {
+        let payload = store.quickSessionDraftPayload
+        #expect(payload.text == text, sourceLocation: sourceLocation)
+        #expect(payload.repoPointers.map(\.path) == ["Sources/App.swift"], sourceLocation: sourceLocation)
+        #expect(payload.attachments.map(\.id) == ["photo-1", "video-1"], sourceLocation: sourceLocation)
+        #expect(store.quickSessionDraftAttachmentData()["photo-1"] == photoBytes, sourceLocation: sourceLocation)
+        let photoPath = payload.attachments.first { $0.id == "photo-1" }?.relativePath
+        #expect(
+            photoPath.map { FileManager.default.fileExists(atPath: rootURL.appending(path: $0).path) } == true,
+            "The image's sidecar file is gone",
+            sourceLocation: sourceLocation
         )
-
-        #expect(viewport.height == 308)
-        #expect(viewport.requiresScrolling)
+        let videoURL = store.quickSessionDraftAttachmentFileURL(attachmentID: "video-1")
+        #expect(videoURL.flatMap { try? Data(contentsOf: $0) } == videoBytes, sourceLocation: sourceLocation)
     }
 
-    @Test func ordinaryContentKeepsItsFittedHeightWithoutScrolling() {
-        let viewport = QuickSessionOverlayLayout.viewport(
-            contentHeight: 220,
-            availableHeight: 700
-        )
-
-        #expect(viewport.height == 220)
-        #expect(!viewport.requiresScrolling)
+    func remove() {
+        try? FileManager.default.removeItem(at: rootURL)
     }
 }
 

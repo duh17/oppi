@@ -1306,7 +1306,7 @@ final class ChatViewController: UIViewController {
             startLiveVoice()
         }
 
-        // Auto-send pending message from QuickSessionSheet.
+        // Auto-send pending message from Quick Session.
         guard let message = appNavigation.pendingQuickSessionMessage else { return }
         let attachments = appNavigation.pendingQuickSessionAttachments ?? []
         // Consume immediately so it doesn't re-fire

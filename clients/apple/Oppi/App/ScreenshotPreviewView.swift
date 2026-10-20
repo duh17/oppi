@@ -744,9 +744,24 @@ private struct RouterModalSitesPreview: View {
             }
             .ignoresSafeArea()
         default:
-            QuickSessionOverlay {}
+            // The app puts the theme's appearance on its window.
+            QuickSessionPreviewHost(root: root)
+                .preferredColorScheme(root.themeStore.preferredColorScheme)
+                .ignoresSafeArea()
         }
     }
+}
+
+/// Quick Session's controller over the window, the way the app root mounts it.
+/// It handles the safe area and the keyboard itself.
+private struct QuickSessionPreviewHost: UIViewControllerRepresentable {
+    let root: AppRootEnvironment
+
+    func makeUIViewController(context: Context) -> QuickSessionViewController {
+        QuickSessionViewController(root: root, onDismiss: {})
+    }
+
+    func updateUIViewController(_ controller: QuickSessionViewController, context: Context) {}
 }
 
 /// A screen as the root of a router navigation controller, the way the shell

@@ -1166,17 +1166,18 @@ final class AppNavigation {
     // MARK: - Quick Session Handoff
     //
     // These properties form a produce-once / consume-once handoff between
-    // QuickSessionSheet (producer) and AppRootLayer + ChatViewController (consumers).
+    // QuickSessionModel (producer) and QuickSessionPresentation + ChatViewController
+    // (consumers).
     //
     // Flow:
-    // 1. QuickSessionSheet sets `pendingQuickSessionNav` (atomic intent)
-    // 2. QuickSessionSheet calls dismiss()
-    // 3. AppRootLayer's dismiss reads nav, extracts message/images, opens the session
+    // 1. QuickSessionModel sets `pendingQuickSessionNav` (atomic intent)
+    // 2. QuickSessionModel dismisses Quick Session
+    // 3. QuickSessionPresentation's dismiss reads nav, extracts message/images, opens the session
     // 4. ChatViewController reads message/images on appear, auto-sends
 
-    /// Atomic navigation intent from QuickSessionSheet.
+    /// Atomic navigation intent from QuickSessionModel.
     /// Bundles target workspace, session ID, and optional auto-send data.
-    /// Set before dismiss; consumed when AppRootLayer dismisses Quick Session.
+    /// Set before dismiss; consumed when QuickSessionPresentation dismisses Quick Session.
     var pendingQuickSessionNav: QuickSessionNav?
 
     /// Message to auto-send when the quick session's ChatViewController opens.
@@ -1605,7 +1606,7 @@ struct QuickSessionThreadParent: Equatable, Sendable {
 /// Atomic navigation intent for quick session deep-link.
 ///
 /// Bundles everything needed to navigate to a session and optionally
-/// auto-send a message. Set as a single write by QuickSessionSheet,
+/// auto-send a message. Set as a single write by QuickSessionModel,
 /// consumed as a single read when Quick Session dismisses.
 struct QuickSessionNav {
     let target: WorkspaceNavTarget

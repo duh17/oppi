@@ -2,10 +2,11 @@ import UIKit
 
 /// The window's root. UIKit owns what the window shows: the launch backdrop,
 /// onboarding, or the workspace shell, with the app root's SwiftUI layer
-/// (`AppRootLayer`) beneath them for app-wide modals and the Quick Session
-/// overlay. It also applies the theme to the window, follows the system
-/// appearance in the theme's system mode, hides the app from VoiceOver while
-/// App Lock covers it, and shows the root prompts `OppiApp` raises.
+/// (`AppRootLayer`) beneath them for app-wide modals and Quick Session
+/// (`QuickSessionPresentation`) above them. It also applies the theme to the
+/// window, follows the system appearance in the theme's system mode, hides the
+/// app from VoiceOver while App Lock covers it, and shows the root prompts
+/// `OppiApp` raises.
 final class AppRootViewController: UIViewController {
     private enum Content: Equatable {
         case launching
@@ -23,6 +24,7 @@ final class AppRootViewController: UIViewController {
     private var pairingWaitExpiresAt: Int64?
     private weak var resourceChoiceAlert: UIAlertController?
     private var resourceChoiceShown: [String]?
+    private lazy var quickSession = QuickSessionPresentation(root: root, host: self)
 
     init(app: OppiApp) {
         self.app = app
@@ -54,13 +56,12 @@ final class AppRootViewController: UIViewController {
         applyTheme()
         showContent(Self.content(for: navigation))
 
-        // The overlay takes the screen: the content under it neither takes
+        // Quick Session takes the screen: the content under it neither takes
         // touches nor reads to VoiceOver.
+        quickSession.update()
         let showsQuickSession = navigation.showQuickSession
-        if showsQuickSession {
-            view.bringSubviewToFront(layer.view)
-        } else {
-            view.sendSubviewToBack(layer.view)
+        if let quickSessionView = quickSession.controller?.view {
+            view.bringSubviewToFront(quickSessionView)
         }
         content?.view.isUserInteractionEnabled = !showsQuickSession
         content?.view.accessibilityElementsHidden = showsQuickSession
