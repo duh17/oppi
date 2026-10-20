@@ -347,6 +347,7 @@ final class AgentNativeEditViewController: UIViewController, UICollectionViewDel
     private let collectionView: UICollectionView
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var appliedThemeID: ThemeID?
+    private var renderedRows: RowInputs?
     private var loadTask: Task<Void, Never>?
     private var extensionToolTask: Task<Void, Never>?
     private var extensionToolRefreshKey: String?
@@ -460,12 +461,14 @@ final class AgentNativeEditViewController: UIViewController, UICollectionViewDel
             SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
         }
         // Everything a row shows is read here, so any change re-runs this pass.
-        _ = (draft.name, draft.description, draft.usesCustomInstructions, draft.instructionMode, draft.instructionText)
-        _ = (draft.model, draft.thinkingLevel, draft.toolSelectionMode, draft.selectedToolNames, draft.chatStyle)
-        _ = (draft.skillSelectionMode, draft.selectedSkillPaths, draft.extensionSelectionMode, draft.selectedExtensionIds)
-        _ = (draft.workspaceConstraintMode, draft.selectedAllowedWorkspaceIds, draft.requiredRuntime)
-        _ = (draft.skillCatalogState, draft.extensionCatalogState, draft.isLoadingResources, draft.error)
-        applySnapshot()
+        // UIKit also runs it for a presented menu or a trait change, and
+        // applying rebuilds every pop-up button, which dismisses the menu a
+        // tap just opened; apply only when a row's input changed.
+        let rows = RowInputs(draft: draft, themeID: themeID, settingsChatStyle: AppPreferences.ChatDisplay.style)
+        if rows != renderedRows {
+            renderedRows = rows
+            applySnapshot()
+        }
 
         let isSaving = draft.isSaving
         let trailingItem = isSaving ? savingItem : saveItem
@@ -484,6 +487,61 @@ final class AgentNativeEditViewController: UIViewController, UICollectionViewDel
             extensionToolTask = Task { [draft, apiClient] in
                 await draft.refreshSelectedExtensionToolDetails(apiClient: apiClient)
             }
+        }
+    }
+
+    /// Every value a row is drawn from.
+    private struct RowInputs: Equatable {
+        let name: String
+        let description: String
+        let usesCustomInstructions: Bool
+        let instructionMode: AgentInstructionMode
+        let instructionText: String
+        let model: String
+        let thinkingLevel: ThinkingLevel?
+        let chatStyle: AppPreferences.ChatDisplay.Style?
+        let toolSelectionMode: AgentToolSelectionMode
+        let selectedToolNames: Set<String>
+        let skillSelectionMode: AgentResourceSelectionMode
+        let selectedSkillPaths: Set<String>
+        let extensionSelectionMode: AgentResourceSelectionMode
+        let selectedExtensionIds: Set<String>
+        let workspaceConstraintMode: AgentResourceSelectionMode
+        let selectedAllowedWorkspaceIds: Set<String>
+        let requiredRuntime: WorkspaceRuntime?
+        let skillCatalogState: AgentResourceCatalogState
+        let extensionCatalogState: AgentResourceCatalogState
+        let isLoadingResources: Bool
+        let error: String?
+        /// The Settings row shows the Settings-wide style.
+        let settingsChatStyle: AppPreferences.ChatDisplay.Style
+        let themeID: ThemeID
+
+        @MainActor
+        init(draft: AgentNativeEditDraft, themeID: ThemeID, settingsChatStyle: AppPreferences.ChatDisplay.Style) {
+            name = draft.name
+            description = draft.description
+            usesCustomInstructions = draft.usesCustomInstructions
+            instructionMode = draft.instructionMode
+            instructionText = draft.instructionText
+            model = draft.model
+            thinkingLevel = draft.thinkingLevel
+            chatStyle = draft.chatStyle
+            toolSelectionMode = draft.toolSelectionMode
+            selectedToolNames = draft.selectedToolNames
+            skillSelectionMode = draft.skillSelectionMode
+            selectedSkillPaths = draft.selectedSkillPaths
+            extensionSelectionMode = draft.extensionSelectionMode
+            selectedExtensionIds = draft.selectedExtensionIds
+            workspaceConstraintMode = draft.workspaceConstraintMode
+            selectedAllowedWorkspaceIds = draft.selectedAllowedWorkspaceIds
+            requiredRuntime = draft.requiredRuntime
+            skillCatalogState = draft.skillCatalogState
+            extensionCatalogState = draft.extensionCatalogState
+            isLoadingResources = draft.isLoadingResources
+            error = draft.error
+            self.settingsChatStyle = settingsChatStyle
+            self.themeID = themeID
         }
     }
 
