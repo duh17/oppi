@@ -646,7 +646,7 @@ final class ChatJumpToBottomView: UIView {
         } else {
             apply()
         }
-        spinner.isAnimating = busy
+        updateSpinnerAnimation()
         if busy, !reduceMotion {
             let pulse = CABasicAnimation(keyPath: "strokeColor")
             pulse.fromValue = busyRing.strokeColor.map { UIColor(cgColor: $0).withAlphaComponent(0.15).cgColor }
@@ -662,12 +662,18 @@ final class ChatJumpToBottomView: UIView {
         }
     }
 
+    /// The spinner runs only while the hint shows it: busy and on screen.
+    private func updateSpinnerAnimation() {
+        spinner.isAnimating = shownBusy == true && shownVisible == true
+    }
+
     /// The slot stays laid out so the button can animate; it takes touches
     /// only while the button shows.
     private func setVisible(_ visible: Bool, animated: Bool) {
         isUserInteractionEnabled = visible
         guard visible != shownVisible else { return }
         shownVisible = visible
+        updateSpinnerAnimation()
         let hiddenTransform = reduceMotion ? CGAffineTransform.identity : Self.scale(0.96, anchoredAt: button)
         if visible { button.isHidden = false }
         let change = {
