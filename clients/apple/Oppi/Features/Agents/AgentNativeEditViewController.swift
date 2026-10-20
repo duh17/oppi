@@ -338,8 +338,8 @@ final class AgentNativeEditDraft {
 
 /// Edit Agent: a saved Agent's definition, plus this device's chat style for
 /// its sessions. Presented in a navigation controller; the selection pages
-/// and the model picker are SwiftUI screens it pushes and presents
-/// (`AgentNativeEditPages`).
+/// are SwiftUI screens it pushes (`AgentNativeEditPages`) and the model
+/// picker is a UIKit sheet over it.
 final class AgentNativeEditViewController: UIViewController, UICollectionViewDelegate {
     private let draft: AgentNativeEditDraft
     private let apiClient: APIClient?
@@ -841,6 +841,21 @@ final class AgentNativeEditViewController: UIViewController, UICollectionViewDel
         }
     }
 
+    /// The picker gets this editor's server explicitly.
+    private func presentModelPicker(root: AppRootEnvironment) {
+        let draft = draft
+        let picker = ModelPickerViewController(
+            currentModel: draft.model.managementNilIfBlank,
+            chatState: draft.connection.chatState,
+            apiClient: apiClient,
+            onSelect: { selected in
+                draft.model = ModelSwitchPolicy.fullModelID(for: selected)
+                AppPreferences.RecentModels.record(draft.model)
+            }
+        )
+        Router.present(picker, presentation: .sheet.inNavigation(), from: self, theme: root.themeStore, onDismiss: nil)
+    }
+
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
         guard let item = dataSource?.itemIdentifier(for: indexPath) else { return }
@@ -852,7 +867,7 @@ final class AgentNativeEditViewController: UIViewController, UICollectionViewDel
         let navigator = ScreenNavigator.forUIKitScreen(self, root: root)
         switch item {
         case .model:
-            AgentNativeEditPages.presentModelPicker(draft, apiClient: apiClient, navigator: navigator)
+            presentModelPicker(root: root)
         case .tools:
             AgentNativeEditPages.pushTools(draft, navigator: navigator)
         case .skills:

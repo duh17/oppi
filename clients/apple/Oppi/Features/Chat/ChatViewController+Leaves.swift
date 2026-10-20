@@ -3,8 +3,8 @@ import UIKit
 
 // The chat's SwiftUI leaf content: the context bar, the footer rows around
 // the composer, the jump-to-bottom hint, the session title, the SwiftUI
-// panels it presents (model picker, review comments, Share), and the pages
-// the UIKit Files panel pushes (`SessionFilePages`). UIKit owns the screen
+// panels it presents (review comments, Share), the model picker's screen,
+// and the pages the UIKit Files panel pushes (`SessionFilePages`). UIKit owns the screen
 // (`ChatViewController`); these are hosted with `HostFactory.leaf`,
 // `HostFactory.content`, or `RouterScreen.hosted`, with the chat's
 // presenter-local values applied explicitly (`leafScope`).
@@ -125,11 +125,32 @@ extension ChatViewController {
         )
     }
 
+    /// The model picker (UIKit), given the chat's server explicitly; its
+    /// current model follows the session while it is up.
     func modelPickerScreen() -> RouterScreen {
-        .hosted { [weak self] in
-            guard let self else { return AnyView(EmptyView()) }
-            return AnyView(self.leafScope(self.modelPickerSheet))
-        }
+        let current = session?.model
+        let agentId = session?.launch?.agentId
+        let chatState = chatState
+        let apiClient = apiClient
+        let onSetDefault: ((ModelInfo) async throws -> Void)? = canPersistSessionDefaults ? { [weak self] model in
+            guard let self else { return }
+            guard let api = self.connection.apiClient else { throw QuickSessionError.noConnection }
+            try await ModelDefaultPersistence.save(model, agentId: self.session?.launch?.agentId, api: api)
+            self.applyModelSelection(model)
+            if self.session?.launch?.agentId == nil, let models = try? await api.listModels() {
+                self.chatState.cachedModels = models
+            }
+        } : nil
+        return .liveController({ [weak self] in
+            ModelPickerViewController(
+                currentModel: current,
+                chatState: chatState,
+                apiClient: apiClient,
+                defaultAgentId: agentId,
+                onSelect: { self?.handleModelSelection($0) },
+                onSetDefault: onSetDefault
+            )
+        }, update: { $0.currentModel = current })
     }
 
     func reviewCommentStashScreen(_ presentation: ReviewCommentStripChrome.StashPresentation) -> RouterScreen {
@@ -158,27 +179,6 @@ extension ChatViewController {
             guard let self else { return AnyView(EmptyView()) }
             return AnyView(self.leafScope(ChatShareRedactionLeaf(context: ChatLeafContext(chat: self))))
         }
-    }
-
-    private var modelPickerSheet: some View {
-        ModelPickerSheet(
-            currentModel: session?.model,
-            onSelect: { [weak self] in self?.handleModelSelection($0) },
-            onSetDefault: canPersistSessionDefaults ? { [weak self] model in
-                guard let self else { return }
-                guard let api = self.connection.apiClient else { throw QuickSessionError.noConnection }
-                try await ModelDefaultPersistence.save(
-                    model,
-                    agentId: self.session?.launch?.agentId,
-                    api: api
-                )
-                self.applyModelSelection(model)
-                if self.session?.launch?.agentId == nil, let models = try? await api.listModels() {
-                    self.chatState.cachedModels = models
-                }
-            } : nil,
-            defaultAgentId: session?.launch?.agentId
-        )
     }
 
     /// The session title's widest size, from the chat's own width (the

@@ -59,7 +59,7 @@ final class ChatSessionState {
     // MARK: - Model Cache
 
     /// Refresh the model cache from the server.
-    /// Called by views that need fresh model data (ModelPickerSheet, QuickSessionModel).
+    /// Called by views that need fresh model data (ModelPickerViewController, QuickSessionModel).
     func refreshModelCache(api: APIClient) async {
         do {
             cachedModels = try await api.listModels()

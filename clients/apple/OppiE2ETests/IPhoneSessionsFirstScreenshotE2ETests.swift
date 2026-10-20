@@ -671,12 +671,11 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         if !modelSearch.exists { app.swipeDown() }
         tap(modelSearch, named: "search schedule models")
         modelSearch.typeText("Haiku 5.5")
-        let modelTitle = app.staticTexts["Claude Haiku 5.5"]
-        XCTAssertTrue(modelTitle.waitForExistence(timeout: 20), "Schedule model picker had no Haiku model")
-        let modelIdentifier = app.staticTexts["anthropic/claude-haiku-5-5"]
-        XCTAssertTrue(modelIdentifier.waitForExistence(timeout: 5), "Schedule model ID was not visible")
-        let selectedModel = modelIdentifier.label
-        tap(modelTitle, named: "schedule model")
+        let selectedModel = "anthropic/claude-haiku-5-5"
+        let modelRow = app.buttons["model.picker.row.\(selectedModel)"]
+        XCTAssertTrue(modelRow.waitForExistence(timeout: 20), "Schedule model picker had no Haiku model")
+        XCTAssertEqual(modelRow.label, "Claude Haiku 5.5")
+        tap(modelRow, named: "schedule model")
         tap(app.buttons["session.toolbar.thinking"], named: "schedule thinking picker")
         tap(app.buttons["session.toolbar.thinking.option.high"], named: "High schedule thinking")
 

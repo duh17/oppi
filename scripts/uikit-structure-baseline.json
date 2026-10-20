@@ -301,9 +301,6 @@
     "clients/apple/Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Support/ModelPickerSheet.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Support/SessionFiles/SessionTouchedFileContentView.swift": {
       "import SwiftUI": 1
     },
@@ -413,9 +410,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Onboarding/WhatsNewView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/QuickSession/QuickSessionModelPicker.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Review/CommitDetailView.swift": {

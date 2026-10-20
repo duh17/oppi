@@ -1,23 +1,10 @@
 import SwiftUI
 
-/// The SwiftUI pieces `GuidedControlComposerController` hosts: the shared
-/// model picker sheet, the review-comment stash sheet, and the staged-comment
-/// pill and drawer above the composer (the chat hosts the same views).
+/// The SwiftUI pieces `GuidedControlComposerController` hosts: the
+/// review-comment stash sheet, and the staged-comment pill and drawer above
+/// the composer (the chat hosts the same views).
 @MainActor
 enum GuidedControlComposerHosted {
-    /// The model picker for this composer's server.
-    static func modelPicker(_ model: GuidedControlComposerModel) -> RouterScreen {
-        .hosted { [weak model] in
-            guard let model else { return AnyView(EmptyView()) }
-            let connection = model.connection
-            return AnyView(
-                ModelPickerSheet(currentModel: model.effectiveModelId, onSelect: { [weak model] in model?.selectModel($0) })
-                    .environment(\.apiClient, connection.apiClient)
-                    .environment(connection.chatState)
-            )
-        }
-    }
-
     static func reviewCommentStash(
         _ model: GuidedControlComposerModel,
         presentation: ReviewCommentStripChrome.StashPresentation

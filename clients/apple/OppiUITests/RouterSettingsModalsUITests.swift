@@ -190,6 +190,31 @@ final class RouterSettingsModalsUITests: XCTestCase {
         assertRunning()
     }
 
+    /// The guided composer's model pill opens the shared UIKit model picker
+    /// over the Agents list; Cancel and swipe-down both close it.
+    func testGuidedComposerModelPicker() {
+        launch(page: "agents")
+        let input = app.textViews["chat.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10), "Agents composer did not appear")
+        input.tap()
+        let pill = app.buttons["session.toolbar.model"]
+        XCTAssertTrue(pill.waitForExistence(timeout: 5), "A focused guided composer shows the model pill")
+        let models = app.navigationBars["Models"]
+
+        pill.tap()
+        XCTAssertTrue(models.waitForExistence(timeout: 5), "Model picker did not open")
+        attachScreenshot("guided-composer-model-picker")
+        assertRunning()
+        tapBarButton(cancelButton)
+        XCTAssertTrue(waitForDisappearance(of: models), "Cancel must close the model picker")
+
+        pill.tap()
+        XCTAssertTrue(models.waitForExistence(timeout: 5), "Model picker did not reopen")
+        dragToBottom(models)
+        XCTAssertTrue(waitForDisappearance(of: models), "Swipe-down must close the model picker")
+        assertRunning()
+    }
+
     // MARK: Schedules
 
     func testScheduleDetailModals() {

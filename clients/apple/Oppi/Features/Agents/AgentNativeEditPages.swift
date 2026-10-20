@@ -69,7 +69,7 @@ enum AgentResourceCatalogState: Equatable {
 }
 
 /// Edit Agent's SwiftUI pages. `AgentNativeEditViewController` pushes the
-/// selection pages and presents the model picker through these; each page
+/// selection pages through these; each page
 /// reads and edits the shared draft, so its changes show on the editor.
 @MainActor
 enum AgentNativeEditPages {
@@ -87,18 +87,6 @@ enum AgentNativeEditPages {
 
     static func pushWorkspaces(_ draft: AgentNativeEditDraft, navigator: ScreenNavigator) {
         navigator.push { AgentNativeEditWorkspacesPage(draft: draft) }
-    }
-
-    /// The picker gets this editor's server explicitly.
-    static func presentModelPicker(_ draft: AgentNativeEditDraft, apiClient: APIClient?, navigator: ScreenNavigator) {
-        navigator.present(.sheet.inNavigation()) {
-            ModelPickerSheet(currentModel: draft.model.managementNilIfBlank) { selected in
-                draft.model = ModelSwitchPolicy.fullModelID(for: selected)
-                AppPreferences.RecentModels.record(draft.model)
-            }
-            .environment(\.apiClient, apiClient)
-            .environment(draft.connection.chatState)
-        }
     }
 }
 

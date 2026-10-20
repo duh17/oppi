@@ -184,7 +184,18 @@ final class GuidedControlComposerController: UIViewController {
             presentation: .sheet.inNavigation(),
             root: root,
             clear: { [weak model] in model?.showModelPicker = false },
-            screen: { GuidedControlComposerHosted.modelPicker(model) }
+            screen: {
+                let current = model.effectiveModelId
+                let connection = model.connection
+                return .liveController({ [weak model] in
+                    ModelPickerViewController(
+                        currentModel: current,
+                        chatState: connection.chatState,
+                        apiClient: connection.apiClient,
+                        onSelect: { model?.selectModel($0) }
+                    )
+                }, update: { $0.currentModel = current })
+            }
         )
         let stash = model.reviewCommentStashPresentation
         commentStash.update(

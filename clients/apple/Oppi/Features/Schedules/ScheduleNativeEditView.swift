@@ -1,5 +1,9 @@
 import SwiftUI
 
+private struct ModelPickerRoute: Identifiable {
+    let id = "model-picker"
+}
+
 struct ScheduleNativeEditView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(\.screenNavigator) private var navigator
@@ -21,7 +25,7 @@ struct ScheduleNativeEditView: View {
     @State private var targetSessionId: String
     @State private var streamingBehavior: ExistingSessionStreamingBehavior?
     @State private var agents: [AgentDefinitionSummary] = []
-    @State private var isShowingModelPicker = false
+    @State private var modelPicker: ModelPickerRoute?
     @State private var isShowingTimeZonePicker = false
     @State private var isSaving = false
     @State private var error: String?
@@ -172,7 +176,7 @@ struct ScheduleNativeEditView: View {
                     .accessibilityIdentifier("schedule.nativeEdit.agent")
 
                     Button {
-                        isShowingModelPicker = true
+                        modelPicker = ModelPickerRoute()
                     } label: {
                         LabeledContent("Model") {
                             Text(modelDisplayName)
@@ -251,15 +255,20 @@ struct ScheduleNativeEditView: View {
         }
         .task { await loadAgents() }
         .interactiveDismissDisabled(isSaving)
-        .routerModal(isPresented: $isShowingModelPicker, presentation: .sheet.inNavigation()) {
-            // The picker gets this editor's server explicitly.
-            ModelPickerSheet(currentModel: model.managementNilIfBlank) { selected in
-                model = ModelSwitchPolicy.fullModelID(for: selected)
-                AppPreferences.RecentModels.record(model)
+        .routerModal(item: $modelPicker, presentation: .sheet.inNavigation(), screen: { _ in
+            // The picker (UIKit) gets this editor's server explicitly.
+            RouterScreen.controller {
+                ModelPickerViewController(
+                    currentModel: model.managementNilIfBlank,
+                    chatState: connection.chatState,
+                    apiClient: apiClient,
+                    onSelect: { selected in
+                        model = ModelSwitchPolicy.fullModelID(for: selected)
+                        AppPreferences.RecentModels.record(model)
+                    }
+                )
             }
-            .environment(\.apiClient, apiClient)
-            .environment(connection.chatState)
-        }
+        })
         .routerModal(isPresented: $isShowingTimeZonePicker, presentation: .sheet.inNavigation()) {
             TimeZonePickerView(selection: $triggerDraft.timeZone)
         }

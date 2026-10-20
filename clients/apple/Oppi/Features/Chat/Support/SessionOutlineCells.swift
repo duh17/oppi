@@ -217,9 +217,9 @@ final class SessionOutlineEntryCell: UICollectionViewListCell {
     }
 }
 
-/// A capsule badge (Compaction).
+/// A capsule badge (Compaction, the model picker's current and quota pills).
 final class SessionOutlineBadgeLabel: UILabel {
-    private let insets = UIEdgeInsets(top: 2, left: 6, bottom: 2, right: 6)
+    var insets = UIEdgeInsets(top: 2, left: 6, bottom: 2, right: 6)
 
     override init(frame: CGRect) {
         super.init(frame: frame)

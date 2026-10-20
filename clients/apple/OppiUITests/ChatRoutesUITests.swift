@@ -239,7 +239,7 @@ final class ChatRoutesUITests: XCTestCase {
         modelPill.tap()
         let models = app.navigationBars["Models"]
         XCTAssertTrue(models.waitForExistence(timeout: 5), "Model picker did not open")
-        XCTAssertTrue(app.staticTexts["GPT Routes"].waitForExistence(timeout: 5), "Model picker must list the chat's models")
+        XCTAssertTrue(app.buttons["model.picker.row.openai/gpt-routes"].waitForExistence(timeout: 5), "Model picker must list the chat's models")
         attachScreenshot("model-picker")
         dragToBottom(models)
         XCTAssertTrue(waitForDisappearance(of: models), "Swipe-down must close the model picker")
