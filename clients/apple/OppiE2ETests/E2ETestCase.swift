@@ -787,6 +787,18 @@ class E2ETestCase: XCTestCase {
         start.press(forDuration: 0.05, thenDragTo: end)
     }
 
+    /// Edge-swipes back and reports whether `destination` appeared. The simulator
+    /// sometimes drops one synthesized edge drag (seen right after a cold app
+    /// launch, when the navigation controller is still busy), so a swipe that
+    /// produced nothing within `timeout` is repeated once. A pop that never works
+    /// still fails: both swipes miss.
+    func swipeBackFromLeadingEdge(until destination: XCUIElement, timeout: TimeInterval = 4) -> Bool {
+        swipeBackFromLeadingEdge()
+        if destination.waitForExistence(timeout: timeout) { return true }
+        swipeBackFromLeadingEdge()
+        return destination.waitForExistence(timeout: timeout)
+    }
+
     /// Rotates to landscape and checks the Message launcher is a hittable item of
     /// the bottom bar, beside Files, not folded into the bar's overflow menu. The
     /// vertical position tells it from the side rail's item with the same id.

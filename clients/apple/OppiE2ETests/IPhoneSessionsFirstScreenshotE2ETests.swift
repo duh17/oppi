@@ -791,8 +791,10 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             waitForStableFrame(of: app.buttons["All Sessions"], timeout: 5),
             "All Sessions back button never settled after opening the workspace"
         )
-        swipeBackFromLeadingEdge()
-        XCTAssertTrue(app.staticTexts["All Sessions"].waitForExistence(timeout: 5), "Edge swipe did not return to All Sessions")
+        XCTAssertTrue(
+            swipeBackFromLeadingEdge(until: app.staticTexts["All Sessions"]),
+            "Edge swipe did not return to All Sessions"
+        )
     }
 
     func testLeavingWorkspaceSettingsReturnsToScopedSessions() throws {
@@ -816,9 +818,8 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             waitForStableFrame(of: app.buttons["workspace.edit.details"], timeout: 5),
             "Workspace Settings never settled after opening"
         )
-        swipeBackFromLeadingEdge()
         XCTAssertTrue(
-            app.buttons["workspace.edit.open"].waitForExistence(timeout: 15),
+            swipeBackFromLeadingEdge(until: app.buttons["workspace.edit.open"]),
             "Leaving Workspace Settings did not return to the workspace-scoped session list"
         )
         XCTAssertTrue(
@@ -844,16 +845,20 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         tap(sessionButton, named: "workspace session row")
         XCTAssertTrue(app.collectionViews["chat.timeline"].waitForExistence(timeout: 15), "Chat timeline did not appear")
 
-        swipeBackFromLeadingEdge()
-        XCTAssertTrue(app.buttons["All Sessions"].waitForExistence(timeout: 10), "Chat swipe did not return to workspace sessions")
+        XCTAssertTrue(
+            swipeBackFromLeadingEdge(until: app.buttons["All Sessions"]),
+            "Chat swipe did not return to workspace sessions"
+        )
 
         // The edge-pop gesture only works once the pop has settled.
         XCTAssertTrue(
             waitForStableFrame(of: app.buttons["All Sessions"], timeout: 5),
             "All Sessions back button never settled after the chat popped"
         )
-        swipeBackFromLeadingEdge()
-        XCTAssertTrue(app.staticTexts["All Sessions"].waitForExistence(timeout: 10), "Workspace swipe did not return to All Sessions")
+        XCTAssertTrue(
+            swipeBackFromLeadingEdge(until: app.staticTexts["All Sessions"]),
+            "Workspace swipe did not return to All Sessions"
+        )
     }
 
     func testIPhoneWorkspaceDeepLinkPresentsPrefilledCreate() throws {
