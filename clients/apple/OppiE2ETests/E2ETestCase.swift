@@ -774,9 +774,13 @@ class E2ETestCase: XCTestCase {
     ///
     /// `XCUIElement.swipeRight()` starts inward of the 20pt edge claim, so it
     /// never pops those destinations.
+    ///
+    /// The drag runs through the navigation bar band (y = 0.15), not the screen
+    /// middle: a content control under the finger there (a stopped-sessions
+    /// header, a Settings summary row) can win the touch over the edge pop.
     func swipeBackFromLeadingEdge() {
-        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.50))
-        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.50))
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.15))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.15))
         start.press(forDuration: 0.05, thenDragTo: end)
     }
 

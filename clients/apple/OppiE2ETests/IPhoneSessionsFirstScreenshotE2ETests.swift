@@ -780,7 +780,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             waitForStableFrame(of: app.buttons["All Sessions"], timeout: 5),
             "All Sessions back button never settled after opening the workspace"
         )
-        swipeBack()
+        swipeBackFromLeadingEdge()
         XCTAssertTrue(app.staticTexts["All Sessions"].waitForExistence(timeout: 5), "Edge swipe did not return to All Sessions")
     }
 
@@ -805,7 +805,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             waitForStableFrame(of: app.buttons["workspace.edit.details"], timeout: 5),
             "Workspace Settings never settled after opening"
         )
-        swipeBack()
+        swipeBackFromLeadingEdge()
         XCTAssertTrue(
             app.buttons["workspace.edit.open"].waitForExistence(timeout: 15),
             "Leaving Workspace Settings did not return to the workspace-scoped session list"
@@ -833,7 +833,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         tap(sessionButton, named: "workspace session row")
         XCTAssertTrue(app.collectionViews["chat.timeline"].waitForExistence(timeout: 15), "Chat timeline did not appear")
 
-        swipeBack()
+        swipeBackFromLeadingEdge()
         XCTAssertTrue(app.buttons["All Sessions"].waitForExistence(timeout: 10), "Chat swipe did not return to workspace sessions")
 
         // The edge-pop gesture only works once the pop has settled.
@@ -841,7 +841,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             waitForStableFrame(of: app.buttons["All Sessions"], timeout: 5),
             "All Sessions back button never settled after the chat popped"
         )
-        swipeBack()
+        swipeBackFromLeadingEdge()
         XCTAssertTrue(app.staticTexts["All Sessions"].waitForExistence(timeout: 10), "Workspace swipe did not return to All Sessions")
     }
 
@@ -1065,13 +1065,5 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         let openWorkspaceButton = app.buttons["workspace.open.\(anchorWorkspaceName)"]
         XCTAssertTrue(openWorkspaceButton.waitForExistence(timeout: 10), "Anchor workspace did not appear in sidebar")
         tap(openWorkspaceButton, named: "anchor workspace button")
-    }
-
-    private func swipeBack() {
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.50))
-            .press(
-                forDuration: 0.05,
-                thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.50))
-            )
     }
 }
