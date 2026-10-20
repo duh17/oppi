@@ -20,6 +20,7 @@ import { SessionEventProcessor } from "./session-events.js";
 import { SessionInputCoordinator, type SessionInputSessionState } from "./session-input.js";
 import {
   SessionLifecycleCoordinator,
+  type SessionLifecycleCoordinatorDeps,
   type SessionLifecycleSessionState,
 } from "./session-lifecycle.js";
 import { SessionMessageQueueCoordinator, type SessionMessageQueueState } from "./session-queue.js";
@@ -91,6 +92,7 @@ export interface SessionCoordinatorBundleDeps {
   sendCommandAsync: (key: string, command: Record<string, unknown>) => Promise<unknown>;
   broadcast: (key: string, message: ServerMessage) => void;
   stopSession: (sessionId: string) => Promise<void>;
+  autoStopSession: SessionLifecycleCoordinatorDeps["autoStopSession"];
   /** Called when a session's firstMessage is first captured. */
   onFirstMessage?: (session: Session) => void;
   /** Operational metrics collector for session lifecycle timing. */
@@ -197,6 +199,7 @@ export function createSessionCoordinatorBundle(
     persistSessionNow: (key, session) => deps.persistSessionNow(key, session),
     releaseSession: (identity) => deps.runtimeManager.releaseSession(identity),
     stopSession: (sessionId) => deps.stopSession(sessionId),
+    autoStopSession: (sessionId, guard) => deps.autoStopSession(sessionId, guard),
     getSessionIdleTimeoutMs: () => deps.runtimeManager.getLimits().sessionIdleTimeoutMs,
     metrics: deps.metrics,
   });

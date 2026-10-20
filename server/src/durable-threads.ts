@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { homedir } from "node:os";
 import type {
+  Activated,
   DurableSessionsHost,
   ResolvedSubagent,
   SessionSender,
@@ -21,6 +22,7 @@ import { DurableRuntime, type DurableHarness, type SessionHost } from "./durable
 import { durableStoreId } from "./session-runtime-capabilities.js";
 import { DURABLE_THREAD_KEY_PREFIX } from "./reserved-launch-keys.js";
 import { mintSessionId } from "./id.js";
+import { safeErrorMessage } from "./log-utils.js";
 import { resolveSessionSeedModel } from "./sdk-backend.js";
 import type { Storage } from "./storage.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
@@ -38,8 +40,16 @@ export interface DurableThreadsDeps {
     | "listDurableStoreConversations"
     | "saveSession"
   >;
-  startSession(sessionId: string, workspace?: Workspace): Promise<Session>;
-  isActive(sessionId: string): boolean;
+  /**
+   * Attach a session and run `submit`, the commit delivering work to it, while the session
+   * counts that incoming work: a child stops once it settles with nothing pending
+   * (`launch.autoStop`), and this keeps it, or waits out a stop already under way.
+   */
+  withIncomingWork<T>(
+    sessionId: string,
+    workspace: Workspace | undefined,
+    submit: () => Promise<T>,
+  ): Promise<{ attached: true; value: T } | { attached: false; error: unknown; closing: boolean }>;
   /** A Session row exists for a new child; clients learn about it. */
   onCreated(session: Session): void;
 }
@@ -92,10 +102,10 @@ export class DurableThreads {
         return this.pendingWakers(sessionId);
       },
       waitForIdle: async (sessionId) => (await refuse(sessionId)) ?? this.waitForIdle(sessionId),
-      activate: async (sessionId) => {
+      activate: async (sessionId, submit) => {
         const refused = await refuse(sessionId);
         if (refused !== undefined) throw new Error(refused);
-        await this.activate(sessionId);
+        return this.activate(sessionId, submit);
       },
       resolveAgent: (request, agent) => this.resolveAgent(request, host, caller, agent),
     };
@@ -127,14 +137,16 @@ export class DurableThreads {
       : undefined;
   }
 
-  async activate(sessionId: string): Promise<void> {
-    if (this.deps.isActive(sessionId)) return;
+  private async activate<T>(sessionId: string, submit: () => Promise<T>): Promise<Activated<T>> {
     const session = this.deps.storage.getSession(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
     const workspace = session.workspaceId
       ? this.deps.storage.getWorkspace(session.workspaceId)
       : undefined;
-    await this.deps.startSession(sessionId, workspace);
+    const result = await this.deps.withIncomingWork(sessionId, workspace, submit);
+    return result.attached
+      ? { submitted: result.value }
+      : { failed: safeErrorMessage(result.error), shuttingDown: result.closing };
   }
 
   /**
@@ -323,9 +335,8 @@ export class DurableThreads {
       session = await this.createSession(storeId, child.conversationId, child.name, key);
       this.deps.onCreated(session);
     }
-    // A Session that exists but is not attached (a crash between the two steps, or a Stop)
-    // is attached again here, so a restart finds it live and keeps its conversation.
-    await this.activate(session.id);
+    // Whatever submits to the child attaches it first (`activate`), so a Session is attached
+    // only while it has work, and a restart before that leaves nothing to resume.
     return session.id;
   }
 
@@ -388,6 +399,9 @@ export class DurableThreads {
         // A copy of the grant on the child's `oppi.agent` document, for `oppi session create`.
         ...(launched?.grant ? { allowsNestedDelegation: true } : {}),
         idempotencyKey: key,
+        // An idle conversation costs nothing and takes messages later: the child detaches once
+        // it settles with no pending wake, and `activate` attaches it again for new work.
+        autoStop: true,
         target: {
           workspaceId: parent.workspaceId,
           ...(parent.worktreeId ? { worktreeId: parent.worktreeId } : {}),

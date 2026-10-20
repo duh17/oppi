@@ -1559,3 +1559,147 @@ describe("stop lifecycle", () => {
     expect(events.some((event) => event.type === "session_ended")).toBe(true);
   });
 });
+
+describe("auto-stop", () => {
+  it("keeps a classic auto-stop session whose turn ends with a background job running until the job's turn settles", async () => {
+    const { manager, session, sdkBackend, dispose, events } = makeManagerHarness("busy");
+    session.launch = { autoStop: true };
+    let pending = true;
+    (sdkBackend as { hasPendingWake: () => Promise<boolean> }).hasPendingWake = vi.fn(
+      async () => pending,
+    );
+    const feed = (type: string) =>
+      (manager as unknown as { handlePiEvent: (key: string, data: unknown) => void }).handlePiEvent(
+        "s1",
+        { type },
+      );
+
+    // The turn ends while the job runs: stopping now would kill it and lose its receipt.
+    feed("agent_end");
+    feed("agent_settled");
+    await flushMicrotasks(20);
+    expect(manager.isActive("s1")).toBe(true);
+    expect(dispose).not.toHaveBeenCalled();
+
+    // The job's receipt starts a turn, which settles with nothing left pending.
+    pending = false;
+    feed("agent_start");
+    feed("agent_end");
+    feed("agent_settled");
+    await vi.waitFor(() => expect(manager.isActive("s1")).toBe(false));
+    expect(session.status).toBe("stopped");
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(events.filter((event) => event.type === "session_ended")).toHaveLength(1);
+  });
+
+  type IncomingWork = <T>(
+    sessionId: string,
+    workspace: undefined,
+    submit: () => Promise<T>,
+  ) => Promise<
+    { attached: true; value: T } | { attached: false; error: unknown; closing: boolean }
+  >;
+  const autoStopHarness = () => {
+    const harness = makeManagerHarness("ready");
+    harness.session.launch = { autoStop: true };
+    let work = false;
+    (harness.sdkBackend as { hasPendingWork: () => Promise<boolean> }).hasPendingWork = vi.fn(
+      async () => work,
+    );
+    const internals = harness.manager as unknown as {
+      handlePiEvent: (key: string, data: unknown) => void;
+      withIncomingWork: IncomingWork;
+    };
+    return {
+      ...harness,
+      feed: (...types: string[]) => {
+        for (const type of types) internals.handlePiEvent("s1", { type });
+      },
+      withIncomingWork: internals.withIncomingWork.bind(harness.manager) as IncomingWork,
+      /** The backend holds queued input or a live run (a durable store commits it first). */
+      setWork: (value: boolean) => {
+        work = value;
+      },
+    };
+  };
+
+  it("keeps a session whose previous turn settles while incoming work is attached but not committed", async () => {
+    const { manager, dispose, feed, withIncomingWork, setWork } = autoStopHarness();
+    const commit = deferred<void>();
+    const incoming = withIncomingWork("s1", undefined, async () => {
+      await commit.promise;
+      setWork(true);
+      return "submitted";
+    });
+    await flushMicrotasks(20);
+
+    // The previous turn ends after activation, before the message commits.
+    feed("agent_end", "agent_settled");
+    await flushMicrotasks(20);
+    expect(manager.isActive("s1")).toBe(true);
+
+    // The message commits; the session has not seen its run start yet.
+    commit.resolve();
+    expect(await incoming).toEqual({ attached: true, value: "submitted" });
+    await flushMicrotasks(20);
+    expect(manager.isActive("s1")).toBe(true);
+    expect(dispose).not.toHaveBeenCalled();
+
+    // Its run settles with nothing left: now it stops.
+    setWork(false);
+    feed("agent_start", "agent_end", "agent_settled");
+    await vi.waitFor(() => expect(manager.isActive("s1")).toBe(false));
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("lets an auto-stop already stopping finish, then attaches the session again before the work commits", async () => {
+    const { manager, session, dispose, feed, withIncomingWork } = autoStopHarness();
+    const disposal = deferred<{ disposal: "graceful" }>();
+    dispose.mockImplementation(() => disposal.promise);
+    const order: string[] = [];
+    const start = vi.spyOn(manager, "startSession").mockImplementation(async () => {
+      order.push(`start (active: ${manager.isActive("s1")})`);
+      return session;
+    });
+
+    feed("agent_end", "agent_settled");
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+    const incoming = withIncomingWork("s1", undefined, async () => {
+      order.push("submit");
+      return "submitted";
+    });
+    await flushMicrotasks(20);
+    expect(start).not.toHaveBeenCalled();
+
+    disposal.resolve({ disposal: "graceful" });
+    expect(await incoming).toEqual({ attached: true, value: "submitted" });
+    expect(order).toEqual(["start (active: false)", "submit"]);
+  });
+
+  it("stops an attached session again when the caller of its incoming work goes away", async () => {
+    const { manager, dispose, withIncomingWork } = autoStopHarness();
+    const aborted = new Error("parent stopped");
+
+    await expect(
+      withIncomingWork("s1", undefined, async () => {
+        throw aborted;
+      }),
+    ).rejects.toBe(aborted);
+
+    await vi.waitFor(() => expect(manager.isActive("s1")).toBe(false));
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("reports a session that cannot be attached without running the work", async () => {
+    const { manager, session, withIncomingWork } = autoStopHarness();
+    (manager as unknown as { active: Map<string, unknown> }).active.delete(session.id);
+    vi.spyOn(manager, "startSession").mockRejectedValue(new Error("VM did not boot"));
+    const submit = vi.fn(async () => "submitted");
+
+    const result = await withIncomingWork("s1", undefined, submit);
+
+    expect(result).toMatchObject({ attached: false, closing: false });
+    expect(String((result as { error: unknown }).error)).toContain("VM did not boot");
+    expect(submit).not.toHaveBeenCalled();
+  });
+});

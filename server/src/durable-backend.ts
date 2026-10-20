@@ -13,6 +13,8 @@ import {
 import {
   watchEvents,
   AgentDoc,
+  InboxDoc,
+  LiveDoc,
   type AgentChange,
   type AgentEventStream,
   type ModelRef,
@@ -841,6 +843,14 @@ export class DurableBackend implements AgentBackend {
   }
   hasPendingWake(): Promise<boolean> {
     return this.host.hasPendingWake(this.conversation.id);
+  }
+  async hasPendingWork(): Promise<boolean> {
+    const { harness } = await this.host.open();
+    const [live, inbox] = await Promise.all([
+      harness.snapshot(LiveDoc, this.conversation.id, BACKGROUND_CONTEXT),
+      harness.snapshot(InboxDoc, this.conversation.id, BACKGROUND_CONTEXT),
+    ]);
+    return live?.run !== undefined || (inbox?.items.length ?? 0) > 0;
   }
   /** Durable tasks recover after a restart and report an interrupted job themselves. */
   readonly holdsWorkLostOnRestart = false;

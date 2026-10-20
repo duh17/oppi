@@ -465,7 +465,12 @@ describe("durable-native threads", () => {
       async () => (await harness.snapshot(LiveDoc, parentConversation, context))?.run === undefined,
       "parent idle",
     );
-    expect((await harness.snapshot(LiveDoc, childConversation, context))?.run).toBeDefined();
+    // The reporter attaches the child, then delivers the task, which parks on the gate.
+    await until(
+      async () => (await harness.snapshot(LiveDoc, childConversation, context))?.run !== undefined,
+      "the child working",
+    );
+    expect((await harness.snapshot(LiveDoc, parentConversation, context))?.run).toBeUndefined();
     const [spawned] = await toolResults(harness, parentConversation);
     expect(spawned?.details).toMatchObject({ background: true, sessionId: child.id });
     const record = await harness.commit((tx) => tx.conversation(childConversation), context);
@@ -622,6 +627,9 @@ describe("durable-native threads", () => {
     await f.manager.stopSession(f.parent.id);
     await f.manager.startSession(f.parent.id, f.workspace);
     await until(async () => (await widgetTask()) !== retired, "a new watcher");
+    // The child stopped once it answered; the phone opens it from its row and messages it.
+    expect(f.storage.getSession(child.id)?.status).toBe("stopped");
+    await f.manager.startSession(child.id, f.workspace);
     await f.manager.sendPrompt(child.id, "Once more");
     await until(
       async () => (await row())?.state === "running",
@@ -1024,6 +1032,7 @@ describe("durable-native threads", () => {
     });
 
     // Clients cannot occupy the namespace.
+    await f.manager.startSession(child.id, f.workspace);
     await expect(
       f.manager.sendPrompt(child.id, "spoof", { clientTurnId: "oppi-send:1" }),
     ).rejects.toThrow("reserved durable requestId namespace");
@@ -1296,6 +1305,123 @@ describe("durable-native threads", () => {
     ]);
   });
 
+  it("stops a child once it answers; a restart leaves it stopped, and send and wait still reach it", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
+        if (text.includes("Spawn")) return spawnCall({ name: "Idle", task: "IDLE_TASK" });
+        if (text.includes("Ask it"))
+          return subagentCall("send", { name: "Idle", message: "LATER_QUESTION" });
+        if (text.includes("Wait for it")) return subagentCall("wait", { names: ["Idle"] });
+        return fauxAssistantMessage(`ANSWER ${text}`);
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const parentConversation = conversationOf(f.storage, f.parent);
+    const settle = async (count: number, what: string) => {
+      const harness = await f.harness();
+      await until(async () => (await reports(harness, parentConversation)).length === count, what);
+      await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    };
+    await f.manager.sendPrompt(f.parent.id, "Spawn it");
+    await settle(1, "the spawn's report");
+    const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    const childConversation = conversationOf(f.storage, child);
+
+    // One settle with nothing pending stops it. Of its conversation only the working-words
+    // ticker is left, which the store fence may abort and the next attach starts again; no job
+    // or reporter whose loss would drop an answer.
+    await until(() => f.storage.getSession(child.id)?.status === "stopped", "the child stopping");
+    expect(f.manager.isActive(child.id)).toBe(false);
+    expect(f.storage.getSession(child.id)?.launch?.autoStop).toBe(true);
+    expect(await (await f.owner()).pendingWakers(childConversation)).toEqual([]);
+    const childTasks = (await (await f.harness()).inspect(context)).tasks.filter(
+      ({ record }) => record.conversationId === childConversation,
+    );
+    expect(childTasks.map(({ record }) => record.kind)).toEqual(["oppi.working-words"]);
+
+    // A restart resumes the parent, not the stopped child.
+    recordLiveSessionsForRestart(f.storage, [f.manager.getActiveSession(f.parent.id)!]);
+    await f.manager.close();
+    managers.splice(managers.indexOf(f.manager), 1);
+    const restarted = new SessionManager(new Storage(f.dir));
+    managers.push(restarted);
+    await restarted.resumeDurableSessions();
+    expect(restarted.isActive(f.parent.id)).toBe(true);
+    expect(restarted.isActive(child.id)).toBe(false);
+    expect(f.storage.getSession(child.id)?.status).toBe("stopped");
+
+    // send attaches it again; its answer comes back once, and it stops again.
+    await restarted.sendPrompt(f.parent.id, "Ask it");
+    await settle(2, "the send's report");
+    await until(() => f.storage.getSession(child.id)?.status === "stopped", "stopping again");
+    const header = `[session Idle (${child.id}) finished, no reply needed] `;
+    expect(await reports(await f.harness(), parentConversation)).toEqual([
+      `${header}ANSWER IDLE_TASK`,
+      `${header}ANSWER LATER_QUESTION`,
+    ]);
+    expect(await userTexts(await f.harness(), childConversation)).toEqual([
+      "IDLE_TASK",
+      "LATER_QUESTION",
+    ]);
+
+    // wait on the stopped child returns its latest answer.
+    await restarted.sendPrompt(f.parent.id, "Wait for it");
+    const harness = await f.harness();
+    await until(
+      async () =>
+        (await toolResults(harness, parentConversation)).some(
+          (result) => result.text === "Idle: ANSWER LATER_QUESTION",
+        ),
+      "the wait",
+    );
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    expect(await reports(harness, parentConversation)).toHaveLength(2);
+  });
+
+  it("tells the parent when a stopped child cannot start for its message", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
+        if (text.includes("Spawn")) return spawnCall({ name: "Idle", task: "IDLE_TASK" });
+        if (text.includes("Ask it"))
+          return subagentCall("send", { name: "Idle", message: "LOST_QUESTION" });
+        return fauxAssistantMessage(`ANSWER ${text}`);
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await f.manager.sendPrompt(f.parent.id, "Spawn it");
+    await until(async () => (await reports(harness, parentConversation)).length === 1, "report");
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    await until(() => f.storage.getSession(child.id)?.status === "stopped", "the child stopping");
+
+    // Its sandbox VM, say, does not boot any more.
+    const start = f.manager.startSession.bind(f.manager);
+    vi.spyOn(f.manager, "startSession").mockImplementation((sessionId, workspace) =>
+      sessionId === child.id
+        ? Promise.reject(new Error("VM did not boot"))
+        : start(sessionId, workspace),
+    );
+    await f.manager.sendPrompt(f.parent.id, "Ask it");
+
+    const failure = `[session Idle (${child.id}) failed: could not start: VM did not boot]`;
+    await until(
+      async () => (await userTexts(harness, parentConversation)).includes(failure),
+      "the failure report",
+    );
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    expect(
+      (await userTexts(harness, parentConversation)).filter((text) => text === failure),
+    ).toHaveLength(1);
+    expect(await userTexts(harness, conversationOf(f.storage, child))).toEqual(["IDLE_TASK"]);
+    expect(f.manager.isActive(child.id)).toBe(false);
+  });
+
   it("returns the answer to a send from a wait right after it, not the previous answer", async () => {
     const f = await fixture(
       model(async ({ last, text }) => {
@@ -1320,6 +1446,9 @@ describe("durable-native threads", () => {
     await f.manager.sendPrompt(f.parent.id, "Spawn it");
     await until(async () => (await reports(harness, parentConversation)).length === 1, "report");
     await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    // The child stopped after its answer; the send and the wait reach it all the same.
+    const quick = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    await until(() => f.storage.getSession(quick.id)?.status === "stopped", "the child stopping");
 
     await f.manager.sendPrompt(f.parent.id, "Ask and wait");
     await until(async () => (await toolResults(harness, parentConversation)).length === 3, "wait");
@@ -1395,10 +1524,11 @@ describe("durable-native threads", () => {
 
     await f.manager.sendPrompt(f.parent.id, "Ask both");
     await bStarting;
-    // A answered and its report reached the parent's queue (the parent is busy in the round).
+    // A answered QA and its report reached the parent's queue (the parent is busy in the round),
+    // after the report of its task.
     const reportOfA = `oppi-report:${conversationOf(f.storage, childA)}:`;
     await until(
-      () => requestIds(f.storage, f.dir, f.parent.id, reportOfA).length === 1,
+      () => requestIds(f.storage, f.dir, f.parent.id, reportOfA).length === 2,
       "A's report",
     );
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -1481,13 +1611,36 @@ describe("durable-native threads", () => {
       expect(requestIds(f.storage, f.dir, f.parent.id, "oppi-report:")).toHaveLength(2);
     }
 
-    it("reports its answer after the job's receipt turn, once", async () => {
+    it("reports its answer after the job's receipt turn, once, and stops only after that turn", async () => {
       const { f, child, parentConversation, open } = await jobFixture();
       // The parent's reporter waits on the child's job, so the parent's idle timeout holds.
       expect(await (await f.owner()).hasPendingWake(parentConversation)).toBe(true);
+      // The child settled with its job running: it stays attached for the receipt. Decide again
+      // as a settle does, and watch that decision end at its wake check.
+      const internals = f.manager as unknown as {
+        active: Map<string, { sdkBackend: { hasPendingWake(): Promise<boolean> } }>;
+        lifecycleCoordinator: { handleSessionSettled(key: string): void };
+        autoStopSession(sessionId: string, guard: unknown): Promise<boolean>;
+      };
+      expect(f.manager.isActive(child.id)).toBe(true);
+      const wake = vi.spyOn(internals.active.get(child.id)!.sdkBackend, "hasPendingWake");
+      const autoStop = vi.spyOn(internals, "autoStopSession");
+      internals.lifecycleCoordinator.handleSessionSettled(child.id);
+      expect(wake).toHaveBeenCalledOnce();
+      // The decision awaited this promise first, so it has returned once the test sees it.
+      expect(await wake.mock.results[0]!.value).toBe(true);
+      expect(autoStop).not.toHaveBeenCalled();
+      expect(f.manager.isActive(child.id)).toBe(true);
+      expect(f.storage.getSession(child.id)?.status).toBe("ready");
+      autoStop.mockRestore();
 
       open();
       await expectTwoReports(f, child, parentConversation);
+      await until(
+        () => f.storage.getSession(child.id)?.status === "stopped",
+        "the child stopping after its receipt turn",
+      );
+      expect(f.manager.isActive(child.id)).toBe(false);
     });
 
     it("reports its answer once when a restart interrupts the job", async () => {
@@ -1682,17 +1835,12 @@ describe("durable-native threads", () => {
     expect(f.manager.isActive(f.parent.id)).toBe(false);
     expect((await harness.snapshot(LiveDoc, childConversation, context))?.run).toBeDefined();
     childGate.open();
-    await until(
-      async () => (await harness.snapshot(LiveDoc, childConversation, context))?.run === undefined,
-      "child idle",
-    );
+    // The child answers and stops; with nothing attached and nothing live, the store closes.
+    await until(() => f.storage.getSession(child.id)?.status === "stopped", "child stopped");
     await new Promise((resolve) => setTimeout(resolve, 300));
 
+    // No report reached the stopped parent, so no turn of it started.
     expect(requestIds(f.storage, f.dir, f.parent.id, "oppi-report:")).toEqual([]);
-    expect(
-      (await userTexts(harness, parentConversation)).filter((text) => text.includes("[session")),
-    ).toEqual([]);
-    expect((await harness.snapshot(LiveDoc, parentConversation, context))?.run).toBeUndefined();
   });
 
   it("does not adopt a Session row that is not bound to the child's conversation", async () => {
@@ -1857,9 +2005,10 @@ describe("durable engine on create requests", () => {
     const list = await route(f, "GET", `/workspaces/${f.workspace.id}/sessions?status=active`);
     const rows = list.body.active as Array<{ id: string; engine?: string }>;
     expect(rows.find((row) => row.id === sessionId)?.engine).toBe("durable");
-    expect(rows.find((row) => row.id === child.id)?.engine).toBe("durable");
 
-    // Stopped rows come from the SQLite projection, not the live runtime.
+    // Stopped rows come from the SQLite projection, not the live runtime. The child stopped
+    // once it answered.
+    await until(() => f.storage.getSession(child.id)?.status === "stopped", "the child stopping");
     await f.manager.stopSession(sessionId);
     const stopped = await route(
       f,
@@ -1868,6 +2017,7 @@ describe("durable engine on create requests", () => {
     );
     const stoppedRows = stopped.body.stopped as Array<{ id: string; engine?: string }>;
     expect(stoppedRows.find((row) => row.id === sessionId)?.engine).toBe("durable");
+    expect(stoppedRows.find((row) => row.id === child.id)?.engine).toBe("durable");
   });
 
   it("launches a saved Agent durable through the one resolver, and records it in meta.json", async () => {

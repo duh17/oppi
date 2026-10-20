@@ -39,6 +39,7 @@ import type { SessionCatchUpResponse } from "./session-broadcast.js";
 import { type SessionStartActiveSession } from "./session-start.js";
 import { type SessionStateActiveSession } from "./session-state.js";
 import { createLogger } from "./logger.js";
+import type { AutoStopGuard } from "./session-lifecycle.js";
 import { safeErrorMessage } from "./log-utils.js";
 import {
   buildPendingExtensionUIRequestMessages,
@@ -106,6 +107,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private active: Map<string, ActiveSession> = new Map();
   /** Pre-start status of sessions inside `startSession`, before they are active. */
   private readonly startingIds = new Map<string, Session["status"]>();
+  /** Callers of `withIncomingWork` per session whose work has not committed yet. */
+  private readonly incomingWork = new Map<string, number>();
   private readonly config: ServerConfig;
   private readonly runtimeManager: WorkspaceRuntime;
   private readonly startupUI = new Map<string, { bridge: SdkUiBridge; state: ExtensionUIState }>();
@@ -147,6 +150,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private readonly queueCoordinator: SessionCoordinatorBundle["queueCoordinator"];
   private readonly agentEventCoordinator: SessionCoordinatorBundle["agentEventCoordinator"];
   private readonly stopFlowCoordinator: SessionCoordinatorBundle["stopFlowCoordinator"];
+  private readonly stopCoordinator: SessionCoordinatorBundle["stopCoordinator"];
   private readonly startCoordinator: SessionCoordinatorBundle["startCoordinator"];
 
   constructor(storage: Storage, metrics?: ServerMetricCollector, stopTimers?: SessionStopTimers) {
@@ -177,8 +181,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
           new DurableThreads({
             runtime,
             storage,
-            startSession: (sessionId, workspace) => this.startSession(sessionId, workspace),
-            isActive: (sessionId) => this.isActive(sessionId),
+            withIncomingWork: (sessionId, workspace, submit) =>
+              this.withIncomingWork(sessionId, workspace, submit),
             onCreated: (session) => this.emit("session_created", session),
           }),
         );
@@ -254,6 +258,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       sendCommandAsync: (key, command) => this.sendCommandAsync(key, command),
       broadcast: (key, message) => this.broadcast(key, message),
       stopSession: (sessionId) => this.stopSession(sessionId),
+      autoStopSession: (sessionId, guard) => this.autoStopSession(sessionId, guard),
       onFirstMessage: (session) => this.onFirstMessage?.(session),
       metrics: this.opsMetrics ?? undefined,
       getLiveVoiceExtension: () => {
@@ -271,6 +276,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     this.queueCoordinator = bundle.queueCoordinator;
     this.agentEventCoordinator = bundle.agentEventCoordinator;
     this.stopFlowCoordinator = bundle.stopFlowCoordinator;
+    this.stopCoordinator = bundle.stopCoordinator;
     this.startCoordinator = bundle.startCoordinator;
     this.ensureMobileRenderersLoaded();
   }
@@ -981,6 +987,80 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     await this.stopFlowCoordinator.stopSession(key, sessionId, () => {
       this.cancelPendingAsk(sessionId);
     });
+  }
+
+  /**
+   * Auto-stop's Stop. Under the session lock it reads the backend (`guard.idle`) and then,
+   * with no await between, rechecks the session and the incoming work that
+   * `withIncomingWork` announces, and marks the stop pending. Work announced first keeps
+   * the session; work announced after waits for the stop and attaches the session again.
+   */
+  private async autoStopSession(sessionId: string, guard: AutoStopGuard): Promise<boolean> {
+    const key = this.sessionKey(sessionId);
+    const decided = await this.runtimeManager.withSessionLock(sessionId, async () => {
+      if (!this.active.has(key) || this.incomingWork.has(sessionId)) return false;
+      if (!(await guard.idle())) return false;
+      const active = this.active.get(key);
+      if (!active || active.pendingStop || this.incomingWork.has(sessionId) || !guard.still())
+        return false;
+      this.stopCoordinator.beginPendingStop(key, active, "terminate", "user");
+      return true;
+    });
+    if (decided) await this.stopSession(sessionId);
+    return decided;
+  }
+
+  /**
+   * Attach a session for work that reaches it from outside its socket (a parent's message to
+   * its durable child), then run `submit`, the commit that delivers the work. From this call
+   * until `submit` settles the session counts as having incoming work, so auto-stop keeps it;
+   * a stop already under way finishes first and the session starts again. When the count
+   * drops to zero on a ready session, auto-stop decides again: the work either started a run
+   * (which settles later) or never came (its caller went away, or it was already answered).
+   */
+  private async withIncomingWork<T>(
+    sessionId: string,
+    workspace: Workspace | undefined,
+    submit: () => Promise<T>,
+  ): Promise<{ attached: true; value: T } | { attached: false; error: unknown; closing: boolean }> {
+    this.incomingWork.set(sessionId, (this.incomingWork.get(sessionId) ?? 0) + 1);
+    try {
+      try {
+        await this.attachForWork(sessionId, workspace);
+      } catch (error) {
+        return { attached: false, error, closing: this.closed };
+      }
+      return { attached: true, value: await submit() };
+    } finally {
+      this.releaseIncomingWork(sessionId);
+    }
+  }
+
+  private async attachForWork(sessionId: string, workspace?: Workspace): Promise<void> {
+    const key = this.sessionKey(sessionId);
+    const state = await this.runtimeManager.withSessionLock(sessionId, async () => {
+      const active = this.active.get(key);
+      if (!active) return "stopped";
+      if (active.pendingStop?.mode === "terminate") return "stopping";
+      this.resetIdleTimer(key);
+      return "running";
+    });
+    if (state === "running") return;
+    if (state === "stopping") await this.stopSession(sessionId);
+    await this.startSession(sessionId, workspace);
+  }
+
+  private releaseIncomingWork(sessionId: string): void {
+    const left = (this.incomingWork.get(sessionId) ?? 1) - 1;
+    if (left > 0) {
+      this.incomingWork.set(sessionId, left);
+      return;
+    }
+    this.incomingWork.delete(sessionId);
+    const key = this.sessionKey(sessionId);
+    const active = this.active.get(key);
+    if (active?.session.status === "ready" && !active.pendingStop)
+      this.lifecycleCoordinator.handleSessionSettled(key);
   }
 
   /** Set by close(); no session starts or registers afterward. */

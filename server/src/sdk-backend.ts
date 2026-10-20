@@ -2407,6 +2407,11 @@ export class SdkBackend implements AgentBackend {
     return this.pendingWake.pending();
   }
 
+  async hasPendingWork(): Promise<boolean> {
+    const { steering, followUp } = this.queuedMessages();
+    return this.piSession.isStreaming || steering.length > 0 || followUp.length > 0;
+  }
+
   get holdsWorkLostOnRestart(): boolean {
     return this.pendingWake.lostOnRestart();
   }

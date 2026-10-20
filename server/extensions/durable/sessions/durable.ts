@@ -151,7 +151,10 @@ const SUBAGENT_TOOL = "subagent";
  * The submission a reporter makes of its message. `wait` submits the same draft to wait for a
  * message not delivered yet; the request id makes both one submission.
  */
-function messageDraft(reporter: TaskId, input: ReporterInput): InputSubmissionDraft {
+function messageDraft(
+  reporter: TaskId,
+  input: ReporterInput,
+): InputSubmissionDraft & { requestId: string } {
   const { task, parent, send } = input;
   return send
     ? {
@@ -167,6 +170,18 @@ function messageDraft(reporter: TaskId, input: ReporterInput): InputSubmissionDr
         requestId: `oppi-spawn:${reporter}`,
         ...sentBy(parent, "task"),
       };
+}
+
+/**
+ * Never resolves: rejects with `signal`'s reason once the server's shutdown aborts the running
+ * task, so the task stays pending and runs again after the restart.
+ */
+function aborted(signal: AbortSignal | undefined): Promise<never> {
+  return new Promise((_, reject) => {
+    if (!signal) reject(new Error("The server is stopping"));
+    else if (signal.aborted) reject(signal.reason);
+    else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
 }
 
 /** The calling conversation's live reporters for `child` that have not delivered their message. */
@@ -226,8 +241,37 @@ function defineReporter(
         const { conversationId, sessionId, name } = reporter.input;
         const child = await runtime.conversation(conversationId, context);
         if (!child) throw new Error(`Subagent ${name} (${sessionId}) conversation disappeared`);
-        const submission = await child.submit(messageDraft(reporter.id, reporter.input), context);
-        const settled = await submission.wait(context);
+        const draft = messageDraft(reporter.id, reporter.input);
+        // A child stops once it settles with nothing pending: attach it while the message lands.
+        // A rerun whose message the child already settled has no work to attach it for.
+        let settledBefore = false;
+        await runtime.commit(async (tx) => {
+          const known = await tx.submissionByRequest(conversationId, draft.requestId);
+          settledBefore = known?.status === "done" || known?.status === "unanswered";
+          return undefined;
+        }, context);
+        const delivered = settledBefore
+          ? { submitted: await child.submit(draft, context) }
+          : await host(await runtime.env(context)).activate(sessionId, () =>
+              child.submit(draft, context),
+            );
+        if ("failed" in delivered) {
+          // A stopping server cut this off: rerun after the restart instead of reporting.
+          if (delivered.shuttingDown) await aborted(runtime.signal);
+          // The message never reached the child; the parent hears why, and this reporter ends.
+          await runtime.commit(
+            () => ({
+              status: "running",
+              checkpoint: {
+                phase: "report",
+                report: `[session ${name} (${sessionId}) failed: could not start: ${delivered.failed}]`,
+              },
+            }),
+            context,
+          );
+          return;
+        }
+        const settled = await delivered.submitted.wait(context);
         // One commit decides the report and records the answer, so a restart does not decide again.
         await runtime.commit(async (tx) => {
           const next = (after: EntryId, report?: string, textOffset?: number, answer?: EntryId) =>
@@ -508,8 +552,8 @@ export function createDurableSessions(
           if (!child) return reply(`No subagent named ${name}.`, { name }, true);
           if (!args.message) return reply("send needs a message.", { name }, true);
           const sessions = bound(api.env);
+          // Its reporter attaches the child when it delivers the message.
           const sessionId = await sessionIdOf(api, name, child);
-          await sessions.activate(sessionId);
           const whenBusy = args.followUp === true ? "followUp" : "steer";
           const requestId = `oppi-send:${sessions.storeId}:${api.conversationId}:${api.taskId}`;
           const parent = sessions.sender();
@@ -571,8 +615,21 @@ export function createDurableSessions(
               const conversation = await api.conversation(child.conversationId, context);
               if (!conversation)
                 return { ids, name, error: `Subagent ${name} has no conversation.` };
-              for (const { id, input } of await undelivered(api, child.conversationId, context))
-                await (await conversation.submit(messageDraft(id, input), context)).wait(context);
+              // The child is attached while they land, as their reporters attach it.
+              for (const { id, input } of await undelivered(api, child.conversationId, context)) {
+                const delivered = await sessions.activate(sessionId, () =>
+                  conversation.submit(messageDraft(id, input), context),
+                );
+                if ("failed" in delivered) {
+                  if (delivered.shuttingDown) await aborted(context.abortSignal);
+                  return {
+                    ids,
+                    name,
+                    error: `Subagent ${name} could not start: ${delivered.failed}`,
+                  };
+                }
+                await delivered.submitted.wait(context);
+              }
               return { ids, name, error: await sessions.waitForIdle(sessionId) };
             }),
           );
@@ -735,8 +792,8 @@ export function createDurableSessions(
 
     const child = await api.conversation(conversationId, context);
     if (!child) throw new Error(`Subagent ${name} (${sessionId}) conversation disappeared`);
-    const settled = await (
-      await child.submit(
+    const delivered = await sessions.activate(sessionId, () =>
+      child.submit(
         {
           type: "input",
           content: task,
@@ -744,8 +801,13 @@ export function createDurableSessions(
           ...sentBy(parent, "task"),
         },
         context,
-      )
-    ).wait(context);
+      ),
+    );
+    if ("failed" in delivered) {
+      if (delivered.shuttingDown) await aborted(context.abortSignal);
+      throw new Error(`Subagent ${name} (${sessionId}) could not start: ${delivered.failed}`);
+    }
+    const settled = await delivered.submitted.wait(context);
     if (settled.status !== "done" || settled.type !== "input")
       throw new Error(`Subagent ${name} (${sessionId}) did not answer: ${settled.status}`);
     return reply(await answerText(api, settled.answer, context), {

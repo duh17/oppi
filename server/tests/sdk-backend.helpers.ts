@@ -136,6 +136,8 @@ export function makeSdkBackendStub(): {
     }),
     isDisposed: false,
     isStreaming: false,
+    hasPendingWake: vi.fn(async () => false),
+    hasPendingWork: vi.fn(async () => false),
     sessionFile: undefined,
     sessionId: "pi-session-1",
     dispose: vi.fn(),

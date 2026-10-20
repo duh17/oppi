@@ -23,6 +23,7 @@ import { SessionManager, type ExtensionUIResponse } from "../src/sessions.js";
 import type { ExtensionUIRequest } from "../src/extension-ui-state.js";
 import {
   SessionLifecycleCoordinator,
+  type AutoStopGuard,
   type SessionLifecycleCoordinatorDeps,
   type SessionLifecycleSessionState,
 } from "../src/session-lifecycle.js";
@@ -2221,6 +2222,7 @@ function makeLifecycleActiveSession(overrides?: Partial<Session>): SessionLifecy
       dispose: vi.fn(),
       onShutdownCleanupComplete: vi.fn(),
       hasPendingWake: vi.fn(async () => false),
+      hasPendingWork: vi.fn(async () => false),
     } as never,
     workspaceId: "ws-1",
     pendingUIRequests: new Map(),
@@ -2239,6 +2241,10 @@ function makeLifecycleDeps(
     persistSessionNow: vi.fn(),
     releaseSession: vi.fn(),
     stopSession: vi.fn(async () => {}),
+    // Like SessionManager's: the guard's backend read, then its synchronous recheck.
+    autoStopSession: vi.fn(async (_sessionId: string, guard: AutoStopGuard) =>
+      (await guard.idle()) ? guard.still() : false,
+    ),
     getSessionIdleTimeoutMs: () => 300_000,
     ...overrides,
   };
@@ -2455,7 +2461,7 @@ describe("SessionLifecycleCoordinator auto-stop settle", () => {
     vi.useRealTimers();
   });
 
-  it("when autoStop and agent settles with no pending user-reply dialog, stopSession is called immediately", () => {
+  it("when autoStop and agent settles with nothing pending, stops without waiting for the idle timeout", async () => {
     const active = makeLifecycleActiveSession({
       status: "ready",
       launch: { autoStop: true },
@@ -2464,15 +2470,122 @@ describe("SessionLifecycleCoordinator auto-stop settle", () => {
     const coordinator = new SessionLifecycleCoordinator(deps);
 
     coordinator.handleSessionSettled("key");
+    await vi.advanceTimersByTimeAsync(0);
 
-    expect(deps.stopSession).toHaveBeenCalledTimes(1);
-    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
-
-    vi.advanceTimersByTime(300_000);
-    expect(deps.stopSession).toHaveBeenCalledTimes(1);
+    expect(deps.autoStopSession).toHaveBeenCalledTimes(1);
+    await expect(vi.mocked(deps.autoStopSession).mock.results[0]?.value).resolves.toBe(true);
+    expect(deps.stopSession).not.toHaveBeenCalled();
   });
 
-  it("when autoStop and pending ask, do not stop", () => {
+  it("when autoStop and a background job is still running, holds until a later settle has no pending wake", async () => {
+    const active = makeLifecycleActiveSession({
+      status: "ready",
+      launch: { autoStop: true },
+    });
+    let pending = true;
+    active.sdkBackend.hasPendingWake = vi.fn(async () => pending) as never;
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    // The turn ends with the job running: stopping now would kill the job and lose its receipt.
+    coordinator.handleSessionSettled("key");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.autoStopSession).not.toHaveBeenCalled();
+    // The idle timeout holds for the wake as well.
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    // The receipt's turn settles with nothing left pending.
+    pending = false;
+    coordinator.handleSessionSettled("key");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.autoStopSession).toHaveBeenCalledTimes(1);
+    await expect(vi.mocked(deps.autoStopSession).mock.results[0]?.value).resolves.toBe(true);
+  });
+
+  it("when autoStop, the locked recheck keeps a session whose backend has work its status does not show yet", async () => {
+    const active = makeLifecycleActiveSession({
+      status: "ready",
+      launch: { autoStop: true },
+    });
+    let work = false;
+    active.sdkBackend.hasPendingWork = vi.fn(async () => work) as never;
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.handleSessionSettled("key");
+    await vi.advanceTimersByTimeAsync(0);
+    const guard = vi.mocked(deps.autoStopSession).mock.calls[0]![1];
+    // A durable store committed queued input or started a run before agent_start arrived.
+    work = true;
+    expect(await guard.idle()).toBe(false);
+    work = false;
+    expect(await guard.idle()).toBe(true);
+    // A new turn, or the session's end, ends the decision.
+    active.session.status = "busy";
+    expect(guard.still()).toBe(false);
+    active.session.status = "ready";
+    expect(guard.still()).toBe(true);
+    coordinator.handleSessionSettled("key");
+    expect(guard.still()).toBe(false);
+  });
+
+  it("when autoStop, events after the settle that start no work do not cancel the decision", async () => {
+    const active = makeLifecycleActiveSession({
+      status: "ready",
+      launch: { autoStop: true },
+    });
+    let answer: (pending: boolean) => void = () => {};
+    active.sdkBackend.hasPendingWake = vi.fn(
+      () => new Promise<boolean>((resolve) => (answer = resolve)),
+    ) as never;
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.handleSessionSettled("key");
+    // A trailing custom message or message_end resets the idle timer.
+    coordinator.resetIdleTimer("key");
+    answer(false);
+    await vi.advanceTimersByTimeAsync(0);
+    answer(false);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(deps.autoStopSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("when autoStop and the wake check fails, keeps the session for the idle timeout to decide", async () => {
+    const active = makeLifecycleActiveSession({
+      status: "ready",
+      launch: { autoStop: true },
+    });
+    active.sdkBackend.hasPendingWake = vi.fn(async () => {
+      throw new Error("store closed");
+    }) as never;
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.handleSessionSettled("key");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(deps.autoStopSession).not.toHaveBeenCalled();
+    expect(deps.stopSession).not.toHaveBeenCalled();
+  });
+
+  it("when autoStop, a session attached again that never settles still stops at the idle timeout", async () => {
+    const active = makeLifecycleActiveSession({
+      status: "ready",
+      launch: { autoStop: true },
+    });
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+    await vi.advanceTimersByTimeAsync(300_000);
+
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+  });
+
+  it("when autoStop and pending ask, do not stop", async () => {
     const active = makeLifecycleActiveSession({
       status: "ready",
       launch: { autoStop: true },
@@ -2487,12 +2600,13 @@ describe("SessionLifecycleCoordinator auto-stop settle", () => {
     const coordinator = new SessionLifecycleCoordinator(deps);
 
     coordinator.handleSessionSettled("key");
-    vi.advanceTimersByTime(300_000);
+    await vi.advanceTimersByTimeAsync(300_000);
 
+    expect(deps.autoStopSession).not.toHaveBeenCalled();
     expect(deps.stopSession).not.toHaveBeenCalled();
   });
 
-  it("when autoStop and an editor dialog is pending, do not stop", () => {
+  it("when autoStop and an editor dialog is pending, do not stop", async () => {
     const active = makeLifecycleActiveSession({
       status: "ready",
       launch: { autoStop: true },
@@ -2507,8 +2621,9 @@ describe("SessionLifecycleCoordinator auto-stop settle", () => {
     const coordinator = new SessionLifecycleCoordinator(deps);
 
     coordinator.handleSessionSettled("key");
-    vi.advanceTimersByTime(300_000);
+    await vi.advanceTimersByTimeAsync(300_000);
 
+    expect(deps.autoStopSession).not.toHaveBeenCalled();
     expect(deps.stopSession).not.toHaveBeenCalled();
   });
 
@@ -2526,9 +2641,10 @@ describe("SessionLifecycleCoordinator auto-stop settle", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+    expect(deps.autoStopSession).not.toHaveBeenCalled();
   });
 
-  it("when autoStop and session is busy, do not stop", () => {
+  it("when autoStop and session is busy, do not stop", async () => {
     const active = makeLifecycleActiveSession({
       status: "busy",
       launch: { autoStop: true },
@@ -2537,13 +2653,12 @@ describe("SessionLifecycleCoordinator auto-stop settle", () => {
     const coordinator = new SessionLifecycleCoordinator(deps);
 
     coordinator.handleSessionSettled("key");
-    coordinator.resetIdleTimer("key");
-    vi.advanceTimersByTime(300_000);
+    await vi.advanceTimersByTimeAsync(0);
 
-    expect(deps.stopSession).not.toHaveBeenCalled();
+    expect(deps.autoStopSession).not.toHaveBeenCalled();
   });
 
-  it("when autoStop and pending ask is answered while ready, stopSession is called immediately", () => {
+  it("when autoStop and pending ask is answered while ready, stops on that settle", async () => {
     const active = makeLifecycleActiveSession({
       status: "ready",
       launch: { autoStop: true },
@@ -2558,16 +2673,17 @@ describe("SessionLifecycleCoordinator auto-stop settle", () => {
     const coordinator = new SessionLifecycleCoordinator(deps);
 
     coordinator.handleSessionSettled("key");
-    expect(deps.stopSession).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.autoStopSession).not.toHaveBeenCalled();
 
     active.pendingUIRequests.clear();
     coordinator.handleSessionSettled("key");
+    await vi.advanceTimersByTimeAsync(0);
 
-    expect(deps.stopSession).toHaveBeenCalledTimes(1);
-    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+    expect(deps.autoStopSession).toHaveBeenCalledTimes(1);
   });
 
-  it("when stopSession rejects, it does not become an unhandled rejection", async () => {
+  it("when the auto-stop rejects, it does not become an unhandled rejection", async () => {
     vi.useRealTimers();
     const active = makeLifecycleActiveSession({
       status: "ready",
@@ -2578,7 +2694,7 @@ describe("SessionLifecycleCoordinator auto-stop settle", () => {
     // A plain rejecting stub: vi.fn() attaches .then() for settledResults and
     // would hide an unhandledRejection that `oppi serve` would still crash on.
     const deps = makeLifecycleDeps(active, {
-      stopSession: (sessionId) => {
+      autoStopSession: (sessionId) => {
         stopCalls.push(sessionId);
         return Promise.reject(stopError);
       },
@@ -2592,6 +2708,9 @@ describe("SessionLifecycleCoordinator auto-stop settle", () => {
 
     try {
       coordinator.handleSessionSettled("key");
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
       expect(stopCalls).toEqual(["session-1"]);
       await new Promise<void>((resolve) => {
         setImmediate(resolve);

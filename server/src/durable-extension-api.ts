@@ -136,6 +136,13 @@ export interface ResolvedSubagent {
 }
 
 /**
+ * `DurableSessionsHost.activate`'s outcome: what `submit` returned, or why the child's Session
+ * could not be attached (`submit` did not run). `shuttingDown`: the server is stopping, so the
+ * caller should wait for its abort and run again after the restart instead of failing.
+ */
+export type Activated<T> = { submitted: T } | { failed: string; shuttingDown: boolean };
+
+/**
  * What the subagent tool needs from Oppi (see `DurableThreads.forCaller`), for one calling
  * conversation. Every Session it takes must be bound to a child conversation that the caller
  * owns; any other is refused.
@@ -144,8 +151,9 @@ export interface DurableSessionsHost {
   /** The store of the calling conversation. */
   readonly storeId: string;
   /**
-   * The Oppi Session bound to a child conversation the caller owns, created and attached on
-   * first use. Idempotent: one Session per conversation id, however often this runs.
+   * The Oppi Session bound to a child conversation the caller owns, created on first use (not
+   * attached: `activate` does that with the first message). Idempotent: one Session per
+   * conversation id, however often this runs.
    */
   materialize(child: { conversationId: ConversationId; name: string }): Promise<string>;
   /** The calling conversation's own Oppi session: who sent an agent message. */
@@ -158,8 +166,13 @@ export interface DurableSessionsHost {
   pendingWakers(sessionId: string): Promise<TaskId[]>;
   /** Wait until a child's conversation is idle. Undefined on success, otherwise an error message. */
   waitForIdle(sessionId: string): Promise<string | undefined>;
-  /** Attach a child's stopped Session so a message to it makes progress. */
-  activate(sessionId: string): Promise<void>;
+  /**
+   * Attach a child's Session (or keep it attached) and run `submit`, the commit that delivers
+   * a message to it. A child stops once it settles with no pending wake; until `submit`
+   * settles it does not, and a stop already under way finishes first. Errors of `submit`
+   * propagate; a Session that cannot be attached is a `failed` result.
+   */
+  activate<T>(sessionId: string, submit: () => Promise<T>): Promise<Activated<T>>;
   /**
    * Resolve a spawn: the saved Agent, model, and thinking level, checked against the caller's
    * delegation grant and workspace. `agent` is the caller's current agent. Rejects with a

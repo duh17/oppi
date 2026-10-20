@@ -42,6 +42,11 @@ export interface AgentBackend {
    */
   hasPendingWake(): Promise<boolean>;
   /**
+   * Whether the session has a live run or queued input, read where the backend keeps it (a
+   * durable store commits input before its events reach the session's projected status).
+   */
+  hasPendingWork(): Promise<boolean>;
+  /**
    * Whether part of that pending wake dies with this server process, so a restart must
    * prompt the session to continue instead of leaving it idle.
    */
