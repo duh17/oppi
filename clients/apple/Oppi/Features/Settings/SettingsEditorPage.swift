@@ -8,6 +8,7 @@ final class SettingsEditorViewController: UIViewController, UICollectionViewDele
     private let collectionView: UICollectionView
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var appliedThemeID: ThemeID?
+    private var changedRows = ChangedRows<Item>()
 
     private enum Section: Hashable { case keyboard, display, indentation, typing }
     private enum Item: Hashable {
@@ -69,8 +70,30 @@ final class SettingsEditorViewController: UIViewController, UICollectionViewDele
         snapshot.appendItems([.syntax, .lineNumbers, .currentLine, .wrap], toSection: .display)
         snapshot.appendItems([.detectIndentation, .indentWith, .tabWidth], toSection: .indentation)
         snapshot.appendItems([.closeBrackets], toSection: .typing)
-        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        let themeID = ThemeRuntimeState.currentThemeID()
+        let shown = Set(dataSource.snapshot().itemIdentifiers)
+        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { item in
+            AnyHashable([AnyHashable(themeID), inputs(of: item)])
+        }
+        snapshot.reconfigureItems(changed.filter(shown.contains))
         dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
+    }
+
+    /// The preference values a row is drawn from.
+    private func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .keybindings: AnyHashable(preferences.keybindings)
+        case .keyBar: AnyHashable(preferences.showsKeyBar)
+        case .customizeKeyBar: AnyHashable(preferences.keyBarKeys.count)
+        case .syntax: AnyHashable(preferences.highlightsSyntax)
+        case .lineNumbers: AnyHashable(preferences.showsLineNumbers)
+        case .currentLine: AnyHashable(preferences.highlightsCurrentLine)
+        case .wrap: AnyHashable(preferences.wrapsLines)
+        case .detectIndentation: AnyHashable(preferences.detectsIndentation)
+        case .indentWith: AnyHashable(preferences.indentsWithTabs)
+        case .tabWidth: AnyHashable(preferences.tabWidth)
+        case .closeBrackets: AnyHashable(preferences.closesBrackets)
+        }
     }
 
     private func installDataSource() {

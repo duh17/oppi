@@ -267,6 +267,28 @@ extension UICellAccessory {
     }
 }
 
+/// Which rows of a settings list a pass must reconfigure: those whose inputs
+/// changed since the last pass. Reconfiguring a row replaces its accessories,
+/// and replacing a pop-up button dismisses the menu it has open, so a pass
+/// that UIKit runs for the menu itself, or for a change to another row, must
+/// leave that row alone.
+struct ChangedRows<Item: Hashable> {
+    private var last: [Item: AnyHashable] = [:]
+
+    /// The rows in `items` whose `inputs` differ from the previous call.
+    mutating func changed(in items: [Item], inputs: (Item) -> AnyHashable) -> [Item] {
+        var next: [Item: AnyHashable] = [:]
+        var changed: [Item] = []
+        for item in items {
+            let value = inputs(item)
+            next[item] = value
+            if last[item] != value { changed.append(item) }
+        }
+        last = next
+        return changed
+    }
+}
+
 enum SSHTerminalSettingsList {
     static func pin(_ collectionView: UICollectionView, in view: UIView) {
         collectionView.translatesAutoresizingMaskIntoConstraints = false
