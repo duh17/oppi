@@ -672,13 +672,15 @@ private struct AudioFilePlayerScreenshotPreview: View {
 /// `workspace-now-playing` (the full-screen player over active playback), and
 /// `quick-session` (its pickers, model sheet, and expanded composer). The
 /// presenters and their modals share one app root over the fixture server, in
-/// the dark theme.
+/// the dark theme. Quick Session starts on plain Pi: an Agent an earlier run
+/// remembered would load its default from the stub server, which fails.
 private struct RouterModalSitesPreview: View {
     private let site: String
     @State private var root: AppRootEnvironment
 
     init() {
         ScreenshotVolatileDefaults.applyDarkTheme(true)
+        ScreenshotVolatileDefaults.apply([AppPreferences.QuickSession.lastAgentIdKey: ""])
         let site = ProcessInfo.processInfo.environment["SCREENSHOT_MODAL_SITE"] ?? "quick-session"
         self.site = site
         _root = State(initialValue: AppRootEnvironment(

@@ -353,7 +353,7 @@ function runAppleGuardrails(): GuardrailResult {
 
   let hits = filterAllowed(
     rgFiles("UIActivityViewController\\(", ["Oppi/"], { cwd: appleRoot, type: "swift" }),
-    /FileSharePresenter\.swift|FileShareService\.swift|AssistantMarkdownContentView\.swift/,
+    /(^|\/)(FileSharePresenter|FileShareService|AssistantMarkdownContentView)\.swift$/,
   );
   if (hits.length > 0) {
     err(
@@ -368,7 +368,7 @@ function runAppleGuardrails(): GuardrailResult {
       cwd: appleRoot,
       type: "swift",
     }),
-    /FullScreenCodeView\.swift/,
+    /(^|\/)FullScreenCodeView\.swift$/,
   );
   if (hits.length > 0) {
     err(
@@ -383,7 +383,7 @@ function runAppleGuardrails(): GuardrailResult {
   // screen, and the editor's conflict review.
   hits = filterAllowed(
     rgFiles("FullScreenCodeViewController\\(", ["Oppi/"], { cwd: appleRoot, type: "swift" }),
-    /FullScreenCodeView\.swift|FullScreenCodeViewController\.swift|EmbeddedFileViewerView\.swift|ToolTimelineRowHelpers\.swift|FileViewerViewController\.swift|WorkspaceFileEditChrome\.swift|ReviewableControlMarkdownViewController\.swift/,
+    /(^|\/)(FullScreenCodeView|FullScreenCodeViewController|EmbeddedFileViewerView|ToolTimelineRowHelpers|FileViewerViewController|WorkspaceFileEditChrome|ReviewableControlMarkdownViewController)\.swift$/,
   );
   if (hits.length > 0) {
     err(
@@ -395,7 +395,7 @@ function runAppleGuardrails(): GuardrailResult {
 
   hits = filterAllowed(
     rgFiles("presentationDetents\\(\\[\\.large\\]\\)", ["Oppi/"], { cwd: appleRoot, type: "swift" }),
-    /FullScreenCodeView\.swift/,
+    /(^|\/)FullScreenCodeView\.swift$/,
   );
   if (hits.length > 0) {
     err(
@@ -456,7 +456,7 @@ function runAppleGuardrails(): GuardrailResult {
       pcre2: true,
       type: "swift",
     }),
-    /ReviewCommentWKWebView\.swift|HTMLContentTracker|PDFFileView\.swift/,
+    /(^|\/)ReviewCommentWKWebView\.swift$/,
   );
   if (hits.length > 0) {
     err(

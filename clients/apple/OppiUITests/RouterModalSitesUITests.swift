@@ -206,9 +206,6 @@ final class RouterModalSitesUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Models"].waitForExistence(timeout: 5), "Model picker did not open")
 
         let alert = app.alerts["Couldn't Set Default Model"]
-        // The saved Agent's default can fail to load first; clear that alert.
-        if alert.waitForExistence(timeout: 2) { alert.buttons["OK"].tap() }
-
         let search = app.searchFields["Search models…"]
         search.tap()
         search.typeText("steady")

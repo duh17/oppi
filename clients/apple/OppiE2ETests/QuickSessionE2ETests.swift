@@ -198,8 +198,6 @@ final class QuickSessionE2ETests: E2ETestCase {
         dismissQuickSession()
     }
 
-    /// The Incognito pill starts an in-memory session, and leaving its chat
-    /// deletes it on the server and from the list.
     @MainActor
     func testTappingTheScrimAboveTheContentClosesQuickSession() {
         XCTAssertTrue(waitForElementToExist(app.collectionViews["workspace.sessionList"], timeout: 20), "Sessions inbox did not appear")
@@ -217,6 +215,8 @@ final class QuickSessionE2ETests: E2ETestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed, "A tap on the scrim did not close Quick Session")
     }
 
+    /// The Incognito pill starts an in-memory session, and leaving its chat
+    /// deletes it on the server and from the list.
     @MainActor
     func testIncognitoQuickSessionIsDeletedWhenItsChatCloses() throws {
         let sessionList = app.collectionViews["workspace.sessionList"]

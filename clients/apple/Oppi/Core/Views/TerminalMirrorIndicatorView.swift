@@ -1,9 +1,8 @@
-import SwiftUI
 import UIKit
 
 struct TerminalMirrorIndicatorPresentation: Equatable {
     let accessibilityLabel: String
-    let color: Color
+    let color: UIColor
     let isAnimated: Bool
 
     init?(session: Session?) {
@@ -16,11 +15,11 @@ struct TerminalMirrorIndicatorPresentation: Equatable {
 
         if session.mirror?.status == "connected" {
             accessibilityLabel = "pi-tui live"
-            color = .themeGreen
+            color = UIColor(ThemeRuntimeState.currentPalette().green)
             isAnimated = true
         } else {
             accessibilityLabel = "pi-tui offline"
-            color = .themeComment
+            color = UIColor(ThemeRuntimeState.currentPalette().comment)
             isAnimated = false
         }
     }
@@ -52,7 +51,7 @@ final class TerminalMirrorIndicatorUIView: UIImageView {
 
     func apply(_ presentation: TerminalMirrorIndicatorPresentation) {
         image = .scaledSymbol("terminal.fill", style: .caption2, weight: .semibold)
-        tintColor = UIColor(presentation.color)
+        tintColor = presentation.color
         accessibilityLabel = presentation.accessibilityLabel
         isAnimated = presentation.isAnimated
         updateBreathing()

@@ -5,8 +5,8 @@ import UIKit
 /// through the server's icon cache and shows the default symbol until it
 /// arrives. A sandbox workspace adds the lock mark (`WorkspaceRuntimeIcon`).
 /// Also the Pi mark, and plain symbols for the other pills. Quick Session's
-/// pills and pickers, the chat title, and the empty chat draw their icons
-/// with it.
+/// pills and pickers, the chat title, the empty chat, and the workspace
+/// sidebar's rows draw their icons with it.
 @MainActor
 final class IconChoiceUIView: UIView {
     enum Content: Equatable {

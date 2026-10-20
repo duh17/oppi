@@ -226,9 +226,6 @@
     "clients/apple/Oppi/Core/Views/StatusPill.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/TerminalMirrorIndicatorView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Views/WorkingSpinnerView.swift": {
       "import SwiftUI": 1
     },

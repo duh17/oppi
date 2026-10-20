@@ -5,8 +5,8 @@ import UIKit
 /// persist one) a star that saves the Pi or Agent default.
 ///
 /// Every presenter shows this controller at the root of a router navigation
-/// controller (`.inNavigation()`), so it owns its bar (title, Cancel, the
-/// saving spinner) and its `UISearchController`: search, selection, and close
+/// controller (`.inNavigation()`), so it owns its bar (title and Cancel) and
+/// its `UISearchController`: search, selection, and close
 /// have one owner. The presenter passes the server's API client and
 /// `ChatSessionState` explicitly; `chatState.cachedModels` opens the list
 /// instantly and a refresh runs once per open. Selecting a model reports it
