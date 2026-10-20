@@ -236,11 +236,7 @@ private final class ChatFooterNoticeView: UIView {
         let label = ExtensionChromeFont.label(.caption1, lines: 0)
         label.text = text
         label.textColor = UIColor(palette.fg)
-        let row = UIStackView(arrangedSubviews: [icon, label])
-        row.axis = .horizontal
-        row.alignment = .top
-        row.spacing = 8
-        for view in [glass, row] as [UIView] {
+        for view in [glass, icon, label] as [UIView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             card.addSubview(view)
         }
@@ -252,11 +248,13 @@ private final class ChatFooterNoticeView: UIView {
             glass.bottomAnchor.constraint(equalTo: card.bottomAnchor),
             glass.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             glass.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            row.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
-            row.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
-            row.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
-            row.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
+            label.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
+            label.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
+            icon.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
             icon.topAnchor.constraint(equalTo: label.topAnchor, constant: 1),
+            icon.bottomAnchor.constraint(lessThanOrEqualTo: card.bottomAnchor, constant: -10),
             content.topAnchor.constraint(equalTo: topAnchor),
             content.bottomAnchor.constraint(equalTo: bottomAnchor),
             content.leadingAnchor.constraint(equalTo: leadingAnchor),

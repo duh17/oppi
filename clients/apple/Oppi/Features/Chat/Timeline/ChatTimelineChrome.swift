@@ -97,8 +97,10 @@ final class ChatEmptyStateView: UIView {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
-        let top = area.topAnchor.constraint(equalTo: topAnchor)
-        let bottom = area.bottomAnchor.constraint(equalTo: bottomAnchor)
+        // Inside the timeline's safe area and then the bars' overlap, as the
+        // hosted SwiftUI empty state laid it out.
+        let top = area.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor)
+        let bottom = area.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor)
         self.top = top
         self.bottom = bottom
         NSLayoutConstraint.activate([
