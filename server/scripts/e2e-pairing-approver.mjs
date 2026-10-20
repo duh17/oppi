@@ -12,8 +12,8 @@
  * Env: E2E_BASE_URL, E2E_BOOTSTRAP_CREDENTIAL_FILE (from e2e-precreate-pair.mjs).
  */
 import { createPrivateKey, sign } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const POLL_MS = 500;
@@ -37,7 +37,18 @@ function signDeviceMessage(privateKey, message) {
 
 class FatalError extends Error {}
 
-export function createApprover({ baseURL, credential, log = console.log }) {
+/**
+ * `onAccessToken` receives each refreshed token. A refresh rotates the device's
+ * access token, and the XCTest lab API reads the same device's token from the
+ * run directory on every call, so the refreshed one has to land there or every
+ * fixture call after the first expiry fails with 401 (`unknown_token`).
+ */
+export function createApprover({
+  baseURL,
+  credential,
+  log = console.log,
+  onAccessToken = () => {},
+}) {
   const base = baseURL.replace(/\/$/, "");
   const privateKey = createPrivateKey({ key: credential.privateKey, format: "jwk" });
   let accessToken = credential.accessToken;
@@ -73,6 +84,7 @@ export function createApprover({ baseURL, credential, log = console.log }) {
       );
     }
     accessToken = (await refreshed.json()).accessToken;
+    onAccessToken(accessToken);
     log("[e2e-approver] refreshed access token");
   }
 
@@ -124,6 +136,13 @@ export function createApprover({ baseURL, credential, log = console.log }) {
   return { approvePending };
 }
 
+/** Atomic, so a fixture call never reads a half-written token. */
+export function writeTokenFile(file, token) {
+  const temporary = `${file}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${token}\n`, { mode: 0o600 });
+  renameSync(temporary, file);
+}
+
 async function main() {
   const baseURL = process.env.E2E_BASE_URL?.trim();
   const credentialFile = process.env.E2E_BOOTSTRAP_CREDENTIAL_FILE?.trim();
@@ -132,7 +151,12 @@ async function main() {
     process.exit(1);
   }
   const credential = JSON.parse(readFileSync(credentialFile, "utf8"));
-  const approver = createApprover({ baseURL, credential });
+  const tokenFile = join(dirname(resolve(credentialFile)), "device-token.txt");
+  const approver = createApprover({
+    baseURL,
+    credential,
+    onAccessToken: (token) => writeTokenFile(tokenFile, token),
+  });
   // A SIGKILLed harness skips its cleanup; reparenting means nobody needs approvals anymore.
   const parent = process.ppid;
   console.log(`[e2e-approver] approving pairings on ${baseURL} as device ${credential.deviceId}`);
