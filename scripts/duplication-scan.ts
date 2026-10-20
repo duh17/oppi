@@ -299,11 +299,14 @@ function runCommand(command: string, args: string[], cwd: string): string {
 function rgFiles(
   pattern: string,
   paths: string[],
-  options: { cwd?: string; pcre2?: boolean; type?: string } = {},
+  options: { cwd?: string; pcre2?: boolean; multiline?: boolean; type?: string } = {},
 ): string[] {
   const args: string[] = [];
   if (options.pcre2) {
     args.push("--pcre2");
+  }
+  if (options.multiline) {
+    args.push("--multiline");
   }
   args.push("-l", pattern);
   if (options.type) {
@@ -378,13 +381,19 @@ function runAppleGuardrails(): GuardrailResult {
     );
   }
 
+  // Presenting a reader modally goes through the helpers. A UIKit screen may
+  // embed one as a child (the file viewer, the conflict review).
   hits = filterAllowed(
-    rgFiles("FullScreenCodeViewController\\(", ["Oppi/"], { cwd: appleRoot, type: "swift" }),
+    rgFiles(
+      String.raw`present\(\s*FullScreenCodeViewController\(|let\s+(\w+)\s*=\s*FullScreenCodeViewController\([\s\S]*?\bpresent\(\s*\1\b`,
+      ["Oppi/"],
+      { cwd: appleRoot, type: "swift", pcre2: true, multiline: true },
+    ),
     /FullScreenCodeView\.swift|FullScreenCodeViewController\.swift|EmbeddedFileViewerView\.swift|ToolTimelineRowHelpers\.swift/,
   );
   if (hits.length > 0) {
     err(
-      `Direct FullScreenCodeViewController creation in: ${hits.join(", ")}`,
+      `Modal FullScreenCodeViewController presentation in: ${hits.join(", ")}`,
       "Use .fullScreenViewer() (SwiftUI) or ToolTimelineRowPresentationHelpers.presentFullScreenContent() (UIKit)",
       hits,
     );
