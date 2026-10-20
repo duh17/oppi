@@ -14,6 +14,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     nonisolated(unsafe) private var swipeRegressionStoppedSessionId: String?
     nonisolated(unsafe) private var themeSwitchSessionId: String?
     nonisolated(unsafe) private var recentStoppedSessionId: String?
+    nonisolated(unsafe) private var scrollWorkspaceIds: [String] = []
     nonisolated(unsafe) private var activeScheduleId: String?
     nonisolated(unsafe) private var archivedScheduleId: String?
     nonisolated(unsafe) private var nativeEditorAgentId: String?
@@ -29,6 +30,12 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
 
     override var e2eAutoCreatesSessionOnLaunch: Bool {
         false
+    }
+
+    /// The sidebar reads its workspace catalog at launch, so the 18 workspaces
+    /// this case seeds only show up in an app launched after them.
+    override var e2eRequiresFreshLaunch: Bool {
+        name.contains("testIPhoneWorkspaceSidebarScrolls")
     }
 
     override func configureE2ELaunch(_ application: XCUIApplication) {
@@ -97,7 +104,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             try createLabSessions(count: 1, workspaceId: anchorWorkspaceId, stopAfterCreate: false)
         } else if name.contains("testIPhoneWorkspaceSidebarScrolls") {
             for index in 1...18 {
-                _ = try createLabWorkspace(named: "Scroll Workspace \(index)")
+                scrollWorkspaceIds.append(try createLabWorkspace(named: "Scroll Workspace \(index)"))
             }
         } else if name.contains("testNativeAgentEditorSavesReplacePromptAndThinking") {
             let agentName = "Native editor reviewer \(UUID().uuidString.prefix(8))"
@@ -154,6 +161,20 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         }
     }
 
+    /// The 18 workspaces would push the anchor workspace below the fold of every
+    /// later case's sidebar, and the running app keeps them in its catalog until
+    /// it relaunches.
+    override func tearDownWithError() throws {
+        if !scrollWorkspaceIds.isEmpty {
+            for id in scrollWorkspaceIds {
+                _ = try? e2eLabAPIJSON(method: "DELETE", path: "/workspaces/\(id)")
+            }
+            scrollWorkspaceIds = []
+            terminateSharedApp()
+        }
+        try super.tearDownWithError()
+    }
+
     func testSessionRowLeadingSwipeDoesNotNavigate() throws {
         XCUIDevice.shared.orientation = .portrait
 
@@ -196,7 +217,12 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         )
         closeSwipe(row)
 
+        // Earlier cases in a run leave sessions above it, and the list builds
+        // only the rows near the screen, so scroll down to it.
         let stoppedRow = app.buttons["session.nav.\(stoppedSessionId)"]
+        for _ in 0..<14 where !stoppedRow.waitForExistence(timeout: 0.5) {
+            sessionList.swipeUp()
+        }
         XCTAssertTrue(stoppedRow.waitForExistence(timeout: 10), "Seeded stopped session row did not appear")
         stoppedRow.swipeLeft()
         XCTAssertTrue(
@@ -209,6 +235,9 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         )
         closeSwipe(stoppedRow)
 
+        for _ in 0..<14 where !row.exists {
+            sessionList.swipeDown()
+        }
         tap(row, named: "session row")
         XCTAssertTrue(
             app.collectionViews["chat.timeline"].waitForExistence(timeout: 15),
