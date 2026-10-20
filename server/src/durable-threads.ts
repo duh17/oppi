@@ -6,6 +6,7 @@ import {
   type ConversationId,
   type Harness,
   type ModelRef,
+  type TaskId,
 } from "@earendil-works/pi-durable";
 import { homedir } from "node:os";
 import type {
@@ -82,8 +83,11 @@ export class DurableThreads {
           throw new Error(`Conversation ${child.conversationId} is not a child of this session`);
         return this.materialize(child, host.storeId);
       },
-      submit: async (sessionId, input) =>
-        (await refuse(sessionId)) ?? this.submit(sessionId, input),
+      pendingWakers: async (sessionId) => {
+        const refused = await refuse(sessionId);
+        if (refused !== undefined) throw new Error(refused);
+        return this.pendingWakers(sessionId);
+      },
       waitForIdle: async (sessionId) => (await refuse(sessionId)) ?? this.waitForIdle(sessionId),
       activate: async (sessionId) => {
         const refused = await refuse(sessionId);
@@ -249,29 +253,15 @@ export class DurableThreads {
     return created;
   }
 
-  /** Submit to a bound session's own store. Undefined on success, otherwise an error message. */
-  async submit(
-    sessionId: string,
-    input: Parameters<DurableSessionsHost["submit"]>[1],
-  ): Promise<string | undefined> {
+  /** `SessionHost.pendingWakers` of a bound session's conversation, in its own store. */
+  private async pendingWakers(sessionId: string): Promise<TaskId[]> {
     const session = this.deps.storage.getSession(sessionId);
     const conversationId = session?.serverDurable?.conversationId as ConversationId | undefined;
     if (!session || conversationId === undefined)
-      return `Session ${sessionId} has no conversation.`;
-    // The session's own controller: the same request-id dedupe and failure card as its socket.
-    return this.deps.runtime.withSession(session, async (harness, host) => {
-      if (!(await harness.conversation(conversationId, BACKGROUND_CONTEXT)))
-        return `Session ${sessionId} has no conversation.`;
-      const controller = await host.controller(conversationId);
-      const options = {
-        requestId: input.requestId,
-        ...(input.entry ? { entry: input.entry } : {}),
-      };
-      await (input.whenBusy === "steer"
-        ? controller.steer(input.content, options)
-        : controller.followUp(input.content, options));
-      return undefined;
-    });
+      throw new Error(`Session ${sessionId} has no conversation.`);
+    return this.deps.runtime.withSession(session, (_harness, host) =>
+      host.pendingWakers(conversationId),
+    );
   }
 
   async waitForIdle(sessionId: string): Promise<string | undefined> {

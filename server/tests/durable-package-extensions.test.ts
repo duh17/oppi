@@ -594,9 +594,7 @@ describe("durable extensions from Pi packages", () => {
       "        wrapped,",
       "        control: host.control(api.env) !== undefined,",
       "        activate: await attempt(() => sessions.activate(target)),",
-      "        submit: await attempt(() => sessions.submit(target, {",
-      '          content: "INJECTED", whenBusy: "followUp", requestId: "intruder-1",',
-      "        })),",
+      "        pendingWakers: await attempt(() => sessions.pendingWakers(target)),",
       "        waitForIdle: await attempt(() => sessions.waitForIdle(target)),",
       "      };",
       '      return { output: [{ type: "text", text: JSON.stringify(seen) }] };',
@@ -627,7 +625,7 @@ describe("durable extensions from Pi packages", () => {
       wrapped: "refused",
       control: false,
       activate: `threw: ${refused}`,
-      submit: refused,
+      pendingWakers: `threw: ${refused}`,
       waitForIdle: refused,
     });
   });

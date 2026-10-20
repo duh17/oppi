@@ -6,6 +6,7 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import {
   AgentDoc,
   AssistantEntry,
+  InboxDoc,
   LiveDoc,
   defineExtension,
   defineTask,
@@ -14,8 +15,12 @@ import {
   type ConversationId,
   type EntryId,
   type Extension,
+  type InputSubmissionDraft,
+  type Task,
+  type TaskId,
   type ToolExecutionApi,
   type ToolExecutionResult,
+  type Tx,
 } from "@earendil-works/pi-durable";
 import {
   SESSION_REPORTER_TASK,
@@ -63,9 +68,12 @@ type ReporterInput = {
   conversationId: ConversationId;
   sessionId: string;
   name: string;
+  /** The message it delivers: a spawn's task, or a `send`'s message. */
   task: string;
   /** The spawning session; absent on reporters created before agent messages. */
   parent?: Sender;
+  /** A `send`: how the message reaches a busy child, and its request id. Absent for a spawn. */
+  send?: { whenBusy: "steer" | "followUp"; requestId: string };
 };
 type ReporterState =
   | { phase: "deliver" }
@@ -74,11 +82,24 @@ type ReporterState =
       report?: string;
       /** Length of the report's model-only header. */
       textOffset?: number;
-    };
+      /** Follow the child afterwards, for its answers after this entry; absent: end. */
+      after?: EntryId;
+      /** The child's answer this report carries; its request id is `reportRequestId`. */
+      answer?: EntryId;
+    }
+  | { phase: "follow"; after: EntryId };
 
 /** Model-only header of a finished child's report; the transcript shows the text after it. */
 function reportHeader(name: string, sessionId: string): string {
   return `[session ${name} (${sessionId}) finished, no reply needed] `;
+}
+
+/**
+ * The request id of the report of `child`'s answer `answer` in its parent: one per answer,
+ * whichever reporter posts it, so `wait` can withdraw a report of the answer it returns.
+ */
+function reportRequestId(child: ConversationId, answer: EntryId): string {
+  return `oppi-report:${child}:${answer}`;
 }
 
 function textOf(message: AssistantMessage | undefined): string {
@@ -87,89 +108,317 @@ function textOf(message: AssistantMessage | undefined): string {
     .join("");
 }
 
+/** A conversation's newest entry; 0 before its first. */
+async function newestEntry(tx: Tx, conversationId: ConversationId): Promise<EntryId> {
+  return (await tx.scanEntries({ conversationId }, 1)).items[0]?.id ?? (0 as EntryId);
+}
+
 /**
- * Hands a background child its task and posts its answer back to the parent. Background
- * too, so the parent's Stop and idle waits leave it alone. Request ids make a restart
- * deliver the task once and the report once.
+ * A conversation's newest final answer: its newest assistant entry, unless that one calls tools
+ * (a run in progress) or failed.
  */
-const Reporter = defineTask<ReporterInput, ReporterState, null>({
-  name: SESSION_REPORTER_TASK,
-  version: 1,
-  initial: () => ({ phase: "deliver" }),
-  phases: {
-    deliver: async (reporter, runtime, context) => {
-      const { conversationId, sessionId, name, task, parent } = reporter.input;
-      const child = await runtime.conversation(conversationId, context);
-      if (!child) throw new Error(`Subagent ${name} (${sessionId}) conversation disappeared`);
-      const submission = await child.submit(
-        {
-          type: "input",
-          content: task,
-          requestId: `oppi-spawn:${reporter.id}`,
-          ...sentBy(parent, "task"),
-        },
-        context,
-      );
-      const settled = await submission.wait(context);
-      await runtime.commit(async (tx) => {
-        const next = (report?: string, textOffset?: number) =>
-          ({
-            status: "running",
-            checkpoint: { phase: "report", report, ...(textOffset ? { textOffset } : {}) },
-          }) as const;
-        // Aborted: stopped or withdrawn. Whoever stopped it knows; nothing to report.
-        if (settled.status === "unanswered")
-          return next(
-            settled.reason === "aborted"
-              ? undefined
-              : `[session ${name} (${sessionId}) failed: ${settled.reason}]`,
-          );
-        if (settled.type !== "input") return next();
-        const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0] as
-          AssistantMessage | undefined;
+async function newestAnswer(
+  tx: Tx,
+  conversationId: ConversationId,
+): Promise<{ id: EntryId; message: AssistantMessage } | undefined> {
+  let cursor;
+  do {
+    const page = await tx.scanEntries({ conversationId }, 50, cursor);
+    for (const entry of page.items) {
+      const message = entry.model?.[0];
+      if (message?.role !== "assistant") continue;
+      const { stopReason } = message as AssistantMessage;
+      if (stopReason === "toolUse" || stopReason === "error" || stopReason === "aborted")
+        return undefined;
+      return { id: entry.id, message: message as AssistantMessage };
+    }
+    cursor = page.next;
+  } while (cursor);
+  return undefined;
+}
+
+function isLive(task: { state: { status: string } } | undefined): boolean {
+  return (
+    task !== undefined && task.state.status !== "terminal" && task.state.status !== "completing"
+  );
+}
+
+const COMPLETED = { status: "terminal", outcome: { status: "completed", result: null } } as const;
+
+const SUBAGENT_TOOL = "subagent";
+
+/**
+ * The submission a reporter makes of its message. `wait` submits the same draft to wait for a
+ * message not delivered yet; the request id makes both one submission.
+ */
+function messageDraft(reporter: TaskId, input: ReporterInput): InputSubmissionDraft {
+  const { task, parent, send } = input;
+  return send
+    ? {
+        type: "input",
+        content: task,
+        whenBusy: send.whenBusy,
+        requestId: send.requestId,
+        ...sentBy(parent, "message"),
+      }
+    : {
+        type: "input",
+        content: task,
+        requestId: `oppi-spawn:${reporter}`,
+        ...sentBy(parent, "task"),
+      };
+}
+
+/** The calling conversation's live reporters for `child` that have not delivered their message. */
+async function undelivered(
+  api: ToolExecutionApi,
+  child: ConversationId,
+  context: Context,
+): Promise<Array<{ id: TaskId; input: ReporterInput }>> {
+  return api.commit(async (tx) => {
+    const found: Array<{ id: TaskId; input: ReporterInput }> = [];
+    for (const status of ["pending", "running"] as const) {
+      let cursor;
+      do {
+        const page = await tx.scanTasks(
+          { conversationId: api.conversationId, kind: SESSION_REPORTER_TASK, status },
+          50,
+          cursor,
+        );
+        for (const task of page.items) {
+          const input = task.input as ReporterInput;
+          const phase = (task.state.checkpoint as { phase?: string } | undefined)?.phase;
+          // A reporter Stop aborted must not have its message delivered after all.
+          if (input.conversationId === child && phase === "deliver" && !task.abortRequested)
+            found.push({ id: task.id, input });
+        }
+        cursor = page.next;
+      } while (cursor);
+    }
+    return found;
+  }, context);
+}
+
+/**
+ * Delivers one message to a background child (a spawn's task or a `send`) and posts the answer
+ * back to the parent as a follow-up (pi-durable example 23). Background too, so the parent's
+ * Stop and idle waits leave it alone. Request ids make a restart deliver the message once and
+ * each report once; the registry's `reported` list makes several messages that end in one
+ * answer report it once.
+ *
+ * Then it follows the child, so answers no parent message caused still come back: a child that
+ * ends its turn waiting on a background job of its own answers again when the job's receipt
+ * wakes it. While the child has pending wakers (`pendingWakers`: undelivered jobs, its own
+ * reporters; never tickers, which do not end), the reporter waits for one to end or for the
+ * child to run, then reports the child's newest unreported answer. One reporter per child
+ * follows (`follower`); it ends once the child is idle with no pending wakers, so it never keeps
+ * the store open longer than the child's own work does.
+ */
+function defineReporter(
+  host: (env: ExecutionEnv | undefined) => DurableSessionsHost,
+): Task<ReporterInput, ReporterState, null, object> {
+  return defineTask<ReporterInput, ReporterState, null>({
+    name: SESSION_REPORTER_TASK,
+    version: 1,
+    initial: () => ({ phase: "deliver" }),
+    phases: {
+      deliver: async (reporter, runtime, context) => {
+        const { conversationId, sessionId, name } = reporter.input;
+        const child = await runtime.conversation(conversationId, context);
+        if (!child) throw new Error(`Subagent ${name} (${sessionId}) conversation disappeared`);
+        const submission = await child.submit(messageDraft(reporter.id, reporter.input), context);
+        const settled = await submission.wait(context);
+        // One commit decides the report and records the answer, so a restart does not decide again.
+        await runtime.commit(async (tx) => {
+          const next = (after: EntryId, report?: string, textOffset?: number, answer?: EntryId) =>
+            ({
+              status: "running",
+              checkpoint: {
+                phase: "report",
+                after,
+                ...(report !== undefined ? { report } : {}),
+                ...(textOffset ? { textOffset } : {}),
+                ...(answer !== undefined ? { answer } : {}),
+              },
+            }) as const;
+          // Aborted: stopped or withdrawn. Whoever stopped it knows; nothing to report.
+          if (settled.status === "unanswered")
+            return next(
+              await newestEntry(tx, conversationId),
+              settled.reason === "aborted"
+                ? undefined
+                : `[session ${name} (${sessionId}) failed: ${settled.reason}]`,
+            );
+          if (settled.type !== "input") return next(await newestEntry(tx, conversationId));
+          const record = (await tx.doc(Subagents, runtime.conversationId)).children[name];
+          if (record) {
+            // Read back from the draft: `??=` yields the plain value, not the stored draft.
+            record.reported ??= [];
+            if (record.reported.includes(settled.answer)) return next(settled.answer);
+            record.reported.push(settled.answer);
+          }
+          const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0] as
+            AssistantMessage | undefined;
+          const header = reportHeader(name, sessionId);
+          return next(settled.answer, `${header}${textOf(answer)}`, header.length, settled.answer);
+        }, context);
+      },
+      report: async (reporter, runtime, context) => {
+        const { report, textOffset: saved, after, answer } = reporter.state.checkpoint;
+        const { sessionId, name } = reporter.input;
+        // A report checkpointed before agent messages has no offset; its header is the same text.
         const header = reportHeader(name, sessionId);
-        return next(`${header}${textOf(answer)}`, header.length);
-      }, context);
-    },
-    report: async (reporter, runtime, context) => {
-      const { report, textOffset: saved } = reporter.state.checkpoint;
-      const { sessionId, name } = reporter.input;
-      // A report checkpointed before agent messages has no offset; its header is the same text.
-      const header = reportHeader(name, sessionId);
-      const textOffset = saved ?? (report?.startsWith(header) ? header.length : undefined);
-      if (report !== undefined) {
-        const parent = await runtime.conversation(runtime.conversationId, context);
-        if (!parent) throw new Error("Parent conversation disappeared");
-        // A follow-up starts a turn when the parent is idle, or waits for its answer.
-        await parent.submit(
-          {
-            type: "input",
-            content: report,
-            whenBusy: "followUp",
-            requestId: `oppi-report:${reporter.id}`,
-            ...sentBy({ sessionId, name }, "report", textOffset),
-          },
+        const textOffset = saved ?? (report?.startsWith(header) ? header.length : undefined);
+        if (report !== undefined) {
+          const parent = await runtime.conversation(runtime.conversationId, context);
+          if (!parent) throw new Error("Parent conversation disappeared");
+          // A follow-up starts a turn when the parent is idle, or waits for its answer.
+          await parent.submit(
+            {
+              type: "input",
+              content: report,
+              whenBusy: "followUp",
+              // An answer's report is named by the answer; a failure by this reporter.
+              requestId:
+                answer === undefined
+                  ? `oppi-report:${reporter.id}`
+                  : reportRequestId(reporter.input.conversationId, answer),
+              ...sentBy({ sessionId, name }, "report", textOffset),
+            },
+            context,
+          );
+        }
+        await runtime.commit(
+          () =>
+            after === undefined
+              ? COMPLETED
+              : { status: "running", checkpoint: { phase: "follow", after } },
           context,
         );
-      }
-      await runtime.commit(
-        () => ({ status: "terminal", outcome: { status: "completed", result: null } }),
-        context,
-      );
+      },
+      follow: async (reporter, runtime, context) => {
+        const { conversationId, sessionId, name } = reporter.input;
+        const { after } = reporter.state.checkpoint;
+        const sessions = host(await runtime.env(context));
+        const child = await runtime.conversation(conversationId, context);
+        if (!child) throw new Error(`Subagent ${name} (${sessionId}) conversation disappeared`);
+        // `pi.live` exists once the child's first run started; a commit must not create it.
+        let live = await runtime.watchDoc(LiveDoc, conversationId, context);
+        /** The child's `pi.live` changed or a waker ended since the round began. */
+        let changed = false;
+        let wake: (() => void) | undefined;
+        const poke = (): void => {
+          changed = true;
+          wake?.();
+        };
+        const listen = (): void => live?.start(async () => poke());
+        listen();
+        /** Wakers already waited on in this phase: one waiter each, however many rounds. */
+        const watched = new Set<TaskId>();
+        try {
+          for (;;) {
+            await child.waitForIdle(context);
+            changed = false;
+            if (!live) {
+              live = await runtime.watchDoc(LiveDoc, conversationId, context);
+              listen();
+            }
+            // Any child commit after this mark (a run that starts a job, or answers) means the
+            // wakers read next may be stale: decide again.
+            let mark: EntryId | undefined;
+            await runtime.commit(async (tx) => {
+              mark = await newestEntry(tx, conversationId);
+              return undefined;
+            }, context);
+            const wakers = await sessions.pendingWakers(sessionId);
+            let decision = "done" as "done" | "again" | "wait";
+            const pending: TaskId[] = [];
+            await runtime.commit(async (tx) => {
+              decision = "done";
+              pending.length = 0;
+              const record = (await tx.doc(Subagents, runtime.conversationId)).children[name];
+              if (!record) return COMPLETED;
+              if (record.follower !== reporter.id) {
+                // Another reporter already follows this child.
+                if (record.follower !== undefined && isLive(await tx.task(record.follower)))
+                  return COMPLETED;
+                record.follower = reporter.id;
+              }
+              const busy =
+                live !== undefined && (await tx.doc(LiveDoc, conversationId)).run !== undefined;
+              if (busy || (await newestEntry(tx, conversationId)) !== mark) {
+                decision = "again";
+                return undefined;
+              }
+              const answer = await newestAnswer(tx, conversationId);
+              record.reported ??= [];
+              if (answer && answer.id > after && !record.reported.includes(answer.id)) {
+                record.reported.push(answer.id);
+                const header = reportHeader(name, sessionId);
+                return {
+                  status: "running",
+                  checkpoint: {
+                    phase: "report",
+                    report: `${header}${textOf(answer.message)}`,
+                    textOffset: header.length,
+                    after: answer.id,
+                    answer: answer.id,
+                  },
+                };
+              }
+              for (const id of wakers) if (isLive(await tx.task(id))) pending.push(id);
+              if (pending.length === 0) return COMPLETED;
+              decision = "wait";
+              return undefined;
+            }, context);
+            if (decision === "done") return;
+            if (decision === "again" || changed) continue;
+            // Until a waker ends (its receipt may wake the child) or the child starts a run.
+            for (const id of pending)
+              if (!watched.has(id)) {
+                watched.add(id);
+                runtime.waitForTask(id, context).then(poke, poke);
+              }
+            await new Promise<void>((resolve, reject) => {
+              const cleanup = (): void => {
+                runtime.signal.removeEventListener("abort", abort);
+                wake = undefined;
+              };
+              const finish = (): void => {
+                cleanup();
+                resolve();
+              };
+              const abort = (): void => {
+                cleanup();
+                reject(runtime.signal.reason);
+              };
+              wake = finish;
+              runtime.signal.addEventListener("abort", abort, { once: true });
+              if (runtime.signal.aborted) abort();
+              else if (changed) finish();
+            });
+          }
+        } finally {
+          await live?.stop();
+        }
+      },
     },
-  },
-  abort: (_reporter, runtime, context) =>
-    runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
-});
+    abort: (_reporter, runtime, context) =>
+      runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
+  });
+}
 
 const GUIDANCE =
   "subagent manages child sessions you address by name. spawn starts one for a self-contained " +
   "task; by default it runs in the background and its answer arrives later as a follow-up " +
   "message, so do not poll. wait: true makes spawn return the answer instead. agent picks a " +
   "saved Agent; model and thinking override it. send messages a child (steer by default, " +
-  "followUp: true after its current answer), wait blocks until children are idle and returns " +
-  "their latest answers, stop aborts a child's current work (it stays usable), list shows them. " +
-  "A child can spawn its own children only when you pass allowNestedDelegation.";
+  "followUp: true after its current answer); its answer also arrives later as a follow-up " +
+  "message, as does any later answer of a child that finishes background work of its own. " +
+  "wait blocks until children answered your messages and are idle, and returns their latest " +
+  "answers instead; an answer wait returns does not also arrive as a follow-up. stop aborts " +
+  "a child's current work (it stays usable), list shows them. A child can spawn its own " +
+  "children only when you pass allowNestedDelegation.";
 
 type ReplyDetails = Record<string, JsonValue>;
 
@@ -203,16 +452,20 @@ export function createDurableSessions(
     child.sessionId !== undefined
       ? Promise.resolve(child.sessionId)
       : bound(api.env).materialize({ conversationId: child.conversationId, name });
+  const Reporter = defineReporter(bound);
+  const background = { ownership: { kind: "conversation" }, background: true } as const;
 
   const subagent = defineTool({
-    name: "subagent",
+    name: SUBAGENT_TOOL,
     description:
       "Manage child sessions by name. spawn (name, task; optional agent, model, thinking, wait, " +
       "allowNestedDelegation) starts one: in the background by default, its answer arrives later " +
       "as a follow-up message; wait: true returns its answer instead. send (name, message; " +
-      "followUp: true queues after its current answer instead of steering) messages one. wait " +
-      "(names) blocks until they are idle and returns their latest answers. stop (name) aborts " +
-      "its current work; it stays usable. list shows every child.",
+      "followUp: true queues after its current answer instead of steering) messages one; its " +
+      "answer arrives later as a follow-up message too, as do a child's later answers after " +
+      "background work of its own. wait (names) blocks until they answered your messages and " +
+      "are idle, and returns their latest answers. stop (name) aborts its current work; it stays usable. list shows every " +
+      "child.",
     parameters: Type.Object({
       action: Type.Union([
         Type.Literal("spawn"),
@@ -259,15 +512,32 @@ export function createDurableSessions(
           await sessions.activate(sessionId);
           const whenBusy = args.followUp === true ? "followUp" : "steer";
           const requestId = `oppi-send:${sessions.storeId}:${api.conversationId}:${api.taskId}`;
-          const submitError = await sessions.submit(sessionId, {
-            content: args.message,
-            whenBusy,
-            requestId,
-            ...sentBy(sessions.sender(), "message"),
-          });
-          const details = { name, conversationId: child.conversationId, sessionId, requestId };
-          if (submitError !== undefined) return reply(submitError, details, true);
-          return reply(`Sent to ${name} (${whenBusy}).`, details);
+          const parent = sessions.sender();
+          const message = args.message;
+          // A reporter delivers the message and reports its answer, keyed by this call so a
+          // rerun creates no second one.
+          await api.commit(async (tx) => {
+            const state = await tx.doc(Subagents, api.conversationId);
+            state.reporters ??= {};
+            if (state.reporters[String(api.taskId)] !== undefined) return;
+            state.reporters[String(api.taskId)] = await tx.createTask(
+              Reporter,
+              {
+                conversationId: child.conversationId,
+                sessionId,
+                name,
+                task: message,
+                ...(parent ? { parent } : {}),
+                send: { whenBusy, requestId },
+              },
+              background,
+            );
+          }, context);
+          return reply(
+            `Sent to ${name} (${whenBusy}). Its answer arrives later as a follow-up message; ` +
+              "do not poll.",
+            { name, conversationId: child.conversationId, sessionId, requestId },
+          );
         }
         case "wait": {
           const names = args.names ?? (args.name ? [args.name] : []);
@@ -281,20 +551,46 @@ export function createDurableSessions(
           if (missing.length)
             return reply(`No subagent named ${missing.join(", ")}.`, { missing }, true);
           const sessions = bound(api.env);
+          // Earlier subagent calls of this round (a `send` in the same answer) take effect first.
+          const round = (await api.snapshot(LiveDoc, api.conversationId, context))?.tools ?? [];
+          for (const slot of round)
+            if (
+              slot.name === SUBAGENT_TOOL &&
+              slot.taskId !== undefined &&
+              slot.taskId < api.taskId &&
+              slot.status !== "done"
+            )
+              await api.waitForTask(slot.taskId, context);
           const waited = await Promise.all(
             found.map(async ({ name, child }) => {
               const sessionId = await sessionIdOf(api, name, child);
               const ids = { name, conversationId: child.conversationId, sessionId };
-              const error = await sessions.waitForIdle(sessionId);
-              if (error !== undefined) return { ids, error };
-              const answer = await latestAnswer(api, child.conversationId, context);
-              return { ids, text: `${name}: ${answer}` };
+              // A message whose reporter has not delivered it yet is not in the child, so the
+              // child can look idle with the previous answer. Wait for its answer: submitting
+              // the reporter's draft returns the reporter's submission (one request id).
+              const conversation = await api.conversation(child.conversationId, context);
+              if (!conversation)
+                return { ids, name, error: `Subagent ${name} has no conversation.` };
+              for (const { id, input } of await undelivered(api, child.conversationId, context))
+                await (await conversation.submit(messageDraft(id, input), context)).wait(context);
+              return { ids, name, error: await sessions.waitForIdle(sessionId) };
             }),
           );
-          const details = { children: waited.map((result) => result.ids) };
-          const failed = waited.find((result) => result.error !== undefined);
-          if (failed?.error !== undefined) return reply(failed.error, details, true);
-          return reply(waited.map((result) => result.text).join("\n\n"), details);
+          // Only once every child is done: an answer taken (and its report withdrawn) is in
+          // this call's result, so no abort or other child's error can lose it.
+          const idle = waited.filter((result) => result.error === undefined);
+          const answers = await takeLatestAnswers(
+            api,
+            idle.map(({ name, ids }) => ({ name, conversationId: ids.conversationId })),
+            context,
+          );
+          const lines = waited.map((result) =>
+            result.error === undefined
+              ? `${result.name}: ${answers[idle.indexOf(result)]}`
+              : `${result.name}: ${result.error}`,
+          );
+          const failed = waited.some((result) => result.error !== undefined);
+          return reply(lines.join("\n\n"), { children: waited.map((r) => r.ids) }, failed);
         }
         case "stop": {
           const name = args.name?.trim() ?? "";
@@ -427,7 +723,7 @@ export function createDurableSessions(
         child.reporter = await tx.createTask(
           Reporter,
           { conversationId, sessionId, name, task, ...(parent ? { parent } : {}) },
-          { ownership: { kind: "conversation" }, background: true },
+          background,
         );
       }, context);
       return reply(
@@ -476,25 +772,115 @@ async function answerText(
   return textOf(entry?.model?.[0] as AssistantMessage | undefined);
 }
 
-/** The text of a conversation's newest assistant message that has any. */
-async function latestAnswer(
-  api: ToolExecutionApi,
+/** A conversation's newest assistant message that has text: what `wait` returns. */
+async function latestText(
+  tx: Tx,
   conversationId: ConversationId,
-  context: Context,
-): Promise<string> {
-  return api.commit(async (tx) => {
+): Promise<{ id: EntryId; text: string } | undefined> {
+  let cursor;
+  do {
+    const page = await tx.scanEntries({ conversationId }, 50, cursor);
+    for (const entry of page.items) {
+      const message = entry.model?.[0];
+      if (message?.role !== "assistant") continue;
+      const text = textOf(message as AssistantMessage);
+      if (text) return { id: entry.id, text };
+    }
+    cursor = page.next;
+  } while (cursor);
+  return undefined;
+}
+
+/** Whether a live reporter of `parent` decided to report `child`'s `answer` and has not yet. */
+async function reportDecided(
+  tx: Tx,
+  parent: ConversationId,
+  child: ConversationId,
+  answer: EntryId,
+): Promise<boolean> {
+  for (const status of ["pending", "running"] as const) {
     let cursor;
     do {
-      const page = await tx.scanEntries({ conversationId }, 50, cursor);
-      for (const entry of page.items) {
-        const message = entry.model?.[0];
-        if (message?.role !== "assistant") continue;
-        const text = textOf(message as AssistantMessage);
-        if (text) return text;
+      const page = await tx.scanTasks(
+        { conversationId: parent, kind: SESSION_REPORTER_TASK, status },
+        50,
+        cursor,
+      );
+      for (const task of page.items) {
+        const checkpoint = task.state.checkpoint as { phase?: string; answer?: EntryId };
+        if (
+          (task.input as ReporterInput).conversationId === child &&
+          checkpoint.phase === "report" &&
+          checkpoint.answer === answer
+        )
+          return true;
       }
       cursor = page.next;
     } while (cursor);
-    return "(no answer yet)";
+  }
+  return false;
+}
+
+/**
+ * The newest answers of the idle `children`, which `wait` returns, taken in one commit just
+ * before it returns: each is recorded as reported, so no reporter decides to post it afterwards,
+ * and the report of a reporter that already decided is withdrawn. While `wait` runs the parent is
+ * busy, so a submitted report is still queued: it is settled `withdrawn` and leaves the inbox, as
+ * `Harness.abortSubmission` does. A report not submitted yet has its request id taken by a record
+ * already settled `withdrawn`, so the reporter's submit returns that one. The parent reads each
+ * answer once: as the `wait` result, or as the report when `wait` ends before this commit.
+ */
+async function takeLatestAnswers(
+  api: ToolExecutionApi,
+  children: Array<{ name: string; conversationId: ConversationId }>,
+  context: Context,
+): Promise<string[]> {
+  return api.commit(async (tx) => {
+    // pi-durable refuses a table read after a table write in one commit: read everything first.
+    const state = await tx.doc(Subagents, api.conversationId);
+    const plans = [];
+    for (const { name, conversationId } of children) {
+      const latest = await latestText(tx, conversationId);
+      const record = state.children[name];
+      if (!latest || !record) {
+        plans.push({ latest, record });
+        continue;
+      }
+      const requestId = reportRequestId(conversationId, latest.id);
+      const recorded = record.reported?.includes(latest.id) === true;
+      const report = recorded
+        ? await tx.submissionByRequest(api.conversationId, requestId)
+        : undefined;
+      // Recorded by an earlier `wait` and no reporter decided it: nothing to withdraw.
+      const decided =
+        recorded &&
+        report === undefined &&
+        (await reportDecided(tx, api.conversationId, conversationId, latest.id));
+      plans.push({ latest, record, recorded, requestId, report, decided });
+    }
+    const texts: string[] = [];
+    for (const { latest, record, recorded, requestId, report, decided } of plans) {
+      texts.push(latest?.text ?? "(no answer yet)");
+      if (!latest || !record) continue;
+      if (!recorded) {
+        record.reported ??= [];
+        if (!record.reported.includes(latest.id)) record.reported.push(latest.id);
+      }
+      if (report?.status === "queued") {
+        tx.settleSubmission(report.id, { status: "unanswered", reason: "withdrawn" });
+        const items = (await tx.doc(InboxDoc, api.conversationId)).items;
+        const index = items.findIndex((item) => item.id === report.id);
+        if (index >= 0) items.splice(index, 1);
+      } else if (decided && requestId !== undefined)
+        await tx.createSubmission({
+          conversationId: api.conversationId,
+          requestId,
+          type: "input",
+          status: "unanswered",
+          reason: "withdrawn",
+        });
+    }
+    return texts;
   }, context);
 }
 

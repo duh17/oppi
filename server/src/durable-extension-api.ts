@@ -2,6 +2,7 @@ import type { Context, JsonValue } from "@earendil-works/chord";
 import type {
   Agent,
   ConversationId,
+  TaskId,
   ToolExecutionApi,
   ToolExecutionResult,
   Tx,
@@ -9,7 +10,6 @@ import type {
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import type { TSchema } from "typebox";
 import type { NotifyInput, NotifyOutcome } from "../extensions/durable/notify/contract.js";
-import type { agentMessageEntry } from "../extensions/durable/sessions/agent-message.js";
 
 /**
  * `oppi/durable`: the host API a durable extension imports for what only Oppi provides. The
@@ -150,16 +150,12 @@ export interface DurableSessionsHost {
   materialize(child: { conversationId: ConversationId; name: string }): Promise<string>;
   /** The calling conversation's own Oppi session: who sent an agent message. */
   sender(): SessionSender | undefined;
-  /** Submit to a child's Session. Undefined on success, otherwise an error message. */
-  submit(
-    sessionId: string,
-    input: {
-      content: string;
-      whenBusy: "steer" | "followUp";
-      requestId: string;
-      entry?: ReturnType<typeof agentMessageEntry>;
-    },
-  ): Promise<string | undefined>;
+  /**
+   * Live tasks of a child's conversation that wake it when they end: its background jobs not
+   * yet delivered and its own subagent reporters. Tickers that never end (pills, working words)
+   * are not among them. The same set holds the child's idle timeout (`hasPendingWake`).
+   */
+  pendingWakers(sessionId: string): Promise<TaskId[]>;
   /** Wait until a child's conversation is idle. Undefined on success, otherwise an error message. */
   waitForIdle(sessionId: string): Promise<string | undefined>;
   /** Attach a child's stopped Session so a message to it makes progress. */

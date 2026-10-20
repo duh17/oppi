@@ -270,6 +270,9 @@ const userTexts = async (harness: Harness, id: ConversationId): Promise<string[]
   (await (await harness.conversation(id, context))!.entries({}, 200, undefined, context)).items
     .toReversed()
     .flatMap((entry) => (entry.model?.[0]?.role === "user" ? [textOf(entry.model[0])] : []));
+/** The children's reports a parent received, oldest first, as the model reads them. */
+const reports = async (harness: Harness, id: ConversationId): Promise<string[]> =>
+  (await userTexts(harness, id)).filter((text) => text.includes("finished, no reply needed"));
 
 /** Request ids of a conversation's submissions, oldest first, read from the Harness database. */
 function requestIds(
@@ -766,8 +769,10 @@ describe("durable-native threads", () => {
     });
     expect((await harness.snapshot(LiveDoc, childConversation, context))?.run).toBeUndefined();
 
-    // Stopped, not removed: its transcript stays and it takes new work.
-    expect(await call("Ask again")).toMatchObject({ text: "Sent to Worker (steer)." });
+    // Stopped, not removed: its transcript stays and it takes new work, whose answer comes back.
+    expect((await call("Ask again")).text).toMatch(/^Sent to Worker \(steer\)\./);
+    await until(async () => (await reports(harness, parentConversation)).length === 1, "report");
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
     // The phone opens each child from the row's ids.
     const ids = { name: "Worker", conversationId: childConversation, sessionId: child.id };
     expect(await call("Wait for it")).toMatchObject({
@@ -780,8 +785,10 @@ describe("durable-native threads", () => {
       `Worker | idle | agent: none | model: faux/faux-1 | session: ${child.id}`,
     );
     expect(listed.details).toEqual({ children: [ids] });
-    // A stopped task has no report.
-    expect(requestIds(f.storage, f.dir, f.parent.id, "oppi-report:")).toEqual([]);
+    // The stopped task has no report; the message after it has one.
+    expect(await reports(harness, parentConversation)).toEqual([
+      `[session Worker (${child.id}) finished, no reply needed] SECOND_ANSWER`,
+    ]);
   });
 
   it("stops only the caller's own child when another store has the same name and conversation id", async () => {
@@ -883,11 +890,13 @@ describe("durable-native threads", () => {
     await until(async () => (await toolResults(harness, parentConversation)).length === 1, "spawn");
     const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
     const childConversation = conversationOf(f.storage, child);
+    await until(async () => (await reports(harness, parentConversation)).length === 1, "report");
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
 
     await f.manager.sendPrompt(f.parent.id, "Message it now");
     await until(async () => (await toolResults(harness, parentConversation)).length === 2, "send");
     const sent = (await toolResults(harness, parentConversation))[1]!;
-    expect(sent).toMatchObject({ toolName: "subagent", text: "Sent to Quick (followUp)." });
+    expect(sent.text).toMatch(/^Sent to Quick \(followUp\)\./);
     const parentStore = f.storage.getSession(f.parent.id)!.serverDurable!.storeId!;
     const sendRequestId = String(sent.details?.requestId);
     const sendPrefix = `oppi-send:${parentStore}:${parentConversation}:`;
@@ -907,6 +916,9 @@ describe("durable-native threads", () => {
       name: f.parent.name,
       intent: "message",
     });
+    // Spawn and send each report their answer.
+    await until(async () => (await reports(harness, parentConversation)).length === 2, "reports");
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
 
     await f.manager.sendPrompt(f.parent.id, "Wait for it please");
     await until(async () => (await toolResults(harness, parentConversation)).length === 3, "wait");
@@ -919,61 +931,6 @@ describe("durable-native threads", () => {
     await expect(
       f.manager.sendPrompt(child.id, "spoof", { clientTurnId: "oppi-send:1" }),
     ).rejects.toThrow("reserved durable requestId namespace");
-  });
-
-  it("admits one request id once across the session socket and subagent send", async () => {
-    const busy = gate();
-    let held!: () => void;
-    const holding = new Promise<void>((resolve) => (held = resolve));
-    const f = await fixture(
-      model(async ({ text, signal }) => {
-        if (text === "HOLD") {
-          held();
-          await busy.wait(signal);
-        }
-        return fauxAssistantMessage(`ANSWER ${text}`);
-      }),
-    );
-    await f.manager.startSession(f.parent.id, f.workspace);
-    const threads = await f.threads();
-    const harness = await f.harness();
-    const id = conversationOf(f.storage, f.parent);
-    const events = observe(f.manager, f.parent.id);
-
-    // The socket and subagent send race one request id: one admission, one user row.
-    const answered = events.next((message) => message.type === "agent_end");
-    await Promise.all([
-      f.manager.sendPrompt(f.parent.id, "SAME", { clientTurnId: "shared-turn" }),
-      threads.submit(f.parent.id, {
-        content: "SAME",
-        whenBusy: "followUp",
-        requestId: "shared-turn",
-      }),
-    ]);
-    await answered;
-    expect(await userTexts(harness, id)).toEqual(["SAME"]);
-    expect(requestIds(f.storage, f.dir, f.parent, "shared-turn")).toEqual(["shared-turn"]);
-
-    // A repeated send to a busy session queues once; changed content is a conflict.
-    await f.manager.sendPrompt(f.parent.id, "HOLD");
-    await holding;
-    const send = { content: "QUEUED", whenBusy: "followUp" as const, requestId: "repeat-send" };
-    expect(await threads.submit(f.parent.id, send)).toBeUndefined();
-    expect(await threads.submit(f.parent.id, send)).toBeUndefined();
-    await expect(threads.submit(f.parent.id, { ...send, content: "CHANGED" })).rejects.toThrow(
-      "clientTurnId conflict",
-    );
-    expect(
-      (await harness.snapshot(InboxDoc, id, context))?.items.map((item) => item.content),
-    ).toEqual(["QUEUED"]);
-
-    busy.open();
-    await until(
-      async () => (await userTexts(harness, id)).join(",") === "SAME,HOLD,QUEUED",
-      "the queued send to run once",
-    );
-    await threads.waitForIdle(f.parent.id);
-    expect(await userTexts(harness, id)).toEqual(["SAME", "HOLD", "QUEUED"]);
   });
 
   it("reruns a foreground spawn after a restart against the same child and Session", async () => {
@@ -1132,7 +1089,7 @@ describe("durable-native threads", () => {
     expect(f.storage.listSessions().map((session) => session.id)).toEqual([f.parent.id]);
   });
 
-  it("steers a busy child or queues after its answer", async () => {
+  it("steers a busy child or queues after its answer, and reports each answer once", async () => {
     const childGate = gate();
     const f = await fixture(
       model(async ({ last, text, signal }) => {
@@ -1143,7 +1100,11 @@ describe("durable-native threads", () => {
           return subagentCall("send", { name: "Busy", message: "STEER_MSG" });
         if (text.includes("Queue it"))
           return subagentCall("send", { name: "Busy", message: "QUEUE_MSG", followUp: true });
-        if (text.includes("BUSY_TASK")) await childGate.wait(signal);
+        // The task's run calls a tool, so the steer joins that run after it.
+        if (text.includes("BUSY_TASK")) {
+          await childGate.wait(signal);
+          return toolCall("read", { path: "BUSY_FILE" });
+        }
         return fauxAssistantMessage(`ANSWER ${text}`);
       }),
     );
@@ -1165,26 +1126,289 @@ describe("durable-native threads", () => {
     }
     const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
     const childConversation = conversationOf(f.storage, child);
-    expect(
+    // Each send's reporter delivers it after the call returns.
+    const inbox = async () =>
       (await harness.snapshot(InboxDoc, childConversation, context))?.items.map((item) => [
         item.mode,
         item.mode === "write" ? undefined : item.content,
-      ]),
-    ).toEqual([
+      ]);
+    await until(async () => (await inbox())?.length === 2, "both messages queued");
+    expect(await inbox()).toEqual([
       ["steer", "STEER_MSG"],
       ["followUp", "QUEUE_MSG"],
     ]);
 
     childGate.open();
     await until(
-      async () => (await userTexts(harness, childConversation)).includes("QUEUE_MSG"),
-      "the queued message",
+      async () => (await reports(harness, parentConversation)).length === 2,
+      "the reports",
     );
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
     expect(await userTexts(harness, childConversation)).toEqual([
       "BUSY_TASK",
       "STEER_MSG",
       "QUEUE_MSG",
     ]);
+    // The task and the steer end in one answer, reported once; the queued message has its own.
+    const header = `[session Busy (${child.id}) finished, no reply needed] `;
+    expect(await reports(harness, parentConversation)).toEqual([
+      `${header}ANSWER STEER_MSG`,
+      `${header}ANSWER QUEUE_MSG`,
+    ]);
+  });
+
+  it("reports the answer to a message sent to an idle background child as a follow-up", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
+        if (text.includes("Spawn")) return spawnCall({ name: "Idle", task: "IDLE_TASK" });
+        if (text.includes("Ask it"))
+          return subagentCall("send", { name: "Idle", message: "IDLE_QUESTION" });
+        return fauxAssistantMessage(`ANSWER ${text}`);
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    const settle = async (count: number, what: string) => {
+      await until(async () => (await reports(harness, parentConversation)).length === count, what);
+      await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    };
+    await f.manager.sendPrompt(f.parent.id, "Spawn it");
+    await settle(1, "the spawn's report");
+    const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    const childConversation = conversationOf(f.storage, child);
+
+    await f.manager.sendPrompt(f.parent.id, "Ask it");
+    await settle(2, "the send's report");
+
+    const header = `[session Idle (${child.id}) finished, no reply needed] `;
+    expect(await reports(harness, parentConversation)).toEqual([
+      `${header}ANSWER IDLE_TASK`,
+      `${header}ANSWER IDLE_QUESTION`,
+    ]);
+    const childTrace = await readDurableTrace(harness, childConversation, "full");
+    expect(childTrace.find((event) => event.text === "IDLE_QUESTION")?.origin).toMatchObject({
+      sessionId: f.parent.id,
+      intent: "message",
+    });
+    const parentTrace = await readDurableTrace(harness, parentConversation, "full");
+    expect(parentTrace.filter((event) => event.origin).map((event) => event.text)).toEqual([
+      "ANSWER IDLE_TASK",
+      "ANSWER IDLE_QUESTION",
+    ]);
+  });
+
+  it("returns the answer to a send from a wait right after it, not the previous answer", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
+        if (text.includes("Spawn")) return spawnCall({ name: "Quick", task: "FIRST_TASK" });
+        // Send, then wait, in one answer.
+        if (text.includes("Ask and wait"))
+          return fauxAssistantMessage(
+            [
+              fauxToolCall("subagent", { action: "send", name: "Quick", message: "SECOND_Q" }),
+              fauxToolCall("subagent", { action: "wait", names: ["Quick"] }),
+            ],
+            { stopReason: "toolUse" },
+          );
+        return fauxAssistantMessage(`ANSWER ${text}`);
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await f.manager.sendPrompt(f.parent.id, "Spawn it");
+    await until(async () => (await reports(harness, parentConversation)).length === 1, "report");
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+
+    await f.manager.sendPrompt(f.parent.id, "Ask and wait");
+    await until(async () => (await toolResults(harness, parentConversation)).length === 3, "wait");
+    expect((await toolResults(harness, parentConversation))[2]).toMatchObject({
+      toolName: "subagent",
+      text: "Quick: ANSWER SECOND_Q",
+    });
+    // Once everything settled, the parent read the answer once, as the wait result: the send's
+    // reporter posted no report of it.
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    await until(
+      async () => !(await (await f.owner()).hasPendingWake(parentConversation)),
+      "the reporters to end",
+    );
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    expect(await reports(harness, parentConversation)).toEqual([
+      `[session Quick (${child.id}) finished, no reply needed] ANSWER FIRST_TASK`,
+    ]);
+    expect(
+      (await toolResults(harness, parentConversation)).filter((result) =>
+        result.text.includes("ANSWER SECOND_Q"),
+      ),
+    ).toHaveLength(1);
+    expect(
+      (await userTexts(harness, conversationOf(f.storage, child))).filter(
+        (text) => text === "SECOND_Q",
+      ),
+    ).toEqual(["SECOND_Q"]);
+  });
+
+  it("keeps an answer of a multi-child wait that is aborted while another child works", async () => {
+    const held = gate();
+    let bStarted!: () => void;
+    const bStarting = new Promise<void>((resolve) => (bStarted = resolve));
+    const f = await fixture(
+      model(async ({ last, text, signal }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
+        if (text.includes("Spawn A")) return spawnCall({ name: "A", task: "A_TASK" });
+        if (text.includes("Spawn B")) return spawnCall({ name: "B", task: "B_TASK" });
+        if (text.includes("Ask both"))
+          return fauxAssistantMessage(
+            [
+              fauxToolCall("subagent", { action: "send", name: "A", message: "QA" }),
+              fauxToolCall("subagent", { action: "send", name: "B", message: "QB" }),
+              fauxToolCall("subagent", { action: "wait", names: ["A", "B"] }),
+            ],
+            { stopReason: "toolUse" },
+          );
+        if (text === "QB") {
+          bStarted();
+          await held.wait(signal);
+        }
+        return fauxAssistantMessage(`ANSWER ${text}`);
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    const settle = async (count: number) => {
+      await until(
+        async () => (await reports(harness, parentConversation)).length === count,
+        "report",
+      );
+      await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    };
+    await f.manager.sendPrompt(f.parent.id, "Spawn A");
+    await settle(1);
+    await f.manager.sendPrompt(f.parent.id, "Spawn B");
+    await settle(2);
+    const childA = f.storage.listSessions().find((session) => session.name === "A")!;
+
+    await f.manager.sendPrompt(f.parent.id, "Ask both");
+    await bStarting;
+    // A answered and its report reached the parent's queue (the parent is busy in the round).
+    const reportOfA = `oppi-report:${conversationOf(f.storage, childA)}:`;
+    await until(
+      () => requestIds(f.storage, f.dir, f.parent.id, reportOfA).length === 1,
+      "A's report",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    // Abort the wait call alone, while B still works; the parent's run goes on.
+    const waitCall = (await harness.snapshot(LiveDoc, parentConversation, context))?.tools?.[2];
+    expect(waitCall?.status).not.toBe("done");
+    await harness.abortTask(waitCall!.taskId!, context);
+    held.open();
+
+    // The aborted wait returned no answer, so A's answer still reaches the parent, once.
+    await settle(4);
+    const childB = f.storage.listSessions().find((session) => session.name === "B")!;
+    const header = (name: string, id: string) =>
+      `[session ${name} (${id}) finished, no reply needed] `;
+    expect((await reports(harness, parentConversation)).toSorted()).toEqual(
+      [
+        `${header("A", childA.id)}ANSWER A_TASK`,
+        `${header("A", childA.id)}ANSWER QA`,
+        `${header("B", childB.id)}ANSWER B_TASK`,
+        `${header("B", childB.id)}ANSWER QB`,
+      ].toSorted(),
+    );
+  });
+
+  describe("a child that answers while its background job runs", () => {
+    /** The child starts a job that waits for `gate`, answers, and answers again on its receipt. */
+    async function jobFixture() {
+      let command = "";
+      const f = await fixture(
+        model(async ({ last, text }) => {
+          if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+          if (last.role === "toolResult" && last.toolName === "background_job")
+            return fauxAssistantMessage("WAITING_ON_JOB");
+          if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
+          if (text.includes("Delegate")) return spawnCall({ name: "Builder", task: "BUILD_TASK" });
+          if (text.includes("BUILD_TASK"))
+            return toolCall("background_job", { action: "start", command });
+          // The job's receipt, finished or interrupted.
+          if (text.includes("Background job bash-1")) return fauxAssistantMessage("BUILD_DONE");
+          return fauxAssistantMessage("OTHER");
+        }),
+      );
+      const gatePath = join(f.dir, "job-gate");
+      command = `for i in $(seq 1 400); do [ -f '${gatePath}' ] && break; sleep 0.05; done; echo JOB_OUTPUT`;
+      await f.manager.startSession(f.parent.id, f.workspace);
+      await f.manager.sendPrompt(f.parent.id, "Delegate the build");
+      const parentConversation = conversationOf(f.storage, f.parent);
+      const harness = await f.harness();
+      await until(
+        async () => (await reports(harness, parentConversation)).length === 1,
+        "the first report",
+      );
+      await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+      const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+      return { f, child, parentConversation, open: () => writeFileSync(gatePath, "") };
+    }
+
+    /** Waits for both reports and for the parent to let go of the child, then checks them. */
+    async function expectTwoReports(
+      f: Fixture,
+      child: Session,
+      parentConversation: ConversationId,
+    ): Promise<void> {
+      const harness = await f.harness();
+      await until(
+        async () => (await reports(harness, parentConversation)).length >= 2,
+        "the report after the job",
+      );
+      await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+      // Nothing of the child holds the parent awake any more.
+      await until(
+        async () => !(await (await f.owner()).hasPendingWake(parentConversation)),
+        "the parent's reporter to end",
+      );
+      const header = `[session Builder (${child.id}) finished, no reply needed] `;
+      expect(await reports(harness, parentConversation)).toEqual([
+        `${header}WAITING_ON_JOB`,
+        `${header}BUILD_DONE`,
+      ]);
+      expect(requestIds(f.storage, f.dir, f.parent.id, "oppi-report:")).toHaveLength(2);
+    }
+
+    it("reports its answer after the job's receipt turn, once", async () => {
+      const { f, child, parentConversation, open } = await jobFixture();
+      // The parent's reporter waits on the child's job, so the parent's idle timeout holds.
+      expect(await (await f.owner()).hasPendingWake(parentConversation)).toBe(true);
+
+      open();
+      await expectTwoReports(f, child, parentConversation);
+    });
+
+    it("reports its answer once when a restart interrupts the job", async () => {
+      const { f, child, parentConversation } = await jobFixture();
+
+      recordLiveSessionsForRestart(f.storage, [
+        f.manager.getActiveSession(f.parent.id)!,
+        f.manager.getActiveSession(child.id)!,
+      ]);
+      await f.manager.close();
+      managers.splice(managers.indexOf(f.manager), 1);
+      const restarted = new SessionManager(new Storage(f.dir));
+      managers.push(restarted);
+      await restarted.resumeDurableSessions();
+
+      await expectTwoReports(f, child, parentConversation);
+    });
   });
 
   it("spawns a saved Agent as its AgentChange: model, tools, replaced instructions without project context", async () => {

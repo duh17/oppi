@@ -21,6 +21,7 @@ import {
   type Registry,
   type Storage,
   type TaskGraph,
+  type TaskId,
   type Tx,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
@@ -437,17 +438,28 @@ export class SessionHost {
    * reporters, so the idle timeout waits for these.
    */
   async hasPendingWake(id: ConversationId): Promise<boolean> {
-    if (!this.opening || this.closed || this.closing) return false;
+    return (await this.pendingWakers(id)).length > 0;
+  }
+
+  /**
+   * The tasks behind `hasPendingWake`: conversation `id`'s live reporters and its background
+   * jobs not yet delivered. Each one ends; tickers (pills, working words) are not among them.
+   * A parent's reporter waits on these of its child to report the child's later answers.
+   */
+  async pendingWakers(id: ConversationId): Promise<TaskId[]> {
+    if (!this.opening || this.closed || this.closing) return [];
     const { harness } = await this.opening;
     const live = await harness.inspect(BACKGROUND_CONTEXT);
-    if (
-      live.tasks.some(
-        ({ record }) => record.conversationId === id && record.kind === SESSION_REPORTER_TASK,
-      )
-    )
-      return true;
+    const reporters = live.tasks.flatMap(({ record }) =>
+      record.conversationId === id && record.kind === SESSION_REPORTER_TASK ? [record.id] : [],
+    );
     const jobs = await harness.snapshot(DurableJobs, id, BACKGROUND_CONTEXT);
-    return jobs?.jobs.some((job) => job.decision === "background" && !job.delivered) ?? false;
+    return [
+      ...reporters,
+      ...(jobs?.jobs ?? [])
+        .filter((job) => job.decision === "background" && !job.delivered)
+        .map((job) => job.taskId),
+    ];
   }
 
   /**

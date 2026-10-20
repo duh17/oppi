@@ -91,8 +91,8 @@ type QueuedInput = Exclude<InboxState["items"][number], { mode: "write" }>;
 
 /**
  * Input and run control of one conversation. `SessionHost.controller` keeps one per open
- * conversation, so every caller (the session socket's `DurableBackend` facade, `subagent send`)
- * shares one admission chain and one request-id dedupe.
+ * conversation, so every caller (the session socket's `DurableBackend` facade) shares one
+ * admission chain and one request-id dedupe.
  */
 export class DurableAgentController {
   private admissions: Promise<void> = Promise.resolve();
@@ -191,7 +191,7 @@ export class DurableAgentController {
       }
       return record;
     });
-    // Callers that do not watch the settlement (subagent send) must not leave a rejection unhandled.
+    // Callers that do not watch the settlement must not leave a rejection unhandled.
     settled.catch(() => undefined);
     return { submission, duplicate, settled };
   }

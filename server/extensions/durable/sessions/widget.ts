@@ -10,7 +10,7 @@ import {
   type TaskId,
   type Tx,
 } from "@earendil-works/pi-durable";
-import { DurableUI, type UINotification, type UIState } from "oppi/durable";
+import { DurableUI, SESSION_REPORTER_TASK, type UINotification, type UIState } from "oppi/durable";
 import { SUBAGENT_WIDGET_TASK, Subagents, type Child } from "./contract.js";
 import {
   renderSubagentTerminal,
@@ -114,6 +114,19 @@ function starterOf(
   if (child.reporter !== undefined) return child.reporter;
   const call = Object.keys(calls).find((key) => calls[key] === name);
   return call === undefined ? undefined : (Number(call) as TaskId);
+}
+
+/**
+ * Whether the starter has yet to hand the child its first input. A reporter lives on after that
+ * (its report, then following the child), so only its `deliver` phase counts.
+ */
+function stillStarting(task: {
+  kind: string;
+  state: { status: string; checkpoint?: unknown };
+}): boolean {
+  if (task.state.status === "terminal") return false;
+  if (task.kind !== SESSION_REPORTER_TASK) return true;
+  return (task.state.checkpoint as { phase?: string } | undefined)?.phase === "deliver";
 }
 
 function shortId(sessionId: string): string {
@@ -252,7 +265,7 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
             for (const { name, child, entry } of rowsOf) {
               const starter = entry.live ? undefined : starterOf(name, child, calls);
               const task = starter === undefined ? undefined : await tx.task(starter);
-              entry.starting = task !== undefined && task.state.status !== "terminal";
+              entry.starting = task !== undefined && stillStarting(task);
               // First sight reads the previous answer even while busy; then each run's end.
               if (entry.stale && (!entry.busy || !entry.read)) {
                 entry.answer = await newestAnswer(tx, child.conversationId);

@@ -2,6 +2,7 @@ import {
   defineDoc,
   type AnyTask,
   type ConversationId,
+  type EntryId,
   type Task,
   type TaskId,
   type Tx,
@@ -21,14 +22,23 @@ export type Child = {
   icon?: string;
   /** Owned by an anchor: its answer comes back as a follow-up. Else owned by the spawning call. */
   background: boolean;
-  /** Hands a background child its task and reports the answer. */
+  /** Hands a background child its task and reports the answer: the task of its first input. */
   reporter?: TaskId;
+  /**
+   * Answers already reported to the parent, or returned by `wait`: several messages can end in
+   * one answer, reported once. The commit that decides a report records its answer.
+   */
+  reported?: EntryId[];
+  /** The reporter that reports this child's later answers, which no parent message caused. */
+  follower?: TaskId;
 };
 
 /** The children of a conversation by name, and which spawn call made which, so a rerun finds it. */
 export const Subagents = defineDoc<{
   children: Record<string, Child>;
   calls: Record<string, string>;
+  /** The reporter each `send` call created, by the call's task id, so a rerun creates no second. */
+  reporters?: Record<string, TaskId>;
   /** The pill's watcher (`SUBAGENT_WIDGET_TASK`), once a child exists. */
   widget?: TaskId;
 }>({
