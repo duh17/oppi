@@ -1,5 +1,4 @@
 import CoreGraphics
-import SwiftUI
 import UIKit
 
 /// UIView that draws a `GraphicalDocumentRenderer` output via Core Graphics.

@@ -199,9 +199,6 @@
     "clients/apple/Oppi/Core/Views/FileIcon.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/FullScreenCodeBodies.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Views/FullScreenCodeSupport.swift": {
       "import SwiftUI": 1
     },
@@ -214,9 +211,6 @@
     "clients/apple/Oppi/Core/Views/FullScreenReviewCommentStashOverlay.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/GraphicalRendererView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Views/ImageBlobView.swift": {
       "import SwiftUI": 1
     },
@@ -224,9 +218,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/MarkdownContentViewWrapper.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/MarkdownText.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/PaperMarkupCanvasHostController.swift": {
@@ -283,9 +274,6 @@
     "clients/apple/Oppi/Features/Chat/Composer/MessageQueueContainer.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Composer/MicButtonChromeView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Composer/MicButtonLabel.swift": {
       "import SwiftUI": 1
     },
@@ -302,9 +290,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Selection/ReviewCommentSelection.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Session/ChatActionHandler.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/ChatSubviews.swift": {
@@ -337,9 +322,6 @@
     "clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownImageView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownUSDZView.swift": {
       "import SwiftUI": 1
     },
@@ -347,9 +329,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Collection/ChatTimelineCollectionView+DataSource.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Timeline/Collection/ChatTimelineCollectionView+RowBuilders.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Collection/ChatTimelineCollectionView.swift": {
@@ -364,34 +343,13 @@
     "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioPlaybackTransportView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Timeline/Rows/CompactionTimelineRowContent.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Timeline/Rows/CustomTimelineRowContent.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Timeline/Rows/ErrorTimelineRowContent.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Timeline/Rows/SystemTimelineRowContent.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Timeline/Rows/ThinkingTimelineRowContent.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Timeline/Rows/UserTimelineRowContent.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/SegmentRenderer.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Timeline/TimelineBubbleStyle.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Timeline/Tool/BashToolRowView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Timeline/Tool/CollapsedToolTimelineRowContent.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Tool/NativeExpandedToolViews.swift": {
@@ -406,19 +364,10 @@
     "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolRowAudioController.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolRowCodeRenderStrategy.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolRowTextRenderer.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowDisplayState.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowStatusAppearance.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowViewStyler.swift": {
@@ -434,9 +383,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTipBanner.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTips.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditChrome.swift": {

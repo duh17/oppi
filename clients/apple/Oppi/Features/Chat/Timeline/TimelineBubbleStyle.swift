@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// Named visual constants for timeline row bubble/chip styling.

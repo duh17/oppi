@@ -1,6 +1,7 @@
+import Foundation
 import FoundationModels
+import Observation
 import os.log
-import SwiftUI
 
 private let log = Logger(subsystem: AppIdentifiers.subsystem, category: "Action")
 

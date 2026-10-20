@@ -1,4 +1,4 @@
-import SwiftUI
+import Foundation
 import TipKit
 
 /// Contextual tips for app behaviors that are easy to miss.
