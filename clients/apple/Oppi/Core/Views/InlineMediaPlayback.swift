@@ -2,7 +2,6 @@ import Accessibility
 import AVFoundation
 import AVKit
 import ImageIO
-import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 import WebKit
@@ -28,8 +27,6 @@ enum ImageViewportSizing {
     enum HeightMode: Equatable {
         case singleScreenFit
         case primaryMedia
-        case unrestricted
-        case fixed(CGFloat)
     }
 
     static let minInlineHeight: CGFloat = 80
@@ -132,7 +129,7 @@ enum ImageViewportSizing {
         return min(maximumHeight, height)
     }
 
-    static func maxHeight(for mode: HeightMode, screenHeight: CGFloat?) -> CGFloat? {
+    static func maxHeight(for mode: HeightMode, screenHeight: CGFloat?) -> CGFloat {
         switch mode {
         case .singleScreenFit:
             let height = max(320, screenHeight ?? fallbackScreenHeight)
@@ -140,10 +137,6 @@ enum ImageViewportSizing {
         case .primaryMedia:
             let height = max(320, screenHeight ?? fallbackScreenHeight)
             return min(maxPrimaryTimelineHeight, max(minInlineHeight, floor(height * maxPrimaryScreenMultiplier)))
-        case .unrestricted:
-            return nil
-        case .fixed(let value):
-            return max(1, value)
         }
     }
 }
@@ -587,23 +580,6 @@ final class InlineAnimatedRasterView: UIImageView {
     }
 }
 
-struct InlineAnimatedRasterRepresentable: UIViewRepresentable {
-    let data: Data
-    var maxPixelSize: CGFloat = 1_600
-
-    func makeUIView(context: Context) -> InlineAnimatedRasterView {
-        let view = InlineAnimatedRasterView(frame: .zero)
-        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        view.display(data: data, maxPixelSize: maxPixelSize)
-        return view
-    }
-
-    func updateUIView(_ view: InlineAnimatedRasterView, context: Context) {
-        view.display(data: data, maxPixelSize: maxPixelSize)
-    }
-}
-
 private final class RasterPlaybackGate: @unchecked Sendable {
     var stopped = false
 }
@@ -813,18 +789,6 @@ final class AnimatedImageWebContainerView: UIView {
             webView.topAnchor.constraint(equalTo: topAnchor),
             webView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-    }
-}
-
-struct AnimatedImageWebView: UIViewRepresentable {
-    let dataURLString: String
-
-    func makeUIView(context: Context) -> AnimatedImageWebContainerView {
-        AnimatedImageWebContainerView()
-    }
-
-    func updateUIView(_ uiView: AnimatedImageWebContainerView, context: Context) {
-        uiView.apply(dataURLString: dataURLString)
     }
 }
 
@@ -1152,166 +1116,171 @@ extension FullScreenImageDataPreviewViewController {
     }
 }
 
-// MARK: - SwiftUI Image Preview
+// MARK: - Data Image Preview
 
-struct DataImagePreviewView: View {
-    private enum Phase {
-        case loading
-        case staticImage(UIImage, CGFloat?)
-        case animated(String, CGFloat?, Data, String?)
-        case animatedRaster(Data, CGFloat?, String?)
+/// Image bytes at the width the view gets and their natural height, with
+/// 8 pt corners: a still image, GIF or APNG playback, or SVG (and other
+/// formats only WebKit draws) in a locked-down web view. A tap opens the
+/// full-screen viewer, or the chat reader when one is up. While the bytes
+/// decode, and when they cannot, a placeholder box stands in. The file
+/// viewer's image page.
+@MainActor
+final class DataImagePreviewView: UIView {
+    private enum Content: Sendable {
+        case still(UIImage, aspectRatio: CGFloat?)
+        case animatedRaster(aspectRatio: CGFloat?, mimeType: String?)
+        case web(dataURL: String, aspectRatio: CGFloat?, mimeType: String)
         case failure
     }
 
-    let data: Data
-    let mimeType: String?
-    var maxPixelSize: CGFloat = 1_600
-    var heightMode: ImageViewportSizing.HeightMode = .singleScreenFit
-    var allowsFullscreenStaticImage = true
+    private let data: Data
+    private let maxPixelSize: CGFloat
+    /// What a tap opens: the decoded still, else the bytes as `mimeType`.
+    private var tapPayload: (UIImage?, String?) = (nil, nil)
 
-    @Environment(\.openChatReader) private var openChatReader
-    @State private var phase: Phase = .loading
-
-    var body: some View {
-        Group {
-            switch phase {
-            case .loading:
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.themeBgHighlight)
-                    .frame(height: placeholderHeight)
-                    .overlay {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-            case .failure:
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.themeBgHighlight)
-                    .frame(height: placeholderHeight)
-                    .overlay {
-                        VStack(spacing: 4) {
-                            Image(systemName: "photo.badge.exclamationmark")
-                                .font(.caption)
-                                .foregroundStyle(.themeComment)
-                            Text("Image preview unavailable")
-                                .font(.caption2)
-                                .foregroundStyle(.themeComment)
-                        }
-                    }
-            case .staticImage(let image, let aspectRatio):
-                renderedImage(
-                    Image(uiImage: image)
-                        .resizable().scaledToFit()
-                        .onTapGesture {
-                            guard allowsFullscreenStaticImage else { return }
-                            let fullResolutionImage = UIImage(data: data) ?? image
-                            if let openChatReader {
-                                openChatReader(.image(fullResolutionImage))
-                            } else {
-                                FullScreenImageViewController.present(image: fullResolutionImage)
-                            }
-                        },
-                    aspectRatio: aspectRatio
-                )
-            case .animatedRaster(let bytes, let aspectRatio, let mimeType):
-                renderedImage(
-                    InlineAnimatedRasterRepresentable(data: bytes, maxPixelSize: maxPixelSize)
-                        .onTapGesture {
-                            if let openChatReader {
-                                openChatReader(.imageData(bytes, mimeType: mimeType))
-                            } else {
-                                FullScreenImageDataPreviewPresenter.present(data: bytes, mimeType: mimeType)
-                            }
-                        },
-                    aspectRatio: aspectRatio
-                )
-            case .animated(let dataURLString, let aspectRatio, let data, let mimeType):
-                renderedImage(
-                    AnimatedImageWebView(dataURLString: dataURLString)
-                        .onTapGesture {
-                            if let openChatReader {
-                                openChatReader(.imageData(data, mimeType: mimeType))
-                            } else {
-                                FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
-                            }
-                        },
-                    aspectRatio: aspectRatio
-                )
-            }
-        }
-        .task(id: cacheKey) {
-            phase = await Task.detached(priority: .userInitiated) {
-                let info = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
-                let aspectRatio = info.aspectRatio ?? MediaMimeType.extractSVGViewBoxAspectRatio(data)
-                if info.isAnimated, !info.prefersWebRenderer {
-                    return Phase.animatedRaster(data, aspectRatio, info.normalizedMimeType)
-                }
-                if info.prefersWebRenderer {
-                    let normalizedMimeType = MediaMimeType.safeImageMimeType(info.normalizedMimeType, fallback: "image/svg+xml")
-                    let dataURLString = "data:\(normalizedMimeType);base64,\(data.base64EncodedString())"
-                    return Phase.animated(dataURLString, aspectRatio, data, normalizedMimeType)
-                }
-
-                if let image = ImageMediaInspector.downsampledImage(data: data, maxPixelSize: maxPixelSize) {
-                    return Phase.staticImage(image, aspectRatio)
-                }
-
-                if MediaMimeType.isSupportedImageMimeType(info.normalizedMimeType) {
-                    let normalizedMimeType = MediaMimeType.safeImageMimeType(info.normalizedMimeType)
-                    let dataURLString = "data:\(normalizedMimeType);base64,\(data.base64EncodedString())"
-                    return Phase.animated(dataURLString, aspectRatio, data, normalizedMimeType)
-                }
-
-                return .failure
+    init(data: Data, mimeType: String?, maxPixelSize: CGFloat) {
+        self.data = data
+        self.maxPixelSize = maxPixelSize
+        super.init(frame: .zero)
+        showPlaceholder(failed: false)
+        Task { [weak self, data] in
+            let content = await Task.detached(priority: .userInitiated) {
+                Self.content(data: data, mimeType: mimeType, maxPixelSize: maxPixelSize)
             }.value
+            self?.show(content)
         }
     }
 
-    private var cacheKey: String {
-        let mime = MediaMimeType.normalized(mimeType) ?? "image/unknown"
-        return "\(mime)-\(data.count)-\(data.prefix(32))-\(data.suffix(32))-\(maxPixelSize)-\(cacheHeightModeKey)"
-    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 
-    private var placeholderHeight: CGFloat {
-        switch heightMode {
-        case .fixed(let value):
-            return max(1, value)
-        case .singleScreenFit, .primaryMedia, .unrestricted:
-            return ImageViewportSizing.defaultPlaceholderHeight
+    nonisolated private static func content(data: Data, mimeType: String?, maxPixelSize: CGFloat) -> Content {
+        let info = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
+        let aspectRatio = info.aspectRatio ?? MediaMimeType.extractSVGViewBoxAspectRatio(data)
+        if info.isAnimated, !info.prefersWebRenderer {
+            return .animatedRaster(aspectRatio: aspectRatio, mimeType: info.normalizedMimeType)
         }
-    }
-
-    private var cacheHeightModeKey: String {
-        switch heightMode {
-        case .singleScreenFit:
-            return "fit"
-        case .primaryMedia:
-            return "primary"
-        case .unrestricted:
-            return "full"
-        case .fixed(let value):
-            return "fixed-\(Int(value.rounded()))"
+        if info.prefersWebRenderer {
+            let webMimeType = MediaMimeType.safeImageMimeType(info.normalizedMimeType, fallback: "image/svg+xml")
+            return .web(dataURL: dataURL(data, webMimeType), aspectRatio: aspectRatio, mimeType: webMimeType)
         }
+        if let image = ImageMediaInspector.downsampledImage(data: data, maxPixelSize: maxPixelSize) {
+            return .still(image, aspectRatio: aspectRatio)
+        }
+        if MediaMimeType.isSupportedImageMimeType(info.normalizedMimeType) {
+            let webMimeType = MediaMimeType.safeImageMimeType(info.normalizedMimeType)
+            return .web(dataURL: dataURL(data, webMimeType), aspectRatio: aspectRatio, mimeType: webMimeType)
+        }
+        return .failure
     }
 
-    @ViewBuilder
-    private func renderedImage<Content: View>(_ content: Content, aspectRatio: CGFloat?) -> some View {
-        let base = content
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .frame(maxWidth: .infinity)
+    nonisolated private static func dataURL(_ data: Data, _ mimeType: String) -> String {
+        "data:\(mimeType);base64,\(data.base64EncodedString())"
+    }
 
-        let maxHeight = ImageViewportSizing.maxHeight(for: heightMode, screenHeight: nil)
-        if let aspectRatio {
-            if let maxHeight {
-                base
-                    .aspectRatio(aspectRatio, contentMode: .fit)
-                    .frame(maxHeight: maxHeight)
-            } else {
-                base.aspectRatio(aspectRatio, contentMode: .fit)
-            }
-        } else if let maxHeight {
-            base.frame(maxHeight: maxHeight)
+    private func show(_ content: Content) {
+        let view: UIView
+        let aspectRatio: CGFloat?
+        switch content {
+        case .failure:
+            showPlaceholder(failed: true)
+            return
+        case .still(let image, let ratio):
+            let imageView = UIImageView(image: image)
+            imageView.contentMode = .scaleAspectFit
+            view = imageView
+            // A still image keeps its own proportions when the file names none.
+            aspectRatio = ratio ?? (image.size.height > 0 ? image.size.width / image.size.height : nil)
+            tapPayload = (image, nil)
+        case .animatedRaster(let ratio, let mimeType):
+            let raster = InlineAnimatedRasterView(frame: .zero)
+            raster.display(data: data, maxPixelSize: maxPixelSize)
+            view = raster
+            aspectRatio = ratio
+            tapPayload = (nil, mimeType)
+        case .web(let dataURL, let ratio, let mimeType):
+            let web = AnimatedImageWebContainerView()
+            web.apply(dataURLString: dataURL)
+            view = web
+            aspectRatio = ratio
+            tapPayload = (nil, mimeType)
+        }
+        subviews.forEach { $0.removeFromSuperview() }
+        // The width comes from the page and the height from the proportions;
+        // an image view's pixel size must not push on the layout around it
+        // (it squeezed the iPad file tree beside the page to its minimum).
+        for axis in [NSLayoutConstraint.Axis.horizontal, .vertical] {
+            view.setContentCompressionResistancePriority(.defaultLow, for: axis)
+            view.setContentHuggingPriority(.defaultLow, for: axis)
+        }
+        view.layer.cornerRadius = 8
+        view.clipsToBounds = true
+        view.isUserInteractionEnabled = true
+        view.isAccessibilityElement = true
+        view.accessibilityTraits = .image
+        view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(openFullScreen)))
+        pin(view)
+        if let aspectRatio, aspectRatio > 0 {
+            view.heightAnchor.constraint(equalTo: view.widthAnchor, multiplier: 1 / aspectRatio).isActive = true
         } else {
-            base.frame(minHeight: 160)
+            view.heightAnchor.constraint(equalToConstant: 160).isActive = true
+        }
+    }
+
+    /// The rounded box shown while decoding (a spinner) and when the bytes
+    /// are no image (a broken-image mark and a caption).
+    private func showPlaceholder(failed: Bool) {
+        subviews.forEach { $0.removeFromSuperview() }
+        let box = UIView()
+        let palette = ThemeRuntimeState.currentPalette()
+        box.backgroundColor = UIColor(palette.bgHighlight)
+        box.layer.cornerRadius = 8
+        let content: UIView
+        if failed {
+            let comment = UIColor(palette.comment)
+            let icon = UIImageView(image: .scaledSymbol("photo.badge.exclamationmark", style: .caption1, color: comment))
+            let label = UILabel()
+            label.text = String(localized: "Image preview unavailable")
+            label.font = .preferredFont(forTextStyle: .caption2)
+            label.adjustsFontForContentSizeCategory = true
+            label.textColor = comment
+            let stack = UIStackView(arrangedSubviews: [icon, label])
+            stack.axis = .vertical
+            stack.alignment = .center
+            stack.spacing = 4
+            content = stack
+        } else {
+            let spinner = UIActivityIndicatorView(style: .medium)
+            spinner.startAnimating()
+            content = spinner
+        }
+        content.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(content)
+        pin(box)
+        NSLayoutConstraint.activate([
+            box.heightAnchor.constraint(equalToConstant: ImageViewportSizing.defaultPlaceholderHeight),
+            content.centerXAnchor.constraint(equalTo: box.centerXAnchor),
+            content.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+        ])
+    }
+
+    private func pin(_ view: UIView) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: topAnchor),
+            view.bottomAnchor.constraint(equalTo: bottomAnchor),
+            view.leadingAnchor.constraint(equalTo: leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+    }
+
+    @objc private func openFullScreen() {
+        switch tapPayload {
+        case (let image?, _):
+            FullScreenImageViewController.present(image: UIImage(data: data) ?? image)
+        case (nil, let mimeType):
+            FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
         }
     }
 }

@@ -208,7 +208,6 @@ final class FileViewerViewController: UIViewController {
     private var mountedChildren: [UIViewController] = []
     /// Hosted SwiftUI leaves report their height through these; a leaf
     /// nothing holds stops resizing its slot.
-    private var mountedLeaves: [HostedLeaf] = []
     private var mountedBackSwipe: HorizontalBackSwipeGestureInstaller?
     private weak var reader: FullScreenCodeViewController?
     private weak var editor: WorkspaceFileEditorViewController?
@@ -567,7 +566,6 @@ final class FileViewerViewController: UIViewController {
             child.removeFromParent()
         }
         mountedChildren = []
-        mountedLeaves = []
         mountedView?.removeFromSuperview()
         mountedView = nil
         mountedBackSwipe = nil
@@ -770,28 +768,20 @@ final class FileViewerViewController: UIViewController {
             scroll.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
         ])
-        guard let root = HostFactory.root(near: self) else { return page }
-        let image = HostFactory.leaf(
-            DataImagePreviewView(
-                data: data,
-                mimeType: MediaMimeType.imageMimeType(forPathExtension: fileExtension),
-                maxPixelSize: 2_400,
-                heightMode: .unrestricted
-            ),
-            root: root
+        let image = DataImagePreviewView(
+            data: data,
+            mimeType: MediaMimeType.imageMimeType(forPathExtension: fileExtension),
+            maxPixelSize: 2_400
         )
-        addChild(image.host)
-        scroll.addSubview(image.view)
+        image.translatesAutoresizingMaskIntoConstraints = false
+        scroll.addSubview(image)
         let inset: CGFloat = 16
         NSLayoutConstraint.activate([
-            image.view.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: inset),
-            image.view.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -inset),
-            image.view.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor, constant: inset),
-            image.view.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor, constant: -inset),
+            image.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: inset),
+            image.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -inset),
+            image.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor, constant: inset),
+            image.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor, constant: -inset),
         ])
-        image.host.didMove(toParent: self)
-        mountedChildren.append(image.host)
-        mountedLeaves.append(image)
         return page
     }
 

@@ -193,9 +193,6 @@
     "clients/apple/Oppi/Core/Views/FullScreenReviewCommentStashOverlay.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/InlineMediaPlayback.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Views/MarkdownContentViewWrapper.swift": {
       "import SwiftUI": 1
     },
