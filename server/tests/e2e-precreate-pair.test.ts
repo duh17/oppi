@@ -43,9 +43,16 @@ describe("e2e pre-create pair helper", () => {
       expiresAt: 1_700_000_600_000,
     });
     // The approver schedules its refresh from expiresAt, so a token without one is unusable.
-    expect(
-      interpretPairResponse(200, JSON.stringify({ deviceId: "dev_e2e", accessToken: "at_e2e" })).ok,
-    ).toBe(false);
+    // The failure message names fields, never the token in the body.
+    const noExpiry = interpretPairResponse(
+      200,
+      JSON.stringify({ deviceId: "dev_e2e", accessToken: "at_secret" }),
+    );
+    expect(noExpiry).toEqual({
+      ok: false,
+      error:
+        "status=200 body lacks a usable field: deviceId=string accessToken=string expiresAt=missing",
+    });
     expect(
       interpretPairResponse(400, JSON.stringify({ error: "devicePublicKey required" })),
     ).toEqual({
@@ -117,6 +124,34 @@ describe("e2e pairing approver token handoff", () => {
 
     expect(readFileSync(tokenFile, "utf8")).toBe("at_new\n");
     expect(seenAuthorization.at(-1)).toBe("Bearer at_new");
+  });
+
+  it("fails on a refresh response without an expiry without echoing the new token", async () => {
+    const keyPair = makeDeviceKeyPair();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        new URL(url).pathname === "/auth/challenge"
+          ? Response.json({ nonce: "n1" })
+          : Response.json({ accessToken: "at_secret" }),
+      ),
+    );
+    const approver = createApprover({
+      baseURL: "https://127.0.0.1:1",
+      credential: {
+        deviceId: "dev_e2e",
+        accessToken: "at_old",
+        expiresAt: 0,
+        privateKey: keyPair.privateKey,
+      },
+      log: () => {},
+    });
+
+    const failure = await approver.approvePending().catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(
+      "refresh response lacks a usable field: accessToken=string expiresAt=undefined",
+    );
   });
 
   it("refreshes a minute before expiry, so no poll is sent with a token about to lapse", async () => {

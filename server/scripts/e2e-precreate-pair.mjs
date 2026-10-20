@@ -45,7 +45,15 @@ export function interpretPairResponse(status, text) {
   const accessToken = json && typeof json.accessToken === "string" ? json.accessToken : "";
   const deviceId = json && typeof json.deviceId === "string" ? json.deviceId : "";
   const expiresAt = json && typeof json.expiresAt === "number" ? json.expiresAt : 0;
-  if (status !== 200 || !accessToken || !deviceId || !expiresAt) {
+  if (status === 200 && (!accessToken || !deviceId || !expiresAt)) {
+    // A 200 body carries the access token: report field types, never the body.
+    const type = (field) => (json && field in json ? typeof json[field] : "missing");
+    return {
+      ok: false,
+      error: `status=200 body lacks a usable field: deviceId=${type("deviceId")} accessToken=${type("accessToken")} expiresAt=${type("expiresAt")}`,
+    };
+  }
+  if (status !== 200) {
     return { ok: false, error: `status=${status} body=${text}` };
   }
   return { ok: true, accessToken, deviceId, expiresAt };

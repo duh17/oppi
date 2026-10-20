@@ -91,7 +91,10 @@ export function createApprover({
     }
     const next = await refreshed.json();
     if (typeof next.accessToken !== "string" || typeof next.expiresAt !== "number") {
-      throw new FatalError(`refresh response lacks accessToken/expiresAt: ${JSON.stringify(next)}`);
+      // The body carries the new access token: report field types only.
+      throw new FatalError(
+        `refresh response lacks a usable field: accessToken=${typeof next.accessToken} expiresAt=${typeof next.expiresAt}`,
+      );
     }
     accessToken = next.accessToken;
     expiresAt = next.expiresAt;
