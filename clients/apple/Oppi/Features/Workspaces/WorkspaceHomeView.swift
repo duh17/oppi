@@ -375,6 +375,9 @@ enum HostSwitcherDestination: Hashable {
     }
 }
 
+/// The server switcher in the Settings and admin toolbars. `HostSwitcherModel`
+/// owns its rows and actions; the session lists draw the same model in UIKit
+/// (`SessionListServerSwitcher`).
 struct HostSwitcherMenu: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
@@ -385,66 +388,43 @@ struct HostSwitcherMenu: View {
     var fitsVerticalRail = false
     var onSwitch: ((PairedServer) -> Void)?
 
-    @State private var locks = ScopedLockService.shared
-
-    private var servers: [PairedServer] {
-        serverStore.servers
-    }
-
-    /// Menu rows cannot draw a trailing badge, so a gated server's row uses
-    /// the lock symbol as its image (the current server keeps its checkmark).
-    private func menuImage(for server: PairedServer) -> String {
-        if server.id == current.id { return "checkmark.circle.fill" }
-        switch locks.badge(.server(server.id)) {
-        case .locked: return "lock.fill"
-        case .unlocked: return "lock.open.fill"
-        case .none: return server.resolvedBadgeIcon.symbolName
-        }
-    }
-
     var body: some View {
+        let model = HostSwitcherModel(
+            coordinator: coordinator,
+            serverStore: serverStore,
+            navigation: navigation,
+            current: current,
+            destination: destination,
+            onSwitch: onSwitch
+        )
         Menu {
-            ForEach(servers) { server in
+            ForEach(model.servers) { server in
                 Button {
-                    switchHost(server)
+                    model.switchHost(server)
                 } label: {
-                    Label(menuTitle(for: server), systemImage: menuImage(for: server))
+                    Label(model.menuTitle(for: server), systemImage: model.menuImage(for: server))
                 }
-                .accessibilityValue(menuAccessibilityValue(for: server))
+                .accessibilityValue(model.menuAccessibilityValue(for: server))
             }
 
             Section("Connection") {
-                let state = badgeState(for: current)
-                let title = ServerConnectionLanePresentation.title(
-                    server: current,
-                    connection: coordinator.connection(for: current.id),
-                    state: state,
-                    isPreparing: coordinator.preparingServerIds.contains(current.id)
-                )
+                let connection = model.connection
                 // Menu Labels render disabled. A Button keeps the healthy
                 // checkmark on the same visual footing as the selected server.
                 Button {
-                    if state != .connected {
-                        Task { await coordinator.retryServerConnection(current.id) }
-                    }
+                    model.retryConnection()
                 } label: {
-                    Label(title, systemImage: state.systemImage)
+                    Label(connection.title, systemImage: connection.systemImage)
                 }
                 .accessibilityLabel("Connection")
-                .accessibilityValue(title)
+                .accessibilityValue(connection.title)
             }
 
             Divider()
 
-            ForEach(
-                HostSwitcherDestination.menuItems(
-                    serverMetricsEnabled: coordinator.connection(for: current.id)?.serverMetricsEnabled
-                ),
-                id: \.self
-            ) { item in
+            ForEach(model.destinations, id: \.self) { item in
                 Button {
-                    guard item.shouldNavigate(from: destination) else { return }
-                    navigation.openHostSwitcherDestination(item, serverId: current.id)
+                    model.open(item)
                 } label: {
                     Label(item.menuTitle, systemImage: item.systemImage)
                 }
@@ -453,20 +433,61 @@ struct HostSwitcherMenu: View {
         } label: {
             ServerSwitcherPill(
                 server: current,
-                connectionState: badgeState(for: current),
+                connectionState: model.badgeState(for: current),
                 fitsVerticalRail: fitsVerticalRail,
-                lockBadge: locks.badge(.server(current.id))
+                lockBadge: model.currentLockBadge
             )
         }
-        .accessibilityLabel("Current server: \(current.name)")
-        .accessibilityValue(badgeState(for: current).title)
-        // Once per connection: a known value is never refetched.
+        .accessibilityLabel(model.accessibilityLabel)
+        .accessibilityValue(model.badgeState(for: current).title)
         .task(id: current.id) {
-            await coordinator.loadServerMetricsEnabledIfNeeded(for: current.id)
+            await model.loadServerMetricsEnabled()
+        }
+    }
+}
+
+/// The server switcher's one owner: the servers it lists, how each row reads,
+/// the connection row, the destinations, and what choosing one does. The
+/// SwiftUI menu (Settings and admin toolbars) and the session lists' UIKit
+/// menu (`SessionListBarItems.serverSwitcher`) only render it.
+@MainActor
+struct HostSwitcherModel {
+    let coordinator: ConnectionCoordinator
+    let serverStore: ServerStore
+    let navigation: AppNavigation
+    let current: PairedServer
+    let destination: HostSwitcherDestination
+    var onSwitch: ((PairedServer) -> Void)?
+
+    private var locks: ScopedLockService { .shared }
+
+    var servers: [PairedServer] { serverStore.servers }
+
+    func badgeState(for server: PairedServer) -> ServerBadgeConnectionState {
+        HostSwitcherBadgeState.make(for: server, coordinator: coordinator)
+    }
+
+    var currentLockBadge: ScopedLockState { locks.badge(.server(current.id)) }
+
+    var accessibilityLabel: String { "Current server: \(current.name)" }
+
+    func menuTitle(for server: PairedServer) -> String {
+        let state = badgeState(for: server)
+        return state == .connected ? server.name : "\(server.name) — \(state.title)"
+    }
+
+    /// Menu rows cannot draw a trailing badge, so a gated server's row uses
+    /// the lock symbol as its image (the current server keeps its checkmark).
+    func menuImage(for server: PairedServer) -> String {
+        if server.id == current.id { return "checkmark.circle.fill" }
+        switch locks.badge(.server(server.id)) {
+        case .locked: return "lock.fill"
+        case .unlocked: return "lock.open.fill"
+        case .none: return server.resolvedBadgeIcon.symbolName
         }
     }
 
-    private func menuAccessibilityValue(for server: PairedServer) -> String {
+    func menuAccessibilityValue(for server: PairedServer) -> String {
         let state = badgeState(for: server).title
         switch locks.badge(.server(server.id)) {
         case .locked: return "\(state), Locked"
@@ -475,8 +496,38 @@ struct HostSwitcherMenu: View {
         }
     }
 
-    private func switchHost(_ server: PairedServer) {
-        // Capture now: the unlock callback runs after this view update.
+    /// The Connection row: the current server's lane, and a retry when it is not connected.
+    var connection: (title: String, systemImage: String, state: ServerBadgeConnectionState) {
+        let state = badgeState(for: current)
+        let title = ServerConnectionLanePresentation.title(
+            server: current,
+            connection: coordinator.connection(for: current.id),
+            state: state,
+            isPreparing: coordinator.preparingServerIds.contains(current.id)
+        )
+        return (title, state.systemImage, state)
+    }
+
+    func retryConnection() {
+        guard badgeState(for: current) != .connected else { return }
+        let coordinator = coordinator
+        let serverId = current.id
+        Task { await coordinator.retryServerConnection(serverId) }
+    }
+
+    var destinations: [HostSwitcherDestination] {
+        HostSwitcherDestination.menuItems(
+            serverMetricsEnabled: coordinator.connection(for: current.id)?.serverMetricsEnabled
+        )
+    }
+
+    func open(_ item: HostSwitcherDestination) {
+        guard item.shouldNavigate(from: destination) else { return }
+        navigation.openHostSwitcherDestination(item, serverId: current.id)
+    }
+
+    func switchHost(_ server: PairedServer) {
+        // Capture now: the unlock callback runs after this update.
         let coordinator = coordinator
         let onSwitch = onSwitch
         let perform: @MainActor () -> Void = {
@@ -494,13 +545,9 @@ struct HostSwitcherMenu: View {
         }
     }
 
-    private func menuTitle(for server: PairedServer) -> String {
-        let state = badgeState(for: server)
-        return state == .connected ? server.name : "\(server.name) — \(state.title)"
-    }
-
-    private func badgeState(for server: PairedServer) -> ServerBadgeConnectionState {
-        HostSwitcherBadgeState.make(for: server, coordinator: coordinator)
+    /// Once per connection: a known value is never refetched.
+    func loadServerMetricsEnabled() async {
+        await coordinator.loadServerMetricsEnabledIfNeeded(for: current.id)
     }
 }
 

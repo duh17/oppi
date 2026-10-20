@@ -119,8 +119,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
     private var titleState: TitleState?
     private var composeHost: HostedContentController?
     private var composeParams: ComposeParams?
-    private var pillHost: HostedContentController?
-    private var pillParams: PillParams?
+    private var pill: InAppNowPlayingPillView?
     private var sidebarToggle: UIBarButtonItem?
 
     private lazy var rowActions = SessionListRowActions(
@@ -427,8 +426,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
         titleState = nil
         composeHost = nil
         composeParams = nil
-        pillHost = nil
-        pillParams = nil
+        pill = nil
         setToolbarItems([], animated: false)
         if navigationController?.topViewController === self {
             navigationController?.setToolbarHidden(true, animated: false)
@@ -1857,13 +1855,12 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
             composeHost?.view.alpha = state.isCreating ? 0.55 : 1
         }
         if !joinsRail, showsBottomItems, detail.toolbar.showsNowPlayingPill {
-            let params = PillParams(player: ObjectIdentifier(player), density: detail.toolbar.pillDensity)
-            if pillParams != params || pillHost == nil {
-                pillParams = params
-                pillHost = SessionListHostedChrome.nowPlayingPill(
-                    updating: pillHost,
-                    root: root,
+            if let pill {
+                pill.update(audioPlayer: player, density: detail.toolbar.pillDensity)
+            } else {
+                pill = InAppNowPlayingPillView(
                     audioPlayer: player,
+                    accessibilityPrefix: "sessionList.nowPlaying",
                     density: detail.toolbar.pillDensity
                 ) { [weak self] in self?.openNowPlaying() }
             }
@@ -1993,9 +1990,9 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
                 if let composeHost {
                     bottom.append(SessionListBarItems.hosted(composeHost))
                 }
-                if bars.showsNowPlaying, let pillHost {
+                if bars.showsNowPlaying, let pill {
                     bottom.append(bars.parksNowPlayingNextToCompose ? .fixedSpace() : .flexibleSpace())
-                    bottom.append(SessionListBarItems.hosted(pillHost))
+                    bottom.append(UIBarButtonItem(customView: pill))
                 }
                 bottom.append(.flexibleSpace())
                 bottom.append(SessionListBarItems.files(
@@ -2335,10 +2332,6 @@ private extension WorkspaceDetailViewController {
         let columnWidth: CGFloat
     }
 
-    struct PillParams: Equatable {
-        let player: ObjectIdentifier
-        let density: InAppNowPlayingChrome.PillDensity
-    }
 }
 
 /// The floating "Creating session..." / "Resuming session..." panel.

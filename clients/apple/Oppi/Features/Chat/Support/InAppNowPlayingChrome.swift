@@ -453,3 +453,133 @@ struct InAppNowPlayingPlayerScreen: View {
         }
     }
 }
+
+/// The session lists' now-playing pill in the bottom bar: play/pause (a
+/// cancel spinner while loading), the title that opens the full-screen
+/// player, and stop. Reads `AudioPlayerService` in `updateProperties()`, so
+/// it follows playback on its own. The chat footer still draws the SwiftUI
+/// `InAppNowPlayingPill` (`.chat` density, expand on tap).
+final class InAppNowPlayingPillView: UIView {
+    private var audioPlayer: AudioPlayerService
+    private let accessibilityPrefix: String
+    private let onOpen: () -> Void
+    private var density: InAppNowPlayingChrome.PillDensity
+
+    private let stack = UIStackView()
+    private let playPause = UIButton(type: .custom)
+    private let loading = AudioLoadingCancelView(style: AudioPlayerChromeStyle())
+    private let titleButton = UIButton(type: .custom)
+    private let titleWidth: NSLayoutConstraint
+    private let stop = UIButton(type: .custom)
+
+    init(
+        audioPlayer: AudioPlayerService,
+        accessibilityPrefix: String,
+        density: InAppNowPlayingChrome.PillDensity,
+        onOpen: @escaping () -> Void
+    ) {
+        self.audioPlayer = audioPlayer
+        self.accessibilityPrefix = accessibilityPrefix
+        self.density = density
+        self.onOpen = onOpen
+        titleWidth = titleButton.widthAnchor.constraint(lessThanOrEqualToConstant: density.titleMaxWidth)
+        super.init(frame: .zero)
+        accessibilityIdentifier = "\(accessibilityPrefix).pill"
+        accessibilityContainerType = .semanticGroup
+
+        playPause.accessibilityIdentifier = "\(accessibilityPrefix).playPause"
+        playPause.addAction(UIAction { [weak self] _ in self?.togglePlayback() }, for: .touchUpInside)
+        loading.translatesAutoresizingMaskIntoConstraints = false
+        playPause.addSubview(loading)
+
+        titleButton.contentHorizontalAlignment = .leading
+        titleButton.titleLabel?.lineBreakMode = .byTruncatingMiddle
+        titleButton.accessibilityHint = String(localized: "Opens the full-screen audio player")
+        titleButton.addAction(UIAction { [weak self] _ in self?.onOpen() }, for: .touchUpInside)
+        titleButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        stop.accessibilityLabel = String(localized: "Stop Playback")
+        stop.accessibilityIdentifier = "\(accessibilityPrefix).stop"
+        stop.addAction(UIAction { [weak self] _ in self?.audioPlayer.stop() }, for: .touchUpInside)
+
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        [playPause, titleButton, stop].forEach(stack.addArrangedSubview)
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            playPause.widthAnchor.constraint(equalToConstant: density.playPauseHitSize),
+            playPause.heightAnchor.constraint(equalToConstant: density.playPauseHitSize),
+            stop.widthAnchor.constraint(equalToConstant: density.stopHitSize),
+            stop.heightAnchor.constraint(equalToConstant: density.stopHitSize),
+            loading.centerXAnchor.constraint(equalTo: playPause.centerXAnchor),
+            loading.centerYAnchor.constraint(equalTo: playPause.centerYAnchor),
+            titleWidth,
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    /// The list's current player and density; also repaints for a theme change.
+    func update(audioPlayer: AudioPlayerService, density: InAppNowPlayingChrome.PillDensity) {
+        self.audioPlayer = audioPlayer
+        self.density = density
+        setNeedsUpdateProperties()
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        let style = AudioPlayerChromeStyle()
+        let action = AudioPlaybackControlAction.resolve(
+            isLoading: audioPlayer.loadingItemID != nil && audioPlayer.playingItemID == nil,
+            isActive: audioPlayer.playingItemID != nil,
+            isPaused: audioPlayer.isPaused
+        )
+        let title = audioPlayer.nowPlayingPresentation?.title ?? "Now Playing"
+
+        loading.apply(style)
+        loading.setVisible(action == .cancelLoading)
+        playPause.setImage(
+            action == .cancelLoading
+                ? nil
+                : AudioPlayerChromeStyle.symbol(action == .pause ? "pause.fill" : "play.fill", style: .body, weight: .semibold),
+            for: .normal
+        )
+        playPause.tintColor = style.foreground
+        playPause.accessibilityLabel = switch action {
+        case .cancelLoading: String(localized: "Cancel Loading")
+        case .pause: String(localized: "Pause")
+        case .resume, .start: String(localized: "Play")
+        }
+
+        titleButton.isHidden = !density.showsTitle
+        titleWidth.constant = density.titleMaxWidth
+        titleButton.setAttributedTitle(NSAttributedString(string: title, attributes: [
+            .font: AudioPlayerChromeStyle.font(.caption1, weight: .semibold),
+            .foregroundColor: style.foreground,
+        ]), for: .normal)
+        titleButton.accessibilityLabel = "Now Playing, \(title)"
+
+        stop.setImage(AudioPlayerChromeStyle.symbol("xmark", style: .body, weight: .semibold), for: .normal)
+        stop.tintColor = style.foreground
+    }
+
+    private func togglePlayback() {
+        switch AudioPlaybackControlAction.resolve(
+            isLoading: audioPlayer.loadingItemID != nil && audioPlayer.playingItemID == nil,
+            isActive: audioPlayer.playingItemID != nil,
+            isPaused: audioPlayer.isPaused
+        ) {
+        case .cancelLoading: audioPlayer.stop()
+        case .pause: audioPlayer.pause()
+        case .resume: audioPlayer.resume()
+        case .start: break
+        }
+    }
+}

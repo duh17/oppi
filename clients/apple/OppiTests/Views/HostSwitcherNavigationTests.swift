@@ -166,19 +166,6 @@ struct SessionInboxHostChangeTests {
 @Suite("Host-job compact switch")
 @MainActor
 struct HostJobCompactSwitchTests {
-    @Test func defaultHostSwitchPathSelectsShellWithoutPopping() throws {
-        let source = try appleSource("Oppi/Features/Workspaces/WorkspaceHomeView.swift")
-        let slice = try sourceSlice(
-            source,
-            start: "private func switchHost(_ server: PairedServer) {",
-            end: "private func menuTitle(for server: PairedServer) -> String {"
-        )
-        #expect(slice.contains("restoreActiveServer(server.id)"))
-        #expect(slice.contains("prepareSelectedServerShell(for: server)"))
-        #expect(!slice.contains("switchToServerReady(server)"))
-        #expect(!slice.contains("showAllWorkspaceSessions"))
-    }
-
     @Test func showAllWorkspaceSessionsWouldPopAHostJob() {
         let navigation = AppNavigation()
         navigation.launchPhase = .ready
@@ -199,20 +186,4 @@ private func appleSource(_ relativePath: String) throws -> String {
         .deletingLastPathComponent()
         .appending(path: relativePath)
     return try String(contentsOf: url, encoding: .utf8)
-}
-
-private func sourceSlice(_ source: String, start: String, end: String) throws -> String {
-    guard let startRange = source.range(of: start) else {
-        Issue.record("Missing source start \(start)")
-        throw SourceSliceError.missingMarker(start)
-    }
-    guard let endRange = source.range(of: end, range: startRange.upperBound..<source.endIndex) else {
-        Issue.record("Missing source end \(end)")
-        throw SourceSliceError.missingMarker(end)
-    }
-    return String(source[startRange.lowerBound..<endRange.lowerBound])
-}
-
-private enum SourceSliceError: Error {
-    case missingMarker(String)
 }

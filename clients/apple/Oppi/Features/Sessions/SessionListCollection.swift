@@ -528,9 +528,176 @@ enum SessionListBarItems {
         return railItem(item, priority: .overflowFirst)
     }
 
-    /// SwiftUI content (the Message capsule, the now-playing pill, the server
-    /// switcher) as a bar item.
+    /// The hosted Message capsule as a bar item (`SessionListHostedChrome`).
     static func hosted(_ host: UIViewController) -> UIBarButtonItem {
         UIBarButtonItem(customView: host.view)
+    }
+}
+
+// MARK: - Server switcher
+
+/// The session lists' server switcher: the current server's pill in the bar
+/// (on the rail, its status-colored symbol) with the switcher menu.
+/// `HostSwitcherModel` owns the rows and actions; the menu is built each time
+/// it opens, so it always lists current states.
+@MainActor
+final class SessionListServerSwitcher {
+    private(set) var model: HostSwitcherModel
+    private let pill = ServerSwitcherPillButton()
+    private(set) var item: UIBarButtonItem
+    /// The rail item and the bar pill are different items; a change makes a new switcher.
+    let joinsRail: Bool
+
+    init(model: HostSwitcherModel, joinsRail: Bool) {
+        self.model = model
+        self.joinsRail = joinsRail
+        let menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak pill] completion in
+            completion(pill?.menuElements() ?? [])
+        }])
+        if joinsRail {
+            item = UIBarButtonItem(image: nil, menu: menu)
+        } else {
+            item = UIBarButtonItem(customView: pill)
+            pill.menu = menu
+            pill.showsMenuAsPrimaryAction = true
+        }
+        update(model)
+    }
+
+    /// Repaints the pill from the model's current state. Call from `updateProperties()`.
+    func update(_ model: HostSwitcherModel) {
+        self.model = model
+        pill.model = model
+        let state = model.badgeState(for: model.current)
+        let colors = SessionRowStyle.for(ThemeRuntimeState.currentThemeID()).colors
+        if joinsRail {
+            item.image = UIImage(systemName: model.current.resolvedBadgeIcon.symbolName)
+            item.tintColor = state.uiColor(colors)
+            item.accessibilityLabel = model.accessibilityLabel
+            item.accessibilityValue = state.title
+        } else {
+            pill.apply(model, state: state, colors: colors)
+        }
+    }
+}
+
+/// The horizontal bar's pill: server badge, name, lock, a connection word
+/// while not connected, and the chevron. The bar draws the capsule.
+final class ServerSwitcherPillButton: UIButton {
+    var model: HostSwitcherModel?
+    private let stack = UIStackView()
+    private let badge = UIView()
+    private let badgeSymbol = UIImageView()
+    private let nameLabel = UILabel()
+    private let lockLabel = UILabel()
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let stateLabel = UILabel()
+    private let chevron = UIImageView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        badge.layer.cornerRadius = 10
+        badge.layer.borderWidth = 1
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badgeSymbol.translatesAutoresizingMaskIntoConstraints = false
+        badgeSymbol.contentMode = .center
+        badge.addSubview(badgeSymbol)
+        nameLabel.font = SessionRowText.font(.caption1, .semibold)
+        stateLabel.font = SessionRowText.font(.caption2, .semibold)
+        spinner.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
+        chevron.image = SessionRowText.symbolImage("chevron.down", style: .caption2, weight: .semibold)
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 6
+        stack.isUserInteractionEnabled = false
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        [badge, nameLabel, lockLabel, spinner, stateLabel, chevron].forEach(stack.addArrangedSubview)
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            badge.widthAnchor.constraint(equalToConstant: 20),
+            badge.heightAnchor.constraint(equalToConstant: 20),
+            badgeSymbol.centerXAnchor.constraint(equalTo: badge.centerXAnchor),
+            badgeSymbol.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+        for subview in stack.arrangedSubviews {
+            subview.isAccessibilityElement = false
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(_ model: HostSwitcherModel, state: ServerBadgeConnectionState, colors: ComposerThemeColors) {
+        let tint = state.uiColor(colors)
+        let server = model.current
+        badge.backgroundColor = tint.withAlphaComponent(0.16)
+        badge.layer.borderColor = tint.withAlphaComponent(0.5).cgColor
+        let symbolName = UIImage(systemName: server.resolvedBadgeIcon.symbolName) == nil
+            ? "desktopcomputer" : server.resolvedBadgeIcon.symbolName
+        badgeSymbol.image = UIImage(
+            systemName: symbolName,
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 10, weight: .bold)
+                .applying(UIImage.SymbolConfiguration(hierarchicalColor: tint))
+        )
+        nameLabel.text = server.name
+        nameLabel.textColor = colors.fg
+        SessionRowText.setLockBadge(model.currentLockBadge, on: lockLabel, color: colors.comment)
+        let connected = state == .connected
+        let busy = state == .connecting || state == .recovering
+        spinner.isHidden = connected || !busy
+        spinner.color = tint
+        if spinner.isHidden { spinner.stopAnimating() } else { spinner.startAnimating() }
+        stateLabel.isHidden = connected
+        stateLabel.text = state.title
+        stateLabel.textColor = tint
+        chevron.tintColor = colors.comment
+        // The menu's glyphs take the app tint, as the SwiftUI menu's did.
+        tintColor = colors.blue
+        accessibilityLabel = model.accessibilityLabel
+        accessibilityValue = state.title
+    }
+
+    /// Servers, the Connection row, then the destinations.
+    func menuElements() -> [UIMenuElement] {
+        guard let model else { return [] }
+        let servers: [UIMenuElement] = model.servers.map { server in
+            let action = UIAction(title: model.menuTitle(for: server), image: UIImage(systemName: model.menuImage(for: server))) { _ in
+                model.switchHost(server)
+            }
+            action.accessibilityValue = model.menuAccessibilityValue(for: server)
+            return action
+        }
+        let connection = model.connection
+        let connectionRow = UIAction(title: connection.title, image: UIImage(systemName: connection.systemImage)) { _ in
+            model.retryConnection()
+        }
+        let destinations: [UIMenuElement] = model.destinations.map { item in
+            let action = UIAction(title: item.menuTitle, image: UIImage(systemName: item.systemImage)) { _ in
+                model.open(item)
+            }
+            action.accessibilityIdentifier = item.accessibilityIdentifier
+            return action
+        }
+        return [
+            UIMenu(options: .displayInline, children: servers),
+            UIMenu(title: String(localized: "Connection"), options: .displayInline, children: [connectionRow]),
+            UIMenu(options: .displayInline, children: destinations),
+        ]
+    }
+}
+
+extension ServerBadgeConnectionState {
+    /// `tintColor` in UIKit.
+    func uiColor(_ colors: ComposerThemeColors) -> UIColor {
+        switch tintColor.role {
+        case .green: colors.green
+        case .blue: colors.blue
+        case .orange: colors.orange
+        default: colors.red
+        }
     }
 }

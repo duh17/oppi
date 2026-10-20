@@ -77,10 +77,9 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
     private var barState: BarState?
     private var composeHost: HostedContentController?
     private var composeParams: ComposeParams?
-    private var pillHost: HostedContentController?
-    private var pillParams: PillParams?
-    private var switcherHost: HostedContentController?
-    private var switcherParams: SwitcherParams?
+    private var pill: InAppNowPlayingPillView?
+    private var switcher: SessionListServerSwitcher?
+    private var switcherServerId: String?
     private var sidebarToggle: UIBarButtonItem?
 
     private lazy var rowActions = SessionListRowActions(
@@ -1171,27 +1170,33 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             }
         }
         if !joinsRail, state.toolbar.showsNowPlayingPill, let player {
-            let params = PillParams(player: ObjectIdentifier(player), density: state.toolbar.pillDensity)
-            if pillParams != params || pillHost == nil {
-                pillParams = params
-                pillHost = SessionListHostedChrome.nowPlayingPill(
-                    updating: pillHost,
-                    root: root,
+            if let pill {
+                pill.update(audioPlayer: player, density: state.toolbar.pillDensity)
+            } else {
+                pill = InAppNowPlayingPillView(
                     audioPlayer: player,
+                    accessibilityPrefix: "sessionList.nowPlaying",
                     density: state.toolbar.pillDensity
                 ) { [weak self] in self?.openNowPlaying() }
             }
         }
         if let server = state.selectedServer {
-            let params = SwitcherParams(server: server, fitsVerticalRail: joinsRail)
-            if switcherParams != params || switcherHost == nil {
-                switcherParams = params
-                switcherHost = SessionListHostedChrome.serverSwitcher(
-                    updating: switcherHost,
-                    root: root,
-                    current: server,
-                    fitsVerticalRail: joinsRail
-                ) { [weak self] _ in self?.switchVisibleServer() }
+            let model = HostSwitcherModel(
+                coordinator: coordinator,
+                serverStore: coordinator.serverStore,
+                navigation: navigation,
+                current: server,
+                destination: .inbox
+            ) { [weak self] _ in self?.switchVisibleServer() }
+            if let switcher, switcher.joinsRail == joinsRail {
+                switcher.update(model)
+            } else {
+                switcher = SessionListServerSwitcher(model: model, joinsRail: joinsRail)
+            }
+            if switcherServerId != server.id {
+                switcherServerId = server.id
+                // Once per connection: a known value is never refetched.
+                Task { await model.loadServerMetricsEnabled() }
             }
         }
 
@@ -1237,8 +1242,8 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
                 onStart: { [weak self] in self?.startQuickSession(dictate: false) },
                 onDictate: { [weak self] in self?.startQuickSession(dictate: true) }
             ))
-            if bars.hasServer, let switcherHost {
-                pinned.append(SessionListBarItems.railItem(SessionListBarItems.hosted(switcherHost), priority: .keep))
+            if bars.hasServer, let switcher {
+                pinned.append(SessionListBarItems.railItem(switcher.item, priority: .keep))
             }
             if bars.showsNowPlaying {
                 trailing.append(SessionListBarItems.railNowPlaying(tint: railTint) { [weak self] in self?.openNowPlaying() })
@@ -1257,15 +1262,15 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             if bars.showsSidebarOpen {
                 leading.append(SessionListBarItems.sidebarOpen(joinsRail: false, tint: tint, action: openSidebar))
             }
-            if bars.hasServer, let switcherHost {
-                trailing.append(SessionListBarItems.hosted(switcherHost))
+            if bars.hasServer, let switcher {
+                trailing.append(switcher.item)
             }
             if let composeHost {
                 bottom.append(SessionListBarItems.hosted(composeHost))
             }
-            if bars.showsNowPlaying, let pillHost {
+            if bars.showsNowPlaying, let pill {
                 bottom.append(bars.parksNowPlayingNextToCompose ? .fixedSpace() : .flexibleSpace())
-                bottom.append(SessionListBarItems.hosted(pillHost))
+                bottom.append(UIBarButtonItem(customView: pill))
             }
             bottom.append(.flexibleSpace())
             bottom.append(SessionListBarItems.files(
@@ -1424,15 +1429,6 @@ private extension SessionInboxViewController {
         let columnWidth: CGFloat
     }
 
-    struct PillParams: Equatable {
-        let player: ObjectIdentifier
-        let density: InAppNowPlayingChrome.PillDensity
-    }
-
-    struct SwitcherParams: Equatable {
-        let server: PairedServer
-        let fitsVerticalRail: Bool
-    }
 }
 
 enum SessionInboxTransportAvailability {
