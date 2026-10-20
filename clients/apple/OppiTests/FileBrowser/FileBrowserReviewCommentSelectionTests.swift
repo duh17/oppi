@@ -274,14 +274,14 @@ struct FileBrowserReviewCommentSelectionTests {
     @Test(arguments: [FileBrowserContentChromeMode.pushed, .treePane])
     func textMountsFullScreenCodeViewController(chromeMode: FileBrowserContentChromeMode) async throws {
         let client = FileBrowserTextMountURLProtocol.makeClient()
-        let host = UIHostingController(rootView:
-            FileBrowserContentView(
+        let host = FileViewerViewController(
+            configuration: .init(
                 workspaceId: FileBrowserTextMountURLProtocol.workspaceId,
                 filePath: FileBrowserTextMountURLProtocol.filePath,
                 fileName: FileBrowserTextMountURLProtocol.fileName,
                 chromeMode: chromeMode
-            )
-            .environment(\.apiClient, client)
+            ),
+            services: .init(apiClient: client)
         )
         host.loadViewIfNeeded()
         host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -303,19 +303,146 @@ struct FileBrowserReviewCommentSelectionTests {
         })
     }
 
+    /// A text file over 1 MB with a known size (a Files listing) asks first:
+    /// the warning and Load File are on screen, nothing is read, and Load
+    /// File shows the text.
+    @Test(arguments: [FileBrowserContentChromeMode.pushed, .treePane])
+    func largeTextFileWarnsThenLoadsOnRequest(chromeMode: FileBrowserContentChromeMode) async throws {
+        let client = FileBrowserTextMountURLProtocol.makeClient()
+        let host = FileViewerViewController(
+            configuration: .init(
+                workspaceId: FileBrowserTextMountURLProtocol.workspaceId,
+                filePath: FileBrowserTextMountURLProtocol.filePath,
+                fileName: FileBrowserTextMountURLProtocol.fileName,
+                fileSize: 2 * 1_024 * 1_024,
+                chromeMode: chromeMode
+            ),
+            services: .init(apiClient: client)
+        )
+        host.loadViewIfNeeded()
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        var loadButton: UIButton?
+        let warned = await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.view.layoutIfNeeded()
+            loadButton = button(titled: "Load File", in: host.view)
+            return loadButton != nil
+        }
+        #expect(warned, "a large text file showed no Load File")
+        #expect(firstFullScreenCodeViewController(in: host) == nil, "a large text file loaded before asking")
+        let load = try #require(loadButton)
+        #expect(load.window === window)
+        #expect(load.bounds.width > 0 && load.bounds.height > 0, "Load File has no size: \(load.frame)")
+
+        load.sendActions(for: .primaryActionTriggered)
+        let loaded = await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            guard let reader = firstFullScreenCodeViewController(in: host) else { return false }
+            reader.view.layoutIfNeeded()
+            return timelineAllTextViews(in: reader.view).contains {
+                timelineRenderedText(of: $0).contains(FileBrowserTextMountURLProtocol.needle)
+            }
+        }
+        #expect(loaded, "Load File did not show the file's text")
+        #expect(button(titled: "Load File", in: host.view) == nil)
+    }
+
+    /// A linked file in a locked scope shows the lock cover alone: no viewer
+    /// is built and nothing from the file reaches the bar.
+    @Test func lockedLinkedFileShowsOnlyTheCover() async throws {
+        let serverId = "sha256:linked-locked-\(UUID().uuidString)"
+        let workspaceId = FileBrowserTextMountURLProtocol.workspaceId
+        let root = try makeTestAppRoot(readyServerId: serverId, apiClient: FileBrowserTextMountURLProtocol.makeClient())
+        ScopedLockService.shared.lock(.workspace(serverId: serverId, workspaceId: workspaceId))
+        defer { ScopedLockService.shared.forgetServer(serverId) }
+        let route = linkedFileRoute(serverId: serverId, workspaceId: workspaceId, root: root)
+        let navigation = UINavigationController(rootViewController: route)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = navigation
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let covered = await waitForMainActorCondition(timeout: .seconds(5)) {
+            navigation.view.layoutIfNeeded()
+            return route.children.contains { $0 is HostedContentController }
+        }
+        #expect(covered, "a locked linked file showed no lock cover")
+        let stayedLocked = await waitForMainActorConditionToStayTrue(for: .seconds(1)) {
+            navigation.view.layoutIfNeeded()
+            return !route.children.contains { $0 is FileViewerViewController }
+        }
+        #expect(stayedLocked, "a locked linked file built its viewer")
+        #expect(route.navigationItem.rightBarButtonItems?.isEmpty ?? true)
+        #expect(!navigation.isNavigationBarHidden, "the lock cover lost the stack's bar")
+    }
+
+    /// The lock engaging over an open linked file removes its viewer and its
+    /// bar items, and brings back the stack's bar that pushed text had hidden,
+    /// so the cover keeps its title and Back.
+    @Test func lockEngagingOverLinkedFileRemovesTheViewerAndItsBar() async throws {
+        let serverId = "sha256:linked-locking-\(UUID().uuidString)"
+        let workspaceId = FileBrowserTextMountURLProtocol.workspaceId
+        let root = try makeTestAppRoot(readyServerId: serverId, apiClient: FileBrowserTextMountURLProtocol.makeClient())
+        defer { ScopedLockService.shared.forgetServer(serverId) }
+        let route = linkedFileRoute(serverId: serverId, workspaceId: workspaceId, root: root)
+        let navigation = UINavigationController(rootViewController: route)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = navigation
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let reading = await waitForMainActorCondition(timeout: .seconds(5)) {
+            navigation.view.layoutIfNeeded()
+            return firstFullScreenCodeViewController(in: route) != nil && navigation.isNavigationBarHidden
+        }
+        #expect(reading, "the linked file's pushed text did not take over the bar")
+        #expect(route.navigationItem.title == FileBrowserTextMountURLProtocol.fileName)
+
+        ScopedLockService.shared.lock(.workspace(serverId: serverId, workspaceId: workspaceId))
+        let locked = await waitForMainActorCondition(timeout: .seconds(5)) {
+            navigation.view.layoutIfNeeded()
+            return route.children.contains { $0 is HostedContentController }
+                && !route.children.contains { $0 is FileViewerViewController }
+        }
+        #expect(locked, "locking left the viewer mounted or showed no cover")
+        #expect(route.navigationItem.title == nil, "the cover kept the file's title")
+        #expect(route.navigationItem.rightBarButtonItems?.isEmpty ?? true, "the cover kept the file's bar items")
+        #expect(!navigation.isNavigationBarHidden, "the cover has no bar or Back")
+    }
+
+    private func linkedFileRoute(serverId: String, workspaceId: String, root: AppRootEnvironment) -> WorkspaceLinkedFileViewController {
+        WorkspaceLinkedFileViewController(
+            target: WorkspaceLinkedFileNavTarget(
+                serverId: serverId,
+                workspaceId: workspaceId,
+                kind: .workspaceFile(
+                    path: FileBrowserTextMountURLProtocol.filePath,
+                    fileName: FileBrowserTextMountURLProtocol.fileName
+                )
+            ),
+            placement: .pushed,
+            root: root
+        )
+    }
+
     /// AVKit fullscreen from an inline Markdown video is a UIKit full-screen
-    /// modal over this view. SwiftUI reports disappear/appear around it, and a
+    /// modal over this viewer. It disappears and appears around it, and a
     /// same-path reload rebuilt the reader, replacing every inline player.
     @Test func textReaderSurvivesFullScreenModalCoverWithoutRemount() async throws {
         let client = FileBrowserTextMountURLProtocol.makeClient()
-        let host = UIHostingController(rootView:
-            FileBrowserContentView(
+        let host = FileViewerViewController(
+            configuration: .init(
                 workspaceId: FileBrowserTextMountURLProtocol.workspaceId,
                 filePath: FileBrowserTextMountURLProtocol.filePath,
                 fileName: FileBrowserTextMountURLProtocol.fileName,
                 chromeMode: .pushed
-            )
-            .environment(\.apiClient, client)
+            ),
+            services: .init(apiClient: client)
         )
         host.loadViewIfNeeded()
         host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -358,14 +485,14 @@ struct FileBrowserReviewCommentSelectionTests {
     @Test func textReaderShowsChangedFileAfterFullScreenModalCover() async throws {
         let response = FileBrowserMutableTextURLProtocol.Response(body: "file-browser-revalidate-before")
         let client = FileBrowserMutableTextURLProtocol.makeClient(response: response)
-        let host = UIHostingController(rootView:
-            FileBrowserContentView(
+        let host = FileViewerViewController(
+            configuration: .init(
                 workspaceId: FileBrowserMutableTextURLProtocol.workspaceId,
                 filePath: FileBrowserMutableTextURLProtocol.filePath,
                 fileName: FileBrowserMutableTextURLProtocol.filePath,
                 chromeMode: .pushed
-            )
-            .environment(\.apiClient, client)
+            ),
+            services: .init(apiClient: client)
         )
         host.loadViewIfNeeded()
         host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -403,7 +530,7 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(refreshed, "returning to the file view kept stale text after the file changed")
     }
 
-    /// Exercise the real SwiftUI task on re-show, not just status classification.
+    /// Exercise the real re-show read, not just status classification.
     @Test(arguments: [401, 403, 404], [false, true])
     func textReaderReplacesStaleTextAfterDefinitiveFailure(status: Int, coded: Bool) async throws {
         let message = status == 404 ? "File no longer exists" : "File access denied"
@@ -421,14 +548,14 @@ struct FileBrowserReviewCommentSelectionTests {
         let text = "file-browser-revalidate-kept-text"
         let response = FileBrowserMutableTextURLProtocol.Response(body: text)
         let client = FileBrowserMutableTextURLProtocol.makeClient(response: response)
-        let host = UIHostingController(rootView:
-            FileBrowserContentView(
+        let host = FileViewerViewController(
+            configuration: .init(
                 workspaceId: FileBrowserMutableTextURLProtocol.workspaceId,
                 filePath: FileBrowserMutableTextURLProtocol.filePath,
                 fileName: FileBrowserMutableTextURLProtocol.filePath,
                 chromeMode: .pushed
-            )
-            .environment(\.apiClient, client)
+            ),
+            services: .init(apiClient: client)
         )
         host.loadViewIfNeeded()
         host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -550,13 +677,13 @@ struct FileBrowserReviewCommentSelectionTests {
 
     @Test func fileBrowserBackSwipePolicyYieldsOwnershipToModalHost() {
         #expect(
-            FileBrowserContentView.shouldInstallHorizontalBackSwipe(
+            FileBrowserContentRenderingPolicy.shouldInstallHorizontalBackSwipe(
                 allowsHorizontalBackSwipe: false,
                 parentOwnsBackSwipe: true
             ) == false
         )
         #expect(
-            FileBrowserContentView.shouldInstallHorizontalBackSwipe(
+            FileBrowserContentRenderingPolicy.shouldInstallHorizontalBackSwipe(
                 allowsHorizontalBackSwipe: true,
                 parentOwnsBackSwipe: true
             ) == true
@@ -613,11 +740,12 @@ struct FileBrowserReviewCommentSelectionTests {
         ))
         #expect(controlTarget.workspaceId.isEmpty)
         #expect(controlTarget.controlSessionId == "control-session")
-        let controlContent = WorkspaceLinkedFileDestinationView(target: controlTarget)
-            .debugFileContentForTesting(
-                store: .constant(FullScreenMarkdownViewportRestoreState())
-            )
-        #expect(controlContent.debugControlSessionIdForTesting == "control-session")
+        let controlContent = WorkspaceLinkedFileViewController.viewerConfiguration(
+            for: controlTarget,
+            workspaceRuntime: nil,
+            addToChatDestination: nil
+        )
+        #expect(controlContent.controlSessionId == "control-session")
         #expect(ChatViewController.currentToolFileTarget(
             serverId: "server-origin",
             routeScope: nil,
@@ -626,7 +754,7 @@ struct FileBrowserReviewCommentSelectionTests {
         ) == nil)
     }
 
-    @Test func linkedFileConstructionPreservesPerKindContextAndRestoreBinding() throws {
+    @Test func linkedFileConstructionPreservesPerKindContext() throws {
         let navigation = FileBrowserNavigationContext(files: [
             FileBrowserSelection(path: "docs/current.md", name: "current.md", size: nil),
             FileBrowserSelection(path: "docs/child.md", name: "child.md", size: nil),
@@ -642,20 +770,12 @@ struct FileBrowserReviewCommentSelectionTests {
                 kind: kind, navigationContext: navigation, lineAnchor: anchor,
                 sourceSessionId: "review-session", controlSessionId: "control-session"
             )
-            var restore = FullScreenMarkdownViewportRestoreState()
-            let binding = Binding(get: { restore }, set: { restore = $0 })
-            let destination = WorkspaceLinkedFileDestinationView(target: target)
-            var anchorNotice: String?
-            let content = destination.debugFileContentForTesting(
-                workspaceRuntime: .sandbox, onLineAnchorNotice: { anchorNotice = $0 }, store: binding
+            let content = WorkspaceLinkedFileViewController.viewerConfiguration(
+                for: target,
+                workspaceRuntime: .sandbox,
+                addToChatDestination: nil
             )
             #expect(content.workspaceRuntime == (content.source == .hostFile ? nil : .sandbox))
-            content.onLineAnchorNotice?("Line out of range")
-            #expect(anchorNotice == "Line out of range")
-            guard case .connecting = destination.debugConnectionStateForTesting else {
-                Issue.record("Linked reader must start connecting")
-                return
-            }
             #expect(content.serverId == "origin-server")
             #expect(content.workspaceId == "origin-workspace")
             #expect(content.filePath == "docs/current.md")
@@ -682,9 +802,6 @@ struct FileBrowserReviewCommentSelectionTests {
                 #expect(content.navigationContext == nil)
                 #expect(content.controlSessionId == "control-session")
             }
-            let store = try #require(content.markdownViewportRestore)
-            store.wrappedValue[content.filePath] = .top
-            #expect(restore[content.filePath] == .top)
         }
     }
 
@@ -722,17 +839,19 @@ struct FileBrowserReviewCommentSelectionTests {
             path: "/workspace/docs/current.md",
             sourceSessionId: "session-origin"
         )
-        let destination = WorkspaceLinkedFileDestinationView(target: target)
-        let store = Binding.constant(FullScreenMarkdownViewportRestoreState())
-        let content = destination.debugFileContentForTesting(store: store)
+        let content = WorkspaceLinkedFileViewController.viewerConfiguration(
+            for: target,
+            workspaceRuntime: nil,
+            addToChatDestination: nil
+        )
 
         #expect(target.serverId == "server-origin")
         #expect(target.workspaceId == "workspace-origin")
         #expect(target.worktreeId == nil)
         #expect(target.sourceSessionId == "session-origin")
-        #expect(content.debugServerIdForTesting == "server-origin")
-        #expect(content.debugSessionIdForTesting == "session-origin")
-        #expect(content.debugSourceForTesting == .sessionFile(sessionId: "session-origin"))
+        #expect(content.serverId == "server-origin")
+        #expect(content.sessionId == "session-origin")
+        #expect(content.source == .sessionFile(sessionId: "session-origin"))
         guard case .sessionFile(let path, let fileName, let sessionId) = target.kind else {
             Issue.record("Expected exact session file target")
             return
@@ -778,7 +897,7 @@ struct FileBrowserReviewCommentSelectionTests {
         ReviewCommentSelectionActiveRouter.register(router, sessionId: "session-origin")
 
         let scope = try #require(
-            WorkspaceLinkedFileDestinationView.reviewCommentSelectionScope(
+            WorkspaceLinkedFileViewController.reviewCommentSelectionScope(
                 sourceSessionId: "session-origin"
             )
         )
@@ -795,10 +914,10 @@ struct FileBrowserReviewCommentSelectionTests {
         )
 
         #expect(
-            WorkspaceLinkedFileDestinationView.reviewCommentSelectionScope(sourceSessionId: nil) == nil
+            WorkspaceLinkedFileViewController.reviewCommentSelectionScope(sourceSessionId: nil) == nil
         )
         #expect(
-            WorkspaceLinkedFileDestinationView.reviewCommentSelectionScope(
+            WorkspaceLinkedFileViewController.reviewCommentSelectionScope(
                 sourceSessionId: "missing-session"
             ) == nil
         )
@@ -824,7 +943,7 @@ struct FileBrowserReviewCommentSelectionTests {
         ReviewCommentSelectionActiveRouter.register(chatViewRouter, sessionId: "session-origin")
 
         let scope = try #require(
-            WorkspaceLinkedFileDestinationView.reviewCommentSelectionScope(
+            WorkspaceLinkedFileViewController.reviewCommentSelectionScope(
                 sourceSessionId: "session-origin"
             )
         )
@@ -891,7 +1010,7 @@ struct FileBrowserReviewCommentSelectionTests {
         )
         ReviewCommentSelectionActiveRouter.register(router, sessionId: "session-origin")
         let scope = try #require(
-            WorkspaceLinkedFileDestinationView.reviewCommentSelectionScope(
+            WorkspaceLinkedFileViewController.reviewCommentSelectionScope(
                 sourceSessionId: "session-origin"
             )
         )
@@ -947,19 +1066,19 @@ struct FileBrowserReviewCommentSelectionTests {
         let current = ComposerCanvasDestination(sessionId: "session-origin") { _, _ in true }
 
         #expect(
-            WorkspaceLinkedFileDestinationView.capturedAddToChatDestination(
+            WorkspaceLinkedFileViewController.capturedAddToChatDestination(
                 sourceSessionId: "session-origin",
                 current: current
             )?.sessionId == "session-origin"
         )
         #expect(
-            WorkspaceLinkedFileDestinationView.capturedAddToChatDestination(
+            WorkspaceLinkedFileViewController.capturedAddToChatDestination(
                 sourceSessionId: "other-session",
                 current: current
             ) == nil
         )
         #expect(
-            WorkspaceLinkedFileDestinationView.capturedAddToChatDestination(
+            WorkspaceLinkedFileViewController.capturedAddToChatDestination(
                 sourceSessionId: nil,
                 current: current
             ) == nil
@@ -979,7 +1098,7 @@ struct FileBrowserReviewCommentSelectionTests {
             ComposerCanvasDestination(sessionId: "other-session") { _, _ in true }
         )
         #expect(
-            WorkspaceLinkedFileDestinationView.capturedAddToChatDestination(
+            WorkspaceLinkedFileViewController.capturedAddToChatDestination(
                 sourceSessionId: "session-origin",
                 current: ComposerCanvasActiveDestination.current
             ) == nil
@@ -987,7 +1106,7 @@ struct FileBrowserReviewCommentSelectionTests {
 
         ComposerCanvasActiveDestination.push(source)
         let captured = try #require(
-            WorkspaceLinkedFileDestinationView.capturedAddToChatDestination(
+            WorkspaceLinkedFileViewController.capturedAddToChatDestination(
                 sourceSessionId: "session-origin",
                 current: ComposerCanvasActiveDestination.current
             )
@@ -1041,7 +1160,7 @@ struct FileBrowserReviewCommentSelectionTests {
         }
         ComposerCanvasActiveDestination.push(source)
         let captured = try #require(
-            WorkspaceLinkedFileDestinationView.capturedAddToChatDestination(
+            WorkspaceLinkedFileViewController.capturedAddToChatDestination(
                 sourceSessionId: "session-origin",
                 current: ComposerCanvasActiveDestination.current
             )
@@ -1168,6 +1287,17 @@ struct FileBrowserReviewCommentSelectionTests {
 
         // Returning nil from UITextView.editMenuForTextIn suppresses the menu entirely.
         #expect(timelineActionTitles(in: menu) == ["Copy"])
+    }
+
+    /// A button in `view`'s tree with `title`, as a tap would find it.
+    private func button(titled title: String, in view: UIView) -> UIButton? {
+        if let button = view as? UIButton, button.configuration?.title == title || button.currentTitle == title {
+            return button
+        }
+        for subview in view.subviews {
+            if let found = button(titled: title, in: subview) { return found }
+        }
+        return nil
     }
 
     private func rootPanGestureCount(on controller: UIViewController) -> Int {

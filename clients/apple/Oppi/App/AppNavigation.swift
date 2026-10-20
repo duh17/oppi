@@ -613,7 +613,7 @@ final class AppNavigation {
         workspace: WorkspaceNavTarget? = nil,
         sourceSession: WorkspaceSessionNavTarget?
     ) {
-        guard scopedLockAllows(WorkspaceLinkedFileDestinationView.lockTarget(for: target), retry: {
+        guard scopedLockAllows(WorkspaceLinkedFileViewController.lockTarget(for: target), retry: {
             self.openReferencedWorkspaceLinkedFile(target, workspace: workspace, sourceSession: sourceSession)
         }) else { return }
         selectedTab = .workspaces
@@ -864,7 +864,7 @@ final class AppNavigation {
     }
 
     func openWorkspaceLinkedFile(_ target: WorkspaceLinkedFileNavTarget, workspace: WorkspaceNavTarget? = nil) {
-        guard scopedLockAllows(WorkspaceLinkedFileDestinationView.lockTarget(for: target), retry: {
+        guard scopedLockAllows(WorkspaceLinkedFileViewController.lockTarget(for: target), retry: {
             self.openWorkspaceLinkedFile(target, workspace: workspace)
         }) else { return }
         selectedTab = .workspaces

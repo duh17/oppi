@@ -879,7 +879,7 @@ final class OppiApp {
             connection.extensionToast = "Could not open this session file"
             return
         }
-        guard await ScopedLockService.shared.authorize(WorkspaceLinkedFileDestinationView.lockTarget(for: target)) else {
+        guard await ScopedLockService.shared.authorize(WorkspaceLinkedFileViewController.lockTarget(for: target)) else {
             return
         }
         guard await coordinator.switchToServerReady(target.serverId) else {
@@ -1329,7 +1329,7 @@ final class OppiApp {
             return false
         }
         guard await ScopedLockService.shared.authorize(
-            WorkspaceLinkedFileDestinationView.lockTarget(for: resolution.target)
+            WorkspaceLinkedFileViewController.lockTarget(for: resolution.target)
         ) else { return true }
         guard await coordinator.switchToServerReady(resolution.target.serverId) else {
             connection.extensionToast = "Could not open the server for this file link"

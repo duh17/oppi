@@ -1017,20 +1017,22 @@ private final class TreePaneEditURLProtocol: URLProtocol, @unchecked Sendable {
 @Suite("Workspace file edit entry")
 @MainActor
 struct WorkspaceFileEditEntryTests {
-    /// The tree pane hides the reader's UIKit bar, so Edit must be a SwiftUI
-    /// toolbar item. The editor mount and autosave in this layout are covered
-    /// by the iPad landscape E2E.
+    /// The tree pane hides the reader's own bar, so Edit must be a bar item.
+    /// The editor mount and autosave in this layout are covered by the iPad
+    /// landscape E2E.
     @Test func treePaneTextWithEditBaseShowsToolbarEdit() async throws {
         let client = TreePaneEditURLProtocol.makeClient()
         _ = try await client.serverInfo()
-        let content = UIHostingController(rootView: FileBrowserContentView(
-            workspaceId: "w-tree",
-            serverId: "srv-tree-\(UUID().uuidString)",
-            filePath: "notes.md",
-            fileName: "notes.md",
-            chromeMode: .treePane
+        let content = FileViewerViewController(
+            configuration: .init(
+                workspaceId: "w-tree",
+                serverId: "srv-tree-\(UUID().uuidString)",
+                filePath: "notes.md",
+                fileName: "notes.md",
+                chromeMode: .treePane
+            ),
+            services: .init(apiClient: client)
         )
-        .environment(\.apiClient, client))
         let host = UINavigationController(rootViewController: content)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
         window.rootViewController = host
@@ -1049,14 +1051,13 @@ struct WorkspaceFileEditEntryTests {
         #expect(Self.activate(item))
         let editing = await waitForMainActorCondition(timeout: .seconds(5)) {
             host.view.layoutIfNeeded()
-            // Done is a role button with no bridged title; the Source/Preview toggle only exists while editing.
+            // The Source/Preview toggle only exists while editing.
             return Self.barButtonItem(titled: "Preview", in: content) != nil
                 && Self.barButtonItem(titled: "Edit", in: content) == nil
         }
         #expect(editing, "Edit did not switch to the editing toolbar; items: \(Self.titles(in: content))")
     }
 
-    /// SwiftUI hosts toolbar buttons as custom views titled by their label.
     private static func barButtonItem(titled title: String, in controller: UIViewController) -> UIBarButtonItem? {
         barButtonItems(in: controller).first { $0.title == title }
     }
@@ -1070,9 +1071,10 @@ struct WorkspaceFileEditEntryTests {
         barButtonItems(in: controller).map { $0.title ?? "-" }.joined(separator: ", ")
     }
 
-    /// SwiftUI wires a hosted toolbar button's tap as the item's target-action.
+    /// Runs the item's primary action, as a tap does.
     private static func activate(_ item: UIBarButtonItem) -> Bool {
-        guard let action = item.action else { return false }
-        return UIApplication.shared.sendAction(action, to: item.target, from: item, for: nil)
+        guard let action = item.primaryAction else { return false }
+        UIButton().sendAction(action)
+        return true
     }
 }

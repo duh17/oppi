@@ -1725,16 +1725,18 @@ struct APIClientTests {
     @Test func currentSessionReaderProvidersNeverUseHostWhenRuntimeMetadataIsMissing() async throws {
         let client = makeClient()
         defer { cleanup() }
-        let view = FileBrowserContentView(
-            workspaceId: "workspace-origin",
-            serverId: "server-origin",
-            filePath: "/workspace/project/docs/current.md",
-            fileName: "current.md",
+        let access = FileViewerFileAccess(
             source: .sessionFile(sessionId: "session-origin"),
+            serverId: "server-origin",
+            workspaceId: "workspace-origin",
+            worktreeId: nil,
             sessionId: "session-origin",
+            controlSessionId: nil,
             workspaceRuntime: nil
         )
-        guard case .markdown(_, _, let reader, _, _) = view.debugFullScreenContentForTesting(text: "# Current", api: client) else {
+        guard case .markdown(_, _, let reader, _, _) = access.fullScreenContent(
+            text: "# Current", sourcePath: "/workspace/project/docs/current.md", api: client, audioPlayer: nil
+        ) else {
             Issue.record("Expected current-file Markdown reader context")
             return
         }
@@ -1803,12 +1805,14 @@ struct APIClientTests {
             .init(workspace: ""),
         ]
         for item in cases {
-            let view = FileBrowserContentView(
-                workspaceId: item.workspace, worktreeId: "origin-worktree", serverId: "origin-server",
-                filePath: "docs/current.md", fileName: "current.md", source: item.source,
-                sessionId: item.session, controlSessionId: "control-session", workspaceRuntime: item.runtime
+            let access = FileViewerFileAccess(
+                source: item.source, serverId: "origin-server", workspaceId: item.workspace,
+                worktreeId: "origin-worktree", sessionId: item.session,
+                controlSessionId: "control-session", workspaceRuntime: item.runtime
             )
-            guard case .markdown(_, _, let reader, _, _) = view.debugFullScreenContentForTesting(text: "# Current", api: client) else {
+            guard case .markdown(_, _, let reader, _, _) = access.fullScreenContent(
+                text: "# Current", sourcePath: "docs/current.md", api: client, audioPlayer: nil
+            ) else {
                 Issue.record("Expected Markdown reader context")
                 return
             }

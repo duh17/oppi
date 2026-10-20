@@ -47,11 +47,12 @@ func makeTestSession(
 /// throwaway file unless the test passes its own store.
 @MainActor
 func makeTestAppRoot(
+    coordinator: ConnectionCoordinator? = nil,
     themeStore: ThemeStore = ThemeStore(),
     composerDraftStore: ComposerDraftStore? = nil
 ) -> AppRootEnvironment {
     AppRootEnvironment(
-        coordinator: ConnectionCoordinator(serverStore: ServerStore()),
+        coordinator: coordinator ?? ConnectionCoordinator(serverStore: ServerStore()),
         navigation: AppNavigation(),
         themeStore: themeStore,
         quickCommentTemplateStore: QuickCommentTemplateStore(templates: []),
@@ -63,6 +64,28 @@ func makeTestAppRoot(
         chatReaderPayloadStore: ChatReaderPayloadStore(),
         sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
     )
+}
+
+/// App root services whose coordinator has `serverId` paired and active, so a
+/// screen's server switch to it succeeds at once, reading through `apiClient`.
+/// The server lives only in memory, never in the Keychain.
+@MainActor
+func makeTestAppRoot(readyServerId serverId: String, apiClient: APIClient) throws -> AppRootEnvironment {
+    let credentials = ServerCredentials(
+        host: "ready-server.test",
+        port: 7749,
+        token: "sk_test",
+        name: "Ready",
+        scheme: .https,
+        serverFingerprint: serverId
+    )
+    let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+    let serverStore = ServerStore()
+    serverStore.replaceServersForPreview([server])
+    let coordinator = ConnectionCoordinator(serverStore: serverStore)
+    coordinator.ensureConnection(for: server).setAPIClientForTesting(apiClient)
+    #expect(coordinator.restoreActiveServer(server.id))
+    return makeTestAppRoot(coordinator: coordinator)
 }
 
 extension ExtensionSurfaceStore {

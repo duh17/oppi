@@ -4,8 +4,9 @@ import SwiftUI
 // (`ShellRouter.swift`, `WorkspaceShellController.swift`). Most routes are a
 // `ShellRouteView` hosted through `HostFactory`; All Sessions, the workspace
 // sidebar, a workspace's sessions, a session's chat
-// (`ChatRouteViewController`), Files (`FileBrowserViewController`), SSH
-// Terminal's host list, Schedules, and Agents are UIKit screens.
+// (`ChatRouteViewController`), Files (`FileBrowserViewController`), a linked
+// file (`WorkspaceLinkedFileViewController`), SSH Terminal's host list,
+// Schedules, and Agents are UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -54,6 +55,9 @@ enum ShellRouteScreens {
                 showsSidebarToggle: placement == .splitDetailRoot
             )
         }
+        if case .linkedFile(let target) = route {
+            return WorkspaceLinkedFileViewController(target: target, placement: placement, root: root)
+        }
         return HostFactory.screen(root: root, bars: route.bars) {
             ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
         }
@@ -94,6 +98,10 @@ enum ShellRouteScreens {
                 files.update(target: target)
             }
             files.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
+        if let linkedFile = screen as? WorkspaceLinkedFileViewController {
+            linkedFile.placement = placement
             return
         }
         // The sidebar reads its own state.
@@ -181,13 +189,12 @@ struct ShellRouteView: View {
     @ViewBuilder
     private var content: some View {
         switch route {
-        case .inbox, .sidebar, .workspace, .session, .fileBrowser:
+        case .inbox, .sidebar, .workspace, .session, .fileBrowser, .linkedFile:
             // UIKit screens (SessionInboxViewController,
             // WorkspaceSidebarViewController, WorkspaceDetailViewController,
-            // ChatRouteViewController, FileBrowserViewController).
+            // ChatRouteViewController, FileBrowserViewController,
+            // WorkspaceLinkedFileViewController).
             mountedByUIKitScreen
-        case .linkedFile(let target):
-            WorkspaceLinkedFileDestinationView(target: target)
         case .chatReader(let target):
             if let chatReaderPayloadStore {
                 ChatReaderDestinationView(target: target, store: chatReaderPayloadStore)

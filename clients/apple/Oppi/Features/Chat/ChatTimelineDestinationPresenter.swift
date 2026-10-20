@@ -33,17 +33,20 @@ struct ChatTimelineDestinationPresenter {
         ) { view }
     }
 
+    /// The file viewer at the root of a router navigation controller; its
+    /// Back closes the modal.
     private func presentWorkspaceFile(for pill: UserMessagePathPill, request: ChatTimelineDestinationRequest) {
         guard connection.apiClient != nil else { return }
-
-        let view = TimelineFileViewerHost(content: fileContent(for: pill, request: request))
-            .withServerScopedEnvironment(connection)
-            .environment(\.reviewCommentSelectionScope, request.reviewCommentSelectionScope)
-
+        var configuration = fileContent(for: pill, request: request)
+        configuration.reviewCommentSelectionScope = request.reviewCommentSelectionScope
+        let viewer = FileViewerViewController(configuration: configuration, services: .init(connection: connection))
         Router.present(
+            viewer,
             presentation: .largeViewer(for: request.sourceView.traitCollection).inNavigation(),
-            from: request.presenter
-        ) { view }
+            from: request.presenter,
+            theme: HostFactory.root(near: request.presenter)?.themeStore,
+            onDismiss: nil
+        )
     }
 
     /// Upload pills open the session-origin copy the server materialized in
@@ -52,7 +55,7 @@ struct ChatTimelineDestinationPresenter {
     func fileContent(
         for pill: UserMessagePathPill,
         request: ChatTimelineDestinationRequest
-    ) -> FileBrowserContentView {
+    ) -> FileViewerViewController.Configuration {
         let source: FileBrowserContentSource
         if MarkdownWikiLinkRewriter.resolvedHostPath(pill.path) != nil {
             source = .hostFile
@@ -63,29 +66,15 @@ struct ChatTimelineDestinationPresenter {
         }
         let session = connection.sessionStore.session(id: request.sessionId)
         let sessionWorktreeId = session?.workspaceId == request.workspaceId ? session?.worktreeId : nil
-        return FileBrowserContentView(
+        return FileViewerViewController.Configuration(
             workspaceId: request.workspaceId,
             worktreeId: source == .workspaceFile ? sessionWorktreeId : nil,
             serverId: request.serverId,
             filePath: pill.path,
             fileName: pill.label,
             source: source,
-            sessionId: request.sessionId,
-            fileSize: nil
+            sessionId: request.sessionId
         )
-    }
-}
-
-/// The path-pill file viewer at the root of its router navigation controller.
-/// Back closes the viewer: `dismiss()` does nothing at a navigation root.
-private struct TimelineFileViewerHost: View {
-    let content: FileBrowserContentView
-    @Environment(\.screenNavigator) private var navigator
-
-    var body: some View {
-        var content = content
-        content.onBackNavigation = navigator.finish
-        return content
     }
 }
 

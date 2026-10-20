@@ -409,13 +409,8 @@ struct MutableFullScreenMarkdownBodyTests {
         #expect(store[filePath] == .top)
     }
 
-    @Test("file browser and destination hosts wire the keyed markdown restore store")
-    func fileBrowserAndDestinationHostsWireKeyedMarkdownViewportRestore() throws {
-        var store = FullScreenMarkdownViewportRestoreState()
-        let binding = Binding(
-            get: { store },
-            set: { store = $0 }
-        )
+    @Test("file browser hosts wire the keyed markdown restore store")
+    func fileBrowserHostsWireKeyedMarkdownViewportRestore() throws {
         let filePath = ".pi/markdown-rendering-stress-test.md"
         let fileName = "markdown-rendering-stress-test.md"
         let detached = FullScreenMarkdownViewportIntent.detached(
@@ -443,24 +438,7 @@ struct MutableFullScreenMarkdownBodyTests {
             ),
             viewportRestore: browserStore
         )
-        let workspaceDestination = WorkspaceLinkedFileDestinationView(
-            target: .workspaceFile(
-                serverId: "server-1",
-                workspaceId: "workspace-1",
-                path: filePath,
-                fileName: fileName
-            )
-        )
-        let hostDestination = WorkspaceLinkedFileDestinationView(
-            target: .hostFile(
-                serverId: "server-1",
-                workspaceId: "workspace-1",
-                path: filePath,
-                fileName: fileName
-            )
-        )
         let readBrowserStore = { browserStore.state }
-        let readDestinationStore = { store }
         let contents: [(String, FileBrowserContentView, () -> FullScreenMarkdownViewportRestoreState)] = [
             (
                 "treePaneSelectedFile",
@@ -472,20 +450,9 @@ struct MutableFullScreenMarkdownBodyTests {
                 FileBrowserViewerFactory.pushedContent(browserRequest),
                 readBrowserStore
             ),
-            (
-                "workspaceLinkedDestination.workspaceFile",
-                workspaceDestination.debugFileContentForTesting(store: binding),
-                readDestinationStore
-            ),
-            (
-                "workspaceLinkedDestination.hostFile",
-                hostDestination.debugFileContentForTesting(store: binding),
-                readDestinationStore
-            ),
         ]
 
         for (name, content, readStore) in contents {
-            store = FullScreenMarkdownViewportRestoreState()
             browserStore.state = FullScreenMarkdownViewportRestoreState()
             #expect(
                 content.debugHasMarkdownViewportRestoreForTesting,

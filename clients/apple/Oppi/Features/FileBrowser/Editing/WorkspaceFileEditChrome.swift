@@ -444,3 +444,236 @@ struct WorkspaceFileConflictReviewView: View {
         ))
     }
 }
+
+// MARK: - Bar items (UIKit)
+
+/// Bar items while a file is being edited: save status, Editor Options,
+/// Source/Preview, Done. Every item carries a title and a symbol so the Duo
+/// vertical rail can show it; the horizontal bar renders them icon-only.
+@MainActor
+final class WorkspaceFileEditBarItems {
+    private let statusView = WorkspaceFileEditStatusView()
+    private lazy var statusItem = UIBarButtonItem(customView: statusView)
+    /// Keeps the passive status glyph out of the buttons' glass group.
+    private let spacer = UIBarButtonItem.fixedSpace()
+    private let optionsItem: UIBarButtonItem
+    private let previewItem: UIBarButtonItem
+    private let doneItem: UIBarButtonItem
+
+    init(onTogglePreview: @escaping @MainActor () -> Void, onDone: @escaping @MainActor () -> Void) {
+        optionsItem = UIBarButtonItem(
+            title: String(localized: "Editor Options"),
+            image: UIImage(systemName: "slider.horizontal.3"),
+            menu: WorkspaceFileEditorOptions.menu()
+        )
+        optionsItem.accessibilityIdentifier = "workspace-file-editor.options"
+        previewItem = UIBarButtonItem(primaryAction: UIAction { _ in onTogglePreview() })
+        previewItem.accessibilityIdentifier = "workspace-file-editor.preview-toggle"
+        doneItem = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { _ in onDone() })
+        doneItem.style = .prominent
+        doneItem.accessibilityIdentifier = "workspace-file-editor.done"
+        update(status: .saved, isShowingPreview: false)
+    }
+
+    /// `rightBarButtonItems` order: Done is the trailing-most.
+    var items: [UIBarButtonItem] {
+        [doneItem, previewItem, optionsItem, spacer, statusItem]
+    }
+
+    func update(status: WorkspaceFileEditSession.Status, isShowingPreview: Bool) {
+        statusView.status = status
+        let title = isShowingPreview ? String(localized: "Source") : String(localized: "Preview")
+        if previewItem.title != title {
+            previewItem.title = title
+            previewItem.image = UIImage(systemName: isShowingPreview ? "doc.text" : "eye")
+        }
+    }
+}
+
+/// Quick editor settings while editing; the same values as Settings > Editor.
+/// Built each time it opens, so it shows the current values.
+@MainActor
+enum WorkspaceFileEditorOptions {
+    static func menu(preferences: CodeEditorPreferences = .shared) -> UIMenu {
+        UIMenu(children: [
+            UIDeferredMenuElement.uncached { completion in
+                completion(elements(preferences))
+            },
+        ])
+    }
+
+    private static func elements(_ preferences: CodeEditorPreferences) -> [UIMenuElement] {
+        let keybindings = UIMenu(
+            title: String(localized: "Keybindings"),
+            options: [.displayInline, .singleSelection],
+            children: CodeEditorKeybindings.allCases.map { keybindings in
+                UIAction(
+                    title: keybindings.label,
+                    state: preferences.keybindings == keybindings ? .on : .off
+                ) { _ in preferences.keybindings = keybindings }
+            }
+        )
+        let toggles: [(String, ReferenceWritableKeyPath<CodeEditorPreferences, Bool>)] = [
+            (String(localized: "Syntax Highlighting"), \.highlightsSyntax),
+            (String(localized: "Line Numbers"), \.showsLineNumbers),
+            (String(localized: "Wrap Lines"), \.wrapsLines),
+            (String(localized: "Keyboard Bar"), \.showsKeyBar),
+        ]
+        let settings = UIMenu(options: .displayInline, children: toggles.map { title, keyPath in
+            UIAction(title: title, state: preferences[keyPath: keyPath] ? .on : .off) { _ in
+                preferences[keyPath: keyPath].toggle()
+            }
+        })
+        return [keybindings, settings]
+    }
+}
+
+/// A document's one Edit control in the bar. With the editor and Edit with
+/// Oppi both available the pencil opens a menu of the two; with one, the
+/// pencil does that one. Nil when neither is available.
+@MainActor
+enum DocumentEditBarItem {
+    static func make(
+        editFile: (@MainActor () -> Void)?,
+        agentEdit: DocumentAgentEditAction?
+    ) -> UIBarButtonItem? {
+        let pencil = UIImage(systemName: DocumentEditLabels.systemImage)
+        if let editFile, let agentEdit {
+            let edit = UIAction(title: DocumentEditLabels.editFile, image: pencil) { _ in editFile() }
+            edit.accessibilityIdentifier = "workspace-file-editor.edit"
+            let agent = UIAction(
+                title: DocumentEditLabels.editWithOppi,
+                image: UIImage(systemName: DocumentEditLabels.editWithOppiImage),
+                attributes: agentEdit.isStarting ? .disabled : []
+            ) { _ in agentEdit.start() }
+            agent.accessibilityIdentifier = "controlFile.editInSession"
+            let item = UIBarButtonItem(
+                title: agentEdit.isStarting ? DocumentEditLabels.startingSession : DocumentEditLabels.edit,
+                image: pencil,
+                menu: UIMenu(children: [edit, agent])
+            )
+            item.accessibilityIdentifier = "document.edit"
+            return item
+        }
+        if let editFile {
+            let item = UIBarButtonItem(
+                title: DocumentEditLabels.edit,
+                image: pencil,
+                primaryAction: UIAction { _ in editFile() }
+            )
+            item.accessibilityLabel = DocumentEditLabels.editFile
+            item.accessibilityIdentifier = "workspace-file-editor.edit"
+            return item
+        }
+        if let agentEdit {
+            let item = UIBarButtonItem(
+                title: agentEdit.isStarting ? DocumentEditLabels.startingSession : DocumentEditLabels.edit,
+                image: pencil,
+                primaryAction: UIAction { _ in agentEdit.start() }
+            )
+            item.isEnabled = !agentEdit.isStarting
+            item.accessibilityLabel = DocumentEditLabels.editWithOppi
+            item.accessibilityIdentifier = "controlFile.editInSession"
+            return item
+        }
+        return nil
+    }
+}
+
+/// The editing bar's passive save-status glyph: the drawn symbol, or a small
+/// spinner while saving or checking. VoiceOver speaks `label(for:)`.
+final class WorkspaceFileEditStatusView: UIView {
+    var status: WorkspaceFileEditSession.Status = .saved {
+        didSet { if status != oldValue { apply() } }
+    }
+
+    private let canvas = WorkspaceFileEditStatusSymbolCanvas()
+    private let spinner = UIActivityIndicatorView(style: .medium)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = true
+        accessibilityIdentifier = "workspace-file-editor.status"
+        accessibilityTraits = []
+        for subview in [canvas, spinner] as [UIView] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(subview)
+            NSLayoutConstraint.activate([
+                subview.centerXAnchor.constraint(equalTo: centerXAnchor),
+                subview.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ])
+        }
+        // Keeps Saving/Checking from resizing Preview and Done.
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: Self.slot),
+            heightAnchor.constraint(equalToConstant: Self.slot),
+            canvas.widthAnchor.constraint(equalToConstant: Self.slot),
+            canvas.heightAnchor.constraint(equalToConstant: Self.slot),
+        ])
+        spinner.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
+        apply()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override var intrinsicContentSize: CGSize { CGSize(width: Self.slot, height: Self.slot) }
+
+    private static let slot: CGFloat = 22
+
+    private func apply() {
+        accessibilityLabel = WorkspaceFileEditStatusPresentation.label(for: status)
+        switch WorkspaceFileEditStatusPresentation.indicator(for: status) {
+        case .progress:
+            canvas.isHidden = true
+            spinner.color = UIColor(Color.themeComment)
+            spinner.startAnimating()
+        case .symbol(let name):
+            spinner.stopAnimating()
+            canvas.systemName = name
+            canvas.isHidden = false
+        }
+    }
+}
+
+// MARK: - Edit banner and conflict review (SwiftUI leaves)
+
+@MainActor
+enum WorkspaceFileEditLeaves {
+    /// The editor's status banner at its natural height. Pin its top and sides.
+    static func banner(
+        session: WorkspaceFileEditSession,
+        root: AppRootEnvironment,
+        onReview: @escaping () -> Void,
+        onUseDisk: @escaping () -> Void
+    ) -> HostedLeaf {
+        HostFactory.leaf(
+            WorkspaceFileEditBanner(session: session, onReview: onReview, onUseDisk: onUseDisk),
+            root: root
+        )
+    }
+
+    /// Disk version against the draft, in a sheet with a bar.
+    @discardableResult
+    static func presentConflictReview(
+        session: WorkspaceFileEditSession,
+        filePath: String,
+        reviewCommentSelectionScope: ReviewCommentSelectionScope?,
+        from presenter: UIViewController,
+        onUseDisk: @escaping () -> Void,
+        onReplace: @escaping () -> Void,
+        onClose: @escaping () -> Void,
+        onDismiss: @escaping () -> Void
+    ) -> HostedScreenController {
+        Router.present(presentation: .sheet.inNavigation(), from: presenter, onDismiss: onDismiss) {
+            WorkspaceFileConflictReviewView(
+                session: session,
+                filePath: filePath,
+                onUseDisk: onUseDisk,
+                onReplace: onReplace,
+                onClose: onClose
+            )
+            .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
+        }
+    }
+}

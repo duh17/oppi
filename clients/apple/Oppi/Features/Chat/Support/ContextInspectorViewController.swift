@@ -804,22 +804,20 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     }
 
     private func openHostFile(_ path: String) {
-        let serverId = connection.currentServerId
         let fileName = (path as NSString).lastPathComponent
-        let connection = connection
-        let scope = reviewCommentSelectionScope
-        Router.push(from: self) {
-            FileBrowserContentView(
+        let viewer = FileViewerViewController(
+            configuration: .init(
                 workspaceId: "",
-                serverId: serverId,
+                serverId: connection.currentServerId,
                 filePath: path,
                 fileName: fileName,
                 title: fileName,
-                source: .hostFile
-            )
-            .withServerScopedEnvironment(connection)
-            .environment(\.reviewCommentSelectionScope, scope)
-        }
+                source: .hostFile,
+                reviewCommentSelectionScope: reviewCommentSelectionScope
+            ),
+            services: .init(connection: connection)
+        )
+        Router.push(viewer, from: self)
     }
 
     private func openExtension(_ id: String) {
