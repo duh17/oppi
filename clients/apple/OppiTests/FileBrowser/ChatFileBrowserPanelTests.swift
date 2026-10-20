@@ -98,10 +98,10 @@ struct ChatFileBrowserPanelTests {
             ChatFilePanelViewController.debugAllFilesBrowserForTesting(root: root, inputs: inputs, workspaceId: "workspace-1")
                 .debugPushedReaderForTesting(path: "docs/notes.md", name: "notes.md", size: nil)
         )
-        #expect(reader.debugWorktreeIdForTesting == "wt-agent")
-        #expect(reader.debugServerIdForTesting == "server-1")
-        #expect(reader.debugSourceForTesting == .workspaceFile)
-        #expect(reader.debugChromeModeForTesting == .pushed)
+        #expect(reader.worktreeId == "wt-agent")
+        #expect(reader.serverId == "server-1")
+        #expect(reader.source == .workspaceFile)
+        #expect(reader.chromeMode == .pushed)
 
         // Changed: the review detail and its current-bytes reader stay on the same checkout.
         let file = WorkspaceReviewFile(

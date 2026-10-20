@@ -95,12 +95,7 @@ enum ShellRouteScreens {
             chatRoute.placement = placement
             return
         }
-        // The route's path is the screen's identity; the column folder and
-        // file recorded on it are where its content mounts after an unlock.
         if let files = screen as? FileBrowserViewController {
-            if case .fileBrowser(let target) = route {
-                files.update(target: target)
-            }
             files.showsSidebarToggle = placement == .splitDetailRoot
             return
         }

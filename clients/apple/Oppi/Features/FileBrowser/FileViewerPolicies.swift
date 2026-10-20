@@ -152,10 +152,16 @@ enum AdjacentFileNavigatorLayout {
     }
 }
 
-/// The Markdown viewport of each file a viewer showed, kept by the screen that
-/// outlives the reader: a linked file rebuilt after a lock, or a file the
-/// viewer comes back to through previous/next.
-@MainActor
-final class FileViewerViewportRestore {
-    var state = FullScreenMarkdownViewportRestoreState()
+/// Shared previous/next file transition. Directional travel and the 220 ms
+/// ease-in-out are one policy for the UIKit viewers' slide and SwiftUI's
+/// `filePushTransition`. Reduce Motion must win at both owners.
+enum FileBrowserPushTransitionPolicy {
+    static let duration: Double = 0.22
+
+    static func directionalSpec(
+        for direction: FileBrowserNavigationDirection,
+        reduceMotion: Bool
+    ) -> FileBrowserPushTransitionSpec? {
+        reduceMotion ? nil : FileBrowserPushTransitionSpec.spec(for: direction)
+    }
 }

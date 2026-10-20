@@ -131,15 +131,11 @@ struct ChatFileAccessReviewCommentStashTests {
 
     @Test func chatFileHostsInstallStashChrome() throws {
         let commit = try chatFileAccessSource("Oppi/Features/Review/CommitDetailView.swift")
-        let files = try chatFileAccessSource("Oppi/Features/FileBrowser/FileBrowserContentView.swift")
         let touched = try chatFileAccessSource(
             "Oppi/Features/Chat/Support/SessionFiles/SessionTouchedFileContentView.swift"
         )
 
         #expect(commit.contains("fullScreenReviewCommentStashOverlay("))
-        #expect(files.contains("fullScreenReviewCommentStashOverlay("))
-        #expect(files.contains("leadingFloatingAccessoryCount:"))
-        #expect(files.contains("trailingFloatingAccessoryCount:"))
         #expect(touched.contains("fullScreenReviewCommentStashOverlay("))
         #expect(touched.contains("leadingFloatingAccessoryCount:"))
         #expect(touched.contains("trailingFloatingAccessoryCount:"))

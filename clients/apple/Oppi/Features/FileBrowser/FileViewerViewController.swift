@@ -45,8 +45,8 @@ final class FileViewerViewController: UIViewController {
         let workspaceId: String
         var worktreeId: String? = nil
         var serverId: String? = nil
-        let filePath: String
-        let fileName: String
+        var filePath: String
+        var fileName: String
         /// Replaces the bar title, as a Skill file names its path inside the Skill.
         var title: String? = nil
         var source: FileBrowserContentSource = .workspaceFile
@@ -126,7 +126,7 @@ final class FileViewerViewController: UIViewController {
         case editor(ObjectIdentifier)
     }
 
-    let configuration: Configuration
+    private(set) var configuration: Configuration
     let bar = FileViewerBar()
     private let services: Services
 
@@ -141,7 +141,7 @@ final class FileViewerViewController: UIViewController {
     var agentEdit: DocumentAgentEditAction? {
         didSet { setNeedsUpdateProperties() }
     }
-    var markdownViewportRestore: FileViewerViewportRestore?
+    var markdownViewportRestore: FileBrowserViewportRestore?
 
     // MARK: State
 
@@ -251,6 +251,21 @@ final class FileViewerViewController: UIViewController {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// Shows another file of the same origin in place: a list's new
+    /// selection. The file previous/next already moved to stays as it is.
+    func show(_ selection: FileBrowserSelection, navigationContext: FileBrowserNavigationContext?) {
+        configuration.navigationContext = navigationContext
+        let alreadyShown = selection.path == currentFilePath
+        configuration.filePath = selection.path
+        configuration.fileName = selection.name
+        configuration.fileSize = selection.size
+        activeSelection = nil
+        setNeedsUpdateProperties()
+        guard !alreadyShown else { return }
+        beginUSDZSafeLoading()
+        if isOnScreen { startLoad() }
+    }
 
     /// Reads the file the way this viewer does; reader resources resolve
     /// against the same origin.
@@ -1707,5 +1722,82 @@ final class FileViewerViewController: UIViewController {
             return
         }
         Router.finish(stackScreen)
+    }
+}
+
+/// The file viewer the Files screen (`FileBrowserViewController`) shows:
+/// beside the tree (`make`), or pushed above the list (`pushReader`).
+@MainActor
+enum FileBrowserViewerFactory {
+    /// One file of the browser, read on the browser's server.
+    struct Request {
+        let workspaceId: String
+        let worktreeId: String?
+        let serverId: String?
+        let source: FileBrowserContentSource
+        let selection: FileBrowserSelection
+        let navigationContext: FileBrowserNavigationContext?
+        let services: FileBrowserServices
+        let viewportRestore: FileBrowserViewportRestore
+    }
+
+    /// The open file beside the tree, or alone when a column selection is
+    /// kept in compact width, as a child controller. Its bar items (Edit,
+    /// the editor's controls) are in `bar` for the browser's bar; another
+    /// selection on the same server goes through `show(_:navigationContext:)`.
+    static func make(
+        _ request: Request,
+        onSelectionChange: @escaping (FileBrowserSelection) -> Void,
+        onBack: @escaping () -> Void
+    ) -> FileViewerViewController {
+        let viewer = viewer(request, chromeMode: .treePane)
+        viewer.onNavigationSelectionChange = onSelectionChange
+        viewer.onBackNavigation = onBack
+        return viewer
+    }
+
+    /// The viewer as its own screen above the browser: host files, and every
+    /// file of the chat panel.
+    static func pushReader(_ request: Request, navigator: ScreenNavigator) {
+        navigator.push(viewer(request, chromeMode: .pushed))
+    }
+
+    /// The viewer's file, origin, and review scope (the chat's, in its file
+    /// panel) for `request`.
+    static func configuration(
+        _ request: Request,
+        chromeMode: FileBrowserContentChromeMode
+    ) -> FileViewerViewController.Configuration {
+        FileViewerViewController.Configuration(
+            workspaceId: request.workspaceId,
+            worktreeId: request.worktreeId,
+            serverId: request.serverId,
+            filePath: request.selection.path,
+            fileName: request.selection.name,
+            source: request.source,
+            fileSize: request.selection.size,
+            chromeMode: chromeMode,
+            navigationContext: request.navigationContext,
+            reviewCommentSelectionScope: request.services.reviewCommentSelectionScope
+        )
+    }
+
+    /// Reads on the browser's server stores (the session's checkout, audio
+    /// playback) with the browser's API client, and shares its viewport store.
+    private static func viewer(
+        _ request: Request,
+        chromeMode: FileBrowserContentChromeMode
+    ) -> FileViewerViewController {
+        let services = request.services
+        let viewer = FileViewerViewController(
+            configuration: configuration(request, chromeMode: chromeMode),
+            services: .init(
+                apiClient: services.apiClient,
+                audioPlayer: services.connection.audioPlayer,
+                sessionStore: services.connection.sessionStore
+            )
+        )
+        viewer.markdownViewportRestore = request.viewportRestore
+        return viewer
     }
 }

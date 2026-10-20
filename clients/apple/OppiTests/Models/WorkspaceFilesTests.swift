@@ -96,7 +96,7 @@ struct WorkspaceFilesTests {
         let htmEntry = FileEntry(name: "page.htm", type: .file, size: 500, modifiedAt: 0, path: nil)
         let tsEntry = FileEntry(name: "app.ts", type: .file, size: 500, modifiedAt: 0, path: nil)
 
-        // Extension extraction matches the pattern used in FileBrowserContentView
+        // Extension extraction matches the pattern used in FileViewerViewController
         func isHTML(_ entry: FileEntry) -> Bool {
             let ext = entry.name.split(separator: ".").last.map(String.init)?.lowercased() ?? ""
             return ["html", "htm"].contains(ext)

@@ -79,38 +79,6 @@ enum WorkspaceFileEditStatusPresentation {
     }
 }
 
-/// Toolbar while a file is being edited: save status, Source/Preview, Done.
-/// Every item carries a title and a symbol (or a role) so the Duo vertical rail
-/// can show it; the horizontal bar renders them icon-only.
-struct WorkspaceFileEditToolbar: ToolbarContent {
-    let status: WorkspaceFileEditSession.Status
-    @Binding var isShowingPreview: Bool
-    let onDone: () -> Void
-
-    var body: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            WorkspaceFileEditStatusIndicator(status: status)
-        }
-        ToolbarSpacer(.fixed, placement: .topBarTrailing)
-        ToolbarItem(placement: .topBarTrailing) {
-            WorkspaceFileEditorOptionsMenu()
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-            Button(
-                isShowingPreview ? String(localized: "Source") : String(localized: "Preview"),
-                systemImage: isShowingPreview ? "doc.text" : "eye"
-            ) {
-                isShowingPreview.toggle()
-            }
-            .accessibilityIdentifier("workspace-file-editor.preview-toggle")
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-            Button(role: .confirm, action: onDone)
-                .accessibilityIdentifier("workspace-file-editor.done")
-        }
-    }
-}
-
 /// The words and glyphs every document's Edit control uses: workspace files,
 /// Skill files, and the Agent and Schedule readers say the same thing.
 enum DocumentEditLabels {
@@ -130,121 +98,8 @@ struct DocumentAgentEditAction {
     let start: @MainActor () -> Void
 }
 
-/// A document's one Edit control in the bar. With the editor and Edit with
-/// Oppi both available the pencil opens a menu of the two; with one, the
-/// pencil does that one.
-struct DocumentEditButton: View {
-    /// Opens the file in the editor. Nil when the file is read-only here.
-    let editFile: (@MainActor () -> Void)?
-    let agentEdit: DocumentAgentEditAction?
-
-    var body: some View {
-        if let editFile, let agentEdit {
-            Menu {
-                Button(DocumentEditLabels.editFile, systemImage: DocumentEditLabels.systemImage) { editFile() }
-                    .accessibilityIdentifier("workspace-file-editor.edit")
-                Button(DocumentEditLabels.editWithOppi, systemImage: DocumentEditLabels.editWithOppiImage) {
-                    agentEdit.start()
-                }
-                .disabled(agentEdit.isStarting)
-                .accessibilityIdentifier("controlFile.editInSession")
-            } label: {
-                Label(
-                    agentEdit.isStarting ? DocumentEditLabels.startingSession : DocumentEditLabels.edit,
-                    systemImage: DocumentEditLabels.systemImage
-                )
-            }
-            .accessibilityIdentifier("document.edit")
-        } else if let editFile {
-            Button(DocumentEditLabels.edit, systemImage: DocumentEditLabels.systemImage) { editFile() }
-                .accessibilityLabel(DocumentEditLabels.editFile)
-                .accessibilityIdentifier("workspace-file-editor.edit")
-        } else if let agentEdit {
-            Button(
-                agentEdit.isStarting ? DocumentEditLabels.startingSession : DocumentEditLabels.edit,
-                systemImage: DocumentEditLabels.systemImage
-            ) {
-                agentEdit.start()
-            }
-            .disabled(agentEdit.isStarting)
-            .accessibilityLabel(DocumentEditLabels.editWithOppi)
-            .accessibilityIdentifier("controlFile.editInSession")
-        }
-    }
-}
-
-/// Quick editor settings while editing; the same values as Settings > Editor.
-struct WorkspaceFileEditorOptionsMenu: View {
-    @Bindable var preferences: CodeEditorPreferences = .shared
-
-    var body: some View {
-        Menu {
-            Picker(String(localized: "Keybindings"), selection: $preferences.keybindings) {
-                ForEach(CodeEditorKeybindings.allCases, id: \.self) { keybindings in
-                    Text(keybindings.label).tag(keybindings)
-                }
-            }
-            .pickerStyle(.inline)
-            Section {
-                Toggle(String(localized: "Syntax Highlighting"), isOn: $preferences.highlightsSyntax)
-                Toggle(String(localized: "Line Numbers"), isOn: $preferences.showsLineNumbers)
-                Toggle(String(localized: "Wrap Lines"), isOn: $preferences.wrapsLines)
-                Toggle(String(localized: "Keyboard Bar"), isOn: $preferences.showsKeyBar)
-            }
-        } label: {
-            Label(String(localized: "Editor Options"), systemImage: "slider.horizontal.3")
-        }
-        .accessibilityIdentifier("workspace-file-editor.options")
-    }
-}
-
-/// Passive toolbar glyph. VoiceOver still speaks `label(for:)`.
-struct WorkspaceFileEditStatusIndicator: View {
-    let status: WorkspaceFileEditSession.Status
-
-    var body: some View {
-        glyph
-            .frame(width: Self.slot, height: Self.slot, alignment: .center)
-    }
-
-    @ViewBuilder
-    private var glyph: some View {
-        let label = WorkspaceFileEditStatusPresentation.label(for: status)
-        switch WorkspaceFileEditStatusPresentation.indicator(for: status) {
-        case .progress:
-            ProgressView()
-                .progressViewStyle(.circular)
-                .controlSize(.small)
-                .labelsHidden()
-                .tint(.themeComment)
-                .accessibilityElement(children: .ignore)
-                .accessibilityIdentifier("workspace-file-editor.status")
-                .accessibilityLabel(label)
-        case .symbol(let name):
-            WorkspaceFileEditStatusSymbolImage(systemName: name, label: label)
-        }
-    }
-
-    /// Keeps Saving/Checking from resizing Preview and Done.
-    private static let slot: CGFloat = 22
-}
-
-/// Draws the locked SF Symbol as pixels. A live `Image(systemName:)` or
-/// `UIImageView` inside ToolbarItem keeps checkmark.circle's Select trait.
-private struct WorkspaceFileEditStatusSymbolImage: UIViewRepresentable {
-    let systemName: String
-    let label: String
-
-    func makeUIView(context: Context) -> WorkspaceFileEditStatusSymbolCanvas {
-        WorkspaceFileEditStatusSymbolCanvas()
-    }
-
-    func updateUIView(_ view: WorkspaceFileEditStatusSymbolCanvas, context: Context) {
-        view.systemName = systemName
-        view.accessibilityLabel = label
-    }
-}
-
+/// Draws the locked SF Symbol as pixels. A live `UIImageView` in a bar item
+/// keeps checkmark.circle's Select trait.
 private final class WorkspaceFileEditStatusSymbolCanvas: UIView {
     var systemName = "" {
         didSet {
@@ -259,9 +114,8 @@ private final class WorkspaceFileEditStatusSymbolCanvas: UIView {
         isOpaque = false
         backgroundColor = .clear
         isUserInteractionEnabled = false
-        isAccessibilityElement = true
-        accessibilityIdentifier = "workspace-file-editor.status"
-        accessibilityTraits = []
+        // `WorkspaceFileEditStatusView` speaks the status.
+        isAccessibilityElement = false
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(themeDidChange),
@@ -595,9 +449,6 @@ final class WorkspaceFileEditStatusView: UIView {
         isAccessibilityElement = true
         accessibilityIdentifier = "workspace-file-editor.status"
         accessibilityTraits = []
-        // This view speaks the status; the glyph inside is not a second element.
-        canvas.isAccessibilityElement = false
-        canvas.accessibilityIdentifier = nil
         for subview in [canvas, spinner] as [UIView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             addSubview(subview)

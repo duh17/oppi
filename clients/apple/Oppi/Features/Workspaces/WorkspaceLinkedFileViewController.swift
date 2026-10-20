@@ -54,7 +54,7 @@ final class WorkspaceLinkedFileViewController: UIViewController {
     /// one server switch, as the hosted gate's `.task(id:)` did.
     private var needsConnect = true
     /// Per-file Markdown viewport, kept while the viewer is rebuilt.
-    private let viewportRestore = FileViewerViewportRestore()
+    private let viewportRestore = FileBrowserViewportRestore()
     /// Captured when the route opens: the chat the link came from, if it is
     /// still the composer's destination.
     private let addToChatDestination: ComposerCanvasDestination?

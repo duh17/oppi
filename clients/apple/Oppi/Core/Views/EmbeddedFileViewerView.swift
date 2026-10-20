@@ -687,15 +687,6 @@ struct FullScreenMarkdownViewportRestoreState: Equatable {
     }
 }
 
-extension Binding where Value == FullScreenMarkdownViewportRestoreState {
-    func intent(for filePath: String) -> Binding<FullScreenMarkdownViewportIntent?> {
-        Binding<FullScreenMarkdownViewportIntent?>(
-            get: { wrappedValue[filePath] },
-            set: { wrappedValue[filePath] = $0 }
-        )
-    }
-}
-
 /// The host navigation bar of a screen that shows the reader's own chrome
 /// for some content (`hidesBar` true) and the host bar for the rest. Settled
 /// content asks for `.visible`, not `.automatic`: in a screen hosted on a

@@ -48,8 +48,9 @@ final class FileBrowserViewportRestore {
 ///
 /// The screen reads the lock service, the server's `FileIndexStore`, and
 /// `AppNavigation` in `updateProperties()` and applies a diffable snapshot
-/// keyed by entry path; state rows have fixed ids. The open file comes from
-/// `FileBrowserViewerFactory` as a child controller.
+/// keyed by entry path; state rows have fixed ids. The open file is a
+/// `FileViewerViewController` from `FileBrowserViewerFactory`, a child whose
+/// bar items show in this screen's bar.
 @MainActor
 final class FileBrowserViewController: UIViewController, UICollectionViewDelegate, UITextFieldDelegate {
     /// The split detail root carries the sidebar toggle.
@@ -122,7 +123,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private var appliedLayout: Layout?
 
     // The open file.
-    private var paneHost: UIViewController?
+    private var paneViewer: FileViewerViewController?
     private var paneKey: PaneKey?
 
     // Snapshot and bar values.
@@ -190,13 +191,6 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     deinit {
         connectTask?.cancel()
         loadTask?.cancel()
-    }
-
-    /// The shell refreshed the route; its column fields are where the content
-    /// mounts next.
-    func update(target: FileBrowserNavTarget) {
-        restoredDirectory = target.columnDirectoryPath
-        restoredSelection = target.columnSelectedFile
     }
 
     // MARK: Embedding (chat panel)
@@ -352,7 +346,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         var empty = paneEmptyConfiguration()
         empty.background.backgroundColor = background
         paneEmpty.configuration = empty
-        paneHost?.view.backgroundColor = background
+        paneViewer?.view.backgroundColor = background
         overlay = nil
     }
 
@@ -1601,8 +1595,10 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     // MARK: The open file
 
-    /// The tree-pane reader beside the tree, or alone for a selection kept
-    /// in compact width. "Select a File" fills an empty column pane.
+    /// The tree-pane viewer beside the tree, or alone for a selection kept
+    /// in compact width. "Select a File" fills an empty column pane. Another
+    /// selection on the same server shows in the same viewer, so its
+    /// previous/next slide and editing state carry over.
     private func syncPane(layout: Layout, services: FileBrowserServices) {
         guard layout != .list, let selection = state.selectedFile else {
             removePane()
@@ -1618,32 +1614,35 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             apiClient: services.apiClient.map(ObjectIdentifier.init)
         )
         guard key != paneKey else { return }
+        if let paneViewer, let paneKey,
+           paneKey.connection == key.connection, paneKey.apiClient == key.apiClient {
+            self.paneKey = key
+            paneViewer.show(selection, navigationContext: context)
+            return
+        }
+        removePane()
         paneKey = key
-        let request = readerRequest(selection, context: context, services: services)
-        let existing = paneHost
-        let pane = FileBrowserViewerFactory.make(
-            request,
-            updating: existing,
-            root: root,
-            navigator: navigator,
+        let viewer = FileBrowserViewerFactory.make(
+            readerRequest(selection, context: context, services: services),
             onSelectionChange: { [weak self] selection in self?.selectFile(selection) },
             onBack: { [weak self] in self?.selectFile(nil) }
         )
-        guard pane !== existing else { return }
-        removePane()
-        paneKey = key
-        pane.view.backgroundColor = UIColor(palette.bg)
-        embed(pane, in: paneContainer)
-        paneHost = pane
+        viewer.view.backgroundColor = UIColor(palette.bg)
+        embed(viewer, in: paneContainer)
+        paneViewer = viewer
     }
 
     private func removePane() {
         paneKey = nil
-        guard let paneHost else { return }
-        paneHost.willMove(toParent: nil)
-        paneHost.view.removeFromSuperview()
-        paneHost.removeFromParent()
-        self.paneHost = nil
+        guard let paneViewer else { return }
+        paneViewer.willMove(toParent: nil)
+        paneViewer.view.removeFromSuperview()
+        paneViewer.removeFromParent()
+        self.paneViewer = nil
+        // The file's Edit, status, Preview, and Done go with it. Locking and
+        // "Connecting" tear the content down without the bar sync that
+        // otherwise follows.
+        navigationItem.rightBarButtonItems = nil
     }
 
     // MARK: Bars
@@ -1661,10 +1660,12 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         navigationItem.title = title
         navigationItem.hidesBackButton = replacesStackBackButton
 
-        // The open file's own bar items (Edit, the editor's controls) are
-        // not drawn yet: the viewer is SwiftUI hosted as a child, whose
-        // toolbar no bar shows. `FileBrowserViewerFactory` is the seam a
-        // UIKit viewer replaces.
+        // The open file's own items (Edit, the editor's status, Preview, and
+        // Done) join this screen's bar.
+        let fileItems = paneViewer?.bar.trailingItems ?? []
+        if !(navigationItem.rightBarButtonItems ?? []).elementsEqual(fileItems, by: ===) {
+            navigationItem.rightBarButtonItems = fileItems
+        }
 
         // The bar's search lists files in place of the folder; the column
         // searches in its own field.
@@ -1729,12 +1730,13 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
 #if DEBUG
 extension FileBrowserViewController {
-    /// The reader a file row pushes (`FileBrowserViewerFactory.pushReader`),
+    /// The viewer a file row pushes (`FileBrowserViewerFactory.pushReader`),
     /// on this browser's server stores.
-    func debugPushedReaderForTesting(path: String, name: String, size: Int?) -> FileBrowserContentView? {
+    func debugPushedReaderForTesting(path: String, name: String, size: Int?) -> FileViewerViewController.Configuration? {
         guard let services else { return nil }
-        return FileBrowserViewerFactory.pushedContent(
-            readerRequest(FileBrowserSelection(path: path, name: name, size: size), context: nil, services: services)
+        return FileBrowserViewerFactory.configuration(
+            readerRequest(FileBrowserSelection(path: path, name: name, size: size), context: nil, services: services),
+            chromeMode: .pushed
         )
     }
 }

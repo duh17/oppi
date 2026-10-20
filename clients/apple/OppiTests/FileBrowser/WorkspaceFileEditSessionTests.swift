@@ -1058,6 +1058,46 @@ struct WorkspaceFileEditEntryTests {
         #expect(editing, "Edit did not switch to the editing toolbar; items: \(Self.titles(in: content))")
     }
 
+    /// The Files screen shows the open file's Edit in its own bar. Locking
+    /// the workspace tears the content down; the file's items must go with
+    /// it, or the cover keeps an Edit whose target is gone.
+    @Test func filesScreenLockTakesTheOpenFilesBarItems() async throws {
+        let client = TreePaneEditURLProtocol.makeClient()
+        _ = try await client.serverInfo()
+        let serverId = "sha256:files-lock-\(UUID().uuidString)"
+        let workspaceId = "w-files-lock"
+        let root = try makeTestAppRoot(readyServerId: serverId, apiClient: client)
+        defer { ScopedLockService.shared.forgetServer(serverId) }
+        let files = FileBrowserViewController(
+            root: root,
+            target: FileBrowserNavTarget(
+                serverId: serverId,
+                scope: .workspace(workspaceId: workspaceId, worktreeId: nil),
+                path: "",
+                columnSelectedFile: FileBrowserSelection(path: "notes.md", name: "notes.md", size: nil)
+            ),
+            showsSidebarToggle: false
+        )
+        let navigation = UINavigationController(rootViewController: files)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        window.rootViewController = navigation
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let shown = await waitForMainActorCondition(timeout: .seconds(5)) {
+            navigation.view.layoutIfNeeded()
+            return Self.barButtonItem(titled: "Edit", in: files) != nil
+        }
+        #expect(shown, "the Files bar showed no Edit for the open file; items: \(Self.titles(in: files))")
+
+        ScopedLockService.shared.lock(.workspace(serverId: serverId, workspaceId: workspaceId))
+        let cleared = await waitForMainActorCondition(timeout: .seconds(5)) {
+            navigation.view.layoutIfNeeded()
+            return Self.barButtonItems(in: files).isEmpty
+        }
+        #expect(cleared, "the locked Files screen kept the file's items: \(Self.titles(in: files))")
+    }
+
     private static func barButtonItem(titled title: String, in controller: UIViewController) -> UIBarButtonItem? {
         barButtonItems(in: controller).first { $0.title == title }
     }

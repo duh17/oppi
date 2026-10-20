@@ -357,10 +357,6 @@ struct MarkdownInlineAudioTests {
         #expect(markdownAudio.contains("shareFileData:"))
         #expect(markdownAudio.contains("source.loadFileData()"))
         #expect(markdownAudio.contains("source = try await shareSourceProvider(embed)"))
-
-        let fileBrowser = try fileBrowserContentSource()
-        #expect(fileBrowser.contains("AsyncFileShareButton(filename: currentFileName"))
-        #expect(fileBrowser.contains("source.loadFileData()"))
     }
 
     @MainActor
@@ -860,15 +856,6 @@ private func nativeMarkdownAudioSource() throws -> String {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .appending(path: "Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownAudioView.swift")
-    return try String(contentsOf: sourceURL, encoding: .utf8)
-}
-
-private func fileBrowserContentSource() throws -> String {
-    let sourceURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: "Oppi/Features/FileBrowser/FileBrowserContentView.swift")
     return try String(contentsOf: sourceURL, encoding: .utf8)
 }
 

@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
@@ -832,48 +831,6 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         previewController.view.removeFromSuperview()
         previewController.removeFromParent()
         self.previewController = nil
-    }
-}
-
-/// SwiftUI host. The controller is created once per edit; updates only recolor
-/// and toggle preview. Teardown hands the buffer back to the session.
-struct WorkspaceFileEditorView: UIViewControllerRepresentable {
-    let session: WorkspaceFileEditSession
-    let isShowingPreview: Bool
-    let replacementText: WorkspaceFileEditorReplacement?
-    /// Vim `:q` and `:wq`, the same as tapping Done.
-    let onDone: () -> Void
-    let makePreview: (String) -> UIViewController
-
-    @Environment(\.themeID) private var themeID
-
-    final class Coordinator {
-        var appliedReplacementID: UUID?
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeUIViewController(context: Context) -> WorkspaceFileEditorViewController {
-        context.coordinator.appliedReplacementID = replacementText?.id
-        return WorkspaceFileEditorViewController(
-            session: session,
-            themeID: themeID,
-            onDone: onDone,
-            makePreview: makePreview
-        )
-    }
-
-    func updateUIViewController(_ controller: WorkspaceFileEditorViewController, context: Context) {
-        controller.applyThemeIfNeeded(themeID)
-        if let replacementText, context.coordinator.appliedReplacementID != replacementText.id {
-            context.coordinator.appliedReplacementID = replacementText.id
-            controller.replaceText(replacementText.text)
-        }
-        controller.setShowingPreview(isShowingPreview)
-    }
-
-    static func dismantleUIViewController(_ controller: WorkspaceFileEditorViewController, coordinator: Coordinator) {
-        controller.finishEditing()
     }
 }
 

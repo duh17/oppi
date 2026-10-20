@@ -448,13 +448,10 @@
     "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditChrome.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditorViewController.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/FileBrowser/FileBrowserContentView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/FileBrowser/FileBrowserMotionPreviewSupport.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/FileBrowser/FilePushTransition.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Icons/IconPickerView.swift": {
