@@ -29,15 +29,14 @@ struct LiveActivityPreviewScreen: View {
                 HStack(spacing: 10) {
                     LiveActivityPiMark(state: state, size: 18)
                     Spacer()
-                    HStack(spacing: 4) {
+                    HStack(spacing: 6) {
                         if state.running > 0 || state.needsYou == 0 {
-                            Text("\(state.running)").foregroundStyle(LiveActivityPresentation.runningColor)
+                            LiveActivityPixelNumber(value: state.running, color: LiveActivityPresentation.runningColor)
                         }
                         if state.needsYou > 0 {
-                            Text("\(state.needsYou)").foregroundStyle(LiveActivityPresentation.needsYouColor)
+                            LiveActivityPixelNumber(value: state.needsYou, color: LiveActivityPresentation.needsYouColor)
                         }
                     }
-                    .font(.caption.monospacedDigit().bold())
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
@@ -56,6 +55,14 @@ struct LiveActivityPreviewScreen: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
+                    HStack(spacing: 7.5) {
+                        if state.running > 0 {
+                            LiveActivityPixelNumber(value: state.running, color: LiveActivityPresentation.runningColor, cellPitch: 3)
+                        }
+                        if state.needsYou > 0 {
+                            LiveActivityPixelNumber(value: state.needsYou, color: LiveActivityPresentation.needsYouColor, cellPitch: 3)
+                        }
+                    }
                 }
                 .padding(16)
                 .background(

@@ -12,23 +12,29 @@ struct OppiLiveActivity: Widget {
             LockScreenView(state: context.state)
         } dynamicIsland: { context in
             DynamicIsland {
+                // Insets keep the top row concentric with the island's 44 pt corners;
+                // flush against the region edge the mark's top-left cells were clipped.
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 8) {
                         LiveActivityPiMark(state: context.state, size: 22)
                         Text("Oppi")
                             .font(.caption.bold())
                     }
+                    .padding(.leading, 10)
+                    .padding(.top, 6)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(spokenSummary(context.state))
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    CountBadges(state: context.state)
+                    PixelCounts(state: context.state, cellPitch: 3, showsIdleZero: false)
+                        .padding(.trailing, 10)
+                        .padding(.top, 6)
                         .accessibilityHidden(true)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     SummaryLine(state: context.state)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, 10)
                         .padding(.bottom, 6)
                         .accessibilityHidden(true)
                 }
@@ -37,7 +43,7 @@ struct OppiLiveActivity: Widget {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(spokenSummary(context.state))
             } compactTrailing: {
-                CompactCounts(state: context.state)
+                PixelCounts(state: context.state, cellPitch: 2.4, showsIdleZero: true)
                     .accessibilityHidden(true)
             } minimal: {
                 MinimalView(state: context.state)
@@ -62,7 +68,7 @@ private struct LockScreenView: View {
                 SummaryLine(state: state)
             }
             Spacer(minLength: 12)
-            CountBadges(state: state)
+            PixelCounts(state: state, cellPitch: 3, showsIdleZero: false)
         }
         .padding(16)
         .accessibilityElement(children: .ignore)
@@ -79,10 +85,7 @@ private struct MinimalView: View {
 
     var body: some View {
         if state.needsYou > 0 {
-            Text("\(state.needsYou)")
-                .font(.callout.monospacedDigit().bold())
-                .foregroundStyle(LiveActivityPresentation.needsYouColor)
-                .contentTransition(.numericText(value: Double(state.needsYou)))
+            LiveActivityPixelNumber(value: state.needsYou, color: LiveActivityPresentation.needsYouColor)
         } else {
             LiveActivityPiMark(state: state, size: 16)
         }
@@ -103,60 +106,23 @@ private struct SummaryLine: View {
     }
 }
 
-private struct CountBadges: View {
+/// The running count in blue and the waiting count in orange, in the pi mark's pixel cells.
+/// Compact trailing keeps a "0" when nothing runs (`showsIdleZero`); the expanded and
+/// Lock Screen layouts leave the summary line to say "All done".
+private struct PixelCounts: View {
     let state: OppiActivityAttributes.ContentState
+    let cellPitch: CGFloat
+    let showsIdleZero: Bool
 
     var body: some View {
-        HStack(spacing: 6) {
-            if state.running > 0 {
-                CountBadge(count: state.running, symbol: "waveform.path.ecg", color: LiveActivityPresentation.runningColor)
+        HStack(spacing: cellPitch * 2.5) {
+            if state.running > 0 || (showsIdleZero && state.needsYou == 0) {
+                LiveActivityPixelNumber(value: state.running, color: LiveActivityPresentation.runningColor, cellPitch: cellPitch)
             }
             if state.needsYou > 0 {
-                CountBadge(count: state.needsYou, symbol: "hand.raised.fill", color: LiveActivityPresentation.needsYouColor)
+                LiveActivityPixelNumber(value: state.needsYou, color: LiveActivityPresentation.needsYouColor, cellPitch: cellPitch)
             }
         }
-        .animation(countAnimation, value: state)
-    }
-}
-
-private struct CountBadge: View {
-    let count: Int
-    let symbol: String
-    let color: Color
-
-    var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: symbol)
-                .font(.caption2.weight(.semibold))
-            Text("\(count)")
-                .font(.caption.monospacedDigit().bold())
-                .contentTransition(.numericText(value: Double(count)))
-        }
-        .foregroundStyle(color)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Capsule().fill(color.opacity(0.16)))
-        .overlay(Capsule().strokeBorder(color.opacity(0.28), lineWidth: 0.8))
-    }
-}
-
-/// Dynamic Island trailing: the running count, and the waiting count when there is one.
-private struct CompactCounts: View {
-    let state: OppiActivityAttributes.ContentState
-
-    var body: some View {
-        HStack(spacing: 4) {
-            if state.running > 0 || state.needsYou == 0 {
-                Text("\(state.running)")
-                    .foregroundStyle(LiveActivityPresentation.runningColor)
-            }
-            if state.needsYou > 0 {
-                Text("\(state.needsYou)")
-                    .foregroundStyle(LiveActivityPresentation.needsYouColor)
-            }
-        }
-        .font(.caption.monospacedDigit().bold())
-        .contentTransition(.numericText())
         .animation(countAnimation, value: state)
     }
 }

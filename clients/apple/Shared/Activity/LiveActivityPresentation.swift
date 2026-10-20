@@ -42,11 +42,11 @@ struct LiveActivityPiMark: View {
     var body: some View {
         let showsSparks = state.needsYou == 0 && state.running > 0
         ZStack {
-            PiCells(cells: showsSparks ? Self.body : Self.body + Self.sparks)
+            PixelCells(cells: showsSparks ? Self.body : Self.body + Self.sparks, columns: 6, rows: 6)
                 .fill(LiveActivityPresentation.color(state))
             if showsSparks {
-                PiCells(cells: [Self.sparks[0]]).fill(Self.sparkAmber)
-                PiCells(cells: [Self.sparks[1]]).fill(Self.sparkRed)
+                PixelCells(cells: [Self.sparks[0]], columns: 6, rows: 6).fill(Self.sparkAmber)
+                PixelCells(cells: [Self.sparks[1]], columns: 6, rows: 6).fill(Self.sparkRed)
             }
         }
         .frame(width: size, height: size)
@@ -64,12 +64,48 @@ struct LiveActivityPiMark: View {
     private static let sparkRed = Color(red: 0.94, green: 0.35, blue: 0.18)
 }
 
-/// Rounded square cells on a 6x6 grid, matching the icon's cell size and corner ratio.
-private struct PiCells: Shape {
+/// A count in the pi's pixel cells: 3x5 digits one empty column apart. The default 2.4 pt
+/// pitch makes a 12 pt tall digit, a little under the 18 pt pi so the mark leads. A new
+/// value fades in rather than morphing cell paths.
+struct LiveActivityPixelNumber: View {
+    let value: Int
+    let color: Color
+    var cellPitch: CGFloat = 2.4
+
+    var body: some View {
+        let digits = String(max(value, 0)).compactMap(\.wholeNumberValue)
+        let columns = digits.count * 4 - 1
+        let cells = digits.enumerated().flatMap { index, digit in
+            Self.font[digit].map { (index * 4 + $0.0, $0.1) }
+        }
+        PixelCells(cells: cells, columns: columns, rows: 5)
+            .fill(color)
+            .frame(width: CGFloat(columns) * cellPitch, height: 5 * cellPitch)
+            .id(value)
+            .transition(.opacity)
+    }
+
+    /// Lit (column, row) cells of each digit on a 3x5 grid.
+    private static let font: [[(Int, Int)]] = [
+        "111 101 101 101 111", "010 110 010 010 111", "111 001 111 100 111",
+        "111 001 111 001 111", "101 101 111 001 001", "111 100 111 001 111",
+        "111 100 111 101 111", "111 001 001 010 010", "111 101 111 101 111",
+        "111 101 111 001 111",
+    ].map { pattern in
+        pattern.split(separator: " ").enumerated().flatMap { row, bits in
+            bits.enumerated().compactMap { column, bit in bit == "1" ? (column, row) : nil }
+        }
+    }
+}
+
+/// Rounded square cells on a grid, matching the app icon's cell size and corner ratio.
+private struct PixelCells: Shape {
     let cells: [(Int, Int)]
+    let columns: Int
+    let rows: Int
 
     func path(in rect: CGRect) -> Path {
-        let pitch = min(rect.width, rect.height) / 6
+        let pitch = min(rect.width / CGFloat(columns), rect.height / CGFloat(rows))
         let side = pitch * 0.88
         let inset = (pitch - side) / 2
         var path = Path()
