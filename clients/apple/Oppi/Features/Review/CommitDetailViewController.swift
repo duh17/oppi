@@ -63,7 +63,7 @@ final class CommitDetailViewController: UIViewController {
     private let pageView = UIView()
     private var mountedPhase: MountedPhase?
     private var loadedContent: CommitDetailContentView?
-    private let progressPanel = ReviewLaunchProgressPanel()
+    private let progressPanel = FloatingProgressPanel(borderWidth: 1)
     private lazy var column = TrailingColumnController(screen: self)
     private let diffSheet = RouterModalPresenter()
 

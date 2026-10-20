@@ -33,14 +33,15 @@ enum WorkspaceDetailLoadErrorPolicy {
 /// until that server is ready, then lists the sessions of the selected
 /// worktree through that server's connection. It reads the stores in
 /// `updateProperties()`, builds a value per row, and applies a diffable
-/// snapshot keyed by session id; only rows whose values changed reconfigure.
-/// Session rows are `SessionListEntryConfiguration` cells and local-session
-/// rows `LocalSessionRowConfiguration`; taps, swipes, and the long-press menu
-/// belong to the collection view.
+/// snapshot keyed by session id to its `SessionListCollection`, which owns
+/// the cells, taps, swipes, and long-press menu. Local-session rows are
+/// `LocalSessionRowConfiguration` cells.
 ///
 /// The shell keeps one screen per server and workspace id; a refreshed
 /// `Workspace` value for it arrives through `update(workspace:)`.
-final class WorkspaceDetailViewController: UIViewController, UICollectionViewDelegate {
+/// Extensions: +List (rows and snapshot), +Chrome (bars, title, overlays),
+/// +Actions (what the controls do), +Refresh (loading and polling).
+final class WorkspaceDetailViewController: UIViewController {
     /// The split detail root carries the sidebar toggle.
     var showsSidebarToggle: Bool {
         didSet { setNeedsUpdateProperties() }
@@ -55,14 +56,32 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
     var navigation: AppNavigation { root.navigation }
     private var lockTarget: ScopedLockTarget { .workspace(serverId: serverId, workspaceId: workspaceId) }
 
-    let collectionView: UICollectionView
-    var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
+    typealias List = SessionListCollection<Section, Item, Row, GroupToggle>
+    /// Session rows, and local-session rows that import and resume on a tap.
+    lazy var list: List = {
+        let list = List(
+            root: root,
+            appearance: .insetGrouped,
+            actions: rowActions,
+            iconAssetCache: { [weak self] in self?.connection?.iconAssetCache },
+            configureRow: { [weak self] cell, row in self?.configure(cell, row: row) },
+            onToggle: { [weak self] toggle in self?.toggle(toggle) }
+        )
+        list.isRowSelectable = { row in
+            if case .local(_, let isEnabled) = row { return isEnabled }
+            return false
+        }
+        list.didSelectRow = { [weak self] row in
+            guard case .local(let local, _) = row else { return }
+            Task { await self?.importAndResumeLocal(local) }
+        }
+        return list
+    }()
     private let search = ScreenSearchController(prompt: String(localized: "Search sessions"))
-    let refreshControl = UIRefreshControl()
-    private let leadingDragGuard = SessionListLeadingDragGuard()
     let titleButton = WorkspaceTitleButton()
     let scrim = UIView()
-    let progressPanel = WorkspaceDetailProgressPanel()
+    /// "Creating session..." or "Resuming session..." over the list.
+    let progressPanel = FloatingProgressPanel()
 
     // Gate and server scope.
     private var phase: Phase?
@@ -103,33 +122,29 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
     /// Values whose changes this screen reacts to; nil until the content shows.
     private var observed: Observed?
 
-    // Snapshot values by item and section.
-    var rows: [Item: SessionListRowContent] = [:]
-    var localRows: [Item: LocalRow] = [:]
-    var stateRows: [Item: StateRow] = [:]
-    var headers: [Section: Header] = [:]
     private var lastThemeID: ThemeID?
-    var rowDisplay = SessionRowDisplay.standard
-    var hasAppliedSnapshot = false
 
     // Overlays and bars.
     var contextBar: WorkspaceContextBarView?
     var contextBarHeight: CGFloat = 0
     var barState: BarState?
     var titleState: TitleState?
-    var composeHost: HostedContentController?
-    var composeParams: ComposeParams?
-    var pill: InAppNowPlayingPillView?
+    lazy var bottomBar = SessionListBottomBar(
+        root: root,
+        onStart: { [weak self] in self?.startQuickSession(dictate: false) },
+        onDictate: { [weak self] in self?.startQuickSession(dictate: true) },
+        onNowPlaying: { [weak self] in self?.openNowPlaying() }
+    )
     var sidebarToggle: UIBarButtonItem?
 
     lazy var rowActions = SessionListRowActions(
         open: { [weak self] session in self?.openSession(session) },
         openThread: { [weak self] rootSession in self?.openThread(rootSession) },
         stop: { [weak self] session in
-            Task { await self?.stopSession(session) }
+            Task { await self?.setRunning(false, session) }
         },
         resume: { [weak self] session in
-            Task { await self?.resumeSession(session) }
+            Task { await self?.setRunning(true, session) }
         },
         delete: { [weak self] session in
             { [weak self] in self?.confirmDelete(session) }
@@ -143,7 +158,6 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
         workspaceId = target.workspace.id
         routeWorkspace = target.workspace
         self.showsSidebarToggle = showsSidebarToggle
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewFlowLayout())
         super.init(nibName: nil, bundle: nil)
         traitOverrides.appRootEnvironment = root
         navigationItem.largeTitleDisplayMode = .never
@@ -173,15 +187,8 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(makeLayout(), animated: false)
-        collectionView.delegate = self
-        collectionView.keyboardDismissMode = .interactive
-        collectionView.accessibilityIdentifier = "workspace.sessionList"
-        collectionView.refreshControl = refreshControl
-        // Pull-to-refresh needs the bounce even when the rows fit on screen.
-        collectionView.alwaysBounceVertical = true
-        leadingDragGuard.install(on: collectionView)
-        refreshControl.addAction(UIAction { [weak self] _ in self?.pullToRefresh() }, for: .valueChanged)
+        let collectionView = list.collectionView
+        list.refreshControl.addAction(UIAction { [weak self] _ in self?.pullToRefresh() }, for: .valueChanged)
 
         scrim.isHidden = true
         scrim.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(scrimTapped)))
@@ -208,27 +215,11 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
             progressPanel.widthAnchor.constraint(lessThanOrEqualTo: safe.widthAnchor, constant: -32),
         ])
 
-        search.onTextChange = { [weak self] text in
-            guard let self else { return }
-            var next = searchNavigation
-            guard next.searchText != text else { return }
-            next.searchText = text
-            searchNavigation = next
-        }
-        search.onPresentationChange = { [weak self] presented in
-            guard let self else { return }
-            var next = searchNavigation
-            guard next.isSearchPresented != presented else { return }
-            next.isSearchPresented = presented
-            searchNavigation = next
-        }
-
-        installDataSource()
-        if #available(iOS 27.1, *) {
-            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (screen: Self, _) in
-                screen.setNeedsUpdateProperties()
-            }
-        }
+        search.bind(
+            get: { [weak self] in self?.searchNavigation ?? .init() },
+            set: { [weak self] in self?.searchNavigation = $0 }
+        )
+        SessionListBarItems.updatesWithVerticalBarEdge(self)
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -281,11 +272,10 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
         super.updateProperties()
         let themeStore = root.themeStore
         overrideUserInterfaceStyle = themeStore.userInterfaceStyle
-        guard isOnScreen, dataSource != nil else { return }
+        guard isOnScreen else { return }
 
         let themeID = themeStore.activeThemeID
-        let themeChanged = lastThemeID != themeID
-        if themeChanged {
+        if lastThemeID != themeID {
             lastThemeID = themeID
             applyTheme(themeID.palette)
         }
@@ -306,17 +296,9 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
         }
 
         reactToChanges(connection)
-        // The saved row appearance (Settings, Sessions, Session Rows) repaints every row.
-        let display = root.sessionRows.display
-        let displayChanged = display != rowDisplay
-        rowDisplay = display
-
         let detail = readState(connection)
-        search.searchController.hidesNavigationBarDuringPresentation = !detail.toolbar.avoidsHidingContentWhileSearching
-        search.setText(detail.search.searchText)
-        search.setPresented(detail.search.isSearchPresented)
-
-        applySnapshot(detail, reconfigureAll: themeChanged || displayChanged)
+        search.show(detail.search, toolbar: detail.toolbar)
+        applySnapshot(detail)
         syncOverlays(detail)
         syncBars(detail)
     }
@@ -324,7 +306,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
     private func applyTheme(_ palette: ThemePalette) {
         let background = UIColor(palette.bg)
         view.backgroundColor = background
-        collectionView.backgroundColor = background
+        list.collectionView.backgroundColor = background
         scrim.backgroundColor = background.withAlphaComponent(0.5)
         progressPanel.apply(palette)
     }
@@ -375,7 +357,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
             contentUnavailableConfiguration = nil
         }
 
-        collectionView.isHidden = next != .content
+        list.collectionView.isHidden = next != .content
         if next == .content {
             search.install(on: self, alwaysVisible: false)
             if hasAppeared {
@@ -424,21 +406,12 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
         sidebarToggle = nil
         barState = nil
         titleState = nil
-        composeHost = nil
-        composeParams = nil
-        pill = nil
+        bottomBar.reset()
         setToolbarItems([], animated: false)
         if navigationController?.topViewController === self {
             navigationController?.setToolbarHidden(true, animated: false)
         }
-        var empty = NSDiffableDataSourceSnapshot<Section, Item>()
-        empty.deleteAllItems()
-        dataSource?.apply(empty, animatingDifferences: false)
-        rows = [:]
-        localRows = [:]
-        stateRows = [:]
-        headers = [:]
-        hasAppliedSnapshot = false
+        list.removeAll()
     }
 
     private func startConnectTask() {
@@ -681,10 +654,8 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
     }
 
     private func presentPendingError() {
-        guard isOnScreen, phase == .content, viewIfLoaded?.window != nil, let message = pendingError else { return }
-        guard presentedViewController == nil || presentedViewController is SessionListErrorAlert else { return }
-        pendingError = nil
-        SessionListAlerts.presentError(message, from: self)
+        guard isOnScreen, phase == .content else { return }
+        SessionListAlerts.presentPendingError(&pendingError, from: self)
     }
 }
 
@@ -769,13 +740,6 @@ extension WorkspaceDetailViewController {
         case stopped(String)
         case archive(String)
         case empty
-
-        var hasHeader: Bool {
-            switch self {
-            case .results, .localResults, .yourTurn, .working, .stopped, .archive: true
-            case .status, .empty: false
-            }
-        }
     }
 
     /// Session rows by session id, local rows by file path, one fixed id per
@@ -794,35 +758,19 @@ extension WorkspaceDetailViewController {
         case archiveLoading(String)
     }
 
-    struct LocalRow: Equatable {
-        let session: LocalSession
-        let isEnabled: Bool
-    }
-
-    enum StateRow: Equatable {
+    /// A row that is not a session: a state, or an importable local session
+    /// (disabled while one imports).
+    enum Row: Equatable {
         case searching
         case noMatches(query: String)
         case empty
         case archiveLoading
+        case local(LocalSession, isEnabled: Bool)
     }
 
     enum GroupToggle: Equatable {
         case stopped(groupID: String, isExpanded: Bool)
         case archive(WorkspaceSessionArchiveBucket)
-    }
-
-    struct GroupHeader: Equatable {
-        let title: String
-        /// The older-history bucket's item count.
-        let detail: String?
-        let isExpanded: Bool
-        let accessibilityIdentifier: String?
-        let toggle: GroupToggle
-    }
-
-    enum Header: Equatable {
-        case title(String)
-        case group(GroupHeader)
     }
 
     struct TitleState: Equatable {
@@ -848,65 +796,5 @@ extension WorkspaceDetailViewController {
         let configurationLabel: String
         /// The rail's worktree item carries the title's menu.
         let title: TitleState
-    }
-
-    struct ComposeParams: Equatable {
-        let showsDictation: Bool
-        let hasActivePlayback: Bool
-        let columnWidth: CGFloat
-    }
-
-}
-
-/// The floating "Creating session..." / "Resuming session..." panel.
-final class WorkspaceDetailProgressPanel: UIView {
-    private let spinner = UIActivityIndicatorView(style: .medium)
-    private let label = UILabel()
-
-    var text: String? {
-        get { label.text }
-        set { label.text = newValue }
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        layer.cornerRadius = 12
-        layer.cornerCurve = .continuous
-        label.font = .preferredFont(forTextStyle: .body)
-        label.adjustsFontForContentSizeCategory = true
-        label.numberOfLines = 0
-        label.textAlignment = .center
-        spinner.startAnimating()
-        let stack = UIStackView(arrangedSubviews: [spinner, label])
-        stack.axis = .vertical
-        stack.alignment = .center
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 16),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-        ])
-        isAccessibilityElement = true
-        accessibilityTraits = .updatesFrequently
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override var accessibilityLabel: String? {
-        get { label.text }
-        set {}
-    }
-
-    func apply(_ palette: ThemePalette) {
-        let surface = ThemeSurfaceStyle.resolve(.elevatedPanel, palette: palette)
-        backgroundColor = UIColor(surface.fill)
-        layer.borderColor = surface.stroke.map { UIColor($0).cgColor }
-        layer.borderWidth = surface.stroke == nil ? 0 : surface.strokeLineWidth
-        spinner.color = UIColor(palette.cyan)
-        label.textColor = UIColor(palette.fg)
     }
 }

@@ -118,7 +118,7 @@ extension WorkspaceDetailViewController {
                 false
             }
         }
-        let hasAskAttention = sessions.contains { Self.pendingAskCount(for: $0.id, connection: connection) > 0 }
+        let hasAskAttention = sessions.contains { connection.sessionListAskCount(for: $0.id) > 0 }
             || connection.askRequestStore.pending.values.contains { ask in
                 ask.workspaceId == workspaceId ||
                     (ask.workspaceId == nil && sessionIds.contains(ask.sessionId))

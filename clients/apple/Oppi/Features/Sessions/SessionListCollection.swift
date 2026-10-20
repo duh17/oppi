@@ -1,9 +1,11 @@
 import UIKit
 
 // UIKit pieces every session list shares (All Sessions, a workspace's
-// sessions): the values a row draws, the trailing swipes and long-press menu,
-// the delete confirmation and error alert, the section header (titled or
-// expandable), and the bar items. The row is `SessionListEntryConfiguration`.
+// sessions): the collection view with its snapshot, the values a row draws,
+// the trailing swipes and long-press menu, the search bar binding, Stop,
+// Resume, and Delete requests, the delete confirmation and error alert, the
+// section header (titled or expandable), and the bar items. The row is
+// `SessionListEntryConfiguration`.
 
 /// What one session-list cell draws, computed by the list in
 /// `updateProperties()`. A list reconfigures an item only when this changes.
@@ -59,6 +61,525 @@ struct SessionListRowContent: Equatable {
             sessions.append(root)
         }
         return sessions
+    }
+
+    /// A row's values from its server's stores. `workspaceContext` names the
+    /// row's workspace (All Sessions); `foreignWorkspaceName` names a drawn
+    /// session's workspace when it is not the list's own.
+    @MainActor
+    static func make(
+        entry: SessionListEntry,
+        connection: ServerConnection,
+        workspaceContext: String? = nil,
+        foreignWorkspaceName: (Session) -> String? = { _ in nil },
+        searchSnippet: AttributedString?,
+        lockTarget: (Session) -> ScopedLockTarget?
+    ) -> Self {
+        var statuses: [String: SessionStatusKind] = [:]
+        var foreignNames: [String: String] = [:]
+        for session in Self.drawnSessions(of: entry) {
+            statuses[session.id] = SessionStatusKind.resolve(
+                session: session,
+                pendingAskCount: connection.sessionListAskCount(for: session.id),
+                seenAt: connection.sessionStore.seenAt(for: session.id)
+            )
+            if let name = foreignWorkspaceName(session) {
+                foreignNames[session.id] = name
+            }
+        }
+        let session = entry.session
+        return Self(
+            entry: entry,
+            presentation: SessionRowPresentationBuilder.make(
+                session: session,
+                pendingAskCount: connection.sessionListAskCount(for: session.id),
+                pendingAsk: connection.askRequestStore.pending(for: session.id),
+                workspaceContext: workspaceContext,
+                seenAt: connection.sessionStore.seenAt(for: session.id),
+                searchSnippet: searchSnippet,
+                catalogModels: connection.chatState.cachedModels
+            ),
+            statuses: statuses,
+            foreignWorkspaceNames: foreignNames,
+            lockBadges: Self.lockBadges(of: entry, target: lockTarget),
+            isDurable: Self.isDurable(session)
+        )
+    }
+}
+
+extension ServerConnection {
+    /// Questions and extension dialogs waiting on a session, as its list row counts them.
+    func sessionListAskCount(for sessionId: String) -> Int {
+        SessionListAttentionMerger.askCount(
+            listCount: sessionStore.listPendingAskCount(for: sessionId),
+            hasPendingAsk: askRequestStore.hasPending(for: sessionId),
+            hasPendingExtensionDialog: hasPendingExtensionDialog(for: sessionId)
+        )
+    }
+}
+
+// MARK: - Collection
+
+/// A session list's collection view: the list layout, the diffable data
+/// source, the values each cell and header draws, and the row taps, trailing
+/// swipes, and long-press menu. Session rows draw `SessionListRowContent`;
+/// every other row (a prompt, a state, a local session) is the list's own
+/// `Row`, drawn by `configureRow`. The list builds a `Snapshot` in
+/// `updateProperties()` and applies it; only items whose values changed
+/// reconfigure, and a theme or row-appearance change reconfigures them all.
+@MainActor
+final class SessionListCollection<
+    Section: Hashable & Sendable,
+    Item: Hashable & Sendable,
+    Row: Equatable,
+    Toggle: Equatable
+>: NSObject, UICollectionViewDelegate {
+    typealias Header = SessionListSectionHeader<Toggle>
+
+    /// One pass's sections and items and what each draws.
+    struct Snapshot {
+        enum Cell {
+            case session(SessionListRowContent)
+            case row(Row)
+        }
+
+        fileprivate var items = NSDiffableDataSourceSnapshot<Section, Item>()
+        fileprivate var sessions: [Item: SessionListRowContent] = [:]
+        fileprivate var rows: [Item: Row] = [:]
+        fileprivate var headers: [Section: Header] = [:]
+
+        /// A section, with its header when it has one.
+        mutating func appendSection(_ section: Section, header: Header? = nil) {
+            items.appendSections([section])
+            headers[section] = header
+        }
+
+        /// A section holding one row that is not a session: a prompt or a state.
+        mutating func appendSection(_ section: Section, item: Item, row: Row) {
+            appendSection(section)
+            items.appendItems([item], toSection: section)
+            rows[item] = row
+        }
+
+        /// Rows in order. A diffable snapshot traps on a repeated item, so a
+        /// repeat is skipped before its values are made; so is an element
+        /// with no cell.
+        mutating func append<Element>(
+            _ elements: [Element],
+            to section: Section,
+            item: (Element) -> Item,
+            cell: (Element) -> Cell?
+        ) {
+            var ids: [Item] = []
+            ids.reserveCapacity(elements.count)
+            for element in elements {
+                let id = item(element)
+                guard sessions[id] == nil, rows[id] == nil else { continue }
+                switch cell(element) {
+                case .session(let content): sessions[id] = content
+                case .row(let row): rows[id] = row
+                case nil: continue
+                }
+                ids.append(id)
+            }
+            items.appendItems(ids, toSection: section)
+        }
+
+        /// Session rows in order.
+        mutating func append(
+            sessions entries: [SessionListEntry],
+            to section: Section,
+            item: (String) -> Item,
+            content: (SessionListEntry) -> SessionListRowContent?
+        ) {
+            append(entries, to: section, item: { item($0.id) }, cell: { content($0).map(Cell.session) })
+        }
+    }
+
+    let collectionView: UICollectionView
+    let refreshControl = UIRefreshControl()
+    /// Whether a row that is not a session takes a tap, and what the tap does.
+    var isRowSelectable: (Row) -> Bool = { _ in false }
+    var didSelectRow: (Row) -> Void = { _ in }
+
+    private let root: AppRootEnvironment
+    private let actions: SessionListRowActions
+    private let iconAssetCache: () -> IconAssetCache?
+    private let configureRow: (UICollectionViewListCell, Row) -> Void
+    private let onToggle: (Toggle) -> Void
+    private let leadingDragGuard = SessionListLeadingDragGuard()
+    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
+    private var current = Snapshot()
+    /// The saved row appearance (Settings, Sessions, Session Rows) and the
+    /// theme the cells last drew.
+    private var display = SessionRowDisplay.standard
+    private var themeID: ThemeID?
+    private var hasApplied = false
+
+    /// `iconAssetCache` is the list's server's, for saved-Agent Genmoji.
+    /// `configureRow` draws a non-session row on a cell already given the
+    /// list's background; `onToggle` runs an expandable header's toggle.
+    init(
+        root: AppRootEnvironment,
+        appearance: UICollectionLayoutListConfiguration.Appearance,
+        actions: SessionListRowActions,
+        iconAssetCache: @escaping () -> IconAssetCache?,
+        configureRow: @escaping (UICollectionViewListCell, Row) -> Void,
+        onToggle: @escaping (Toggle) -> Void
+    ) {
+        self.root = root
+        self.actions = actions
+        self.iconAssetCache = iconAssetCache
+        self.configureRow = configureRow
+        self.onToggle = onToggle
+        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewFlowLayout())
+        super.init()
+        collectionView.setCollectionViewLayout(makeLayout(appearance), animated: false)
+        collectionView.delegate = self
+        collectionView.keyboardDismissMode = .interactive
+        collectionView.accessibilityIdentifier = "workspace.sessionList"
+        collectionView.refreshControl = refreshControl
+        // Pull-to-refresh needs the bounce even when the rows fit on screen.
+        collectionView.alwaysBounceVertical = true
+        leadingDragGuard.install(on: collectionView)
+        installDataSource(
+            headerInset: appearance == .insetGrouped
+                ? SessionListSectionHeaderView.insetGroupedInset
+                : SessionListSectionHeaderView.plainInset
+        )
+    }
+
+    /// Applies the pass's snapshot, animated once the list has rows on
+    /// screen. Call from `updateProperties()`: the row appearance and theme
+    /// read here are tracked.
+    func apply(_ next: Snapshot) {
+        guard let dataSource else { return }
+        let display = root.sessionRows.display
+        let themeID = root.themeStore.activeThemeID
+        let reconfigureAll = display != self.display || themeID != self.themeID
+        self.display = display
+        self.themeID = themeID
+
+        var items = next.items
+        let existing = Set(dataSource.snapshot().itemIdentifiers)
+        let changed = items.itemIdentifiers.filter { item in
+            guard existing.contains(item) else { return false }
+            if reconfigureAll { return true }
+            if let session = next.sessions[item] { return current.sessions[item] != session }
+            return current.rows[item] != next.rows[item]
+        }
+        let headersChanged = reconfigureAll || current.headers != next.headers
+        current = next
+        items.reconfigureItems(changed)
+
+        let animated = hasApplied && collectionView.window != nil
+        hasApplied = true
+        dataSource.apply(items, animatingDifferences: animated) { [weak self] in
+            if headersChanged { self?.refreshVisibleHeaders() }
+        }
+    }
+
+    /// Empties the list; the next snapshot applies without animation.
+    func removeAll() {
+        current = Snapshot()
+        hasApplied = false
+        dataSource?.apply(NSDiffableDataSourceSnapshot<Section, Item>(), animatingDifferences: false)
+    }
+
+    /// The first of `items` with a cell on screen (a confirmation's anchor).
+    func cell(forFirstOf items: [Item]) -> UIView? {
+        for item in items {
+            if let indexPath = dataSource?.indexPath(for: item), let cell = collectionView.cellForItem(at: indexPath) {
+                return cell
+            }
+        }
+        return nil
+    }
+
+    /// A section has a header exactly when the snapshot gave it one. A plain
+    /// list draws separators between session rows only, never under a
+    /// prompt or state row.
+    private func makeLayout(_ appearance: UICollectionLayoutListConfiguration.Appearance) -> UICollectionViewLayout {
+        UICollectionViewCompositionalLayout { [weak self] index, environment in
+            var configuration = UICollectionLayoutListConfiguration(appearance: appearance)
+            configuration.backgroundColor = .clear
+            let hasHeader = self?.dataSource?.sectionIdentifier(for: index)
+                .flatMap { self?.current.headers[$0] } != nil
+            configuration.headerMode = hasHeader ? .supplementary : .none
+            if appearance == .plain {
+                configuration.showsSeparators = hasHeader
+            }
+            configuration.trailingSwipeActionsConfigurationProvider = { [weak self] indexPath in
+                self?.trailingSwipe(at: indexPath)
+            }
+            return NSCollectionLayoutSection.list(using: configuration, layoutEnvironment: environment)
+        }
+    }
+
+    private func installDataSource(headerInset: CGFloat) {
+        let sessionCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
+            guard let self, let row = current.sessions[item] else { return }
+            cell.contentConfiguration = SessionListEntryConfiguration(
+                row: row,
+                display: display,
+                themeID: root.themeStore.activeThemeID,
+                iconAssetCache: iconAssetCache(),
+                actions: actions
+            )
+            cell.backgroundConfiguration = rowBackground()
+            // No tap highlight, as the rows have always had none.
+            cell.automaticallyUpdatesBackgroundConfiguration = false
+        }
+        let rowCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
+            guard let self, let row = current.rows[item] else { return }
+            cell.accessibilityIdentifier = nil
+            cell.accessories = []
+            cell.backgroundConfiguration = rowBackground()
+            cell.automaticallyUpdatesBackgroundConfiguration = false
+            configureRow(cell, row)
+        }
+        let dataSource = UICollectionViewDiffableDataSource<Section, Item>(
+            collectionView: collectionView
+        ) { [weak self] collectionView, indexPath, item in
+            if self?.current.sessions[item] != nil {
+                collectionView.dequeueConfiguredReusableCell(using: sessionCell, for: indexPath, item: item)
+            } else {
+                collectionView.dequeueConfiguredReusableCell(using: rowCell, for: indexPath, item: item)
+            }
+        }
+        let header = UICollectionView.SupplementaryRegistration<SessionListSectionHeaderView>(
+            elementKind: SessionListSectionHeaderView.elementKind
+        ) { [weak self] view, _, indexPath in
+            view.horizontalInset = headerInset
+            self?.configure(view, at: indexPath)
+        }
+        dataSource.supplementaryViewProvider = { collectionView, _, indexPath in
+            collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
+        }
+        self.dataSource = dataSource
+    }
+
+    private func rowBackground() -> UIBackgroundConfiguration {
+        var background = UIBackgroundConfiguration.listCell()
+        background.backgroundColor = root.themeStore.backgroundColor
+        return background
+    }
+
+    private func configure(_ view: SessionListSectionHeaderView, at indexPath: IndexPath) {
+        guard let section = dataSource?.sectionIdentifier(for: indexPath.section),
+              let header = current.headers[section] else { return }
+        let palette = root.themeStore.activeThemeID.palette
+        switch header {
+        case .title(let title):
+            view.configure(title: title, palette: palette)
+        case .group(let title, let detail, let isExpanded, let accessibilityIdentifier, let toggle):
+            view.configure(
+                title: title,
+                detail: detail,
+                isExpanded: isExpanded,
+                accessibilityIdentifier: accessibilityIdentifier,
+                palette: palette
+            ) { [weak self] in
+                self?.onToggle(toggle)
+            }
+        }
+    }
+
+    private func refreshVisibleHeaders() {
+        let kind = SessionListSectionHeaderView.elementKind
+        for indexPath in collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind) {
+            guard let view = collectionView.supplementaryView(forElementKind: kind, at: indexPath)
+                as? SessionListSectionHeaderView else { continue }
+            configure(view, at: indexPath)
+        }
+    }
+
+    private func session(at indexPath: IndexPath) -> Session? {
+        guard let item = dataSource?.itemIdentifier(for: indexPath) else { return nil }
+        return current.sessions[item]?.entry.session
+    }
+
+    private func trailingSwipe(at indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        guard let session = session(at: indexPath) else { return nil }
+        return SessionListRowMenus.trailingSwipe(
+            for: session,
+            actions: actions,
+            palette: root.themeStore.activeThemeID.palette
+        )
+    }
+
+    // MARK: UICollectionViewDelegate
+
+    func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
+        guard let item = dataSource?.itemIdentifier(for: indexPath) else { return false }
+        if current.sessions[item] != nil { return true }
+        return current.rows[item].map(isRowSelectable) ?? false
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        collectionView.deselectItem(at: indexPath, animated: false)
+        guard let item = dataSource?.itemIdentifier(for: indexPath) else { return }
+        if let session = current.sessions[item]?.entry.session {
+            actions.open(session)
+        } else if let row = current.rows[item], isRowSelectable(row) {
+            didSelectRow(row)
+        }
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
+        point: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard indexPaths.count == 1, let indexPath = indexPaths.first, let session = session(at: indexPath) else {
+            return nil
+        }
+        return SessionListRowMenus.contextMenu(for: session, actions: actions)
+    }
+}
+
+/// A session-list section's header: a plain title ("Your Turn"), or an
+/// expandable group (a stopped day) whose `toggle` the list runs on a tap.
+/// `detail` is a count shown before the chevron.
+enum SessionListSectionHeader<Toggle: Equatable>: Equatable {
+    case title(String)
+    case group(title: String, detail: String? = nil, isExpanded: Bool, accessibilityIdentifier: String?, toggle: Toggle)
+}
+
+extension UIContentUnavailableConfiguration {
+    /// A session search the server is still answering.
+    static func sessionListSearching() -> Self {
+        var content = loading()
+        content.text = String(localized: "Searching sessions…")
+        return content
+    }
+
+    static func sessionListNoMatches(query: String) -> Self {
+        var content = empty()
+        content.image = UIImage(systemName: "magnifyingglass")
+        content.text = String(localized: "No Matching Sessions")
+        content.secondaryText = String(localized: "No sessions match “\(query)”.")
+        return content
+    }
+}
+
+// MARK: - Search
+
+extension ScreenSearchController {
+    /// Keeps a session list's saved search (`AppNavigation`, kept across
+    /// pushes) in step with this bar: typing and presenting write it, and
+    /// `show(_:toolbar:)` puts it back on the bar.
+    func bind(
+        get: @escaping () -> SessionListSearchNavigationPersistence.State,
+        set: @escaping (SessionListSearchNavigationPersistence.State) -> Void
+    ) {
+        onTextChange = { text in
+            var next = get()
+            guard next.searchText != text else { return }
+            next.searchText = text
+            set(next)
+        }
+        onPresentationChange = { presented in
+            var next = get()
+            guard next.isSearchPresented != presented else { return }
+            next.isSearchPresented = presented
+            set(next)
+        }
+    }
+
+    /// The saved search on the bar. While Now Playing shares the bottom bar,
+    /// searching keeps the navigation bar in place.
+    func show(_ state: SessionListSearchNavigationPersistence.State, toolbar: InAppNowPlayingChrome.SessionListToolbar) {
+        searchController.hidesNavigationBarDuringPresentation = !toolbar.avoidsHidingContentWhileSearching
+        setText(state.searchText)
+        setPresented(state.isSearchPresented)
+    }
+}
+
+extension SessionSearchStore {
+    /// A list's matches for `query`: its sessions by name (and
+    /// `extraCandidates`), then the server's content matches; nil without a
+    /// query. A content match would say what a locked session contains, so
+    /// locked sessions match by name only.
+    @MainActor
+    func sessionListMatches(
+        localSessions: [Session],
+        query: String,
+        serverId: String?,
+        extraCandidates: (Session) -> [String?] = { _ in [] }
+    ) -> [SessionListSearchPresentation.Match]? {
+        SessionListSearchPresentation.flattenedMatches(
+            localSessions: localSessions,
+            query: query,
+            extraCandidates: extraCandidates,
+            serverResults: results.filter { result in
+                guard let session = result.session, let serverId else { return true }
+                return !ScopedLockService.shared.isLocked(.session(session, serverId: serverId))
+            },
+            completedServerQuery: completedServerQuery,
+            activeServerQuery: activeServerQuery,
+            snippetsBySessionId: snippetsBySessionId
+        )
+    }
+}
+
+// MARK: - Lifecycle requests
+
+/// Stop, Resume, and Delete from a session list, sent to the session's
+/// server on `scope`. A failed request reports the list's alert message.
+@MainActor
+enum SessionListLifecycle {
+    /// Stops or resumes the session and stores the server's answer. False
+    /// when nothing was sent (no client) or the request failed.
+    @discardableResult
+    static func setRunning(
+        _ running: Bool,
+        _ session: Session,
+        scope: SessionRouteScope,
+        connection: ServerConnection,
+        onError: (String) -> Void
+    ) async -> Bool {
+        guard let api = connection.apiClient else { return false }
+        do {
+            let updated = running
+                ? try await api.resumeSession(scope: scope, sessionId: session.id)
+                : try await api.stopSession(scope: scope, sessionId: session.id)
+            connection.sessionStore.upsert(updated)
+            return true
+        } catch {
+            onError("\(running ? "Resume" : "Stop") failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// Drops the session from the list and this device's cached timeline,
+    /// then deletes it on the server. Its lock and draft go only once the
+    /// server no longer has it (deleted, or already gone: 404); a failed
+    /// delete brings it back on the next sync, still locked.
+    static func delete(
+        _ session: Session,
+        scope: SessionRouteScope,
+        serverId: String,
+        connection: ServerConnection,
+        drafts: ComposerDraftStore,
+        onError: (String) -> Void
+    ) async {
+        guard let api = connection.apiClient else { return }
+        connection.sessionStore.remove(id: session.id)
+        await TimelineCache.shared.removeTrace(session.id, serverId: serverId)
+        do {
+            try await api.deleteSession(scope: scope, sessionId: session.id)
+        } catch let apiError as APIError {
+            guard case .server(let status, _) = apiError, status == 404 else {
+                onError("Delete failed: \(apiError.localizedDescription)")
+                return
+            }
+        } catch {
+            onError("Delete failed: \(error.localizedDescription)")
+            return
+        }
+        ScopedLockService.shared.forgetSession(serverId: serverId, sessionId: session.id)
+        drafts.clearDraft(serverID: serverId, workspaceID: scope.composerDraftScopeID, sessionID: session.id)
     }
 }
 
@@ -275,6 +796,17 @@ enum SessionListAlerts {
         alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .cancel))
         presenter.present(alert, animated: true)
     }
+
+    /// Shows a held error once the list is in a window and nothing else is
+    /// presented over it; until then it stays held.
+    static func presentPendingError(_ pending: inout String?, from presenter: UIViewController) {
+        guard presenter.viewIfLoaded?.window != nil, let message = pending else { return }
+        guard presenter.presentedViewController == nil || presenter.presentedViewController is SessionListErrorAlert else {
+            return
+        }
+        pending = nil
+        presentError(message, from: presenter)
+    }
 }
 
 /// Marks the list's error alert, so a later error updates it instead of stacking.
@@ -484,14 +1016,112 @@ enum SessionListBarItems {
         return railTitle == nil ? item : railItem(item, priority: .keep)
     }
 
+    /// Rail or horizontal bar: the bars rebuild when the vertical bar edge changes.
+    static func updatesWithVerticalBarEdge(_ controller: UIViewController) {
+        if #available(iOS 27.1, *) {
+            let traits = UITraitCollection.systemTraitsAffectingVerticalBarEdge
+            controller.registerForTraitChanges(traits) { (controller: UIViewController, _: UITraitCollection) in
+                controller.setNeedsUpdateProperties()
+            }
+        }
+    }
+}
+
+/// A session list's Message and Now Playing controls. On the horizontal
+/// bottom bar they are the hosted Message capsule and the Now Playing pill,
+/// kept across passes so they update in place instead of rebuilding the bar
+/// item; on the vertical rail, labeled symbols. Each opens Quick Session,
+/// dictation, or the player through the list's closures.
+@MainActor
+final class SessionListBottomBar {
+    /// The Message capsule's host, once the horizontal bar has asked for it.
+    private(set) var composeHost: HostedContentController?
+    private var composeParams: ComposeParams?
+    private var pill: InAppNowPlayingPillView?
+    private let root: AppRootEnvironment
+    private let onStart: () -> Void
+    private let onDictate: () -> Void
+    private let onNowPlaying: () -> Void
+
+    init(
+        root: AppRootEnvironment,
+        onStart: @escaping () -> Void,
+        onDictate: @escaping () -> Void,
+        onNowPlaying: @escaping () -> Void
+    ) {
+        self.root = root
+        self.onStart = onStart
+        self.onDictate = onDictate
+        self.onNowPlaying = onNowPlaying
+    }
+
+    /// Brings the horizontal bar's capsule up to date, and the pill when
+    /// Now Playing shows. The capsule rebuilds only when its inputs change.
+    func update(
+        showsDictation: Bool,
+        hasActivePlayback: Bool,
+        toolbar: InAppNowPlayingChrome.SessionListToolbar,
+        player: AudioPlayerService?,
+        columnWidth: CGFloat
+    ) {
+        let params = ComposeParams(
+            showsDictation: showsDictation,
+            hasActivePlayback: hasActivePlayback,
+            columnWidth: columnWidth
+        )
+        if composeParams != params || composeHost == nil {
+            composeParams = params
+            composeHost = SessionListHostedChrome.composeCapsule(
+                updating: composeHost,
+                root: root,
+                showsDictation: showsDictation,
+                hasActivePlayback: hasActivePlayback,
+                columnWidth: columnWidth,
+                onStart: onStart,
+                onDictate: onDictate
+            )
+        }
+        guard toolbar.showsNowPlayingPill, let player else { return }
+        if let pill {
+            pill.update(audioPlayer: player, density: toolbar.pillDensity)
+        } else {
+            pill = InAppNowPlayingPillView(
+                audioPlayer: player,
+                accessibilityPrefix: "sessionList.nowPlaying",
+                density: toolbar.pillDensity,
+                onOpen: onNowPlaying
+            )
+        }
+    }
+
+    /// The horizontal bottom bar: Message, then Now Playing parked beside it
+    /// or centered, then `files` trailing.
+    func items(showsNowPlaying: Bool, parksNowPlayingNextToCompose: Bool, files: UIBarButtonItem) -> [UIBarButtonItem] {
+        var items: [UIBarButtonItem] = []
+        if let composeHost {
+            items.append(UIBarButtonItem(customView: composeHost.view))
+        }
+        if showsNowPlaying, let pill {
+            items.append(parksNowPlayingNextToCompose ? .fixedSpace() : .flexibleSpace())
+            items.append(UIBarButtonItem(customView: pill))
+        }
+        items.append(.flexibleSpace())
+        items.append(files)
+        return items
+    }
+
+    /// Drops the controls with the list's content; the next update makes them again.
+    func reset() {
+        composeHost = nil
+        composeParams = nil
+        pill = nil
+    }
+
     /// The rail's compose control. The rail has no room for the capsule's
     /// mic, so long-press keeps Dictate.
-    static func railCompose(
-        showsDictation: Bool,
-        tint: UIColor,
-        onStart: @escaping () -> Void,
-        onDictate: @escaping () -> Void
-    ) -> UIBarButtonItem {
+    func railCompose(showsDictation: Bool, tint: UIColor) -> UIBarButtonItem {
+        let onStart = onStart
+        let onDictate = onDictate
         var menuItems: [UIMenuElement] = []
         if showsDictation {
             menuItems.append(UIAction(title: String(localized: "Dictate"), image: UIImage(systemName: "mic")) { _ in onDictate() })
@@ -511,12 +1141,13 @@ enum SessionListBarItems {
                 return true
             },
         ]
-        return railItem(item, priority: .keep)
+        return SessionListBarItems.railItem(item, priority: .keep)
     }
 
     /// Now Playing is a wide pill. On the rail it is a labeled symbol that
     /// opens the same player.
-    static func railNowPlaying(tint: UIColor, onOpen: @escaping () -> Void) -> UIBarButtonItem {
+    func railNowPlaying(tint: UIColor) -> UIBarButtonItem {
+        let onOpen = onNowPlaying
         let item = UIBarButtonItem(
             title: String(localized: "Playing"),
             image: UIImage(systemName: "waveform"),
@@ -525,12 +1156,13 @@ enum SessionListBarItems {
         item.tintColor = tint
         item.accessibilityLabel = String(localized: "Now Playing")
         item.accessibilityIdentifier = "sessionList.nowPlaying.rail"
-        return railItem(item, priority: .overflowFirst)
+        return SessionListBarItems.railItem(item, priority: .overflowFirst)
     }
 
-    /// The hosted Message capsule as a bar item (`SessionListHostedChrome`).
-    static func hosted(_ host: UIViewController) -> UIBarButtonItem {
-        UIBarButtonItem(customView: host.view)
+    private struct ComposeParams: Equatable {
+        let showsDictation: Bool
+        let hasActivePlayback: Bool
+        let columnWidth: CGFloat
     }
 }
 

@@ -76,8 +76,8 @@ extension WorkspaceDetailViewController {
         let next = max(0, ceil(height))
         guard abs(next - contextBarHeight) > 0.5 else { return }
         contextBarHeight = next
-        collectionView.contentInset.top = next
-        collectionView.verticalScrollIndicatorInsets.top = next
+        list.collectionView.contentInset.top = next
+        list.collectionView.verticalScrollIndicatorInsets.top = next
     }
 
     @objc func scrimTapped() {
@@ -92,7 +92,6 @@ extension WorkspaceDetailViewController {
         let joinsRail = SessionListBarItems.joinsRail(traitCollection)
         let palette = root.themeStore.activeThemeID.palette
         let showsDictation = SessionInboxComposeChrome.showsDictationShortcut(hasActivePlayback: detail.hasActivePlayback)
-        let player = detail.connection.audioPlayer
         let showsBottomItems = !detail.isNavigatingDeeper
 
         navigationItem.title = detail.workspace.name
@@ -111,37 +110,16 @@ extension WorkspaceDetailViewController {
         )
 
         if !joinsRail, showsBottomItems {
-            let params = ComposeParams(
+            bottomBar.update(
                 showsDictation: showsDictation,
                 hasActivePlayback: detail.hasActivePlayback,
+                toolbar: detail.toolbar,
+                player: detail.connection.audioPlayer,
                 columnWidth: columnWidth
             )
-            if composeParams != params || composeHost == nil {
-                composeParams = params
-                composeHost = SessionListHostedChrome.composeCapsule(
-                    updating: composeHost,
-                    root: root,
-                    showsDictation: showsDictation,
-                    hasActivePlayback: detail.hasActivePlayback,
-                    columnWidth: columnWidth,
-                    onStart: { [weak self] in self?.startQuickSession(dictate: false) },
-                    onDictate: { [weak self] in self?.startQuickSession(dictate: true) }
-                )
-            }
             // Disabled while a session is being created.
-            composeHost?.view.isUserInteractionEnabled = !state.isCreating
-            composeHost?.view.alpha = state.isCreating ? 0.55 : 1
-        }
-        if !joinsRail, showsBottomItems, detail.toolbar.showsNowPlayingPill {
-            if let pill {
-                pill.update(audioPlayer: player, density: detail.toolbar.pillDensity)
-            } else {
-                pill = InAppNowPlayingPillView(
-                    audioPlayer: player,
-                    accessibilityPrefix: "sessionList.nowPlaying",
-                    density: detail.toolbar.pillDensity
-                ) { [weak self] in self?.openNowPlaying() }
-            }
+            bottomBar.composeHost?.view.isUserInteractionEnabled = !state.isCreating
+            bottomBar.composeHost?.view.alpha = state.isCreating ? 0.55 : 1
         }
 
         let bars = BarState(
@@ -204,12 +182,7 @@ extension WorkspaceDetailViewController {
                 trailing.append(SessionListBarItems.railItem(item, priority: .navigation))
             }
             if bars.showsBottomItems {
-                let compose = SessionListBarItems.railCompose(
-                    showsDictation: bars.showsDictation,
-                    tint: railTint,
-                    onStart: { [weak self] in self?.startQuickSession(dictate: false) },
-                    onDictate: { [weak self] in self?.startQuickSession(dictate: true) }
-                )
+                let compose = bottomBar.railCompose(showsDictation: bars.showsDictation, tint: railTint)
                 compose.isEnabled = !bars.isCreating
                 trailing.append(compose)
             }
@@ -236,7 +209,7 @@ extension WorkspaceDetailViewController {
             trailing.append(SessionListBarItems.railItem(configuration, priority: .keep))
             if bars.showsBottomItems {
                 if bars.showsNowPlaying {
-                    trailing.append(SessionListBarItems.railNowPlaying(tint: railTint) { [weak self] in self?.openNowPlaying() })
+                    trailing.append(bottomBar.railNowPlaying(tint: railTint))
                 }
                 // Bottom-anchored: spacers cannot push a rail item down.
                 bottom.append(SessionListBarItems.files(
@@ -265,21 +238,17 @@ extension WorkspaceDetailViewController {
             configuration.accessibilityIdentifier = "workspace.edit.open"
             trailing.append(configuration)
             if bars.showsBottomItems {
-                if let composeHost {
-                    bottom.append(SessionListBarItems.hosted(composeHost))
-                }
-                if bars.showsNowPlaying, let pill {
-                    bottom.append(bars.parksNowPlayingNextToCompose ? .fixedSpace() : .flexibleSpace())
-                    bottom.append(UIBarButtonItem(customView: pill))
-                }
-                bottom.append(.flexibleSpace())
-                bottom.append(SessionListBarItems.files(
-                    isEnabled: true,
-                    accessibilityLabel: String(localized: "Open workspace files"),
-                    railTitle: nil,
-                    palette: palette,
-                    action: openFiles
-                ))
+                bottom = bottomBar.items(
+                    showsNowPlaying: bars.showsNowPlaying,
+                    parksNowPlayingNextToCompose: bars.parksNowPlayingNextToCompose,
+                    files: SessionListBarItems.files(
+                        isEnabled: true,
+                        accessibilityLabel: String(localized: "Open workspace files"),
+                        railTitle: nil,
+                        palette: palette,
+                        action: openFiles
+                    )
+                )
             }
         }
 
@@ -352,7 +321,6 @@ extension WorkspaceDetailViewController {
         titleButton.accessibilityTraits = title.canSwitch ? .button : .staticText
     }
 }
-
 
 /// The principal title: the workspace name and lock badge over the worktree
 /// name, with a chevron when it opens the worktree menu. One accessibility

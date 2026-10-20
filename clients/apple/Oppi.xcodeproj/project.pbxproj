@@ -560,6 +560,7 @@
 		41E175DE8988BFF7FDBB99C8 /* RouterHostFactoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D0699B591C549CA5E228AE5 /* RouterHostFactoryTests.swift */; };
 		42366F76054EC58F1C1E06E4 /* OppiLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA83524385AB9BA7D8A7D0A5 /* OppiLiveActivity.swift */; };
 		423A9FB295E685345AF3FCDE /* MermaidSequenceRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D1E894886D53C5996B0BF12 /* MermaidSequenceRenderer.swift */; };
+		425082935735C3C328A1A30F /* FloatingProgressPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD132131766760180A3BDB72 /* FloatingProgressPanel.swift */; };
 		42718579F9BCC21A9EB12207 /* WorkspaceShellScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DCD513FA3DAF9646FAC4510 /* WorkspaceShellScreenshotPreview.swift */; };
 		428E6AAD4DE6959B90635F17 /* OrgAttributedStringRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E669818A177E15546B537121 /* OrgAttributedStringRenderer.swift */; };
 		429B1005EF6FA38AF909961B /* TimelineStressTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D4CE6842FBBD5377C922E7 /* TimelineStressTests.swift */; };
@@ -3601,6 +3602,7 @@
 		BCB8D14CE76E0FADA85E98C8 /* WorkspaceCRUDHappyPathE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceCRUDHappyPathE2ETests.swift; sourceTree = "<group>"; };
 		BCFC039AD80C3C8631DA5C1E /* Router.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Router.swift; sourceTree = "<group>"; };
 		BD06D367BA2BF53E3832D5EC /* WorkspaceFileDraftStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFileDraftStore.swift; sourceTree = "<group>"; };
+		BD132131766760180A3BDB72 /* FloatingProgressPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingProgressPanel.swift; sourceTree = "<group>"; };
 		BD1E2BCCF033B0B389560C98 /* SSHTerminalTrustViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalTrustViewController.swift; sourceTree = "<group>"; };
 		BDF3FC48464C4933B0A40EAF /* OppiControlWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = OppiControlWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		BE02A0DA4D10A4291BA38D3C /* ReadMarkdownExpandOverlapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadMarkdownExpandOverlapTests.swift; sourceTree = "<group>"; };
@@ -5896,6 +5898,7 @@
 				4E68B230E7FE6CB9EBA56D26 /* DoubleTapZoom.swift */,
 				0996499F6180DAE543025C8C /* EmbeddedFileViewerView.swift */,
 				395634C298C4CAA8C79AF252 /* FileIcon.swift */,
+				BD132131766760180A3BDB72 /* FloatingProgressPanel.swift */,
 				95B3589E8059066D1C93C3AF /* FullScreenCodeBodies.swift */,
 				6598CC67F49112C7E21F80C8 /* FullScreenCodeSupport.swift */,
 				25E1EAB7B3DB387C15E7E1E8 /* FullScreenCodeView.swift */,
@@ -9205,6 +9208,7 @@
 				2E82D0D834143FAAA2AF0A13 /* FileViewerPolicies.swift in Sources */,
 				9B44DCE6CD42C144D9896C37 /* FileViewerViewController.swift in Sources */,
 				88FEDE6B7DBCF691A73F6962 /* FileViewerViews.swift in Sources */,
+				425082935735C3C328A1A30F /* FloatingProgressPanel.swift in Sources */,
 				ECC0CAD425200C67F4AA778D /* FocusedSessionConnectionPolicy.swift in Sources */,
 				1BA6712B50710A6C0C738B64 /* FocusedSessionStopTurnPolicy.swift in Sources */,
 				EEC34E6A997C99C02481CBB7 /* FocusedSessionStore.swift in Sources */,

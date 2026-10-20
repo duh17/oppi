@@ -125,67 +125,35 @@ extension WorkspaceDetailViewController {
         }
     }
 
-    func stopSession(_ session: Session) async {
-        guard let connection, let api = connection.apiClient else { return }
-        do {
-            let updated = try await api.stopWorkspaceSession(workspaceId: workspaceId, sessionId: session.id)
-            connection.sessionStore.upsert(updated)
-        } catch {
-            showError("Stop failed: \(error.localizedDescription)")
-        }
-    }
-
-    func resumeSession(_ session: Session) async {
-        guard let connection, let api = connection.apiClient else { return }
-        do {
-            let updated = try await api.resumeWorkspaceSession(workspaceId: workspaceId, sessionId: session.id)
-            connection.sessionStore.upsert(updated)
+    /// Stops or resumes; a resumed session leaves its older-history bucket.
+    func setRunning(_ running: Bool, _ session: Session) async {
+        guard let connection else { return }
+        let succeeded = await SessionListLifecycle.setRunning(
+            running, session, scope: .workspace(workspaceId), connection: connection
+        ) { showError($0) }
+        if running, succeeded {
             removeArchiveSession(session.id)
-        } catch {
-            showError("Resume failed: \(error.localizedDescription)")
         }
     }
 
     func confirmDelete(_ session: Session) {
-        SessionListAlerts.confirmDelete(session, from: self, sourceView: cell(for: session.id)) { [weak self] in
+        let id = session.id
+        let sourceView = list.cell(forFirstOf: [.session(id), .stoppedSession(id), .archiveSession(id)])
+        SessionListAlerts.confirmDelete(session, from: self, sourceView: sourceView) { [weak self] in
             Task { await self?.deleteSession(session) }
         }
     }
 
-    private func cell(for sessionId: String) -> UIView? {
-        for item in [Item.session(sessionId), .stoppedSession(sessionId), .archiveSession(sessionId)] {
-            if let indexPath = dataSource?.indexPath(for: item), let cell = collectionView.cellForItem(at: indexPath) {
-                return cell
-            }
-        }
-        return nil
-    }
-
     private func deleteSession(_ session: Session) async {
-        guard let connection, let api = connection.apiClient else { return }
-        connection.sessionStore.remove(id: session.id)
+        guard let connection, connection.apiClient != nil else { return }
         removeArchiveSession(session.id)
-        await TimelineCache.shared.removeTrace(session.id, serverId: serverId)
-        do {
-            try await api.deleteWorkspaceSession(workspaceId: workspaceId, sessionId: session.id)
-            forgetDeleted(session)
-        } catch let apiError as APIError {
-            // 404 means already deleted server-side — local removal above is sufficient.
-            if case .server(let status, _) = apiError, status == 404 {
-                forgetDeleted(session)
-            } else {
-                showError("Delete failed: \(apiError.localizedDescription)")
-            }
-        } catch {
-            showError("Delete failed: \(error.localizedDescription)")
-        }
-    }
-
-    /// Only after the server no longer has the session; a failed delete
-    /// brings it back on the next sync, still locked.
-    private func forgetDeleted(_ session: Session) {
-        ScopedLockService.shared.forgetSession(serverId: serverId, sessionId: session.id)
-        root.composerDraftStore.clearDraft(serverID: serverId, workspaceID: workspaceId, sessionID: session.id)
+        await SessionListLifecycle.delete(
+            session,
+            scope: .workspace(workspaceId),
+            serverId: serverId,
+            connection: connection,
+            drafts: root.composerDraftStore
+        ) { showError($0) }
     }
 
     func openSession(_ session: Session) {
@@ -295,7 +263,7 @@ extension WorkspaceDetailViewController {
         Task { [weak self] in
             guard let self else { return }
             await refreshWorkspaceData()
-            refreshControl.endRefreshing()
+            list.refreshControl.endRefreshing()
         }
     }
 }

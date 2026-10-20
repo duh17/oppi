@@ -195,8 +195,8 @@ enum QuickSessionLauncherCoverage {
 
 /// The hosted Message capsule and the now-playing player for UIKit session
 /// lists. The capsule stays SwiftUI while the SwiftUI thread detail shares it;
-/// it returns its host so the list updates it in place (`updating`) instead of
-/// rebuilding the bar item.
+/// it returns its host so `SessionListBottomBar` updates it in place
+/// (`updating`) instead of rebuilding the bar item.
 @MainActor
 enum SessionListHostedChrome {
     /// The bottom bar's Message capsule.

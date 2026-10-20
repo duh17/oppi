@@ -7,10 +7,9 @@ import UIKit
 /// content focused on session rows and uses small row context instead of a
 /// workspace header card. It reads the app's stores in `updateProperties()`,
 /// builds a value per row, and applies a diffable snapshot keyed by session
-/// id; only rows whose values changed reconfigure. Rows are
-/// `SessionListEntryConfiguration` cells; taps, swipes, and the long-press
-/// menu belong to the collection view.
-final class SessionInboxViewController: UIViewController, UICollectionViewDelegate {
+/// id to its `SessionListCollection`, which owns the cells, taps, swipes, and
+/// long-press menu.
+final class SessionInboxViewController: UIViewController {
     /// Opens the workspace drawer; set only at the compact root.
     var onOpenSidebar: (() -> Void)? {
         didSet { setNeedsUpdateProperties() }
@@ -25,12 +24,17 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
     private var coordinator: ConnectionCoordinator { root.coordinator }
     private var navigation: AppNavigation { root.navigation }
 
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
+    private typealias List = SessionListCollection<Section, Item, Row, StoppedDay>
+    private lazy var list = List(
+        root: root,
+        appearance: .plain,
+        actions: rowActions,
+        iconAssetCache: { [weak self] in self?.coordinator.activeConnection.iconAssetCache },
+        configureRow: { [weak self] cell, row in self?.configure(cell, row: row) },
+        onToggle: { [weak self] day in self?.toggleStoppedDayExpansion(day.groupID, day: day.day) }
+    )
     private let search = ScreenSearchController(prompt: String(localized: "Search sessions"))
     private let searchStore = SessionSearchStore()
-    private let refreshControl = UIRefreshControl()
-    private let leadingDragGuard = SessionListLeadingDragGuard()
     private let titleLabel = UILabel()
     private let hiddenSystemTitle = UIView()
 
@@ -64,20 +68,18 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
     private var serverTask: Task<Void, Never>?
     private var serverTaskServerId: String??
 
-    // Snapshot values by item and section.
-    private var rows: [Item: SessionListRowContent] = [:]
-    private var stateRows: [Item: StateRow] = [:]
-    private var headers: [Section: Header] = [:]
+    /// The listed sessions' context and routing, by session id.
     private var itemsById: [String: InboxItem] = [:]
     private var lastThemeID: ThemeID?
-    private var rowDisplay = SessionRowDisplay.standard
-    private var hasAppliedSnapshot = false
 
     // Bars.
     private var barState: BarState?
-    private var composeHost: HostedContentController?
-    private var composeParams: ComposeParams?
-    private var pill: InAppNowPlayingPillView?
+    private lazy var bottomBar = SessionListBottomBar(
+        root: root,
+        onStart: { [weak self] in self?.startQuickSession(dictate: false) },
+        onDictate: { [weak self] in self?.startQuickSession(dictate: true) },
+        onNowPlaying: { [weak self] in self?.openNowPlaying() }
+    )
     private var switcher: SessionListServerSwitcher?
     private var switcherServerId: String?
     private var sidebarToggle: UIBarButtonItem?
@@ -92,11 +94,11 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
         },
         stop: { [weak self] session in
             guard let self, let item = item(for: session) else { return }
-            Task { await self.stop(item) }
+            Task { await self.setRunning(false, item) }
         },
         resume: { [weak self] session in
             guard let self, let item = item(for: session) else { return }
-            Task { await self.resume(item) }
+            Task { await self.setRunning(true, item) }
         },
         delete: { [weak self] session in
             guard let self, let item = item(for: session),
@@ -113,7 +115,6 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
         self.root = root
         self.onOpenSidebar = onOpenSidebar
         self.showsSidebarToggle = showsSidebarToggle
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewFlowLayout())
         super.init(nibName: nil, bundle: nil)
         traitOverrides.appRootEnvironment = root
         title = String(localized: "All Sessions")
@@ -137,14 +138,7 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(makeLayout(), animated: false)
-        collectionView.delegate = self
-        collectionView.keyboardDismissMode = .interactive
-        collectionView.accessibilityIdentifier = "workspace.sessionList"
-        collectionView.refreshControl = refreshControl
-        // Pull-to-refresh needs the bounce even when the rows fit on screen.
-        collectionView.alwaysBounceVertical = true
-        leadingDragGuard.install(on: collectionView)
+        let collectionView = list.collectionView
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(collectionView)
         NSLayoutConstraint.activate([
@@ -153,7 +147,7 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
-        refreshControl.addAction(UIAction { [weak self] _ in self?.pullToRefresh() }, for: .valueChanged)
+        list.refreshControl.addAction(UIAction { [weak self] _ in self?.pullToRefresh() }, for: .valueChanged)
 
         titleLabel.text = String(localized: "All Sessions")
         titleLabel.font = UIFontMetrics(forTextStyle: .headline).scaledFont(
@@ -166,27 +160,11 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
         titleLabel.accessibilityIdentifier = "workspace.inbox.title"
 
         search.install(on: self, alwaysVisible: false)
-        search.onTextChange = { [weak self] text in
-            guard let self else { return }
-            var next = navigation.inboxSessionSearch
-            guard next.searchText != text else { return }
-            next.searchText = text
-            navigation.inboxSessionSearch = next
-        }
-        search.onPresentationChange = { [weak self] presented in
-            guard let self else { return }
-            var next = navigation.inboxSessionSearch
-            guard next.isSearchPresented != presented else { return }
-            next.isSearchPresented = presented
-            navigation.inboxSessionSearch = next
-        }
-
-        installDataSource()
-        if #available(iOS 27.1, *) {
-            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (screen: Self, _) in
-                screen.setNeedsUpdateProperties()
-            }
-        }
+        search.bind(
+            get: { [weak self] in self?.navigation.inboxSessionSearch ?? .init() },
+            set: { [weak self] in self?.navigation.inboxSessionSearch = $0 }
+        )
+        SessionListBarItems.updatesWithVerticalBarEdge(self)
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -227,31 +205,21 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
         super.updateProperties()
         let themeStore = root.themeStore
         overrideUserInterfaceStyle = themeStore.userInterfaceStyle
-        guard isOnScreen, dataSource != nil else { return }
+        guard isOnScreen else { return }
 
         reactToChanges()
 
         let themeID = themeStore.activeThemeID
-        let themeChanged = lastThemeID != themeID
-        if themeChanged {
+        if lastThemeID != themeID {
             lastThemeID = themeID
             view.backgroundColor = themeStore.backgroundColor
-            collectionView.backgroundColor = themeStore.backgroundColor
+            list.collectionView.backgroundColor = themeStore.backgroundColor
             titleLabel.textColor = UIColor(themeID.palette.fg)
         }
 
-        // The saved row appearance (Settings, Sessions, Session Rows) repaints every row.
-        let display = root.sessionRows.display
-        let displayChanged = display != rowDisplay
-        rowDisplay = display
-
         let state = readState()
-        let searchState = state.search
-        search.searchController.hidesNavigationBarDuringPresentation = !state.toolbar.avoidsHidingContentWhileSearching
-        search.setText(searchState.searchText)
-        search.setPresented(searchState.isSearchPresented)
-
-        applySnapshot(state, reconfigureAll: themeChanged || displayChanged)
+        search.show(state.search, toolbar: state.toolbar)
+        applySnapshot(state)
         syncBars(state)
     }
 
@@ -302,22 +270,11 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
     private func viewData(_ state: InboxState) -> ViewData {
         let items = sessionItems(serverId: state.activeServerId, connection: state.connection)
         var itemsById = Dictionary(items.map { ($0.session.id, $0) }, uniquingKeysWith: { first, _ in first })
-        if let matches = SessionListSearchPresentation.flattenedMatches(
+        if let matches = searchStore.sessionListMatches(
             localSessions: items.map(\.session),
             query: state.search.searchText,
-            extraCandidates: { session in
-                [itemsById[session.id]?.workspace?.name]
-            },
-            serverResults: searchStore.results
-                // A content match would say what a locked session contains;
-                // locked sessions match by name only.
-                .filter { result in
-                    guard let session = result.session, let serverId = state.activeServerId else { return true }
-                    return !ScopedLockService.shared.isLocked(.session(session, serverId: serverId))
-                },
-            completedServerQuery: searchStore.completedServerQuery,
-            activeServerQuery: searchStore.activeServerQuery,
-            snippetsBySessionId: searchStore.snippetsBySessionId
+            serverId: state.activeServerId,
+            extraCandidates: { session in [itemsById[session.id]?.workspace?.name] }
         ) {
             let searchItems = matches.compactMap { match in
                 itemsById[match.session.id] ?? inboxItem(for: match.session, state: state)
@@ -342,7 +299,9 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             loaded: sessions
         )
         let connection = state.connection
-        let attention = { (session: Session) in Self.attentionCounts(for: session, connection: connection) }
+        let attention = { (session: Session) in
+            SessionListAttentionCounts(askCount: connection?.sessionListAskCount(for: session.id) ?? 0)
+        }
         let grouped = SessionInboxGrouping.make(
             items: entries,
             now: Date(),
@@ -408,57 +367,19 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
         )
     }
 
-    private static func attentionCounts(for session: Session, connection: ServerConnection?) -> SessionListAttentionCounts {
-        SessionRowPresentationBuilder.attentionCounts(
-            sessionId: session.id,
-            pendingAskCountForSession: { pendingAskCount(for: $0, connection: connection) }
-        )
-    }
-
-    /// All Sessions shows one server, so every row reads the active connection.
-    private static func pendingAskCount(for sessionId: String, connection: ServerConnection?) -> Int {
-        guard let connection else { return 0 }
-        return SessionListAttentionMerger.askCount(
-            listCount: connection.sessionStore.listPendingAskCount(for: sessionId),
-            hasPendingAsk: connection.askRequestStore.hasPending(for: sessionId),
-            hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: sessionId)
-        )
-    }
-
-    private func rowContent(for entry: SessionListEntry, data: ViewData, state: InboxState) -> SessionListRowContent {
-        var statuses: [String: SessionStatusKind] = [:]
-        for session in SessionListRowContent.drawnSessions(of: entry) {
-            statuses[session.id] = SessionStatusKind.resolve(
-                session: session,
-                pendingAskCount: Self.pendingAskCount(for: session.id, connection: state.connection),
-                seenAt: state.connection?.sessionStore.seenAt(for: session.id)
-            )
-        }
-        let presentation: SessionRowPresentation
-        if let item = data.itemsById[entry.session.id] ?? inboxItem(for: entry.session, state: state) {
-            let attention = Self.attentionCounts(for: item.session, connection: state.connection)
-            presentation = SessionRowPresentationBuilder.make(
-                session: item.session,
-                pendingAskCount: attention.askCount,
-                pendingAsk: item.connection.askRequestStore.pending(for: item.session.id),
-                workspaceContext: SessionInboxSessionRouting.allSessionsContext(
-                    for: item.session,
-                    workspaceName: item.workspace?.name
-                ),
-                seenAt: item.connection.sessionStore.seenAt(for: item.session.id),
-                searchSnippet: searchStore.snippetsBySessionId[item.session.id],
-                catalogModels: item.connection.chatState.cachedModels
-            )
-        } else {
-            presentation = SessionRowPresentationBuilder.make(session: entry.session)
-        }
-        // Every All Sessions row already names its workspace.
-        return SessionListRowContent(
+    /// Every listed entry has its item, which names the row's workspace
+    /// (every All Sessions row does) and carries the active connection.
+    private func rowContent(for entry: SessionListEntry, data: ViewData) -> SessionListRowContent? {
+        guard let item = data.itemsById[entry.session.id] else { return nil }
+        return SessionListRowContent.make(
             entry: entry,
-            presentation: presentation,
-            statuses: statuses,
-            lockBadges: SessionListRowContent.lockBadges(of: entry, target: rowActions.lockTarget),
-            isDurable: SessionListRowContent.isDurable(entry.session)
+            connection: item.connection,
+            workspaceContext: SessionInboxSessionRouting.allSessionsContext(
+                for: item.session,
+                workspaceName: item.workspace?.name
+            ),
+            searchSnippet: searchStore.snippetsBySessionId[item.session.id],
+            lockTarget: rowActions.lockTarget
         )
     }
 
@@ -604,7 +525,7 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             async let refresh: () = refreshVisibleServer()
             async let providers: () = loadProviderSetupState()
             _ = await (refresh, providers)
-            refreshControl.endRefreshing()
+            list.refreshControl.endRefreshing()
         }
     }
 
@@ -648,153 +569,65 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
 
     // MARK: Snapshot
 
-    private func makeLayout() -> UICollectionViewLayout {
-        UICollectionViewCompositionalLayout { [weak self] index, environment in
-            var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
-            configuration.backgroundColor = .clear
-            let section = self?.dataSource?.sectionIdentifier(for: index)
-            configuration.headerMode = section?.hasHeader == true ? .supplementary : .none
-            configuration.showsSeparators = section?.listsSessions == true
-            configuration.trailingSwipeActionsConfigurationProvider = { [weak self] indexPath in
-                self?.trailingSwipe(at: indexPath)
-            }
-            return NSCollectionLayoutSection.list(using: configuration, layoutEnvironment: environment)
-        }
-    }
-
-    private func installDataSource() {
-        let sessionCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-            guard let self, let row = rows[item] else { return }
-            cell.contentConfiguration = SessionListEntryConfiguration(
-                row: row,
-                display: rowDisplay,
-                themeID: root.themeStore.activeThemeID,
-                iconAssetCache: coordinator.activeConnection.iconAssetCache,
-                actions: rowActions
-            )
-            cell.backgroundConfiguration = rowBackground()
-            // No tap highlight, as the rows have always had none.
-            cell.automaticallyUpdatesBackgroundConfiguration = false
-        }
-        let stateCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-            guard let self, let row = stateRows[item] else { return }
-            configure(cell, row: row)
-        }
-        let dataSource = UICollectionViewDiffableDataSource<Section, Item>(
-            collectionView: collectionView
-        ) { collectionView, indexPath, item in
-            switch item {
-            case .session, .stoppedSession:
-                collectionView.dequeueConfiguredReusableCell(using: sessionCell, for: indexPath, item: item)
-            default:
-                collectionView.dequeueConfiguredReusableCell(using: stateCell, for: indexPath, item: item)
-            }
-        }
-        let header = UICollectionView.SupplementaryRegistration<SessionListSectionHeaderView>(
-            elementKind: SessionListSectionHeaderView.elementKind
-        ) { [weak self] view, _, indexPath in
-            self?.configure(view, at: indexPath)
-        }
-        dataSource.supplementaryViewProvider = { collectionView, _, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-        }
-        self.dataSource = dataSource
-    }
-
-    private func applySnapshot(_ state: InboxState, reconfigureAll: Bool) {
-        guard let dataSource else { return }
+    private func applySnapshot(_ state: InboxState) {
         let data = viewData(state)
         itemsById = data.itemsById
-
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        var nextRows: [Item: SessionListRowContent] = [:]
-        var nextStates: [Item: StateRow] = [:]
-        var nextHeaders: [Section: Header] = [:]
-
-        func appendState(_ row: StateRow, item: Item, section: Section) {
-            snapshot.appendSections([section])
-            snapshot.appendItems([item], toSection: section)
-            nextStates[item] = row
-        }
-        func appendSessions(_ entries: [SessionListEntry], section: Section, item: (String) -> Item) {
-            snapshot.appendSections([section])
-            var items: [Item] = []
-            items.reserveCapacity(entries.count)
-            for entry in entries {
-                let id = item(entry.id)
-                // A diffable snapshot traps on a repeated item.
-                guard nextRows[id] == nil else { continue }
-                nextRows[id] = rowContent(for: entry, data: data, state: state)
-                items.append(id)
-            }
-            snapshot.appendItems(items, toSection: section)
+        var next = List.Snapshot()
+        func appendSessions(_ entries: [SessionListEntry], to section: Section, item: (String) -> Item) {
+            next.append(sessions: entries, to: section, item: item) { rowContent(for: $0, data: data) }
         }
 
         if state.showsVersionNotice, let server = state.selectedServer {
-            appendState(.serverVersion(serverId: server.id), item: .prompt, section: .prompt)
+            next.appendSection(.prompt, item: .prompt, row: .serverVersion(serverId: server.id))
         } else if state.showsProviderPrompt, let server = state.selectedServer {
-            appendState(.providerSetup(serverId: server.id, serverName: server.name), item: .prompt, section: .prompt)
+            next.appendSection(.prompt, item: .prompt, row: .providerSetup(serverId: server.id, serverName: server.name))
         }
 
         if state.refreshFailed, !data.isEmpty, let server = state.selectedServer {
-            appendState(.cachedWarning(serverName: server.name), item: .cachedWarning, section: .cachedWarning)
+            next.appendSection(.cachedWarning, item: .cachedWarning, row: .cachedWarning(serverName: server.name))
         }
 
         if state.hasSearchQuery {
             if data.isSearching && data.searchMatches.isEmpty {
-                appendState(.searching, item: .searching, section: .status)
+                next.appendSection(.status, item: .searching, row: .searching)
             } else if data.searchMatches.isEmpty {
                 let query = state.search.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-                appendState(.noMatches(query: query), item: .noMatches, section: .status)
+                next.appendSection(.status, item: .noMatches, row: .noMatches(query: query))
             } else {
-                nextHeaders[.results] = Header(title: String(localized: "Results"), stoppedDay: nil)
-                appendSessions(data.searchMatches, section: .results, item: Item.session)
+                next.appendSection(.results, header: .title(String(localized: "Results")))
+                appendSessions(data.searchMatches, to: .results, item: Item.session)
             }
         } else {
             if !data.yourTurn.isEmpty {
-                nextHeaders[.yourTurn] = Header(title: SessionInboxSectionTitle.yourTurn, stoppedDay: nil)
-                appendSessions(data.yourTurn, section: .yourTurn, item: Item.session)
+                next.appendSection(.yourTurn, header: .title(SessionInboxSectionTitle.yourTurn))
+                appendSessions(data.yourTurn, to: .yourTurn, item: Item.session)
             }
             if !data.working.isEmpty {
-                nextHeaders[.working] = Header(title: SessionInboxSectionTitle.working, stoppedDay: nil)
-                appendSessions(data.working, section: .working, item: Item.session)
+                next.appendSection(.working, header: .title(SessionInboxSectionTitle.working))
+                appendSessions(data.working, to: .working, item: Item.session)
             }
             let now = Date()
             for group in data.stoppedGroups {
                 let section = Section.stopped(group.id)
                 let isExpanded = isStoppedDayExpanded(group.id, day: group.day)
-                nextHeaders[section] = Header(
+                next.appendSection(section, header: .group(
                     title: SessionInboxSectionTitle.stopped(day: group.day, now: now, calendar: Calendar.current),
-                    stoppedDay: StoppedDay(groupID: group.id, day: group.day, isExpanded: isExpanded)
-                )
-                appendSessions(isExpanded ? group.items : [], section: section, item: Item.stoppedSession)
+                    isExpanded: isExpanded,
+                    accessibilityIdentifier: "workspace.sessionList.\(group.id)",
+                    toggle: StoppedDay(groupID: group.id, day: group.day)
+                ))
+                if isExpanded {
+                    appendSessions(group.items, to: section, item: Item.stoppedSession)
+                }
             }
             if ProviderSetupPromptPolicy.shouldShowInboxEmptyState(
                 isEmpty: data.isEmpty,
                 showsProviderSetup: state.showsProviderPrompt || state.showsVersionNotice
             ) {
-                appendState(.empty(emptyState(state)), item: .empty, section: .empty)
+                next.appendSection(.empty, item: .empty, row: .empty(emptyState(state)))
             }
         }
-
-        let current = Set(dataSource.snapshot().itemIdentifiers)
-        let changed = snapshot.itemIdentifiers.filter { item in
-            guard current.contains(item) else { return false }
-            if reconfigureAll { return true }
-            if let row = nextRows[item] { return rows[item] != row }
-            return stateRows[item] != nextStates[item]
-        }
-        let headersChanged = reconfigureAll || headers != nextHeaders
-        rows = nextRows
-        stateRows = nextStates
-        headers = nextHeaders
-        snapshot.reconfigureItems(changed)
-
-        let animated = hasAppliedSnapshot && view.window != nil
-        hasAppliedSnapshot = true
-        dataSource.apply(snapshot, animatingDifferences: animated) { [weak self] in
-            if headersChanged { self?.refreshVisibleHeaders() }
-        }
+        list.apply(next)
     }
 
     private func emptyState(_ state: InboxState) -> EmptyState {
@@ -808,17 +641,8 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
         return .noActiveSessions(serverName: state.selectedServer?.name ?? String(localized: "this server"))
     }
 
-    private func rowBackground() -> UIBackgroundConfiguration {
-        var background = UIBackgroundConfiguration.listCell()
-        background.backgroundColor = root.themeStore.backgroundColor
-        return background
-    }
-
-    private func configure(_ cell: UICollectionViewListCell, row: StateRow) {
+    private func configure(_ cell: UICollectionViewListCell, row: Row) {
         let palette = root.themeStore.activeThemeID.palette
-        cell.accessibilityIdentifier = nil
-        cell.backgroundConfiguration = rowBackground()
-        cell.automaticallyUpdatesBackgroundConfiguration = false
         switch row {
         case .serverVersion(let serverId):
             cell.backgroundConfiguration = .clear()
@@ -844,15 +668,9 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             cell.contentConfiguration = content
             cell.accessibilityIdentifier = "workspace.sessionList.cachedWarning"
         case .searching:
-            var content = UIContentUnavailableConfiguration.loading()
-            content.text = String(localized: "Searching sessions…")
-            cell.contentConfiguration = content
+            cell.contentConfiguration = UIContentUnavailableConfiguration.sessionListSearching()
         case .noMatches(let query):
-            var content = UIContentUnavailableConfiguration.empty()
-            content.image = UIImage(systemName: "magnifyingglass")
-            content.text = String(localized: "No Matching Sessions")
-            content.secondaryText = String(localized: "No sessions match “\(query)”.")
-            cell.contentConfiguration = content
+            cell.contentConfiguration = UIContentUnavailableConfiguration.sessionListNoMatches(query: query)
         case .empty(let empty):
             cell.contentConfiguration = emptyConfiguration(empty)
         }
@@ -891,70 +709,6 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
         return content
     }
 
-    private func configure(_ view: SessionListSectionHeaderView, at indexPath: IndexPath) {
-        guard let section = dataSource?.sectionIdentifier(for: indexPath.section),
-              let header = headers[section] else { return }
-        let palette = root.themeStore.activeThemeID.palette
-        guard let stopped = header.stoppedDay else {
-            view.configure(title: header.title, palette: palette)
-            return
-        }
-        view.configure(
-            title: header.title,
-            isExpanded: stopped.isExpanded,
-            accessibilityIdentifier: "workspace.sessionList.\(stopped.groupID)",
-            palette: palette
-        ) { [weak self] in
-            self?.toggleStoppedDayExpansion(stopped.groupID, day: stopped.day)
-        }
-    }
-
-    private func refreshVisibleHeaders() {
-        let kind = SessionListSectionHeaderView.elementKind
-        for indexPath in collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind) {
-            guard let view = collectionView.supplementaryView(forElementKind: kind, at: indexPath)
-                as? SessionListSectionHeaderView else { continue }
-            configure(view, at: indexPath)
-        }
-    }
-
-    private func session(at indexPath: IndexPath) -> Session? {
-        guard let item = dataSource?.itemIdentifier(for: indexPath) else { return nil }
-        return rows[item]?.entry.session
-    }
-
-    private func trailingSwipe(at indexPath: IndexPath) -> UISwipeActionsConfiguration? {
-        guard let session = session(at: indexPath) else { return nil }
-        return SessionListRowMenus.trailingSwipe(
-            for: session,
-            actions: rowActions,
-            palette: root.themeStore.activeThemeID.palette
-        )
-    }
-
-    // MARK: UICollectionViewDelegate
-
-    func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
-        session(at: indexPath) != nil
-    }
-
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        collectionView.deselectItem(at: indexPath, animated: false)
-        guard let session = session(at: indexPath) else { return }
-        rowActions.open(session)
-    }
-
-    func collectionView(
-        _ collectionView: UICollectionView,
-        contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
-        point: CGPoint
-    ) -> UIContextMenuConfiguration? {
-        guard indexPaths.count == 1, let indexPath = indexPaths.first, let session = session(at: indexPath) else {
-            return nil
-        }
-        return SessionListRowMenus.contextMenu(for: session, actions: rowActions)
-    }
-
     // MARK: Actions
 
     private func open(_ item: InboxItem) {
@@ -991,72 +745,31 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
         navigation.openSessionThread(SessionThreadNavTarget(serverId: serverId, rootSessionId: rootSession.id))
     }
 
-    private func stop(_ item: InboxItem) async {
-        guard let api = item.connection.apiClient,
-              let routeScope = SessionInboxSessionRouting.routeScope(for: item.session) else { return }
-        do {
-            let updated = try await api.stopSession(scope: routeScope, sessionId: item.session.id)
-            item.connection.sessionStore.upsert(updated)
-        } catch {
-            showError("Stop failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func resume(_ item: InboxItem) async {
-        guard let api = item.connection.apiClient,
-              let routeScope = SessionInboxSessionRouting.routeScope(for: item.session) else { return }
-        do {
-            let updated = try await api.resumeSession(scope: routeScope, sessionId: item.session.id)
-            item.connection.sessionStore.upsert(updated)
-        } catch {
-            showError("Resume failed: \(error.localizedDescription)")
-        }
+    /// Stops or resumes on the session's own route.
+    private func setRunning(_ running: Bool, _ item: InboxItem) async {
+        guard let routeScope = SessionInboxSessionRouting.routeScope(for: item.session) else { return }
+        await SessionListLifecycle.setRunning(
+            running, item.session, scope: routeScope, connection: item.connection
+        ) { showError($0) }
     }
 
     private func confirmDelete(_ pending: PendingDelete) {
-        let sourceView = cell(for: pending.session.id)
+        let id = pending.session.id
+        let sourceView = list.cell(forFirstOf: [.session(id), .stoppedSession(id)])
         SessionListAlerts.confirmDelete(pending.session, from: self, sourceView: sourceView) { [weak self] in
             Task { await self?.delete(pending) }
         }
     }
 
-    private func cell(for sessionId: String) -> UIView? {
-        for item in [Item.session(sessionId), .stoppedSession(sessionId)] {
-            if let indexPath = dataSource?.indexPath(for: item), let cell = collectionView.cellForItem(at: indexPath) {
-                return cell
-            }
-        }
-        return nil
-    }
-
     private func delete(_ pending: PendingDelete) async {
-        guard let connection = coordinator.connection(for: pending.serverId),
-              let api = connection.apiClient else { return }
-        connection.sessionStore.remove(id: pending.session.id)
-        await TimelineCache.shared.removeTrace(pending.session.id, serverId: pending.serverId)
-        do {
-            try await api.deleteSession(scope: pending.routeScope, sessionId: pending.session.id)
-            forgetDeleted(pending)
-        } catch let apiError as APIError {
-            if case .server(let status, _) = apiError, status == 404 {
-                forgetDeleted(pending)
-            } else {
-                showError("Delete failed: \(apiError.localizedDescription)")
-            }
-        } catch {
-            showError("Delete failed: \(error.localizedDescription)")
-        }
-    }
-
-    /// Only after the server no longer has the session; a failed delete
-    /// brings it back on the next sync, still locked.
-    private func forgetDeleted(_ pending: PendingDelete) {
-        ScopedLockService.shared.forgetSession(serverId: pending.serverId, sessionId: pending.session.id)
-        root.composerDraftStore.clearDraft(
-            serverID: pending.serverId,
-            workspaceID: pending.routeScope.composerDraftScopeID,
-            sessionID: pending.session.id
-        )
+        guard let connection = coordinator.connection(for: pending.serverId) else { return }
+        await SessionListLifecycle.delete(
+            pending.session,
+            scope: pending.routeScope,
+            serverId: pending.serverId,
+            connection: connection,
+            drafts: root.composerDraftStore
+        ) { showError($0) }
     }
 
     private func showError(_ message: String) {
@@ -1065,10 +778,8 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
     }
 
     private func presentPendingError() {
-        guard isOnScreen, viewIfLoaded?.window != nil, let message = pendingError else { return }
-        guard presentedViewController == nil || presentedViewController is SessionListErrorAlert else { return }
-        pendingError = nil
-        SessionListAlerts.presentError(message, from: self)
+        guard isOnScreen else { return }
+        SessionListAlerts.presentPendingError(&pendingError, from: self)
     }
 
     private func switchVisibleServer() {
@@ -1151,34 +862,13 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
         let player = state.connection?.audioPlayer
 
         if !joinsRail {
-            let params = ComposeParams(
+            bottomBar.update(
                 showsDictation: showsDictation,
                 hasActivePlayback: state.hasActivePlayback,
+                toolbar: state.toolbar,
+                player: player,
                 columnWidth: columnWidth
             )
-            if composeParams != params || composeHost == nil {
-                composeParams = params
-                composeHost = SessionListHostedChrome.composeCapsule(
-                    updating: composeHost,
-                    root: root,
-                    showsDictation: showsDictation,
-                    hasActivePlayback: state.hasActivePlayback,
-                    columnWidth: columnWidth,
-                    onStart: { [weak self] in self?.startQuickSession(dictate: false) },
-                    onDictate: { [weak self] in self?.startQuickSession(dictate: true) }
-                )
-            }
-        }
-        if !joinsRail, state.toolbar.showsNowPlayingPill, let player {
-            if let pill {
-                pill.update(audioPlayer: player, density: state.toolbar.pillDensity)
-            } else {
-                pill = InAppNowPlayingPillView(
-                    audioPlayer: player,
-                    accessibilityPrefix: "sessionList.nowPlaying",
-                    density: state.toolbar.pillDensity
-                ) { [weak self] in self?.openNowPlaying() }
-            }
         }
         if let server = state.selectedServer {
             let model = HostSwitcherModel(
@@ -1236,17 +926,12 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             if bars.showsSidebarOpen {
                 trailing.append(SessionListBarItems.sidebarOpen(joinsRail: true, tint: railTint, action: openSidebar))
             }
-            trailing.append(SessionListBarItems.railCompose(
-                showsDictation: showsDictation,
-                tint: railTint,
-                onStart: { [weak self] in self?.startQuickSession(dictate: false) },
-                onDictate: { [weak self] in self?.startQuickSession(dictate: true) }
-            ))
+            trailing.append(bottomBar.railCompose(showsDictation: showsDictation, tint: railTint))
             if bars.hasServer, let switcher {
                 pinned.append(SessionListBarItems.railItem(switcher.item, priority: .keep))
             }
             if bars.showsNowPlaying {
-                trailing.append(SessionListBarItems.railNowPlaying(tint: railTint) { [weak self] in self?.openNowPlaying() })
+                trailing.append(bottomBar.railNowPlaying(tint: railTint))
             }
             // Bottom-anchored: spacers cannot push a rail item down.
             bottom.append(SessionListBarItems.files(
@@ -1265,20 +950,16 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
             if bars.hasServer, let switcher {
                 trailing.append(switcher.item)
             }
-            if let composeHost {
-                bottom.append(SessionListBarItems.hosted(composeHost))
-            }
-            if bars.showsNowPlaying, let pill {
-                bottom.append(bars.parksNowPlayingNextToCompose ? .fixedSpace() : .flexibleSpace())
-                bottom.append(UIBarButtonItem(customView: pill))
-            }
-            bottom.append(.flexibleSpace())
-            bottom.append(SessionListBarItems.files(
-                isEnabled: bars.canOpenFiles,
-                accessibilityLabel: String(localized: "Open server files"),
-                railTitle: nil,
-                palette: palette
-            ) { [weak self] in self?.openFiles() })
+            bottom = bottomBar.items(
+                showsNowPlaying: bars.showsNowPlaying,
+                parksNowPlayingNextToCompose: bars.parksNowPlayingNextToCompose,
+                files: SessionListBarItems.files(
+                    isEnabled: bars.canOpenFiles,
+                    accessibilityLabel: String(localized: "Open server files"),
+                    railTitle: nil,
+                    palette: palette
+                ) { [weak self] in self?.openFiles() }
+            )
         }
 
         var leadingGroups = leading.isEmpty
@@ -1360,15 +1041,6 @@ private extension SessionInboxViewController {
         case working
         case stopped(String)
         case empty
-
-        var hasHeader: Bool {
-            switch self {
-            case .results, .yourTurn, .working, .stopped: true
-            case .prompt, .cachedWarning, .status, .empty: false
-            }
-        }
-
-        var listsSessions: Bool { hasHeader }
     }
 
     /// Session rows by session id; one fixed id per state row. A stopped row
@@ -1384,7 +1056,8 @@ private extension SessionInboxViewController {
         case stoppedSession(String)
     }
 
-    enum StateRow: Equatable {
+    /// A row that is not a session.
+    enum Row: Equatable {
         case serverVersion(serverId: String)
         case providerSetup(serverId: String, serverName: String)
         case cachedWarning(serverName: String)
@@ -1400,16 +1073,10 @@ private extension SessionInboxViewController {
         case noActiveSessions(serverName: String)
     }
 
+    /// An expandable stopped-day group's toggle.
     struct StoppedDay: Equatable {
         let groupID: String
         let day: Date
-        let isExpanded: Bool
-    }
-
-    struct Header: Equatable {
-        let title: String
-        /// Set for an expandable stopped-day group.
-        let stoppedDay: StoppedDay?
     }
 
     struct BarState: Equatable {
@@ -1422,13 +1089,6 @@ private extension SessionInboxViewController {
         let canOpenFiles: Bool
         let themeID: ThemeID
     }
-
-    struct ComposeParams: Equatable {
-        let showsDictation: Bool
-        let hasActivePlayback: Bool
-        let columnWidth: CGFloat
-    }
-
 }
 
 enum SessionInboxTransportAvailability {

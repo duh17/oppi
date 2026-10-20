@@ -169,7 +169,8 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
 #if DEBUG
     private var motionMarker: FileMotionDebugMarker?
 #endif
-    private let progressPanel = ReviewLaunchProgressPanel()
+    /// "Starting new session…" or a template's progress over the review.
+    private let progressPanel = FloatingProgressPanel(borderWidth: 1)
     private lazy var adjacentButtons = AdjacentFileNavigatorButtons { [weak self] direction in
         self?.navigateToAdjacentReviewFile(direction)
     }
@@ -1171,59 +1172,5 @@ enum ReviewPagePlaceholder {
         configuration.text = title
         configuration.secondaryText = message
         return UIContentUnavailableView(configuration: configuration)
-    }
-}
-
-/// "Starting new session…" or a template's progress over a review screen.
-@MainActor
-final class ReviewLaunchProgressPanel: UIView {
-    private let spinner = UIActivityIndicatorView(style: .medium)
-    private let label = UILabel()
-
-    var text: String? {
-        get { label.text }
-        set { label.text = newValue }
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        layer.cornerRadius = 12
-        layer.cornerCurve = .continuous
-        label.font = .preferredFont(forTextStyle: .body)
-        label.adjustsFontForContentSizeCategory = true
-        label.numberOfLines = 0
-        label.textAlignment = .center
-        spinner.startAnimating()
-        let stack = UIStackView(arrangedSubviews: [spinner, label])
-        stack.axis = .vertical
-        stack.alignment = .center
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 16),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-        ])
-        isAccessibilityElement = true
-        accessibilityTraits = .updatesFrequently
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override var accessibilityLabel: String? {
-        get { label.text }
-        set {}
-    }
-
-    func apply(_ palette: ThemePalette) {
-        let surface = ThemeSurfaceStyle.resolve(.elevatedPanel, palette: palette)
-        backgroundColor = UIColor(surface.fill)
-        layer.borderColor = surface.stroke.map { UIColor($0).cgColor }
-        layer.borderWidth = surface.stroke == nil ? 0 : 1
-        spinner.color = UIColor(palette.cyan)
-        label.textColor = UIColor(palette.fg)
     }
 }
