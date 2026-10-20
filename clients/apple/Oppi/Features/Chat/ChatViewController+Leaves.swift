@@ -5,8 +5,7 @@ import UIKit
 // it presents, and the pages the UIKit Files panel pushes
 // (`SessionFilePages`). UIKit owns the screen (`ChatViewController`), its
 // context bar, and its footer, title, and jump hint (`ChatFooterViews`). The
-// pill is hosted with `HostFactory.content`, with the chat's presenter-local
-// values applied explicitly (`leafScope`).
+// pill is hosted with `HostFactory.content`.
 
 extension AppScenePhase {
     var isActive: Bool { phase == .active }
@@ -19,23 +18,6 @@ extension AppScenePhase {
 extension ChatViewController {
     static func shouldPauseTimelinePresentation(for phase: ScenePhase) -> Bool {
         phase == .inactive || phase == .background
-    }
-
-    /// Presenter-local values for the chat's leaves and modals. They run with
-    /// the app root services, so this chat's server, API client, reducer
-    /// stores, navigation, and composer media gate go on explicitly.
-    func leafScope<Content: View>(_ content: Content) -> some View {
-        content
-            .withServerScopedEnvironment(connection)
-            .environment(\.apiClient, apiClient)
-            .environment(sessionManager.reducer)
-            .environment(sessionManager.reducer.toolOutputStore)
-            .environment(sessionManager.reducer.toolArgsStore)
-            .environment(appNavigation)
-            .environment(\.composerMediaImportGate, composerDraftController.mediaImportGate)
-            .environment(\.openChatReader, ChatReaderOpenAction { [weak self] payload in
-                self?.openTimelineReader(payload)
-            })
     }
 
     /// The workspace context bar over the top of the timeline, below the bar.

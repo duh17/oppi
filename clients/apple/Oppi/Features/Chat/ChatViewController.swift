@@ -64,10 +64,9 @@ enum ChatSessionWarningChrome {
 }
 
 /// The chat screen's own state: what it opens, what its footer and drawers
-/// show, and the composer values that are not the draft. The controller reads
-/// it in `updateProperties()`, and the chat's hosted SwiftUI leaves (footer,
-/// context bar) read the same model, so a change reaches both without either
-/// pushing to the other.
+/// show, and the composer values that are not the draft. The controller and
+/// its UIKit footer, title, and context bar read it in `updateProperties()`,
+/// so a change reaches each without one pushing to another.
 @MainActor @Observable
 final class ChatScreenModel {
     var composerTextBeforeRecording: String?

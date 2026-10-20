@@ -673,15 +673,20 @@ final class ChatJumpToBottomView: UIView {
         isUserInteractionEnabled = visible
         guard visible != shownVisible else { return }
         shownVisible = visible
-        updateSpinnerAnimation()
         let hiddenTransform = reduceMotion ? CGAffineTransform.identity : Self.scale(0.96, anchoredAt: button)
-        if visible { button.isHidden = false }
+        if visible {
+            button.isHidden = false
+            updateSpinnerAnimation()
+        }
         let change = {
             self.button.alpha = visible ? 1 : 0
             self.button.transform = visible ? .identity : hiddenTransform
         }
         let finish: (Bool) -> Void = { _ in
-            if self.shownVisible == false { self.button.isHidden = true }
+            // The spinner keeps turning through the fade, then stops.
+            guard self.shownVisible == false else { return }
+            self.button.isHidden = true
+            self.updateSpinnerAnimation()
         }
         if animated {
             UIView.animate(

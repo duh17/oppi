@@ -435,10 +435,10 @@ final class ScreenNavigator {
         self.root = root
     }
 
-    /// A navigator for a UIKit screen, for the SwiftUI leaf content it hosts
-    /// with `HostFactory.content` or `HostFactory.leaf` (the chat's and a
-    /// workspace's context bars open a quick-action chat with `push`). The
-    /// leaf gets it with
+    /// A navigator for a UIKit screen, to push and present from it: Edit
+    /// Agent's tool and skill pages, the chat Files panel's and the file
+    /// browser's pushed files, and the chat a review file opens. SwiftUI leaf
+    /// content the screen hosts gets it with
     /// `.environment(\.screenNavigator, navigator)`.
     ///
     /// Push and present only. The leaf does not own the screen, so `finish()`
