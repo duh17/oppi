@@ -1,5 +1,5 @@
 /**
- * Workspace file editor write contract (I0).
+ * File editor write contract (I0): workspace files and editable Skill files.
  *
  * Reads and writes share one eligibility predicate that is stricter than
  * host-workspace current-file fallbacks (`~`, host-absolute, `..`).
@@ -16,7 +16,7 @@ import { constants } from "node:fs";
 import * as fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { isWorkspaceEditorTextPath, MAX_WORKSPACE_FILE_EDIT_BYTES } from "./file-serving-policy.js";
 import { isPathWithinRoot } from "./git-utils.js";
@@ -37,7 +37,7 @@ type CapturedTemp = {
   ino: number;
 };
 
-export type WorkspaceFileEditInspection =
+export type FileEditInspection =
   | {
       kind: "eligible";
       bytes: Buffer;
@@ -52,7 +52,30 @@ export type WorkspaceFileEditInspection =
   | { kind: "forbidden" }
   | { kind: "ineligible" };
 
-export type PutWorkspaceFileResult =
+/** One file the editor may read and write: a path that must stay under `root`. */
+export interface FileEditTarget {
+  /** Host directory: a workspace checkout or mount, or an editable Skill's directory. */
+  root: string;
+  requestedPath: string;
+  /**
+   * Workspace edits accept sandbox guest paths and report escapes as 403.
+   * Absent for a Skill directory, where only root-relative paths resolve.
+   */
+  workspace?: Workspace;
+}
+
+function isSandboxed(target: { workspace?: Workspace }): boolean {
+  return target.workspace?.runtime === "sandbox";
+}
+
+/** A root-relative path under `root`; `editorPathForm` already refused absolute and `..`. */
+function containedRelativePath(root: string, requestedPath: string): string | null {
+  const hostRoot = resolve(root);
+  const candidate = resolve(hostRoot, requestedPath);
+  return candidate !== hostRoot && isPathWithinRoot(candidate, hostRoot) ? candidate : null;
+}
+
+export type PutEditedFileResult =
   | { kind: "ok"; response: WorkspaceFileEditWriteResponse }
   | { kind: "error"; status: number; message: string };
 
@@ -141,7 +164,10 @@ export function evaluateIfMatch(
   return { kind: "invalid" };
 }
 
-function editorPathForm(workspace: Workspace, requestedPath: string): "ok" | "ineligible" {
+function editorPathForm(
+  workspace: Workspace | undefined,
+  requestedPath: string,
+): "ok" | "ineligible" {
   if (!requestedPath || requestedPath.includes("\0")) return "ineligible";
   if (requestedPath.toLowerCase().startsWith("file:")) return "ineligible";
   if (requestedPath.startsWith("~")) return "ineligible";
@@ -154,7 +180,7 @@ function editorPathForm(workspace: Workspace, requestedPath: string): "ok" | "in
   if (!absolute) return "ok";
   // Sandbox clients read guest paths (`/workspace/<slug>/...`). Host-absolute
   // paths stay ineligible even when they happen to sit on the mount.
-  if (workspace.runtime === "sandbox" && normalized.startsWith("/workspace/")) {
+  if (workspace?.runtime === "sandbox" && normalized.startsWith("/workspace/")) {
     return "ok";
   }
   return "ineligible";
@@ -188,7 +214,7 @@ async function proveHandleInRoot(
   return { realPath };
 }
 
-function inspectionError(inspection: WorkspaceFileEditInspection): PutWorkspaceFileResult | null {
+function inspectionError(inspection: FileEditInspection): PutEditedFileResult | null {
   if (inspection.kind === "eligible") return null;
   if (inspection.kind === "forbidden") {
     return { kind: "error", status: 403, message: "Path outside sandbox workspace" };
@@ -202,22 +228,20 @@ function inspectionError(inspection: WorkspaceFileEditInspection): PutWorkspaceF
  * 1 MiB, editor text types only, valid UTF-8, no NUL. Callers map `ineligible`
  * to "no ETag" on GET and existing 404 on PUT. Sandbox escape stays 403.
  */
-export async function inspectWorkspaceFileForEdit(input: {
-  workspace: Workspace;
-  root: string;
-  requestedPath: string;
-}): Promise<WorkspaceFileEditInspection> {
+export async function inspectFileForEdit(input: FileEditTarget): Promise<FileEditInspection> {
   if (editorPathForm(input.workspace, input.requestedPath) !== "ok") {
     return { kind: "ineligible" };
   }
 
-  const lexicalPath = resolveWorkspaceUserPath({
-    workspace: input.workspace,
-    requestedPath: input.requestedPath,
-    root: input.root,
-  });
+  const lexicalPath = input.workspace
+    ? resolveWorkspaceUserPath({
+        workspace: input.workspace,
+        requestedPath: input.requestedPath,
+        root: input.root,
+      })
+    : containedRelativePath(input.root, input.requestedPath);
   if (!lexicalPath) {
-    return input.workspace.runtime === "sandbox" ? { kind: "forbidden" } : { kind: "not-found" };
+    return isSandboxed(input) ? { kind: "forbidden" } : { kind: "not-found" };
   }
 
   let realRoot: string;
@@ -241,7 +265,7 @@ export async function inspectWorkspaceFileForEdit(input: {
     return { kind: "not-found" };
   }
   if (!isPathWithinRoot(canonical, realRoot)) {
-    return input.workspace.runtime === "sandbox" ? { kind: "forbidden" } : { kind: "ineligible" };
+    return isSandboxed(input) ? { kind: "forbidden" } : { kind: "ineligible" };
   }
   if (lst.isSymbolicLink()) return { kind: "ineligible" };
   if (!lst.isFile()) return { kind: "not-found" };
@@ -262,7 +286,7 @@ export async function inspectWorkspaceFileForEdit(input: {
   try {
     const proven = await proveHandleInRoot(handle, canonical, realRoot);
     if (!proven) {
-      return input.workspace.runtime === "sandbox" ? { kind: "forbidden" } : { kind: "ineligible" };
+      return isSandboxed(input) ? { kind: "forbidden" } : { kind: "ineligible" };
     }
     const opened = await handle.stat();
     if (!opened.isFile()) return { kind: "not-found" };
@@ -380,16 +404,15 @@ async function proveTempInodeAndBytes(
   }
 }
 
-async function writeWorkspaceFileAtomic(input: {
-  workspace: Workspace;
-  root: string;
-  requestedPath: string;
-  realPath: string;
-  realRoot: string;
-  expectedEtag: string;
-  bytes: Buffer;
-  mode: number;
-}): Promise<PutWorkspaceFileResult> {
+async function writeEditedFileAtomic(
+  input: FileEditTarget & {
+    realPath: string;
+    realRoot: string;
+    expectedEtag: string;
+    bytes: Buffer;
+    mode: number;
+  },
+): Promise<PutEditedFileResult> {
   const permission = input.mode & 0o777;
   let captured: CapturedTemp | undefined;
 
@@ -401,7 +424,7 @@ async function writeWorkspaceFileAtomic(input: {
       return { kind: "error", status: 404, message: "File not found" };
     }
     if (!isPathWithinRoot(parentReal, input.realRoot)) {
-      return input.workspace.runtime === "sandbox"
+      return isSandboxed(input)
         ? { kind: "error", status: 403, message: "Path outside sandbox workspace" }
         : { kind: "error", status: 404, message: "File not found" };
     }
@@ -427,7 +450,7 @@ async function writeWorkspaceFileAtomic(input: {
         captured = { path: candidate, dev: created.dev, ino: created.ino };
         const proven = await proveHandleInRoot(handle, candidate, input.realRoot);
         if (!proven) {
-          return input.workspace.runtime === "sandbox"
+          return isSandboxed(input)
             ? { kind: "error", status: 403, message: "Path outside sandbox workspace" }
             : { kind: "error", status: 404, message: "File not found" };
         }
@@ -459,7 +482,7 @@ async function writeWorkspaceFileAtomic(input: {
       return { kind: "error", status: 500, message: "Failed to write file" };
     }
 
-    const recheck = await inspectWorkspaceFileForEdit({
+    const recheck = await inspectFileForEdit({
       workspace: input.workspace,
       root: input.root,
       requestedPath: input.requestedPath,
@@ -508,13 +531,49 @@ async function writeWorkspaceFileAtomic(input: {
   }
 }
 
-export async function putWorkspaceFile(input: {
-  workspace: Workspace;
-  root: string;
-  requestedPath: string;
-  ifMatch: string | string[] | undefined;
-  body: Buffer;
-}): Promise<PutWorkspaceFileResult> {
+/**
+ * One editor PUT from an HTTP request: a concrete `If-Match` is checked before
+ * the body is read, the body is bounded, then `putEditedFile` writes. `size` is
+ * the body length once read, for the route's log.
+ */
+export async function putEditedFileFromRequest(
+  req: IncomingMessage,
+  target: FileEditTarget,
+): Promise<PutEditedFileResult & { size?: number }> {
+  const precondition = evaluateIfMatch(req.headers["if-match"]);
+  if (precondition.kind === "missing") {
+    return { kind: "error", status: 428, message: "If-Match precondition required" };
+  }
+  if (precondition.kind === "wildcard" || precondition.kind === "invalid") {
+    return { kind: "error", status: 412, message: "Precondition failed" };
+  }
+
+  const body = await readBoundedRequestBody(req, WORKSPACE_FILE_EDIT_MAX_BYTES);
+  if (body.kind === "too-large") {
+    req.resume();
+    return {
+      kind: "error",
+      status: 413,
+      message: `File too large (max ${Math.round(WORKSPACE_FILE_EDIT_MAX_BYTES / (1024 * 1024))}MB)`,
+    };
+  }
+  if (body.kind === "error") {
+    return { kind: "error", status: 400, message: "Failed to read body" };
+  }
+  const result = await putEditedFile({
+    ...target,
+    ifMatch: req.headers["if-match"],
+    body: body.bytes,
+  });
+  return { ...result, size: body.bytes.length };
+}
+
+export async function putEditedFile(
+  input: FileEditTarget & {
+    ifMatch: string | string[] | undefined;
+    body: Buffer;
+  },
+): Promise<PutEditedFileResult> {
   const precondition = evaluateIfMatch(input.ifMatch);
   if (precondition.kind === "missing") {
     return { kind: "error", status: 428, message: "If-Match precondition required" };
@@ -533,16 +592,17 @@ export async function putWorkspaceFile(input: {
     return { kind: "error", status: 415, message: "Invalid UTF-8" };
   }
 
-  const first = await inspectWorkspaceFileForEdit(input);
+  const first = await inspectFileForEdit(input);
   const firstError = inspectionError(first);
   if (firstError) return firstError;
   if (first.kind !== "eligible") {
     return { kind: "error", status: 404, message: "File not found" };
   }
 
-  const lockKey = `${input.workspace.id}\0${first.realPath}`;
-  return withEditorWriteLock(lockKey, async () => {
-    const inspection = await inspectWorkspaceFileForEdit(input);
+  // The canonical file is the lock: a Skill inside a workspace checkout is
+  // one file whichever route edits it.
+  return withEditorWriteLock(first.realPath, async () => {
+    const inspection = await inspectFileForEdit(input);
     const error = inspectionError(inspection);
     if (error) return error;
     if (inspection.kind !== "eligible") {
@@ -551,7 +611,7 @@ export async function putWorkspaceFile(input: {
     if (inspection.etag !== precondition.etag || inspection.realPath !== first.realPath) {
       return { kind: "error", status: 412, message: "Precondition failed" };
     }
-    return writeWorkspaceFileAtomic({
+    return writeEditedFileAtomic({
       workspace: input.workspace,
       root: input.root,
       requestedPath: input.requestedPath,

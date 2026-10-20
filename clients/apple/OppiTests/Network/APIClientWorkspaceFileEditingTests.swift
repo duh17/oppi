@@ -100,6 +100,10 @@ struct APIClientWorkspaceFileEditingTests {
         EditURLProtocol.reset()
     }
 
+    private func workspaceFile(_ path: String, worktreeId: String? = nil) -> WorkspaceFileEditIdentity {
+        WorkspaceFileEditIdentity(serverId: "s1", workspaceId: "w1", worktreeId: worktreeId, path: path)
+    }
+
     private func query(_ url: URL) -> [String: String] {
         let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         return Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
@@ -115,17 +119,16 @@ struct APIClientWorkspaceFileEditingTests {
         ] {
             let client = makeClient()
             try await loadCapabilities(client, capabilities)
-            #expect(await client.workspaceFileEditingCapability() == nil)
-            let outcome = await client.writeWorkspaceFile(
-                workspaceId: "w1", path: "notes.md", worktreeId: nil,
-                bytes: Data("x".utf8), ifMatch: Self.tag
+            #expect(await client.fileEditingCapability(for: workspaceFile("notes.md").owner) == nil)
+            let outcome = await client.writeEditedFile(
+                workspaceFile("notes.md"), bytes: Data("x".utf8), ifMatch: Self.tag
             )
             guard case .rejected = outcome else {
                 Issue.record("expected rejected, got \(outcome)")
                 continue
             }
             await #expect(throws: CocoaError.self) {
-                _ = try await client.readWorkspaceFileForEditing(workspaceId: "w1", path: "notes.md")
+                _ = try await client.readFileForEditing(workspaceFile("notes.md"))
             }
             #expect(EditURLProtocol.recorded.isEmpty, "a read-only server must never receive a write or edit read")
         }
@@ -138,15 +141,14 @@ struct APIClientWorkspaceFileEditingTests {
             client,
             #"{"currentFiles":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576}}"#
         )
-        #expect(await client.workspaceFileEditingCapability()?.maxBytes == 1_048_576)
+        #expect(await client.fileEditingCapability(for: workspaceFile("a.md").owner)?.maxBytes == 1_048_576)
 
         let bytes = Data([0xEF, 0xBB, 0xBF]) + Data("a\r\nb\u{0065}\u{0301}".utf8)
         EditURLProtocol.handler = { _ in
             (200, ["Content-Type": "application/json"], Data(#"{"etag":\#(Self.newTagJSON),"size":9,"mtimeMs":1}"#.utf8))
         }
-        let outcome = await client.writeWorkspaceFile(
-            workspaceId: "w1", path: "docs/a b.md", worktreeId: "wt-1",
-            bytes: bytes, ifMatch: Self.tag
+        let outcome = await client.writeEditedFile(
+            workspaceFile("docs/a b.md", worktreeId: "wt-1"), bytes: bytes, ifMatch: Self.tag
         )
         #expect(outcome == .saved(etag: Self.newTag))
         let request = try #require(EditURLProtocol.recorded.first)
@@ -177,24 +179,16 @@ struct APIClientWorkspaceFileEditingTests {
         ]
         for (status, expected) in cases {
             EditURLProtocol.handler = { _ in (status, [:], Data(#"{"error":"File too large (max 1MB)"}"#.utf8)) }
-            let outcome = await client.writeWorkspaceFile(
-                workspaceId: "w1", path: "a.md", worktreeId: nil, bytes: Data("x".utf8), ifMatch: Self.tag
-            )
+            let outcome = await client.writeEditedFile(workspaceFile("a.md"), bytes: Data("x".utf8), ifMatch: Self.tag)
             #expect(outcome == expected)
         }
 
         EditURLProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
-        #expect(await client.writeWorkspaceFile(
-            workspaceId: "w1", path: "a.md", worktreeId: nil, bytes: Data("x".utf8), ifMatch: Self.tag
-        ) == .notSent)
+        #expect(await client.writeEditedFile(workspaceFile("a.md"), bytes: Data("x".utf8), ifMatch: Self.tag) == .notSent)
         EditURLProtocol.handler = { _ in throw URLError(.timedOut) }
-        #expect(await client.writeWorkspaceFile(
-            workspaceId: "w1", path: "a.md", worktreeId: nil, bytes: Data("x".utf8), ifMatch: Self.tag
-        ) == .unknown)
+        #expect(await client.writeEditedFile(workspaceFile("a.md"), bytes: Data("x".utf8), ifMatch: Self.tag) == .unknown)
         EditURLProtocol.handler = { _ in throw URLError(.networkConnectionLost) }
-        #expect(await client.writeWorkspaceFile(
-            workspaceId: "w1", path: "a.md", worktreeId: nil, bytes: Data("x".utf8), ifMatch: Self.tag
-        ) == .unknown)
+        #expect(await client.writeEditedFile(workspaceFile("a.md"), bytes: Data("x".utf8), ifMatch: Self.tag) == .unknown)
         // Every write, including failures, used the one current-file route.
         #expect(EditURLProtocol.recorded.allSatisfy { $0.method == "PUT" && $0.url.path == "/files/current" })
     }
@@ -212,11 +206,49 @@ struct APIClientWorkspaceFileEditingTests {
             #expect(record.url.path == "/files/current")
             return (200, ["ETag": Self.tag, "Content-Type": "application/json"], bytes)
         }
-        let snapshot = try await client.readWorkspaceFileForEditing(workspaceId: "w1", path: "a.json", worktreeId: "wt-2")
+        let snapshot = try await client.readFileForEditing(workspaceFile("a.json", worktreeId: "wt-2"))
         #expect(snapshot == WorkspaceFileDiskSnapshot(bytes: bytes, etag: Self.tag))
         #expect(query(EditURLProtocol.recorded[0].url)["worktreeId"] == "wt-2")
 
         EditURLProtocol.handler = { _ in (404, [:], Data(#"{"error":"File not found"}"#.utf8)) }
-        #expect(await client.readWorkspaceFileForEditingOutcome(workspaceId: "w1", path: "a.json", worktreeId: nil) == .missing)
+        #expect(await client.readFileForEditingOutcome(workspaceFile("a.json")) == .missing)
+    }
+
+    @Test func skillFilesEditThroughTheSkillOnlyWhenTheServerAdvertisesIt() async throws {
+        defer { EditURLProtocol.reset() }
+        let skillFile = WorkspaceFileEditIdentity(serverId: "s1", skillId: "skill_abc", path: "refs/a b.md")
+
+        // Workspace editing alone leaves Skill files read-only.
+        let workspaceOnly = makeClient()
+        try await loadCapabilities(
+            workspaceOnly,
+            #"{"currentFiles":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576}}"#
+        )
+        #expect(await workspaceOnly.fileEditingCapability(for: skillFile.owner) == nil)
+        guard case .rejected = await workspaceOnly.writeEditedFile(skillFile, bytes: Data("x".utf8), ifMatch: Self.tag) else {
+            Issue.record("a server without skillFileEditing must not get a Skill write")
+            return
+        }
+        #expect(EditURLProtocol.recorded.isEmpty)
+
+        let client = makeClient()
+        try await loadCapabilities(
+            client,
+            #"{"workspaceFileEditing":{"version":1,"maxBytes":1048576},"skillFileEditing":{"version":1,"maxBytes":1048576}}"#
+        )
+        let bytes = Data("# Skill\n".utf8)
+        EditURLProtocol.handler = { record in
+            if record.method == "GET" { return (200, ["ETag": Self.tag], bytes) }
+            return (200, ["Content-Type": "application/json"], Data(#"{"etag":\#(Self.newTagJSON),"size":8,"mtimeMs":1}"#.utf8))
+        }
+        #expect(try await client.readFileForEditing(skillFile) == WorkspaceFileDiskSnapshot(bytes: bytes, etag: Self.tag))
+        #expect(await client.writeEditedFile(skillFile, bytes: bytes, ifMatch: Self.tag) == .saved(etag: Self.newTag))
+        #expect(EditURLProtocol.recorded.map(\.method) == ["GET", "PUT"])
+        for request in EditURLProtocol.recorded {
+            #expect(request.url.path == "/files/current")
+            #expect(query(request.url) == ["origin": "skill", "skillId": "skill_abc", "path": "refs/a b.md"])
+        }
+        #expect(EditURLProtocol.recorded[1].ifMatch == Self.tag)
+        #expect(EditURLProtocol.recorded[1].body == bytes)
     }
 }

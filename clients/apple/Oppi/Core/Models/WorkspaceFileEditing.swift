@@ -1,27 +1,82 @@
 import CryptoKit
 import Foundation
 
-/// One editable workspace file. Server + workspace + worktree + workspace-relative
-/// path. A nil worktree means the workspace's main checkout; a set worktree never
-/// falls back to main, and no other origin (host, session) is editable.
-struct WorkspaceFileEditIdentity: Hashable, Sendable, Codable {
+/// One editable file: server + owner + owner-relative path. A workspace file
+/// names its checkout (a nil worktree means main; a set worktree never falls
+/// back to main). A Skill file is one of an editable Skill's own files. No other
+/// origin (host, session) is editable.
+struct WorkspaceFileEditIdentity: Hashable, Sendable {
+    /// The `/files/current` origin that reads and writes the file.
+    enum Owner: Hashable, Sendable {
+        /// `origin=workspace`.
+        case workspace(id: String, worktreeId: String?)
+        /// `origin=skill`.
+        case skill(id: String)
+    }
+
     let serverId: String
-    let workspaceId: String
-    let worktreeId: String?
+    let owner: Owner
+    /// Workspace- or Skill-relative path.
     let path: String
 
     init(serverId: String, workspaceId: String, worktreeId: String?, path: String) {
         self.serverId = serverId
-        self.workspaceId = workspaceId
         let trimmed = worktreeId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        self.worktreeId = trimmed.isEmpty ? nil : trimmed
+        self.owner = .workspace(id: workspaceId, worktreeId: trimmed.isEmpty ? nil : trimmed)
+        self.path = path
+    }
+
+    init(serverId: String, skillId: String, path: String) {
+        self.serverId = serverId
+        self.owner = .skill(id: skillId)
         self.path = path
     }
 
     /// Stable file-name key for protected draft storage.
     var storageKey: String {
-        let raw = ["v1", serverId, workspaceId, worktreeId ?? "", path].joined(separator: "\u{0}")
+        let parts: [String] = switch owner {
+        // The workspace key predates Skill files; changing it would strand drafts.
+        case .workspace(let workspaceId, let worktreeId): ["v1", serverId, workspaceId, worktreeId ?? "", path]
+        case .skill(let skillId): ["skill-v1", serverId, skillId, path]
+        }
+        let raw = parts.joined(separator: "\u{0}")
         return SHA256.hash(data: Data(raw.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+/// Flat keys, so drafts stored before Skill files decode as workspace files.
+extension WorkspaceFileEditIdentity: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case serverId, workspaceId, worktreeId, skillId, path
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let serverId = try container.decode(String.self, forKey: .serverId)
+        let path = try container.decode(String.self, forKey: .path)
+        if let skillId = try container.decodeIfPresent(String.self, forKey: .skillId) {
+            self.init(serverId: serverId, skillId: skillId, path: path)
+        } else {
+            self.init(
+                serverId: serverId,
+                workspaceId: try container.decode(String.self, forKey: .workspaceId),
+                worktreeId: try container.decodeIfPresent(String.self, forKey: .worktreeId),
+                path: path
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(serverId, forKey: .serverId)
+        try container.encode(path, forKey: .path)
+        switch owner {
+        case .workspace(let workspaceId, let worktreeId):
+            try container.encode(workspaceId, forKey: .workspaceId)
+            try container.encodeIfPresent(worktreeId, forKey: .worktreeId)
+        case .skill(let skillId):
+            try container.encode(skillId, forKey: .skillId)
+        }
     }
 }
 

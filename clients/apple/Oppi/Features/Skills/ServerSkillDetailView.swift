@@ -288,7 +288,7 @@ struct ServerSkillDetailView: View {
             }
             LabeledContent("Provenance", value: summary.provenance.label)
             LabeledContent("Scope", value: "Server default")
-            LabeledContent("Files", value: summary.editable ? "Editable in session" : "Read-only")
+            LabeledContent("Files", value: summary.editable ? "Editable" : "Read-only")
         }
     }
 

@@ -106,6 +106,8 @@ struct ServerInfo: Codable, Sendable, Equatable {
         let extensionNativeUI: ExtensionNativeUICapability?
         /// Guarded `PUT /files/current?origin=workspace`. Missing means read-only.
         var workspaceFileEditing: WorkspaceFileEditingCapability? = nil
+        /// Guarded `PUT /files/current?origin=skill` for editable Skills. Missing means read-only.
+        var skillFileEditing: WorkspaceFileEditingCapability? = nil
         /// Create requests may ask for `engine: "durable"` (`experimental.serverDurable`).
         var durableSessions: CapabilityVersion? = nil
         /// Durable sessions replicate over the focused socket (`attach` / `snapshot` / `update`).

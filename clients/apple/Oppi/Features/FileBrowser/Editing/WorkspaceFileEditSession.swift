@@ -1,8 +1,9 @@
 import Foundation
 import Observation
 
-/// Read and write seams for one editable workspace file. The live adapter calls
-/// `GET`/`PUT /files/current?origin=workspace`; tests supply scripted closures.
+/// Read and write seams for one editable file. The live adapter calls
+/// `GET`/`PUT /files/current` with the owner's origin (`workspace` or
+/// `skill`); tests supply scripted closures.
 struct WorkspaceFileEditTransport: Sendable {
     var read: @Sendable (WorkspaceFileEditIdentity) async -> WorkspaceFileReadOutcome
     var write: @Sendable (WorkspaceFileEditIdentity, Data, String) async -> WorkspaceFileWriteOutcome
@@ -12,20 +13,10 @@ extension WorkspaceFileEditTransport {
     static func api(_ api: APIClient) -> WorkspaceFileEditTransport {
         WorkspaceFileEditTransport(
             read: { identity in
-                await api.readWorkspaceFileForEditingOutcome(
-                    workspaceId: identity.workspaceId,
-                    path: identity.path,
-                    worktreeId: identity.worktreeId
-                )
+                await api.readFileForEditingOutcome(identity)
             },
             write: { identity, bytes, ifMatch in
-                await api.writeWorkspaceFile(
-                    workspaceId: identity.workspaceId,
-                    path: identity.path,
-                    worktreeId: identity.worktreeId,
-                    bytes: bytes,
-                    ifMatch: ifMatch
-                )
+                await api.writeEditedFile(identity, bytes: bytes, ifMatch: ifMatch)
             }
         )
     }

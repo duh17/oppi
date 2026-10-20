@@ -313,9 +313,10 @@ actor APIClient: ClientLogUploading {
     private let trustDelegate: PinnedServerTrustDelegate
     private let availabilityObserver: APIClientAvailabilityObserver?
     nonisolated private let responseFailureObserverBox = APIClientResponseFailureObserverBox()
-    /// `workspaceFileEditing` from this client's own `/server/info`. Nil keeps
-    /// every file read-only.
+    /// `workspaceFileEditing` and `skillFileEditing` from this client's own
+    /// `/server/info`. Nil keeps those files read-only.
     private var workspaceFileEditing: ServerInfo.WorkspaceFileEditingCapability?
+    private var skillFileEditing: ServerInfo.WorkspaceFileEditingCapability?
 
     init(
         environment: OppiClientEnvironment,
@@ -621,6 +622,7 @@ actor APIClient: ClientLogUploading {
 
     private func recordCapabilities(_ info: ServerInfo) -> ServerInfo {
         workspaceFileEditing = info.capabilities?.workspaceFileEditing
+        skillFileEditing = info.capabilities?.skillFileEditing
         return info
     }
 
@@ -2241,27 +2243,28 @@ actor APIClient: ClientLogUploading {
         try await get(url: makeCurrentFileURL(.workspace(workspaceId: workspaceId, worktreeId: worktreeId), path: path))
     }
 
-    // MARK: - Workspace File Editing
+    // MARK: - File Editing
 
-    /// Editing capability for this server. Nil means read-only.
-    func workspaceFileEditingCapability() -> ServerInfo.WorkspaceFileEditingCapability? {
-        guard let workspaceFileEditing,
-              workspaceFileEditing.version >= 1,
-              workspaceFileEditing.maxBytes > 0 else { return nil }
-        return workspaceFileEditing
+    /// Editing capability for this server and owner. Nil means read-only:
+    /// workspace files need `workspaceFileEditing`, Skill files `skillFileEditing`.
+    func fileEditingCapability(
+        for owner: WorkspaceFileEditIdentity.Owner
+    ) -> ServerInfo.WorkspaceFileEditingCapability? {
+        let capability = switch owner {
+        case .workspace: workspaceFileEditing
+        case .skill: skillFileEditing
+        }
+        guard let capability, capability.version >= 1, capability.maxBytes > 0 else { return nil }
+        return capability
     }
 
-    /// `GET /files/current?origin=workspace` with the strong ETag of the exact
-    /// returned bytes. Only on servers that advertise `workspaceFileEditing`.
-    func readWorkspaceFileForEditing(
-        workspaceId: String,
-        path: String,
-        worktreeId: String? = nil
-    ) async throws -> WorkspaceFileDiskSnapshot {
-        guard workspaceFileEditingCapability() != nil else {
+    /// The editor's read: the exact bytes with their strong ETag. Only on
+    /// servers that advertise editing for the identity's owner.
+    func readFileForEditing(_ identity: WorkspaceFileEditIdentity) async throws -> WorkspaceFileDiskSnapshot {
+        guard fileEditingCapability(for: identity.owner) != nil else {
             throw CocoaError(.featureUnsupported)
         }
-        let url = try makeWorkspaceFileEditURL(workspaceId: workspaceId, path: path, worktreeId: worktreeId)
+        let url = try makeFileEditURL(identity)
         let (data, response) = try await performAuthorized {
             var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
             req.httpMethod = "GET"
@@ -2272,17 +2275,9 @@ actor APIClient: ClientLogUploading {
         return WorkspaceFileDiskSnapshot(bytes: data, etag: etag)
     }
 
-    func readWorkspaceFileForEditingOutcome(
-        workspaceId: String,
-        path: String,
-        worktreeId: String?
-    ) async -> WorkspaceFileReadOutcome {
+    func readFileForEditingOutcome(_ identity: WorkspaceFileEditIdentity) async -> WorkspaceFileReadOutcome {
         do {
-            return .snapshot(try await readWorkspaceFileForEditing(
-                workspaceId: workspaceId,
-                path: path,
-                worktreeId: worktreeId
-            ))
+            return .snapshot(try await readFileForEditing(identity))
         } catch let APIError.server(status, _) where status == 404 {
             return .missing
         } catch let APIError.codedServer(status, _, _) where status == 404 {
@@ -2292,23 +2287,21 @@ actor APIClient: ClientLogUploading {
         }
     }
 
-    /// Guarded write of an existing workspace text file. The only file-write URL
-    /// this client builds: `PUT /files/current?origin=workspace`, one concrete
-    /// `If-Match`, raw bytes.
-    func writeWorkspaceFile(
-        workspaceId: String,
-        path: String,
-        worktreeId: String?,
+    /// Guarded write of an existing text file. The only file-write URL this
+    /// client builds: `PUT /files/current` with `origin=workspace` or
+    /// `origin=skill`, one concrete `If-Match`, raw bytes.
+    func writeEditedFile(
+        _ identity: WorkspaceFileEditIdentity,
         bytes: Data,
         ifMatch: String
     ) async -> WorkspaceFileWriteOutcome {
-        guard workspaceFileEditingCapability() != nil, !ifMatch.isEmpty, ifMatch != "*" else {
+        guard fileEditingCapability(for: identity.owner) != nil, !ifMatch.isEmpty, ifMatch != "*" else {
             return .rejected(status: 0, message: "Editing is not available on this server")
         }
         let data: Data
         let response: URLResponse
         do {
-            let url = try makeWorkspaceFileEditURL(workspaceId: workspaceId, path: path, worktreeId: worktreeId)
+            let url = try makeFileEditURL(identity)
             (data, response) = try await performAuthorized {
                 var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
                 req.httpMethod = "PUT"
@@ -2340,20 +2333,12 @@ actor APIClient: ClientLogUploading {
         }
     }
 
-    private func makeWorkspaceFileEditURL(
-        workspaceId: String,
-        path: String,
-        worktreeId: String?
-    ) throws -> URL {
-        try makeURL(
-            pathSegments: ["files", "current"],
-            queryItems: [
-                URLQueryItem(name: "origin", value: "workspace"),
-                URLQueryItem(name: "workspaceId", value: workspaceId),
-            ] + workspaceWorktreeQueryItems(worktreeId) + [
-                URLQueryItem(name: "path", value: path),
-            ]
-        )
+    private func makeFileEditURL(_ identity: WorkspaceFileEditIdentity) throws -> URL {
+        let origin: CurrentFileOrigin = switch identity.owner {
+        case .workspace(let workspaceId, let worktreeId): .workspace(workspaceId: workspaceId, worktreeId: worktreeId)
+        case .skill(let skillId): .skill(skillId: skillId)
+        }
+        return try makeCurrentFileURL(origin, path: identity.path)
     }
 
     /// Exact-path existence check for an owner host file. 404 is unresolved.
@@ -3071,6 +3056,8 @@ actor APIClient: ClientLogUploading {
         case workspace(workspaceId: String, worktreeId: String?)
         /// Workspace session cwd; the server resolves the session by id.
         case session(sessionId: String)
+        /// An editable Skill's own files, by Skill-relative path.
+        case skill(skillId: String)
     }
 
     /// `/files/current` and its per-file companions, which take the same query.
@@ -3111,6 +3098,11 @@ actor APIClient: ClientLogUploading {
             queryItems = [
                 URLQueryItem(name: "origin", value: "session"),
                 URLQueryItem(name: "sessionId", value: sessionId),
+            ]
+        case .skill(let skillId):
+            queryItems = [
+                URLQueryItem(name: "origin", value: "skill"),
+                URLQueryItem(name: "skillId", value: skillId),
             ]
         }
         queryItems.append(URLQueryItem(name: "path", value: path))

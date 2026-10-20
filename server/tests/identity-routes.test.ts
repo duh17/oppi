@@ -395,6 +395,7 @@ describe("identity module", () => {
           capabilities: string[];
         };
         workspaceFileEditing: { version: number; maxBytes: number };
+        skillFileEditing: { version: number; maxBytes: number };
       };
     };
     expect(body.uploadProtocol).toEqual({ version: 1, maxFileBytes: 123, maxTurnBytes: 456 });
@@ -409,6 +410,10 @@ describe("identity module", () => {
       ],
     });
     expect(body.capabilities.workspaceFileEditing).toEqual({
+      version: 1,
+      maxBytes: 1_048_576,
+    });
+    expect(body.capabilities.skillFileEditing).toEqual({
       version: 1,
       maxBytes: 1_048_576,
     });

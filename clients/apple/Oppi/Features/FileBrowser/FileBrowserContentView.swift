@@ -18,6 +18,14 @@ enum FileBrowserContentSource: Equatable {
     }
 }
 
+/// A host file that is one of an editable Skill's own files: the editor reads
+/// and writes it through `/files/current?origin=skill`.
+struct SkillFileEditTarget: Equatable {
+    let skillId: String
+    /// Skill-relative path.
+    let path: String
+}
+
 enum FileBrowserContentRenderingPolicy {
     static func showsNavigationChrome(
         for chromeMode: FileBrowserContentChromeMode,
@@ -141,6 +149,11 @@ struct FileBrowserContentView: View {
     /// Where selected-text comments go when the host owns them (a Skill file
     /// stages them for its revision session). Nil: the environment's scope.
     var reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil
+    /// A host file that is an editable Skill's own file. Only `.hostFile`.
+    var skillFile: SkillFileEditTarget? = nil
+    /// Edit with Oppi, beside the editor in the one Edit control. Shown in
+    /// the SwiftUI bar, so only for host files, whose bar that is.
+    var agentEdit: DocumentAgentEditAction? = nil
 
 #if DEBUG
     var debugHasMarkdownViewportRestoreForTesting: Bool {
@@ -313,35 +326,7 @@ struct FileBrowserContentView: View {
         .navigationTitle(shouldHideHostNavigationBar ? "" : viewerTitle)
         .navigationBarTitleDisplayMode(.inline)
         .readerHostNavigationBar(hidesBar: isLoadingContent ? nil : shouldHideHostNavigationBar)
-        .toolbar {
-            if isEditingText, let editSession {
-                WorkspaceFileEditToolbar(
-                    status: editSession.status,
-                    isShowingPreview: $isShowingEditPreview,
-                    onDone: endEditing
-                )
-            } else if isUsingFileViewer, canBeginEditing,
-                      FileBrowserContentRenderingPolicy.editPlacement(for: chromeMode, source: source) == .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(String(localized: "Edit"), systemImage: "pencil") { beginEditing() }
-                        .accessibilityLabel(String(localized: "Edit File"))
-                        .accessibilityIdentifier("workspace-file-editor.edit")
-                }
-            } else if chromeMode == .pushed, !isUsingFileViewer {
-                if let shareable = shareableContent() {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        FileShareButton(content: shareable, style: .icon)
-                    }
-                } else if case .audio(let source) = content {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        AsyncFileShareButton(filename: currentFileName) {
-                            try await source.loadFileData()
-                        }
-                        .accessibilityIdentifier("fileBrowser.audio.share")
-                    }
-                }
-            }
-        }
+        .toolbar { hostToolbar }
         .routerModal(isPresented: $isReviewingEdit, presentation: .sheet.inNavigation()) {
             if let editSession {
                 WorkspaceFileConflictReviewView(
@@ -379,6 +364,48 @@ struct FileBrowserContentView: View {
         }
         .onDisappear {
             releaseLoadedUSDZHandle()
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var hostToolbar: some ToolbarContent {
+        if isEditingText, let editSession {
+            WorkspaceFileEditToolbar(
+                status: editSession.status,
+                isShowingPreview: $isShowingEditPreview,
+                onDone: endEditing
+            )
+        } else {
+            readerToolbar
+        }
+    }
+
+    /// Opens the editor; nil while the shown file cannot be edited here.
+    private var editFileAction: (@MainActor () -> Void)? {
+        guard isUsingFileViewer, canBeginEditing else { return nil }
+        return { beginEditing() }
+    }
+
+    @ToolbarContentBuilder
+    private var readerToolbar: some ToolbarContent {
+        if showsToolbarEditControl {
+            ToolbarItem(placement: .topBarTrailing) {
+                DocumentEditButton(editFile: editFileAction, agentEdit: agentEdit)
+            }
+        }
+        if chromeMode == .pushed, !isUsingFileViewer {
+            if let shareable = shareableContent() {
+                ToolbarItem(placement: .topBarTrailing) {
+                    FileShareButton(content: shareable, style: .icon)
+                }
+            } else if case .audio(let source) = content {
+                ToolbarItem(placement: .topBarTrailing) {
+                    AsyncFileShareButton(filename: currentFileName) {
+                        try await source.loadFileData()
+                    }
+                    .accessibilityIdentifier("fileBrowser.audio.share")
+                }
+            }
         }
     }
 
@@ -503,6 +530,16 @@ struct FileBrowserContentView: View {
             && (editBase != nil || editSession != nil)
     }
 
+    /// The Edit control lives in the SwiftUI bar (host files, the tree pane)
+    /// once the file has loaded, when the editor or Edit with Oppi can run.
+    private var showsToolbarEditControl: Bool {
+        guard FileBrowserContentRenderingPolicy.editPlacement(for: chromeMode, source: source) == .toolbar else {
+            return false
+        }
+        if case .loading = content { return false }
+        return agentEdit != nil || (isUsingFileViewer && canBeginEditing)
+    }
+
     private var checkoutSubtitle: String? {
         FileBrowserContentRenderingPolicy.checkoutSubtitle(
             source: source,
@@ -519,26 +556,34 @@ struct FileBrowserContentView: View {
         return [
             FullScreenViewerNavigationAction(
                 id: "workspace-file-edit",
-                title: String(localized: "Edit"),
-                systemImage: "pencil",
-                accessibilityLabel: String(localized: "Edit File"),
+                title: DocumentEditLabels.edit,
+                systemImage: DocumentEditLabels.systemImage,
+                accessibilityLabel: DocumentEditLabels.editFile,
                 handler: { beginEditing() }
             ),
         ]
     }
 
-    /// Server + workspace + worktree + path. Only workspace-origin files on a
-    /// known server are editable; host and session origins stay read-only.
+    /// Workspace-origin files on a known server edit by workspace + worktree +
+    /// path; a host file edits only as its Skill's own file. Other host and
+    /// session files stay read-only.
     private func editIdentity(for path: String) -> WorkspaceFileEditIdentity? {
-        guard source == .workspaceFile,
-              let serverId, !serverId.isEmpty,
-              !workspaceId.isEmpty else { return nil }
-        return WorkspaceFileEditIdentity(
-            serverId: serverId,
-            workspaceId: workspaceId,
-            worktreeId: worktreeId,
-            path: path
-        )
+        guard let serverId, !serverId.isEmpty else { return nil }
+        switch source {
+        case .workspaceFile:
+            guard !workspaceId.isEmpty else { return nil }
+            return WorkspaceFileEditIdentity(
+                serverId: serverId,
+                workspaceId: workspaceId,
+                worktreeId: worktreeId,
+                path: path
+            )
+        case .hostFile:
+            guard let skillFile, path == filePath else { return nil }
+            return WorkspaceFileEditIdentity(serverId: serverId, skillId: skillFile.skillId, path: skillFile.path)
+        case .sessionFile:
+            return nil
+        }
     }
 
     private func resetEditState() {
@@ -956,15 +1001,11 @@ struct FileBrowserContentView: View {
     ) async throws -> ReaderRead? {
         if category == .text,
            let identity = editIdentity(for: path),
-           let capability = await api.workspaceFileEditingCapability() {
+           let capability = await api.fileEditingCapability(for: identity.owner) {
             // One tagged read: the edit base is exactly the displayed bytes.
             let snapshot: WorkspaceFileDiskSnapshot
             do {
-                snapshot = try await api.readWorkspaceFileForEditing(
-                    workspaceId: workspaceId,
-                    path: path,
-                    worktreeId: worktreeId
-                )
+                snapshot = try await api.readFileForEditing(identity)
             } catch let error where Self.isHTTPError(error, statusCodes: [404]) {
                 guard isCurrentFile(path) else { return nil }
                 guard let session = WorkspaceFileEditRecovery.sessionForMissingFile(

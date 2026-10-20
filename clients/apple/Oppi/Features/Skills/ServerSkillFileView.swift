@@ -25,7 +25,7 @@ struct ServerSkillFileScopedDestinationView: View {
 /// How a Skill file opens. Every file is read from its host path, the same
 /// direct read as any other host file.
 enum ServerSkillFilePresentation: Equatable {
-    /// Readable, with Edit in Oppi Session.
+    /// Readable, with the editor and Edit with Oppi.
     case editable(hostPath: String)
     case readOnly(hostPath: String)
     /// No host path to read.
@@ -122,6 +122,7 @@ struct ServerSkillFileView: View {
                         hostFilePath: hostPath,
                         serverId: target.serverId,
                         title: target.path,
+                        skillFile: SkillFileEditTarget(skillId: target.resourceId, path: target.path),
                         domain: .skills,
                         targetId: target.resourceId,
                         targetName: summary.name,

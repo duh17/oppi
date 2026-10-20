@@ -20,11 +20,13 @@ import { readAudioMediaInfo } from "../media-info.js";
 import { sessionWorkRoot, type SessionWorkRoot } from "../session-work-root.js";
 import type { DirectoryListingResponse } from "../types.js";
 import {
-  evaluateIfMatch,
-  inspectWorkspaceFileForEdit,
-  putWorkspaceFile,
-  readBoundedRequestBody,
-  WORKSPACE_FILE_EDIT_MAX_BYTES,
+  ServerResourceNotFoundError,
+  ServerResourceReadOnlyError,
+} from "../server-resource-service.js";
+import {
+  type FileEditTarget,
+  inspectFileForEdit,
+  putEditedFileFromRequest,
 } from "../workspace-file-edit.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
@@ -42,6 +44,7 @@ const CURRENT_FILE_QUERY_KEYS = new Set([
   "workspaceId",
   "worktreeId",
   "sessionId",
+  "skillId",
 ]);
 
 const SESSION_ROOT_ERRORS: Record<Exclude<SessionWorkRoot["kind"], "ok">, string> = {
@@ -55,6 +58,29 @@ const SESSION_ROOT_ERRORS: Record<Exclude<SessionWorkRoot["kind"], "ok">, string
 type CurrentFileRequest =
   | { kind: "ok"; origin: CurrentFileOrigin; path: string; originKind: string }
   | { kind: "error"; status: number; message: string };
+
+/**
+ * The file the editor reads and writes for a query origin, or null. Only the
+ * `workspace` and `skill` query origins edit; a session read that resolves
+ * into a workspace stays read-only.
+ */
+function editTargetFor(request: {
+  originKind: string;
+  origin: CurrentFileOrigin;
+  path: string;
+}): FileEditTarget | null {
+  if (request.originKind === "workspace" && request.origin.kind === "workspace") {
+    return {
+      workspace: request.origin.workspace,
+      root: request.origin.root,
+      requestedPath: request.path,
+    };
+  }
+  if (request.originKind === "skill" && request.origin.kind === "skill") {
+    return { root: request.origin.root, requestedPath: request.path };
+  }
+  return null;
+}
 
 export function createHostFileRoutes(
   ctx: RouteContext,
@@ -72,6 +98,8 @@ export function createHostFileRoutes(
    * - `origin=workspace&workspaceId[&worktreeId]`: the selected checkout or mount.
    * - `origin=session&sessionId`: the session's actual cwd (worktree, sandbox
    *   mount, or control-session cwd).
+   * - `origin=skill&skillId`: an editable Skill's own files, by Skill-relative
+   *   path; a single-file Skill is that one file. Read-only Skills are 403.
    */
   async function parseCurrentFileRequest(url: URL): Promise<CurrentFileRequest> {
     const params = url.searchParams;
@@ -86,12 +114,15 @@ export function createHostFileRoutes(
     const workspaceId = params.get("workspaceId");
     const worktreeId = params.get("worktreeId");
     const sessionId = params.get("sessionId");
+    const skillId = params.get("skillId");
     const conflict = {
       kind: "error",
       status: 400,
       message: "Conflicting origin parameters",
     } as const;
     const dataDir = ctx.storage.getDataDir();
+
+    if (originKind !== "skill" && skillId !== null) return conflict;
 
     switch (originKind) {
       case "host":
@@ -140,6 +171,26 @@ export function createHostFileRoutes(
           path,
           originKind,
         };
+      }
+      case "skill": {
+        if (!skillId || workspaceId !== null || worktreeId !== null || sessionId !== null) {
+          return conflict;
+        }
+        try {
+          const root = await ctx.serverResources.skillEditRoot(skillId, path);
+          return { kind: "ok", origin: { kind: "skill", root }, path, originKind };
+        } catch (error: unknown) {
+          if (error instanceof ServerResourceReadOnlyError) {
+            return { kind: "error", status: 403, message: error.message };
+          }
+          if (error instanceof ServerResourceNotFoundError) {
+            return { kind: "error", status: 404, message: error.message };
+          }
+          log.warn("currentfile.skill_resolve_failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return { kind: "error", status: 500, message: "Unable to load server skills" };
+        }
       }
       default:
         return { kind: "error", status: 400, message: "Invalid origin" };
@@ -203,17 +254,10 @@ export function createHostFileRoutes(
       switch (servable.kind) {
         case "ok": {
           const extraHeaders = resolvedPathHeaders(resolved.file);
-          // ETag only when the query origin is workspace, not session→workspace.
-          if (
-            originKind === "workspace" &&
-            resolved.origin.kind === "workspace" &&
-            !req.headers.range
-          ) {
-            const inspection = await inspectWorkspaceFileForEdit({
-              workspace: resolved.origin.workspace,
-              root: resolved.origin.root,
-              requestedPath: resolved.path,
-            });
+          // ETag only for an editing origin (workspace or skill), not session→workspace.
+          const editTarget = req.headers.range ? null : editTargetFor(resolved);
+          if (editTarget) {
+            const inspection = await inspectFileForEdit(editTarget);
             if (inspection.kind === "eligible") {
               status = sendExactFileBytes(
                 res,
@@ -253,6 +297,7 @@ export function createHostFileRoutes(
     let status = 404;
     let originKind: string | undefined;
     let workspaceId: string | undefined;
+    let skillId: string | undefined;
     let relativePath: string | undefined;
     let size: number | null = null;
     try {
@@ -264,50 +309,18 @@ export function createHostFileRoutes(
       }
       originKind = request.originKind;
       relativePath = request.path;
-      if (request.originKind !== "workspace" || request.origin.kind !== "workspace") {
+      const target = editTargetFor(request);
+      if (!target) {
         status = 404;
         helpers.error(res, 404, "File not found");
         return;
       }
-      workspaceId = request.origin.workspace.id;
+      workspaceId = target.workspace?.id;
+      skillId =
+        request.originKind === "skill" ? (url.searchParams.get("skillId") ?? undefined) : undefined;
 
-      const precondition = evaluateIfMatch(req.headers["if-match"]);
-      if (precondition.kind === "missing") {
-        status = 428;
-        helpers.error(res, 428, "If-Match precondition required");
-        return;
-      }
-      if (precondition.kind === "wildcard" || precondition.kind === "invalid") {
-        status = 412;
-        helpers.error(res, 412, "Precondition failed");
-        return;
-      }
-
-      const body = await readBoundedRequestBody(req, WORKSPACE_FILE_EDIT_MAX_BYTES);
-      if (body.kind === "too-large") {
-        status = 413;
-        helpers.error(
-          res,
-          413,
-          `File too large (max ${Math.round(WORKSPACE_FILE_EDIT_MAX_BYTES / (1024 * 1024))}MB)`,
-        );
-        req.resume();
-        return;
-      }
-      if (body.kind === "error") {
-        status = 400;
-        helpers.error(res, 400, "Failed to read body");
-        return;
-      }
-      size = body.bytes.length;
-
-      const result = await putWorkspaceFile({
-        workspace: request.origin.workspace,
-        root: request.origin.root,
-        requestedPath: request.path,
-        ifMatch: req.headers["if-match"],
-        body: body.bytes,
-      });
+      const result = await putEditedFileFromRequest(req, target);
+      size = result.size ?? null;
       if (result.kind === "error") {
         status = result.status;
         helpers.error(res, result.status, result.message);
@@ -319,6 +332,7 @@ export function createHostFileRoutes(
       log.info("currentfile.write", {
         origin: originKind,
         workspaceId,
+        skillId,
         path: relativePath,
         status,
         ...(size !== null ? { size } : {}),

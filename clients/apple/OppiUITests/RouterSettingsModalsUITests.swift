@@ -200,11 +200,54 @@ final class RouterSettingsModalsUITests: XCTestCase {
         )
     }
 
+    /// A server without Skill file editing: the pencil is Edit with Oppi.
     func testSkillFileGuidedRevisionSheet() {
         launch(page: "skill-file-review")
         let edit = app.buttons["controlFile.editInSession"]
         XCTAssertTrue(edit.waitForExistence(timeout: 10), "Skill file viewer did not load")
+        XCTAssertFalse(app.buttons["document.edit"].exists, "No editor means no Edit menu")
         assertGuidedSheet(opener: { edit.tap() }, title: "Revise release")
+    }
+
+    /// A server that edits Skill files: the one pencil offers the editor and
+    /// Edit with Oppi. Typing saves through the Skill, and Done returns to the
+    /// reader with the same menu.
+    func testSkillFileEditMenuEditsInPlaceOrWithOppi() {
+        launch(page: "skill-file-edit")
+        let menu = app.buttons["document.edit"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), "Skill file Edit menu did not load")
+
+        menu.tap()
+        let editFile = app.buttons["workspace-file-editor.edit"]
+        XCTAssertTrue(editFile.waitForExistence(timeout: 5), "The menu did not offer Edit File")
+        XCTAssertTrue(app.buttons["controlFile.editInSession"].exists, "The menu did not offer Edit with Oppi")
+        attachScreenshot("skill-file-edit-menu")
+        editFile.tap()
+        let text = app.textViews["workspace-file-editor.text"]
+        XCTAssertTrue(text.waitForExistence(timeout: 10), "Edit File did not open the editor")
+        text.tap()
+        text.typeText("Ship it.")
+        XCTAssertTrue(
+            waitFor(lastWrite.contains("PUT /files/current"), timeout: 15),
+            "The edit must autosave through the Skill: \(lastWrite)"
+        )
+        tapBarButton(app.buttons["workspace-file-editor.done"])
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), "Done did not return to the reader")
+        assertRunning()
+
+        assertGuidedSheet(
+            opener: {
+                self.openEditMenu(menu)
+                self.app.buttons["controlFile.editInSession"].tap()
+            },
+            title: "Revise release"
+        )
+    }
+
+    private func openEditMenu(_ menu: XCUIElement) {
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        menu.tap()
+        XCTAssertTrue(app.buttons["controlFile.editInSession"].waitForExistence(timeout: 5), "Edit menu did not open")
     }
 
     // MARK: MCP

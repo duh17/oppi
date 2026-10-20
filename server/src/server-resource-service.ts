@@ -158,6 +158,14 @@ export class ServerResourceNotFoundError extends ServerResourceServiceError {
   }
 }
 
+/** A package or other non-top-level Skill: readable, never written by Oppi. */
+export class ServerResourceReadOnlyError extends ServerResourceServiceError {
+  constructor() {
+    super("Skill is read-only");
+    this.name = "ServerResourceReadOnlyError";
+  }
+}
+
 export class ServerResourceValidationError extends ServerResourceServiceError {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -233,6 +241,25 @@ export class ServerResourceService {
     } catch {
       throw new ServerResourceNotFoundError("skill file");
     }
+  }
+
+  /**
+   * The directory `/files/current?origin=skill` resolves `path` under: an
+   * editable Skill's own directory. A Markdown Skill without its own directory
+   * is that one file, so its neighbors are never reachable here. The editor
+   * contract (`inspectFileForEdit`) still checks containment, type, size, and
+   * symlinks on every read and write.
+   */
+  async skillEditRoot(id: string, path: string): Promise<string> {
+    const entry = (await this.buildSkillCatalog(await this.resolveContext())).find(
+      (candidate) => candidate.summary.id === id,
+    );
+    if (!entry) throw new ServerResourceNotFoundError("skill");
+    if (!entry.summary.editable) throw new ServerResourceReadOnlyError();
+    if (entry.markdownFileName !== "SKILL.md" && path !== entry.markdownFileName) {
+      throw new ServerResourceNotFoundError("skill file");
+    }
+    return entry.baseDir;
   }
 
   async getExtensionDetail(id: string): Promise<ServerExtensionDetail> {

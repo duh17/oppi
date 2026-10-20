@@ -226,8 +226,9 @@ struct ReviewableControlMarkdownView: View {
     private enum Viewer {
         /// Text the caller already holds, in the full-screen reader.
         case fullScreen(FullScreenCodeContent)
-        /// A file on the server's host, in the shared file reader.
-        case hostFile(serverId: String, title: String)
+        /// A file on the server's host, in the shared file reader. A Skill's
+        /// own file also opens in the editor there.
+        case hostFile(serverId: String, title: String, skillFile: SkillFileEditTarget?)
     }
 
     private let viewer: Viewer
@@ -260,18 +261,20 @@ struct ReviewableControlMarkdownView: View {
 
     /// A file at `hostFilePath` on the server, read directly from the host
     /// like any other host file: images, PDFs, and relative Markdown images
-    /// work. Host files keep the system bar, so Edit is a bar button there.
+    /// work. Host files keep the system bar, so Edit is a bar button there;
+    /// with `skillFile` it offers the editor beside Edit with Oppi.
     init(
         hostFilePath: String,
         serverId: String,
         title: String,
+        skillFile: SkillFileEditTarget? = nil,
         domain: ControlSessionDomain,
         targetId: String,
         targetName: String,
         sourceLabel: String,
         editFlow: ReviewableControlMarkdownEditFlow = .directSession
     ) {
-        self.viewer = .hostFile(serverId: serverId, title: title)
+        self.viewer = .hostFile(serverId: serverId, title: title, skillFile: skillFile)
         self.languageHint = Self.languageHint(for: hostFilePath)
         self.domain = domain
         self.targetId = targetId
@@ -322,16 +325,13 @@ struct ReviewableControlMarkdownView: View {
         )
     }
 
-    private var editTitle: String {
-        isCreatingSession ? "Starting…" : "Edit"
-    }
-
     private var navigationActions: [FullScreenViewerNavigationAction] {
         [
             FullScreenViewerNavigationAction(
                 id: "edit-in-session",
-                title: editTitle,
-                accessibilityLabel: "Edit in Oppi Session",
+                title: isCreatingSession ? DocumentEditLabels.startingSession : DocumentEditLabels.edit,
+                systemImage: DocumentEditLabels.systemImage,
+                accessibilityLabel: DocumentEditLabels.editWithOppi,
                 isEnabled: !isCreatingSession,
                 handler: startEdit
             ),
@@ -407,7 +407,7 @@ struct ReviewableControlMarkdownView: View {
                 reviewCommentSelectionContext: selectionContext,
                 navigationActions: navigationActions
             )
-        case .hostFile(let serverId, let title):
+        case .hostFile(let serverId, let title, let skillFile):
             FileBrowserContentView(
                 workspaceId: "",
                 serverId: serverId,
@@ -415,16 +415,10 @@ struct ReviewableControlMarkdownView: View {
                 fileName: (sourcePath as NSString).lastPathComponent,
                 title: title,
                 source: .hostFile,
-                reviewCommentSelectionContext: selectionContext
+                reviewCommentSelectionContext: selectionContext,
+                skillFile: skillFile,
+                agentEdit: DocumentAgentEditAction(isStarting: isCreatingSession, start: startEdit)
             )
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(editTitle, systemImage: "pencil", action: startEdit)
-                        .disabled(isCreatingSession)
-                        .accessibilityLabel("Edit in Oppi Session")
-                        .accessibilityIdentifier("controlFile.editInSession")
-                }
-            }
         }
     }
 

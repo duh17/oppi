@@ -11,7 +11,8 @@ import SwiftUI
 /// `skills`, `skill-detail`, `extensions`, `extension-detail`,
 /// `agents-pi`, `workspace-create`, `workspace-create-configure`.
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
-/// `agents-pi-file`, `schedules`, `skill-file-review`,
+/// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
+/// server that also edits Skill files in place),
 /// `pairing-approval`, `onboarding-add-server`, `onboarding-tailscale` (the
 /// same onboarding over a running tailnet); `mcp`, `theme-import`, and
 /// `agents-pi` serve them too. `SCREENSHOT_SWEEP_SHOWS_WRITES=1` shows the
@@ -262,6 +263,10 @@ struct SettingsSweepScreenshotPreview: View {
         case "schedules": ScheduleManagementView()
         case "skill-file-review":
             ServerSkillFileView(target: .init(serverId: server.id, resourceId: "release", path: "SKILL.md"))
+        case "skill-file-edit":
+            ServerInfoLoaded(client: client) {
+                ServerSkillFileView(target: .init(serverId: server.id, resourceId: "release", path: "SKILL.md"))
+            }
         default: TailnetSettingsView(previewProbes: Self.tailnetProbes)
         }
     }
@@ -407,6 +412,9 @@ struct SettingsSweepScreenshotPreview: View {
             )),
             // A Skill file is a host read; the fixture answers every one.
             "/files/current": Data("# Release\n\nReview release readiness.".utf8),
+            // `skill-file-edit`: the server edits Skill files, read through the Skill.
+            "/server/info": Data(#"{"name":"mac-studio","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"mac-studio","nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":{"currentFiles":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576},"skillFileEditing":{"version":1,"maxBytes":1048576}},"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":1,"modelCount":0}}"#.utf8),
+            "PUT /files/current": Data(#"{"etag":"\"sha256-\#(String(repeating: "b", count: 64))\"","size":1,"mtimeMs":1}"#.utf8),
             "/server/resources/skills/release": json(ServerSkillDetail(
                 summary: skills[0],
                 skillMarkdown: "# Release\n\nReview release readiness.",
@@ -437,6 +445,24 @@ struct SettingsSweepScreenshotPreview: View {
     }
 }
 
+/// Shows `content` after the client has read `/server/info`, the way a
+/// connected app knows its server's capabilities before a file opens.
+private struct ServerInfoLoaded<Content: View>: View {
+    let client: APIClient
+    @ViewBuilder let content: () -> Content
+    @State private var loaded = false
+
+    var body: some View {
+        Group {
+            if loaded { content() } else { ProgressView() }
+        }
+        .task {
+            _ = try? await client.serverInfo()
+            loaded = true
+        }
+    }
+}
+
 /// The last write (`POST`, `PUT`, `PATCH`, `DELETE`) the fixture server
 /// received, as `METHOD path {sorted JSON body}`.
 @MainActor @Observable
@@ -449,6 +475,8 @@ final class SettingsSweepWrites {
 /// `"METHOD /path"` key answers that method first. Anything else is a 404.
 final class SettingsSweepFixtureURLProtocol: URLProtocol {
     nonisolated(unsafe) static var routes: [String: Data] = [:]
+    /// The editor's tagged read: a strong ETag on every `origin=skill` GET.
+    private static let skillSourceETag = "\"sha256-\(String(repeating: "a", count: 64))\""
     nonisolated(unsafe) static var writeDelay: TimeInterval = 0
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -475,11 +503,15 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
         let methodPrefix = "\(request.httpMethod ?? "GET") "
         let body = Self.routes.first { $0.key.hasPrefix(methodPrefix) && path.hasSuffix($0.key.dropFirst(methodPrefix.count)) }?.value
             ?? Self.routes.first { $0.key.hasPrefix("/") && path.hasSuffix($0.key) }?.value
+        var headers = ["Content-Type": "application/json"]
+        if request.httpMethod == "GET", request.url?.query?.contains("origin=skill") == true {
+            headers["ETag"] = Self.skillSourceETag
+        }
         let response = HTTPURLResponse(
             url: request.url ?? URL(fileURLWithPath: "/"),
             statusCode: body == nil ? 404 : 200,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
+            headerFields: headers
         )
         if let response {
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)

@@ -458,6 +458,11 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
           version: 1,
           maxBytes: MAX_WORKSPACE_FILE_EDIT_BYTES,
         } satisfies WorkspaceFileEditingCapability,
+        // `/files/current?origin=skill`: the same editor contract on an editable Skill's files.
+        skillFileEditing: {
+          version: 1,
+          maxBytes: MAX_WORKSPACE_FILE_EDIT_BYTES,
+        } satisfies WorkspaceFileEditingCapability,
         appEventStream: { version: 1 },
         dictationStream: voiceReady.has("dictation") ? { version: 1 } : undefined,
         // `POST /speech` reads messages aloud with the configured `tts` provider.

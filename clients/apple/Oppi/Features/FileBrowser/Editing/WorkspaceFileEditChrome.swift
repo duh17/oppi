@@ -111,6 +111,68 @@ struct WorkspaceFileEditToolbar: ToolbarContent {
     }
 }
 
+/// The words and glyphs every document's Edit control uses: workspace files,
+/// Skill files, and the Agent and Schedule readers say the same thing.
+enum DocumentEditLabels {
+    static let systemImage = "pencil"
+    static let edit = String(localized: "Edit")
+    static let editFile = String(localized: "Edit File")
+    /// An Oppi session revises the document.
+    static let editWithOppi = String(localized: "Edit with Oppi")
+    static let editWithOppiImage = "text.bubble"
+    static let startingSession = String(localized: "Starting…")
+}
+
+/// Editing a document through an Oppi session instead of the editor.
+struct DocumentAgentEditAction {
+    /// The session is being created; the action waits.
+    var isStarting = false
+    let start: @MainActor () -> Void
+}
+
+/// A document's one Edit control in the bar. With the editor and Edit with
+/// Oppi both available the pencil opens a menu of the two; with one, the
+/// pencil does that one.
+struct DocumentEditButton: View {
+    /// Opens the file in the editor. Nil when the file is read-only here.
+    let editFile: (@MainActor () -> Void)?
+    let agentEdit: DocumentAgentEditAction?
+
+    var body: some View {
+        if let editFile, let agentEdit {
+            Menu {
+                Button(DocumentEditLabels.editFile, systemImage: DocumentEditLabels.systemImage) { editFile() }
+                    .accessibilityIdentifier("workspace-file-editor.edit")
+                Button(DocumentEditLabels.editWithOppi, systemImage: DocumentEditLabels.editWithOppiImage) {
+                    agentEdit.start()
+                }
+                .disabled(agentEdit.isStarting)
+                .accessibilityIdentifier("controlFile.editInSession")
+            } label: {
+                Label(
+                    agentEdit.isStarting ? DocumentEditLabels.startingSession : DocumentEditLabels.edit,
+                    systemImage: DocumentEditLabels.systemImage
+                )
+            }
+            .accessibilityIdentifier("document.edit")
+        } else if let editFile {
+            Button(DocumentEditLabels.edit, systemImage: DocumentEditLabels.systemImage) { editFile() }
+                .accessibilityLabel(DocumentEditLabels.editFile)
+                .accessibilityIdentifier("workspace-file-editor.edit")
+        } else if let agentEdit {
+            Button(
+                agentEdit.isStarting ? DocumentEditLabels.startingSession : DocumentEditLabels.edit,
+                systemImage: DocumentEditLabels.systemImage
+            ) {
+                agentEdit.start()
+            }
+            .disabled(agentEdit.isStarting)
+            .accessibilityLabel(DocumentEditLabels.editWithOppi)
+            .accessibilityIdentifier("controlFile.editInSession")
+        }
+    }
+}
+
 /// Quick editor settings while editing; the same values as Settings > Editor.
 struct WorkspaceFileEditorOptionsMenu: View {
     @Bindable var preferences: CodeEditorPreferences = .shared

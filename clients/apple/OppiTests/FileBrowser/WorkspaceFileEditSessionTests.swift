@@ -154,6 +154,24 @@ struct WorkspaceFileEditSessionTests {
         #expect(main.storageKey == blank.storageKey)
         #expect(main.storageKey != worktree.storageKey)
         #expect(main.storageKey != otherServer.storageKey)
+        // A Skill id that equals a workspace id is still a different file.
+        let skill = WorkspaceFileEditIdentity(serverId: "s", skillId: "w", path: "a.md")
+        #expect(skill.storageKey != main.storageKey)
+    }
+
+    @Test func draftsStoredBeforeSkillFilesStillDecodeAndSkillDraftsRoundTrip() throws {
+        let legacy = Data(#"{"serverId":"s","workspaceId":"w","worktreeId":"wt","path":"a.md"}"#.utf8)
+        let decoded = try JSONDecoder().decode(WorkspaceFileEditIdentity.self, from: legacy)
+        #expect(decoded == WorkspaceFileEditIdentity(serverId: "s", workspaceId: "w", worktreeId: "wt", path: "a.md"))
+
+        let skill = WorkspaceFileEditIdentity(serverId: "s", skillId: "skill_1", path: "refs/a.md")
+        let store = WorkspaceFileDraftStore(
+            directory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("edit-tests-\(UUID().uuidString)", isDirectory: true)
+        )
+        let draft = WorkspaceFileDraft(identity: skill, baseEtag: tag("a"), bytes: Data("x".utf8), updatedAt: Date())
+        try store.save(draft)
+        #expect(store.loadResult(skill) == .draft(draft))
     }
 
     // MARK: Autosave and generations
@@ -481,12 +499,13 @@ struct WorkspaceFileEditSessionTests {
         let shared = WorkspaceFileDraftStore.shared
         #expect(shared.directory.standardizedFileURL.path.hasPrefix(appSupport.standardizedFileURL.path))
         let marker = "draft-marker-\(UUID().uuidString)"
-        let probe = WorkspaceFileEditIdentity(serverId: "probe", workspaceId: UUID().uuidString, worktreeId: nil, path: "p.md")
+        let probeWorkspaceId = UUID().uuidString
+        let probe = WorkspaceFileEditIdentity(serverId: "probe", workspaceId: probeWorkspaceId, worktreeId: nil, path: "p.md")
         try shared.save(WorkspaceFileDraft(identity: probe, baseEtag: tag("a"), bytes: Data(marker.utf8), updatedAt: Date()))
         defer { shared.remove(probe) }
         #expect(FileManager.default.fileExists(atPath: shared.fileURL(for: probe).path))
         let defaults = UserDefaults.standard.dictionaryRepresentation()
-        #expect(!defaults.keys.contains { $0.contains(probe.storageKey) || $0.contains(probe.workspaceId) })
+        #expect(!defaults.keys.contains { $0.contains(probe.storageKey) || $0.contains(probeWorkspaceId) })
         #expect(!defaults.values.contains { value in
             if let data = value as? Data { return data.range(of: Data(marker.utf8)) != nil }
             if let string = value as? String { return string.contains(marker) }

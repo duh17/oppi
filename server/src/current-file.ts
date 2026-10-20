@@ -264,7 +264,9 @@ export type CurrentFileOrigin =
   /** Absolute, `~`, and local `file://` paths; relative paths need `cwd`. */
   | { kind: "host"; cwd?: () => string | null; homeDir?: string }
   /** Workspace or workspace-session root: worktree, host mount, or sandbox mount. */
-  | { kind: "workspace"; workspace: Workspace; root: string };
+  | { kind: "workspace"; workspace: Workspace; root: string }
+  /** An editable Skill's directory; only Skill-relative paths inside it resolve. */
+  | { kind: "skill"; root: string };
 
 export type CurrentFilePathResult =
   | { kind: "ok"; file: ResolvedCurrentFile }
@@ -291,6 +293,18 @@ export async function resolveCurrentFilePath(
     realRoot = await realpath(origin.root);
   } catch {
     return { kind: "root-not-found" };
+  }
+  if (origin.kind === "skill") {
+    const root = resolve(origin.root);
+    const lexicalPath = isAbsolute(requestedPath) ? null : resolve(root, requestedPath);
+    if (!lexicalPath || lexicalPath === root || !isPathWithinRoot(lexicalPath, root)) {
+      return { kind: "not-found" };
+    }
+    try {
+      return { kind: "ok", file: { realPath: await realpath(lexicalPath), lexicalPath } };
+    } catch {
+      return { kind: "not-found" };
+    }
   }
   const sandboxed = origin.workspace.runtime === "sandbox";
   const lexicalPath =
