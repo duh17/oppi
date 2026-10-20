@@ -425,7 +425,24 @@ struct MutableFullScreenMarkdownBodyTests {
                 absoluteOffset: 640
             )
         )
-        let browser = FileBrowserView(workspaceId: "workspace-1", initialPath: "")
+        // The file browser's readers share the browser's store.
+        let browserStore = FileBrowserViewportRestore()
+        let browserRequest = FileBrowserViewerFactory.Request(
+            workspaceId: "workspace-1",
+            worktreeId: nil,
+            serverId: nil,
+            source: .workspaceFile,
+            selection: FileBrowserSelection(path: filePath, name: fileName, size: nil),
+            navigationContext: nil,
+            services: FileBrowserServices(
+                connection: ServerConnection(),
+                apiClient: nil,
+                fileIndexStore: FileIndexStore(),
+                navigation: AppNavigation(),
+                reviewCommentSelectionScope: nil
+            ),
+            viewportRestore: browserStore
+        )
         let workspaceDestination = WorkspaceLinkedFileDestinationView(
             target: .workspaceFile(
                 serverId: "server-1",
@@ -442,35 +459,34 @@ struct MutableFullScreenMarkdownBodyTests {
                 fileName: fileName
             )
         )
-        let contents: [(String, FileBrowserContentView)] = [
+        let readBrowserStore = { browserStore.state }
+        let readDestinationStore = { store }
+        let contents: [(String, FileBrowserContentView, () -> FullScreenMarkdownViewportRestoreState)] = [
             (
                 "treePaneSelectedFile",
-                browser.debugTreePaneSelectedFileContentForTesting(
-                    selection: FileBrowserSelection(path: filePath, name: fileName, size: nil),
-                    store: binding
-                )
+                FileBrowserViewerFactory.content(browserRequest, chromeMode: .treePane),
+                readBrowserStore
             ),
             (
-                "compactNavigationLink",
-                browser.debugCompactNavigationFileContentForTesting(
-                    path: filePath,
-                    name: fileName,
-                    size: nil,
-                    store: binding
-                )
+                "pushedReader",
+                FileBrowserViewerFactory.pushedContent(browserRequest),
+                readBrowserStore
             ),
             (
                 "workspaceLinkedDestination.workspaceFile",
-                workspaceDestination.debugFileContentForTesting(store: binding)
+                workspaceDestination.debugFileContentForTesting(store: binding),
+                readDestinationStore
             ),
             (
                 "workspaceLinkedDestination.hostFile",
-                hostDestination.debugFileContentForTesting(store: binding)
+                hostDestination.debugFileContentForTesting(store: binding),
+                readDestinationStore
             ),
         ]
 
-        for (name, content) in contents {
+        for (name, content, readStore) in contents {
             store = FullScreenMarkdownViewportRestoreState()
+            browserStore.state = FullScreenMarkdownViewportRestoreState()
             #expect(
                 content.debugHasMarkdownViewportRestoreForTesting,
                 "\(name) dropped the restore store"
@@ -481,12 +497,12 @@ struct MutableFullScreenMarkdownBodyTests {
             )
             restore.wrappedValue[filePath] = detached
             #expect(
-                store[filePath] == detached,
+                readStore()[filePath] == detached,
                 "\(name) did not write through the host store"
             )
             restore.wrappedValue[filePath] = .top
             #expect(
-                store[filePath] == .top,
+                readStore()[filePath] == .top,
                 "\(name) blocked a laid-out top from replacing the stored intent"
             )
         }

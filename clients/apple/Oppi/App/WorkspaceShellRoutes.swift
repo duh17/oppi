@@ -4,8 +4,8 @@ import SwiftUI
 // (`ShellRouter.swift`, `WorkspaceShellController.swift`). Most routes are a
 // `ShellRouteView` hosted through `HostFactory`; All Sessions, the workspace
 // sidebar, a workspace's sessions, a session's chat
-// (`ChatRouteViewController`), SSH Terminal's host list, Schedules, and Agents
-// are UIKit screens.
+// (`ChatRouteViewController`), Files (`FileBrowserViewController`), SSH
+// Terminal's host list, Schedules, and Agents are UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -47,6 +47,13 @@ enum ShellRouteScreens {
         if case .session(let target) = route {
             return ChatRouteViewController(target: target, placement: placement, root: root)
         }
+        if case .fileBrowser(let target) = route {
+            return FileBrowserViewController(
+                root: root,
+                target: target,
+                showsSidebarToggle: placement == .splitDetailRoot
+            )
+        }
         return HostFactory.screen(root: root, bars: route.bars) {
             ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
         }
@@ -78,6 +85,15 @@ enum ShellRouteScreens {
         }
         if let chatRoute = screen as? ChatRouteViewController {
             chatRoute.placement = placement
+            return
+        }
+        // The route's path is the screen's identity; the column folder and
+        // file recorded on it are where its content mounts after an unlock.
+        if let files = screen as? FileBrowserViewController {
+            if case .fileBrowser(let target) = route {
+                files.update(target: target)
+            }
+            files.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
         // The sidebar reads its own state.
@@ -165,13 +181,11 @@ struct ShellRouteView: View {
     @ViewBuilder
     private var content: some View {
         switch route {
-        case .inbox, .sidebar, .workspace, .session:
+        case .inbox, .sidebar, .workspace, .session, .fileBrowser:
             // UIKit screens (SessionInboxViewController,
             // WorkspaceSidebarViewController, WorkspaceDetailViewController,
-            // ChatRouteViewController).
+            // ChatRouteViewController, FileBrowserViewController).
             mountedByUIKitScreen
-        case .fileBrowser(let target):
-            WorkspaceFileBrowserDestinationView(target: target)
         case .linkedFile(let target):
             WorkspaceLinkedFileDestinationView(target: target)
         case .chatReader(let target):

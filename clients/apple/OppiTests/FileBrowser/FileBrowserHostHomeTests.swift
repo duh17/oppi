@@ -52,26 +52,4 @@ struct FileBrowserHostHomeTests {
         #expect(FileBrowserHostHomePath.rawPath(relativePath: "Documents/notes.md") == "~/Documents/notes.md")
         #expect(FileBrowserHostHomePath.rawPath(relativePath: "~/already.md") == "~/already.md")
     }
-
-    @Test func hostHomeLoadCallsListHostDirectoryNotWorkspaceDirectory() throws {
-        let source = try appleSource("Oppi/Features/FileBrowser/FileBrowserView.swift")
-        #expect(source.contains("api.listHostDirectory(path: listingPath)"))
-        #expect(source.contains("api.listWorkspaceDirectory("))
-        let loadStart = try #require(source.range(of: "private func loadDirectory(path: String) async"))
-        let load = String(source[loadStart.lowerBound...])
-        let hostCase = try #require(load.range(of: "case .hostHome(let listingPath):"))
-        let hostCall = try #require(load.range(of: "api.listHostDirectory(path: listingPath)"))
-        #expect(hostCase.lowerBound < hostCall.lowerBound)
-        let hostSlice = String(load[hostCase.lowerBound..<load.index(hostCall.upperBound, offsetBy: 0)])
-        #expect(!hostSlice.contains("listWorkspaceDirectory"))
-    }
-}
-
-private func appleSource(_ relativePath: String) throws -> String {
-    let sourceURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: relativePath)
-    return try String(contentsOf: sourceURL, encoding: .utf8)
 }
