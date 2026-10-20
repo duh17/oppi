@@ -291,6 +291,14 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     func testThemeSwitchRefreshesMountedInboxAndSidebar() throws {
         let sessionId = try XCTUnwrap(themeSwitchSessionId, "Theme-switch session was not seeded")
         let sessionRow = app.buttons["session.nav.\(sessionId)"]
+        // A relaunch after an earlier failure shows the inbox before it has
+        // fetched this case's session, and the list builds only nearby rows.
+        let inbox = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(inbox.waitForExistence(timeout: 15), "iPhone sessions inbox did not appear")
+        inbox.swipeDown()
+        for _ in 0..<14 where !sessionRow.waitForExistence(timeout: 0.5) {
+            inbox.swipeUp()
+        }
         XCTAssertTrue(sessionRow.waitForExistence(timeout: 15), "Theme-switch session row did not appear")
 
         selectManualTheme("OLED")
@@ -758,6 +766,11 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
 
         try saveLabScreenshot(name: "iphone-workspace-scoped-separated-controls-e2e")
 
+        // The edge-pop gesture only works once the push has settled.
+        XCTAssertTrue(
+            waitForStableFrame(of: app.buttons["All Sessions"], timeout: 5),
+            "All Sessions back button never settled after opening the workspace"
+        )
         swipeBack()
         XCTAssertTrue(app.staticTexts["All Sessions"].waitForExistence(timeout: 5), "Edge swipe did not return to All Sessions")
     }
@@ -779,6 +792,10 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             "Workspace Settings summary row did not appear"
         )
 
+        XCTAssertTrue(
+            waitForStableFrame(of: app.buttons["workspace.edit.details"], timeout: 5),
+            "Workspace Settings never settled after opening"
+        )
         swipeBack()
         XCTAssertTrue(
             app.buttons["workspace.edit.open"].waitForExistence(timeout: 15),
@@ -810,6 +827,11 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         swipeBack()
         XCTAssertTrue(app.buttons["All Sessions"].waitForExistence(timeout: 10), "Chat swipe did not return to workspace sessions")
 
+        // The edge-pop gesture only works once the pop has settled.
+        XCTAssertTrue(
+            waitForStableFrame(of: app.buttons["All Sessions"], timeout: 5),
+            "All Sessions back button never settled after the chat popped"
+        )
         swipeBack()
         XCTAssertTrue(app.staticTexts["All Sessions"].waitForExistence(timeout: 10), "Workspace swipe did not return to All Sessions")
     }

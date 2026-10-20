@@ -308,9 +308,7 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
                 return
             }
             showNativePlaybackChrome(on: presentedNativePlayer())
-            let pauseButton = nativePlayPauseButton()
-            if hittableNativeControl(pauseButton) {
-                pauseButton.tap()
+            if tapNativeControlIfPresent(nativePlayPauseButton()) {
                 let pausedDeadline = Date().addingTimeInterval(2)
                 while Date() < pausedDeadline {
                     latest = currentPlaybackProbe()
@@ -340,6 +338,19 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
                 "Pause"
             )
         ).firstMatch
+    }
+
+    /// Taps a native control from one snapshot. AVKit hides the chrome of a
+    /// playing video a few seconds after it appears, so a control found by
+    /// `exists` can be gone by the time `tap()` queries it again, and that
+    /// records a failure. A snapshot that cannot be taken just means "not there".
+    private func tapNativeControlIfPresent(_ element: XCUIElement) -> Bool {
+        guard let snapshot = try? element.snapshot(), snapshot.isEnabled, !snapshot.frame.isEmpty else {
+            return false
+        }
+        let center = CGVector(dx: snapshot.frame.midX, dy: snapshot.frame.midY)
+        app.coordinate(withNormalizedOffset: .zero).withOffset(center).tap()
+        return true
     }
 
     private func hittableNativeControl(_ element: XCUIElement) -> Bool {
