@@ -18,7 +18,7 @@ import UIKit
 ///
 /// When the user taps the text field during recording, a gesture recognizer restores
 /// the keyboard (`inputView = nil` + `reloadInputViews()`) and fires a callback so
-/// ChatInputBar can stop voice recording — making typing and voice seamlessly toggle.
+/// the composer can stop voice recording — making typing and voice seamlessly toggle.
 ///
 /// These tests protect that contract so future changes don't accidentally break the
 /// voice/keyboard interaction.
@@ -135,7 +135,7 @@ struct KeyboardSuppressionTests {
         // Invoke the @objc tap handler via ObjC runtime (private but @objc).
         textView.perform(NSSelectorFromString("handleKeyboardRestoreTap"))
 
-        #expect(callbackFired, "Callback must fire so ChatInputBar can stop voice recording")
+        #expect(callbackFired, "Callback must fire so the composer can stop voice recording")
         #expect(!textView.isKeyboardSuppressed, "Keyboard should be restored after tap")
         #expect(textView.inputView == nil, "inputView should be nil after restore")
     }
@@ -212,7 +212,7 @@ struct KeyboardSuppressionTests {
 
     @Test("Restore callback fires regardless of external recording state")
     func restoreCallbackAlwaysFires() {
-        // Regression: handleKeyboardRestore in ChatInputBar guarded on
+        // Regression: handleKeyboardRestore in the composer guarded on
         // isRecording — after mic-stop the guard bailed and suppressKeyboard
         // was never reset. The UIKit callback must fire unconditionally so
         // the SwiftUI handler can always clean up.

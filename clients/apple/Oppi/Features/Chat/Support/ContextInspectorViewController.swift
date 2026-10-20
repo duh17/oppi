@@ -839,22 +839,24 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     /// Starts a control session that edits the extension's file, then closes the
     /// panel and opens that session.
     private func editExtension(_ resource: SessionResourceSnapshot) {
+        guard let root = HostFactory.root(near: self) else { return }
         let connection = connection
-        editSheet = Router.present(
-            presentation: .sheet.inNavigation(),
-            from: self
-        ) { [weak self] in
-            GuidedControlSessionSheet(
+        let sheet = GuidedControlSessionViewController(
+            configuration: GuidedControlComposerConfiguration(
                 domain: .extensions,
                 intent: .revise,
                 targetId: resource.path,
                 targetName: resource.name,
                 targetPath: resource.path,
-                placeholder: "Describe how this extension should change…",
-                onSessionPrepared: { target in self?.openEditSession(target) }
-            )
-            .withServerScopedEnvironment(connection)
-        }
+                allowsEmptyRequest: true,
+                placeholder: "Describe how this extension should change…"
+            ),
+            root: root,
+            connection: { connection },
+            onSessionPrepared: { [weak self] target in self?.openEditSession(target) }
+        )
+        editSheet = sheet
+        Router.present(sheet, presentation: .sheet.inNavigation(), from: self, theme: root.themeStore, onDismiss: nil)
     }
 
     private func openEditSession(_ target: WorkspaceSessionNavTarget) {

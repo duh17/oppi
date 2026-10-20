@@ -3,7 +3,8 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Shared logic between ChatInputBar and ExpandedComposerView.
+/// Shared logic between the inline composer (`ChatComposerOwner`) and the
+/// expanded composer (`ExpandedComposerViewController`).
 ///
 /// Eliminates duplicated private functions for image handling, input manipulation,
 /// voice UI helpers, and keyboard management. Both composers delegate to these
@@ -121,31 +122,6 @@ enum ComposerShared {
             textBeforeRecording.wrappedValue = nil
         }
         suppressKeyboard.wrappedValue = false
-    }
-
-    @ViewBuilder
-    static func captureFailureNotice<Retry: View>(
-        manager: VoiceInputManager?, owner: VoiceInputOwner, @ViewBuilder retry: () -> Retry
-    ) -> some View {
-        if let failure = captureFailure(manager, owner: owner) {
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Dictation stopped", systemImage: "mic.slash")
-                    .font(.subheadline.weight(.semibold))
-                Text(failure.message)
-                    .font(.subheadline)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("composer.dictationFailure.message")
-                retry()
-                    .frame(minHeight: 44)
-                    .accessibilityLabel("Retry dictation")
-                    .accessibilityIdentifier("composer.dictationFailure.retry")
-            }
-            .foregroundStyle(.themeFg)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(.themeBgDark, in: RoundedRectangle(cornerRadius: 12))
-            .accessibilityIdentifier("composer.dictationFailure")
-        }
     }
 
     static func micTapAction(for state: VoiceInputManager.State) -> VoiceMicTapAction {
@@ -678,24 +654,6 @@ enum ComposerShared {
             return String(text.dropFirst(2))
         }
         return text
-    }
-
-    static func textFieldBinding(
-        text: Binding<String>,
-        displayText: @escaping () -> String
-    ) -> Binding<String> {
-        Binding(
-            get: {
-                visibleComposerText(displayText())
-            },
-            set: { newValue in
-                if text.wrappedValue.hasPrefix("$ ") {
-                    text.wrappedValue = newValue.isEmpty ? "" : "$ " + newValue
-                } else {
-                    text.wrappedValue = newValue
-                }
-            }
-        )
     }
 
     static func correctionRanges(

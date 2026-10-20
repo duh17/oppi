@@ -40,14 +40,21 @@ protocol ChatComposerSource: AnyObject {
     func makeExpandedComposer() -> ExpandedComposerViewController
     /// The screen's current draft and session values for the open expanded composer.
     var expandedComposerLiveState: ExpandedComposerLiveState { get }
+    /// What paces the inline Ask card's auto-advance; nil keeps the card's own.
+    var composerAskAutoAdvanceController: AskInlineAutoAdvanceController? { get }
+}
+
+extension ChatComposerSource {
+    var composerAskAutoAdvanceController: AskInlineAutoAdvanceController? { nil }
 }
 
 /// The chat input bar in UIKit: `ComposerBarController` with the dictation
 /// failure notice above it and the busy-mode tip in its slot, the inline
 /// voice wiring, focus and dictation requests, and the expanded composer.
-/// A screen (the chat, Quick Session) embeds this controller as a child (the
-/// SSH terminal embeds `ComposerBarController` the same way) and supplies a
-/// `ChatComposerSource`.
+/// A screen (the chat, Quick Session, the guided control composer) embeds
+/// this controller as a child (the SSH terminal embeds `ComposerBarController`
+/// the same way) and supplies a `ChatComposerSource`. Every height change
+/// goes through `updateHeight()`, measured when it happens.
 @MainActor
 final class ChatComposerOwner: UIViewController, ComposerBarHosting {
     weak var source: ChatComposerSource?
@@ -206,7 +213,7 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
 
     /// The busy-mode tip claims height only while it is presented.
     private func updateBusyTip(_ content: ComposerBarContent) {
-        let show = ChatInputBar.showsBusyModeSelector(
+        let show = ComposerPolicy.showsBusyModeSelector(
             isBusy: content.isBusy,
             hasAskRequest: content.askRequest != nil
         )
@@ -363,7 +370,7 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
 
     func setInputFocused(_ value: Bool) {
         // The action row comes and goes with focus: measure again.
-        DispatchQueue.main.async { [weak self] in self?.updateHeight() }
+        updateHeight()
     }
 
     func performSend() { source?.composerSend() }
@@ -611,8 +618,11 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
         )
     }
 
-    /// A new Ask can change the slot's height inside `apply()`; measure after.
-    func askSlotDidChangeHeight() {
-        DispatchQueue.main.async { [weak self] in self?.updateHeight() }
+    func barHeightDidChange() {
+        updateHeight()
+    }
+
+    var askAutoAdvanceController: AskInlineAutoAdvanceController? {
+        source?.composerAskAutoAdvanceController
     }
 }

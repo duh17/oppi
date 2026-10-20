@@ -1,17 +1,15 @@
 #if DEBUG
 import SwiftUI
+import UIKit
 
 /// Parks the production Ask delay owner until the fixture releases it.
 @MainActor
-final class AskCardIntentRegressionSession: ObservableObject {
-    @Published var pendingCount = 0
-    @Published var status = "Waiting"
-    @Published var askRequest: AskRequest? = AskCardIntentRegressionPreview.threeQuestionRequest
-    @Published var text = ""
-    @Published var textBeforeRecording: String?
-    @Published var attachments: [PendingAttachment] = []
-    @Published var repoPointers: [PendingFileReference] = []
-    @Published var busyBehavior: StreamingBehavior = .steer
+final class AskCardIntentRegressionSession {
+    var pendingCount = 0 {
+        didSet { onChange?() }
+    }
+    /// Runs after the delay registers or releases.
+    var onChange: (() -> Void)?
 
     private var continuations: [CheckedContinuation<Void, Error>] = []
 
@@ -63,85 +61,15 @@ final class AskCardIntentRegressionSession: ObservableObject {
     }
 }
 
-/// Lane-local Ask delayed-advance fixture. Multi-question single-select plus
-/// the real composer Ignore control, with a same-id replacement button.
-struct AskCardIntentRegressionPreview: View {
-    @StateObject private var session = AskCardIntentRegressionSession()
-
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            Color.themeBg
-                .ignoresSafeArea()
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Ask intent regression")
-                    .font(.headline)
-                    .foregroundStyle(.themeFg)
-                Text(session.status)
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-                    .accessibilityIdentifier("ask.intent.status")
-                Text(session.delayState)
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-                    .accessibilityIdentifier("ask.intent.delayState")
-
-                Button("Release delay") {
-                    session.releaseAll()
-                }
-                .accessibilityIdentifier("ask.intent.releaseDelay")
-
-                Button("Replace same-id content") {
-                    session.askRequest = Self.replacementRequest
-                    session.status = "Replaced same id"
-                }
-                .accessibilityIdentifier("ask.intent.replaceSameId")
-
-                Spacer()
-            }
-            .padding(24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            ChatInputBar(
-                text: $session.text,
-                textBeforeRecording: $session.textBeforeRecording,
-                pendingAttachments: $session.attachments,
-                pendingRepoPointers: $session.repoPointers,
-                isBusy: true,
-                busyStreamingBehavior: $session.busyBehavior,
-                isSending: false,
-                sendProgressText: nil,
-                isStopping: false,
-                showForceStop: false,
-                isForceStopInFlight: false,
-                askRequest: session.askRequest,
-                onAskSubmit: { _, _, complete in
-                    session.status = "Submitted"
-                    complete(.completed)
-                },
-                onAskIgnoreAll: { _, complete in
-                    session.status = "Ignored all"
-                    complete(.completed)
-                },
-                autoAdvanceController: session.autoAdvance,
-                slashCommands: [],
-                fileSuggestions: [],
-                onFileSuggestionQuery: nil,
-                onSend: {},
-                onStop: {},
-                onForceStop: {},
-                onExpand: {},
-                externalFocusRequestID: 0,
-                appliesOuterPadding: true,
-                alwaysShowActionRow: true
-            )
-        }
-        .onAppear {
-            FeatureEducationTips.markPromptAnswered()
-        }
-        .preferredColorScheme(.dark)
-        .accessibilityIdentifier("screenshot.ready")
+/// Lane-local Ask delayed-advance fixture: a three-question single-select
+/// Ask on the chat's composer (`ChatComposerOwner`), busy so the composer's
+/// Ignore control shows, with a same-id replacement button.
+struct AskCardIntentRegressionPreview: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> AskCardIntentRegressionPreviewController {
+        AskCardIntentRegressionPreviewController()
     }
+
+    func updateUIViewController(_ controller: AskCardIntentRegressionPreviewController, context: Context) {}
 
     static let threeQuestionRequest = AskRequest(
         id: "ask-intent-regression",
@@ -197,53 +125,97 @@ struct AskCardIntentRegressionPreview: View {
     )
 }
 
+final class AskCardIntentRegressionPreviewController: UIViewController {
+    private let session = AskCardIntentRegressionSession()
+    private let statusLabel = UILabel()
+    private let delayLabel = UILabel()
+    private let composer: PreviewComposerController
+
+    init() {
+        composer = PreviewComposerController(values: .init(
+            isBusy: true,
+            askRequest: AskCardIntentRegressionPreview.threeQuestionRequest,
+            colors: ComposerThemeColors(palette: ThemeRuntimeState.currentPalette())
+        ))
+        super.init(nibName: nil, bundle: nil)
+        overrideUserInterfaceStyle = .dark
+        composer.autoAdvance = session.autoAdvance
+        composer.onAskSubmit = { [weak self] _, _ in self?.setStatus("Submitted") }
+        composer.onAskIgnore = { [weak self] _ in self?.setStatus("Ignored all") }
+        session.onChange = { [weak self] in self?.showDelayState() }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let colors = composer.values.colors
+        view.backgroundColor = colors.bg
+        view.accessibilityIdentifier = "screenshot.ready"
+        FeatureEducationTips.markPromptAnswered()
+
+        let title = UILabel()
+        title.text = "Ask intent regression"
+        title.font = .preferredFont(forTextStyle: .headline)
+        title.textColor = colors.fg
+        for label in [statusLabel, delayLabel] {
+            label.font = .preferredFont(forTextStyle: .caption1)
+            label.textColor = colors.comment
+        }
+        statusLabel.accessibilityIdentifier = "ask.intent.status"
+        delayLabel.accessibilityIdentifier = "ask.intent.delayState"
+        setStatus("Waiting")
+        showDelayState()
+        let release = UIButton(configuration: .plain(), primaryAction: UIAction(title: "Release delay") { [weak self] _ in
+            self?.session.releaseAll()
+        })
+        release.accessibilityIdentifier = "ask.intent.releaseDelay"
+        let replace = UIButton(configuration: .plain(), primaryAction: UIAction(title: "Replace same-id content") { [weak self] _ in
+            self?.composer.values.askRequest = AskCardIntentRegressionPreview.replacementRequest
+            self?.setStatus("Replaced same id")
+        })
+        replace.accessibilityIdentifier = "ask.intent.replaceSameId"
+        let header = UIStackView(arrangedSubviews: [title, statusLabel, delayLabel, release, replace])
+        header.axis = .vertical
+        header.alignment = .leading
+        header.spacing = 12
+        header.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(header)
+
+        addChild(composer)
+        composer.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(composer.view)
+        composer.didMove(toParent: self)
+        let safe = view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            header.topAnchor.constraint(equalTo: safe.topAnchor, constant: 24),
+            header.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 24),
+            header.trailingAnchor.constraint(lessThanOrEqualTo: safe.trailingAnchor, constant: -24),
+            composer.view.topAnchor.constraint(greaterThanOrEqualTo: header.bottomAnchor, constant: 12),
+            composer.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
+            composer.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
+            composer.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+        ])
+    }
+
+    private func setStatus(_ status: String) {
+        statusLabel.text = status
+    }
+
+    private func showDelayState() {
+        delayLabel.text = session.delayState
+    }
+}
+
 /// One question with enough options to exceed the inline Ask cap so the
 /// card must scroll instead of stretching the composer.
-struct AskCardTallScrollPreview: View {
-    @State private var text = ""
-    @State private var textBeforeRecording: String?
-    @State private var attachments: [PendingAttachment] = []
-    @State private var repoPointers: [PendingFileReference] = []
-    @State private var busyBehavior: StreamingBehavior = .followUp
-
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            Color.themeBg.ignoresSafeArea()
-            ChatInputBar(
-                text: $text,
-                textBeforeRecording: $textBeforeRecording,
-                pendingAttachments: $attachments,
-                pendingRepoPointers: $repoPointers,
-                isBusy: false,
-                busyStreamingBehavior: $busyBehavior,
-                isSending: false,
-                sendProgressText: nil,
-                isStopping: false,
-                showForceStop: false,
-                isForceStopInFlight: false,
-                askRequest: Self.tallRequest,
-                onAskSubmit: { _, _, complete in complete(.completed) },
-                onAskIgnoreAll: { _, complete in complete(.completed) },
-                slashCommands: [],
-                fileSuggestions: [],
-                onFileSuggestionQuery: nil,
-                onSend: {},
-                onStop: {},
-                onForceStop: {},
-                onExpand: {},
-                externalFocusRequestID: 0,
-                appliesOuterPadding: true,
-                alwaysShowActionRow: true
-            )
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-        }
-        .onAppear {
-            FeatureEducationTips.markPromptAnswered()
-        }
-        .preferredColorScheme(.light)
-        .accessibilityIdentifier("screenshot.ready")
+struct AskCardTallScrollPreview: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> AskCardTallScrollPreviewController {
+        AskCardTallScrollPreviewController()
     }
+
+    func updateUIViewController(_ controller: AskCardTallScrollPreviewController, context: Context) {}
 
     static let tallRequest = AskRequest(
         id: "ask-tall-scroll",
@@ -268,5 +240,31 @@ struct AskCardTallScrollPreview: View {
         allowCustom: true,
         timeout: nil
     )
+}
+
+final class AskCardTallScrollPreviewController: UIViewController {
+    private let composer = PreviewComposerController(values: .init(
+        askRequest: AskCardTallScrollPreview.tallRequest,
+        colors: ComposerThemeColors(palette: ThemeRuntimeState.currentPalette())
+    ))
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        overrideUserInterfaceStyle = .light
+        view.backgroundColor = composer.values.colors.bg
+        view.accessibilityIdentifier = "screenshot.ready"
+        FeatureEducationTips.markPromptAnswered()
+        addChild(composer)
+        composer.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(composer.view)
+        composer.didMove(toParent: self)
+        let safe = view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            composer.view.topAnchor.constraint(greaterThanOrEqualTo: safe.topAnchor),
+            composer.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 16),
+            composer.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -16),
+            composer.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8),
+        ])
+    }
 }
 #endif

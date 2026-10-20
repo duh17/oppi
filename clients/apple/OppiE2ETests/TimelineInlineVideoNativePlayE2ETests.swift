@@ -65,7 +65,6 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
             "Composer did not return after the wiki video turn"
         )
 
-        dismissComposerKeyboardIfNeeded()
         let nativePlayer = revealNativePlayer()
         XCTAssertTrue(
             nativePlayer.waitForExistence(timeout: 8),
@@ -466,14 +465,6 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         return !element.exists
-    }
-
-    private func dismissComposerKeyboardIfNeeded() {
-        let dismiss = app.buttons["chat.keyboard.dismiss"]
-        if dismiss.exists, dismiss.isHittable {
-            dismiss.tap()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        }
     }
 
     @discardableResult

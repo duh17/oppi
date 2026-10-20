@@ -150,7 +150,7 @@ final class RecoveryE2ETests: E2ETestCase {
         return element.value as? String != value
     }
 
-    /// ChatInputBar sets `chat.send` accessibilityLabel to "Sending" while
+    /// The composer bar sets `chat.send` accessibilityLabel to "Sending" while
     /// `isSendInFlight` (`isSending` / voice-finish), then "Send" when the turn
     /// send returns. Call this after composer clear: beginSubmission clears the
     /// field while still in-flight, so "Send" here means completeSubmission

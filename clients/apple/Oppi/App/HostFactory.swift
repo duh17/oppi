@@ -637,24 +637,6 @@ extension View {
         }
     }
 
-    /// Boolean form of `routerModal(item:presentation:onDismiss:screen:)`.
-    func routerModal(
-        isPresented: Binding<Bool>,
-        presentation: ModalPresentation = .sheet,
-        onDismiss: (() -> Void)? = nil,
-        screen: RouterScreen
-    ) -> some View {
-        background {
-            RouterModalFlagAnchor(
-                isPresented: isPresented,
-                presentation: presentation,
-                onDismiss: onDismiss,
-                screen: { _ in screen }
-            )
-            .accessibilityHidden(true)
-        }
-    }
-
     /// Boolean form of `routerModal(item:presentation:onDismiss:content:)`.
     func routerModal<ModalContent: View>(
         isPresented: Binding<Bool>,

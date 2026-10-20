@@ -130,12 +130,14 @@ protocol ComposerBarHosting: AnyObject {
     func discardFailedVoiceTake()
     func restoreKeyboardFromSuppression()
     var askAutoAdvanceController: AskInlineAutoAdvanceController? { get }
-    func askSlotDidChangeHeight()
+    /// The bar's fitted height changed outside the host's own update (the
+    /// Ask card measured itself): measure the bar again.
+    func barHeightDidChange()
 }
 
 extension ComposerBarHosting {
     var askAutoAdvanceController: AskInlineAutoAdvanceController? { nil }
-    func askSlotDidChangeHeight() {}
+    func barHeightDidChange() {}
 }
 
 /// Emoji / asset / symbol workspace mark plus the sandbox lock. UIKit counterpart
@@ -1323,7 +1325,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         filePillStrip.apply(pointers: content.pendingRepoPointers, colors: colors)
         filePillStripWrapper.setHiddenIfChanged(content.pendingRepoPointers.isEmpty)
 
-        let showActionRow = ChatInputBar.shouldShowComposerActionRow(
+        let showActionRow = ComposerPolicy.shouldShowComposerActionRow(
             alwaysShowActionRow: content.alwaysShowActionRow,
             isBusy: content.isBusy,
             isInputFocused: isInputFocused,
@@ -1333,7 +1335,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         ) && content.showsAccessoryRow
         applyActionRowVisibility(showActionRow, minimumHeight: content.actionRowMinimumHeight, reduceMotion: content.reduceMotion)
 
-        let showsBusy = ChatInputBar.showsBusyModeSelector(
+        let showsBusy = ComposerPolicy.showsBusyModeSelector(
             isBusy: content.isBusy,
             hasAskRequest: content.askRequest != nil
         )
@@ -1400,7 +1402,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         }
     }
 
-    /// `notifyHost` is false while SwiftUI is already measuring the bar.
+    /// `notifyHost` is false while `sizeThatFits` is already measuring the bar.
     private func applyAskViewport(notifyHost: Bool = true) {
         let hasAsk = host?.content.askRequest != nil
         let focused = isInputFocused && !(host?.content.suppressKeyboard ?? false)
@@ -1416,7 +1418,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         askContainer.setHiddenIfChanged(!hasAsk || slot <= 0)
         if slotChanged {
             view.invalidateIntrinsicContentSize()
-            if notifyHost { host?.askSlotDidChangeHeight() }
+            if notifyHost { host?.barHeightDidChange() }
         }
     }
 
@@ -1595,7 +1597,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         let callStatus = content.askRequest == nil && content.placeholderOverride == nil
             ? content.liveVoiceCall?.status
             : nil
-        placeholderLabel.text = callStatus ?? content.placeholderOverride ?? ChatInputBar.composerPlaceholder(
+        placeholderLabel.text = callStatus ?? content.placeholderOverride ?? ComposerPolicy.composerPlaceholder(
             askRequest: content.askRequest,
             pendingReviewCommentCount: content.pendingReviewCommentCount,
             isBusy: content.isBusy,
@@ -1634,7 +1636,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             correctionUnderlineColor: colors.orange,
             scrollCaretToVisible: true
         )
-        let allowRestore = ChatInputBar.allowKeyboardRestoreOnTap(
+        let allowRestore = ComposerPolicy.allowKeyboardRestoreOnTap(
             voiceState: content.voiceInputManager?.state ?? .idle
         )
         if textView.allowsKeyboardRestoreOnTap != allowRestore {
@@ -1673,7 +1675,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     private func applyTextLayout(proposedWidth: CGFloat) {
         guard let host else { return }
         let content = host.content
-        let maxLines = ChatInputBar.inlineTextMaxLines(
+        let maxLines = ComposerPolicy.inlineTextMaxLines(
             hasAskRequest: content.askRequest != nil,
             hasAttachments: !content.pendingAttachments.isEmpty,
             hasRepoPointers: !content.pendingRepoPointers.isEmpty
@@ -1701,7 +1703,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         let lineHeight = max(textView.font?.lineHeight ?? 17, 1)
         let lines = (growth.height - textVerticalInset * 2) / lineHeight
         inlineVisualLineCount = max(1, Int(lines + 0.05))
-        let showsExpand = ChatInputBar.shouldShowExpandButton(
+        let showsExpand = ComposerPolicy.shouldShowExpandButton(
             allowsExpansion: content.allowsExpansion,
             visualLineCount: inlineVisualLineCount,
             threshold: expandVisibilityLineThreshold,
@@ -1710,7 +1712,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         overlayExpand.isHidden = !(showsExpand && content.askRequest == nil)
         expandInActionRow.setHiddenIfChanged(!(showsExpand && content.askRequest != nil && lastShowActionRow == true))
         if showsExpand {
-            textView.textContainerInset.right = ChatInputBar.composerTextTrailingPadding(showsExpandButton: true)
+            textView.textContainerInset.right = ComposerPolicy.composerTextTrailingPadding(showsExpandButton: true)
             growth = ComposerInputMetrics.textViewGrowth(
                 for: textView,
                 fittingWidth: textWidth,
@@ -1727,7 +1729,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     private func applyPrimaryButton(content: ComposerBarContent, colors: ComposerThemeColors) {
         let canSend = self.canSend
         let inFlight = isSendInFlight
-        let kind = ChatInputBar.primaryActionKind(
+        let kind = ComposerPolicy.primaryActionKind(
             isBusy: content.isBusy,
             canSend: canSend,
             isSending: inFlight,
@@ -1796,7 +1798,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     private func applyCallButtons(
         content: ComposerBarContent,
         colors: ComposerThemeColors,
-        kind: ChatInputPrimaryActionKind,
+        kind: ComposerPrimaryActionKind,
         canSend: Bool,
         inFlight: Bool
     ) {
@@ -1931,7 +1933,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         if host.content.askRequest != nil {
             return pendingAskSendTransition != nil
         }
-        return ChatInputBar.canSubmitMessage(
+        return ComposerPolicy.canSubmitMessage(
             allowsEmptySubmit: host.content.allowsEmptySubmit,
             text: composerDisplayText,
             hasImages: host.content.pendingAttachments.contains { $0.source == .image },
@@ -1964,8 +1966,8 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         return askRequest.questions[askClearing.currentPage].id
     }
 
-    private var pendingAskSendTransition: ChatInputBar.AskComposerSendTransition? {
-        ChatInputBar.askComposerSendTransition(
+    private var pendingAskSendTransition: ComposerPolicy.AskComposerSendTransition? {
+        ComposerPolicy.askComposerSendTransition(
             request: host?.content.askRequest,
             currentPage: askClearing.currentPage,
             draftAnswers: askClearing.draftAnswers,
@@ -1977,7 +1979,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
 
     private func handlePrimaryAction() {
         guard let host else { return }
-        switch ChatInputBar.primaryActionKind(
+        switch ComposerPolicy.primaryActionKind(
             isBusy: host.content.isBusy,
             canSend: canSend,
             isSending: isSendInFlight,
@@ -2005,7 +2007,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             Task { @MainActor in
                 await self.host?.finishVoiceBeforeSubmit()
                 self.host?.setSuppressKeyboard(
-                    ChatInputBar.suppressKeyboardAfterSend(
+                    ComposerPolicy.suppressKeyboardAfterSend(
                         voiceState: voiceState,
                         wasSuppressed: wasSuppressed
                     )
@@ -2074,7 +2076,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
                let submittedTextRevision,
                self.askClearing.textRevision == submittedTextRevision,
                self.host?.content.text.isEmpty == true,
-               let restored = ChatInputBar.composerTextForActiveAskQuestion(
+               let restored = ComposerPolicy.composerTextForActiveAskQuestion(
                    request: self.host?.content.askRequest,
                    activeQuestionID: self.activeAskQuestionID,
                    draftAnswers: self.askClearing.draftAnswers,
@@ -2098,7 +2100,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     }
 
     private func syncComposerTextWithActiveAskQuestion() {
-        guard let desiredText = ChatInputBar.composerTextForActiveAskQuestion(
+        guard let desiredText = ComposerPolicy.composerTextForActiveAskQuestion(
             request: host?.content.askRequest,
             activeQuestionID: activeAskQuestionID,
             draftAnswers: askClearing.draftAnswers,
@@ -2267,18 +2269,19 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
 
     func textViewDidBeginEditing(_ textView: UITextView) {
         isInputFocused = true
-        host?.setInputFocused(true)
         if let pastable = textView as? PastableUITextView, pastable.isKeyboardSuppressed {
         } else {
             updateKeyboardLanguage()
         }
         applyChrome()
+        // After the chrome: the host measures the bar with its new action row.
+        host?.setInputFocused(true)
     }
 
     func textViewDidEndEditing(_ textView: UITextView) {
         isInputFocused = false
-        host?.setInputFocused(false)
         applyChrome()
+        host?.setInputFocused(false)
     }
 
     /// A call's live transcript is display-only; typing waits until the user stops talking.

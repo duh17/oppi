@@ -119,8 +119,6 @@ struct ScreenshotPreviewView: View {
             ReviewFileMotionPreview()
         case "extension-widget":
             ExtensionSurfacePreview()
-        case "chat-input-attachment-containment":
-            ChatInputAttachmentContainmentPreview()
         case "live-voice-composer":
             LiveVoiceComposerPreview(pinned: nil)
                 .ignoresSafeArea()
@@ -129,21 +127,6 @@ struct ScreenshotPreviewView: View {
                 rawValue: String(ScreenshotPreviewConfig.screen.dropFirst("live-voice-composer-".count))
             ))
             .ignoresSafeArea()
-        case "extension-notify-chip-info":
-            ExtensionNotifyChipScreenshotPreview(mode: .collapsedInfo)
-        case "extension-notify-chip-error":
-            ExtensionNotifyChipScreenshotPreview(mode: .collapsedError)
-        case "extension-notify-chip-expanded":
-            ExtensionNotifyChipScreenshotPreview(mode: .expandedMultiple)
-        case "review-comment-strip-collapsed":
-            ReviewCommentStripScreenshotPreview(isExpanded: false)
-        case "review-comment-strip-expanded":
-            ReviewCommentStripScreenshotPreview(isExpanded: true)
-        case "review-comment-strip-expanded-one":
-            ReviewCommentStripScreenshotPreview(
-                isExpanded: true,
-                comments: Array(ReviewCommentStripScreenshotPreview.fixtureComments.prefix(1))
-            )
         case "quick-session-dictation-composer":
             QuickSessionDictationComposerPreview()
         case "dictation-non-wipe-composer":
@@ -458,7 +441,7 @@ private struct RouterRoutesMenu: View {
     @Environment(\.screenNavigator) private var navigator
     @Environment(ServerConnection.self) private var connection
     @State private var dismissedModals = 0
-    @State private var isEditingAgent = false
+    @State private var editingAgent: StoredAgentDefinition?
     @State private var saves = RouterRoutesSaves.shared
 
     var body: some View {
@@ -469,20 +452,22 @@ private struct RouterRoutesMenu: View {
             .accessibilityIdentifier("routerRoutes.quickComments")
 
             Button("Edit Agent") {
-                isEditingAgent = true
+                editingAgent = RouterRoutesFixtures.agent
             }
             .accessibilityIdentifier("routerRoutes.editAgent")
             .routerModal(
-                isPresented: $isEditingAgent,
+                item: $editingAgent,
                 presentation: .fullScreen.inNavigation(),
                 onDismiss: { dismissedModals += 1 },
-                screen: .controller({ [connection] in
-                    AgentNativeEditViewController(
-                        agent: RouterRoutesFixtures.agent,
-                        apiClient: RouterRoutesFixtures.api,
-                        connection: connection
-                    ) { _ in }
-                })
+                screen: { [connection] agent in
+                    .controller({
+                        AgentNativeEditViewController(
+                            agent: agent,
+                            apiClient: RouterRoutesFixtures.api,
+                            connection: connection
+                        ) { _ in }
+                    })
+                }
             )
 
             Button("Edit Schedule") {

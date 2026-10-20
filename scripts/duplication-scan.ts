@@ -402,16 +402,6 @@ function runAppleGuardrails(): GuardrailResult {
     );
   }
 
-  const chatInputFunctions = privateFunctionNames("Oppi/Features/Chat/Composer/ChatInputBar.swift");
-  const expandedComposerFunctions = privateFunctionNames("Oppi/Features/Chat/Composer/ExpandedComposerView.swift");
-  const sharedComposerFunctionCount = intersectionCount(chatInputFunctions, expandedComposerFunctions);
-  if (sharedComposerFunctionCount > 5) {
-    err(
-      `ChatInputBar and ExpandedComposerView share ${sharedComposerFunctionCount} private funcs`,
-      "Extract shared logic to a ComposerShared module",
-    );
-  }
-
   const askCardFunctions = privateFunctionNames("Oppi/Features/Chat/Composer/AskCard.swift");
   const askCardExpandedFunctions = privateFunctionNames("Oppi/Features/Chat/Composer/AskCardExpanded.swift");
   const sharedAskFunctionCount = intersectionCount(askCardFunctions, askCardExpandedFunctions);

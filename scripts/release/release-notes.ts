@@ -60,7 +60,7 @@ Usage:
 Examples:
   release-notes.ts create --bump
   release-notes.ts add --build-number 31 --fixed "Ask-card typed answers submit to the visible question."
-  release-notes.ts add --bump --validation "OppiTests/ChatInputBarTests passed"
+  release-notes.ts add --bump --validation "OppiTests/ComposerBarTests passed"
 `);
   process.exit(0);
 }

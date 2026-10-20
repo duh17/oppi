@@ -64,7 +64,7 @@ enum SessionInboxSearchScope {
 }
 
 /// Collapsed session-list compose launcher. Not a live text field — tap
-/// presents Quick Session, which owns the real ChatInputBar.
+/// presents Quick Session, which owns the real composer.
 struct SessionInboxCompactComposeBar: View {
     let showsDictation: Bool
     var hasActivePlayback: Bool = false

@@ -244,7 +244,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
 
     private let comments = ChatReviewCommentsController()
     private var guidedSessionHandoff = ControlRevisionSheetHandoff()
-    private weak var guidedSheet: HostedScreenController?
+    private weak var guidedSheet: GuidedControlSessionViewController?
     private var isCreatingSession = false {
         didSet { setNeedsUpdateProperties() }
     }
@@ -468,34 +468,36 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     }
 
     private func presentGuidedRevision() {
-        guard guidedSheet == nil, let connection else { return }
-        let domain = domain
-        let targetId = targetId
-        let targetName = targetName
-        let targetPath = domain == .skills ? sourcePath : nil
-        let comments = comments
-        guidedSheet = Router.present(
+        guard guidedSheet == nil, let connection, let root else { return }
+        let configuration = GuidedControlComposerConfiguration(
+            domain: domain,
+            intent: .revise,
+            targetId: targetId,
+            targetName: targetName,
+            targetPath: domain == .skills ? sourcePath : nil,
+            // Staged comments are the request: they send with no text.
+            allowsEmptyRequest: true,
+            placeholder: "Describe how this \(domain.title) should change…",
+            stagedComments: comments
+        )
+        let sheet = GuidedControlSessionViewController(
+            configuration: configuration,
+            root: root,
+            // A skill file opens under its own server's scope, not
+            // necessarily the active one.
+            connection: { connection },
+            onSessionPrepared: { [weak self] target in
+                self?.guidedSessionHandoff.prepare(target)
+                self?.closeGuidedRevision()
+            }
+        )
+        guidedSheet = sheet
+        Router.present(
+            sheet,
             presentation: .sheet.inNavigation(),
             from: self,
-            onDismiss: { [weak self] in self?.completeGuidedSessionHandoff() },
-            content: { [weak self] in
-                GuidedControlSessionSheet(
-                    domain: domain,
-                    intent: .revise,
-                    targetId: targetId,
-                    targetName: targetName,
-                    targetPath: targetPath,
-                    placeholder: "Describe how this \(domain.title) should change…",
-                    stagedComments: comments,
-                    onSessionPrepared: { target in
-                        self?.guidedSessionHandoff.prepare(target)
-                        self?.closeGuidedRevision()
-                    }
-                )
-                // A skill file opens under its own server's scope, not
-                // necessarily the active one.
-                .withServerScopedEnvironment(connection)
-            }
+            theme: root.themeStore,
+            onDismiss: { [weak self] in self?.completeGuidedSessionHandoff() }
         )
     }
 

@@ -120,7 +120,9 @@ struct FeatureEducationP0TipPreview: View {
     }
 
     private var busyComposer: some View {
+        // Room for the bar and the busy-mode tip it shows above itself.
         FeatureEducationBusyComposerPreview()
+            .frame(height: 220)
             .accessibilityIdentifier("feature-tip-p0.busy-send.surface")
     }
 
@@ -246,38 +248,20 @@ private struct AskCardPreviewHost: UIViewControllerRepresentable {
     }
 }
 
-private struct FeatureEducationBusyComposerPreview: View {
-    @State private var text = "Guide the current turn"
-    @State private var textBeforeRecording: String?
-    @State private var attachments: [PendingAttachment] = []
-    @State private var repoPointers: [PendingFileReference] = []
-    @State private var busyBehavior: StreamingBehavior = .steer
+/// The chat's composer, busy, so its tip slot shows the busy-mode tip.
+private struct FeatureEducationBusyComposerPreview: UIViewControllerRepresentable {
+    @Environment(\.themeID) private var themeID
 
-    var body: some View {
-        ChatInputBar(
-            text: $text,
-            textBeforeRecording: $textBeforeRecording,
-            pendingAttachments: $attachments,
-            pendingRepoPointers: $repoPointers,
+    func makeUIViewController(context: Context) -> PreviewComposerController {
+        PreviewComposerController(values: .init(
+            text: "Guide the current turn",
             isBusy: true,
-            busyStreamingBehavior: $busyBehavior,
-            isSending: false,
-            sendProgressText: nil,
-            isStopping: false,
-            showForceStop: false,
-            isForceStopInFlight: false,
-            slashCommands: [],
-            fileSuggestions: [],
-            onFileSuggestionQuery: nil,
-            onSend: {},
-            onStop: {},
-            onForceStop: {},
-            onExpand: {},
-            externalFocusRequestID: 0,
             appliesOuterPadding: false,
-            alwaysShowActionRow: true
-        )
+            colors: ComposerThemeColors(palette: themeID.palette)
+        ))
     }
+
+    func updateUIViewController(_ controller: PreviewComposerController, context: Context) {}
 }
 
 private struct FeatureEducationReviewSelectionRepresentable: UIViewRepresentable {

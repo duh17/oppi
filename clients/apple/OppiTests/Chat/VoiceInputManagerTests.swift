@@ -395,7 +395,7 @@ struct VoiceInputManagerTests {
 
     // MARK: - Rapid Tap Simulation
 
-    /// Simulates the button action pattern from ChatInputBar without
+    /// Simulates the button action pattern from the composer bar without
     /// actually calling Speech APIs (which crash in simulator).
     /// Verifies the state machine + operation lock prevent double-entry.
     @Test func rapidTapButtonActionPattern() async {
@@ -1521,18 +1521,19 @@ struct VoiceInputManagerTests {
             window.rootViewController = controller
             hostView = controller.view
         } else {
-            let root = ChatInputBar(
-                text: text, textBeforeRecording: prefix, pendingAttachments: .constant([]),
-                pendingRepoPointers: .constant([]), isBusy: false, busyStreamingBehavior: .constant(.steer),
-                isSending: false, sendProgressText: nil, isStopping: false,
-                voiceInputManager: manager, showForceStop: false, isForceStopInFlight: false,
-                slashCommands: [], fileSuggestions: [], onFileSuggestionQuery: nil,
-                onSend: {}, onStop: {}, onForceStop: {}, onExpand: {},
-                externalFocusRequestID: 0, appliesOuterPadding: true
-            )
-            let host = UIHostingController(rootView: root.environment(\.dynamicTypeSize, .accessibility1))
-            window.rootViewController = host
-            hostView = host.view
+            // The chat's composer owner, fed the draft the way the chat feeds it.
+            var content = ComposerBarContent.testDefault()
+            content.text = draft.text
+            content.textBeforeRecording = draft.prefix
+            content.voiceInputManager = manager
+            content.appliesOuterPadding = true
+            let screen = ComposerOwnerTestScreen(content: content)
+            screen.onEdit = { edited in
+                draft.text = edited.text
+                draft.prefix = edited.textBeforeRecording
+            }
+            window.rootViewController = screen
+            hostView = screen.view
         }
         window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }

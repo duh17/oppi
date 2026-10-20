@@ -283,41 +283,6 @@ struct AskSubmissionRecoveryTests {
         }
     }
 
-    @Test(arguments: ["newer typing", ""])
-    func failurePreservesNewerTextThroughTheComposerBinding(newText: String) {
-        var state = AskComposerClearingState(draftAnswers: ["q": .custom("sent answer")])
-        var text = "sent answer"
-        let request = AskRequest(id: "ask", sessionId: "s", questions: [
-            AskQuestion(id: "q", question: "Which?", options: [], multiSelect: false),
-        ], allowCustom: true, timeout: nil)
-        let textBinding = Binding(get: { text }, set: { text = $0 })
-        let field = ChatInputBar.askComposerTextFieldBinding(
-            text: textBinding,
-            clearing: Binding(get: { state }, set: { state = $0 }),
-            displayText: { text }
-        )
-        let revision = state.textRevision
-        var done: AskResponseSubmission.Completion?
-        state.submission.submit(requestID: request.id, deliver: {
-            text = ""
-            done = $0
-        }, completion: { result in
-            if result == .retryableFailure {
-                ChatInputBar.restoreFailedAskComposerText(
-                    text: textBinding, clearing: state, submittedTextRevision: revision,
-                    request: request, activeQuestionID: "q"
-                )
-            }
-        })
-        // Exercise the binding supplied to PastableTextView, including type-then-delete (ABA).
-        field.wrappedValue = "newer typing"
-        field.wrappedValue = newText
-        done?(.retryableFailure)
-        #expect(text == newText)
-        #expect(field.wrappedValue == newText)
-        #expect(state.submission.phase == .failed(request.id))
-    }
-
     private enum DeliveryFailure: Error { case offline }
 
     @Test func settlementBeforeFailureDoesNotRearmMountedRequest() {
@@ -342,13 +307,7 @@ struct AskSubmissionRecoveryTests {
         done?(.retryableFailure)
         #expect(state.submittedRequestID == nil)
         #expect(state.currentPage == 1)
-        var text = ""
-        #expect(ChatInputBar.restoreFailedAskComposerText(
-            text: Binding(get: { text }, set: { text = $0 }), clearing: state,
-            submittedTextRevision: state.textRevision, request: request, activeQuestionID: "q"
-        ))
-        #expect(text == "keep this")
-        #expect(ChatInputBar.composerTextForActiveAskQuestion(
+        #expect(ComposerPolicy.composerTextForActiveAskQuestion(
             request: request, activeQuestionID: "q", draftAnswers: state.draftAnswers,
             keepComposerClearedForSubmittedRequestID: state.submittedRequestID
         ) == "keep this")

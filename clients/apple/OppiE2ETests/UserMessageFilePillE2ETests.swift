@@ -50,10 +50,8 @@ final class UserMessageFilePillE2ETests: E2ETestCase {
         let timeline = app.collectionViews["chat.timeline"]
         XCTAssertTrue(waitForElementToExist(timeline, timeout: 5), "Chat timeline was unavailable")
 
-        let keyboardDismissButton = app.buttons["chat.keyboard.dismiss"]
-        if keyboardDismissButton.exists {
-            tap(keyboardDismissButton, named: "keyboard dismiss button", timeout: 1)
-        } else if app.keyboards.firstMatch.exists {
+        // The composer has no keyboard Done bar; a tap on the timeline ends editing.
+        if app.keyboards.firstMatch.exists {
             timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.30)).tap()
         }
         let keyboardGone = XCTNSPredicateExpectation(

@@ -196,7 +196,7 @@ struct ComposerSuggestionPerfBench {
             "README.md",
             "package.json",
             "clients/apple/Oppi/Features/Chat/ChatView.swift",
-            "clients/apple/Oppi/Features/Chat/Composer/ChatInputBar.swift",
+            "clients/apple/Oppi/Features/Chat/Composer/ComposerBarController.swift",
             "clients/apple/Oppi/Features/Chat/Composer/ChatComposer.swift",
             "clients/apple/OppiCore/Models/ChatMessage.swift",
             "clients/apple/OppiTests/Chat/ChatViewTests.swift",

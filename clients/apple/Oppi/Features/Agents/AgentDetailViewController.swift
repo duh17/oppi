@@ -129,7 +129,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
 
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
-        loadTask?.cancel()
+        cancelLoad()
         loadTask = Task { [weak self] in
             await self?.loadAgent()
             // A replaced load leaves the resources to the load that replaced it.
@@ -152,7 +152,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        loadTask?.cancel()
+        cancelLoad()
     }
 
     override func updateProperties() {
@@ -641,12 +641,19 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
     // MARK: - Actions
 
     private func refresh() {
-        loadTask?.cancel()
+        cancelLoad()
         loadTask = Task { [weak self] in
             await self?.loadAgent()
             if !Task.isCancelled { await self?.loadResources() }
             self?.refreshControl.endRefreshing()
         }
+    }
+
+    /// A cancelled load skips its resource flag reset so it cannot clear a
+    /// newer load's flag; the canceller clears it instead.
+    private func cancelLoad() {
+        loadTask?.cancel()
+        isLoadingResources = false
     }
 
     private func loadAgent() async {

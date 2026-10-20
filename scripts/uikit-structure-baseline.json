@@ -19,9 +19,6 @@
     "clients/apple/Oppi/App/CodeGutterAlignmentHarnessView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/App/ExtensionNotifyChipScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/App/FeatureEducationP0TipPreview.swift": {
       "import SwiftUI": 1
     },
@@ -41,9 +38,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ReviewCommentStashHarnessView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ReviewCommentStripScreenshotPreview.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ScreenshotPreviewView.swift": {
@@ -280,10 +274,10 @@
     "clients/apple/Oppi/Features/Chat/ChatViewController+Leaves.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Composer/ChatInputBar.swift": {
+    "clients/apple/Oppi/Features/Chat/Composer/ComposerShared.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Composer/ComposerShared.swift": {
+    "clients/apple/Oppi/Features/Chat/Composer/ComposerSwiftUIInterop.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Composer/MessageQueueContainer.swift": {
@@ -430,7 +424,7 @@
     "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowViewStyler.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/ControlSessions/GuidedControlSessionComposer.swift": {
+    "clients/apple/Oppi/Features/ControlSessions/GuidedControlComposerHosted.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Extensions/ServerExtensionDetailView.swift": {
