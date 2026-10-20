@@ -241,9 +241,11 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         }
         XCTAssertFalse(swipeActions.contains(where: \.exists), "A swiped-open row did not close")
 
-        for _ in 0..<14 where !row.exists {
+        // Built rows reach past the screen, so wait for one that can take the tap.
+        for _ in 0..<14 where !(row.exists && row.isHittable) {
             sessionList.swipeDown()
         }
+        XCTAssertTrue(row.isHittable, "Seeded session row never scrolled into reach")
         tap(row, named: "session row")
         XCTAssertTrue(
             app.collectionViews["chat.timeline"].waitForExistence(timeout: 15),
