@@ -404,7 +404,8 @@ enum AppPreferences {
 
     /// Device-local chat style. It applies to every session, classic and
     /// durable, at every width, and never changes session or Agent data sent
-    /// over the wire.
+    /// over the wire. An Agent may carry its own style on this device (Edit
+    /// Agent → Chat Style); its sessions use that instead of `style`.
     enum ChatDisplay {
         /// How chats look. Full shows every tool call and thinking block;
         /// Compact folds each turn's work into a strip drawn in
@@ -446,10 +447,38 @@ enum AppPreferences {
 
         static let styleKey = "\(AppIdentifiers.subsystem).chatDisplay.style"
         static let workStripStyleKey = "\(AppIdentifiers.subsystem).chatDisplay.workStripStyle"
+        /// `[serverId: [agentId: Style.rawValue]]`. Agent IDs are per server.
+        static let agentStylesKey = "\(AppIdentifiers.subsystem).chatDisplay.agentStyles"
         static let didChangeNotification = Notification.Name("oppi.chatDisplay.didChange")
 
         static var style: Style {
             UserDefaults.standard.string(forKey: styleKey).flatMap(Style.init(rawValue:)) ?? .full
+        }
+
+        /// The style a session shows: its Agent's style on this device, else
+        /// the Settings style.
+        static func style(serverId: String?, agentId: String?) -> Style {
+            guard let serverId, let agentId else { return style }
+            return agentStyle(serverId: serverId, agentId: agentId) ?? style
+        }
+
+        /// The style this Agent's sessions use on this device; nil follows `style`.
+        static func agentStyle(serverId: String, agentId: String) -> Style? {
+            agentStyles[serverId]?[agentId].flatMap(Style.init(rawValue:))
+        }
+
+        static func setAgentStyle(_ style: Style?, serverId: String, agentId: String) {
+            guard style != agentStyle(serverId: serverId, agentId: agentId) else { return }
+            var all = agentStyles
+            var server = all[serverId] ?? [:]
+            server[agentId] = style?.rawValue
+            all[serverId] = server.isEmpty ? nil : server
+            UserDefaults.standard.set(all, forKey: agentStylesKey)
+            NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        }
+
+        private static var agentStyles: [String: [String: String]] {
+            UserDefaults.standard.dictionary(forKey: agentStylesKey) as? [String: [String: String]] ?? [:]
         }
 
         static var workStripStyle: WorkStripStyle {

@@ -133,7 +133,7 @@ final class SettingsEditorViewController: UIViewController, UICollectionViewDele
         switch item {
         case .keybindings:
             content.text = String(localized: "Keybindings")
-            cell.accessories = [menuAccessory(
+            cell.accessories = [.settingsPopUpMenu(
                 identifier: "settings.editor.keybindings.menu",
                 options: CodeEditorKeybindings.allCases.map { keybindings in
                     (keybindings.label, keybindings == preferences.keybindings, { [weak self] in self?.preferences.keybindings = keybindings })
@@ -141,7 +141,7 @@ final class SettingsEditorViewController: UIViewController, UICollectionViewDele
             )]
         case .keyBar:
             content.text = String(localized: "Keyboard Bar")
-            cell.accessories = [toggle(preferences.showsKeyBar) { [weak self] in self?.preferences.showsKeyBar = $0 }]
+            cell.accessories = [.settingsToggle(preferences.showsKeyBar) { [weak self] in self?.preferences.showsKeyBar = $0 }]
         case .customizeKeyBar:
             content.text = String(localized: "Customize Keys")
             content.secondaryText = String(localized: "\(preferences.keyBarKeys.count) keys")
@@ -150,22 +150,22 @@ final class SettingsEditorViewController: UIViewController, UICollectionViewDele
             cell.accessibilityTraits.insert(.button)
         case .syntax:
             content.text = String(localized: "Syntax Highlighting")
-            cell.accessories = [toggle(preferences.highlightsSyntax) { [weak self] in self?.preferences.highlightsSyntax = $0 }]
+            cell.accessories = [.settingsToggle(preferences.highlightsSyntax) { [weak self] in self?.preferences.highlightsSyntax = $0 }]
         case .lineNumbers:
             content.text = String(localized: "Line Numbers")
-            cell.accessories = [toggle(preferences.showsLineNumbers) { [weak self] in self?.preferences.showsLineNumbers = $0 }]
+            cell.accessories = [.settingsToggle(preferences.showsLineNumbers) { [weak self] in self?.preferences.showsLineNumbers = $0 }]
         case .currentLine:
             content.text = String(localized: "Highlight Current Line")
-            cell.accessories = [toggle(preferences.highlightsCurrentLine) { [weak self] in self?.preferences.highlightsCurrentLine = $0 }]
+            cell.accessories = [.settingsToggle(preferences.highlightsCurrentLine) { [weak self] in self?.preferences.highlightsCurrentLine = $0 }]
         case .wrap:
             content.text = String(localized: "Wrap Lines")
-            cell.accessories = [toggle(preferences.wrapsLines) { [weak self] in self?.preferences.wrapsLines = $0 }]
+            cell.accessories = [.settingsToggle(preferences.wrapsLines) { [weak self] in self?.preferences.wrapsLines = $0 }]
         case .detectIndentation:
             content.text = String(localized: "Detect From File")
-            cell.accessories = [toggle(preferences.detectsIndentation) { [weak self] in self?.preferences.detectsIndentation = $0 }]
+            cell.accessories = [.settingsToggle(preferences.detectsIndentation) { [weak self] in self?.preferences.detectsIndentation = $0 }]
         case .indentWith:
             content.text = String(localized: "Indent With")
-            cell.accessories = [menuAccessory(
+            cell.accessories = [.settingsPopUpMenu(
                 identifier: "settings.editor.indentWith.menu",
                 options: [
                     (String(localized: "Spaces"), !preferences.indentsWithTabs, { [weak self] in self?.preferences.indentsWithTabs = false }),
@@ -174,7 +174,7 @@ final class SettingsEditorViewController: UIViewController, UICollectionViewDele
             )]
         case .tabWidth:
             content.text = String(localized: "Tab Width")
-            cell.accessories = [menuAccessory(
+            cell.accessories = [.settingsPopUpMenu(
                 identifier: "settings.editor.tabWidth.menu",
                 options: CodeEditorPreferences.tabWidths.map { width in
                     (String(width), width == preferences.tabWidth, { [weak self] in self?.preferences.tabWidth = width })
@@ -182,35 +182,9 @@ final class SettingsEditorViewController: UIViewController, UICollectionViewDele
             )]
         case .closeBrackets:
             content.text = String(localized: "Close Brackets and Quotes")
-            cell.accessories = [toggle(preferences.closesBrackets) { [weak self] in self?.preferences.closesBrackets = $0 }]
+            cell.accessories = [.settingsToggle(preferences.closesBrackets) { [weak self] in self?.preferences.closesBrackets = $0 }]
         }
         cell.contentConfiguration = content
-    }
-
-    private func toggle(_ isOn: Bool, onChange: @escaping (Bool) -> Void) -> UICellAccessory {
-        let toggle = UISwitch()
-        toggle.isOn = isOn
-        toggle.addAction(UIAction { action in
-            guard let toggle = action.sender as? UISwitch else { return }
-            onChange(toggle.isOn)
-        }, for: .valueChanged)
-        return .customView(configuration: .init(customView: toggle, placement: .trailing()))
-    }
-
-    /// A pop-up button showing the current choice.
-    private func menuAccessory(identifier: String, options: [(String, Bool, () -> Void)]) -> UICellAccessory {
-        let button = UIButton(type: .system)
-        button.showsMenuAsPrimaryAction = true
-        button.changesSelectionAsPrimaryAction = true
-        button.accessibilityIdentifier = identifier
-        button.menu = UIMenu(children: options.map { title, selected, action in
-            UIAction(title: title, state: selected ? .on : .off) { _ in action() }
-        })
-        var config = UIButton.Configuration.plain()
-        config.indicator = .popup
-        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 8, bottom: 10, trailing: 0)
-        button.configuration = config
-        return .customView(configuration: .init(customView: button, placement: .trailing()))
     }
 
     func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {

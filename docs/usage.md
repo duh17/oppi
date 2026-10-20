@@ -97,7 +97,7 @@ Selecting text shows a microphone first in the edit menu, followed by **Comment*
 
 **Settings → Chat → Busy Animation** chooses the busy-row animation: **Orbiting**, **Searching**, and **Solving** Metal orbs, plus **Pi** and **GoL**. New installs default to Orbiting; saved Pi or GoL choices stay.
 
-**Settings → Chat → Style** picks how every chat looks, classic and durable, on any screen width. **Full** (the default) shows every tool call and thinking block. **Compact** folds each turn's tool calls and thinking into one strip you tap to expand, showing **Icons** or **Words**. **Chat** uses a messaging layout: your messages are trailing bubbles, replies are cards, each turn's work is a **Worked 9s · 2 steps** pill, and the title shows the model and thinking level.
+**Settings → Chat → Style** picks how every chat looks, classic and durable, on any screen width, unless the chat's Agent has its own [Chat Style](#agents-and-schedules). **Full** (the default) shows every tool call and thinking block. **Compact** folds each turn's tool calls and thinking into one strip you tap to expand, showing **Icons** or **Words**. **Chat** uses a messaging layout: your messages are trailing bubbles, replies are cards, each turn's work is a **Worked 9s · 2 steps** pill, and the title shows the model and thinking level.
 
 ## Appearance
 
@@ -114,6 +114,7 @@ Voice replies are produced by the paired server and its configured voice extensi
 The sidebar holds saved **Agents** and **Schedules**.
 
 - Agents store reusable definitions and can use one Unicode emoji or SF Symbol as an icon.
+- **Edit Agent → Chat Style** picks how that Agent's sessions look on this device: **Full**, **Compact**, or **Chat**, or **Settings** to follow **Settings → Chat → Style**. The choice stays on the device, so another phone or iPad keeps its own, and a change restyles the Agent's open sessions too.
 - Schedules support `at`, `every`, and `cron` triggers. Each schedule can target a workspace, saved Agent, or existing session. Oppi keeps run history for manual and approved automatic runs.
 
 Create and edit sheets can open a **Pi Control** session (ordinary Pi with global settings, tools, Skills, Extensions, `SYSTEM.md`, and `APPEND_SYSTEM.md`) or use the native forms.

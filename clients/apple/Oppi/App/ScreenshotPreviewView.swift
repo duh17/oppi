@@ -456,7 +456,9 @@ private struct RouterRoutesStack: UIViewControllerRepresentable {
 
 private struct RouterRoutesMenu: View {
     @Environment(\.screenNavigator) private var navigator
+    @Environment(ServerConnection.self) private var connection
     @State private var dismissedModals = 0
+    @State private var isEditingAgent = false
     @State private var saves = RouterRoutesSaves.shared
 
     var body: some View {
@@ -467,16 +469,21 @@ private struct RouterRoutesMenu: View {
             .accessibilityIdentifier("routerRoutes.quickComments")
 
             Button("Edit Agent") {
-                navigator.present(
-                    .fullScreen.inNavigation(),
-                    onDismiss: { dismissedModals += 1 },
-                    content: {
-                        AgentNativeEditView(agent: RouterRoutesFixtures.agent) { _ in }
-                            .environment(\.apiClient, RouterRoutesFixtures.api)
-                    }
-                )
+                isEditingAgent = true
             }
             .accessibilityIdentifier("routerRoutes.editAgent")
+            .routerModal(
+                isPresented: $isEditingAgent,
+                presentation: .fullScreen.inNavigation(),
+                onDismiss: { dismissedModals += 1 },
+                screen: .controller({ [connection] in
+                    AgentNativeEditViewController(
+                        agent: RouterRoutesFixtures.agent,
+                        apiClient: RouterRoutesFixtures.api,
+                        connection: connection
+                    ) { _ in }
+                })
+            )
 
             Button("Edit Schedule") {
                 navigator.present(

@@ -823,7 +823,7 @@ private struct AgentDetailView: View {
     @State private var agent: StoredAgentDefinition?
     @State private var isLoading = false
     @State private var error: String?
-    @State private var isShowingNativeEdit = false
+    @State private var editingAgent: StoredAgentDefinition?
     @State private var isShowingRevision = false
     @State private var isShowingDefinitionReview = false
     @State private var isShowingIconPicker = false
@@ -980,7 +980,7 @@ private struct AgentDetailView: View {
             if let agent, agent.status == .active {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Edit", systemImage: "pencil") {
-                        isShowingNativeEdit = true
+                        editingAgent = agent
                     }
                     .accessibilityIdentifier("agents.detail.edit")
                 }
@@ -1026,14 +1026,14 @@ private struct AgentDetailView: View {
             await loadAgent()
             await loadResources()
         }
-        .routerModal(isPresented: $isShowingNativeEdit, presentation: .fullScreen.inNavigation()) {
-            if let agent {
-                AgentNativeEditView(agent: agent) { updated in
+        .routerModal(item: $editingAgent, presentation: .fullScreen.inNavigation(), screen: { editing in
+            .controller({
+                AgentNativeEditViewController(agent: editing, apiClient: apiClient, connection: connection) { updated in
                     self.agent = updated
                     onUpdated(updated)
                 }
-            }
-        }
+            })
+        })
         .routerModal(
             isPresented: $isShowingIconPicker,
             presentation: .iconPicker(

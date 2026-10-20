@@ -229,6 +229,44 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
     }
 }
 
+@MainActor
+extension UICellAccessory {
+    /// A trailing switch. `identifier` makes it `app.switches[id]` in UI tests.
+    static func settingsToggle(
+        _ isOn: Bool,
+        identifier: String? = nil,
+        onChange: @escaping (Bool) -> Void
+    ) -> UICellAccessory {
+        let toggle = UISwitch()
+        toggle.isOn = isOn
+        toggle.accessibilityIdentifier = identifier
+        toggle.addAction(UIAction { action in
+            guard let toggle = action.sender as? UISwitch else { return }
+            onChange(toggle.isOn)
+        }, for: .valueChanged)
+        return .customView(configuration: .init(customView: toggle, placement: .trailing()))
+    }
+
+    /// A trailing pop-up button showing the current choice.
+    static func settingsPopUpMenu(
+        identifier: String,
+        options: [(title: String, selected: Bool, action: () -> Void)]
+    ) -> UICellAccessory {
+        let button = UIButton(type: .system)
+        button.showsMenuAsPrimaryAction = true
+        button.changesSelectionAsPrimaryAction = true
+        button.accessibilityIdentifier = identifier
+        button.menu = UIMenu(children: options.map { option in
+            UIAction(title: option.title, state: option.selected ? .on : .off) { _ in option.action() }
+        })
+        var config = UIButton.Configuration.plain()
+        config.indicator = .popup
+        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 8, bottom: 10, trailing: 0)
+        button.configuration = config
+        return .customView(configuration: .init(customView: button, placement: .trailing()))
+    }
+}
+
 enum SSHTerminalSettingsList {
     static func pin(_ collectionView: UICollectionView, in view: UIView) {
         collectionView.translatesAutoresizingMaskIntoConstraints = false

@@ -271,7 +271,7 @@
     "clients/apple/Oppi/Features/Agents/AgentManagementView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Agents/AgentNativeEditView.swift": {
+    "clients/apple/Oppi/Features/Agents/AgentNativeEditPages.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/ChatTimelineDestinationPresenter.swift": {

@@ -446,10 +446,11 @@ final class ChatViewController: UIViewController {
         session?.status == .stopped
     }
 
-    /// Settings → Chat → Style, for every session and width.
+    /// The Agent's chat style on this device when it has one, else Settings →
+    /// Chat → Style, at every width.
     var chatDisplayStyle: AppPreferences.ChatDisplay.Style {
         _ = model.chatDisplayRefresh
-        return AppPreferences.ChatDisplay.style
+        return AppPreferences.ChatDisplay.style(serverId: resolvedServerId, agentId: session?.launch?.agentId)
     }
 
     var timelineChromeStyle: ChatTimelineChromeStyle {

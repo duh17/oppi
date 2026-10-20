@@ -68,7 +68,7 @@ final class RouterRoutesUITests: XCTestCase {
         let editAgent = app.navigationBars["Edit Agent"]
         XCTAssertTrue(editAgent.waitForExistence(timeout: 5), "Edit Agent did not present")
         attachScreenshot("full-screen-edit-agent")
-        let toolsRow = app.buttons["agent.nativeEdit.tools"]
+        let toolsRow = app.cells["agent.nativeEdit.tools"]
         XCTAssertTrue(text(of: toolsRow).contains("1 selected"), "Fixture agent starts with one tool: \(text(of: toolsRow))")
         assertRunning()
 
@@ -101,6 +101,19 @@ final class RouterRoutesUITests: XCTestCase {
         app.buttons["routerRoutes.editAgent"].tap()
         let editAgent = app.navigationBars["Edit Agent"]
         XCTAssertTrue(editAgent.waitForExistence(timeout: 5), "Edit Agent did not present")
+
+        // The System Prompt footer follows the toggle and Append/Replace.
+        XCTAssertTrue(app.staticTexts["Uses the server's default system prompt."].exists)
+        app.switches["agent.nativeEdit.customPrompt"].tap()
+        XCTAssertTrue(
+            app.staticTexts["Adds these instructions after the server's default system prompt."].waitForExistence(timeout: 5),
+            "Turning on a custom prompt must describe Append"
+        )
+        app.segmentedControls["agent.nativeEdit.promptMode"].buttons["Replace"].tap()
+        XCTAssertTrue(
+            app.staticTexts["Uses these instructions instead of the server's default system prompt."].waitForExistence(timeout: 5),
+            "Replace must describe replacing the default prompt"
+        )
 
         // The root of a presented navigation controller, where SwiftUI
         // dismiss() does nothing.
@@ -516,17 +529,24 @@ final class RouterRoutesUITests: XCTestCase {
         tapRowLabel("schedule.nativeEdit.timeZone", "Time Zone")
     }
 
-    /// The editors' plain-style rows only take taps on their text; the row's
-    /// center is empty space between label and value. On the Duo's shorter
+    /// SwiftUI editors' plain-style rows only take taps on their text; the
+    /// row's center is empty space between label and value. UIKit list rows
+    /// (Edit Agent) are cells that take a tap anywhere. On the Duo's shorter
     /// outer display a row can start below the fold.
     private func tapRowLabel(_ row: String, _ label: String) {
-        let button = app.buttons[row]
+        // A UIKit cell below the fold is not in the hierarchy until scrolled to.
+        var element = app.cells[row].exists ? app.cells[row] : app.buttons[row]
         var swipes = 0
-        while !(button.exists && button.isHittable), swipes < 5 {
+        while !(element.exists && element.isHittable), swipes < 5 {
             app.swipeUp()
             swipes += 1
+            element = app.cells[row].exists ? app.cells[row] : app.buttons[row]
         }
-        button.staticTexts[label].firstMatch.tap()
+        if element.elementType == .cell {
+            element.tap()
+        } else {
+            element.staticTexts[label].firstMatch.tap()
+        }
     }
 
     private func text(of element: XCUIElement) -> String {
