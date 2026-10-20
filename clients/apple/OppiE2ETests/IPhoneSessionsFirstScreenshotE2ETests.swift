@@ -233,6 +233,13 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             "Trailing stopped-session swipe did not expose Delete"
         )
         closeSwipe(stoppedRow)
+        // A row still swiped open turns the next tap into "close", not "open".
+        let swipeActions = [app.buttons["Resume"], app.buttons["Delete"], app.buttons["Stop"]]
+        let closeDeadline = Date().addingTimeInterval(5)
+        while swipeActions.contains(where: \.exists), Date() < closeDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertFalse(swipeActions.contains(where: \.exists), "A swiped-open row did not close")
 
         for _ in 0..<14 where !row.exists {
             sessionList.swipeDown()
