@@ -1969,6 +1969,39 @@ struct NonTextWikiLinkIconTests {
         #expect(distinctLinkURLs(in: attributed).count == 1, "\(source): link text must stay tappable")
     }
 
+    /// The chat text views carry no underline in `linkTextAttributes`, so the
+    /// run attribute is the only underline: file links drop it (TextKit breaks
+    /// it around `_` glyphs), web links keep it. Covers the icon (direct-append)
+    /// and icon-free (range-based) paragraph renderers.
+    @Test(arguments: [
+        "[[Da_Chen_Resume.pdf]] or [docs](https://example.com)",
+        "[[resume_notes.md]] or [docs](https://example.com)",
+    ])
+    func fileLinksSkipUnderlineWhileWebLinksKeepIt(source: String) throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark(source),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        let rendered = NSAttributedString(attributed)
+        var fileLinkUnderlines: [Int?] = []
+        var webLinkUnderlines: [Int?] = []
+        rendered.enumerateAttribute(
+            .link,
+            in: NSRange(location: 0, length: rendered.length)
+        ) { value, range, _ in
+            guard let url = value as? URL else { return }
+            let underline = rendered.attribute(.underlineStyle, at: range.location, effectiveRange: nil) as? Int
+            if ResourceReferenceURL.isReference(url) {
+                fileLinkUnderlines.append(underline)
+            } else {
+                webLinkUnderlines.append(underline)
+            }
+        }
+        #expect(fileLinkUnderlines == [nil], "\(source): file link must not be underlined")
+        #expect(webLinkUnderlines == [NSUnderlineStyle.single.rawValue], "\(source): web link keeps its underline")
+    }
+
     @Test func inlineMathNextToNonTextWikiLinkKeepsIconAndLink() throws {
         let attributed = try textSegment(from: FlatSegment.build(
             from: parseCommonMark("See [[photo.png]] and $x^2$"),

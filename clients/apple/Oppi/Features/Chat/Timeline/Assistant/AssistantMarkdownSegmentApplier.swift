@@ -1351,9 +1351,10 @@ final class AssistantMarkdownSegmentApplier {
         textView.textColor = UIColor(palette.fg)
         textView.font = AppFont.messageBody
         textView.tintColor = UIColor(palette.blue)
+        // Underlines live on the link runs (see `MarkdownText`) so file links
+        // can omit them; an underline here would cover every link.
         textView.linkTextAttributes = [
             .foregroundColor: UIColor(palette.blue),
-            .underlineStyle: NSUnderlineStyle.single.rawValue,
         ]
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.translatesAutoresizingMaskIntoConstraints = false

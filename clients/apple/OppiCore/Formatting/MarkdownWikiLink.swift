@@ -640,8 +640,13 @@ enum ResourceReferenceURL {
         return components.url
     }
 
+    /// Whether `url` points at a file through the resource-reference pipeline.
+    static func isReference(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == scheme
+    }
+
     static func parse(_ url: URL) -> ResourceReference? {
-        guard url.scheme?.lowercased() == scheme,
+        guard isReference(url),
               url.host?.lowercased() == "resolve",
               let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
               let target = queryValue("target", in: queryItems) else {

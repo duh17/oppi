@@ -1220,7 +1220,7 @@ enum FlatSegment: Sendable {
                     bodyFont: bodyFont
                 )
                 rendered.attributed.uiKit.foregroundColor = UIColor(palette.mdLink)
-                rendered.attributed.underlineStyle = .single
+                rendered.attributed.uiKit.underlineStyle = linkUnderline(destination: destination)
                 let decorated = applyLink(
                     destination: destination,
                     to: prependWikiIcon(to: rendered.attributed, destination: destination)
@@ -2289,7 +2289,6 @@ enum FlatSegment: Sendable {
         var result = AttributedString(audioFallbackText(embed))
         if let url = ResourceReferenceURL.make(embed.reference) {
             result.uiKit.foregroundColor = UIColor(palette.mdLink)
-            result.underlineStyle = .single
             result.link = url
         } else {
             result.uiKit.foregroundColor = UIColor(palette.comment)
@@ -2304,7 +2303,6 @@ enum FlatSegment: Sendable {
         var result = AttributedString(videoFallbackText(embed))
         if let url = ResourceReferenceURL.make(embed.reference) {
             result.uiKit.foregroundColor = UIColor(palette.mdLink)
-            result.underlineStyle = .single
             result.link = url
         } else {
             result.uiKit.foregroundColor = UIColor(palette.comment)
@@ -2319,7 +2317,6 @@ enum FlatSegment: Sendable {
         var result = AttributedString(usdzFallbackText(embed))
         if let url = ResourceReferenceURL.make(embed.reference) {
             result.uiKit.foregroundColor = UIColor(palette.mdLink)
-            result.underlineStyle = .single
             result.link = url
         } else {
             result.uiKit.foregroundColor = UIColor(palette.comment)
@@ -2376,9 +2373,10 @@ enum FlatSegment: Sendable {
                         return url
                     }()
                     let linkColor = UIColor(palette.mdLink)
+                    let underline = linkUnderline(destination: destination)
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
                         sub.uiKit.foregroundColor = linkColor
-                        sub.underlineStyle = .single
+                        sub.uiKit.underlineStyle = underline
                         if let url = resolvedURL {
                             sub.link = url
                         }
@@ -2397,7 +2395,6 @@ enum FlatSegment: Sendable {
                     let linkColor = UIColor(palette.mdLink)
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
                         sub.uiKit.foregroundColor = linkColor
-                        sub.underlineStyle = .single
                         sub.link = url
                     })
                 } else {
@@ -2412,7 +2409,6 @@ enum FlatSegment: Sendable {
                     let linkColor = UIColor(palette.mdLink)
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
                         sub.uiKit.foregroundColor = linkColor
-                        sub.underlineStyle = .single
                         sub.link = url
                     })
                 } else {
@@ -2427,7 +2423,6 @@ enum FlatSegment: Sendable {
                     let linkColor = UIColor(palette.mdLink)
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
                         sub.uiKit.foregroundColor = linkColor
-                        sub.underlineStyle = .single
                         sub.link = url
                     })
                 } else {
@@ -2477,7 +2472,7 @@ enum FlatSegment: Sendable {
         case .link(let children, let destination):
             var result = renderInlines(children, palette: palette)
             result.uiKit.foregroundColor = UIColor(palette.mdLink)
-            result.underlineStyle = .single
+            result.uiKit.underlineStyle = linkUnderline(destination: destination)
             if let destination,
                let url = URL(string: destination),
                url.scheme != nil {
@@ -2505,6 +2500,21 @@ enum FlatSegment: Sendable {
             result.strikethroughStyle = .single
             return result
         }
+    }
+
+    /// Web and session links keep the underline. File links (resource
+    /// references) skip it: the link color and file icon already mark them, and
+    /// TextKit's underline skips around `_` glyphs that sit lower than the
+    /// underline, so names like `Da_Chen_Resume.pdf` draw a stepped, broken line.
+    /// UIKit scope: these strings render in UITextViews, and SwiftUI's
+    /// `underlineStyle` does not survive the `NSAttributedString` conversion.
+    private static func linkUnderline(destination: String?) -> NSUnderlineStyle? {
+        guard let destination,
+              let url = URL(string: destination),
+              ResourceReferenceURL.isReference(url) else {
+            return .single
+        }
+        return nil
     }
 
     // MARK: - Wiki-link file icon decoration
@@ -2668,7 +2678,7 @@ enum FlatSegment: Sendable {
         case .link(let children, let destination):
             var result = renderInlinesDirectAppend(children, palette: palette, defaultColor: nil)
             result.uiKit.foregroundColor = UIColor(palette.mdLink)
-            result.underlineStyle = .single
+            result.uiKit.underlineStyle = linkUnderline(destination: destination)
             return applyLink(
                 destination: destination,
                 to: prependWikiIcon(to: result, destination: destination)

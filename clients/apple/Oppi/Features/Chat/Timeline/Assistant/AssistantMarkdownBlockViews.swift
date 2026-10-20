@@ -1016,9 +1016,9 @@ final class NativeTableBlockView: UIView {
             palette: palette
         )
         tableLabel.attributedText = attrText
+        // Underlines live on the link runs so file links can omit them.
         tableLabel.linkTextAttributes = [
             .foregroundColor: UIColor(palette.blue),
-            .underlineStyle: NSUnderlineStyle.single.rawValue,
         ]
 
         let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -1157,9 +1157,9 @@ final class NativeTableBlockView: UIView {
         textView.setContentCompressionResistancePriority(.required, for: .horizontal)
         textView.setContentHuggingPriority(.required, for: .horizontal)
         textView.delegate = self
+        // Underlines live on the link runs so file links can omit them.
         textView.linkTextAttributes = [
             .foregroundColor: UIColor(palette.blue),
-            .underlineStyle: NSUnderlineStyle.single.rawValue,
         ]
 
         let font = isHeader ? AppFont.monoMediumBold : AppFont.monoMedium
@@ -1510,11 +1510,14 @@ final class NativeTableBlockView: UIView {
             var attrs: [NSAttributedString.Key: Any] = [
                 .font: font,
                 .foregroundColor: linkColor,
-                .underlineStyle: NSUnderlineStyle.single.rawValue,
                 .paragraphStyle: paragraph,
             ]
             if let dest = destination, let url = URL(string: dest), url.scheme != nil {
                 attrs[.link] = url
+                // File links skip the underline; it breaks around `_` glyphs.
+                if !ResourceReferenceURL.isReference(url) {
+                    attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+                }
             }
             result.append(NSAttributedString(string: text, attributes: attrs))
         case .code(let s):
@@ -1547,42 +1550,36 @@ final class NativeTableBlockView: UIView {
             var attrs: [NSAttributedString.Key: Any] = [
                 .font: font,
                 .foregroundColor: linkColor,
-                .underlineStyle: NSUnderlineStyle.single.rawValue,
                 .paragraphStyle: paragraph,
             ]
             if let url = ResourceReferenceURL.make(embed.reference) {
                 attrs[.link] = url
             } else {
                 attrs[.foregroundColor] = defaultColor
-                attrs[.underlineStyle] = nil
             }
             result.append(NSAttributedString(string: embed.displayLabel, attributes: attrs))
         case .audioEmbed(let embed):
             var attrs: [NSAttributedString.Key: Any] = [
                 .font: font,
                 .foregroundColor: linkColor,
-                .underlineStyle: NSUnderlineStyle.single.rawValue,
                 .paragraphStyle: paragraph,
             ]
             if let url = ResourceReferenceURL.make(embed.reference) {
                 attrs[.link] = url
             } else {
                 attrs[.foregroundColor] = defaultColor
-                attrs[.underlineStyle] = nil
             }
             result.append(NSAttributedString(string: embed.displayLabel, attributes: attrs))
         case .usdzEmbed(let embed):
             var attrs: [NSAttributedString.Key: Any] = [
                 .font: font,
                 .foregroundColor: linkColor,
-                .underlineStyle: NSUnderlineStyle.single.rawValue,
                 .paragraphStyle: paragraph,
             ]
             if let url = ResourceReferenceURL.make(embed.reference) {
                 attrs[.link] = url
             } else {
                 attrs[.foregroundColor] = defaultColor
-                attrs[.underlineStyle] = nil
             }
             result.append(NSAttributedString(string: embed.displayLabel, attributes: attrs))
         }
