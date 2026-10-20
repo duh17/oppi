@@ -34,6 +34,30 @@ export function e2eFauxReplyText(prompt: string): string {
   ].join("\n");
 }
 
+/**
+ * A scripted tool call, so a UI test can drive tool rows and subagents. The last line of the
+ * prompt decides it, and only when the prompt is the newest message (a tool result is answered
+ * with text):
+ *
+ * - `faux:bash <command>` calls `bash` with the command.
+ * - `faux:subagent <name> <task>` spawns a background subagent with the task; a task that is
+ *   itself a directive makes the child call that tool.
+ *
+ * Only the last line counts, so a reply that echoes a directive (every reply ends with
+ * `End of faux reply.`) never triggers another call.
+ */
+export function e2eFauxToolCall(
+  messages: readonly Message[],
+): { name: string; arguments: Record<string, string> } | undefined {
+  if (messages.at(-1)?.role !== "user") return undefined;
+  const line = lastUserText(messages).split("\n").at(-1)?.trim() ?? "";
+  const [, command] = /^faux:bash\s+(.+)$/.exec(line) ?? [];
+  if (command) return { name: "bash", arguments: { command } };
+  const [, name, task] = /^faux:subagent\s+(\S+)\s+(.+)$/.exec(line) ?? [];
+  if (name && task) return { name: "subagent", arguments: { action: "spawn", name, task } };
+  return undefined;
+}
+
 function lastUserText(messages: readonly Message[]): string {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
@@ -55,18 +79,23 @@ function lastUserText(messages: readonly Message[]): string {
  */
 export async function registerE2EFauxProvider(models: ModelRuntime): Promise<boolean> {
   if (!e2eFauxProviderEnabled()) return false;
-  const [{ createFauxCore, fauxAssistantMessage }, { createProvider }] = await Promise.all([
-    import("@earendil-works/pi-ai/providers/faux"),
-    import("@earendil-works/pi-ai/models"),
-  ]);
+  const [{ createFauxCore, fauxAssistantMessage, fauxToolCall }, { createProvider }] =
+    await Promise.all([
+      import("@earendil-works/pi-ai/providers/faux"),
+      import("@earendil-works/pi-ai/models"),
+    ]);
   const core = createFauxCore({
     api: E2E_FAUX_PROVIDER_ID,
     provider: E2E_FAUX_PROVIDER_ID,
     models: [{ id: E2E_FAUX_MODEL_ID, name: "Oppi E2E Faux", reasoning: false, input: ["text"] }],
     tokensPerSecond: E2E_FAUX_TOKENS_PER_SECOND,
   });
-  const reply = (context: TranscriptContext): AssistantMessage =>
-    fauxAssistantMessage(e2eFauxReplyText(lastUserText(context.messages)));
+  const reply = (context: TranscriptContext): AssistantMessage => {
+    const call = e2eFauxToolCall(context.messages);
+    return call
+      ? fauxAssistantMessage(fauxToolCall(call.name, call.arguments), { stopReason: "toolUse" })
+      : fauxAssistantMessage(e2eFauxReplyText(lastUserText(context.messages)));
+  };
   // The faux core answers from a queue. Queue the scripted step right before each request
   // takes it, so the script never runs dry and concurrent requests cannot steal a step.
   const stream: typeof core.stream = (model, context, options?: SimpleStreamOptions) => {
