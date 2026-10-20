@@ -80,6 +80,7 @@ final class ModelPickerCell: UICollectionViewListCell {
         model: ModelInfo,
         id: String,
         isCurrent: Bool,
+        isEnabled: Bool,
         star: Star?,
         palette: ThemePalette,
         onSelect: @escaping () -> Void,
@@ -116,7 +117,10 @@ final class ModelPickerCell: UICollectionViewListCell {
         row.accessibilityLabel = model.name
         row.accessibilityValue = [id, model.contextWindow > 0 ? SessionFormatting.tokenCount(model.contextWindow) : nil]
             .compactMap { $0 }.joined(separator: ", ")
-        row.accessibilityTraits = isCurrent ? [.button, .selected] : .button
+        var traits: UIAccessibilityTraits = isCurrent ? [.button, .selected] : .button
+        // Saving a default blocks the list; VoiceOver must not select a row meanwhile.
+        if !isEnabled { traits.insert(.notEnabled) }
+        row.accessibilityTraits = traits
 
         starButton.isHidden = star == nil
         if let star {
@@ -147,6 +151,7 @@ final class ModelPickerHeaderView: UICollectionReusableView {
     private let iconView = UIImageView()
     private let nameLabel = UILabel()
     private let pills = UIStackView()
+    private let pillsRow = UIStackView()
     private let countLabel = UILabel()
     private let chevron = UIImageView()
     private let controls = UIStackView()
@@ -163,6 +168,10 @@ final class ModelPickerHeaderView: UICollectionReusableView {
         iconView.setContentHuggingPriority(.required, for: .horizontal)
         pills.spacing = 4
         pills.alignment = .leading
+        // On its own row the pill keeps its size: the spacer takes the slack.
+        let slack = UIView()
+        slack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        pillsRow.addArrangedSubview(slack)
         pills.setContentHuggingPriority(.required, for: .horizontal)
         countLabel.setContentHuggingPriority(.required, for: .horizontal)
         chevron.contentMode = .center
@@ -223,6 +232,7 @@ final class ModelPickerHeaderView: UICollectionReusableView {
         hasVisibleModels: Bool,
         isCollapsed: Bool,
         isSearching: Bool,
+        isEnabled: Bool,
         palette: ThemePalette,
         onToggle: @escaping () -> Void
     ) {
@@ -259,7 +269,7 @@ final class ModelPickerHeaderView: UICollectionReusableView {
         )
         chevron.tintColor = UIColor(palette.comment)
 
-        let toggles = !isSearching && hasVisibleModels
+        let toggles = !isSearching && hasVisibleModels && isEnabled
         self.onToggle = toggles ? onToggle : nil
         let base = toggles ? (isCollapsed ? "Expand \(name) models" : "Collapse \(name) models") : name
         let quota = badges.map(\.accessibilityLabel).joined(separator: ", ")
@@ -285,7 +295,10 @@ final class ModelPickerHeaderView: UICollectionReusableView {
     /// Pills inline between the name and the controls when they fit, else on
     /// their own row (stacked vertically when even that is too narrow).
     private func placePills(availableWidth: CGFloat?) {
-        guard !pills.isHidden else { return }
+        guard !pills.isHidden else {
+            pillsRow.removeFromSuperview()
+            return
+        }
         let compressed = UIView.layoutFittingCompressedSize
         pills.axis = .horizontal
         let pillsWidth = pills.systemLayoutSizeFitting(compressed).width
@@ -296,8 +309,10 @@ final class ModelPickerHeaderView: UICollectionReusableView {
         let inline = width <= 0 || fixedWidth + pillsWidth <= width
         if inline {
             topRow.insertArrangedSubview(pills, at: 2)
+            pillsRow.removeFromSuperview()
         } else {
-            column.addArrangedSubview(pills)
+            pillsRow.insertArrangedSubview(pills, at: 0)
+            column.addArrangedSubview(pillsRow)
             if pillsWidth > width { pills.axis = .vertical }
         }
     }

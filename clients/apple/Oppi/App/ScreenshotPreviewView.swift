@@ -405,6 +405,9 @@ private struct RouterRoutesPreview: View {
     var body: some View {
         RouterRoutesStack(root: root)
             .ignoresSafeArea()
+            // Modals present from the window, so UIKit screens they show (the
+            // model picker) find this root, and its theme, in their traits.
+            .publishesAppRootToWindow(root)
     }
 }
 

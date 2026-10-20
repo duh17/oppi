@@ -3,7 +3,7 @@ import UIKit
 /// Quick Session's router modals, one presenter slot each, requested from the
 /// model's flags in `updateProperties()`: the workspace and worktree popovers
 /// (UIKit, on their pills), the Agent and thinking popovers of the
-/// accessibility-size panel, and the shared SwiftUI model picker sheet.
+/// accessibility-size panel, and the shared UIKit model picker sheet.
 extension QuickSessionViewController {
     var presenters: [RouterModalPresenter] {
         [modelPicker, workspacePicker, worktreePicker, agentPicker, thinkingPicker]

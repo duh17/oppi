@@ -195,6 +195,34 @@ final class RouterModalSitesUITests: XCTestCase {
         assertRunning()
     }
 
+    /// A failed default save shows its alert while a search is active: the
+    /// picker is already presenting the search controller then, and an alert
+    /// presented from the picker itself is dropped.
+    func testModelPickerDefaultSaveFailureAlertShowsWhileSearching() {
+        launchSite("quick-session")
+        let model = app.buttons["session.toolbar.model"]
+        XCTAssertTrue(model.waitForExistence(timeout: 10), "Quick session did not appear")
+        model.tap()
+        XCTAssertTrue(app.navigationBars["Models"].waitForExistence(timeout: 5), "Model picker did not open")
+
+        let alert = app.alerts["Couldn't Set Default Model"]
+        // The saved Agent's default can fail to load first; clear that alert.
+        if alert.waitForExistence(timeout: 2) { alert.buttons["OK"].tap() }
+
+        let search = app.searchFields["Search models…"]
+        search.tap()
+        search.typeText("steady")
+        let star = app.buttons["model.picker.star.fixture/fixture-steady"]
+        XCTAssertTrue(star.waitForExistence(timeout: 5), "The search must keep the matching model")
+        star.tap()
+        XCTAssertTrue(alert.waitForExistence(timeout: 5), "The failed save must show its alert over the active search")
+        attachScreenshot("model-picker-default-failure-alert")
+        alert.buttons["OK"].tap()
+        XCTAssertTrue(waitForDisappearance(of: alert), "OK must dismiss the alert")
+        XCTAssertTrue(app.navigationBars["Models"].exists, "The picker stays open after a failed save")
+        assertRunning()
+    }
+
     func testQuickSessionModelSheetAndExpandedComposerReachTheSheet() {
         launchSite("quick-session")
         let model = app.buttons["session.toolbar.model"]

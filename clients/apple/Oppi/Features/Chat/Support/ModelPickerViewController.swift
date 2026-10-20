@@ -65,18 +65,10 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
 
     private let list: UICollectionView
     private var dataSource: UICollectionViewDiffableDataSource<SectionID, String>!
-    private let unavailable = UIContentUnavailableView(configuration: .empty())
     private lazy var cancelItem = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in
         guard let self else { return }
         Router.finish(self)
     })
-    private lazy var savingItem: UIBarButtonItem = {
-        let spinner = UIActivityIndicatorView(style: .medium)
-        spinner.startAnimating()
-        let item = UIBarButtonItem(customView: spinner)
-        item.accessibilityLabel = "Saving default model"
-        return item
-    }()
 
     init(
         currentModel: String?,
@@ -120,9 +112,6 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in
             self.reload()
         }
-        models = chatState.cachedModels
-        modelsCacheReady = chatState.modelsCacheReady
-        reload()
 
         Task { [weak self] in await self?.loadAgentDefault() }
         Task { [weak self] in
@@ -174,6 +163,7 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
                 model: model,
                 id: id,
                 isCurrent: isCurrent(model),
+                isEnabled: !isSavingDefault,
                 star: onSetDefault == nil ? nil : .init(isDefault: isDefault(model), isEnabled: !isSavingDefault),
                 palette: palette,
                 onSelect: { [weak self] in self?.choose(model) },
@@ -191,22 +181,19 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
         dataSource.supplementaryViewProvider = { collectionView, _, indexPath in
             collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
         }
-        for subview in [list, unavailable] {
-            subview.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(subview)
-            NSLayoutConstraint.activate([
-                subview.topAnchor.constraint(equalTo: view.topAnchor),
-                subview.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-                subview.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                subview.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            ])
-        }
+        list.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(list)
+        NSLayoutConstraint.activate([
+            list.topAnchor.constraint(equalTo: view.topAnchor),
+            list.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            list.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            list.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
         setContentScrollView(list, for: .top)
     }
 
     private func updateSavingChrome() {
         cancelItem.isEnabled = !isSavingDefault
-        navigationItem.rightBarButtonItem = isSavingDefault ? savingItem : nil
         list.isUserInteractionEnabled = !isSavingDefault
         isModalInPresentation = isSavingDefault
     }
@@ -242,16 +229,13 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
         dataSource.apply(snapshot, animatingDifferences: !UIAccessibility.isReduceMotionEnabled && list.window != nil)
         refreshHeaders()
 
-        let unavailableContent = unavailableConfiguration()
-        list.isHidden = unavailableContent != nil
-        unavailable.isHidden = unavailableContent == nil
-        if var content = unavailableContent {
-            content.textProperties.color = UIColor(palette.fg)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
-            content.imageProperties.tintColor = UIColor(palette.comment)
-            content.background.backgroundColor = UIColor(palette.bg)
-            unavailable.configuration = content
-        }
+        var content = unavailableConfiguration()
+        list.isHidden = content != nil
+        content?.textProperties.color = UIColor(palette.fg)
+        content?.secondaryTextProperties.color = UIColor(palette.comment)
+        content?.imageProperties.tintColor = UIColor(palette.comment)
+        content?.background.backgroundColor = UIColor(palette.bg)
+        contentUnavailableConfiguration = content
     }
 
     private func unavailableConfiguration() -> UIContentUnavailableConfiguration? {
@@ -345,6 +329,7 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
                 hasVisibleModels: !group.models.isEmpty,
                 isCollapsed: collapsed,
                 isSearching: !query.isEmpty,
+                isEnabled: !isSavingDefault,
                 palette: palette
             ) { [weak self] in
                 guard let self else { return }
@@ -388,6 +373,7 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
     }
 
     private func showDefaultError(_ message: String?) {
+        guard view.window != nil else { return }
         let alert = UIAlertController(
             title: "Couldn't Set Default Model",
             message: message ?? "Please try again.",
@@ -395,7 +381,9 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
         )
         alert.addAction(UIAlertAction(title: "OK", style: .cancel))
         alert.view.tintColor = UIColor(palette.blue)
-        present(alert, animated: true)
+        // Not `present(_:)` on self: with a search active the picker is
+        // already presenting the search controller, which drops the alert.
+        Router.topPresenter(from: self).present(alert, animated: true)
     }
 
     // MARK: - Loading

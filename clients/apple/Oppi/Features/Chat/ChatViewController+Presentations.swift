@@ -120,6 +120,34 @@ extension ChatViewController {
         )
     }
 
+    /// The model picker (UIKit), given the chat's server explicitly; its
+    /// current model follows the session while it is up.
+    func modelPickerScreen() -> RouterScreen {
+        let current = session?.model
+        let agentId = session?.launch?.agentId
+        let chatState = chatState
+        let apiClient = apiClient
+        let onSetDefault: ((ModelInfo) async throws -> Void)? = canPersistSessionDefaults ? { [weak self] model in
+            guard let self else { return }
+            guard let api = self.connection.apiClient else { throw QuickSessionError.noConnection }
+            try await ModelDefaultPersistence.save(model, agentId: self.session?.launch?.agentId, api: api)
+            self.applyModelSelection(model)
+            if self.session?.launch?.agentId == nil, let models = try? await api.listModels() {
+                self.chatState.cachedModels = models
+            }
+        } : nil
+        return .liveController({ [weak self] in
+            ModelPickerViewController(
+                currentModel: current,
+                chatState: chatState,
+                apiClient: apiClient,
+                defaultAgentId: agentId,
+                onSelect: { self?.handleModelSelection($0) },
+                onSetDefault: onSetDefault
+            )
+        }, update: { $0.currentModel = current })
+    }
+
     /// Side panels slide in as a trailing column in regular width (iPad, the
     /// Duo's inner display) and are sheets in compact width. A size-class
     /// change while a panel is open moves it between the column and the
