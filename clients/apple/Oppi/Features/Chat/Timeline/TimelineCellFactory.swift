@@ -17,6 +17,7 @@ enum TimelineCellFactory {
         let loadMore: CellDequeuer
         let working: CellDequeuer
         let quietWork: CellDequeuer
+        let childTail: CellDequeuer
     }
 
     static func dequeueCell(
@@ -37,6 +38,10 @@ enum TimelineCellFactory {
 
         if itemID.hasPrefix("quiet-work-line:") {
             return registrations.quietWork(collectionView, indexPath, itemID)
+        }
+
+        if itemID.hasPrefix(TimelineDisplayRow.childTailIDPrefix) {
+            return registrations.childTail(collectionView, indexPath, itemID)
         }
 
         guard let item = itemByID[itemID] else {

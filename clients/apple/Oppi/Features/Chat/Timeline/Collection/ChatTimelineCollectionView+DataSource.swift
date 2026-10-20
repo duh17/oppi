@@ -483,6 +483,27 @@ extension ChatTimelineController {
             )
         }
 
+        let childTailRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+            let configureStartNs = ChatTimelinePerf.timestampNs()
+            guard let self, let tail = self.currentChildTailByID[itemID] else {
+                self?.applyNativeFrictionRow(
+                    to: cell,
+                    title: "Subagent row unavailable",
+                    detail: "Synthetic child-tail row missing from snapshot.",
+                    rowType: "child_tail_placeholder",
+                    startNs: configureStartNs
+                )
+                return
+            }
+            cell.contentConfiguration = ChildTailTimelineRowConfiguration(tail: tail)
+            cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+            cell.contentView.clipsToBounds = true
+            ChatTimelinePerf.recordCellConfigure(
+                rowType: "child_tail",
+                durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
+            )
+        }
+
         let workingRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, _ in
             let configureStartNs = ChatTimelinePerf.timestampNs()
             guard let self else {
@@ -587,6 +608,13 @@ extension ChatTimelineController {
             quietWork: { collectionView, indexPath, itemID in
                 collectionView.dequeueConfiguredReusableCell(
                     using: quietWorkRegistration,
+                    for: indexPath,
+                    item: itemID
+                )
+            },
+            childTail: { collectionView, indexPath, itemID in
+                collectionView.dequeueConfiguredReusableCell(
+                    using: childTailRegistration,
                     for: indexPath,
                     item: itemID
                 )

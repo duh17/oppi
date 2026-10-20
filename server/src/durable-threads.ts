@@ -50,6 +50,9 @@ export interface DurableThreadsDeps {
  * spawned whom. This class gives each owned child its Oppi Session, bound by conversation
  * id, and reads the thread tree back from the ownership edges.
  */
+/** Owner edges a subtree check follows at most; spawning nests far less deep. */
+const MAX_THREAD_DEPTH = 64;
+
 export class DurableThreads {
   /** Concurrent materializations of one child (tool rerun, reporter) share one result. */
   private readonly materializing = new Map<string, Promise<string>>();
@@ -96,6 +99,25 @@ export class DurableThreads {
       },
       resolveAgent: (request, agent) => this.resolveAgent(request, host, caller, agent),
     };
+  }
+
+  /**
+   * Whether conversation `ancestor` of `host`'s store owns `id`, directly or through the children
+   * it owns: `id` is in its subtree. Walks owner edges up from `id`, the edge `forCaller` checks.
+   */
+  async ownsWithin(
+    host: SessionHost,
+    ancestor: ConversationId,
+    id: ConversationId,
+  ): Promise<boolean> {
+    let current = id;
+    for (let depth = 0; depth < MAX_THREAD_DEPTH; depth += 1) {
+      const owner = await ownerOf(host, current);
+      if (owner === undefined) return false;
+      if (owner === ancestor) return true;
+      current = owner;
+    }
+    return false;
   }
 
   private sessionOf(storeId: string, conversationId: ConversationId): SessionSender | undefined {

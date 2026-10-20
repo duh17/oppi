@@ -15,6 +15,9 @@ struct TimelineLiveTail: Equatable, Sendable {
     /// A call of the current tool round that has not finished.
     struct Tool: Equatable, Sendable {
         var id: String
+        /// Tool name and presentation, for a call whose row is not in view (a subagent's tail).
+        var name: String = ""
+        var view: ConversationToolCallView?
         /// Started; a pending call of a sequential round has not.
         var running: Bool
         var output: String
@@ -72,6 +75,8 @@ struct ConversationLiveProjector {
             let truncated = dropped > 0 || (slot["droppedLines"]?.numberValue ?? 0) > 0
             tail.tools.append(.init(
                 id: id,
+                name: slot["name"]?.stringValue ?? "",
+                view: view(id, raw: rawViews[id]),
                 running: slot["status"]?.stringValue == "running",
                 output: output,
                 truncated: truncated,

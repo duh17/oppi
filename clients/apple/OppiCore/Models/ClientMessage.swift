@@ -93,6 +93,7 @@ enum ClientMessage: Sendable {
 
     // ── Durable conversation stream (socket-only, not a server `ClientMessage`) ──
     case conversationAttach(ConversationStreamAttach)
+    case conversationDetach(ConversationStreamDetach)
     case conversationOlder(ConversationStreamOlderRequest)
 }
 
@@ -231,6 +232,8 @@ extension ClientMessage: Encodable {
         switch self {
         case .conversationAttach(let attach):
             return try attach.encode(to: encoder)
+        case .conversationDetach(let detach):
+            return try detach.encode(to: encoder)
         case .conversationOlder(let older):
             return try older.encode(to: encoder)
         default:
@@ -239,7 +242,7 @@ extension ClientMessage: Encodable {
         var c = encoder.container(keyedBy: CodingKeys.self)
 
         switch self {
-        case .conversationAttach, .conversationOlder:
+        case .conversationAttach, .conversationDetach, .conversationOlder:
             break
 
         // ── Prompting ──
@@ -545,6 +548,7 @@ extension ClientMessage {
         case .dictationStop: return "dictation_stop"
         case .dictationCancel: return "dictation_cancel"
         case .conversationAttach: return "attach"
+        case .conversationDetach: return "detach"
         case .conversationOlder: return "older"
         }
     }

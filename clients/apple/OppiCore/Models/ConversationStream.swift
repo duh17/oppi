@@ -207,6 +207,15 @@ enum ConversationStreamServerMessage: Decodable, Equatable, Sendable {
     case update(ConversationStreamUpdate)
     case older(ConversationStreamOlderPage)
 
+    /// One socket multiplexes conversations: a session's own and its subagents' live tails.
+    var conversationId: Int {
+        switch self {
+        case .snapshot(let snapshot): snapshot.conversationId
+        case .update(let update): update.conversationId
+        case .older(let page): page.conversationId
+        }
+    }
+
     private enum CodingKeys: String, CodingKey { case type }
 
     init(from decoder: Decoder) throws {
@@ -227,10 +236,25 @@ enum ConversationStreamServerMessage: Decodable, Equatable, Sendable {
 /// Client → server: start (or restart) the stream on a focused session socket.
 struct ConversationStreamAttach: Codable, Equatable, Sendable {
     var type = "attach"
+    /// The session's own by default; in `live` mode, also a conversation it owns (a subagent's).
     var conversationId: Int?
     var sessionId: String?
-    /// Newest entry id the client holds (`ConversationReplica.resumeCursor`).
+    /// `full` (default) or `live`: only `pi.live` and `pi.inbox`, no entries (`conversationStream` v2).
+    var mode: ConversationStreamMode?
+    /// Newest entry id the client holds (`ConversationReplica.resumeCursor`); `full` mode only.
     var afterEntryId: Int?
+    var requestId: String?
+}
+
+enum ConversationStreamMode: String, Codable, Equatable, Sendable {
+    case full
+    case live
+}
+
+/// Client → server: end this socket's stream of one conversation (`conversationStream` v2).
+struct ConversationStreamDetach: Codable, Equatable, Sendable {
+    var type = "detach"
+    var conversationId: Int
     var requestId: String?
 }
 

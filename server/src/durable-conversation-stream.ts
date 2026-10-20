@@ -30,6 +30,7 @@ import type {
 import { DurableInputCards } from "../extensions/durable/durable-ui.js";
 import {
   CONVERSATION_CLIENT_DOCS,
+  type ClientDocSpec,
   projectEntry,
   renderToolCall,
   toolCallsOf,
@@ -67,6 +68,14 @@ export const CONVERSATION_SNAPSHOT_LIMIT = 100;
 export const CONVERSATION_OLDER_MAX = 500;
 
 type SendFrame = (frame: ConversationStreamServerMessage) => void;
+
+/**
+ * `full`: entries and every client document. `live`: the live tail only, the documents marked
+ * `live` and no entries, so a client can show a conversation it has not opened (a subagent's)
+ * without its history.
+ */
+export type ConversationStreamMode = "full" | "live";
+const LIVE_DOCS = CONVERSATION_CLIENT_DOCS.filter((spec) => spec.live);
 type OlderFrame = Extract<ConversationStreamServerMessage, { type: "older" }>;
 
 function isUserEntry(entry: EntryRecord): boolean {
@@ -524,15 +533,23 @@ export class ConversationStreamSubscription {
   private lastSentAt = 0;
   private disposed = false;
 
+  private readonly docs: readonly ClientDocSpec[];
+
   constructor(
     private readonly room: ConversationRoom,
     private readonly send: SendFrame,
     private readonly onLost?: () => void,
-  ) {}
+    private readonly mode: ConversationStreamMode = "full",
+  ) {
+    this.docs = mode === "live" ? LIVE_DOCS : CONVERSATION_CLIENT_DOCS;
+  }
 
-  /** The newest entry id sent; a new subscription started after it resumes this socket. */
+  /**
+   * The newest entry id sent; a new subscription started after it resumes this socket. A live
+   * subscription sends no entries and has none.
+   */
   get cursor(): number {
-    return this.sentTip;
+    return this.mode === "live" ? 0 : this.sentTip;
   }
 
   /**
@@ -542,6 +559,7 @@ export class ConversationStreamSubscription {
    */
   start(afterEntryId: number | undefined): void {
     if (
+      this.mode === "full" &&
       afterEntryId !== undefined &&
       afterEntryId >= this.room.head &&
       this.room.has(afterEntryId)
@@ -584,19 +602,31 @@ export class ConversationStreamSubscription {
     this.send(frame);
   }
 
+  /** This subscription's documents, current. */
+  private currentDocs(): Map<string, JsonObject> {
+    const all = this.room.clientDocs();
+    const docs = new Map<string, JsonObject>();
+    for (const { kind } of this.docs) {
+      const value = all.get(kind);
+      if (value !== undefined) docs.set(kind, value);
+    }
+    return docs;
+  }
+
   private sendSnapshot(): void {
-    const docs = this.room.clientDocs();
+    const docs = this.currentDocs();
     this.sentHead = this.room.head;
     this.sentTip = this.room.tip;
     this.sentRevision = this.room.revision;
     this.sentFloor = this.room.windowFloor();
-    this.sentDocs = new Map(docs);
+    this.sentDocs = docs;
+    const live = this.mode === "live";
     this.emit({
       type: "snapshot",
       conversationId: this.room.conversationId,
-      head: this.room.head,
-      hasOlder: this.room.hasOlder || this.sentFloor > 0,
-      entries: this.room.visibleEntries(this.sentFloor),
+      head: live ? 0 : this.room.head,
+      hasOlder: !live && (this.room.hasOlder || this.sentFloor > 0),
+      entries: live ? [] : this.room.visibleEntries(this.sentFloor),
       docs: Object.fromEntries(docs),
     });
   }
@@ -608,18 +638,22 @@ export class ConversationStreamSubscription {
   private flush(resume: boolean): void {
     // The room notifies again when its presentation pass ends.
     if (this.room.presenting) return;
-    if (this.room.head !== this.sentHead) {
+    const live = this.mode === "live";
+    // A live subscription holds no entries, so a head move changes nothing it sent.
+    if (!live && this.room.head !== this.sentHead) {
       this.sendSnapshot();
       return;
     }
-    const restated = resume
-      ? this.room.presentedUpTo(this.sentFloor, this.sentTip)
-      : this.room.changedSince(this.sentRevision, this.sentFloor, this.sentTip);
-    const entries = [...restated, ...this.room.entriesAfter(this.sentTip)];
+    const restated = live
+      ? []
+      : resume
+        ? this.room.presentedUpTo(this.sentFloor, this.sentTip)
+        : this.room.changedSince(this.sentRevision, this.sentFloor, this.sentTip);
+    const entries = live ? [] : [...restated, ...this.room.entriesAfter(this.sentTip)];
     this.sentRevision = this.room.revision;
     const current = this.room.clientDocs();
     const docs: Record<string, ConversationDocOp[] | null> = {};
-    for (const { kind } of CONVERSATION_CLIENT_DOCS) {
+    for (const { kind } of this.docs) {
       const previous = this.sentDocs.get(kind);
       const next = current.get(kind);
       if (next === undefined) {
@@ -675,6 +709,9 @@ export async function attachConversationStream(options: {
   harness: Harness;
   conversationId: ConversationId;
   renderers: MobileRendererRegistry;
+  /** Default `full`. */
+  mode?: ConversationStreamMode;
+  /** `full` mode's resume cursor. */
   afterEntryId?: number;
   send: SendFrame;
   /** The room failed after this subscription started; re-attach from `cursor` to resume. */
@@ -688,7 +725,12 @@ export async function attachConversationStream(options: {
     // itself from ROOMS, so the retry opens a new room.
     if (room.closed) continue;
     if (room.presenting) continue;
-    const subscription = new ConversationStreamSubscription(room, options.send, options.onLost);
+    const subscription = new ConversationStreamSubscription(
+      room,
+      options.send,
+      options.onLost,
+      options.mode,
+    );
     room.join(subscription);
     try {
       subscription.start(options.afterEntryId);

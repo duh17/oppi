@@ -9,6 +9,10 @@ import Foundation
 /// `TimelineReducer.applyConversationCommitted`, `pi.live` through
 /// `ConversationLiveProjector` and `TimelineReducer.applyLiveTail`. While it exists the
 /// session's classic timeline events are ignored and trace catch-up is not used.
+///
+/// A `live` driver follows a subagent's conversation on its parent's socket instead
+/// (`attach { mode: live }`): its replica holds only `pi.live` and `pi.inbox`, and `liveTail`
+/// is what the parent shows under the tool row that names it.
 /// Wire: `dev/architecture-server/durable-conversation-stream.md`.
 @MainActor @Observable
 final class ConversationStreamDriver {
@@ -34,9 +38,15 @@ final class ConversationStreamDriver {
         case superseded
     }
 
+    /// The conversation a `live` driver follows; nil for the session's own, in full.
+    let liveConversationId: Int?
     /// `replica.hasOlder`, observed by the timeline's "load earlier" control.
     private(set) var hasOlder = false
     @ObservationIgnored private(set) var replica = ConversationReplica()
+    /// Full mode: the child conversations its tool calls name.
+    @ObservationIgnored private(set) var children = ConversationChildIndex()
+    /// Live mode: what the replica's `pi.live` shows.
+    @ObservationIgnored private(set) var liveTail = TimelineLiveTail()
     @ObservationIgnored private var committed = ConversationCommittedProjection()
     @ObservationIgnored private var live = ConversationLiveProjector()
     /// The reducer does not hold the replica's rows: it was reset, or frames applied while
@@ -50,11 +60,20 @@ final class ConversationStreamDriver {
     @ObservationIgnored private var olderRequestIds: Set<String> = []
     @ObservationIgnored private var waiters: [String: CheckedContinuation<Bool, Never>] = [:]
 
+    init() {
+        liveConversationId = nil
+    }
+
+    init(liveConversationId: Int) {
+        self.liveConversationId = liveConversationId
+    }
+
     /// The committed rows as trace events, for the timeline cache.
     var committedEvents: [TraceEvent] { committed.events }
 
     /// `attach` resumes from the replica's cursor when it holds a conversation; otherwise
     /// (first open, `fresh`, or after a failed apply) the server answers with a snapshot.
+    /// A live attach always gets a snapshot.
     func attachRequest(fresh: Bool) -> (message: ClientMessage, requestId: String) {
         let requestId = "attach-\(UUID().uuidString)"
         if let previous = attachRequestId { supersededAttachIds.insert(previous) }
@@ -63,13 +82,23 @@ final class ConversationStreamDriver {
         // itself (`fresh`) keeps it spent.
         if !fresh { freshAttachRetried = false }
         var attach = ConversationStreamAttach(requestId: requestId)
-        if !fresh, let conversationId = replica.conversationId, let cursor = replica.resumeCursor {
+        if let liveConversationId {
+            attach.conversationId = liveConversationId
+            attach.mode = .live
+            awaitingSnapshot = true
+        } else if !fresh, let conversationId = replica.conversationId, let cursor = replica.resumeCursor {
             attach.conversationId = conversationId
             attach.afterEntryId = cursor
         } else {
             awaitingSnapshot = true
         }
         return (.conversationAttach(attach), requestId)
+    }
+
+    /// Live mode: end this conversation's stream on the socket. Its frames that arrive after
+    /// are no longer routed here.
+    func detachRequest() -> ClientMessage? {
+        liveConversationId.map { .conversationDetach(.init(conversationId: $0)) }
     }
 
     /// `older` before the oldest held entry, or nil when there is nothing older.
@@ -147,6 +176,7 @@ final class ConversationStreamDriver {
         }
         awaitingSnapshot = false
         if hasOlder != replica.hasOlder { hasOlder = replica.hasOlder }
+        indexChildren(frame, previousCount: previousCount, previousCursor: previousCursor)
         if presentationPaused || reducerNeedsResync {
             reducerNeedsResync = true
             if presentationPaused { return .deferred }
@@ -185,6 +215,51 @@ final class ConversationStreamDriver {
             reducer.applyLiveTail(live.tail(from: replica.docs["pi.live"]))
         }
         return .applied
+    }
+
+    /// Live mode: apply a frame of the followed conversation and project its `pi.live`.
+    func receiveLive(_ frame: ConversationStreamServerMessage) -> FrameOutcome {
+        if awaitingSnapshot {
+            guard case .snapshot = frame else { return .ignored }
+        }
+        do {
+            try replica.apply(frame)
+        } catch {
+            replica = ConversationReplica()
+            liveTail = TimelineLiveTail()
+            awaitingSnapshot = true
+            return .applyFailed(String(describing: error))
+        }
+        awaitingSnapshot = false
+        liveTail = live.tail(from: replica.docs["pi.live"])
+        return .applied
+    }
+
+    /// Keep `children` current with the frame just applied: committed tool results are indexed
+    /// as they append, the running round's calls from `pi.live`.
+    private func indexChildren(
+        _ frame: ConversationStreamServerMessage,
+        previousCount: Int,
+        previousCursor: Int?
+    ) {
+        switch frame {
+        case .snapshot, .older:
+            children.reindex(replica.entries)
+            children.updateLive(replica.docs["pi.live"])
+        case .update(let update):
+            if let entries = update.entries, !entries.isEmpty {
+                let appended = previousCursor.map { cursor in entries.allSatisfy { $0.id > cursor } }
+                    ?? (previousCount == 0)
+                if appended, previousCount <= replica.entries.count {
+                    children.append(replica.entries[previousCount...])
+                } else {
+                    children.reindex(replica.entries)
+                }
+            }
+            if update.docs?.keys.contains("pi.live") == true {
+                children.updateLive(replica.docs["pi.live"])
+            }
+        }
     }
 
     /// Rebuild the timeline from the replica.

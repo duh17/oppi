@@ -145,11 +145,13 @@ async function attach(
   f: { harness: Harness; conversation: Conversation },
   afterEntryId?: number,
   client = new Client(),
+  mode?: "live",
 ): Promise<Client> {
   client.subscription = await attachConversationStream({
     harness: f.harness,
     conversationId: f.conversation.id,
     renderers: new MobileRendererRegistry(),
+    ...(mode ? { mode } : {}),
     ...(afterEntryId !== undefined ? { afterEntryId } : {}),
     send: (frame) => {
       const wire = JSON.parse(JSON.stringify(frame)) as ConversationStreamServerMessage;
@@ -360,6 +362,45 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
     const current = await attach(f, client.tip);
     expect(current.frames[0]).toMatchObject({ type: "update", entries: [] });
     await expectConverged(f, client);
+  });
+
+  it("streams only the live documents in live mode, through turns and head moves", async () => {
+    const f = await fixture([fauxAssistantMessage(LONG_ANSWER)], { slow: true });
+    const full = await attach(f);
+    const live = await attach(f, undefined, new Client(), "live");
+    expect(live.frames[0]).toMatchObject({
+      type: "snapshot",
+      head: 0,
+      hasOlder: false,
+      entries: [],
+    });
+
+    await prompt(f.conversation, "first");
+    await settle();
+    const tip = full.tip;
+    await f.conversation.commit(async (tx) => {
+      await tx.appendEntry(f.conversation.id, {
+        kind: "pi.compaction",
+        head: tip as EntryId,
+        model: [{ role: "user", content: "<summary>first</summary>", timestamp: 1 }],
+      });
+    }, context);
+    await settle();
+
+    // The full replica got the answer and a snapshot for the head move; the live one only
+    // the answer streaming in `pi.live`, and never an entry.
+    expect(full.frames.filter((frame) => frame.type === "snapshot")).toHaveLength(2);
+    expect(live.frames.filter((frame) => frame.type === "snapshot")).toHaveLength(1);
+    expect(live.frames.flatMap(liveTextOps).length).toBeGreaterThanOrEqual(2);
+    for (const frame of live.frames) {
+      if (frame.type === "snapshot") expect(frame.entries).toEqual([]);
+      else expect(frame).not.toHaveProperty("entries");
+      const kinds = Object.keys((frame as { docs?: object }).docs ?? {});
+      expect(kinds.every((kind) => kind === "pi.live" || kind === "pi.inbox")).toBe(true);
+    }
+    expect(live.entries).toEqual([]);
+    expect(live.docs["pi.live"]).toEqual(full.docs["pi.live"]);
+    expect(live.docs["pi.inbox"]).toEqual(full.docs["pi.inbox"]);
   });
 
   it("loads a closed room's successor with the head marker and the entries it keeps", async () => {

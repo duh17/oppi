@@ -54,6 +54,9 @@ struct QuietWorkStripPreview: View {
                     if case .toolCall = item, let inspection = inspectionFixture.toolInspection(for: item) {
                         Label(inspection.interactionSummary ?? inspection.title, systemImage: inspection.glyph ?? "wrench")
                     }
+                case .childTail:
+                    // The quiet projection never makes one; the owned clock inserts tails.
+                    EmptyView()
                 }
             }
         }.accessibilityIdentifier("quiet-work-strip.mixed-inspection")

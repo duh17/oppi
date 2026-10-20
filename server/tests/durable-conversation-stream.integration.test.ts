@@ -11,7 +11,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { WebSocket, type RawData } from "ws";
 import { applyImmutable, type Op } from "@earendil-works/chord/delta";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
+import {
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type FauxProviderHandle,
+} from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationId } from "@earendil-works/pi-durable";
 
 import type { DurableHarness } from "../src/durable-harness.js";
@@ -29,13 +34,17 @@ type Frame = Record<string, unknown> & { type: string };
 
 const LONG_ANSWER = Array.from({ length: 40 }, (_, index) => `word${index}`).join(" ");
 
-/** One focused-stream socket and the replica built from its conversation frames. */
+/**
+ * One focused-stream socket and the replica built from its conversation frames: those of the
+ * first conversation it receives a frame of. `liveDocs` replays another one's.
+ */
 class StreamClient {
   readonly frames: Frame[] = [];
   readonly opened: Promise<void>;
   entries: ConversationEntryView[] = [];
   docs: Record<string, unknown> = {};
   head = 0;
+  conversationId: number | undefined;
   private readonly waiters = new Set<{
     predicate: (frame: Frame) => boolean;
     resolve: (frame: Frame) => void;
@@ -62,6 +71,9 @@ class StreamClient {
   }
 
   private apply(frame: Frame): void {
+    if (typeof frame.conversationId !== "number") return;
+    this.conversationId ??= frame.conversationId;
+    if (frame.conversationId !== this.conversationId) return;
     if (frame.type === "snapshot") {
       this.entries = [...(frame.entries as ConversationEntryView[])];
       this.docs = { ...(frame.docs as Record<string, unknown>) };
@@ -87,6 +99,34 @@ class StreamClient {
 
   conversationFrames(): Frame[] {
     return this.frames.filter((frame) => frame.type === "snapshot" || frame.type === "update");
+  }
+
+  /** The documents of `conversationId` its frames build, from its newest snapshot on. */
+  liveDocs(conversationId: number): Record<string, unknown> {
+    let docs: Record<string, unknown> = {};
+    for (const frame of this.conversationFrames()) {
+      if (frame.conversationId !== conversationId) continue;
+      if (frame.type === "snapshot") docs = { ...(frame.docs as Record<string, unknown>) };
+      else
+        for (const [kind, ops] of Object.entries(
+          (frame.docs ?? {}) as Record<string, Op[] | null>,
+        )) {
+          if (ops === null) delete docs[kind];
+          else docs[kind] = applyImmutable(docs[kind], ops);
+        }
+    }
+    return docs;
+  }
+
+  /** Send `message` with a request id; resolves with its `command_result`. */
+  async request(message: Record<string, unknown>): Promise<Frame> {
+    const requestId = randomUUID();
+    const from = this.frames.length;
+    this.send({ ...message, requestId });
+    return this.next(
+      (frame) => frame.type === "command_result" && frame.requestId === requestId,
+      from,
+    );
   }
 
   next(predicate: (frame: Frame) => boolean, fromIndex = 0, timeoutMs = 20_000): Promise<Frame> {
@@ -142,6 +182,7 @@ let baseUrl: string;
 let workspace: Workspace;
 let session: Session;
 let clients: StreamClient[] = [];
+let faux: FauxProviderHandle;
 let previousTls: string | undefined;
 let previousAgentDir: string | undefined;
 
@@ -165,7 +206,7 @@ beforeEach(async () => {
     modelsStorePath: join(dataDir, "models-cache.json"),
     refreshOnCreate: false,
   });
-  const faux = fauxProvider({ tokensPerSecond: 60, tokenSize: { min: 3, max: 3 } });
+  faux = fauxProvider({ tokensPerSecond: 60, tokenSize: { min: 3, max: 3 } });
   faux.setResponses([
     fauxAssistantMessage(LONG_ANSWER),
     fauxAssistantMessage(LONG_ANSWER),
@@ -281,7 +322,7 @@ describe("durable conversation stream over the focused session socket", { timeou
     const info = (await (
       await fetch(`${baseUrl}/server/info`, { headers: { Authorization: `Bearer ${token}` } })
     ).json()) as { capabilities: Record<string, unknown> };
-    expect(info.capabilities.conversationStream).toEqual({ version: 1 });
+    expect(info.capabilities.conversationStream).toEqual({ version: 2 });
 
     const attached = await connect();
     const plain = await connect();
@@ -437,6 +478,108 @@ describe("durable conversation stream over the focused session socket", { timeou
     expect(result).toMatchObject({ command: "attach", success: false });
     expect(String(result.error)).toContain("durable session");
     expect(client.conversationFrames()).toEqual([]);
+  });
+
+  it("streams a subagent's live tail on its parent's socket, only within the parent's thread", async () => {
+    let openChild!: () => void;
+    const childGate = new Promise<void>((resolve) => (openChild = resolve));
+    const childAnswer = Array.from({ length: 4 }, () => LONG_ANSWER).join("\n");
+    faux.setResponses(
+      Array.from(
+        { length: 12 },
+        () => async (transcript: { messages: Array<{ role: string; content: unknown }> }) => {
+          const last = transcript.messages.findLast((message) => message.role !== "system")!;
+          const text = JSON.stringify(last.content);
+          if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
+          if (text.includes("Delegate"))
+            return fauxAssistantMessage(
+              [fauxToolCall("subagent", { action: "spawn", name: "Kid", task: "KID_TASK" })],
+              { stopReason: "toolUse" },
+            );
+          if (text.includes("KID_TASK")) {
+            await childGate;
+            return fauxAssistantMessage(childAnswer);
+          }
+          return fauxAssistantMessage("NOTED");
+        },
+      ),
+    );
+    const parent = await connect();
+    await parent.attach();
+    await prompt(parent, "Delegate in the background");
+    const child = storage.listSessions().find((candidate) => candidate.id !== session.id)!;
+    const parentConversation = storage.getSession(session.id)!.serverDurable!.conversationId!;
+    const childConversation = storage.getSession(child.id)!.serverDurable!.conversationId!;
+
+    // Only the live tail of a conversation the parent owns, and only in live mode.
+    expect(
+      await parent.request({ type: "attach", conversationId: childConversation }),
+    ).toMatchObject({ command: "attach", success: false });
+    expect(
+      await parent.request({ type: "attach", conversationId: 999, mode: "live" }),
+    ).toMatchObject({ command: "attach", success: false });
+    const childSocket = await connect(child);
+    const upward = await childSocket.request({
+      type: "attach",
+      conversationId: parentConversation,
+      mode: "live",
+    });
+    expect(upward).toMatchObject({ command: "attach", success: false });
+    expect(String(upward.error)).toContain("thread");
+    expect(childSocket.conversationFrames()).toEqual([]);
+
+    const from = parent.frames.length;
+    expect(
+      await parent.request({ type: "attach", conversationId: childConversation, mode: "live" }),
+    ).toMatchObject({ command: "attach", success: true });
+    const snapshot = parent.frames
+      .slice(from)
+      .find((frame) => frame.conversationId === childConversation)!;
+    expect(snapshot).toMatchObject({ type: "snapshot", head: 0, hasOlder: false, entries: [] });
+    expect(Object.keys(snapshot.docs as object).sort()).toEqual(["pi.inbox", "pi.live"]);
+    expect((snapshot.docs as Record<string, { run?: unknown }>)["pi.live"]?.run).toBeDefined();
+
+    // The child's answer streams as live text; its frames never carry entries.
+    openChild();
+    const textAt = (docs: Record<string, unknown>) =>
+      JSON.stringify(
+        (docs["pi.live"] as { generation?: { message?: { content?: unknown } } } | undefined)
+          ?.generation?.message?.content ?? "",
+      );
+    await parent.next(
+      (frame) =>
+        frame.conversationId === childConversation &&
+        textAt(parent.liveDocs(childConversation)).includes("word5"),
+      from,
+    );
+
+    // A reconnect while the child streams gets the tail so far in its first frame.
+    const reconnected = await connect();
+    await reconnected.request({ type: "attach", conversationId: childConversation, mode: "live" });
+    expect(textAt(reconnected.liveDocs(childConversation))).toContain("word0");
+
+    const detached = await parent.request({ type: "detach", conversationId: childConversation });
+    expect(detached).toMatchObject({ command: "detach", success: true });
+    const afterDetach = parent.frames.length;
+    // The child lands its answer and goes idle; the other socket still follows it.
+    await reconnected.next(
+      (frame) =>
+        frame.conversationId === childConversation &&
+        (reconnected.liveDocs(childConversation)["pi.live"] as { run?: unknown } | undefined)
+          ?.run === undefined,
+    );
+    // The child's report starts a parent turn; the parent's replica follows only its own frames.
+    await parent.next((frame) => frame.type === "agent_end", afterDetach);
+    await settle();
+    const childFrames = parent
+      .conversationFrames()
+      .filter((frame) => frame.conversationId === childConversation);
+    expect(childFrames.length).toBeGreaterThan(1);
+    expect(
+      childFrames.every((frame) => ((frame.entries as unknown[] | undefined) ?? []).length === 0),
+    ).toBe(true);
+    expect(childFrames.every((frame) => parent.frames.indexOf(frame) < afterDetach)).toBe(true);
+    await expectConverged(parent);
   });
 
   it("refuses older on a socket that has not attached", async () => {

@@ -61,6 +61,9 @@ struct ChatTimelineApplyPlan {
             case .quietWork(let workLine):
                 workLineByID[workLine.id] = workLine
                 nextIDs.append(workLine.id)
+            case .childTail:
+                // Its payload is `ChatTimelineConfiguration.childTailByID`.
+                nextIDs.append(row.id)
             }
         }
 
@@ -83,6 +86,18 @@ struct ChatTimelineApplyPlan {
             nextWorkLineByID: nextWorkLineByID,
             removedIDs: Set(currentIDs).subtracting(nextIDs)
         )
+    }
+
+    /// Child tails whose lines changed under the same ID.
+    static func childTailReconfigureIDs(
+        previous: [String: ConversationChildTail],
+        next: [String: ConversationChildTail]
+    ) -> [String] {
+        next.compactMap { id, tail in
+            guard let old = previous[id], old != tail else { return nil }
+            return id
+        }
+        .sorted()
     }
 
     /// Same synthetic ID, new counts/live state. Diffable snapshots ignore payload

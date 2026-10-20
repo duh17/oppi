@@ -1,16 +1,21 @@
 import Foundation
 
-/// A presentation-only row. Quiet work lines deliberately do not use ChatItem
-/// identity: reducer rows remain the source of truth and synthetic IDs cannot
+/// A presentation-only row. Quiet work lines and child tails deliberately do not use
+/// ChatItem identity: reducer rows remain the source of truth and synthetic IDs cannot
 /// accidentally become timeline or outline targets.
 enum TimelineDisplayRow: Equatable, Identifiable {
     case item(ChatItem)
     case quietWork(QuietTimelineWorkLine)
+    /// A subagent's live tail, right after the row of the tool call that names it.
+    case childTail(ConversationChildTail)
+
+    static let childTailIDPrefix = "child-tail:"
 
     var id: String {
         switch self {
         case .item(let item): return item.id
         case .quietWork(let workLine): return workLine.id
+        case .childTail(let tail): return Self.childTailID(tail)
         }
     }
 
@@ -18,7 +23,28 @@ enum TimelineDisplayRow: Equatable, Identifiable {
         switch self {
         case .item(let item): return [item.id]
         case .quietWork(let workLine): return workLine.sourceItemIDs
+        case .childTail: return []
         }
+    }
+
+    static func childTailID(_ tail: ConversationChildTail) -> String {
+        "\(childTailIDPrefix)\(tail.reference.conversationId)"
+    }
+
+    /// `rows` with each tail after the row that holds its tool call (a quiet work line folds
+    /// that row in). Tails whose row is not shown are left out.
+    static func insertingChildTails(_ tails: [String: ConversationChildTail], into rows: [Self]) -> [Self] {
+        guard !tails.isEmpty else { return rows }
+        var result: [Self] = []
+        result.reserveCapacity(rows.count + tails.count)
+        for row in rows {
+            result.append(row)
+            let held = row.sourceItemIDs.compactMap { tails[$0] }
+            for tail in held.sorted(by: { $0.reference.conversationId < $1.reference.conversationId }) {
+                result.append(.childTail(tail))
+            }
+        }
+        return result
     }
 }
 

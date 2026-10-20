@@ -12,11 +12,13 @@ struct ConversationStreamTests {
         "update_queue", "update_partial", "update_hidden", "update_resume", "snapshot_after_compaction",
         "update_input_card", "older",
     ]
+    /// The live tail of conversation 5, a subagent of 3, on the same socket.
+    private static let liveSequence = ["live_snapshot", "live_update"]
 
     @Test func everyFixtureMessageDecodes() throws {
         let messages = try fixtureMessages()
         let serverKeys = messages.keys.filter { $0.hasPrefix("server.") }.map { String($0.dropFirst(7)) }
-        #expect(Set(serverKeys) == Set(Self.serverSequence))
+        #expect(Set(serverKeys) == Set(Self.serverSequence + Self.liveSequence))
         for key in serverKeys {
             _ = try JSONDecoder().decode(ConversationStreamServerMessage.self, from: json(messages, "server.\(key)"))
         }
@@ -29,6 +31,28 @@ struct ConversationStreamTests {
         // What the client sends round-trips to the same wire object.
         let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(older)) as? NSDictionary
         #expect(encoded == (messages["client.older"] as? NSDictionary))
+        let live = ConversationStreamAttach(conversationId: 5, mode: .live, requestId: "req-attach-3")
+        let detach = ConversationStreamDetach(conversationId: 5, requestId: "req-detach-1")
+        for (key, message) in [("client.attach_live", ClientMessage.conversationAttach(live)), ("client.detach", .conversationDetach(detach))] {
+            let wire = try JSONSerialization.jsonObject(with: JSONEncoder().encode(message)) as? NSDictionary
+            #expect(wire == (messages[key] as? NSDictionary), "\(key)")
+        }
+    }
+
+    /// A live tail replica holds only `pi.live` and `pi.inbox`, and no entries.
+    @MainActor @Test func liveTailFramesApplyToTheirOwnReplica() throws {
+        let messages = try fixtureMessages()
+        let driver = ConversationStreamDriver(liveConversationId: 5)
+        _ = driver.attachRequest(fresh: false)
+        for key in Self.liveSequence {
+            let frame = try JSONDecoder().decode(ConversationStreamServerMessage.self, from: json(messages, "server.\(key)"))
+            #expect(frame.conversationId == 5)
+            #expect(driver.receiveLive(frame) == .applied, "\(key)")
+        }
+        #expect(driver.replica.entries.isEmpty)
+        #expect(Set(driver.replica.docs.keys) == ["pi.live", "pi.inbox"])
+        let tool = try #require(driver.liveTail.tools.first)
+        #expect(driver.liveTail.isRunning && tool.running && tool.output == "tick 1\ntick 2\n")
     }
 
     @Test func fixtureFramesApplyInOrder() throws {

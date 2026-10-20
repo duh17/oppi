@@ -532,6 +532,166 @@ struct ConversationStreamSessionTests {
         await harness.finish()
     }
 
+    /// A subagent tool row's details name a child conversation; its live tail streams on the
+    /// parent's socket and shows under that row, apart from the parent's own replica.
+    @Test func followsASubagentsLiveTailUnderItsToolRowAcrossAReconnect() async throws {
+        let harness = Harness(liveTails: true)
+        await harness.connect()
+        let own = try await harness.attach(1)
+        harness.yield(.commandResult(command: "attach", requestId: own.requestId, success: true, data: nil, error: nil))
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [
+            Wire.user(1, "Delegate"),
+            Wire.assistant(2, [Wire.toolCall("call-s", "subagent", ["action": "spawn"])]),
+            Wire.toolResult(3, callId: "call-s", output: "Started kid", details: Wire.child(9, "child-session")),
+        ], docs: [:])))
+        #expect(await harness.waitForRows(["1", "call-s"]))
+        let tailAttach = try await harness.attach(2)
+        #expect(tailAttach.conversationId == 9 && tailAttach.mode == .live && tailAttach.afterEntryId == nil)
+
+        harness.frame(.snapshot(.init(conversationId: 9, head: 0, hasOlder: false, entries: [], docs: [
+            "pi.live": Wire.live(content: [Wire.text("Reading files\nfound two")]),
+        ])))
+        #expect(await waitForMainActorCondition {
+            harness.manager.childTails["call-s"]?.lines.map(\.text) == ["Reading files", "found two"]
+        })
+        #expect(harness.manager.childTails["call-s"]?.reference.sessionId == "child-session")
+        harness.frame(.update(.init(conversationId: 9, docs: ["pi.live": [
+            .append([.key("generation"), .key("message"), .key("content"), .index(0), .key("text")], "\nand a third"),
+        ]])))
+        #expect(await waitForMainActorCondition {
+            harness.manager.childTails["call-s"]?.lines.last?.text == "and a third"
+        })
+        // The child's frames leave the parent's replica and rows alone.
+        #expect(harness.manager.conversationStream?.replica.conversationId == 7)
+        #expect(harness.manager.reducer.items.map(\.id) == ["1", "call-s"])
+
+        // A reconnect resumes the parent and attaches the child again, which snapshots.
+        harness.yield(.connected(session: harness.session))
+        let resumed = try await harness.attach(3)
+        #expect(resumed.conversationId == 7 && resumed.afterEntryId == 3)
+        let again = try await harness.attach(4)
+        #expect(again.conversationId == 9 && again.mode == .live)
+        harness.frame(.snapshot(.init(conversationId: 9, head: 0, hasOlder: false, entries: [], docs: [
+            "pi.live": Wire.live(content: [Wire.text("after the reconnect")]),
+        ])))
+        #expect(await waitForMainActorCondition {
+            harness.manager.childTails["call-s"]?.lines.map(\.text) == ["after the reconnect"]
+        })
+
+        // Idle: nothing to show.
+        harness.frame(.update(.init(conversationId: 9, docs: ["pi.live": [.delete([.key("run")]), .delete([.key("generation")])]])))
+        #expect(await waitForMainActorCondition { harness.manager.childTails.isEmpty })
+        await harness.finish()
+    }
+
+    @Test func followsTheNewestChildrenAndKeepsTheSessionWhenATailIsRefused() async throws {
+        let harness = Harness(liveTails: true)
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let max = ChatSessionManager.maxChildTails
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: (1 ... max + 1).map { index in
+            Wire.toolResult(index, callId: "call-\(index)", output: "ok", details: Wire.child(100 + index, "child-\(index)"))
+        }, docs: [:])))
+        #expect(await waitForMainActorCondition { harness.attaches.count == 1 + max })
+        let followed = harness.attaches.dropFirst().compactMap(\.conversationId)
+        #expect(Set(followed) == Set((2 ... max + 1).map { 100 + $0 }))
+
+        // A newer child: the oldest followed one is detached.
+        harness.frame(.update(.init(conversationId: 7, entries: [
+            Wire.toolResult(20, callId: "call-20", output: "ok", details: Wire.child(120, "child-20")),
+        ])))
+        #expect(await waitForMainActorCondition { harness.detaches.map(\.conversationId) == [102] })
+        #expect(harness.attaches.last?.conversationId == 120)
+
+        // A refused tail is tried once more, then dropped; the session's own stream goes on.
+        let refused = try #require(harness.attaches.last)
+        harness.yield(.commandResult(command: "attach", requestId: refused.requestId, success: false, data: nil, error: "not in this session's thread"))
+        let count = harness.attaches.count + 1
+        let retry = try await harness.attach(count)
+        #expect(retry.conversationId == 120)
+        harness.yield(.commandResult(command: "attach", requestId: retry.requestId, success: false, data: nil, error: "not in this session's thread"))
+        harness.frame(.update(.init(conversationId: 7, entries: [Wire.user(21, "still here")])))
+        #expect(await waitForMainActorCondition { harness.manager.reducer.items.last?.id == "21" })
+        #expect(harness.manager.entryState == .streaming)
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) { harness.attaches.count == count })
+        await harness.finish()
+    }
+
+    @Test func aServerWithoutLiveTailsGetsNoChildAttach() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [
+            Wire.user(1, "Delegate"),
+            Wire.assistant(2, [Wire.toolCall("call-s", "subagent", ["action": "spawn"])]),
+            Wire.toolResult(3, callId: "call-s", output: "ok", details: Wire.child(9, "child-session")),
+        ], docs: [:])))
+        #expect(await harness.waitForRows(["1", "call-s"]))
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) { harness.attaches.count == 1 })
+        await harness.finish()
+    }
+
+    /// A v1 server's `attach` replaces the socket's only stream: reconnecting to one (a server
+    /// rolled back under a running app) must not re-attach the children followed before.
+    @Test func aReconnectToAServerWithoutLiveTailsStopsFollowingChildren() async throws {
+        let harness = Harness(liveTails: true)
+        await harness.connect()
+        _ = try await harness.attach(1)
+        harness.frame(Self.parentWithChild)
+        _ = try await harness.attach(2)
+        harness.frame(.snapshot(.init(conversationId: 9, head: 0, hasOlder: false, entries: [], docs: [
+            "pi.live": Wire.live(text: "busy"),
+        ])))
+        #expect(await waitForMainActorCondition { harness.manager.childTails["call-s"] != nil })
+
+        harness.connection.setSplitStreamCapabilitiesForTesting(conversationStream: true, conversationStreamVersion: 1)
+        harness.yield(.connected(session: harness.session))
+        let resumed = try await harness.attach(3)
+        #expect(resumed.conversationId == 7 && resumed.mode == nil)
+        #expect(await waitForMainActorCondition { harness.manager.childTails.isEmpty })
+        // Neither now nor on the session's next frames.
+        harness.frame(.update(.init(conversationId: 7, entries: [Wire.user(4, "still here")])))
+        #expect(await harness.waitForRows(["1", "call-s", "4"]))
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) { harness.attaches.count == 3 })
+        await harness.finish()
+    }
+
+    /// A detached child's snapshot can still be in flight when the session's own replica was
+    /// reset and waits for its snapshot: it must not become the session's replica.
+    @Test func aDetachedChildsLateSnapshotNeverReplacesTheSessionsReplica() async throws {
+        let harness = Harness(liveTails: true)
+        await harness.connect()
+        _ = try await harness.attach(1)
+        harness.frame(Self.parentWithChild)
+        _ = try await harness.attach(2)
+        // The child drops out (its tool row is gone after a snapshot), and the session's replica
+        // resets after a frame it cannot apply.
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "Delegate")], docs: [:])))
+        #expect(await waitForMainActorCondition { harness.detaches.map(\.conversationId) == [9] })
+        harness.frame(.update(.init(conversationId: 7, docs: ["pi.live": [.append([.key("generation")], "x")]])))
+        let fresh = try await harness.attach(3)
+        #expect(fresh.afterEntryId == nil && fresh.mode == nil)
+
+        harness.frame(.snapshot(.init(conversationId: 9, head: 0, hasOlder: false, entries: [Wire.user(50, "child")], docs: [:])))
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            !harness.manager.reducer.items.contains { $0.id == "50" }
+                && harness.manager.conversationStream?.replica.conversationId == nil
+        })
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "Delegate"), Wire.user(2, "again")], docs: [:])))
+        #expect(await harness.waitForRows(["1", "2"]))
+        #expect(harness.manager.conversationStream?.replica.conversationId == 7)
+        #expect(harness.attaches.count == 3)
+        await harness.finish()
+    }
+
+    private static let parentWithChild = ConversationStreamServerMessage.snapshot(.init(
+        conversationId: 7, head: 0, hasOlder: false, entries: [
+            Wire.user(1, "Delegate"),
+            Wire.assistant(2, [Wire.toolCall("call-s", "subagent", ["action": "spawn"])]),
+            Wire.toolResult(3, callId: "call-s", output: "ok", details: Wire.child(9, "child-session")),
+        ], docs: [:]
+    ))
+
     @Test func committedPromptReplacesTheOptimisticRow() async throws {
         let harness = Harness()
         await harness.connect()
@@ -545,6 +705,60 @@ struct ConversationStreamSessionTests {
         #expect(await harness.waitForRows(["1", "2"]))
         #expect(!reducer.items.contains { $0.id == optimistic })
         #expect(reducer._lastLoadWasIncrementalForTesting)
+        await harness.finish()
+    }
+}
+
+/// Main-thread work of following busy subagents: eight children each stream ten frames a second,
+/// as the server's frame interval allows, for two seconds. Each publication of the tails
+/// rebuilds the parent timeline's rows, so they must stay batched. Prints a `PERF` line.
+@Suite("Subagent live tail cost")
+@MainActor
+struct ConversationChildTailPerfTests {
+    @Test func eightStreamingChildrenPublishAtMostFourTimesASecond() async throws {
+        let children = ChatSessionManager.maxChildTails
+        let harness = Harness(liveTails: true)
+        await harness.connect()
+        _ = try await harness.attach(1)
+        var entries: [ConversationEntryView] = []
+        for index in 0..<children {
+            let call = "call-\(index)"
+            entries.append(Wire.assistant(index * 2 + 1, [Wire.toolCall(call, "subagent", ["action": "spawn"])]))
+            entries.append(Wire.toolResult(index * 2 + 2, callId: call, output: "ok", details: Wire.child(100 + index, "child-\(index)")))
+        }
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: entries, docs: [:])))
+        #expect(await waitForMainActorCondition { harness.attaches.count == 1 + children })
+        for index in 0..<children {
+            harness.frame(.snapshot(.init(conversationId: 100 + index, head: 0, hasOlder: false, entries: [], docs: [
+                "pi.live": Wire.live(text: "Starting"),
+            ])))
+        }
+        #expect(await waitForMainActorCondition { harness.manager.childTails.count == children })
+
+        let before = harness.manager._childTailPublicationsForTesting
+        let rounds = 20
+        let start = ContinuousClock.now
+        for round in 1...rounds {
+            for index in 0..<children {
+                harness.frame(.update(.init(conversationId: 100 + index, docs: ["pi.live": [
+                    .append([.key("generation"), .key("message"), .key("content"), .index(0), .key("text")], "\nline \(round)"),
+                ]])))
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(await waitForMainActorCondition {
+            harness.manager.childTails.values.allSatisfy { $0.lines.last?.text == "line \(rounds)" }
+        })
+        let elapsed = ContinuousClock.now - start
+        let publications = harness.manager._childTailPublicationsForTesting - before
+        let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        print(String(
+            format: "PERF conversation-stream child tails: %d children, %d frames in %.2f s, %d publications (%.1f/s)",
+            children, children * rounds, seconds, publications, Double(publications) / seconds
+        ))
+        // Unbatched, every one of the 160 frames would publish.
+        #expect(publications >= 2)
+        #expect(Double(publications) <= seconds * 4 + 2)
         await harness.finish()
     }
 }
@@ -563,20 +777,27 @@ private final class Harness {
     private(set) var sent: [ClientMessage] = []
     private var connectTask: Task<Void, Never>?
 
-    init(engine: SessionEngine = .durable) {
+    init(engine: SessionEngine = .durable, liveTails: Bool = false) {
         manager = ChatSessionManager(sessionId: sessionId)
         var session = makeTestSession(id: sessionId, workspaceId: "w1", status: .ready)
         session.engine = engine
         self.session = session
         manager._streamSessionForTesting = { [streams] _ in streams.makeStream() }
         manager._loadHistoryForTesting = { _, _ in nil }
-        connection.setSplitStreamCapabilitiesForTesting(conversationStream: true)
+        connection.setSplitStreamCapabilitiesForTesting(
+            conversationStream: true,
+            conversationStreamVersion: liveTails ? 2 : 1
+        )
         connection._sendMessageForTesting = { [weak self] message in self?.sent.append(message) }
         store.upsert(session)
     }
 
     var attaches: [ConversationStreamAttach] {
         sent.compactMap { if case .conversationAttach(let attach) = $0 { attach } else { nil } }
+    }
+
+    var detaches: [ConversationStreamDetach] {
+        sent.compactMap { if case .conversationDetach(let detach) = $0 { detach } else { nil } }
     }
 
     var olderRequests: [ConversationStreamOlderRequest] {
@@ -649,17 +870,24 @@ enum Wire {
         ])
     }
 
-    static func toolResult(_ id: Int, callId: String, output: String) -> ConversationEntryView {
-        ConversationEntryView(
+    static func toolResult(_ id: Int, callId: String, output: String, details: JSONValue? = nil) -> ConversationEntryView {
+        var message: [String: JSONValue] = [
+            "role": "toolResult", "toolCallId": .string(callId), "toolName": "bash",
+            "content": [["type": "text", "text": .string(output)]], "isError": false,
+            "timestamp": .number(at + Double(id) * 1000),
+        ]
+        if let details { message["details"] = details }
+        return ConversationEntryView(
             id: id,
             kind: "pi.tool-result",
-            model: [[
-                "role": "toolResult", "toolCallId": .string(callId), "toolName": "bash",
-                "content": [["type": "text", "text": .string(output)]], "isError": false,
-                "timestamp": .number(at + Double(id) * 1000),
-            ]],
+            model: [.object(message)],
             toolResult: .init(outputPresentation: .init(kind: "terminal"))
         )
+    }
+
+    /// Tool details that name a child conversation, as `subagent`'s do.
+    static func child(_ conversationId: Int, _ sessionId: String) -> JSONValue {
+        ["name": "kid", "conversationId": .number(Double(conversationId)), "sessionId": .string(sessionId)]
     }
 
     static func text(_ text: String) -> JSONValue { ["type": "text", "text": .string(text)] }

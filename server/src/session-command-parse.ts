@@ -1,6 +1,11 @@
 import type { ShareSessionAction, ShareSessionRedactionPolicyInput } from "./session-share.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
-import type { ClientMessage, ConversationStreamAttach, ConversationStreamOlder } from "./types.js";
+import type {
+  ClientMessage,
+  ConversationStreamAttach,
+  ConversationStreamDetach,
+  ConversationStreamOlder,
+} from "./types.js";
 
 export function toRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
@@ -227,12 +232,20 @@ export function parseConversationStreamAttach(
     if (record.sessionId !== undefined && typeof record.sessionId !== "string") {
       throw new Error("Invalid attach payload: sessionId must be a string");
     }
+    const mode = record.mode;
+    if (mode !== undefined && mode !== "full" && mode !== "live") {
+      throw new Error('Invalid attach payload: mode must be "full" or "live"');
+    }
+    if (mode === "live" && afterEntryId !== undefined) {
+      throw new Error("Invalid attach payload: the live mode has no cursor");
+    }
     return {
       ok: true,
       message: {
         type: "attach",
         ...(conversationId !== undefined ? { conversationId } : {}),
         ...(typeof record.sessionId === "string" ? { sessionId: record.sessionId } : {}),
+        ...(mode !== undefined ? { mode } : {}),
         ...(afterEntryId !== undefined ? { afterEntryId } : {}),
         ...(requestId !== undefined ? { requestId } : {}),
       },
@@ -244,6 +257,30 @@ export function parseConversationStreamAttach(
       ...(requestId !== undefined ? { requestId } : {}),
     };
   }
+}
+
+/** Conversation stream `detach`; socket-only, like `attach`. */
+export function parseConversationStreamDetach(
+  record: Record<string, unknown>,
+):
+  | { ok: true; message: ConversationStreamDetach }
+  | { ok: false; error: string; requestId?: string } {
+  const requestId = readOptionalRequestId(record.requestId);
+  const id = record.conversationId;
+  if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 0)
+    return {
+      ok: false,
+      error: "Invalid detach payload: conversationId must be a non-negative integer",
+      ...(requestId !== undefined ? { requestId } : {}),
+    };
+  return {
+    ok: true,
+    message: {
+      type: "detach",
+      conversationId: id,
+      ...(requestId !== undefined ? { requestId } : {}),
+    },
+  };
 }
 
 /** Conversation stream `older`; socket-only, like `attach`. */

@@ -59,6 +59,7 @@ import type { ClassicExtensionIndex } from "./durable-agent.js";
 import {
   attachConversationStream,
   readOlderConversationEntries,
+  type ConversationStreamMode,
   type ConversationStreamSubscription,
 } from "./durable-conversation-stream.js";
 import { DurableModels } from "./durable-models.js";
@@ -281,6 +282,7 @@ interface TranscriptStream {
   readonly id: ConversationId;
   readonly options: {
     renderers: MobileRendererRegistry;
+    mode: ConversationStreamMode;
     send: (frame: ConversationStreamServerMessage) => void;
     onLost: () => void;
   };
@@ -588,6 +590,7 @@ export class SessionHost {
     id: ConversationId,
     options: {
       renderers: MobileRendererRegistry;
+      mode?: ConversationStreamMode;
       afterEntryId?: number;
       send: (frame: ConversationStreamServerMessage) => void;
     },
@@ -597,6 +600,7 @@ export class SessionHost {
       const { harness } = await this.open();
       const streamOptions: TranscriptStream["options"] = {
         renderers: options.renderers,
+        mode: options.mode ?? "full",
         send: options.send,
         onLost: () => void this.reattachLostTranscript(stream),
       };

@@ -126,6 +126,31 @@ final class ChatSessionManager {
     /// socket connects and kept across reconnects so `attach` resumes from the replica.
     private(set) var conversationStream: ConversationStreamDriver?
 
+    /// Live tails of the subagent conversations the replica's tool calls name, followed on the
+    /// same socket (`capabilities.conversationStream` v2): one live driver per conversation, for
+    /// the newest `maxChildTails` children.
+    @ObservationIgnored private var childStreams: [Int: ChildStream] = [:]
+    /// Conversations whose live attach the server refused on this socket; not retried until
+    /// the next `connected`.
+    @ObservationIgnored private var refusedChildTails: Set<Int> = []
+    /// What the timeline shows under tool rows: the busy children's tails, by tool call id.
+    private(set) var childTails: [String: ConversationChildTail] = [:]
+    static let maxChildTails = 8
+    static let childTailPublishInterval: Duration = .milliseconds(250)
+    @ObservationIgnored private var childTailPublishTask: Task<Void, Never>?
+    @ObservationIgnored private var lastChildTailPublish: ContinuousClock.Instant?
+    /// Lines each busy child's row keeps room for, by conversation id.
+    @ObservationIgnored private var childTailLineReservations: [Int: Int] = [:]
+    /// The conversation the session's own stream attached. Survives a replica reset, so a frame
+    /// of a child detached while in flight is never taken for the session's.
+    @ObservationIgnored private var ownConversationId: Int?
+    @ObservationIgnored private(set) var _childTailPublicationsForTesting = 0
+
+    private struct ChildStream {
+        var reference: ConversationChildReference
+        let driver: ConversationStreamDriver
+    }
+
     var hasOlderTracePage: Bool {
         if let conversationStream { return conversationStream.hasOlder }
         return tracePage?.hasOlder == true && tracePage?.olderCursor != nil
@@ -845,6 +870,7 @@ final class ChatSessionManager {
             transitionTo(.stopped(historyLoaded: false))
             // History-only: no socket to attach, so trace history owns the timeline.
             conversationStream = nil
+            dropChildTails()
             log.warning("Session \(self.sessionId) is stopped — loading history only unless the server reports it active")
             scheduleHistoryReload(
                 generation: generation,
@@ -1075,14 +1101,26 @@ final class ChatSessionManager {
 
         if case .conversationStream(let frame) = message {
             if case .streaming = entryState {
-                applyConversationFrame(frame)
+                if childStreams[frame.conversationId] != nil {
+                    applyChildTailFrame(frame)
+                } else if let own = ownConversationId, own != frame.conversationId {
+                    // A child tail detached while its frames were in flight.
+                } else {
+                    applyConversationFrame(frame)
+                }
             }
             return
         }
-        if case .commandResult(_, let requestId?, let success, _, let error) = message,
-           let outcome = conversationStream?.commandResult(requestId: requestId, success: success, error: error) {
-            handleConversationCommandOutcome(outcome)
-            return
+        if case .commandResult(_, let requestId?, let success, _, let error) = message {
+            if let outcome = conversationStream?.commandResult(requestId: requestId, success: success, error: error) {
+                handleConversationCommandOutcome(outcome)
+                return
+            }
+            for (conversationId, child) in childStreams {
+                guard let outcome = child.driver.commandResult(requestId: requestId, success: success, error: error) else { continue }
+                handleChildTailCommandOutcome(outcome, conversationId: conversationId)
+                return
+            }
         }
 
         switch entryState {
@@ -1287,6 +1325,7 @@ final class ChatSessionManager {
 
         effectsStatePort.emitTimelineSessionEnded(sessionId: sessionId)
         conversationStream?.cancelPendingRequests()
+        for child in childStreams.values { child.driver.cancelPendingRequests() }
 
         // A stale tail must not clear a newer owner's (or another session's)
         // watchdog handler; a leftover handler of ours is inert once unowned.
@@ -1412,6 +1451,7 @@ final class ChatSessionManager {
         transitionTo(.disconnected(reason: .cancelled))
         resumeStreamingWaiters(with: .failure(CancellationError()))
         conversationStream?.cancelPendingRequests()
+        dropChildTails()
         cancelStateSync()
         // The only release: the claim lives as long as the view's runtime.
         releaseFocusClaim()
@@ -1819,6 +1859,7 @@ final class ChatSessionManager {
     private func startConversationStreamIfOffered(for session: Session, meta: InboundStreamMeta?) -> Bool {
         guard focusedStreamPort.conversationStreamAvailable, session.engine == .durable else {
             conversationStream = nil
+            dropChildTails()
             return false
         }
         if conversationStream == nil {
@@ -1832,6 +1873,15 @@ final class ChatSessionManager {
             focusedStreamPort.persistEpoch(meta?.runtimeEpoch, sessionId: sessionId)
         }
         sendConversationAttach(fresh: false)
+        // A new socket: each followed child attaches again after the session's own stream. A
+        // server without live tails (v1) replaces the socket's only stream on every attach, so a
+        // child attach there would end the session's own: follow none.
+        refusedChildTails.removeAll()
+        if focusedStreamPort.conversationStreamLiveTailsAvailable {
+            for child in childStreams.values { sendChildTailAttach(child.driver) }
+        } else {
+            dropChildTails()
+        }
         return true
     }
 
@@ -1882,10 +1932,12 @@ final class ChatSessionManager {
         case .deferred:
             // Resynced from the replica when presentation resumes.
             coalescer.markPresentationNeedsTraceReload()
+            followChildTails()
             return
         case .applied:
             break
         }
+        followChildTails()
         telemetry.recordFreshContentLagIfNeeded(reason: "conversation_stream", workspaceId: resolveWorkspaceId())
         guard isSnapshot else { return }
         needsInitialScroll = true
@@ -1915,6 +1967,127 @@ final class ChatSessionManager {
             focusedStreamPort.fatalSetupError = true
             failFocusedStreamSetup(message: "Conversation stream unavailable: \(error)")
         }
+    }
+
+    // MARK: - Subagent live tails
+
+    /// Follow the newest children the replica's tool calls name, and stop following the rest.
+    private func followChildTails() {
+        if let own = conversationStream?.replica.conversationId { ownConversationId = own }
+        guard focusedStreamPort.conversationStreamLiveTailsAvailable, let conversationStream else { return }
+        let wanted = conversationStream.children.children(limit: Self.maxChildTails)
+        let wantedIds = Set(wanted.map(\.conversationId))
+        for (conversationId, child) in childStreams where !wantedIds.contains(conversationId) {
+            childStreams[conversationId] = nil
+            if let detach = child.driver.detachRequest() { sendChildTailMessage(detach) }
+        }
+        for reference in wanted {
+            if childStreams[reference.conversationId] != nil {
+                childStreams[reference.conversationId]?.reference = reference
+            } else if !refusedChildTails.contains(reference.conversationId) {
+                let driver = ConversationStreamDriver(liveConversationId: reference.conversationId)
+                childStreams[reference.conversationId] = ChildStream(reference: reference, driver: driver)
+                sendChildTailAttach(driver)
+            }
+        }
+        publishChildTails()
+    }
+
+    private func applyChildTailFrame(_ frame: ConversationStreamServerMessage) {
+        guard let child = childStreams[frame.conversationId] else { return }
+        switch child.driver.receiveLive(frame) {
+        case .applyFailed(let error):
+            log.error("Subagent live tail frame did not apply for \(frame.conversationId): \(error, privacy: .public) \u{2014} attaching again")
+            sendChildTailAttach(child.driver, fresh: true)
+        case .applied, .deferred, .ignored:
+            break
+        }
+        scheduleChildTailPublish()
+    }
+
+    /// Every busy child streams up to ten frames a second, and each publication rebuilds the
+    /// timeline's rows: publish the tails at most every `childTailPublishInterval`, the first
+    /// change after a quiet interval at once.
+    private func scheduleChildTailPublish() {
+        guard childTailPublishTask == nil else { return }
+        let now = ContinuousClock.now
+        let due = lastChildTailPublish.map { $0 + Self.childTailPublishInterval } ?? now
+        guard due > now else {
+            publishChildTails()
+            return
+        }
+        childTailPublishTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(until: due, clock: .continuous)
+            guard let self, !Task.isCancelled else { return }
+            self.childTailPublishTask = nil
+            self.publishChildTails()
+        }
+    }
+
+    private func handleChildTailCommandOutcome(_ outcome: ConversationStreamDriver.CommandOutcome, conversationId: Int) {
+        switch outcome {
+        case .attached, .older, .superseded:
+            break
+        case .retryFreshAttach:
+            // `fresh` keeps the retry budget spent: a second refusal drops the tail.
+            if let child = childStreams[conversationId] { sendChildTailAttach(child.driver, fresh: true) }
+        case .attachFailed(let error):
+            // Only the tail is lost; the session's own stream is unaffected.
+            log.warning("Subagent live tail \(conversationId) refused: \(error, privacy: .public)")
+            childStreams[conversationId] = nil
+            refusedChildTails.insert(conversationId)
+            publishChildTails()
+        }
+    }
+
+    /// A live attach always snapshots; `fresh` only says whether it spends this socket's one
+    /// retry after a refusal.
+    private func sendChildTailAttach(_ driver: ConversationStreamDriver, fresh: Bool = false) {
+        sendChildTailMessage(driver.attachRequest(fresh: fresh).message)
+    }
+
+    private func sendChildTailMessage(_ message: ClientMessage) {
+        Task { @MainActor [weak self] in
+            do {
+                try await self?.focusedStreamPort.send(message)
+            } catch {
+                // The socket is gone; its next `connected` attaches again.
+                log.warning("Subagent live tail send failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    /// The busy children's tails, under the newest tool row that names each.
+    /// A busy child's row keeps the most lines it has shown, so it does not change height with
+    /// every frame; the reservation ends when the child goes idle.
+    private func publishChildTails() {
+        lastChildTailPublish = ContinuousClock.now
+        var next: [String: ConversationChildTail] = [:]
+        var reserved: [Int: Int] = [:]
+        for child in childStreams.values {
+            guard var tail = ConversationChildTail(reference: child.reference, tail: child.driver.liveTail) else { continue }
+            let id = child.reference.conversationId
+            reserved[id] = max(childTailLineReservations[id] ?? 0, tail.lines.count)
+            tail.reservedLines = reserved[id] ?? 0
+            next[child.reference.toolCallId] = tail
+        }
+        childTailLineReservations = reserved
+        if next != childTails {
+            childTails = next
+            _childTailPublicationsForTesting += 1
+        }
+    }
+
+    /// The session's own stream ended (history-only, or not durable), or the server cannot
+    /// stream live tails: stop following its children.
+    private func dropChildTails() {
+        for child in childStreams.values { child.driver.cancelPendingRequests() }
+        childStreams.removeAll()
+        refusedChildTails.removeAll()
+        childTailPublishTask?.cancel()
+        childTailPublishTask = nil
+        childTailLineReservations.removeAll()
+        if !childTails.isEmpty { childTails = [:] }
     }
 
     /// The replica's committed rows are the cached timeline of an attached session.

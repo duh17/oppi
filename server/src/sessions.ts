@@ -687,26 +687,49 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   }
 
   /**
-   * Attach a socket to the session's durable conversation stream. Sends the first frame
-   * before resolving; the returned function ends the stream. Fails for a session that is
-   * not bound to a durable conversation, or a request for another session or conversation.
+   * The conversation an `attach` on `session`'s socket streams: the session's own, or in `live`
+   * mode any conversation it owns, directly or through its children. Fails for a session that
+   * is not bound to a durable conversation, or a request for another session or for a
+   * conversation outside that subtree.
    */
-  async attachConversationStream(
+  async conversationStreamTarget(
     session: Session,
     request: ConversationStreamAttach,
-    send: (frame: ConversationStreamServerMessage) => void,
-  ): Promise<() => void> {
-    const conversationId = this.boundConversationId(session.id);
+  ): Promise<number> {
+    const bound = this.boundConversationId(session.id);
     const runtime = this.durableHarness;
-    if (conversationId === undefined || !runtime)
+    if (bound === undefined || !runtime)
       throw new Error("The conversation stream requires a durable session");
     if (request.sessionId !== undefined && request.sessionId !== session.id)
       throw new Error(`The conversation stream cannot target session ${request.sessionId}`);
-    if (request.conversationId !== undefined && request.conversationId !== conversationId)
-      throw new Error(`Conversation ${request.conversationId} is not this session's conversation`);
+    const target = (request.conversationId ?? bound) as ConversationId;
+    if (target === bound) return bound;
+    if (request.mode !== "live")
+      throw new Error(`Conversation ${target} is not this session's conversation`);
+    const harness = await runtime;
+    const host = await harness.openHost(requireDurableStoreId(session));
+    if (!(await harness.boundThreads?.ownsWithin(host, bound, target)))
+      throw new Error(`Conversation ${target} is not in this session's thread`);
+    return target;
+  }
+
+  /**
+   * Attach a socket to conversation `conversationId`, which `conversationStreamTarget` allowed
+   * for this request. Sends the first frame before resolving; the returned function ends the
+   * stream.
+   */
+  async attachConversationStream(
+    session: Session,
+    conversationId: number,
+    request: ConversationStreamAttach,
+    send: (frame: ConversationStreamServerMessage) => void,
+  ): Promise<() => void> {
+    const runtime = this.durableHarness;
+    if (!runtime) throw new Error("The conversation stream requires a durable session");
     const host = await (await runtime).openHost(requireDurableStoreId(session));
-    return host.transcript(conversationId, {
+    return host.transcript(conversationId as ConversationId, {
       renderers: this.mobileRenderers,
+      mode: request.mode ?? "full",
       ...(request.afterEntryId !== undefined ? { afterEntryId: request.afterEntryId } : {}),
       send,
     });

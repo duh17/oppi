@@ -274,6 +274,8 @@ final class ServerConnection {
     var durableSessionsAvailable: Bool { serverCapabilities?.durableSessions?.version ?? 0 >= 1 }
     /// The server replicates durable conversations on the focused socket (`capabilities.conversationStream`).
     var conversationStreamAvailable: Bool { serverCapabilities?.conversationStream?.version ?? 0 >= 1 }
+    /// v2: `attach { mode: live }` streams the live tails of a session's subagents on its socket.
+    var conversationStreamLiveTailsAvailable: Bool { serverCapabilities?.conversationStream?.version ?? 0 >= 2 }
     /// The server advertises experimental live H.264 (`capabilities.desktopLiveView`).
     var desktopLiveViewAvailable: Bool { serverCapabilities?.desktopLiveView?.version ?? 0 >= 1 }
     /// The server reads messages aloud (`capabilities.speech`, `POST /speech`).
@@ -3177,6 +3179,7 @@ final class ServerConnection {
         appEventStream: Bool = false,
         durableSessions: Bool = false,
         conversationStream: Bool = false,
+        conversationStreamVersion: Int = 1,
         desktopLiveView: Bool = false,
         speech: Bool = false,
         liveVoice: Bool = false,
@@ -3191,7 +3194,7 @@ final class ServerConnection {
             appEventStream: version(appEventStream),
             extensionNativeUI: nil,
             durableSessions: version(durableSessions),
-            conversationStream: version(conversationStream),
+            conversationStream: conversationStream ? .init(version: conversationStreamVersion) : nil,
             desktopLiveView: version(desktopLiveView),
             speech: version(speech),
             liveVoice: version(liveVoice),

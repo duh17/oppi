@@ -472,7 +472,8 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         // Create requests may ask for engine "durable" (experimental.serverDurable).
         durableSessions: ctx.sessions.durableSessionsAvailable() ? { version: 1 } : undefined,
         // Experimental: `attach` on a durable session's focused stream sends snapshot/update.
-        conversationStream: ctx.sessions.conversationStreamAvailable() ? { version: 1 } : undefined,
+        // v2: `attach { mode: "live" }` streams the live tails of its subagents, and `detach`.
+        conversationStream: ctx.sessions.conversationStreamAvailable() ? { version: 2 } : undefined,
         desktopLiveView: config.experimental?.desktopLiveView === true ? { version: 1 } : undefined,
         extensionNativeUI: {
           version: 1,

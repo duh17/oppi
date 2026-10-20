@@ -23,6 +23,8 @@ struct ChatTimelineConfiguration {
     var items: [ChatItem]
     var displayRows: [TimelineDisplayRow]
     var workLineByID: [String: QuietTimelineWorkLine]
+    /// The `.childTail` rows of `displayRows` by row id.
+    var childTailByID: [String: ConversationChildTail] = [:]
     /// Full timeline order used for absolute navigation ordinals. This is
     /// separate from `items`, which may only contain the rendered suffix.
     var fullTimelineItemIDs: [String]
@@ -542,6 +544,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     var currentItemByID: [String: ChatItem] = [:]
     var currentWorkLineByID: [String: QuietTimelineWorkLine] = [:]
     private var previousWorkLineByID: [String: QuietTimelineWorkLine] = [:]
+    var currentChildTailByID: [String: ConversationChildTail] = [:]
+    private var previousChildTailByID: [String: ConversationChildTail] = [:]
     private var workLineReplacementIDByPreviousID: [String: String] = [:]
     private var previousItemByID: [String: ChatItem] = [:]
     /// The arguments revision each running tool row was last configured with.
@@ -1021,6 +1025,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         )
         workLineByID = configuration.workLineByID
         currentWorkLineByID = configuration.workLineByID
+        currentChildTailByID = configuration.childTailByID
         streamingAssistantID = configuration.streamingAssistantID
         updateLiveTailItemIDs(in: collectionView, configuration: configuration)
         let expandedChanged = (reducer?.expandedItemIDs ?? [])
@@ -1133,6 +1138,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             && configuration.hiddenCount == previousHiddenCount
             && configuration.hasOlderServerPage == previousHasOlderServerPage
             && configuration.workLineByID == previousWorkLineByID
+            && configuration.childTailByID == previousChildTailByID
             && !appearanceChanged
             && configuration.extensionHiddenThinkingLabel == previousHiddenThinkingLabel
 
@@ -1391,6 +1397,12 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                 next: configuration.workLineByID
             )
         )
+        forceReconfigureIDs.append(
+            contentsOf: ChatTimelineApplyPlan.childTailReconfigureIDs(
+                previous: previousChildTailByID,
+                next: configuration.childTailByID
+            )
+        )
         if configuration.extensionHiddenThinkingLabel != previousHiddenThinkingLabel {
             forceReconfigureIDs.append(contentsOf: applyPlan.nextIDs.filter { id in
                 if case .thinking = applyPlan.nextItemByID[id] {
@@ -1416,6 +1428,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
 
         previousItemByID = applyPlan.nextItemByID
         previousWorkLineByID = applyPlan.nextWorkLineByID
+        previousChildTailByID = configuration.childTailByID
         previousStreamingAssistantID = configuration.streamingAssistantID
         previousHiddenCount = configuration.hiddenCount
             previousHasOlderServerPage = configuration.hasOlderServerPage

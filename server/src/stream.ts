@@ -12,6 +12,7 @@ import type { Storage } from "./storage.js";
 import type {
   ClientMessage,
   ConversationStreamAttach,
+  ConversationStreamDetach,
   ConversationStreamOlder,
   ConversationStreamServerMessage,
   ServerMessage,
@@ -38,6 +39,7 @@ import { admitSessionRoute } from "./session-route-scope.js";
 import {
   parseClientCommand,
   parseConversationStreamAttach,
+  parseConversationStreamDetach,
   parseConversationStreamOlder,
   type ClientCommandParseErrorCode,
 } from "./session-command-parse.js";
@@ -161,6 +163,7 @@ function parseIncomingJsonRecord(
 type IncomingSessionCommand =
   | { ok: true; message: ClientMessage }
   | { ok: true; message: ConversationStreamAttach }
+  | { ok: true; message: ConversationStreamDetach }
   | { ok: true; message: ConversationStreamOlder }
   | {
       ok: false;
@@ -179,6 +182,10 @@ function parseIncomingSessionCommand(data: RawData): IncomingSessionCommand {
   if (decoded.record.type === "attach") {
     const attach = parseConversationStreamAttach(decoded.record);
     return attach.ok ? attach : { ...attach, command: "attach", code: "invalid_field" };
+  }
+  if (decoded.record.type === "detach") {
+    const detach = parseConversationStreamDetach(decoded.record);
+    return detach.ok ? detach : { ...detach, command: "detach", code: "invalid_field" };
   }
   if (decoded.record.type === "older") {
     const older = parseConversationStreamOlder(decoded.record);
@@ -385,7 +392,12 @@ export class BoundSessionStreamMux {
     let heldToolCallId: string | undefined;
     let lastToolUpdateSentAt = 0;
     let queue: Promise<void> = Promise.resolve();
-    let stopConversationStream: (() => void) | undefined;
+    /** This socket's conversation streams by conversation id; `full` is the bound one's. */
+    const conversationStreams = new Map<number, { stop: () => void; full: boolean }>();
+    const stopConversationStream = (conversationId: number): void => {
+      conversationStreams.get(conversationId)?.stop();
+      conversationStreams.delete(conversationId);
+    };
 
     const cleanupBoundConnection = (code: number, reason?: Buffer): void => {
       if (connectionClosed) return;
@@ -400,8 +412,7 @@ export class BoundSessionStreamMux {
       startupRelay.unsubscribe?.();
       if (startupRelay.messageHandler) ws.off("message", startupRelay.messageHandler);
       liveConnectionCleanup.run?.();
-      stopConversationStream?.();
-      stopConversationStream = undefined;
+      for (const id of [...conversationStreams.keys()]) stopConversationStream(id);
       this.ctx.handleConnectionClosed?.(connId);
       stopPing();
       this.ctx.untrackConnection(ws);
@@ -789,15 +800,12 @@ export class BoundSessionStreamMux {
               sessionId: trace.sessionId ?? sessionId,
             });
 
-            if (msg.type === "attach") {
-              // One conversation stream per socket; a new attach replaces the previous one.
-              stopConversationStream?.();
-              stopConversationStream = undefined;
+            if (msg.type === "attach" || msg.type === "detach") {
               const reply = (success: boolean, error?: string): void => {
                 if (msg.requestId !== undefined) {
                   send({
                     type: "command_result",
-                    command: "attach",
+                    command: msg.type,
                     requestId: msg.requestId,
                     success,
                     ...(error ? { error } : {}),
@@ -807,11 +815,24 @@ export class BoundSessionStreamMux {
                   send({ type: "error", error, sessionId });
                 }
               };
+              if (msg.type === "detach") {
+                stopConversationStream(msg.conversationId);
+                reply(true);
+                return;
+              }
               const targetSession = this.ctx.storage.getSession(sessionId) ?? session;
               let stop: () => void;
+              let conversationId: number;
               try {
+                conversationId = await this.ctx.sessions.conversationStreamTarget(
+                  targetSession,
+                  msg,
+                );
+                // One stream per conversation; a new attach replaces it.
+                stopConversationStream(conversationId);
                 stop = await this.ctx.sessions.attachConversationStream(
                   targetSession,
+                  conversationId,
                   msg,
                   (frame) => send(frame, true),
                 );
@@ -823,7 +844,7 @@ export class BoundSessionStreamMux {
                 stop();
                 return;
               }
-              stopConversationStream = stop;
+              conversationStreams.set(conversationId, { stop, full: msg.mode !== "live" });
               reply(true);
               return;
             }
@@ -843,8 +864,8 @@ export class BoundSessionStreamMux {
                   send({ type: "error", error, sessionId });
                 }
               };
-              // Pages extend the replica this socket attached; without one there is none.
-              if (!stopConversationStream) {
+              // Pages extend the replica this socket attached in full; without one there is none.
+              if (![...conversationStreams.values()].some((stream) => stream.full)) {
                 reply(false, "Send attach before older");
                 return;
               }

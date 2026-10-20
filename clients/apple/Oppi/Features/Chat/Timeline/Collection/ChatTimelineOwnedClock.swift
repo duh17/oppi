@@ -156,6 +156,10 @@ extension ChatTimelineController {
             ownedClock.quietSettledEnds = nextSettled
         }
 
+        // Subagents' live tails go right after the row of the tool call that names each.
+        let childTails = config.sessionManager?.childTails ?? [:]
+        visibleRows = TimelineDisplayRow.insertingChildTails(childTails, into: visibleRows)
+
         let items = visibleRows.compactMap { row -> ChatItem? in
             if case .item(let item) = row { return item }
             return nil
@@ -169,6 +173,9 @@ extension ChatTimelineController {
         config.items = items
         config.displayRows = visibleRows
         config.workLineByID = workLineByID
+        config.childTailByID = Dictionary(uniqueKeysWithValues: visibleRows.compactMap { row in
+            if case .childTail(let tail) = row { (row.id, tail) } else { nil }
+        })
         config.fullTimelineItemIDs = projection.fullTimelineItemIDs
         config.hiddenCount = hiddenCount
         config.hasOlderServerPage = config.sessionManager?.hasOlderTracePage ?? config.hasOlderServerPage
@@ -243,6 +250,7 @@ extension ChatTimelineController {
             if let sessionManager = configuration?.sessionManager {
                 _ = sessionManager.needsInitialScroll
                 _ = sessionManager.hasOlderTracePage
+                _ = sessionManager.childTails
             }
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in

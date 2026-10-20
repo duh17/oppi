@@ -1186,9 +1186,12 @@ describe("server durable managed runtime", () => {
     await f.manager.startSession(f.session.id, f.workspace);
     const observed = observe(f.manager, f.session.id);
     const frames: string[] = [];
+    const session = f.storage.getSession(f.session.id)!;
+    const attach = { type: "attach" } as const;
     const stop = await f.manager.attachConversationStream(
-      f.storage.getSession(f.session.id)!,
-      {} as never,
+      session,
+      await f.manager.conversationStreamTarget(session, attach),
+      attach,
       (frame) => frames.push(JSON.stringify(frame)),
     );
     await answer(f, observed, "one");

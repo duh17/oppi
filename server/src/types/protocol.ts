@@ -862,10 +862,11 @@ export interface SessionEventsResponse {
   live: boolean;
 }
 
-// ── Durable conversation stream (experimental, capabilities.conversationStream v1) ──
+// ── Durable conversation stream (experimental, capabilities.conversationStream v2) ──
 //
 // A replica of one durable conversation's `{ entries, docs }` on the focused session
-// socket. Frames are sent only after the client sends `attach`; the event frames above
+// socket. Version 2 adds `attach { mode: "live" }` for the conversations the bound one owns
+// (its subagents' live tails, multiplexed by `conversationId`) and `detach`. Frames are sent only after the client sends `attach`; the event frames above
 // are unchanged. Frames carry no `seq`: the socket is ordered, and the resume cursor
 // across reconnects is the last entry id the client holds.
 
@@ -1002,15 +1003,39 @@ export type ConversationStreamServerMessage =
       hasOlder: boolean;
     };
 
-/** Client → server: start (or restart) the conversation stream on a focused session socket. */
+/**
+ * Client → server: start (or restart) a conversation stream on a focused session socket. A
+ * socket streams each conversation at most once; an attach replaces that conversation's stream.
+ */
 export interface ConversationStreamAttach {
   type: "attach";
-  /** Must be the bound session's conversation when present. */
+  /**
+   * Default: the bound session's conversation. In `live` mode it may name any conversation the
+   * bound one owns, directly or through its children (a subagent's).
+   */
   conversationId?: number;
   /** Must be the socket's bound session when present. */
   sessionId?: string;
-  /** Newest entry id the client holds; resumes with an `update` when still usable. */
+  /**
+   * `full` (default): entries and every client document; only for the bound conversation.
+   * `live`: the live tail only, the `pi.live` and `pi.inbox` documents and no entries; every
+   * frame is a snapshot with `entries: []`, `head: 0`, `hasOlder: false`, then updates of
+   * those documents.
+   */
+  mode?: "full" | "live";
+  /** `full` mode: newest entry id the client holds; resumes with an `update` when still usable. */
   afterEntryId?: number;
+  requestId?: string;
+}
+
+/**
+ * Client → server: end this socket's stream of a conversation, answered by
+ * `command_result { command: "detach" }` with a `requestId`. Detaching a conversation the socket
+ * does not stream succeeds.
+ */
+export interface ConversationStreamDetach {
+  type: "detach";
+  conversationId: number;
   requestId?: string;
 }
 

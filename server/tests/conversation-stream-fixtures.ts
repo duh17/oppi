@@ -2,16 +2,18 @@ import { fileURLToPath } from "node:url";
 import type {
   ConversationEntryView,
   ConversationStreamAttach,
+  ConversationStreamDetach,
   ConversationStreamOlder,
   ConversationStreamServerMessage,
 } from "../src/types.js";
 import { serializeProtocolFixture } from "./protocol-fixtures.js";
 
-// Experimental durable conversation stream (capabilities.conversationStream v1).
+// Experimental durable conversation stream (capabilities.conversationStream v2).
 // Kept apart from server-messages.json: those examples must all decode as known
 // focused-stream events in the Apple client, which reads this stream with its own models.
-// The server examples are one ordered sequence: the Apple replica test applies them in
-// this order and checks the result of every op kind.
+// The server examples of conversation 3 are one ordered sequence: the Apple replica test
+// applies them in this order and checks the result of every op kind. The `live_` examples are
+// a second sequence on the same socket: the live tail of conversation 5, a subagent of 3.
 
 export const CONVERSATION_STREAM_SNAPSHOT_FILE = fileURLToPath(
   new URL("../../protocol/conversation-stream.json", import.meta.url),
@@ -312,13 +314,54 @@ const CONVERSATION_STREAM_SERVER_MESSAGES = {
     entries: [userEntry, toolCallEntry, toolResultEntry],
     hasOlder: false,
   },
+  live_snapshot: {
+    type: "snapshot",
+    conversationId: 5,
+    head: 0,
+    hasOlder: false,
+    entries: [],
+    docs: {
+      "pi.live": {
+        run: { taskId: 40, inputs: [12] },
+        tools: [
+          {
+            callId: "call-7",
+            name: "bash",
+            taskId: 41,
+            status: "running",
+            output: "tick 1\n",
+          },
+        ],
+        toolCalls: {
+          "call-7": {
+            callSegments: [
+              { text: "$ ", style: "bold" },
+              { text: "npm test", style: "accent" },
+            ],
+            outputPresentation: { kind: "terminal" },
+          },
+        },
+      },
+      "pi.inbox": { items: [] },
+    },
+  },
+  live_update: {
+    type: "update",
+    conversationId: 5,
+    docs: { "pi.live": [["a", ["tools", 0, "output"], "tick 2\n"]] },
+  },
 } satisfies Record<string, ConversationStreamServerMessage>;
 
 const CONVERSATION_STREAM_CLIENT_MESSAGES = {
   attach: { type: "attach", requestId: "req-attach-1" },
   attach_resume: { type: "attach", conversationId: 3, afterEntryId: 11, requestId: "req-attach-2" },
   attach_by_session: { type: "attach", sessionId: "test-session-1" },
+  attach_live: { type: "attach", conversationId: 5, mode: "live", requestId: "req-attach-3" },
 } satisfies Record<string, ConversationStreamAttach>;
+
+const CONVERSATION_STREAM_DETACH_REQUESTS = {
+  detach: { type: "detach", conversationId: 5, requestId: "req-detach-1" },
+} satisfies Record<string, ConversationStreamDetach>;
 
 const CONVERSATION_STREAM_OLDER_REQUESTS = {
   older: { type: "older", beforeEntryId: 11, limit: 100, requestId: "req-older-1" },
@@ -335,6 +378,7 @@ export function buildConversationStreamMessages(): Record<string, unknown> {
     ...Object.fromEntries(
       Object.entries({
         ...CONVERSATION_STREAM_CLIENT_MESSAGES,
+        ...CONVERSATION_STREAM_DETACH_REQUESTS,
         ...CONVERSATION_STREAM_OLDER_REQUESTS,
       }).map(([key, value]) => [`client.${key}`, value]),
     ),

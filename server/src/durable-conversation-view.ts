@@ -38,6 +38,8 @@ import { sanitizeToolResultDetails } from "./visual-schema.js";
 export interface ClientDoc<T extends JsonObject> {
   readonly doc: ConversationDocToken<T>;
   readonly client: true;
+  /** Part of the live tail: also sent to a `live` mode attach, which gets no entries. */
+  readonly live?: true;
   readonly view?: (value: T, tools: ToolPresenter) => object;
 }
 
@@ -51,6 +53,7 @@ export interface ToolPresenter {
 /** A client document with its value type erased, for iteration. */
 export interface ClientDocSpec {
   readonly kind: string;
+  readonly live: boolean;
   readonly doc: ConversationDocToken<JsonObject>;
   project(value: JsonObject, tools: ToolPresenter): JsonObject;
 }
@@ -59,6 +62,7 @@ function clientDoc<T extends JsonObject>(spec: ClientDoc<T>): ClientDocSpec {
   const view = spec.view;
   return {
     kind: spec.doc.definition.kind,
+    live: spec.live === true,
     doc: spec.doc as unknown as ConversationDocToken<JsonObject>,
     project: (value, tools) => (view ? view(value as T, tools) : value) as JsonObject,
   };
@@ -69,8 +73,8 @@ function clientDoc<T extends JsonObject>(spec: ClientDoc<T>): ClientDocSpec {
  * private), then extension documents that declare themselves client-visible.
  */
 export const CONVERSATION_CLIENT_DOCS: readonly ClientDocSpec[] = [
-  clientDoc({ doc: LiveDoc, client: true, view: liveView }),
-  clientDoc({ doc: InboxDoc, client: true }),
+  clientDoc({ doc: LiveDoc, client: true, live: true, view: liveView }),
+  clientDoc({ doc: InboxDoc, client: true, live: true }),
   clientDoc({ doc: AgentDoc, client: true }),
   clientDoc({ doc: UsageDoc, client: true }),
   clientDoc(DurableUIClientDoc),

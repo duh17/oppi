@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Experimental durable conversation stream frames — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 16
+    "messageCount": 20
   },
   "messages": {
     "server.snapshot": {
@@ -662,6 +662,69 @@
       ],
       "hasOlder": false
     },
+    "server.live_snapshot": {
+      "type": "snapshot",
+      "conversationId": 5,
+      "head": 0,
+      "hasOlder": false,
+      "entries": [],
+      "docs": {
+        "pi.live": {
+          "run": {
+            "taskId": 40,
+            "inputs": [
+              12
+            ]
+          },
+          "tools": [
+            {
+              "callId": "call-7",
+              "name": "bash",
+              "taskId": 41,
+              "status": "running",
+              "output": "tick 1\n"
+            }
+          ],
+          "toolCalls": {
+            "call-7": {
+              "callSegments": [
+                {
+                  "text": "$ ",
+                  "style": "bold"
+                },
+                {
+                  "text": "npm test",
+                  "style": "accent"
+                }
+              ],
+              "outputPresentation": {
+                "kind": "terminal"
+              }
+            }
+          }
+        },
+        "pi.inbox": {
+          "items": []
+        }
+      }
+    },
+    "server.live_update": {
+      "type": "update",
+      "conversationId": 5,
+      "docs": {
+        "pi.live": [
+          [
+            "a",
+            [
+              "tools",
+              0,
+              "output"
+            ],
+            "tick 2\n"
+          ]
+        ]
+      }
+    },
     "client.attach": {
       "type": "attach",
       "requestId": "req-attach-1"
@@ -675,6 +738,17 @@
     "client.attach_by_session": {
       "type": "attach",
       "sessionId": "test-session-1"
+    },
+    "client.attach_live": {
+      "type": "attach",
+      "conversationId": 5,
+      "mode": "live",
+      "requestId": "req-attach-3"
+    },
+    "client.detach": {
+      "type": "detach",
+      "conversationId": 5,
+      "requestId": "req-detach-1"
     },
     "client.older": {
       "type": "older",
