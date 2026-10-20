@@ -167,7 +167,7 @@ const CONVERSATION_STREAM_SERVER_MESSAGES = {
           },
         },
       },
-      "pi.inbox": { items: [] },
+      "pi.inbox": { steering: [], followUp: [] },
       "pi.agent": {
         model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
         thinkingLevel: "medium",
@@ -255,21 +255,37 @@ const CONVERSATION_STREAM_SERVER_MESSAGES = {
     type: "update",
     conversationId: 3,
     docs: {
+      // The client view of `pi.inbox`: queue items, not model content.
       "pi.inbox": [
+        ["p", ["steering"], 0, 0, [{ id: "32", message: "second", createdAt: 1791650004000 }]],
         [
           "p",
-          ["items"],
+          ["followUp"],
           0,
           0,
           [
-            { id: 31, mode: "followUp", content: "first" },
-            { id: 32, mode: "steer", content: "second" },
-            { id: 33, mode: "followUp", content: "third" },
+            { id: "31", message: "first", createdAt: 1791650003000 },
+            {
+              id: "33",
+              message: "third",
+              attachments: [
+                {
+                  type: "attachment",
+                  id: "att-1",
+                  source: "upload",
+                  name: "notes.txt",
+                  mimeType: "text/plain",
+                  sizeBytes: 12,
+                },
+              ],
+              createdAt: 1791650005000,
+            },
+            { id: "34", message: "fourth", createdAt: 0 },
           ],
         ],
-        ["m", ["items"], [1, 0, 2]],
-        ["d", ["items", 2]],
-        ["s", ["items", 1, "content"], "first, edited"],
+        ["m", ["followUp"], [1, 0, 2]],
+        ["d", ["followUp", 2]],
+        ["s", ["followUp", 1, "message"], "first, edited"],
       ],
     },
   },
@@ -289,7 +305,7 @@ const CONVERSATION_STREAM_SERVER_MESSAGES = {
     entries: [cardEntry],
     docs: {
       "pi.live": [["r", {}]],
-      "pi.inbox": [["r", { items: [] }]],
+      "pi.inbox": [["r", { steering: [], followUp: [] }]],
       "pi.agent": [["r", { model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } }]],
       "pi.usage": [["r", { models: {} }]],
       "oppi.extension-ui": null,

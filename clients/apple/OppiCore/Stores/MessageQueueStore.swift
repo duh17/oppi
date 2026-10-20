@@ -23,8 +23,22 @@ struct MessageQueueStoreTelemetry: Sendable {
 
 @MainActor @Observable
 final class MessageQueueStore {
+    /// A session whose queue is its conversation replica's `pi.inbox`.
+    private struct ConversationQueue {
+        /// The replica's queue as last applied.
+        var server = MessageQueueState.empty
+        /// Optimistic items whose send the server acknowledged. Every frame after the
+        /// acknowledgement reflects the input, queued or placed, so the next one drops them.
+        var delivered: Set<String> = []
+    }
+
     private let telemetry: MessageQueueStoreTelemetry
     private(set) var queuesBySessionId: [String: MessageQueueState] = [:]
+    @ObservationIgnored private var conversationQueues: [String: ConversationQueue] = [:]
+    /// Ids of the items `enqueueOptimisticItem` added that no server queue has replaced yet.
+    /// A replica session keeps exactly these as pending; anything else in the store came from
+    /// a server and the replica now says what the server holds.
+    @ObservationIgnored private var optimisticIDs: [String: Set<String>] = [:]
 
     init(telemetry: MessageQueueStoreTelemetry = .none) {
         self.telemetry = telemetry
@@ -35,7 +49,56 @@ final class MessageQueueStore {
         return queuesBySessionId[sessionId] ?? .empty
     }
 
+    /// Whether `sessionId`'s queue comes from its conversation replica, not `queue_state`.
+    func isConversationQueue(_ sessionId: String) -> Bool {
+        conversationQueues[sessionId] != nil
+    }
+
+    /// The queue of an attached durable session after a replica frame: the replica's items,
+    /// then the optimistic items still waiting for their send. Takes the session over from
+    /// `queue_state` until `endConversationQueue`; items a `get_queue` answer put in the store
+    /// before that are the server's, and the replica replaces them.
+    func applyConversationQueue(_ server: MessageQueueState, for sessionId: String) {
+        var replica = conversationQueues[sessionId] ?? ConversationQueue()
+        let current = queuesBySessionId[sessionId] ?? .empty
+        let optimistic = optimisticIDs[sessionId] ?? []
+        func pending(_ items: [MessageQueueItem]) -> [MessageQueueItem] {
+            items.filter { optimistic.contains($0.id) && !replica.delivered.contains($0.id) }
+        }
+        let next = MessageQueueState(
+            version: current.version,
+            steering: server.steering + pending(current.steering),
+            followUp: server.followUp + pending(current.followUp)
+        )
+        setOptimisticIDs(Set((pending(current.steering) + pending(current.followUp)).map(\.id)), for: sessionId)
+        replica.server = server
+        replica.delivered.removeAll()
+        conversationQueues[sessionId] = replica
+        if queuesBySessionId[sessionId] != next { queuesBySessionId[sessionId] = next }
+    }
+
+    /// `queue_state` owns the session's queue again.
+    func endConversationQueue(for sessionId: String) {
+        conversationQueues.removeValue(forKey: sessionId)
+    }
+
+    /// The server acknowledged the send of optimistic item `id`. A replica session drops it
+    /// now if the replica already shows its input, else at the next frame; a classic
+    /// session's next `queue_state` replaces it.
+    func optimisticItemDelivered(_ id: String, kind: MessageQueueKind, message: String, for sessionId: String) {
+        guard var replica = conversationQueues[sessionId] else { return }
+        let shown = kind == .steer ? replica.server.steering : replica.server.followUp
+        if shown.contains(where: { $0.message == message }) {
+            removeQueuedItem(for: sessionId, kind: kind, id: id, messageFallback: message)
+        } else {
+            replica.delivered.insert(id)
+            conversationQueues[sessionId] = replica
+        }
+    }
+
     func apply(_ state: MessageQueueState, for sessionId: String) {
+        // The replica's `pi.inbox` is the queue; a `get_queue` answer does not replace it.
+        guard !isConversationQueue(sessionId) else { return }
         if let current = queuesBySessionId[sessionId], state.version < current.version {
             recordQueueEventMetric(
                 .staleDrop,
@@ -52,10 +115,27 @@ final class MessageQueueStore {
         queuesBySessionId[sessionId] = state.preservingLocalMedia(
             from: queuesBySessionId[sessionId]
         )
+        // The server's queue replaces the optimistic items; an id it kept is the server's now.
+        setOptimisticIDs([], for: sessionId)
     }
 
+    private func setOptimisticIDs(_ ids: Set<String>, for sessionId: String) {
+        if ids.isEmpty {
+            optimisticIDs.removeValue(forKey: sessionId)
+        } else {
+            optimisticIDs[sessionId] = ids
+        }
+    }
+
+    /// Drops the session's queue (a stop, an end). A replica session keeps what `pi.inbox`
+    /// holds, since the server, not the stop, decides which inputs stay queued.
     func clear(sessionId: String) {
-        queuesBySessionId.removeValue(forKey: sessionId)
+        setOptimisticIDs([], for: sessionId)
+        if let replica = conversationQueues[sessionId] {
+            queuesBySessionId[sessionId] = replica.server
+        } else {
+            queuesBySessionId.removeValue(forKey: sessionId)
+        }
     }
 
     @discardableResult
@@ -84,6 +164,7 @@ final class MessageQueueStore {
         }
 
         queuesBySessionId[sessionId] = state
+        optimisticIDs[sessionId, default: []].insert(id)
         return item
     }
 
@@ -93,6 +174,7 @@ final class MessageQueueStore {
         id: String,
         messageFallback: String
     ) {
+        optimisticIDs[sessionId]?.remove(id)
         guard var state = queuesBySessionId[sessionId] else { return }
 
         let removed: Bool
@@ -114,6 +196,7 @@ final class MessageQueueStore {
         item: MessageQueueItem,
         queueVersion: Int
     ) {
+        guard !isConversationQueue(sessionId) else { return }
         var state = queuesBySessionId[sessionId] ?? .empty
         guard queueVersion >= state.version else {
             recordQueueEventMetric(

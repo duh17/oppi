@@ -223,6 +223,11 @@ extension ChatSessionFocusedStreamPort {
     var conversationStreamLiveTailsAvailable: Bool { false }
 }
 
+extension ChatSessionEffectsStatePort {
+    /// Mac does not attach yet, so it has no replica queue.
+    func applyConversationQueue(_ queue: MessageQueueState?, sessionId: String) {}
+}
+
 /// Shared session state and outward effects produced by the chat runtime.
 ///
 /// iOS implements this port with its stores and UI/device services. The shared
@@ -250,6 +255,9 @@ protocol ChatSessionEffectsStatePort: AnyObject {
     )
     func handleAudioStream(_ stream: AudioStreamMessage, sessionId: String)
     func applyVoiceReplyModeDetails(_ details: JSONValue?, sessionId: String)
+    /// An attached durable session's queue: `pi.inbox` from its conversation replica, after
+    /// every applied frame. Nil hands the session's queue back to `queue_state`.
+    func applyConversationQueue(_ queue: MessageQueueState?, sessionId: String)
     func handleCommandResult(
         command: String,
         requestId: String?,

@@ -294,6 +294,17 @@ extension E2ETestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(0.2))
     }
 
+    /// Closes the session's focused sockets on the server, as a dropped connection would.
+    /// Returns how many it closed.
+    @discardableResult
+    func dropE2EHarnessSessionStreams(sessionId: String) throws -> Int {
+        let response = try e2eLabAPIJSON(
+            method: "POST",
+            path: "/e2e/ui/sessions/\(sessionId)/disconnect"
+        )
+        return try XCTUnwrap(response["closed"] as? Int, "Disconnect response missing count")
+    }
+
     func e2eHarnessSubscriberCount(sessionId: String) throws -> Int {
         let response = try e2eLabAPIJSON(
             method: "GET",

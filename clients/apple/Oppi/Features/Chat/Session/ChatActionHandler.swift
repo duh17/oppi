@@ -190,8 +190,16 @@ final class ChatActionHandler {
                     }
                     self.clearUnconfirmedTurn(clientTurnId: queueTurnId)
                     onSendSucceeded?()
-                    Task { @MainActor in
-                        try? await connection.requestMessageQueue(sessionIdOverride: sessionId)
+                    let queueStore = connection.messageQueueStore
+                    if queueStore.isConversationQueue(sessionId) {
+                        // The replica's `pi.inbox` shows the input; no `get_queue` needed.
+                        queueStore.optimisticItemDelivered(
+                            optimisticQueueItem.id, kind: queuedKind, message: trimmed, for: sessionId
+                        )
+                    } else {
+                        Task { @MainActor in
+                            try? await connection.requestMessageQueue(sessionIdOverride: sessionId)
+                        }
                     }
                 } catch {
                     if self.wasDeliveredBeforeChatLeft(error) {

@@ -520,6 +520,64 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
     await expectConverged(f, client);
   });
 
+  it("shows the busy run and its queued inputs as the queue does, without generated inputs", async () => {
+    const f = await fixture(
+      [
+        fauxAssistantMessage(LONG_ANSWER),
+        fauxAssistantMessage("steered"),
+        fauxAssistantMessage("followed"),
+        fauxAssistantMessage("job"),
+      ],
+      { slow: true },
+    );
+    const id = f.conversation.id;
+    const client = await attach(f);
+    expect(client.docs["pi.inbox"]).toEqual({ steering: [], followUp: [] });
+    // A background job's input: card metadata names its request.
+    await f.conversation.commit(async (tx) => {
+      const cards = await tx.doc(DurableInputCards, id);
+      cards.requests["job-1"] = { title: "Background job 1", at: 1 };
+    }, context);
+    await f.conversation.submit({ type: "input", content: "go" }, context);
+    await vi.waitFor(() => expect(client.live()?.run).toBeDefined());
+
+    const steer = await f.conversation.submit(
+      {
+        type: "input",
+        content: [
+          { type: "text", text: "look " },
+          { type: "text", text: "here" },
+        ],
+        whenBusy: "steer",
+      },
+      context,
+    );
+    const followUp = await f.conversation.submit(
+      { type: "input", content: "then this", whenBusy: "followUp" },
+      context,
+    );
+    await f.conversation.submit(
+      { type: "input", content: "raw job output", whenBusy: "followUp", requestId: "job-1" },
+      context,
+    );
+    // Queue items, not inbox items: no model content, and the job's input is not the user's.
+    await vi.waitFor(() =>
+      expect(client.docs["pi.inbox"]).toEqual({
+        steering: [{ id: String(steer.id), message: "look here", createdAt: 0 }],
+        followUp: [{ id: String(followUp.id), message: "then this", createdAt: 0 }],
+      }),
+    );
+    expect(client.live()?.run).toBeDefined();
+
+    await f.conversation.waitForIdle(context);
+    await settle();
+    expect(client.docs["pi.inbox"]).toEqual({ steering: [], followUp: [] });
+    expect(client.live()?.run).toBeUndefined();
+    // Queued or placed, the job's raw input never reached the client.
+    expect(JSON.stringify(client.frames)).not.toContain("raw job output");
+    await expectConverged(f, client);
+  });
+
   it("ends the room instead of sending undecided presentation when a pass fails", async () => {
     const f = await fixture([fauxAssistantMessage("ack")]);
     const id = f.conversation.id;

@@ -14,26 +14,34 @@
  * recovered partials. Both depend on state outside the entry (input-card receipts, task
  * records), so the room decides them in asynchronous passes with the trace's own helpers
  * and holds frames while a pass runs. A presentation that changes after an entry was
- * sent goes out again as an upsert of that entry.
+ * sent goes out again as an upsert of that entry. The same passes decide how `pi.inbox`
+ * shows each queued input (its stored display, or hidden when generated).
+ *
+ * An attached socket gets no classic event that the entries and documents restate
+ * (`restatedByConversationStream` in `stream.ts`).
  */
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { diffRevisions } from "@earendil-works/chord/delta";
-import type {
-  CommitPublication,
-  Conversation,
-  ConversationId,
-  EntryId,
-  EntryRecord,
-  Harness,
-  JsonObject,
+import {
+  InboxDoc,
+  type CommitPublication,
+  type Conversation,
+  type ConversationId,
+  type EntryId,
+  type EntryRecord,
+  type Harness,
+  type InboxState,
+  type JsonObject,
 } from "@earendil-works/pi-durable";
 import { DurableInputCards } from "../extensions/durable/durable-ui.js";
+import { readQueuedInput, type QueuedInput } from "./durable-agent-controller.js";
 import {
   CONVERSATION_CLIENT_DOCS,
   type ClientDocSpec,
   projectEntry,
   renderToolCall,
   toolCallsOf,
+  type DocPresenter,
   type ToolPresenter,
 } from "./durable-conversation-view.js";
 import { isAbortedAttempt, isRecoveredPartial } from "./durable-history.js";
@@ -47,6 +55,7 @@ import type {
   ConversationEntryView,
   ConversationStreamServerMessage,
   ConversationToolCallView,
+  MessageQueueItem,
 } from "./types.js";
 
 const log = createLogger({ base: { component: "durable-conversation-stream" } });
@@ -56,6 +65,7 @@ export const CONVERSATION_FRAME_INTERVAL_MS = 100;
 
 const CLIENT_DOC_KINDS = new Set(CONVERSATION_CLIENT_DOCS.map((spec) => spec.kind));
 const INPUT_CARDS_KIND = DurableInputCards.definition.kind;
+const INBOX_KIND = InboxDoc.definition.kind;
 
 /** `older` pages: visible entries per request by default, and at most. */
 export const CONVERSATION_OLDER_LIMIT = 100;
@@ -89,7 +99,7 @@ function sameCard(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-class ConversationRoom implements ToolPresenter {
+class ConversationRoom implements DocPresenter {
   readonly subscribers = new Set<ConversationStreamSubscription>();
   closed = false;
   /** Active entries in display order: the head entry first, when there is one. */
@@ -115,6 +125,8 @@ class ConversationRoom implements ToolPresenter {
   private readonly inputCards = new Map<number, ConversationEntryCard>();
   /** Active entries the trace hides. */
   private readonly hidden = new Set<number>();
+  /** How the queue shows each queued user input in `pi.inbox`; generated inputs are absent. */
+  private readonly queued = new Map<number, MessageQueueItem>();
   /** Revision of each entry's latest presentation change. */
   private readonly revisions = new Map<number, number>();
   /** Increases with every presentation change. */
@@ -181,7 +193,7 @@ class ConversationRoom implements ToolPresenter {
       );
       this.hasOlder ||= older.items.length > 0;
     }
-    await this.presentPass(this.entries.filter(isUserEntry), true);
+    await this.presentPass(this.entries.filter(isUserEntry), true, true);
     // Replaying commits the read already saw is idempotent: entries are keyed by id,
     // head moves re-select the same suffix, and each document ends at its newest value.
     const pending = this.pending ?? [];
@@ -201,10 +213,10 @@ class ConversationRoom implements ToolPresenter {
   }
 
   /** Queue a presentation pass; subscribers flush when the last one ends. */
-  private present(users: EntryRecord[], partials: boolean): void {
+  private present(users: EntryRecord[], partials: boolean, inbox: boolean): void {
     this.passes += 1;
     this.passChain = this.passChain
-      .then(() => this.presentPass(users, partials))
+      .then(() => this.presentPass(users, partials, inbox))
       .catch((error: unknown) => {
         // A Harness that closes mid-pass rejects its reads; the room closes with it.
         if (this.closed) return;
@@ -225,10 +237,15 @@ class ConversationRoom implements ToolPresenter {
   }
 
   /**
-   * Decide input cards for `users` and hiding for every active attempt, with the helpers
-   * trace history uses (`readDurableInputCards`, `isRecoveredPartial`).
+   * Decide input cards for `users`, hiding for every active attempt, and with `inbox` how
+   * the queue shows each queued input, with the helpers trace history and `get_queue` use
+   * (`readDurableInputCards`, `isRecoveredPartial`, `readQueuedInput`).
    */
-  private async presentPass(users: readonly EntryRecord[], partials: boolean): Promise<void> {
+  private async presentPass(
+    users: readonly EntryRecord[],
+    partials: boolean,
+    inbox: boolean,
+  ): Promise<void> {
     const targets = users.filter((entry) => this.ids.has(entry.id));
     if (targets.length) {
       const cards = await readDurableInputCards(
@@ -239,11 +256,43 @@ class ConversationRoom implements ToolPresenter {
         if (this.ids.has(entry.id))
           this.setInputCard(entry.id, cards.entries.get(entry.id as EntryId));
     }
+    if (inbox) await this.presentQueue();
     if (!partials) return;
     for (const entry of [...this.attempts.values()]) {
       const hidden = await isRecoveredPartial(entry, this.harness, this.entries);
       if (this.attempts.has(entry.id)) this.setHidden(entry.id, hidden);
     }
+  }
+
+  /**
+   * The queue items of the inputs `pi.inbox` holds now. A generated input (an input-card
+   * receipt) is left out, as `get_queue` leaves it out; its card metadata can land after the
+   * input, so every pass checks every queued input again. A display never changes once
+   * stored, so each input's item is read once.
+   */
+  private async presentQueue(): Promise<void> {
+    const items = (this.committed.get(INBOX_KIND) as InboxState | undefined)?.items ?? [];
+    const inputs = items.filter((item): item is QueuedInput => item.mode !== "write");
+    const generated = inputs.length
+      ? (await readDurableInputCards(this.harness, [this.conversationId])).submissions
+      : new Set<number>();
+    const shown = new Map<number, MessageQueueItem>();
+    for (const input of inputs) {
+      if (generated.has(input.id)) continue;
+      shown.set(
+        input.id,
+        this.queued.get(input.id) ??
+          (await readQueuedInput(this.harness, this.conversationId, input)),
+      );
+    }
+    // Inputs that arrived during the reads are decided by the pass their commit queued.
+    this.queued.clear();
+    for (const [id, item] of shown) this.queued.set(id, item);
+    if (this.committed.has(INBOX_KIND)) this.dirty.add(INBOX_KIND);
+  }
+
+  queuedInput(id: number): MessageQueueItem | undefined {
+    return this.queued.get(id);
   }
 
   private setInputCard(id: number, card: ConversationEntryCard | undefined): void {
@@ -294,6 +343,7 @@ class ConversationRoom implements ToolPresenter {
   private apply(publication: CommitPublication): boolean {
     let changed = false;
     let cardsChanged = false;
+    let inboxChanged = false;
     let attemptTaskChanged = false;
     const entries: EntryRecord[] = [];
     for (const change of publication.changes) {
@@ -319,6 +369,7 @@ class ConversationRoom implements ToolPresenter {
         continue;
       }
       if (!CLIENT_DOC_KINDS.has(change.record.kind)) continue;
+      if (change.record.kind === INBOX_KIND) inboxChanged = true;
       if (change.value) this.setDoc(change.record.kind, change.value);
       else {
         this.committed.delete(change.record.kind);
@@ -329,11 +380,12 @@ class ConversationRoom implements ToolPresenter {
     }
     entries.sort((left, right) => left.id - right.id);
     const added = entries.filter((entry) => this.addEntry(entry));
-    if (added.length || cardsChanged || attemptTaskChanged) {
+    if (added.length || cardsChanged || inboxChanged || attemptTaskChanged) {
       // Card metadata is published before its input, but a late one still applies to it.
       const users = cardsChanged ? this.entries.filter(isUserEntry) : added.filter(isUserEntry);
       const partials = this.attempts.size > 0 && (added.length > 0 || attemptTaskChanged);
-      if (users.length || partials) this.present(users, partials);
+      const inbox = inboxChanged || cardsChanged;
+      if (users.length || partials || inbox) this.present(users, partials, inbox);
     }
     return changed || added.length > 0;
   }

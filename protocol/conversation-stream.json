@@ -143,7 +143,8 @@
           }
         },
         "pi.inbox": {
-          "items": []
+          "steering": [],
+          "followUp": []
         },
         "pi.agent": {
           "model": {
@@ -345,32 +346,57 @@
           [
             "p",
             [
-              "items"
+              "steering"
             ],
             0,
             0,
             [
               {
-                "id": 31,
-                "mode": "followUp",
-                "content": "first"
+                "id": "32",
+                "message": "second",
+                "createdAt": 1791650004000
+              }
+            ]
+          ],
+          [
+            "p",
+            [
+              "followUp"
+            ],
+            0,
+            0,
+            [
+              {
+                "id": "31",
+                "message": "first",
+                "createdAt": 1791650003000
               },
               {
-                "id": 32,
-                "mode": "steer",
-                "content": "second"
+                "id": "33",
+                "message": "third",
+                "attachments": [
+                  {
+                    "type": "attachment",
+                    "id": "att-1",
+                    "source": "upload",
+                    "name": "notes.txt",
+                    "mimeType": "text/plain",
+                    "sizeBytes": 12
+                  }
+                ],
+                "createdAt": 1791650005000
               },
               {
-                "id": 33,
-                "mode": "followUp",
-                "content": "third"
+                "id": "34",
+                "message": "fourth",
+                "createdAt": 0
               }
             ]
           ],
           [
             "m",
             [
-              "items"
+              "followUp"
             ],
             [
               1,
@@ -381,16 +407,16 @@
           [
             "d",
             [
-              "items",
+              "followUp",
               2
             ]
           ],
           [
             "s",
             [
-              "items",
+              "followUp",
               1,
-              "content"
+              "message"
             ],
             "first, edited"
           ]
@@ -458,7 +484,8 @@
           [
             "r",
             {
-              "items": []
+              "steering": [],
+              "followUp": []
             }
           ]
         ],

@@ -363,6 +363,15 @@ final class IOSChatSessionRuntimeAdapter:
         AppPreferences.Voice.applySessionReplyModeDetails(details, sessionId: sessionId)
     }
 
+    func applyConversationQueue(_ queue: MessageQueueState?, sessionId: String) {
+        guard let store = connection?.messageQueueStore else { return }
+        if let queue {
+            store.applyConversationQueue(queue, for: sessionId)
+        } else {
+            store.endConversationQueue(for: sessionId)
+        }
+    }
+
     func handleCommandResult(
         command: String,
         requestId: String?,

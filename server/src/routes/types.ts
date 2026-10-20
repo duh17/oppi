@@ -68,6 +68,11 @@ export interface RouteContext {
   /** Close upgraded sockets owned by a newly revoked device. */
   onDeviceRevoked?: (deviceId: string) => void;
   /**
+   * E2E UI harness: close a session's focused sockets like a dropped connection; resolves with
+   * the count once they have closed.
+   */
+  dropSessionStreams?: (sessionId: string) => Promise<number>;
+  /**
    * End-to-end-encrypted push (protocol/push/spec.md). In relay mode `/server/info` advertises
    * the primary relay so apps register; `/me/push-registration` stores their keys.
    */

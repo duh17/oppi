@@ -1,7 +1,8 @@
 /**
  * Client projection of a durable conversation for the conversation stream:
- * which documents clients replicate, and the tool presentation the server adds
- * to entries and `pi.live`. Pure functions over committed values; the room in
+ * which documents clients replicate, the tool presentation the server adds
+ * to entries and `pi.live`, and the queue `pi.inbox` shows. Pure functions over
+ * committed values and decided presentation; the room in
  * `durable-conversation-stream.ts` owns state and delivery.
  */
 import type { Message } from "@earendil-works/pi-ai";
@@ -12,6 +13,7 @@ import {
   UsageDoc,
   type ConversationDocToken,
   type EntryRecord,
+  type InboxState,
   type JsonObject,
   type LiveState,
   type ToolSlot,
@@ -25,8 +27,10 @@ import type {
   ConversationEntryCard,
   ConversationEntryView,
   ConversationMessageView,
+  ConversationQueueView,
   ConversationToolCallView,
   ConversationToolResultView,
+  MessageQueueItem,
 } from "./types.js";
 import { sanitizeToolResultDetails } from "./visual-schema.js";
 
@@ -40,7 +44,7 @@ export interface ClientDoc<T extends JsonObject> {
   readonly client: true;
   /** Part of the live tail: also sent to a `live` mode attach, which gets no entries. */
   readonly live?: true;
-  readonly view?: (value: T, tools: ToolPresenter) => object;
+  readonly view?: (value: T, presenter: DocPresenter) => object;
 }
 
 /** Tool presentation shared by entry views and the live view. */
@@ -50,12 +54,22 @@ export interface ToolPresenter {
   committedCall(callId: string): { name: string; args: unknown } | undefined;
 }
 
+/**
+ * Presentation a document view reads: tools, and how the queue shows each queued input.
+ * The room decides queued inputs in its presentation passes (`readQueuedInput`, input-card
+ * receipts), since both depend on state outside `pi.inbox`.
+ */
+export interface DocPresenter extends ToolPresenter {
+  /** The queue item for submission `id`; undefined for an extension-generated input. */
+  queuedInput(id: number): MessageQueueItem | undefined;
+}
+
 /** A client document with its value type erased, for iteration. */
 export interface ClientDocSpec {
   readonly kind: string;
   readonly live: boolean;
   readonly doc: ConversationDocToken<JsonObject>;
-  project(value: JsonObject, tools: ToolPresenter): JsonObject;
+  project(value: JsonObject, presenter: DocPresenter): JsonObject;
 }
 
 function clientDoc<T extends JsonObject>(spec: ClientDoc<T>): ClientDocSpec {
@@ -64,7 +78,7 @@ function clientDoc<T extends JsonObject>(spec: ClientDoc<T>): ClientDocSpec {
     kind: spec.doc.definition.kind,
     live: spec.live === true,
     doc: spec.doc as unknown as ConversationDocToken<JsonObject>,
-    project: (value, tools) => (view ? view(value as T, tools) : value) as JsonObject,
+    project: (value, presenter) => (view ? view(value as T, presenter) : value) as JsonObject,
   };
 }
 
@@ -74,7 +88,7 @@ function clientDoc<T extends JsonObject>(spec: ClientDoc<T>): ClientDocSpec {
  */
 export const CONVERSATION_CLIENT_DOCS: readonly ClientDocSpec[] = [
   clientDoc({ doc: LiveDoc, client: true, live: true, view: liveView }),
-  clientDoc({ doc: InboxDoc, client: true, live: true }),
+  clientDoc({ doc: InboxDoc, client: true, live: true, view: queueView }),
   clientDoc({ doc: AgentDoc, client: true }),
   clientDoc({ doc: UsageDoc, client: true }),
   clientDoc(DurableUIClientDoc),
@@ -257,6 +271,21 @@ export function projectEntry(
     if (card) view.card = card;
   }
   return view;
+}
+
+/**
+ * `pi.inbox` as the queue shows it: the queued user inputs the presenter decided, steers and
+ * follow-ups in inbox order. Writes and generated inputs stay out, and model content (image
+ * data included) never leaves the server.
+ */
+function queueView(value: InboxState, presenter: DocPresenter): ConversationQueueView {
+  const queue: ConversationQueueView = { steering: [], followUp: [] };
+  for (const item of value.items) {
+    if (item.mode === "write") continue;
+    const shown = presenter.queuedInput(item.id);
+    if (shown) queue[item.mode === "steer" ? "steering" : "followUp"].push(shown);
+  }
+  return queue;
 }
 
 /**

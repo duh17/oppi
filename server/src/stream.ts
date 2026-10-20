@@ -90,6 +90,39 @@ function isLiveVoiceFrame(msg: { type: string; command?: string }): boolean {
   );
 }
 
+/**
+ * Classic session events a socket attached to the durable conversation stream no longer
+ * gets, because its entries and documents restate them: streamed text and thinking, tool
+ * calls and output, committed messages, cards, compaction and retry status (`pi.live`), the
+ * queue (`pi.inbox`), and a notice restating a committed card (`entry:<id>`). Run
+ * boundaries, session state, stop feedback, errors, other notices, cache misses, extension
+ * UI, command results, and audio still go: no entry or document carries those effects to
+ * clients yet. Here rather than in `durable-conversation-stream.ts`, which loads lazily.
+ */
+function restatedByConversationStream(message: ServerMessage): boolean {
+  switch (message.type) {
+    case "text_delta":
+    case "thinking_delta":
+    case "message_end":
+    case "tool_start":
+    case "tool_update":
+    case "tool_output":
+    case "tool_end":
+    case "custom_card":
+    case "compaction_start":
+    case "compaction_end":
+    case "retry_start":
+    case "retry_end":
+    case "queue_state":
+    case "queue_item_started":
+      return true;
+    case "notice":
+      return message.id.startsWith("entry:");
+    default:
+      return false;
+  }
+}
+
 // ─── Keepalive ───
 
 /** Default server-side ping interval (seconds). */
@@ -261,6 +294,7 @@ export function startServerPing(
 export class BoundSessionStreamMux {
   private connectionSeq = 0;
   private liveSessionConnections = new Map<string, Set<(msg: ServerMessage) => void>>();
+  private liveSessionSockets = new Map<string, Set<WebSocket>>();
   private readonly connectionIds = new WeakMap<WebSocket, string>();
   private readonly lifecycle: SessionLifecycleService;
 
@@ -286,6 +320,29 @@ export class BoundSessionStreamMux {
   /** True while any client holds an open focused session stream. */
   hasLiveConnections(): boolean {
     return this.liveSessionConnections.size > 0;
+  }
+
+  /**
+   * E2E UI harness: close every focused socket of `sessionId` the way a dropped connection
+   * ends (1011, which clients reconnect after). Resolves with how many it closed once they
+   * have closed and released their session subscriptions, so a later subscriber is a new socket.
+   */
+  async dropSessionStreams(sessionId: string): Promise<number> {
+    const sockets = [...(this.liveSessionSockets.get(sessionId) ?? [])];
+    await Promise.all(
+      sockets.map(
+        (ws) =>
+          new Promise<void>((resolve) => {
+            if (ws.readyState === WebSocket.CLOSED) return resolve();
+            // Registered after the connection's own close handler, so cleanup has run.
+            ws.once("close", () => resolve());
+            ws.close(1011, "Session stream dropped");
+            // A peer that never answers the close frame is cut off.
+            setTimeout(() => ws.terminate(), 5_000).unref();
+          }),
+      ),
+    );
+    return sockets.length;
   }
 
   sendToSession(sessionId: string, msg: ServerMessage): number {
@@ -535,8 +592,16 @@ export class BoundSessionStreamMux {
 
     // A socket carrying a Live Voice call gets the call, not the session's traffic: that stays on
     // the chat socket, and its errors and command results are not the call's to act on.
+    // A socket that replicates its own conversation in full gets none of the events that
+    // conversation's entries and documents restate. Live tails of child conversations do not
+    // count: they restate nothing of this session's events.
+    const replicatesOwnConversation = (): boolean => {
+      for (const stream of conversationStreams.values()) if (stream.full) return true;
+      return false;
+    };
     const broadcastForSession = (msg: ServerMessage): void => {
       if (this.ctx.isLiveVoiceCallConnection?.(connId)) return;
+      if (restatedByConversationStream(msg) && replicatesOwnConversation()) return;
       sendForSession(msg);
     };
 
@@ -551,12 +616,21 @@ export class BoundSessionStreamMux {
       this.liveSessionConnections.set(sessionId, liveConnections);
     }
     liveConnections.add(broadcastForSession);
+    let liveSockets = this.liveSessionSockets.get(sessionId);
+    if (!liveSockets) {
+      liveSockets = new Set();
+      this.liveSessionSockets.set(sessionId, liveSockets);
+    }
+    liveSockets.add(ws);
     liveConnectionCleanup.run = () => {
       const connections = this.liveSessionConnections.get(sessionId);
       connections?.delete(broadcastForSession);
       if (connections?.size === 0) {
         this.liveSessionConnections.delete(sessionId);
       }
+      const sockets = this.liveSessionSockets.get(sessionId);
+      sockets?.delete(ws);
+      if (sockets?.size === 0) this.liveSessionSockets.delete(sessionId);
     };
 
     send(streamConnectedMessage(this.ctx, owner));
@@ -865,7 +939,7 @@ export class BoundSessionStreamMux {
                 }
               };
               // Pages extend the replica this socket attached in full; without one there is none.
-              if (![...conversationStreams.values()].some((stream) => stream.full)) {
+              if (!replicatesOwnConversation()) {
                 reply(false, "Send attach before older");
                 return;
               }

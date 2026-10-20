@@ -996,6 +996,7 @@ export class Server {
       piCliVersion: optionalPiCliVersion(Server.detectPiVersion(this.piExecutable)),
       serverUpdate: this.serverUpdate,
       onDeviceRevoked: (deviceId) => this.closeConnectionsForDevice(deviceId),
+      dropSessionStreams: (sessionId) => this.boundSessionStreamMux.dropSessionStreams(sessionId),
       push: {
         sender: this.push,
         serverPublicKey: this.identityPublicKey,

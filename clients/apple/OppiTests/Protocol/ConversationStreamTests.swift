@@ -92,10 +92,11 @@ struct ConversationStreamTests {
         #expect(doc("pi.live", "tools", 0, "output") == "src\n")
 
         try apply("update_queue")  // p, m, d on an array index, s inside an array
-        #expect(doc("pi.inbox", "items") == [
-            ["id": 32, "mode": "steer", "content": "second"],
-            ["id": 31, "mode": "followUp", "content": "first, edited"],
-        ])
+        #expect(doc("pi.inbox", "steering") == [["id": "32", "message": "second", "createdAt": 1_791_650_004_000]])
+        #expect(doc("pi.inbox", "followUp", 0, "id") == "33")
+        #expect(doc("pi.inbox", "followUp", 0, "attachments", 0, "name") == "notes.txt")
+        #expect(doc("pi.inbox", "followUp", 1) == ["id": "31", "message": "first, edited", "createdAt": 1_791_650_003_000])
+        #expect(doc("pi.inbox", "followUp")?.arrayValue?.count == 2)
 
         try apply("update_partial")
         #expect(replica.entries.map(\.id) == [8, 9, 10, 11, 13])
@@ -104,7 +105,7 @@ struct ConversationStreamTests {
 
         try apply("update_resume")  // r per document, null removes one; 12 goes before 13
         #expect(replica.entries.map(\.id) == [8, 9, 10, 11, 12, 13])
-        #expect(replica.docs["pi.inbox"] == ["items": []])
+        #expect(replica.docs["pi.inbox"] == ["steering": [], "followUp": []])
         #expect(replica.docs["oppi.extension-ui"] == nil)
         #expect(Set(replica.docs.keys) == ["pi.live", "pi.inbox", "pi.agent", "pi.usage"])
 

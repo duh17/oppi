@@ -431,8 +431,11 @@ final class ChatViewController: UIViewController {
         session?.displayTitle ?? "Session \(String(sessionId.prefix(8)))"
     }
 
+    /// An attached durable session is busy exactly while its replica holds `pi.live.run`;
+    /// others, and a durable session between sockets, read the session status.
     var isBusy: Bool {
-        session?.status == .busy || session?.status == .stopping
+        if let running = sessionManager.conversationStream?.isRunning { return running }
+        return session?.status == .busy || session?.status == .stopping
     }
 
     var isStopping: Bool {
@@ -1459,7 +1462,8 @@ final class ChatViewController: UIViewController {
             return
         }
 
-        guard newStatus == .busy else { return }
+        // An attached durable session's queue is its replica's `pi.inbox`.
+        guard newStatus == .busy, !connection.messageQueueStore.isConversationQueue(sessionId) else { return }
         let connection = connection
         let sessionId = sessionId
         Task {

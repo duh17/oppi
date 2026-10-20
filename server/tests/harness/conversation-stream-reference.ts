@@ -1,16 +1,17 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import type { ConversationId, Harness } from "@earendil-works/pi-durable";
+import { InboxDoc, type ConversationId, type Harness } from "@earendil-works/pi-durable";
+import { readQueuedInput } from "../../src/durable-agent-controller.js";
 import {
   CONVERSATION_CLIENT_DOCS,
   projectEntry,
   renderToolCall,
   toolCallsOf,
-  type ToolPresenter,
+  type DocPresenter,
 } from "../../src/durable-conversation-view.js";
 import { isRecoveredPartial } from "../../src/durable-history.js";
 import { readDurableInputCards } from "../../src/durable-input-cards.js";
 import type { MobileRendererRegistry } from "../../src/mobile-renderer.js";
-import type { ConversationEntryView } from "../../src/types.js";
+import type { ConversationEntryView, MessageQueueItem } from "../../src/types.js";
 
 /**
  * The replica's upsert rule: replace an entry it holds; place one it does not hold in id
@@ -74,9 +75,16 @@ export async function conversationReference(
       if (message.role === "assistant")
         for (const call of toolCallsOf(message))
           calls.set(call.id, { name: call.name, args: call.args });
-  const tools: ToolPresenter = {
+  // The queue as `get_queue` reads it: queued inputs without generated ones.
+  const generated = (await readDurableInputCards(harness, [conversationId])).submissions;
+  const queued = new Map<number, MessageQueueItem>();
+  for (const item of (await harness.snapshot(InboxDoc, conversationId, context))?.items ?? [])
+    if (item.mode !== "write" && !generated.has(item.id))
+      queued.set(item.id, await readQueuedInput(harness, conversationId, item));
+  const tools: DocPresenter = {
     call: (name, args) => renderToolCall(renderers, name, args),
     committedCall: (callId) => calls.get(callId),
+    queuedInput: (id) => queued.get(id),
   };
   const docs: Record<string, unknown> = {};
   for (const spec of CONVERSATION_CLIENT_DOCS) {

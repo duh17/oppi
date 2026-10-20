@@ -953,6 +953,16 @@ export interface ConversationEntryView {
   textOffset?: number;
 }
 
+/**
+ * The client projection of `pi.inbox`: the queued user inputs as the queue shows them
+ * (`readQueuedInput`), steers and follow-ups in inbox order. Writes and extension-generated
+ * inputs (input cards) stay on the server, and so does each input's model content.
+ */
+export interface ConversationQueueView {
+  steering: MessageQueueItem[];
+  followUp: MessageQueueItem[];
+}
+
 export type ConversationDocPath = ReadonlyArray<string | number>;
 
 /**

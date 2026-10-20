@@ -2157,19 +2157,16 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     // RPC results — model changes get a system event, others are silent
     private func handleCommandResult(command: String, success: Bool, error: String?) -> Bool {
-        if !success, let err = error {
-            items.append(.error(id: UUID().uuidString, message: "\(command) failed: \(UserFacingErrorText.normalize(err))"))
+        switch TimelineClientRow.commandResult(command: command, success: success, error: error) {
+        case .error(let message):
+            items.append(.error(id: UUID().uuidString, message: message))
             return true
-        }
-        if command == "set_model" || command == "cycle_model" {
-            items.append(.systemEvent(id: UUID().uuidString, message: String(localized: "Model changed")))
+        case .system(let message):
+            items.append(.systemEvent(id: UUID().uuidString, message: message))
             return true
+        case .notice, .cacheMiss, nil:
+            return false
         }
-        if command == "set_thinking_level" || command == "cycle_thinking_level" {
-            items.append(.systemEvent(id: UUID().uuidString, message: String(localized: "Thinking level changed")))
-            return true
-        }
-        return false
     }
 
     // MARK: - User Message (from local prompt)
@@ -2304,6 +2301,30 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         rebuildIndex()
         bumpRenderVersion()
         timelineMatchesTrace = false
+    }
+
+    // MARK: - Client Rows (attached durable sessions)
+
+    /// Show a row no conversation entry or document carries. The replica path calls this
+    /// directly, not through the coalescer; rebuilds from the replica keep these rows
+    /// (`clientOnlyRows`). A notice or cache miss with an id it already shows is updated in place.
+    func appendClientRow(_ row: TimelineClientRow) {
+        switch row {
+        case .notice(let id, let message):
+            guard upsertLiveWarningRow(.notice(id: id, message: message), id: id) else { return }
+        case .cacheMiss(let id, let message):
+            guard upsertLiveWarningRow(.cacheMiss(id: id, message: message), id: id) else { return }
+        case .error(let message):
+            let item = ChatItem.error(id: UUID().uuidString, message: message)
+            items.append(item)
+            indexAppend(item)
+        case .system(let message):
+            let item = ChatItem.systemEvent(id: UUID().uuidString, message: message)
+            items.append(item)
+            indexAppend(item)
+        }
+        bumpItemsMutationSeq()
+        bumpRenderVersion()
     }
 
     // MARK: - System Events (from local actions)
@@ -3249,5 +3270,27 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Output: compact Q/A markdown, or empty if all ignored.
     static func formatAskAnswers(details: JSONValue?) -> String {
         ToolCallFormatting.askAnswerSummary(details: details)
+    }
+}
+
+/// A timeline row only this client holds: no conversation entry or document carries it.
+/// An attached durable session shows these from classic frames and local actions with
+/// `TimelineReducer.appendClientRow`; text is ready to show.
+enum TimelineClientRow: Equatable, Sendable {
+    case notice(id: String, message: String)
+    case cacheMiss(id: String, message: String)
+    case error(String)
+    case system(String)
+
+    /// What a command result shows: a failure, or the change a model or thinking command made.
+    static func commandResult(command: String, success: Bool, error: String?) -> TimelineClientRow? {
+        if !success, let error {
+            return .error("\(command) failed: \(UserFacingErrorText.normalize(error))")
+        }
+        switch command {
+        case "set_model", "cycle_model": return .system(String(localized: "Model changed"))
+        case "set_thinking_level", "cycle_thinking_level": return .system(String(localized: "Thinking level changed"))
+        default: return nil
+        }
     }
 }

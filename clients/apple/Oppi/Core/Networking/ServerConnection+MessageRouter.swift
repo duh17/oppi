@@ -60,7 +60,7 @@ extension ServerConnection {
         case .agentSettled:
             silenceWatchdog.stop()
 
-        case .textDelta, .thinkingDelta, .toolStart, .toolOutput, .toolEnd, .customCard:
+        case .textDelta, .thinkingDelta, .toolStart, .toolOutput, .toolEnd, .customCard, .conversationStream:
             silenceWatchdog.recordEvent()
 
         case .error:

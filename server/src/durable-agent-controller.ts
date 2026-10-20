@@ -70,6 +70,36 @@ export async function readRequestDisplay(
   return metadata?.display ? (JSON.parse(metadata.display) as RequestDisplay) : undefined;
 }
 
+/** A queued user input: an inbox item other than a write. */
+export type QueuedInput = Exclude<InboxState["items"][number], { mode: "write" }>;
+
+/**
+ * How the queue shows a queued input: the display its prompt stored (an expanded Skill,
+ * attachments), else the text of its content. `get_queue` and the conversation stream's
+ * `pi.inbox` view both read it here.
+ */
+export async function readQueuedInput(
+  harness: Harness,
+  conversationId: ConversationId,
+  item: QueuedInput,
+): Promise<MessageQueueItem> {
+  const receipt = await harness.submission(item.id, BACKGROUND_CONTEXT);
+  const record = await receipt?.status(BACKGROUND_CONTEXT);
+  const display = record?.requestId
+    ? await readRequestDisplay(harness, conversationId, record.requestId)
+    : undefined;
+  const text =
+    typeof item.content === "string"
+      ? item.content
+      : item.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+  return {
+    id: String(item.id),
+    message: display?.message ?? text,
+    ...(display?.attachments?.length ? { attachments: display.attachments } : {}),
+    createdAt: display?.createdAt ?? 0,
+  };
+}
+
 export interface PromptOptions {
   /** Durable identity of this input: the same id with the same content is the same input. */
   requestId: string;
@@ -96,8 +126,6 @@ export interface QueuedInputs {
   steering: MessageQueueItem[];
   followUp: MessageQueueItem[];
 }
-
-type QueuedInput = Exclude<InboxState["items"][number], { mode: "write" }>;
 
 /**
  * Input and run control of one conversation. `SessionHost.controller` keeps one per open
@@ -274,22 +302,8 @@ export class DurableAgentController {
     return withdrawn;
   }
 
-  private async queueItem(item: QueuedInput): Promise<MessageQueueItem> {
-    const receipt = await this.harness.submission(item.id, BACKGROUND_CONTEXT);
-    const record = await receipt?.status(BACKGROUND_CONTEXT);
-    const display = record?.requestId
-      ? await readRequestDisplay(this.harness, this.conversation.id, record.requestId)
-      : undefined;
-    const text =
-      typeof item.content === "string"
-        ? item.content
-        : item.content.map((block) => (block.type === "text" ? block.text : "")).join("");
-    return {
-      id: String(item.id),
-      message: display?.message ?? text,
-      ...(display?.attachments?.length ? { attachments: display.attachments } : {}),
-      createdAt: display?.createdAt ?? 0,
-    };
+  private queueItem(item: QueuedInput): Promise<MessageQueueItem> {
+    return readQueuedInput(this.harness, this.conversation.id, item);
   }
 
   /**

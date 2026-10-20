@@ -100,7 +100,13 @@ final class ChatSessionRuntimeTelemetryTracker {
     }
 
     func completeTTFTIfNeeded(signal: ServerMessage) {
-        guard isTTFTCompletionSignal(signal), let context = pendingTTFTContext else { return }
+        guard isTTFTCompletionSignal(signal) else { return }
+        completeTTFT()
+    }
+
+    /// The first token arrived: a delta, or the answer in flight in `pi.live`.
+    func completeTTFT() {
+        guard let context = pendingTTFTContext else { return }
         pendingTTFTContext = nil
         effects.recordTelemetry(
             .timeToFirstToken(

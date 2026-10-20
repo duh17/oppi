@@ -144,6 +144,20 @@ export function createE2EUIHarnessRoutes(
       return true;
     }
 
+    // Drop the session's focused sockets mid-turn, as a lost connection would; the app
+    // reconnects and resumes on its own.
+    const disconnectMatch = path.match(/^\/e2e\/ui\/sessions\/([^/]+)\/disconnect$/);
+    if (disconnectMatch) {
+      if (method !== "POST") {
+        helpers.error(res, 405, "Method not allowed");
+        return true;
+      }
+      const sessionId = decodeURIComponent(disconnectMatch[1]);
+      const closed = (await ctx.dropSessionStreams?.(sessionId)) ?? 0;
+      helpers.json(res, { ok: true, sessionId, closed });
+      return true;
+    }
+
     const messageMatch = path.match(/^\/e2e\/ui\/sessions\/([^/]+)\/message$/);
     if (!messageMatch) {
       helpers.error(res, 404, "Not found");

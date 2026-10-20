@@ -767,6 +767,8 @@ final class ChatSessionManager {
         cancelPresentationReloadRetry()
         if let conversationStream {
             conversationStream.resync(reducer)
+            for row in pausedConversationRows { reducer.appendClientRow(row) }
+            pausedConversationRows.removeAll()
             coalescer.acknowledgePresentationTraceReload()
             return
         }
@@ -869,8 +871,7 @@ final class ChatSessionManager {
             == .refreshHistoryBeforeStreamDecision {
             transitionTo(.stopped(historyLoaded: false))
             // History-only: no socket to attach, so trace history owns the timeline.
-            conversationStream = nil
-            dropChildTails()
+            endConversationStream()
             log.warning("Session \(self.sessionId) is stopped — loading history only unless the server reports it active")
             scheduleHistoryReload(
                 generation: generation,
@@ -1107,6 +1108,10 @@ final class ChatSessionManager {
                     // A child tail detached while its frames were in flight.
                 } else {
                     applyConversationFrame(frame)
+                }
+                // Stream activity for the silence watchdog, which classic deltas fed.
+                if focusedStreamPort.isFocused(sessionId: sessionId) {
+                    effectsStatePort.handleActiveSessionUI(message, sessionId: sessionId, storeResult: .notHandled)
                 }
             }
             return
@@ -1452,6 +1457,10 @@ final class ChatSessionManager {
         resumeStreamingWaiters(with: .failure(CancellationError()))
         conversationStream?.cancelPendingRequests()
         dropChildTails()
+        // The replica stays for a later connect of this runtime; the queue it fed does not.
+        if conversationStream != nil {
+            effectsStatePort.applyConversationQueue(nil, sessionId: sessionId)
+        }
         cancelStateSync()
         // The only release: the claim lives as long as the view's runtime.
         releaseFocusClaim()
@@ -1468,15 +1477,12 @@ final class ChatSessionManager {
         _ message: ServerMessage,
         storeResult: ChatSessionStoreUpdateResult = .notHandled
     ) {
-        // An attached durable session's conversation comes from its replica. Its classic
-        // timeline events still arrive on the socket; only their other effects apply
-        // (session status, queue, extension UI, audio, voice settings, command results),
-        // plus stop feedback rows and the rows no entry or document carries.
-        let replicaOwnsTimeline = conversationStream != nil
-        if !replicaOwnsTimeline || Self.isClassicOnlyTimelineRow(message) {
-            for event in ServerMessageEffects.timelineEvents(for: message, sessionId: sessionId) {
-                coalescer.receive(event)
-            }
+        if conversationStream != nil {
+            routeToConversationTimeline(message)
+            return
+        }
+        for event in ServerMessageEffects.timelineEvents(for: message, sessionId: sessionId) {
+            coalescer.receive(event)
         }
 
         if let stopEffect = FocusedSessionStopTurnPolicy.timelineEffect(for: message) {
@@ -1486,7 +1492,7 @@ final class ChatSessionManager {
                 reducer.appendSystemEvent(message)
             case .confirmed(let message, let finalizeTerminalArtifacts):
                 coalescer.flushNow()
-                if finalizeTerminalArtifacts, !replicaOwnsTimeline {
+                if finalizeTerminalArtifacts {
                     reducer.finalizeTerminalArtifactsAsInterrupted()
                 }
                 reducer.appendSystemEvent(message)
@@ -1502,19 +1508,6 @@ final class ChatSessionManager {
 
         case .audioStream(let stream):
             effectsStatePort.handleAudioStream(stream, sessionId: sessionId)
-
-        case .toolStart where replicaOwnsTimeline,
-             .toolUpdate where replicaOwnsTimeline,
-             .toolOutput where replicaOwnsTimeline,
-             .messageEnd where replicaOwnsTimeline,
-             .queueItemStarted where replicaOwnsTimeline:
-            break
-
-        case .toolEnd(_, _, let details, let isError, _, _, let outputPresentation, _, _)
-            where replicaOwnsTimeline:
-            if !isError, outputPresentation?.settingEffect == "voiceReplyMode" {
-                effectsStatePort.applyVoiceReplyModeDetails(details, sessionId: sessionId)
-            }
 
         case .toolStart(let tool, let args, let toolCallId, let callSegments, let inputPresentation, let display, let outputPresentation, let parent):
             coalescer.receive(toolCallCorrelator.start(
@@ -1602,12 +1595,41 @@ final class ChatSessionManager {
             // Only finalize when leaving a running state. Re-broadcast ready/idle
             // snapshots (state or session_summary) must not flip in-progress tools
             // to Interrupted. Missed agent_settled still recovers on the transition.
-            if storeResult.didTransitionOutOfRunning, !replicaOwnsTimeline {
+            if storeResult.didTransitionOutOfRunning {
                 guard !suppressTimelineMutationWhilePaused() else { break }
                 coalescer.flushNow()
                 reducer.finalizeTerminalArtifactsAsInterrupted()
             }
 
+        default:
+            break
+        }
+    }
+
+    /// An attached durable session: the replica owns the timeline, and the server sends no
+    /// event its entries or documents restate (`dev/architecture-server/durable-conversation-stream.md`).
+    /// The classic frames that still arrive add only the rows no entry or document carries
+    /// (a notice, an error, a cache miss, why the session ended, stop feedback, a failed
+    /// command) and their other effects: audio, a fatal error, command results.
+    private func routeToConversationTimeline(_ message: ServerMessage) {
+        if let row = Self.conversationClientRow(for: message) {
+            showConversationClientRow(row)
+        }
+        switch message {
+        case .audioStream(let stream):
+            effectsStatePort.handleAudioStream(stream, sessionId: sessionId)
+        case .error(_, _, let fatal) where fatal:
+            // A fatal error (a sandbox VM that cannot start) suppresses auto-reconnect.
+            focusedStreamPort.fatalSetupError = true
+        case .commandResult(let command, let requestId, let success, let data, let error):
+            let consumed = effectsStatePort.handleCommandResult(
+                command: command, requestId: requestId,
+                success: success, data: data, error: error,
+                sessionId: sessionId
+            )
+            if !consumed, let row = TimelineClientRow.commandResult(command: command, success: success, error: error) {
+                showConversationClientRow(row)
+            }
         default:
             break
         }
@@ -1828,20 +1850,39 @@ final class ChatSessionManager {
 
     // MARK: - Durable conversation stream
 
-    /// Timeline rows that exist only as classic frames, so an attached durable session keeps
-    /// them: notices (a worktree rebind, a recovered store), errors (a failed prompt or
+    /// The row an attached durable session shows for a classic frame no entry or document
+    /// carries: notices (a worktree rebind, a recovered store), errors (a failed prompt or
     /// extension UI answer, connection errors), cache misses (from usage, not committed),
-    /// and the reason a session ended. Everything else in `timelineEvents` restates entries
-    /// or `pi.live` (text, thinking, tools, compaction, retry, cards), and so does a notice
-    /// whose id is `entry:<id>`: the durable backend's restatement of a committed card.
-    /// A run failure's error is later committed as a failure card too; the reducer drops
-    /// the error row when that card lands. The reducer keeps all of these rows through
-    /// rebuilds from the replica.
-    private static func isClassicOnlyTimelineRow(_ message: ServerMessage) -> Bool {
+    /// the reason a session ended, and stop feedback. A notice whose id is `entry:<id>`
+    /// restates a committed card; the server no longer sends those to an attached socket,
+    /// but its bootstrap replay before `attach` can. A run failure's error is later
+    /// committed as a failure card too; the reducer drops the error row when that card
+    /// lands. The reducer keeps these rows through rebuilds from the replica.
+    private static func conversationClientRow(for message: ServerMessage) -> TimelineClientRow? {
+        if let stopEffect = FocusedSessionStopTurnPolicy.timelineEffect(for: message) {
+            switch stopEffect {
+            case .requested(let text), .confirmed(let text, _): return .system(text)
+            case .failed(let text): return .error(UserFacingErrorText.normalize(text))
+            }
+        }
         switch message {
-        case .notice(let id, _): !id.hasPrefix("entry:")
-        case .error, .cacheMiss, .sessionEnded: true
-        default: false
+        case .notice(let id, let text) where !id.hasPrefix("entry:"): return .notice(id: id, message: text)
+        case .error(let text, _, _): return .error(UserFacingErrorText.normalize(text))
+        case .cacheMiss(let id, let text): return .cacheMiss(id: id, message: text)
+        case .sessionEnded(let reason): return .system("Session ended: \(reason)")
+        default: return nil
+        }
+    }
+
+    /// Rows held while presentation is paused; they show after the resync on resume.
+    @ObservationIgnored private var pausedConversationRows: [TimelineClientRow] = []
+
+    private func showConversationClientRow(_ row: TimelineClientRow) {
+        if coalescer.isPresentationPaused {
+            pausedConversationRows.append(row)
+            coalescer.markPresentationNeedsTraceReload()
+        } else {
+            reducer.appendClientRow(row)
         }
     }
 
@@ -1858,11 +1899,14 @@ final class ChatSessionManager {
     /// cursor when it holds the conversation.
     private func startConversationStreamIfOffered(for session: Session, meta: InboundStreamMeta?) -> Bool {
         guard focusedStreamPort.conversationStreamAvailable, session.engine == .durable else {
-            conversationStream = nil
-            dropChildTails()
+            endConversationStream()
             return false
         }
-        if conversationStream == nil {
+        if let conversationStream {
+            // A new socket (an in-place reconnect brings no stream end): nothing the old one
+            // was asked is answered, and its run state is stale until this socket's first frame.
+            conversationStream.cancelPendingRequests()
+        } else {
             conversationStream = ConversationStreamDriver()
         }
         cancelHistoryReload()
@@ -1909,6 +1953,16 @@ final class ChatSessionManager {
         }
     }
 
+    /// The session is not attached (any more): its queue goes back to `queue_state`.
+    private func endConversationStream() {
+        // Its children's tails go with it.
+        dropChildTails()
+        guard conversationStream != nil else { return }
+        conversationStream = nil
+        pausedConversationRows.removeAll()
+        effectsStatePort.applyConversationQueue(nil, sessionId: sessionId)
+    }
+
     private func applyConversationFrame(_ frame: ConversationStreamServerMessage) {
         guard let conversationStream else { return }
         let isSnapshot = if case .snapshot = frame { true } else { false }
@@ -1929,13 +1983,26 @@ final class ChatSessionManager {
             )
             sendConversationAttach(fresh: true)
             return
-        case .deferred:
+        case .deferred, .applied:
+            break
+        }
+        // Not timeline presentation: these apply while the scene is paused too.
+        if let error = conversationStream.takeQueueDecodeError() {
+            log.error("Conversation stream pi.inbox did not decode for \(self.sessionId, privacy: .public): \(error, privacy: .public)")
+            effectsStatePort.recordLog(
+                .error,
+                message: "Conversation stream pi.inbox did not decode; the queue shows empty",
+                metadata: ["sessionId": sessionId, "error": error]
+            )
+        }
+        effectsStatePort.applyConversationQueue(conversationStream.queue, sessionId: sessionId)
+        if conversationStream.hasLiveAnswer { telemetry.completeTTFT() }
+        if case .update(let update) = frame { applySettingResults(update.entries ?? []) }
+        guard outcome == .applied else {
             // Resynced from the replica when presentation resumes.
             coalescer.markPresentationNeedsTraceReload()
             followChildTails()
             return
-        case .applied:
-            break
         }
         followChildTails()
         telemetry.recordFreshContentLagIfNeeded(reason: "conversation_stream", workspaceId: resolveWorkspaceId())
@@ -2088,6 +2155,18 @@ final class ChatSessionManager {
         childTailPublishTask = nil
         childTailLineReservations.removeAll()
         if !childTails.isEmpty { childTails = [:] }
+    }
+
+    /// A tool result that changes a setting (`outputPresentation.settingEffect`) applies it
+    /// when it lands, as classic `tool_end` did. Snapshots and `older` pages are history and
+    /// apply nothing; an update's entries are new to this client (tool results are never
+    /// restated). Only registry-declared producers may mutate preferences.
+    private func applySettingResults(_ entries: [ConversationEntryView]) {
+        for entry in entries where entry.toolResult?.outputPresentation?.settingEffect == "voiceReplyMode" {
+            let result = entry.model?.first?.objectValue
+            guard result?["isError"]?.boolValue != true else { continue }
+            effectsStatePort.applyVoiceReplyModeDetails(result?["details"], sessionId: sessionId)
+        }
     }
 
     /// The replica's committed rows are the cached timeline of an attached session.

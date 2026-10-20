@@ -7,12 +7,15 @@ import Foundation
 /// It keeps the `ConversationReplica` across reconnects of the runtime and feeds the
 /// timeline from it: committed entries through `ConversationCommittedProjection` and
 /// `TimelineReducer.applyConversationCommitted`, `pi.live` through
-/// `ConversationLiveProjector` and `TimelineReducer.applyLiveTail`. While it exists the
-/// session's classic timeline events are ignored and trace catch-up is not used.
+/// `ConversationLiveProjector` and `TimelineReducer.applyLiveTail`. It also reads the run
+/// state from `pi.live.run` (the busy indicator and stop button) and the queue from
+/// `pi.inbox` (the queued-messages UI). While it exists the server sends no classic event
+/// the replica restates, and trace catch-up is not used.
 ///
 /// A `live` driver follows a subagent's conversation on its parent's socket instead
 /// (`attach { mode: live }`): its replica holds only `pi.live` and `pi.inbox`, and `liveTail`
-/// is what the parent shows under the tool row that names it.
+/// is what the parent shows under the tool row that names it. It feeds neither the run state
+/// nor the queue, which are the session's own (`receive` only).
 /// Wire: `dev/architecture-server/durable-conversation-stream.md`.
 @MainActor @Observable
 final class ConversationStreamDriver {
@@ -42,6 +45,16 @@ final class ConversationStreamDriver {
     let liveConversationId: Int?
     /// `replica.hasOlder`, observed by the timeline's "load earlier" control.
     private(set) var hasOlder = false
+    /// `pi.live.run` is present: the conversation is busy. Observed by the busy indicator and
+    /// the stop button. Nil before this socket's first frame and after the socket ends,
+    /// while the replica may be stale.
+    private(set) var isRunning: Bool?
+    /// `pi.inbox` as the queue shows it (the server's queue view), steers and follow-ups in
+    /// order. Decoded again only when a frame changes the document.
+    @ObservationIgnored private(set) var queue = MessageQueueState.empty
+    /// Why the last `pi.inbox` did not decode as the server's queue view (a server that still
+    /// sends raw inbox items); the queue shows empty. Read once with `takeQueueDecodeError`.
+    @ObservationIgnored private var queueDecodeError: String?
     @ObservationIgnored private(set) var replica = ConversationReplica()
     /// Full mode: the child conversations its tool calls name.
     @ObservationIgnored private(set) var children = ConversationChildIndex()
@@ -177,6 +190,13 @@ final class ConversationStreamDriver {
         awaitingSnapshot = false
         if hasOlder != replica.hasOlder { hasOlder = replica.hasOlder }
         indexChildren(frame, previousCount: previousCount, previousCursor: previousCursor)
+        let running = replica.docs["pi.live"]?.objectValue?["run"].map { $0 != .null } ?? false
+        if isRunning != running { isRunning = running }
+        switch frame {
+        case .snapshot: decodeQueue()
+        case .update(let update) where update.docs?.keys.contains("pi.inbox") == true: decodeQueue()
+        default: break
+        }
         if presentationPaused || reducerNeedsResync {
             reducerNeedsResync = true
             if presentationPaused { return .deferred }
@@ -262,6 +282,36 @@ final class ConversationStreamDriver {
         }
     }
 
+    /// The answer in flight has content: its first token arrived.
+    var hasLiveAnswer: Bool {
+        let generation = replica.docs["pi.live"]?.objectValue?["generation"]?.objectValue
+        return generation?["message"]?.objectValue?["content"]?.arrayValue?.isEmpty == false
+    }
+
+    /// The `pi.inbox` decode failure since the last call, for the session's log.
+    func takeQueueDecodeError() -> String? {
+        defer { queueDecodeError = nil }
+        return queueDecodeError
+    }
+
+    private func decodeQueue() {
+        struct View: Decodable {
+            var steering: [MessageQueueItem]
+            var followUp: [MessageQueueItem]
+        }
+        guard let inbox = replica.docs["pi.inbox"] else {
+            queue = .empty
+            return
+        }
+        do {
+            let view = try JSONDecoder().decode(View.self, from: JSONEncoder().encode(inbox))
+            queue = MessageQueueState(version: 0, steering: view.steering, followUp: view.followUp)
+        } catch {
+            queue = .empty
+            queueDecodeError = String(describing: error)
+        }
+    }
+
     /// Rebuild the timeline from the replica.
     func resync(_ reducer: TimelineReducer) {
         committed.reproject(replica.entries)
@@ -277,6 +327,7 @@ final class ConversationStreamDriver {
 
     /// The socket ended; nothing in flight will be answered.
     func cancelPendingRequests() {
+        isRunning = nil
         attachRequestId = nil
         freshAttachRetried = false
         supersededAttachIds.removeAll()

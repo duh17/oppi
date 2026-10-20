@@ -379,6 +379,153 @@ struct ConversationStreamSessionTests {
         await harness.finish()
     }
 
+    /// Classic-only rows that arrive while the scene is paused show once it resumes, after
+    /// the resync from the replica, instead of being dropped with the paused frames.
+    @Test func classicOnlyRowsWhilePausedShowAfterResume() async throws {
+        let harness = Harness()
+        let reducer = harness.manager.reducer
+        await harness.connect()
+        _ = try await harness.attach(1)
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "go")], docs: [:])))
+        #expect(await harness.waitForRows(["1"]))
+
+        harness.manager.coalescer.pause()
+        harness.yield(.notice(id: "rebind", message: "Resuming on Main checkout."))
+        harness.frame(.update(.init(conversationId: 7, entries: [Wire.assistant(2, [Wire.text("Done.")])])))
+        await harness.sync()
+        #expect(reducer.items.map(\.id) == ["1"])
+
+        #expect(harness.manager.coalescer.resume())
+        harness.manager.reloadTimelineAfterPresentationOverflow()
+        #expect(reducer.items.map(\.id) == ["1", "2-text-0", "rebind"])
+        await harness.finish()
+    }
+
+    /// The busy indicator, stop button, and queue read the replica: `pi.live.run` and the
+    /// server's `pi.inbox` queue view, not the session status or `queue_state`. A sent
+    /// follow-up shows at once and gives way to the replica's item without a duplicate; once
+    /// the socket ends, the run state no longer counts.
+    @Test func busyStateAndQueueComeFromTheReplica() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let queues = harness.connection.messageQueueStore
+        let sessionId = harness.sessionId
+        func queue() -> (steering: [String], followUp: [String]) {
+            let state = queues.queue(for: sessionId)
+            return (state.steering.map(\.message), state.followUp.map(\.message))
+        }
+
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "go")], docs: [
+            "pi.live": Wire.live(text: "Working"),
+            "pi.inbox": Wire.queue(steering: [("31", "look here")]),
+        ])))
+        #expect(await waitForMainActorCondition { harness.manager.conversationStream?.isRunning == true })
+        #expect(queue().steering == ["look here"])
+        // The session row still says ready; the replica decides.
+        #expect(harness.store.session(id: sessionId)?.status == .ready)
+
+        // A `get_queue` answer does not replace the replica's queue.
+        harness.yield(.queueState(queue: MessageQueueState(version: 99, steering: [], followUp: [])))
+        await harness.sync()
+        #expect(queue().steering == ["look here"])
+
+        // A follow-up shows before the server has it, through frames that do not have it yet.
+        queues.enqueueOptimisticItem(for: sessionId, kind: .followUp, message: "then this", attachments: nil, id: "turn-1")
+        harness.frame(.update(.init(conversationId: 7, docs: ["pi.live": [.append([.key("generation"), .key("message"), .key("content"), .index(0), .key("text")], "…")]])))
+        await harness.sync()
+        #expect(queue().followUp == ["then this"])
+        // Acknowledged: the next frame shows the input as the server has it, once.
+        queues.optimisticItemDelivered("turn-1", kind: .followUp, message: "then this", for: sessionId)
+        harness.frame(.update(.init(conversationId: 7, docs: [
+            "pi.inbox": [.replace(Wire.queue(steering: [("31", "look here")], followUp: [("32", "then this")]))],
+        ])))
+        #expect(await waitForMainActorCondition { queues.queue(for: sessionId).followUp.map(\.id) == ["32"] })
+
+        // The run ends and both inputs start.
+        harness.frame(.update(.init(conversationId: 7, entries: [Wire.user(2, "look here"), Wire.user(3, "then this")], docs: [
+            "pi.live": [.replace([:])],
+            "pi.inbox": [.replace(Wire.queue())],
+        ])))
+        #expect(await waitForMainActorCondition { harness.manager.conversationStream?.isRunning == false })
+        #expect(queue().steering.isEmpty && queue().followUp.isEmpty)
+
+        await harness.finish()
+        #expect(harness.manager.conversationStream?.isRunning == nil)
+        #expect(!queues.isConversationQueue(sessionId))
+    }
+
+    /// Opening a busy chat: the queue sync's `queue_state` fills the store before the replica
+    /// takes over. The snapshot's `pi.inbox` replaces those items instead of showing each twice.
+    @Test func replicaQueueReplacesTheQueueStateItShowedFirst() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let queues = harness.connection.messageQueueStore
+        let sessionId = harness.sessionId
+        let item = MessageQueueItem(id: "31", message: "look here", createdAt: 0)
+        harness.yield(.queueState(queue: MessageQueueState(version: 3, steering: [item], followUp: [])))
+        await harness.sync()
+        #expect(queues.queue(for: sessionId).steering.map(\.id) == ["31"])
+
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "go")], docs: [
+            "pi.live": Wire.live(text: "Working"),
+            "pi.inbox": Wire.queue(steering: [("31", "look here")]),
+        ])))
+        #expect(await waitForMainActorCondition { queues.isConversationQueue(sessionId) })
+        #expect(queues.queue(for: sessionId).steering.map(\.id) == ["31"])
+        await harness.finish()
+    }
+
+    /// A socket replaced in place (no stream end, a second `connected`): the old run state does
+    /// not drive the stop button; the resumed replica does once its first frame lands.
+    @Test func runStateWaitsForTheResumedSocket() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "go")], docs: [
+            "pi.live": Wire.live(text: "Working"),
+        ])))
+        #expect(await waitForMainActorCondition { harness.manager.conversationStream?.isRunning == true })
+
+        harness.yield(.connected(session: harness.session))
+        let resume = try await harness.attach(2)
+        #expect(resume.afterEntryId == 1)
+        #expect(harness.manager.conversationStream?.isRunning == nil)
+
+        harness.frame(.update(.init(conversationId: 7, entries: [], docs: ["pi.live": [.replace([:])]])))
+        #expect(await waitForMainActorCondition { harness.manager.conversationStream?.isRunning == false })
+        await harness.finish()
+    }
+
+    /// A committed tool result that changes a setting applies it when it lands, as classic
+    /// `tool_end` did; the same result in a snapshot is history and applies nothing.
+    @Test func landedSettingResultAppliesAndHistoryDoesNot() async throws {
+        let harness = Harness()
+        defer { AppPreferences.Voice.setSessionReplyMode(nil, for: harness.sessionId) }
+        await harness.connect()
+        _ = try await harness.attach(1)
+        func voiceResult(_ id: Int, mode: String) -> ConversationEntryView {
+            var entry = Wire.toolResult(id, callId: "voice-\(id)", output: "ok")
+            entry.model = [[
+                "role": "toolResult", "toolCallId": .string("voice-\(id)"), "toolName": "voice_reply_mode",
+                "content": [["type": "text", "text": "ok"]], "isError": false,
+                "details": ["kind": "voice_reply_mode", "mode": .string(mode)],
+            ]]
+            entry.toolResult = .init(outputPresentation: .init(kind: "structured", settingEffect: "voiceReplyMode"))
+            return entry
+        }
+
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [voiceResult(1, mode: "manual")], docs: [:])))
+        await harness.sync()
+        #expect(AppPreferences.Voice.sessionReplyMode(for: harness.sessionId) == nil)
+
+        harness.frame(.update(.init(conversationId: 7, entries: [voiceResult(2, mode: "autoplay")])))
+        await harness.sync()
+        #expect(AppPreferences.Voice.sessionReplyMode(for: harness.sessionId) == .autoplay)
+        await harness.finish()
+    }
+
     /// Each committed user entry takes the oldest pending prompt, even when the server
     /// expanded it (`/skill:` prompts). Agent messages and input cards take none.
     @Test func committedUserEntriesTakePendingPromptsInOrder() async throws {
@@ -581,6 +728,41 @@ struct ConversationStreamSessionTests {
         // Idle: nothing to show.
         harness.frame(.update(.init(conversationId: 9, docs: ["pi.live": [.delete([.key("run")]), .delete([.key("generation")])]])))
         #expect(await waitForMainActorCondition { harness.manager.childTails.isEmpty })
+        await harness.finish()
+    }
+
+    /// A busy child's live tail, and its queue, never drive the session's own busy state or
+    /// queue. An in-place reconnect resets only the session's run state; its followed children
+    /// keep their tails and attach again.
+    @Test func childTailsNeverDriveTheSessionsRunStateOrQueue() async throws {
+        let harness = Harness(liveTails: true)
+        await harness.connect()
+        let own = try await harness.attach(1)
+        harness.yield(.commandResult(command: "attach", requestId: own.requestId, success: true, data: nil, error: nil))
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [
+            Wire.user(1, "Delegate"),
+            Wire.assistant(2, [Wire.toolCall("call-s", "subagent", ["action": "spawn"])]),
+            Wire.toolResult(3, callId: "call-s", output: "Started kid", details: Wire.child(9, "child-session")),
+        ], docs: ["pi.inbox": Wire.queue()])))
+        #expect(await harness.waitForRows(["1", "call-s"]))
+        let tailAttach = try await harness.attach(2)
+        #expect(tailAttach.conversationId == 9 && tailAttach.mode == .live)
+
+        harness.frame(.snapshot(.init(conversationId: 9, head: 0, hasOlder: false, entries: [], docs: [
+            "pi.live": Wire.live(content: [Wire.text("child working")]),
+            "pi.inbox": Wire.queue(followUp: [("41", "child follow-up")]),
+        ])))
+        #expect(await waitForMainActorCondition { harness.manager.childTails["call-s"] != nil })
+        #expect(harness.manager.conversationStream?.isRunning == false)
+        #expect(harness.connection.messageQueueStore.queue(for: harness.sessionId).followUp.isEmpty)
+
+        harness.yield(.connected(session: harness.session))
+        let resumed = try await harness.attach(3)
+        #expect(resumed.conversationId == 7)
+        let again = try await harness.attach(4)
+        #expect(again.conversationId == 9 && again.mode == .live)
+        #expect(harness.manager.conversationStream?.isRunning == nil)
+        #expect(harness.manager.childTails["call-s"] != nil)
         await harness.finish()
     }
 
@@ -852,6 +1034,14 @@ private final class Harness {
         await connectTask?.value
         manager.cleanup()
     }
+
+    /// Wait until every message yielded so far is handled: a marker state lands after them.
+    func sync() async {
+        var marker = session
+        marker.name = "sync \(UUID().uuidString)"
+        yield(.state(session: marker))
+        _ = await waitForMainActorCondition { self.store.session(id: self.sessionId)?.name == marker.name }
+    }
 }
 
 /// Conversation stream entries and `pi.live` documents.
@@ -894,6 +1084,14 @@ enum Wire {
     static func thinking(_ text: String) -> JSONValue { ["type": "thinking", "thinking": .string(text)] }
     static func toolCall(_ id: String, _ name: String, _ args: [String: JSONValue]) -> JSONValue {
         ["type": "toolCall", "id": .string(id), "name": .string(name), "arguments": .object(args)]
+    }
+
+    /// The server's `pi.inbox` view: queue items by id and message.
+    static func queue(steering: [(String, String)] = [], followUp: [(String, String)] = []) -> JSONValue {
+        func items(_ list: [(String, String)]) -> JSONValue {
+            .array(list.map { ["id": .string($0.0), "message": .string($0.1), "createdAt": 0] })
+        }
+        return ["steering": items(steering), "followUp": items(followUp)]
     }
 
     /// `pi.live` for a running answer.

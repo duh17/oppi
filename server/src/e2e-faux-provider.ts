@@ -13,8 +13,11 @@ const log = createLogger({ base: { component: "e2e_faux_provider" } });
 export const E2E_FAUX_PROVIDER_ID = "oppi-e2e-faux";
 export const E2E_FAUX_MODEL_ID = "oppi-e2e-faux-1";
 
-/** Slow enough that a UI test sees the live row for several seconds before the reply lands. */
-const E2E_FAUX_TOKENS_PER_SECOND = 10;
+/**
+ * Slow enough that a UI test can queue inputs, stop, or drop the connection while a reply
+ * streams: a reply takes over ten seconds to land.
+ */
+const E2E_FAUX_TOKENS_PER_SECOND = 4;
 
 /**
  * Test-only scripted model for the iOS E2E harness (`e2e.sh --faux-model`). It needs both
