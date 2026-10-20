@@ -1645,6 +1645,7 @@
 		C24E6FA07237638FC20AEA20 /* ServerTLSTrustPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F802D6BE1FF5B98186B5C83B /* ServerTLSTrustPolicy.swift */; };
 		C296A66E88AD68FFA5425B3E /* QuickSessionLaunchRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B15B29F53BA1B192BE8505DA /* QuickSessionLaunchRoutingTests.swift */; };
 		C2DFDDC83245E0AE9DEBE09B /* MermaidERParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABA5130567D8BB2FF99C2F37 /* MermaidERParser.swift */; };
+		C3022EEDEAD37BBBEE0DA16C /* ChangedFileRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35A9B614D6AC58E54D176CE5 /* ChangedFileRow.swift */; };
 		C3177AEB555B50F4D4D2F6BD /* MermaidFlowchartRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05867D89410F8026ABA59F5 /* MermaidFlowchartRenderer.swift */; };
 		C355A73491D9DEB884C8AF64 /* TableBodyLeakParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04FECF5D52D24E3E5498F0D4 /* TableBodyLeakParserTests.swift */; };
 		C3703E915262A9D71F9A3FCC /* HerdrAgentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6F6185F644E55021D87123F /* HerdrAgentsView.swift */; };
@@ -2662,6 +2663,7 @@
 		35527FA0A604AA72376EAB4E /* MacDelimitedTablePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacDelimitedTablePreview.swift; sourceTree = "<group>"; };
 		357625D6E77C502A3C54C15B /* AskRequestStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskRequestStore.swift; sourceTree = "<group>"; };
 		3582B8B0D278E55DF6D2351B /* MacWorkspaceWorktreePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWorkspaceWorktreePresentation.swift; sourceTree = "<group>"; };
+		35A9B614D6AC58E54D176CE5 /* ChangedFileRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangedFileRow.swift; sourceTree = "<group>"; };
 		35BF3FE30B7EC795027E2D18 /* TailscaleKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = TailscaleKit.xcframework; path = Vendor/TailscaleKit/TailscaleKit.xcframework; sourceTree = "<group>"; };
 		35F57C3EB7B70D151A45A6F4 /* TableColumnAlignmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableColumnAlignmentTests.swift; sourceTree = "<group>"; };
 		35FA3411D780C1DB10CED7BC /* AUDIT-RESULTS.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "AUDIT-RESULTS.md"; sourceTree = "<group>"; };
@@ -5196,6 +5198,7 @@
 		623821166F6E0927C343516B /* Review */ = {
 			isa = PBXGroup;
 			children = (
+				35A9B614D6AC58E54D176CE5 /* ChangedFileRow.swift */,
 				2728D56D1C552B9C9AC45DAE /* CommitDetailViewController.swift */,
 				F4DC08E1289A614CB4C81937 /* ReviewFileSummaryBarView.swift */,
 				DF85E4D412BDDB553B3E8AB2 /* TrailingSidePanelPolicy.swift */,
@@ -9027,6 +9030,7 @@
 				A4C9B7F982A94351AFF5679C /* BuiltInToolFacts.swift in Sources */,
 				E1C7DEC4B647AFA919AF9F29 /* BuiltInToolFactsPreview.swift in Sources */,
 				D32835604A1C4A91BEE49FD1 /* CMarkFastParser.swift in Sources */,
+				C3022EEDEAD37BBBEE0DA16C /* ChangedFileRow.swift in Sources */,
 				B71167C607841FED0FFA99A6 /* ChatActionHandler.swift in Sources */,
 				053FCCCBB8F4F31C80468CCB /* ChatComposerDraftController.swift in Sources */,
 				A612502A7810BD421E95FA21 /* ChatComposerOwner.swift in Sources */,

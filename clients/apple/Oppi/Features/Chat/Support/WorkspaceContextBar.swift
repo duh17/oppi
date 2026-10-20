@@ -214,7 +214,7 @@ final class WorkspaceContextBarView: UIView {
         didSet {
             guard isSelecting != oldValue else { return }
             setNeedsUpdateProperties()
-            if isSelecting { loadQuickActions() }
+            if isSelecting { Task { await loadQuickActionsIfNeeded() } }
         }
     }
     private var selectedPaths: Set<String> = [] {
@@ -249,7 +249,18 @@ final class WorkspaceContextBarView: UIView {
     // Views.
     private let card = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
     private let cardStack = UIStackView()
-    private var toggleButton = PlainRowButton(frame: .zero)
+    /// Expands and collapses the bar: branch, counts, upstream, chevron.
+    private lazy var toggleButton: PlainRowButton = {
+        let spacer = UIView()
+        spacer.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
+        let button = PlainRowButton(wrapping: Self.row(
+            [branchGroup, changedLabel, linesGroup, spacer, aheadGroup, chevron],
+            spacing: 8,
+            insets: NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)
+        )) { [weak self] in self?.toggleExpanded() }
+        button.accessibilityIdentifier = "workspace-context-bar.toggle"
+        return button
+    }()
     private let branchIcon = UIImageView()
     private let branchLabel = UILabel()
     private let branchGroup = UIStackView()
@@ -262,7 +273,15 @@ final class WorkspaceContextBarView: UIView {
     private let aheadGroup = UIStackView()
     private let chevron = UIImageView()
     private let selectDivider = UIView()
-    private var selectButton = PlainRowButton(frame: .zero)
+    private let selectionDividerSlot = UIView()
+    private lazy var selectButton: PlainRowButton = {
+        let button = PlainRowButton(
+            wrapping: Self.padded(selectLabel, NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
+        ) { [weak self] in self?.toggleSelecting() }
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return button
+    }()
     private let selectLabel = UILabel()
     private let tipHost = FeatureEducationTipHostView(
         tip: FeatureEducationTips.ChangedFilesBarTip(),
@@ -280,10 +299,7 @@ final class WorkspaceContextBarView: UIView {
     private var fileRows: [(path: String, view: UIView, mark: UIImageView?)] = []
     private weak var selectAllButton: UIButton?
     private weak var selectedCountLabel: UILabel?
-    private lazy var dragSelectGesture: UIPanGestureRecognizer = {
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(handleDragSelect(_:)))
-        return pan
-    }()
+    private lazy var dragSelectGesture = UIPanGestureRecognizer(target: self, action: #selector(handleDragSelect(_:)))
     private var panelKey: PanelKey?
     private var selectionBarKey: SelectionBarKey?
     private var lastReportedHeight: CGFloat = -1
@@ -467,41 +483,23 @@ final class WorkspaceContextBarView: UIView {
         }
         chevron.contentMode = .center
         chevron.setContentHuggingPriority(.required, for: .horizontal)
-        let spacer = UIView()
-        spacer.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
-        let toggleStack = Self.row(
-            [branchGroup, changedLabel, linesGroup, spacer, aheadGroup, chevron],
-            spacing: 8,
-            insets: NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)
-        )
-        toggleButton = PlainRowButton(wrapping: toggleStack) { [weak self] in self?.toggleExpanded() }
-        toggleButton.accessibilityIdentifier = "workspace-context-bar.toggle"
 
         selectDivider.translatesAutoresizingMaskIntoConstraints = false
-        let dividerSlot = UIView()
-        dividerSlot.addSubview(selectDivider)
+        selectionDividerSlot.addSubview(selectDivider)
         NSLayoutConstraint.activate([
             selectDivider.widthAnchor.constraint(equalToConstant: 1 / max(traitCollection.displayScale, 2)),
             selectDivider.heightAnchor.constraint(equalToConstant: 18),
-            selectDivider.centerYAnchor.constraint(equalTo: dividerSlot.centerYAnchor),
-            selectDivider.leadingAnchor.constraint(equalTo: dividerSlot.leadingAnchor),
-            selectDivider.trailingAnchor.constraint(equalTo: dividerSlot.trailingAnchor, constant: -2),
+            selectDivider.centerYAnchor.constraint(equalTo: selectionDividerSlot.centerYAnchor),
+            selectDivider.leadingAnchor.constraint(equalTo: selectionDividerSlot.leadingAnchor),
+            selectDivider.trailingAnchor.constraint(equalTo: selectionDividerSlot.trailingAnchor, constant: -2),
         ])
         selectLabel.adjustsFontForContentSizeCategory = true
-        selectButton = PlainRowButton(
-            wrapping: Self.padded(selectLabel, NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
-        ) { [weak self] in self?.toggleSelecting() }
-        selectButton.setContentHuggingPriority(.required, for: .horizontal)
-        selectButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let row = UIStackView(arrangedSubviews: [toggleButton, dividerSlot, selectButton])
+        let row = UIStackView(arrangedSubviews: [toggleButton, selectionDividerSlot, selectButton])
         row.axis = .horizontal
         row.alignment = .fill
         cardStack.addArrangedSubview(row)
-        selectionDividerSlot = dividerSlot
     }
-
-    private var selectionDividerSlot: UIView?
 
     // MARK: Render
 
@@ -646,7 +644,7 @@ final class WorkspaceContextBarView: UIView {
         ].compactMap { $0 }.joined(separator: ", ")
 
         let showsSelect = isExpanded && context.workspaceId != nil
-        selectionDividerSlot?.isHidden = !showsSelect
+        selectionDividerSlot.isHidden = !showsSelect
         selectButton.isHidden = !showsSelect
         selectDivider.backgroundColor = .separator
         selectLabel.text = isSelecting ? String(localized: "Cancel") : String(localized: "Select")
@@ -882,16 +880,6 @@ final class WorkspaceContextBarView: UIView {
         return (row, mark)
     }
 
-    private func rowChevron(palette: ThemePalette) -> UIImageView {
-        let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
-        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
-            font: font(fixed: 8, .semibold, regular: .caption2, .semibold)
-        )
-        chevron.tintColor = UIColor(palette.comment).withAlphaComponent(0.5)
-        chevron.setContentHuggingPriority(.required, for: .horizontal)
-        return chevron
-    }
-
     private func commitList(palette: ThemePalette) -> UIView {
         let list = UIStackView()
         list.axis = .vertical
@@ -904,7 +892,8 @@ final class WorkspaceContextBarView: UIView {
             let message = Self.label(commit.message, font: font(.caption2, .caption1), color: UIColor(palette.fgDim))
             message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             message.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            let content = Self.row([sha, message, rowChevron(palette: palette)], spacing: 8, insets: .zero)
+            let chevron = ChangedFileRow.chevron(font: font(fixed: 8, .semibold, regular: .caption2, .semibold), palette: palette)
+            let content = Self.row([sha, message, chevron], spacing: 8, insets: .zero)
             content.setCustomSpacing(20, after: message)
             let row = PlainRowButton(wrapping: content) { [weak self] in self?.presentCommit(commit) }
             row.accessibilityLabel = "\(commit.sha), \(commit.message)"
@@ -929,7 +918,9 @@ final class WorkspaceContextBarView: UIView {
                 )
                 configuration.contentInsets = .zero
                 let button = UIButton(configuration: configuration)
-                button.addAction(UIAction { [weak self] _ in self?.loadMoreCommits() }, for: .primaryActionTriggered)
+                button.addAction(UIAction { [weak self] _ in
+                    Task { await self?.loadMoreCommitsIfPossible() }
+                }, for: .primaryActionTriggered)
                 loadMore = button
             }
             let centered = UIStackView(arrangedSubviews: [loadMore])
@@ -1260,7 +1251,7 @@ final class WorkspaceContextBarView: UIView {
             || context.sessionId != old.sessionId
             || context.worktreeId != old.worktreeId {
             resetQuickActionCache()
-            if isSelecting { loadQuickActions() }
+            if isSelecting { Task { await loadQuickActionsIfNeeded() } }
         }
     }
 
@@ -1372,21 +1363,12 @@ final class WorkspaceContextBarView: UIView {
         Router.push(chat, from: presenter)
     }
 
-    private func presentLaunchError(_ message: String) {
-        guard let presenter else { return }
-        WorkspaceQuickActionMenu.presentLaunchError(message, from: presenter)
-    }
-
     // MARK: Quick actions
 
     private func resetQuickActionCache() {
         quickActionOptions = []
         quickActionOptionsContextKey = nil
         isLoadingQuickActions = false
-    }
-
-    private func loadQuickActions() {
-        Task { await loadQuickActionsIfNeeded() }
     }
 
     private func loadQuickActionsIfNeeded() async {
@@ -1428,7 +1410,7 @@ final class WorkspaceContextBarView: UIView {
     private func useSelectionInCurrentSession(option: WorkspaceQuickActionOption) async {
         guard let workspaceId = context.workspaceId, !selectedPaths.isEmpty else { return }
         guard let api = apiClient else {
-            presentLaunchError("Server is offline.")
+            WorkspaceQuickActionMenu.presentLaunchError("Server is offline.", from: presenter)
             return
         }
         guard let onReviewInCurrentSession = options.onReviewInCurrentSession else { return }
@@ -1458,14 +1440,14 @@ final class WorkspaceContextBarView: UIView {
                 }
             )
         } catch {
-            presentLaunchError(error.localizedDescription)
+            WorkspaceQuickActionMenu.presentLaunchError(error.localizedDescription, from: presenter)
         }
     }
 
     private func launchEmptySession() async {
         guard let workspaceId = context.workspaceId else { return }
         guard let api = apiClient else {
-            presentLaunchError("Server is offline.")
+            WorkspaceQuickActionMenu.presentLaunchError("Server is offline.", from: presenter)
             return
         }
         guard launchActionInFlightTitle == nil else { return }
@@ -1487,14 +1469,14 @@ final class WorkspaceContextBarView: UIView {
                 filePaths: paths
             ))
         } catch {
-            presentLaunchError(error.localizedDescription)
+            WorkspaceQuickActionMenu.presentLaunchError(error.localizedDescription, from: presenter)
         }
     }
 
     private func launchSelection(option: WorkspaceQuickActionOption) async {
         guard let workspaceId = context.workspaceId, !selectedPaths.isEmpty else { return }
         guard let api = apiClient else {
-            presentLaunchError("Server is offline.")
+            WorkspaceQuickActionMenu.presentLaunchError("Server is offline.", from: presenter)
             return
         }
         guard launchActionInFlightTitle == nil else { return }
@@ -1524,15 +1506,11 @@ final class WorkspaceContextBarView: UIView {
                 fileDisplayPrefix: option.title
             ))
         } catch {
-            presentLaunchError(error.localizedDescription)
+            WorkspaceQuickActionMenu.presentLaunchError(error.localizedDescription, from: presenter)
         }
     }
 
     // MARK: Load more commits
-
-    private func loadMoreCommits() {
-        Task { await loadMoreCommitsIfPossible() }
-    }
 
     private func loadMoreCommitsIfPossible() async {
         guard let workspaceId = context.workspaceId, let api = apiClient, !isLoadingMore else { return }

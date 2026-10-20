@@ -534,13 +534,11 @@ struct UserTimelineRowContentTests {
     func commitQuickActionDestinationPushesOntoViewerNavigation() async throws {
         let connection = ServerConnection()
         let destination = QuickActionSessionNavDestination.empty(sessionId: "session-from-commit")
-        let host = makeTimelineCommitHostController(
-            connection: connection,
-            destination: destination
-        )
+        let host = makeTimelineCommitHostController(connection: connection)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
+        try openCommitDestination(destination, in: host)
         defer {
             window.isHidden = true
             window.rootViewController = nil
@@ -566,14 +564,11 @@ struct UserTimelineRowContentTests {
         let connection = ServerConnection()
         let root = makeTestAppRoot()
         root.navigation.pendingQuickSessionMessage = "meant for the session Quick Session opens"
-        let host = makeTimelineCommitHostController(
-            connection: connection,
-            destination: QuickActionSessionNavDestination.empty(sessionId: "session-from-commit"),
-            root: root
-        )
+        let host = makeTimelineCommitHostController(connection: connection, root: root)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
+        try openCommitDestination(.empty(sessionId: "session-from-commit"), in: host)
         defer {
             window.isHidden = true
             window.rootViewController = nil
@@ -618,14 +613,11 @@ struct UserTimelineRowContentTests {
         store.setDraft(.init(text: "unsent commit follow-up", repoPointers: []), for: key)
 
         let destination = QuickActionSessionNavDestination.empty(sessionId: "session-from-commit")
-        let host = makeTimelineCommitHostController(
-            connection: connection,
-            destination: destination,
-            composerDraftStore: store
-        )
+        let host = makeTimelineCommitHostController(connection: connection, composerDraftStore: store)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
+        try openCommitDestination(destination, in: host)
         defer {
             window.isHidden = true
             window.rootViewController = nil
@@ -661,7 +653,6 @@ struct UserTimelineRowContentTests {
         store.updateSystemColorScheme(.dark)
         let liveHost = makeTimelineCommitHostController(
             connection: ServerConnection(),
-            destination: nil,
             root: makeTestAppRoot(themeStore: store)
         )
         let viewer = try #require(liveHost.viewControllers.first)
@@ -1996,12 +1987,9 @@ private func color(_ lhs: UIColor?, approximatelyEquals rhs: UIColor, tolerance:
 }
 
 /// The commit viewer as chat presents it, scoped to the chat's connection.
-/// `destination` opens as the viewer's New Session would, once the caller
-/// has put the viewer in its window.
 @MainActor
 private func makeTimelineCommitHostController(
     connection: ServerConnection,
-    destination: QuickActionSessionNavDestination?,
     composerDraftStore: ComposerDraftStore? = nil,
     root: AppRootEnvironment? = nil
 ) -> RouterNavigationController {
@@ -2014,10 +2002,14 @@ private func makeTimelineCommitHostController(
     )
     let navigation = RouterNavigationController(rootViewController: viewer)
     navigation.traitOverrides.appRootEnvironment = root ?? makeTestAppRoot(composerDraftStore: composerDraftStore)
-    if let destination {
-        DispatchQueue.main.async { viewer.openQuickActionSession(destination) }
-    }
     return navigation
+}
+
+/// Opens `destination` as the viewer's New Session does, once it is in its window.
+@MainActor
+private func openCommitDestination(_ destination: QuickActionSessionNavDestination, in host: RouterNavigationController) throws {
+    let viewer = try #require(host.viewControllers.first as? CommitDetailViewController)
+    viewer.openQuickActionSession(destination)
 }
 
 @MainActor
