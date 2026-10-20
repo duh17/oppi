@@ -84,15 +84,10 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
         XCTAssertNotNil(expectedMid, "ready probe missing model identity. ready=\(readyProbe)")
         XCTAssertNotNil(expectedPid, "ready probe missing player identity. ready=\(readyProbe)")
         XCTAssertNotEqual(expectedPid, "nil", "ready probe has no player. ready=\(readyProbe)")
-        XCTAssertLessThan(
-            Self.probeTime(readyProbe),
-            0.5,
-            "Inline video was not paused near start before the Play journey. ready=\(readyProbe)"
-        )
-        XCTAssertTrue(
-            Self.probeRate(readyProbe) <= 0.01,
-            "Inline video was already playing before any native tap. ready=\(readyProbe)"
-        )
+        // The inline play tap is the playback intent, so the player autoplays.
+        // Each Play claim below pauses through the native control first, so
+        // uninterrupted autoplay is never accepted as Play delivery.
+        pauseIfPlaying(reason: "after the inline play tap")
         try saveLabScreenshot(name: "timeline-inline-video-ready")
 
         try tapNativePlayAndRequireTimeAdvance(
@@ -210,6 +205,10 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
         for _ in 0..<14 {
             timeline.swipeDown()
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            // A row that left the window returns as its still frame and play control.
+            if startInlinePlaybackIfShown() {
+                _ = presentedNativePlayer().waitForExistence(timeout: 8)
+            }
             revealedProbe = currentPlaybackProbe()
             let player = presentedNativePlayer()
             if player.exists,
@@ -228,6 +227,7 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
             presentedNativePlayer().waitForExistence(timeout: 8),
             "Inline player did not return after reveal. last=\(revealedProbe)"
         )
+        scrollPlayerBelowTopBar()
         try tapNativePlayAndRequireTimeAdvance(
             reason: "after hide/reveal",
             requiredSubstring: "vis=1"
@@ -467,26 +467,62 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
         return !element.exists
     }
 
-    @discardableResult
-    /// Inline video rows build their player only after the play control is tapped.
-    private func startInlinePlaybackIfNeeded() {
+    /// Inline video rows build their player only when the play control is tapped,
+    /// and a recycled row returns to that control. The control exists only while
+    /// its row is on screen, so the caller scrolls before asking.
+    /// Returns whether it tapped play.
+    private func startInlinePlaybackIfShown() -> Bool {
         let play = app.buttons["markdown-video-play"]
-        guard !presentedNativePlayer().exists, play.waitForExistence(timeout: 8) else { return }
-        tap(play, named: "inline video play control")
+        guard play.exists, play.isHittable else { return false }
+        play.tap()
+        return true
     }
 
+    /// Scrolls the inline row's player on screen, below the floating top bar.
     private func revealNativePlayer() -> XCUIElement {
-        startInlinePlaybackIfNeeded()
-        let timeline = timelineElement()
+        let player = findNativePlayer()
+        scrollPlayerBelowTopBar()
+        return player
+    }
+
+    /// The chat's floating top bar covers the top of a player scrolled under it,
+    /// including AVKit's top-leading fullscreen control and the chrome tap target,
+    /// and takes the touches meant for them. Drag the timeline down, from the text
+    /// below the player so the drag does not start on AVKit, until the player's top
+    /// edge clears the bar.
+    private func scrollPlayerBelowTopBar() {
+        let topBar = app.buttons["chat.toolbar.back"]
+        guard topBar.exists else { return }
+        let clearance = topBar.frame.maxY + 24
+        for _ in 0..<4 {
+            let player = presentedNativePlayer()
+            guard player.exists else { return }
+            let overlap = clearance - player.frame.minY
+            guard overlap > 0 else { return }
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: app.frame.midX, dy: player.frame.maxY + 60))
+            let end = start.withOffset(CGVector(dx: 0, dy: overlap))
+            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.5)
+        }
+    }
+
+    /// Scrolls the timeline until the inline row's player is on screen, tapping
+    /// the row's play control when the row shows it instead.
+    private func findNativePlayer() -> XCUIElement {
         var player = presentedNativePlayer()
         if player.exists, player.isHittable {
             return player
         }
+        let timeline = timelineElement()
         if timeline.waitForExistence(timeout: 8) {
             for _ in 0..<14 {
                 player = presentedNativePlayer()
                 if player.exists, player.isHittable {
                     return player
+                }
+                if startInlinePlaybackIfShown() {
+                    _ = presentedNativePlayer().waitForExistence(timeout: 8)
+                    continue
                 }
                 timeline.swipeDown()
                 RunLoop.current.run(until: Date().addingTimeInterval(0.2))
