@@ -219,7 +219,8 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        columnWidth = view.bounds.width
+        // The bottom bar lays out inside the safe area; see WorkspaceDetailViewController.
+        columnWidth = view.bounds.width - view.safeAreaInsets.left - view.safeAreaInsets.right
     }
 
     override func updateProperties() {

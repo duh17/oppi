@@ -742,6 +742,17 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         )
     }
 
+    /// All Sessions sized its Message capsule from the full width, which landscape
+    /// safe-area insets leave no room for beside the folder button.
+    func testLandscapeAllSessionsBottomBarKeepsMessageLauncherVisible() throws {
+        XCTAssertTrue(
+            app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 15),
+            "All Sessions inbox did not appear"
+        )
+        XCTAssertTrue(app.staticTexts["All Sessions"].exists, "The root is not All Sessions")
+        assertLandscapeBottomBarKeepsMessageLauncher(screen: "All Sessions")
+    }
+
     func testIPhoneSidebarAgentsAndSchedulesNavigate() throws {
         openWorkspaceSidebar()
         tap(app.buttons["workspace.agents.open"], named: "Agents sidebar destination")
