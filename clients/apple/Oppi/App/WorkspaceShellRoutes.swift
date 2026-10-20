@@ -329,8 +329,6 @@ private struct WorkspaceUtilityDestinationView: View {
             case .sshTerminal:
                 // The shell hosts this route as SSHTerminalHostListViewController.
                 EmptyView()
-            case .desktopStill:
-                desktopViewer
             case .manageServers:
                 ServerView()
             case .serverMetrics:
@@ -344,16 +342,6 @@ private struct WorkspaceUtilityDestinationView: View {
                 systemImage: "eye.slash",
                 description: "This management screen is hidden in this build."
             )
-        }
-    }
-
-    @ViewBuilder
-    private var desktopViewer: some View {
-        let connection = coordinator.activeServerId.flatMap { coordinator.connection(for: $0) }
-        if AppPreferences.Experiments.desktopLiveViewEnabled, connection?.desktopLiveViewAvailable == true {
-            DesktopLiveViewerView(connection: connection)
-        } else {
-            DesktopCurrentStillViewerView()
         }
     }
 }

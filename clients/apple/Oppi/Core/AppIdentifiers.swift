@@ -12,10 +12,3 @@ enum AppIdentifiers {
     static let subsystem: String = Bundle.main.bundleIdentifier ?? "dev.chenda.Oppi"
     static let workspaceSidebarExpandedKey = "workspace.sidebar.workspaces.expanded"
 }
-
-/// Features held back from the shipping build until they are reliable.
-enum ReleaseFeatures {
-    /// iPhone Remote Screen viewer in the workspace sidebar.
-    /// Keep hidden until the current-still capture path is reliable.
-    static let desktopStillEnabled = false
-}

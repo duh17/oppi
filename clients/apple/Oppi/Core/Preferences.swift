@@ -49,7 +49,6 @@ enum AppPreferences {
         static let sshTerminalKey = "\(AppIdentifiers.subsystem).experiments.sshTerminal"
         static let durableSessionsKey = "\(AppIdentifiers.subsystem).experiments.durableSessions"
         static let durableSessionsDefaultKey = "\(AppIdentifiers.subsystem).experiments.durableSessionsDefault"
-        static let desktopLiveViewKey = "\(AppIdentifiers.subsystem).experiments.desktopLiveView"
 
         /// Durable Sessions: the new-session composer can start durable sessions on
         /// servers that advertise them. New sessions start Classic unless
@@ -60,12 +59,6 @@ enum AppPreferences {
 
         static var sshTerminalEnabled: Bool {
             UserDefaults.standard.bool(forKey: sshTerminalKey)
-        }
-
-        /// Live Remote Screen: dedicated H.264 viewer when the server advertises
-        /// `capabilities.desktopLiveView`. Off keeps the existing still viewer.
-        static var desktopLiveViewEnabled: Bool {
-            UserDefaults.standard.bool(forKey: desktopLiveViewKey)
         }
 
         /// Session Threads: launch-tree grouping, Thread strips, Thread detail, and

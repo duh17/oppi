@@ -133,6 +133,7 @@ Example:
 
 - **Client:** The SSH Terminal's migration of the single saved host from before Build 53.
 - **Server:** Classic sandbox sessions no longer load your global Skills; they discover Skills inside the workspace, through the VM.
+- **Client/Server:** The Live Remote Screen experiment and the Mac app's Capture window.
 
 ### Migration notes
 
@@ -141,6 +142,7 @@ Example:
 - **Compatibility:** After an extension has had an **Edit with Oppi** session in the last 3 days, Builds 53 and 54 cannot load that server's session list or finish pairing from an invite.
 - **Server:** Durable extensions found only by the file name `durable.ts`, or exported with `defineDurableExtension`, no longer load. Declare the entry in `package.json` and default-export the extension.
 - **Relay:** Deploy the push relay before shipping an app build with Live Activities: the app's Live Activity state upload and the server's Live Activity sends use endpoints an older relay does not have.
+- **Server:** `experimental.desktopLiveView` is gone. The server ignores it in an existing `config.json`, but `oppi config validate` reports it as an unknown key until you delete it.
 - **Server:** Server resource sampling (`server-metrics-*.jsonl`) is now opt-in with `serverMetrics.enabled`, default off. The Grafana Server Health resource panels and the release gate's event-loop stall check have no new data until you turn it on in Server Settings or with `oppi config set serverMetrics.enabled true`.
 
 ## [0.52.0] - 2026-10-14
@@ -161,7 +163,7 @@ Target: iOS `1.1.2` Build `55`, `oppi-server@0.52.0`, and `oppi-mirror@0.52.0` (
 - **Client:** Nerd Font icons show in tool output and the SSH terminal with any code font.
 - **Client:** SSH Terminal: text a host program copies (OSC 52) goes on the iPhone clipboard, the terminal reconnects when you return to Oppi, and programs that report status (OSC 7501, such as Pi 1.1.0+) show a status symbol and a card when they need you. Program notifications (OSC 9/777) use the same card. See [SSH Terminal](docs/ssh-terminal.md).
 - **Server:** `oppi session wait` reports each session's program status, and `--program-status` shows it in the terminal while waiting.
-- **Client/Server:** Experiment: Live Remote Screen plays the Mac window granted to this phone. See [Using Oppi](docs/usage.md#live-remote-screen-experiment).
+- **Client/Server:** Experiment: Live Remote Screen plays the Mac window granted to this phone.
 - **Client/Server:** For a server running from an `npm link`ed checkout, About This Server offers **Rebuild & Restart** when the checkout changed, instead of an npm update.
 - **Server:** Durable control conversation (`oppi control open`, `oppi control send`): manage Agents, Schedules, and sessions by chat. Every write waits for a confirm card in the app. See [Extensions](docs/extensions.md).
 - **Server:** `--idempotency-key` on `oppi agent create` and `oppi schedule create`, and `--turn-id` on `oppi session send`, make retries safe.

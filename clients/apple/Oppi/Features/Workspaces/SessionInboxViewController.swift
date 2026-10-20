@@ -49,7 +49,6 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
     }
     private var hasAutoOpenedE2EWorkspace = false
     private var hasAutoOpenedE2ESession = false
-    private var hasAutoOpenedRemoteScreen = false
     private var pendingError: String?
     private var columnWidth: CGFloat = 0 {
         didSet { if columnWidth != oldValue { setNeedsUpdateProperties() } }
@@ -1086,19 +1085,6 @@ final class SessionInboxViewController: UIViewController, UICollectionViewDelega
     private func applyE2ELaunchHintsIfNeeded() {
         autoOpenE2EWorkspaceIfRequested()
         autoOpenE2ESessionIfRequested()
-        autoOpenRemoteScreenIfRequested()
-    }
-
-    private func autoOpenRemoteScreenIfRequested() {
-        let connection = coordinator.activeServerId.flatMap { coordinator.connection(for: $0) }
-        guard !hasAutoOpenedRemoteScreen,
-              ProcessInfo.processInfo.environment["OPPI_E2E_OPEN_REMOTE_SCREEN"] == "1",
-              navigation.workspaceStackRouteElements.isEmpty,
-              WorkspaceUtilityNavTarget.desktopStill.isReleaseEnabled,
-              ReleaseFeatures.desktopStillEnabled || connection?.desktopLiveViewAvailable == true
-        else { return }
-        hasAutoOpenedRemoteScreen = true
-        navigation.openWorkspaceUtility(.desktopStill)
     }
 
     private func autoOpenE2EWorkspaceIfRequested() {

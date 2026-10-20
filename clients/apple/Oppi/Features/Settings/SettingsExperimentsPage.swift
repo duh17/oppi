@@ -6,7 +6,6 @@ struct SettingsExperimentsPage: View {
     @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var sshTerminalEnabled = false
     @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableSessionsEnabled = false
     @AppStorage(AppPreferences.Experiments.durableSessionsDefaultKey) private var durableSessionsByDefault = false
-    @AppStorage(AppPreferences.Experiments.desktopLiveViewKey) private var desktopLiveViewEnabled = false
 
     /// How many experiments are currently on, for the root row summary.
     @MainActor
@@ -15,7 +14,6 @@ struct SettingsExperimentsPage: View {
             sessionThreadsEnabled,
             AppPreferences.Experiments.sshTerminalEnabled,
             AppPreferences.Experiments.durableSessionsEnabled,
-            AppPreferences.Experiments.desktopLiveViewEnabled,
         ].filter { $0 }.count
     }
 
@@ -44,13 +42,6 @@ struct SettingsExperimentsPage: View {
                 }
             } footer: {
                 Text("On servers that offer durable sessions, the new-session composer shows a Classic / Durable switch. New sessions start Classic unless Start Sessions as Durable is on. Durable sessions are a development playground: they don't run your Pi extensions yet and don't match terminal coding agents feature for feature.")
-            }
-
-            Section {
-                Toggle("Live Remote Screen", isOn: $desktopLiveViewEnabled)
-                    .accessibilityIdentifier("settings.experiments.desktopLiveView")
-            } footer: {
-                Text("Shows a live view of a granted Mac window on iPhone when the server offers Live Remote Screen. Off hides Remote Screen. Frames are not saved.")
             }
         }
         .settingsPage("Experiments")

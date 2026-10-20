@@ -117,12 +117,7 @@ import {
   localApiSocketPath,
   type LocalApiSocketBinding,
 } from "./local-api-socket.js";
-import { DesktopCompanionStillClient } from "./desktop-companion-still-client.js";
-import { DesktopCompanionViewSessionClient } from "./desktop-companion-view-session-client.js";
-import { DesktopCompanionViewStreamClient } from "./desktop-companion-view-stream-client.js";
-import { DesktopViewStreamMux } from "./desktop-view-stream.js";
-import { isDeviceAccessPrincipal, type RequestPrincipal } from "./request-principal.js";
-import { DESKTOP_VIEW_STREAM_PATH } from "./types/protocol.js";
+import type { RequestPrincipal } from "./request-principal.js";
 import { allowsTrustedPrivateHttpBind, trustConfigFromServerConfig } from "./proxy-config.js";
 import {
   isAllowedWebSocketOrigin,
@@ -527,7 +522,6 @@ export class Server {
   private appEventStreamMux!: AppEventStreamMux;
   private boundSessionStreamMux!: BoundSessionStreamMux;
   private dictationStreamMux!: DictationStreamMux;
-  private desktopViewStreamMux!: DesktopViewStreamMux;
   private mirrorRuntime!: PiTuiMirrorRuntime;
   private sessionRuntimes!: SessionRuntimes;
   // REST route handler (dispatch + all HTTP handlers)
@@ -544,27 +538,10 @@ export class Server {
   private dictationConfig: DictationConfig | undefined;
   private uploadGcTimer: ReturnType<typeof setInterval> | null = null;
   private scheduleRunner!: AgentScheduleRunner;
-  /** Companion owner-socket still fetch. Paired HTTPS current-still only. */
-  private readonly desktopCompanionStillClient: Pick<
-    DesktopCompanionStillClient,
-    "fetchCurrentStill"
-  >;
-  private readonly desktopCompanionViewSessionClient: Pick<
-    DesktopCompanionViewSessionClient,
-    "fetchViewSession"
-  >;
-  private readonly desktopCompanionViewStreamClient: DesktopCompanionViewStreamClient;
 
   constructor(
     storage: Storage,
     options?: {
-      desktopCompanionStillClient?: Pick<DesktopCompanionStillClient, "fetchCurrentStill">;
-      desktopCompanionViewSessionClient?: Pick<
-        DesktopCompanionViewSessionClient,
-        "fetchViewSession"
-      >;
-      desktopCompanionRuntimeRoot?: string;
-      desktopCompanionViewStreamClient?: DesktopCompanionViewStreamClient;
       onRestartAfterUpdate?: (mode: ServerRestartMode, targetVersion: string) => void;
       restartNeededVersion?: string;
       /** Package directory the update service inspects; defaults to the running package. */
@@ -572,19 +549,6 @@ export class Server {
     },
   ) {
     this.storage = storage;
-    this.desktopCompanionStillClient =
-      options?.desktopCompanionStillClient ??
-      new DesktopCompanionStillClient({ runtimeRoot: options?.desktopCompanionRuntimeRoot });
-    this.desktopCompanionViewSessionClient =
-      options?.desktopCompanionViewSessionClient ??
-      new DesktopCompanionViewSessionClient({
-        runtimeRoot: options?.desktopCompanionRuntimeRoot,
-      });
-    this.desktopCompanionViewStreamClient =
-      options?.desktopCompanionViewStreamClient ??
-      new DesktopCompanionViewStreamClient({
-        runtimeRoot: options?.desktopCompanionRuntimeRoot,
-      });
     this.serverUpdate = new ServerUpdateService({
       onRestart: options?.onRestartAfterUpdate,
       restartNeededVersion: options?.restartNeededVersion,
@@ -761,12 +725,6 @@ export class Server {
     });
     this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
     this.dictationStreamMux = new DictationStreamMux(streamContext);
-    this.desktopViewStreamMux = new DesktopViewStreamMux({
-      claimViewSession: (input) => this.desktopCompanionViewSessionClient.fetchViewSession(input),
-      connectCompanion: (input) => this.desktopCompanionViewStreamClient.connect(input),
-      trackConnection: (ws) => this.trackConnection(ws),
-      untrackConnection: (ws) => this.untrackConnection(ws),
-    });
 
     // Server resource utilization sampler
     this.serverMetricsEnabled = storage.getConfig().serverMetrics?.enabled === true;
@@ -1046,8 +1004,6 @@ export class Server {
       pairing: this.pairing,
       onOwnerTokenRotated: () => this.closeAllDeviceConnections(),
       stopWorkspaceVm: (workspaceId) => SdkBackend.stopWorkspaceVm(workspaceId),
-      desktopCompanionStillClient: this.desktopCompanionStillClient,
-      desktopCompanionViewSessionClient: this.desktopCompanionViewSessionClient,
       metrics: this.opsMetrics,
       serverMetrics: {
         telemetryDir: join(this.storage.getDataDir(), "diagnostics", "telemetry"),
@@ -1956,17 +1912,7 @@ export class Server {
     const sessionStreamMatch = matchFocusedSessionStreamPath(url.pathname);
     const appEventStreamMatch = url.pathname === "/app/events/stream";
     const dictationStreamMatch = url.pathname === "/dictation/stream";
-    const desktopViewStreamMatch = url.pathname === DESKTOP_VIEW_STREAM_PATH;
-    if (desktopViewStreamMatch) {
-      const liveViewOn = this.storage.getConfig().experimental?.desktopLiveView === true;
-      if (!liveViewOn || !isDeviceAccessPrincipal(principal) || principal.deviceId.trim() === "") {
-        writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
-          Connection: "close",
-          "Content-Length": "0",
-        });
-        return;
-      }
-    } else if (!sessionStreamMatch && !appEventStreamMatch && !dictationStreamMatch) {
+    if (!sessionStreamMatch && !appEventStreamMatch && !dictationStreamMatch) {
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
         Connection: "close",
         "Content-Length": "0",
@@ -2007,7 +1953,6 @@ export class Server {
         sessionStreamMatch,
         appEventStreamMatch,
         dictationStreamMatch,
-        desktopViewStreamMatch,
         upgradeReceivedAt,
         authenticatedDeviceId,
       });
@@ -2020,7 +1965,6 @@ export class Server {
       sessionStreamMatch: FocusedSessionStreamPath | null;
       appEventStreamMatch: boolean;
       dictationStreamMatch: boolean;
-      desktopViewStreamMatch: boolean;
       upgradeReceivedAt: number;
       authenticatedDeviceId?: string;
     },
@@ -2067,22 +2011,6 @@ export class Server {
           ? { expiresAt: principal.expiresAt }
           : undefined,
       );
-      return;
-    }
-    if (route.desktopViewStreamMatch) {
-      const principal = this.socketPrincipals.get(ws);
-      if (!isDeviceAccessPrincipal(principal) || principal.deviceId.trim() === "") {
-        ws.close(1008, "Not found");
-        return;
-      }
-      const storedName = this.storage
-        .listDevices()
-        .find((device) => device.id === principal.deviceId)
-        ?.name?.trim();
-      this.desktopViewStreamMux.handleWebSocket(ws, {
-        deviceId: principal.deviceId,
-        deviceName: storedName && storedName.length > 0 ? storedName : undefined,
-      });
       return;
     }
     ws.close(1008, "Unsupported WebSocket endpoint");

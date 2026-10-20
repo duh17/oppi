@@ -89,15 +89,6 @@ enum WorkspaceSidebarPrimaryUtilities {
         ),
     ]
 
-    static let desktopStill = WorkspaceSidebarPrimaryUtilityItem(
-        target: .desktopStill,
-        title: "Remote Screen",
-        systemImage: "macwindow",
-        accessibilityLabel: "Remote Screen",
-        accessibilityIdentifier: "workspace.desktopStill.open",
-        accessibilityHint: "Inspect the current remote screen"
-    )
-
     /// Pinned below New Workspace; not part of `items(for:…)`.
     static let appSettings = WorkspaceSidebarPrimaryUtilityItem(
         target: .appSettings,
@@ -113,8 +104,7 @@ enum WorkspaceSidebarPrimaryUtilities {
     static func items(
         for idiom: UIUserInterfaceIdiom,
         sshTerminalEnabled: Bool,
-        hasSSHProfile: Bool,
-        desktopLiveViewAvailable: Bool = false
+        hasSSHProfile: Bool
     ) -> [WorkspaceSidebarPrimaryUtilityItem] {
         var result = items
         if sshTerminalEnabled && hasSSHProfile {
@@ -123,9 +113,6 @@ enum WorkspaceSidebarPrimaryUtilities {
                 accessibilityLabel: "Open SSH Terminal", accessibilityIdentifier: "workspace.terminal.open",
                 accessibilityHint: "Opens your saved SSH hosts"
             ))
-        }
-        if idiom == .phone, ReleaseFeatures.desktopStillEnabled || desktopLiveViewAvailable {
-            result.append(desktopStill)
         }
         return result
     }

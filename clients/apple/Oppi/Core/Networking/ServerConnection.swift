@@ -276,8 +276,6 @@ final class ServerConnection {
     var conversationStreamAvailable: Bool { serverCapabilities?.conversationStream?.version ?? 0 >= 1 }
     /// v2: `attach { mode: live }` streams the live tails of a session's subagents on its socket.
     var conversationStreamLiveTailsAvailable: Bool { serverCapabilities?.conversationStream?.version ?? 0 >= 2 }
-    /// The server advertises experimental live H.264 (`capabilities.desktopLiveView`).
-    var desktopLiveViewAvailable: Bool { serverCapabilities?.desktopLiveView?.version ?? 0 >= 1 }
     /// The server reads messages aloud (`capabilities.speech`, `POST /speech`).
     var speechAvailable: Bool { serverCapabilities?.speech?.version ?? 0 >= 1 }
     /// A Live Voice call can start (`capabilities.liveVoice`). A server that does not
@@ -2949,30 +2947,6 @@ final class ServerConnection {
         return client
     }
 
-    func makeDesktopLiveViewStreamClient() -> DesktopLiveViewStreamClient? {
-        guard let selection = endpointSelection,
-              let credentials else { return nil }
-        let session = httpAuthSession
-        let currentTokenProvider: (@Sendable () async throws -> String)?
-        let refreshTokenProvider: (@Sendable () async throws -> String)?
-        if let session {
-            currentTokenProvider = { try await session.currentAccessToken() }
-            refreshTokenProvider = { try await session.refreshAccessToken() }
-        } else {
-            currentTokenProvider = nil
-            refreshTokenProvider = nil
-        }
-        return DesktopLiveViewStreamClient(
-            baseURL: selection.baseURL,
-            token: credentials.effectiveAccessToken,
-            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
-            tlsServerName: selection.tlsServerName,
-            tailnetRoute: configuredTailnetRoute,
-            currentTokenProvider: currentTokenProvider,
-            refreshTokenProvider: refreshTokenProvider
-        )
-    }
-
     /// A second stream to the chat's session that carries its Live Voice call and audio.
     /// It must not steal the focused chat WebSocket.
     func makeLiveVoiceWebSocketClient(sessionId: String, routeScope: SessionRouteScope) -> WebSocketClient? {
@@ -3180,7 +3154,6 @@ final class ServerConnection {
         durableSessions: Bool = false,
         conversationStream: Bool = false,
         conversationStreamVersion: Int = 1,
-        desktopLiveView: Bool = false,
         speech: Bool = false,
         liveVoice: Bool = false,
         pushRelay: URL? = nil
@@ -3195,7 +3168,6 @@ final class ServerConnection {
             extensionNativeUI: nil,
             durableSessions: version(durableSessions),
             conversationStream: conversationStream ? .init(version: conversationStreamVersion) : nil,
-            desktopLiveView: version(desktopLiveView),
             speech: version(speech),
             liveVoice: version(liveVoice),
             pushNotifications: pushRelay.map {

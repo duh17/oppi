@@ -141,10 +141,6 @@ From the CLI, `oppi session create --workspace <id> --prompt <text> --engine dur
 
 A durable session can start helper sessions of its own with its `subagent` tool. Each one is a child session you can open from the tool row or the Subagents pill above the composer, listed in All Sessions. The pill shows each child as Working, Needs attention, Done, or Error, with its model and context use as of its last answer. It reports each answer back to the session that started it: the answer to its task, the answer to each later message, and an answer it gives on its own after background work, such as a background job it waited on. A child can start its own children only when its parent allows it.
 
-## Live Remote Screen experiment
-
-Turn on **Settings → Experiments → Live Remote Screen** (off by default, saved on this device). When the visible server advertises live remote screen (`oppi config set experimental.desktopLiveView true` and a restart), iPhone shows **Remote Screen** in the workspace sidebar. It plays the Mac window that was granted to this phone. Live means a frame arrived recently; if nothing arrives for a couple of seconds the status becomes Paused or Reconnecting with how old the last picture is. Pinch to zoom, drag to pan, double-tap to fit or zoom to 2×. The stream stops when Oppi backgrounds, the screen locks, or you leave the viewer, and it does not save frames. Turn the experiment off to hide Remote Screen.
-
 ## Models and quota
 
 Pick models from the in-app picker. Remaining provider quota and pace live on **Server Settings** → **Model Providers**. The CLI also has `oppi quota` and `oppi models`. See [Provider quotas](provider-quotas.md).

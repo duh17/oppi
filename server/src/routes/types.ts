@@ -10,8 +10,6 @@ import type { ProviderAuthManager } from "../provider-auth/provider-auth-manager
 import type { ProviderQuotasStatus } from "../provider-quota.js";
 import type { AppEventEmitter } from "../app-event-stream.js";
 import type { SessionRuntimes } from "../runtime-router.js";
-import type { DesktopCompanionStill } from "../desktop-companion-still-client.js";
-import type { DesktopCompanionViewSession } from "../desktop-companion-view-session-client.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ServerResourceService } from "../server-resource-service.js";
 import type { ServerUpdateService } from "../server-update.js";
@@ -85,22 +83,10 @@ export interface RouteContext {
   onOwnerTokenRotated?: () => void;
   /** Stop the sandbox VM for a deleted workspace. Composed in server.ts. */
   stopWorkspaceVm?: (workspaceId: string) => void | Promise<void>;
-  /** Companion current-still fetch. Never starts a capture. */
-  desktopCompanionStillClient?: {
-    fetchCurrentStill: (options?: { signal?: AbortSignal }) => Promise<DesktopCompanionStill>;
-  };
   /** Server operational metrics. Optional so route tests can omit it. */
   metrics?: ServerMetricCollector;
   /** Resource sampler control. Optional so route tests can omit it. */
   serverMetrics?: ServerMetricsControl;
-  /** Companion view-session metadata. JSON only. Never starts a capture. */
-  desktopCompanionViewSessionClient?: {
-    fetchViewSession: (input: {
-      deviceId: string;
-      deviceName?: string;
-      signal?: AbortSignal;
-    }) => Promise<DesktopCompanionViewSession>;
-  };
 }
 
 export interface RouteHelpers {

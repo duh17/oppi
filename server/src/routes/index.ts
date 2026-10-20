@@ -25,8 +25,6 @@ import { createMcpRoutes } from "./mcp.js";
 import { createScheduleRoutes } from "./schedules.js";
 import { createE2EUIHarnessRoutes } from "./e2e-ui-harness.js";
 import { createServerResourceRoutes } from "./server-resources.js";
-import { createDesktopStillRoutes } from "./desktop-stills.js";
-import { createDesktopViewSessionRoutes } from "./desktop-view-session.js";
 
 export type { RouteContext } from "./types.js";
 
@@ -58,8 +56,6 @@ export class RouteHandler {
       createMcpRoutes(this.ctx, this.helpers),
       createScheduleRoutes(this.ctx, this.helpers),
       createE2EUIHarnessRoutes(this.ctx, this.helpers),
-      createDesktopStillRoutes(this.ctx, this.helpers),
-      createDesktopViewSessionRoutes(this.ctx, this.helpers),
     ];
   }
 

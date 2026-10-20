@@ -54,7 +54,6 @@ final class WorkspaceSidebarViewController: UIViewController {
     /// What `AppStorage` read before: the same defaults keys.
     private struct Defaults: Equatable {
         var sshTerminalEnabled: Bool
-        var desktopLiveViewEnabled: Bool
         var sshCatalogData: Data
         var workspacesExpanded: Bool
 
@@ -62,7 +61,6 @@ final class WorkspaceSidebarViewController: UIViewController {
             let defaults = UserDefaults.standard
             return Self(
                 sshTerminalEnabled: defaults.bool(forKey: AppPreferences.Experiments.sshTerminalKey),
-                desktopLiveViewEnabled: defaults.bool(forKey: AppPreferences.Experiments.desktopLiveViewKey),
                 sshCatalogData: defaults.data(forKey: SSHTerminalProfileStore.catalogKey) ?? Data(),
                 workspacesExpanded: defaults.object(forKey: AppIdentifiers.workspaceSidebarExpandedKey) as? Bool
                     ?? WorkspaceSidebarDisclosurePolicy.defaultExpanded
@@ -193,7 +191,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         apply(previous: previous, themeChanged: themeChanged)
     }
 
-    /// The disclosure, SSH, and Remote Screen flags changed in Settings or
+    /// The disclosure and SSH flags changed in Settings or
     /// elsewhere in the app, as `AppStorage` reacted before.
     /// Posted on whichever thread wrote the default.
     @objc private nonisolated func defaultsDidChange() {
@@ -231,13 +229,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         let utilities = WorkspaceSidebarPrimaryUtilities.items(
             for: UIDevice.current.userInterfaceIdiom,
             sshTerminalEnabled: defaults.sshTerminalEnabled,
-            hasSSHProfile: SSHTerminalProfileStore.hasConfiguredHost(catalogData: defaults.sshCatalogData),
-            desktopLiveViewAvailable: DesktopLiveViewPlayground.isAvailable(
-                experimentEnabled: defaults.desktopLiveViewEnabled,
-                serverOffers: server
-                    .flatMap { coordinator.connection(for: $0.id) }?
-                    .desktopLiveViewAvailable == true
-            )
+            hasSSHProfile: SSHTerminalProfileStore.hasConfiguredHost(catalogData: defaults.sshCatalogData)
         )
         .filter { $0.target.isReleaseEnabled }
         for item in utilities {

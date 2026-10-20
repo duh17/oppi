@@ -8,10 +8,6 @@ import {
   buildConversationStreamGolden,
   CONVERSATION_STREAM_GOLDEN_FILE,
 } from "../tests/conversation-stream-golden.js";
-import {
-  DESKTOP_VIEW_STREAM_SNAPSHOT_FILE,
-  serializeDesktopViewStreamFixture,
-} from "../tests/desktop-view-stream-fixtures.js";
 
 import {
   APP_EVENT_MESSAGES_FIXTURE_DESCRIPTION,
@@ -28,7 +24,6 @@ const fixtures = [
   { path: CONVERSATION_STREAM_SNAPSHOT_FILE, content: serializeConversationStreamFixture() },
   // Runs a real Harness conversation; only this script writes it, never ordinary tests.
   { path: CONVERSATION_STREAM_GOLDEN_FILE, content: await buildConversationStreamGolden() },
-  { path: DESKTOP_VIEW_STREAM_SNAPSHOT_FILE, content: serializeDesktopViewStreamFixture() },
   {
     path: SERVER_MESSAGES_SNAPSHOT_FILE,
     content: serializeProtocolFixture(

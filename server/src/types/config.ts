@@ -127,8 +127,6 @@ export interface ServerConfig {
      * attach. Write it with `oppi extensions enable|disable`, which the running server sees.
      */
     durableExtensions?: { disabled?: string[] };
-    /** Mac → Node live H.264 view lane. Default off. */
-    desktopLiveView?: boolean;
   };
 
   /** Provider quota display options. */

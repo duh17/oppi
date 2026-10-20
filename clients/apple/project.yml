@@ -723,8 +723,6 @@ targets:
       - path: Oppi/Core/Theme/ThemeContrast.swift
       - path: Oppi/Core/Theme/ThemeStore.swift
     dependencies:
-      - sdk: ScreenCaptureKit.framework
-      - sdk: VideoToolbox.framework
       - package: Sparkle
       - package: swift-cmark
         product: cmark-gfm

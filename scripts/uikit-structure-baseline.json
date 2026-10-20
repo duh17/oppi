@@ -655,15 +655,6 @@
     "clients/apple/Oppi/Features/Skills/SkillFileView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Workspaces/DesktopCurrentStillViewerView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Workspaces/DesktopLiveSampleBufferView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Workspaces/DesktopLiveViewerView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Workspaces/SessionInboxComposeChrome.swift": {
       "import SwiftUI": 1
     },

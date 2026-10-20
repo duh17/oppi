@@ -223,8 +223,6 @@ enum WorkspaceUtilityNavTarget: Hashable {
     case extensions
     case mcpServers
     case sshTerminal
-    /// iPhone-only remote screen. Hidden until the still viewer is released or Live Remote Screen is on.
-    case desktopStill
     case manageServers
     /// The active host's CPU, memory, disk, and Oppi process over time.
     case serverMetrics
@@ -232,8 +230,6 @@ enum WorkspaceUtilityNavTarget: Hashable {
 
     var isReleaseEnabled: Bool {
         switch self {
-        case .desktopStill:
-            ReleaseFeatures.desktopStillEnabled || AppPreferences.Experiments.desktopLiveViewEnabled
         case .sshTerminal:
             AppPreferences.Experiments.sshTerminalEnabled && SSHTerminalProfileStore().hasConfiguredHost
         case .schedules, .agents, .skills, .extensions, .mcpServers, .manageServers, .serverMetrics, .appSettings:

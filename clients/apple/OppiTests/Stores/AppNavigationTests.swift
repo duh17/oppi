@@ -1550,7 +1550,6 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitColumnVisibility == .all)
     }
 
-    // Order is pinned by desktopStillUtilityStaysPhoneOnlyAndHiddenUntilReleaseEnabled.
     @Test func sidebarPrimaryUtilitiesHaveDistinctIdentifiers() {
         let items = WorkspaceSidebarPrimaryUtilities.items(
             for: .phone, sshTerminalEnabled: true, hasSSHProfile: true

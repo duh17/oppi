@@ -329,12 +329,7 @@ function normalizeConfig(
       errors.push("config.experimental: expected object");
     } else {
       for (const key of Object.keys(obj.experimental)) {
-        if (
-          key !== "serverDurable" &&
-          key !== "desktopLiveView" &&
-          key !== "durableExtensions" &&
-          strictUnknown
-        ) {
+        if (key !== "serverDurable" && key !== "durableExtensions" && strictUnknown) {
           errors.push(`config.experimental.${key}: unknown key`);
         }
       }
@@ -344,13 +339,6 @@ function normalizeConfig(
           errors.push("config.experimental.serverDurable: expected boolean");
         } else {
           experimental.serverDurable = obj.experimental.serverDurable;
-        }
-      }
-      if ("desktopLiveView" in obj.experimental) {
-        if (typeof obj.experimental.desktopLiveView !== "boolean") {
-          errors.push("config.experimental.desktopLiveView: expected boolean");
-        } else {
-          experimental.desktopLiveView = obj.experimental.desktopLiveView;
         }
       }
       if ("durableExtensions" in obj.experimental) {

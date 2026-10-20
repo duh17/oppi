@@ -474,7 +474,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         // Experimental: `attach` on a durable session's focused stream sends snapshot/update.
         // v2: `attach { mode: "live" }` streams the live tails of its subagents, and `detach`.
         conversationStream: ctx.sessions.conversationStreamAvailable() ? { version: 2 } : undefined,
-        desktopLiveView: config.experimental?.desktopLiveView === true ? { version: 1 } : undefined,
         extensionNativeUI: {
           version: 1,
           capabilities: [...EXTENSION_NATIVE_UI_SERVER_CAPABILITIES],
