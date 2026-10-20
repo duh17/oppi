@@ -2,6 +2,8 @@
 export const DURABLE_QUEUE_REQUEST_ID_PREFIX = "oppi-queue:";
 /** Display-only failure cards. One id per input or task, so a retry writes nothing. */
 export const DURABLE_FAILURE_REQUEST_ID_PREFIX = "oppi-failure:";
+/** The write that starts the inputs queued behind a failed run, one per failed input. */
+export const DURABLE_CONTINUE_REQUEST_ID_PREFIX = "oppi-continue:";
 export const DURABLE_RESERVED_REQUEST_ID_PREFIXES = [
   "background-job:",
   // The subagent tool: a child's first task, its reports to the parent
@@ -12,4 +14,5 @@ export const DURABLE_RESERVED_REQUEST_ID_PREFIXES = [
   "oppi-send:",
   DURABLE_QUEUE_REQUEST_ID_PREFIX,
   DURABLE_FAILURE_REQUEST_ID_PREFIX,
+  DURABLE_CONTINUE_REQUEST_ID_PREFIX,
 ] as const;

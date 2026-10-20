@@ -11,6 +11,7 @@ import {
   type EntryRecord,
   type Harness,
   type SnapshotEvent,
+  type SubmissionId,
   type TaskId,
 } from "@earendil-works/pi-durable";
 import {
@@ -22,6 +23,9 @@ import {
 
 import { compactionSummary, isRecoveredPartial } from "./durable-history.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
+
+/** The unanswered reasons of a failed run: pi-durable keeps the inputs queued behind it. */
+const FAILED_RUN_REASONS: ReadonlySet<string> = new Set(["model_error", "no_model"]);
 
 type Compacting = {
   reason: string;
@@ -48,6 +52,15 @@ export class DurableEventProjection {
   private retry?: { attempt: number; taskId?: TaskId; error: string };
   private snapshotSeen = false;
   private runInputs?: readonly number[];
+  /** `pi.inbox` as of the events projected so far. */
+  private inbox: SnapshotEvent["inbox"] = [];
+  /**
+   * The last run ended with another to come, so its `agent_settled` waits: a failed run that
+   * left inputs queued, which start once its failure card is written. The next `run_start`
+   * clears it; `settle` sends it when no run followed after all.
+   */
+  private settleHeld = false;
+  private continuation?: SubmissionId;
 
   constructor(
     private readonly harness: Harness,
@@ -106,6 +119,10 @@ export class DurableEventProjection {
     }
     this.snapshotSeen = true;
     this.runInputs = snapshot.run?.inputs;
+    this.inbox = snapshot.inbox;
+    if (this.settleHeld && !snapshot.run) events.push(this.pi({ type: "agent_settled" }));
+    this.settleHeld = false;
+    this.continuation = undefined;
     if (
       snapshot.generation?.retry &&
       (!sameRun || this.retry?.attempt !== snapshot.generation.attempt)
@@ -134,6 +151,7 @@ export class DurableEventProjection {
     // Capture remaining delay and context before any async receipt lookup can lag.
     const now = Date.now();
     for (const event of events) {
+      if (event.type === "inbox_update") this.inbox = event.items;
       if (event.type === "message_end" || event.type === "entry_appended") {
         if (!this.entries.some((entry) => entry.id === event.entry.id))
           this.entries.push(event.entry);
@@ -180,7 +198,7 @@ export class DurableEventProjection {
         hidden.add(message);
     }
     const ends = await this.compactionEnds(events);
-    for (const event of events) {
+    for (const [index, event] of events.entries()) {
       if (event.type === "snapshot") {
         // A snapshot can include an already-placed summary and a newer run.
         // Finish that hold before rebinding the newer run's live projection.
@@ -251,16 +269,22 @@ export class DurableEventProjection {
         );
         this.retry = undefined;
       }
-      if (event.type === "run_start") this.runInputs = event.inputs;
+      if (event.type === "run_start") {
+        this.runInputs = event.inputs;
+        this.settleHeld = false;
+        this.continuation = undefined;
+      }
       if (event.type === "run_end") this.runInputs = undefined;
       // run_end carries no assistant. Read the ending run from entries already
       // updated by this batch's message_end/entry_appended events and snapshots.
+      const adapted = adaptDurableEvent(
+        event,
+        this.adapter,
+        event.type === "run_end" ? newestAssistantOfActiveRun(this.entries) : undefined,
+      );
+      const held = event.type === "run_end" && this.holdsSettle(event, events, index);
       out.push(
-        ...adaptDurableEvent(
-          event,
-          this.adapter,
-          event.type === "run_end" ? newestAssistantOfActiveRun(this.entries) : undefined,
-        ),
+        ...(held ? adapted.filter((pi) => pi.type !== "agent_settled") : adapted),
         ...(ends.get(event) ?? []),
       );
     }
@@ -421,6 +445,45 @@ export class DurableEventProjection {
             !["aborted", "error"].includes((message as AssistantMessage).stopReason),
         ),
     ).tokens;
+  }
+
+  /**
+   * Whether the ending run settles later, as classic settles only once no run follows: a later
+   * event of its batch starts the next run (a final answer's queued inputs), or it failed with
+   * inputs queued behind it, which `DurableAgentController.continueAfterFailedRun` starts.
+   */
+  private holdsSettle(
+    end: Extract<AgentEvent, { type: "run_end" }>,
+    events: readonly AgentEvent[],
+    index: number,
+  ): boolean {
+    if (events.slice(index + 1).some((event) => event.type === "run_start")) return true;
+    const failed = events.find(
+      (event): event is Extract<AgentEvent, { type: "submission" }> =>
+        event.type === "submission" &&
+        event.record.type === "input" &&
+        event.record.status === "unanswered" &&
+        FAILED_RUN_REASONS.has(event.record.reason) &&
+        end.inputs.includes(event.record.id),
+    );
+    if (!failed || !this.inbox.some((item) => item.mode !== "write")) return false;
+    this.settleHeld = true;
+    this.continuation = failed.record.id;
+    return true;
+  }
+
+  /** The failed input whose run left inputs queued to start, once. */
+  takeContinuation(): SubmissionId | undefined {
+    const failed = this.continuation;
+    this.continuation = undefined;
+    return failed;
+  }
+
+  /** The held `agent_settled`, when no run followed the failed one after all. */
+  settle(): AgentSessionEvent[] {
+    if (!this.settleHeld) return [];
+    this.settleHeld = false;
+    return [this.pi({ type: "agent_settled" })];
   }
 
   private pi(event: object): AgentSessionEvent {

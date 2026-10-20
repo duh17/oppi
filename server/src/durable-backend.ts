@@ -792,6 +792,21 @@ export class DurableBackend implements AgentBackend {
           }
         }
       }
+      // A run that failed with inputs queued behind it: its card is written above, so start them
+      // now, behind it. The projection held the run's `agent_settled`; send it if none starts.
+      const failed = this.projection.takeContinuation();
+      if (failed !== undefined && !this.disposed) {
+        let next: "running" | "idle" = "idle";
+        try {
+          next = await (await this.controller()).continueAfterFailedRun(failed);
+        } catch (error) {
+          log.warn("durable_failure.continue_failed", {
+            submissionId: failed,
+            error: safeErrorMessage(error),
+          });
+        }
+        if (next === "idle") for (const pi of this.projection.settle()) this.onEvent(pi);
+      }
       // A run's settlement commits with its end, so its errors are in this batch or earlier.
       // A later run starts with nothing shown.
       if (events.some((event) => event.type === "run_end")) this.shownRunErrors.clear();

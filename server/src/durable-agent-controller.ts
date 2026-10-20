@@ -13,17 +13,25 @@ import {
   type InputEntry,
   type SettledSubmissionRecord,
   type Submission,
+  type SubmissionId,
   type Tx,
   type UserInput,
 } from "@earendil-works/pi-durable";
 import { resolveDurableInputCards } from "./durable-input-cards.js";
 import { recordInputFailure } from "./durable-failure-cards.js";
+import { DURABLE_CONTINUE_REQUEST_ID_PREFIX } from "./durable-request-ids.js";
 import type { SessionHost } from "./durable-harness.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { ChatAttachmentRef, MessageQueueItem } from "./types.js";
 
 const log = createLogger({ base: { component: "durable-agent-controller" } });
+
+/**
+ * The hidden write that starts the inputs queued behind a failed run. No model message and no
+ * card, so no trace, stream, or export shows it.
+ */
+const CONTINUE_ENTRY_KIND = "oppi.continue";
 
 // Submission records omit content after queued input withdrawal. Keep its
 // fingerprint durable too, so a later replay cannot silently change that input.
@@ -284,6 +292,37 @@ export class DurableAgentController {
     };
   }
 
+  /**
+   * Start the inputs queued behind a run that failed (`model_error`, `no_model`), as classic
+   * goes on with its queued messages after a failed run. Call it once the run's failure card is
+   * written. pi-durable's `afterFailedRun: "continue"` would place them in the commit that
+   * fails the run, ahead of that card, which Oppi can only write in a later commit, so the
+   * Harness keeps its default (`keep`) and this admits a write instead. Its entry changes
+   * nothing the model sees, but `edits: []` makes it more than display-only: an idle
+   * conversation with queued items queues it behind them and runs a final boundary, which
+   * places it, then the queued inputs, and starts the next run. The request id makes a repeat a
+   * no-op. Resolves `running` when a run follows (this one's, or one a prompt started
+   * meanwhile) and `idle` when nothing is queued.
+   */
+  async continueAfterFailedRun(failed: SubmissionId): Promise<"running" | "idle"> {
+    const id = this.conversation.id;
+    const running = async (): Promise<boolean> =>
+      (await this.harness.snapshot(LiveDoc, id, BACKGROUND_CONTEXT))?.run !== undefined;
+    const inbox = await this.harness.snapshot(InboxDoc, id, BACKGROUND_CONTEXT);
+    if (!inbox?.items.some((item) => item.mode !== "write"))
+      return (await running()) ? "running" : "idle";
+    if (!(await running()))
+      await this.conversation.submit(
+        {
+          type: "write",
+          requestId: `${DURABLE_CONTINUE_REQUEST_ID_PREFIX}${failed}`,
+          entry: { kind: CONTINUE_ENTRY_KIND, edits: [] },
+        },
+        BACKGROUND_CONTEXT,
+      );
+    return (await running()) ? "running" : "idle";
+  }
+
   abort(): Promise<void> {
     return this.host.abortConversation(this.conversation.id);
   }
@@ -292,8 +331,8 @@ export class DurableAgentController {
    * Cancel a pending retry backoff and nothing else. The failed attempt's error is already
    * in the transcript; aborting only the generation task ends the run as aborted and leaves
    * queued inputs in the inbox, as classic does. Outside a backoff this does nothing, as classic.
-   * Queued inputs also stay unstarted afterwards: pi-durable places the inbox only at a boundary or
-   * on the next submission, after an aborted run as after a failed one.
+   * Queued inputs also stay unstarted afterwards: pi-durable places the inbox after an aborted run
+   * only on the next submission (`continueAfterFailedRun` covers failed runs, not aborted ones).
    *
    * The backoff is a durable sleep: the generation commits `sleeping` at checkpoint `phase: "retry"`
    * (a record an earlier pi-durable stored `running` or `pending` there sleeps again when it runs),

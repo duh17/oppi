@@ -2867,6 +2867,97 @@ describe("server durable managed runtime", () => {
     observed.unsubscribe();
   });
 
+  /** A run that fails after its one retry, with a follow-up queued during the backoff. */
+  async function failWithQueuedFollowUp(options?: { autoStop?: boolean }) {
+    const f = await fixture(
+      [
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 overloaded" }),
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 still overloaded" }),
+        fauxAssistantMessage("FOLLOW_UP_ANSWER"),
+      ],
+      { settings: { retry: { enabled: true, maxRetries: 1, baseDelayMs: 1_000 } } },
+    );
+    if (options?.autoStop) {
+      const row = f.storage.getSession(f.session.id)!;
+      row.launch = { ...row.launch, autoStop: true };
+      f.storage.saveSession(row);
+    }
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    const backoff = observed.next((message) => message.type === "retry_start");
+    await f.manager.sendPrompt(f.session.id, "fail twice");
+    await backoff;
+    await f.manager.sendPrompt(f.session.id, "queued behind the failure", {
+      streamingBehavior: "followUp",
+    });
+    return { f, observed };
+  }
+
+  it("starts a follow-up queued behind a run that fails, after its error, as classic does", async () => {
+    const { f, observed } = await failWithQueuedFollowUp();
+    // Retries run out and the run fails; nothing else is sent, yet the follow-up is answered.
+    await observed.next(
+      (message) =>
+        message.type === "message_end" && JSON.stringify(message).includes("FOLLOW_UP_ANSWER"),
+    );
+    await vi.waitFor(() =>
+      expect(observed.messages.some((message) => message.type === "agent_settled")).toBe(true),
+    );
+    expect(f.faux.state.callCount).toBe(3);
+    expect(observed.messages.filter((message) => message.type === "retry_end")).toEqual([
+      expect.objectContaining({ success: false, finalError: "429 still overloaded" }),
+    ]);
+    expect((await f.manager.getMessageQueue(f.session.id)).followUp).toEqual([]);
+    // Settled once, after the follow-up's run: the failed run hands over to it.
+    const types = observed.messages.map((message) => message.type);
+    expect(types.filter((type) => type === "agent_settled")).toHaveLength(1);
+    expect(types.lastIndexOf("agent_settled")).toBeGreaterThan(types.lastIndexOf("agent_start"));
+
+    // The failure card is the failed run's last row, before the input it did not cause.
+    const harness = (
+      f.manager as unknown as { active: Map<string, { sdkBackend: { harness: Harness } }> }
+    ).active.get(f.session.id)!.sdkBackend.harness;
+    const id = f.storage.getSession(f.session.id)!.serverDurable!.conversationId as ConversationId;
+    const page = await (await harness.conversation(id, context))!.entries(
+      {},
+      500,
+      undefined,
+      context,
+    );
+    const entries = [...page.items].reverse();
+    const at = (match: (entry: (typeof entries)[number]) => boolean): number =>
+      entries.findIndex(match);
+    const failedAnswer = entries.findLastIndex(
+      (entry) =>
+        entry.model?.[0]?.role === "assistant" &&
+        (entry.model[0] as { stopReason?: string }).stopReason === "error",
+    );
+    const card = at((entry) => entry.kind === DURABLE_FAILURE_ENTRY_KIND);
+    const queued = at((entry) =>
+      JSON.stringify(entry.model ?? []).includes("queued behind the failure"),
+    );
+    const answered = at((entry) => JSON.stringify(entry.model ?? []).includes("FOLLOW_UP_ANSWER"));
+    expect(failedAnswer).toBeGreaterThanOrEqual(0);
+    expect([failedAnswer < card, card < queued, queued < answered]).toEqual([true, true, true]);
+    observed.unsubscribe();
+  });
+
+  it("runs the follow-up queued behind a failed run before an autoStop session stops", async () => {
+    const { f, observed } = await failWithQueuedFollowUp({ autoStop: true });
+    const answered = observed.next(
+      (message) =>
+        message.type === "message_end" && JSON.stringify(message).includes("FOLLOW_UP_ANSWER"),
+    );
+    await answered;
+    expect(f.faux.state.callCount).toBe(3);
+    // Then it settles, once, and stops as autoStop asks.
+    await vi.waitFor(() => expect(f.manager.isActive(f.session.id)).toBe(false), {
+      timeout: 8_000,
+    });
+    expect(observed.messages.filter((message) => message.type === "agent_settled")).toHaveLength(1);
+    observed.unsubscribe();
+  });
+
   it("abort_retry leaves the next attempt alone when the backoff ends before the abort lands", async () => {
     const answerText = "RETRY ANSWER STREAMED ONE TOKEN AT A TIME";
     const f = await fixture(
