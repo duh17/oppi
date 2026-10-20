@@ -18,6 +18,10 @@ final class RouterSettingsModalsUITests: XCTestCase {
         throw XCTSkip("Router modal tests are simulator-only")
 #endif
         continueAfterFailure = false
+        // The simulator keeps the orientation an earlier test left. In iPhone
+        // landscape (compact height) a sheet presents full screen, which has no
+        // swipe-down to close, so every sheet claim here is a portrait claim.
+        XCUIDevice.shared.orientation = .portrait
     }
 
     // MARK: Agents
