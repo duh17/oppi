@@ -76,25 +76,28 @@ struct ChatFileBrowserPanelTests {
     }
 
     @MainActor
-    @Test func panelReadersUseTheSessionCheckoutAndServer() {
-        let panel = ChatFileBrowserPanel(
+    @Test func panelReadersUseTheSessionCheckoutAndServer() throws {
+        let inputs = ChatFilePanelInputs(
             sessionId: "session-1",
             workspaceId: "workspace-1",
             changedFiles: ["docs/notes.md"],
-            selectedTab: .constant(.all),
             serverId: "server-1",
             worktreeId: "wt-agent",
-            onClose: {}
+            reviewCommentSelectionScope: nil,
+            connection: ServerConnection(),
+            apiClient: nil,
+            fileIndexStore: FileIndexStore(),
+            gitStatusStore: GitStatusStore(),
+            navigation: AppNavigation(),
+            closePanel: {}
         )
+        let root = makeTestAppRoot()
 
         // All: a tapped file pushes the full reader (own chrome and Edit) on the session checkout.
-        let reader = panel.debugAllFilesBrowserForTesting(workspaceId: "workspace-1")
-            .debugCompactNavigationFileContentForTesting(
-                path: "docs/notes.md",
-                name: "notes.md",
-                size: nil,
-                store: .constant(FullScreenMarkdownViewportRestoreState())
-            )
+        let reader = try #require(
+            ChatFilePanelViewController.debugAllFilesBrowserForTesting(root: root, inputs: inputs, workspaceId: "workspace-1")
+                .debugPushedReaderForTesting(path: "docs/notes.md", name: "notes.md", size: nil)
+        )
         #expect(reader.debugWorktreeIdForTesting == "wt-agent")
         #expect(reader.debugServerIdForTesting == "server-1")
         #expect(reader.debugSourceForTesting == .workspaceFile)
@@ -111,8 +114,9 @@ struct ChatFileBrowserPanelTests {
             isUntracked: false,
             selectedSessionTouched: true
         )
-        let review = panel.debugChangedFilesListForTesting
-            .debugReviewDetailForTesting(workspaceId: "workspace-1", file: file)
+        let changed = SessionFilesListViewController(root: root, navigator: .unattached)
+        changed.update(inputs: inputs, searchText: "")
+        let review = try #require(changed.debugReviewDetailForTesting(file: file))
         #expect(review.debugWorktreeIdForTesting == "wt-agent")
         #expect(review.debugServerIdForTesting == "server-1")
         let current = review.debugCurrentFileContentForTesting()

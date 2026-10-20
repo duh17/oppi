@@ -2,11 +2,12 @@ import SwiftUI
 import UIKit
 
 // The chat's SwiftUI leaf content: the context bar, the footer rows around
-// the composer, the jump-to-bottom hint, the session title, and the SwiftUI
-// panels it presents (Files, model picker, review comments, Share). UIKit
-// owns the screen (`ChatViewController`); these are hosted with
-// `HostFactory.leaf`, `HostFactory.content`, or `RouterScreen.hosted`, with
-// the chat's presenter-local values applied explicitly (`leafScope`).
+// the composer, the jump-to-bottom hint, the session title, the SwiftUI
+// panels it presents (model picker, review comments, Share), and the pages
+// the UIKit Files panel pushes (`SessionFilePages`). UIKit owns the screen
+// (`ChatViewController`); these are hosted with `HostFactory.leaf`,
+// `HostFactory.content`, or `RouterScreen.hosted`, with the chat's
+// presenter-local values applied explicitly (`leafScope`).
 
 /// The chat, held weakly by its hosted leaves: the controller owns them.
 struct ChatLeafContext {
@@ -82,16 +83,46 @@ extension ChatViewController {
         return host
     }
 
-    /// The Files panel, as a sheet or in the trailing column.
-    ///
-    /// Hosted content closures run inside the hosted screen's SwiftUI body
-    /// (`ScreenContentView`), so an observed change can re-run one while the
-    /// modal outlives a closed chat: those draw nothing instead of trapping.
+    /// The Files panel (UIKit), as a sheet or in the trailing column. It
+    /// reads this chat's session, server stores, and tab live; once the chat
+    /// is gone it shows what it last read.
     func filePanelScreen() -> RouterScreen {
-        .hosted { [weak self] in
-            guard let self else { return AnyView(EmptyView()) }
-            return AnyView(self.leafScope(ChatFilePanelLeaf(context: ChatLeafContext(chat: self))))
-        }
+        .controller({ [weak self] in
+            guard let self, let root = self.root else {
+                preconditionFailure("The Files panel presents only while its chat is alive")
+            }
+            return ChatFilePanelViewController(
+                root: root,
+                inputs: { [weak self] in self?.filePanelInputs },
+                tab: { [weak self] in self?.model.selectedFilePanelTab ?? .changed },
+                setTab: { [weak self] tab in
+                    guard let self else { return }
+                    self.model.selectedFilePanelTab = tab
+                    ChatFileBrowserPanelTabStore.shared.setTab(tab, for: self.sessionId)
+                },
+                onClose: { [weak self] in self?.closeChatFilePanel() }
+            )
+        })
+    }
+
+    /// The Files panel's values: the session's files and checkout, this
+    /// chat's server stores, and its review-comment scope.
+    private var filePanelInputs: ChatFilePanelInputs {
+        let session = session
+        return ChatFilePanelInputs(
+            sessionId: sessionId,
+            workspaceId: session?.workspaceId,
+            changedFiles: session?.changeStats?.changedFiles ?? [],
+            serverId: serverIdHint ?? connection.currentServerId,
+            worktreeId: session?.worktreeId,
+            reviewCommentSelectionScope: .activeSession(reviewCommentSelectionRouter),
+            connection: connection,
+            apiClient: apiClient,
+            fileIndexStore: connection.fileIndexStore,
+            gitStatusStore: connection.gitStatusStore,
+            navigation: appNavigation,
+            closePanel: { [weak self] in self?.closeChatFilePanel() }
+        )
     }
 
     func modelPickerScreen() -> RouterScreen {
@@ -617,39 +648,78 @@ private struct ChatTitleLeaf: View {
     }
 }
 
-/// The Files panel with the chat's tab, review scope, and Done.
-private struct ChatFilePanelLeaf: View {
-    let context: ChatLeafContext
+/// The pages the Files panel's Changed tab pushes, still SwiftUI: a Git
+/// change's review, or the current bytes of a file the session touched. Each
+/// runs in its own screen, so the panel's server, API client, and navigation
+/// go on explicitly.
+@MainActor
+enum SessionFilePages {
+    static func reviewDetail(
+        workspaceId: String,
+        sessionId: String,
+        file: WorkspaceReviewFile,
+        worktreeId: String?,
+        serverId: String?,
+        reviewCommentSelectionScope: ReviewCommentSelectionScope?,
+        navigationFiles: [WorkspaceReviewFile]
+    ) -> WorkspaceReviewFileDetailView {
+        WorkspaceReviewFileDetailView(
+            workspaceId: workspaceId,
+            selectedSessionId: sessionId,
+            file: file,
+            worktreeId: worktreeId,
+            serverId: serverId,
+            reviewCommentSelectionScopeOverride: reviewCommentSelectionScope,
+            navigationFiles: navigationFiles,
+            showsFileListInspector: false
+        )
+    }
 
-    var body: some View {
-        if let chat = context.chat {
-            let session = chat.session
-            let model = chat.model
-            let sessionId = chat.sessionId
-            ChatFileBrowserPanel(
-                sessionId: sessionId,
-                workspaceId: session?.workspaceId,
-                changedFiles: session?.changeStats?.changedFiles ?? [],
-                selectedTab: Binding(
-                    get: { model.selectedFilePanelTab },
-                    set: { tab in
-                        model.selectedFilePanelTab = tab
-                        ChatFileBrowserPanelTabStore.shared.setTab(tab, for: sessionId)
-                    }
-                ),
-                fileDetailReviewCommentScope: .activeSession(chat.reviewCommentSelectionRouter),
-                serverId: chat.serverIdHint ?? chat.connection.currentServerId,
-                worktreeId: session?.worktreeId,
-                onClose: { [weak chat] in chat?.closeChatFilePanel() }
-            )
-            .navigationTitle("Files")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { [weak chat] in chat?.closeChatFilePanel() }
-                }
-            }
+    static func pushReview(_ detail: WorkspaceReviewFileDetailView, inputs: ChatFilePanelInputs, navigator: ScreenNavigator) {
+        let connection = inputs.connection
+        let apiClient = inputs.apiClient
+        let navigation = inputs.navigation
+        navigator.push {
+            detail.presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
         }
+    }
+
+    static func pushSessionTouchedFile(
+        workspaceId: String,
+        sessionId: String,
+        path: String,
+        navigationContext: FileBrowserNavigationContext,
+        reviewCommentSelectionScope: ReviewCommentSelectionScope?,
+        inputs: ChatFilePanelInputs,
+        navigator: ScreenNavigator
+    ) {
+        let page = SessionTouchedFileContentView(
+            workspaceId: workspaceId,
+            sessionId: sessionId,
+            filePath: path,
+            fileName: path.lastPathComponentForDisplay,
+            navigationContext: navigationContext
+        )
+        .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
+        let connection = inputs.connection
+        let apiClient = inputs.apiClient
+        let navigation = inputs.navigation
+        navigator.push {
+            page.presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
+        }
+    }
+
+    /// A comment started on a pushed file closes the panel first, so it
+    /// reaches the chat's composer.
+    static func closingPanelScope(
+        _ scope: ReviewCommentSelectionScope?,
+        closePanel: @escaping () -> Void
+    ) -> ReviewCommentSelectionScope? {
+        guard case .activeSession(let router) = scope else { return scope }
+        return .activeSession(router.retargetingDispatch { request in
+            closePanel()
+            router.dispatch(request)
+        })
     }
 }
 

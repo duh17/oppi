@@ -136,9 +136,6 @@ struct ChatFileAccessReviewCommentStashTests {
         let touched = try chatFileAccessSource(
             "Oppi/Features/Chat/Support/SessionFiles/SessionTouchedFileContentView.swift"
         )
-        let panel = try chatFileAccessSource(
-            "Oppi/Features/Chat/Support/SessionFiles/ChatFileBrowserPanel.swift"
-        )
 
         #expect(review.contains("fullScreenReviewCommentStashOverlay("))
         #expect(commit.contains("fullScreenReviewCommentStashOverlay("))
@@ -148,7 +145,6 @@ struct ChatFileAccessReviewCommentStashTests {
         #expect(touched.contains("fullScreenReviewCommentStashOverlay("))
         #expect(touched.contains("leadingFloatingAccessoryCount:"))
         #expect(touched.contains("trailingFloatingAccessoryCount:"))
-        #expect(panel.contains(".environment(\\.reviewCommentSelectionScope, fileDetailReviewCommentScope)"))
     }
 }
 

@@ -147,8 +147,7 @@ extension ChatViewController {
         )
     }
 
-    /// Outline and Context are UIKit screens; Files is hosted SwiftUI with the
-    /// chat's own values (`leafScope`).
+    /// Outline, Context, and Files are UIKit screens.
     private func sidePanelScreen(_ panel: ChatSidePanel) -> RouterScreen {
         switch panel {
         case .files: filePanelScreen()

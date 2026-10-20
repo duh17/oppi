@@ -20,7 +20,7 @@ struct ChatFileBrowserPanelPreview: View {
     private static let changedFiles = [
         "clients/apple/Oppi/Features/Chat/ChatView.swift",
         "clients/apple/Oppi/Features/Chat/Support/SessionFiles/ChatFileBrowserPanel.swift",
-        "clients/apple/Oppi/Features/FileBrowser/FileBrowserView.swift",
+        "clients/apple/Oppi/Features/FileBrowser/FileBrowserViewController.swift",
         "clients/apple/OppiTests/FileBrowser/ChatFileBrowserPanelTests.swift",
     ]
 
@@ -33,12 +33,12 @@ struct ChatFileBrowserPanelPreview: View {
                     RouterPreviewStack(root: appRoot) {
                         previewSessionColumn
                             .routerTrailingColumn(item: PreviewPanelColumn(), minWidth: 320, idealWidth: 400) { _ in
-                                panel
+                                RouterScreen.controller({ makePanel(root: appRoot) })
                             }
                     }
                     .ignoresSafeArea()
                 } else {
-                    RouterPreviewStack(root: appRoot) { panel }
+                    RouterPreviewControllerStack(root: appRoot) { makePanel(root: appRoot) }
                         .ignoresSafeArea()
                 }
             }
@@ -52,26 +52,30 @@ struct ChatFileBrowserPanelPreview: View {
         var id: Int { 0 }
     }
 
-    /// Runs in its own hosted screen, so the fixtures go on here.
-    private var panel: some View {
-        ChatFileBrowserPanelPreviewContent(
+    /// The UIKit panel over the preview's fixture stores and API.
+    private func makePanel(root: AppRootEnvironment) -> UIViewController {
+        let tab = PreviewPanelTab(ScreenshotPreviewConfig.panelTab)
+        let inputs = ChatFilePanelInputs(
             sessionId: Self.sessionId,
             workspaceId: Self.workspaceId,
-            changedFiles: Self.changedFiles
+            changedFiles: Self.changedFiles,
+            serverId: nil,
+            worktreeId: nil,
+            reviewCommentSelectionScope: nil,
+            connection: root.coordinator.activeConnection,
+            apiClient: apiClient,
+            fileIndexStore: fileIndexStore,
+            gitStatusStore: gitStatusStore,
+            navigation: navigation,
+            closePanel: {}
         )
-        .navigationTitle("Files")
-        .navigationBarTitleDisplayMode(.inline)
-        .environment(navigation)
-        .environment(gitStatusStore)
-        .environment(fileIndexStore)
-        .environment(WorkspaceStore())
-        .environment(ReviewCommentStore())
-        .environment(QuickCommentTemplateStore())
-        .environment(VoiceInputManager())
-        .environment(AskRequestStore())
-        .environment(MessageQueueStore())
-        .environment(\.apiClient, apiClient)
-        .accessibilityIdentifier("chat-file-panel.preview")
+        return ChatFilePanelViewController(
+            root: root,
+            inputs: { inputs },
+            tab: { tab.value },
+            setTab: { tab.value = $0 },
+            onClose: {}
+        )
     }
 
     private var previewSessionColumn: some View {
@@ -180,22 +184,13 @@ struct ChatFileBrowserPanelPreview: View {
     }
 }
 
-/// The panel with its tab in the hosted screen's own state.
-private struct ChatFileBrowserPanelPreviewContent: View {
-    let sessionId: String
-    let workspaceId: String
-    let changedFiles: [String]
+/// The preview panel's tab, observed like the chat's model.
+@MainActor @Observable
+private final class PreviewPanelTab {
+    var value: ChatFileBrowserPanelTab
 
-    @State private var selectedTab = ScreenshotPreviewConfig.panelTab
-
-    var body: some View {
-        ChatFileBrowserPanel(
-            sessionId: sessionId,
-            workspaceId: workspaceId,
-            changedFiles: changedFiles,
-            selectedTab: $selectedTab,
-            onClose: {}
-        )
+    init(_ value: ChatFileBrowserPanelTab) {
+        self.value = value
     }
 }
 
@@ -272,7 +267,7 @@ private final class ScreenshotPreviewFileBrowserURLProtocol: URLProtocol {
     private static let changedPaths = [
         "clients/apple/Oppi/Features/Chat/ChatView.swift",
         "clients/apple/Oppi/Features/Chat/Support/SessionFiles/ChatFileBrowserPanel.swift",
-        "clients/apple/Oppi/Features/FileBrowser/FileBrowserView.swift",
+        "clients/apple/Oppi/Features/FileBrowser/FileBrowserViewController.swift",
         "clients/apple/OppiTests/FileBrowser/ChatFileBrowserPanelTests.swift",
     ]
 
