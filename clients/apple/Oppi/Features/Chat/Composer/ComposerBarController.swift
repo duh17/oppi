@@ -1387,22 +1387,16 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         let minHeight = showActionRow ? minimumHeight : 0
         let visibilityChanged = lastShowActionRow.map { $0 != showActionRow } ?? false
         lastShowActionRow = showActionRow
-        let applyFlags = {
-            self.actionRowStack.setHiddenIfChanged(!showActionRow)
-            self.actionRowMinHeight?.constant = minHeight
-        }
+        // The flag flips at once; only the resulting layout animates.
+        actionRowStack.setHiddenIfChanged(!showActionRow)
+        actionRowMinHeight?.constant = minHeight
         if visibilityChanged, !reduceMotion {
             UIView.animate(
                 withDuration: 0.18,
                 delay: 0,
                 options: [.curveEaseInOut, .beginFromCurrentState, .allowUserInteraction],
-                animations: {
-                    applyFlags()
-                    self.actionRowStack.layoutIfNeeded()
-                }
+                animations: { self.actionRowStack.layoutIfNeeded() }
             )
-        } else {
-            applyFlags()
         }
     }
 

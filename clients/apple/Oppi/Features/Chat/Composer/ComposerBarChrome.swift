@@ -982,12 +982,15 @@ final class ComposerForceStopButton: UIButton {
 }
 
 extension UIView {
-    /// Under an animation, each `isHidden = true` on an already hidden arranged
-    /// subview adds a hide that a later `false` write must cancel one for one,
-    /// so repeated chrome updates during a rotation left the row hidden when
-    /// focus showed it.
+    /// Flips an arranged subview's hidden flag at once, never as a stack-view
+    /// animation. An animated hide finishes later and can land after a newer
+    /// flip: repeated hides during a rotation left the row hidden when focus
+    /// showed it, and commenting with dictation (focus, comment mode, and
+    /// dictation start back to back) left the action row and its items laid out
+    /// as hidden while visible. Callers animate the resulting layout instead.
     func setHiddenIfChanged(_ hidden: Bool) {
-        if isHidden != hidden { isHidden = hidden }
+        guard isHidden != hidden else { return }
+        UIView.performWithoutAnimation { isHidden = hidden }
     }
 }
 

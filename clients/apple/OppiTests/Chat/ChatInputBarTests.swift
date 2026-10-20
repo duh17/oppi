@@ -2019,6 +2019,179 @@ private func chatInputBarSourceSlice(
     return String(source[start.lowerBound..<end.lowerBound])
 }
 
+/// Commenting with dictation from the selection menu, through the chat's own
+/// composer owner: the comment row and then the normal bar must stay laid out.
+@Suite("Composer action row with dictated comments")
+@MainActor
+struct ComposerDictatedCommentRowTests {
+    @Test("Commenting with dictation keeps the plus and Cancel in the row, and the normal bar recovers after")
+    func dictatedCommentKeepsActionRowLaidOut() async throws {
+        var content = ComposerBarTestHost().content
+        content.alwaysShowActionRow = false
+        content.appliesOuterPadding = true
+        content.reduceMotion = false
+        content.voiceInputManager = VoiceInputManager()
+        let toolbar = ComposerActionRow.sessionToolbar(
+            modelTitle: "opus-5-5",
+            modelProvider: "anthropic",
+            thinkingLevel: .high,
+            thinkingTint: .systemBlue,
+            supportedThinkingLevels: [.off, .high],
+            colors: .placeholder,
+            onModelTap: {},
+            onThinkingSelect: { _ in },
+            onSaveThinkingAsDefault: nil
+        )
+        content.actionRow = toolbar
+        let screen = DictatedCommentScreen(content: content)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        window.rootViewController = screen
+        window.makeKeyAndVisible()
+        defer { window.rootViewController = nil; window.isHidden = true }
+
+        // The timeline text the user selected holds first responder.
+        let selection = UITextView(frame: CGRect(x: 20, y: 100, width: 360, height: 200))
+        selection.text = "Tap the mic so the bar gets stuck with the plus cut off on the left."
+        selection.isEditable = false
+        screen.view.addSubview(selection)
+        screen.composer.setNeedsUpdateProperties()
+        try await Task.sleep(for: .milliseconds(400))
+        selection.becomeFirstResponder()
+        selection.selectedRange = NSRange(location: 4, length: 20)
+        try await Task.sleep(for: .milliseconds(300))
+
+        // ChatViewController.handleReviewCommentSelection with startsDictation.
+        screen.content.actionRow = ComposerActionRow(
+            leading: QuickCommentTemplate.builtInDefaults.map { template in
+                .reviewChip(
+                    id: "chat.reviewComment.\(template.id.uuidString)",
+                    title: template.title,
+                    systemImage: template.systemImage,
+                    onTap: {}
+                )
+            },
+            trailing: [.reviewCancel {}],
+            leadingScrolls: true
+        )
+        screen.content.placeholderOverride = "Comment…"
+        screen.composer.setNeedsUpdateProperties()
+        screen.composer.requestFocus()
+        screen.composer.requestDictation(owner: .reviewCommentMenu)
+        try await Task.sleep(for: .milliseconds(500))
+
+        let attach = try #require(screen.view.firstDescendant { $0.accessibilityIdentifier == "chat.attach" })
+        let row = try #require(attach.superview as? UIStackView)
+        screen.view.layoutIfNeeded()
+        #expect(!row.isHidden)
+        let cancel = try #require(screen.view.firstDescendant {
+            $0.accessibilityIdentifier == "chat.reviewComment.cancel"
+        })
+        expectInside(attach, row, "plus while commenting")
+        expectInside(cancel, row, "Cancel while commenting")
+
+        // Cancelling the comment returns the session toolbar.
+        await screen.composer.stopVoice()
+        screen.content.actionRow = toolbar
+        screen.content.placeholderOverride = nil
+        screen.composer.setNeedsUpdateProperties()
+        try await Task.sleep(for: .milliseconds(500))
+        screen.view.layoutIfNeeded()
+        let thinking = try #require(screen.view.firstDescendant {
+            $0.accessibilityIdentifier == "session.toolbar.thinking"
+        })
+        #expect(!row.isHidden)
+        #expect(row.bounds.height >= 30, "the normal bar's row collapsed to \(row.bounds.height) pt")
+        expectInside(attach, row, "plus after the comment")
+        expectInside(thinking, row, "thinking pill after the comment")
+    }
+
+    private func expectInside(_ item: UIView, _ row: UIStackView, _ name: String) {
+        let frame = item.convert(item.bounds, to: row)
+        let lane = row.bounds.inset(by: UIEdgeInsets(
+            top: 0,
+            left: row.layoutMargins.left - 0.5,
+            bottom: 0,
+            right: row.layoutMargins.right - 0.5
+        ))
+        #expect(frame.width >= 20 && frame.minX >= lane.minX && frame.maxX <= lane.maxX, "\(name) at \(frame) in \(lane)")
+    }
+}
+
+/// The chat screen's part in commenting: it feeds `ChatComposerOwner` the
+/// bar's content the way `ChatViewController` does.
+@MainActor
+private final class DictatedCommentScreen: UIViewController, ChatComposerSource {
+    var content: ComposerBarContent
+    let composer = ChatComposerOwner()
+
+    init(content: ComposerBarContent) {
+        self.content = content
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        composer.source = self
+        addChild(composer)
+        composer.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(composer.view)
+        composer.didMove(toParent: self)
+        NSLayoutConstraint.activate([
+            composer.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            composer.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            composer.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+        ])
+    }
+
+    var composerContent: ComposerBarContent { content }
+    var composerDraftStore: ComposerDraftStore? { nil }
+    var composerMediaImportGate: ComposerMediaImportGate? { nil }
+    func composerSetText(_ text: String) {
+        content.text = text
+        composer.setNeedsUpdateProperties()
+    }
+    func composerSetTextBeforeRecording(_ value: String?) {
+        content.textBeforeRecording = value
+        composer.setNeedsUpdateProperties()
+    }
+    func composerSetPendingAttachments(_ value: [PendingAttachment]) {}
+    func composerSetPendingRepoPointers(_ value: [PendingFileReference]) {}
+    func composerSetBusyStreamingBehavior(_ value: StreamingBehavior) {}
+    func composerSend() {}
+    func composerStop() {}
+    func composerForceStop() {}
+    func composerExpand() {}
+    func composerSubmitAsk(
+        _ request: AskRequest,
+        answers: [String: AskAnswer],
+        completion: @escaping AskResponseSubmission.Completion
+    ) {}
+    func composerIgnoreAsk(_ request: AskRequest, completion: @escaping AskResponseSubmission.Completion) {}
+    func composerFileSuggestionQuery(_ query: String?) {}
+    func composerPrepareVoiceInput(_ manager: VoiceInputManager) async throws {}
+    var isComposerExpanded: Bool { false }
+    func composerExpandedDidClose() {}
+    func makeExpandedComposer() -> ExpandedComposerViewController {
+        preconditionFailure("The test never expands the composer")
+    }
+    var expandedComposerLiveState: ExpandedComposerLiveState {
+        preconditionFailure("The test never expands the composer")
+    }
+}
+
+private extension UIView {
+    func firstDescendant(where match: (UIView) -> Bool) -> UIView? {
+        if match(self) { return self }
+        for child in subviews {
+            if let hit = child.firstDescendant(where: match) { return hit }
+        }
+        return nil
+    }
+}
+
 private enum ChatInputBarSourceSliceError: Error {
     case missingMarker(String)
 }
