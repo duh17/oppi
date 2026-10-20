@@ -18,6 +18,8 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     nonisolated(unsafe) private var nativeEditorAgentId: String?
     nonisolated(unsafe) private var nativeEditorAgentName: String?
     nonisolated(unsafe) private var nativeEditorScheduleId: String?
+    nonisolated(unsafe) private var launchAgentId: String?
+    nonisolated(unsafe) private var launchAgentName: String?
     nonisolated(unsafe) private var customCronScheduleId: String?
 
     override var e2eLaunchesSessionsInboxOnly: Bool {
@@ -109,6 +111,16 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             )
             let agent = try XCTUnwrap(response["agent"] as? [String: Any])
             nativeEditorAgentId = try XCTUnwrap(agent["id"] as? String)
+        } else if name.contains("testAgentDetailStartSessionPreselectsTheAgent") {
+            let agentName = "Launch reviewer \(UUID().uuidString.prefix(8))"
+            launchAgentName = agentName
+            let response = try e2eLabAPIJSON(
+                method: "POST",
+                path: "/agents",
+                body: ["name": agentName, "instructions": ["mode": "append", "text": "Review carefully."]]
+            )
+            let agent = try XCTUnwrap(response["agent"] as? [String: Any])
+            launchAgentId = try XCTUnwrap(agent["id"] as? String)
         } else if name.contains("testNativeScheduleEditorSavesThinkingAndPrompt") {
             nativeEditorScheduleId = try createScheduleFixture(
                 name: "Native schedule editor",
@@ -495,6 +507,41 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertEqual(launch["agentId"] as? String, agentId)
         XCTAssertEqual(launchedSession["firstMessage"] as? String, "Start from the saved Agent")
         XCTAssertGreaterThanOrEqual(launchedSession["messageCount"] as? Int ?? 0, 1)
+    }
+
+    /// Start Session on an Agent's detail opens Quick Session with that Agent,
+    /// after its editor saved and closed. The SwiftUI Quick Session opened on
+    /// Pi instead.
+    func testAgentDetailStartSessionPreselectsTheAgent() throws {
+        XCUIDevice.shared.orientation = .portrait
+
+        let agentId = try XCTUnwrap(launchAgentId, "Launch Agent was not seeded")
+        let agentName = try XCTUnwrap(launchAgentName, "Launch Agent name was not seeded")
+        openWorkspaceSidebar()
+        tap(app.buttons["workspace.agents.open"], named: "Agents sidebar destination")
+        tap(app.buttons["agents.row.\(agentId)"], named: "launch Agent", timeout: 10)
+        tap(app.buttons["agents.detail.edit"], named: "native Agent Edit", timeout: 10)
+        XCTAssertTrue(app.navigationBars["Edit Agent"].waitForExistence(timeout: 10))
+        tap(app.buttons["agent.nativeEdit.save"], named: "Save native Agent edit")
+        XCTAssertTrue(app.navigationBars[agentName].waitForExistence(timeout: 10), "The editor did not close")
+
+        tap(app.buttons["agents.detail.launch"], named: "Agent compose", timeout: 10)
+        let selectedAgent = app.buttons["quickSession.agentPicker"]
+        XCTAssertTrue(selectedAgent.waitForExistence(timeout: 10), "Quick Session did not open")
+        XCTAssertTrue(
+            waitForLabel(of: selectedAgent, containing: agentName, timeout: 10),
+            "Quick Session did not preselect the Agent: \(selectedAgent.label)"
+        )
+        try saveLabScreenshot(name: "iphone-agent-detail-start-session-e2e")
+    }
+
+    private func waitForLabel(of element: XCUIElement, containing text: String, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if element.label.contains(text) { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return element.label.contains(text)
     }
 
     func testNativeScheduleEditorSavesThinkingAndPrompt() throws {

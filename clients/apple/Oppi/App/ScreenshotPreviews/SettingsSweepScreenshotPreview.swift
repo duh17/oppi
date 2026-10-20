@@ -222,6 +222,12 @@ struct SettingsSweepScreenshotPreview: View {
         case "schedules":
             RouterPreviewControllerStack(root: root) { ScheduleListViewController(root: root) }
                 .ignoresSafeArea()
+        case "agents":
+            RouterPreviewControllerStack(root: root) { AgentListViewController(root: root) }
+                .ignoresSafeArea()
+        case "agents-pi", "agents-pi-file":
+            RouterPreviewControllerStack(root: root) { PiAgentDetailViewController(root: root) }
+                .ignoresSafeArea()
         // Every other page is the root of a router stack, where its links push.
         default:
             RouterPreviewStack(root: root) { pushedPage }
@@ -263,8 +269,6 @@ struct SettingsSweepScreenshotPreview: View {
             ServerSkillDetailView(target: .init(serverId: server.id, kind: .skill, resourceId: "release"))
         case "extension-detail":
             ServerExtensionDetailView(target: .init(serverId: server.id, kind: .extension, resourceId: "workflow"))
-        case "agents-pi", "agents-pi-file": PiAgentDetailView()
-        case "agents": AgentManagementView()
         case "skill-file-review":
             ServerSkillFileView(target: .init(serverId: server.id, resourceId: "release", path: "SKILL.md"))
         case "skill-file-edit":

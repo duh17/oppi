@@ -265,10 +265,10 @@
     "clients/apple/Oppi/Core/Views/WorkingSpinnerView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Agents/AgentIconPickerView.swift": {
+    "clients/apple/Oppi/Features/Agents/AgentHostedScreens.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Agents/AgentManagementView.swift": {
+    "clients/apple/Oppi/Features/Agents/AgentIconPickerView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditPages.swift": {

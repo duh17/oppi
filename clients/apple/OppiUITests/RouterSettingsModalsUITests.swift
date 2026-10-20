@@ -149,6 +149,47 @@ final class RouterSettingsModalsUITests: XCTestCase {
         )
     }
 
+    /// The keyboard of the Agents list's guided composer must not outlive the
+    /// screen: open an Agent and its full-screen editor while the composer
+    /// has the keyboard, close both, and the composer is above the keyboard
+    /// or the keyboard is down. It once stayed up over a list whose composer
+    /// had gone, with nothing left to dismiss it.
+    func testGuidedComposerKeyboardAfterAgentDetailAndEditor() {
+        launch(page: "agents")
+        let input = app.textViews["chat.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10), "Agents composer did not appear")
+        input.tap()
+        input.typeText("Draft")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "The composer did not raise the keyboard")
+
+        let row = app.buttons["agents.row.agent-design"]
+        row.tap()
+        let edit = app.buttons["agents.detail.edit"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 10), "Agent detail did not load")
+        tapBarButton(edit)
+        XCTAssertTrue(app.navigationBars["Edit Agent"].waitForExistence(timeout: 10), "The editor did not open")
+        tapBarButton(cancelButton)
+        XCTAssertTrue(waitForDisappearance(of: app.navigationBars["Edit Agent"]), "Cancel must close the editor")
+        app.buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "Back must return to Agents")
+
+        XCTAssertTrue(input.waitForExistence(timeout: 5), "The composer must be back")
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(
+            waitFor(!keyboard.exists || input.frame.maxY <= keyboard.frame.minY + 1),
+            "The composer must sit above the keyboard or the keyboard be down: input \(input.frame), keyboard \(keyboard.exists ? keyboard.frame : .zero)"
+        )
+        // A keyboard left up must belong to the composer, so it can dismiss it.
+        if keyboard.exists {
+            XCTAssertEqual(
+                input.value(forKey: "hasKeyboardFocus") as? Bool, true,
+                "A keyboard that is up must belong to the composer"
+            )
+        }
+        attachScreenshot("agents-composer-after-detail")
+        assertRunning()
+    }
+
     // MARK: Schedules
 
     func testScheduleDetailModals() {

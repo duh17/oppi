@@ -4,8 +4,8 @@ import SwiftUI
 // (`ShellRouter.swift`, `WorkspaceShellController.swift`). Most routes are a
 // `ShellRouteView` hosted through `HostFactory`; All Sessions, the workspace
 // sidebar, a workspace's sessions, a session's chat
-// (`ChatRouteViewController`), SSH Terminal's host list, and Schedules are
-// UIKit screens.
+// (`ChatRouteViewController`), SSH Terminal's host list, Schedules, and Agents
+// are UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -30,6 +30,9 @@ enum ShellRouteScreens {
         }
         if case .utility(.schedules) = route {
             return ScheduleListViewController(root: root, showsSidebarToggle: placement == .splitDetailRoot)
+        }
+        if case .utility(.agents) = route {
+            return AgentListViewController(root: root, showsSidebarToggle: placement == .splitDetailRoot)
         }
         if case .sidebar = route {
             return WorkspaceSidebarViewController(root: root)
@@ -66,6 +69,10 @@ enum ShellRouteScreens {
             return
         }
         if let list = screen as? ScheduleListViewController {
+            list.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
+        if let list = screen as? AgentListViewController {
             list.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
@@ -324,11 +331,10 @@ private struct WorkspaceUtilityDestinationView: View {
     var body: some View {
         if target.isReleaseEnabled {
             switch target {
-            case .schedules:
-                // The shell hosts this route as ScheduleListViewController.
+            case .schedules, .agents:
+                // The shell hosts these routes as ScheduleListViewController
+                // and AgentListViewController.
                 EmptyView()
-            case .agents:
-                AgentManagementView()
             case .skills:
                 ServerSkillsView()
             case .extensions:

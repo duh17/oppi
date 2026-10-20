@@ -74,14 +74,7 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         collectionView.accessibilityIdentifier = "schedules.list"
         collectionView.refreshControl = refreshControl
         refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        collectionView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(collectionView)
-        NSLayoutConstraint.activate([
-            collectionView.topAnchor.constraint(equalTo: view.topAnchor),
-            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        ])
+        ControlScreenList.pinFullWidth(collectionView, in: view)
         installDataSource()
         composer.install(in: self)
     }

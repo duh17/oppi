@@ -2,7 +2,7 @@ import UIKit
 
 /// List pieces the UIKit control-definition screens share (Agents, Schedules,
 /// Custom Themes): rows whose one accessibility element is a button, the
-/// loading and empty states, theme colors, and a small status pill.
+/// loading and empty states, theme colors, and bar items.
 ///
 /// A row that opens or acts is a `SidebarListCell`: its `SidebarRowElement`
 /// takes the tap and is the row's accessibility element, a button, because
@@ -37,7 +37,6 @@ enum ControlScreenList {
         return UICollectionViewCompositionalLayout.list(using: config)
     }
 
-    /// The theme's page behind the list and its color scheme on the screen.
     /// Sets the bar's items only when they changed, as the chat does:
     /// `updateProperties()` runs often, and each assignment lays the bar out
     /// again.
@@ -50,6 +49,20 @@ enum ControlScreenList {
         }
     }
 
+    /// The list across the whole screen. Settings-style pages keep the
+    /// readable form width instead (`SSHTerminalSettingsList.pin`).
+    static func pinFullWidth(_ collectionView: UICollectionView, in view: UIView) {
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(collectionView)
+        NSLayoutConstraint.activate([
+            collectionView.topAnchor.constraint(equalTo: view.topAnchor),
+            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+    }
+
+    /// The theme's page behind the list and its color scheme on the screen.
     /// Reads the theme store: call from `updateProperties()` to follow it.
     static func applyTheme(_ theme: ThemeStore, to screen: UIViewController, collectionView: UICollectionView) {
         screen.overrideUserInterfaceStyle = theme.userInterfaceStyle
