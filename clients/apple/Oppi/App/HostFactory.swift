@@ -505,13 +505,6 @@ final class ScreenNavigator {
         Router.finish(controller)
     }
 
-    /// Moves the sheet this screen sits in to `detent` (the selection half of
-    /// SwiftUI `presentationDetents(_:selection:)`).
-    func selectSheetDetent(_ detent: UISheetPresentationController.Detent.Identifier) {
-        guard let controller else { return unattached("selectSheetDetent") }
-        Router.selectSheetDetent(detent, of: controller)
-    }
-
     /// The bar for `owner`'s search, or nil while a newer anchor drives it.
     fileprivate func searchController(prompt: String, alwaysVisible: Bool, owner: AnyObject) -> ScreenSearchController? {
         let id = ObjectIdentifier(owner)

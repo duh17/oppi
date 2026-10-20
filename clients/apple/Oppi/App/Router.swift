@@ -32,7 +32,7 @@ struct ModalPresentation {
     var detents: [UISheetPresentationController.Detent] = []
     var prefersGrabberVisible = false
     /// The detent the sheet opens at. Nil opens at the smallest detent.
-    /// The screen moves it later with `ScreenNavigator.selectSheetDetent`.
+    /// A UIKit screen moves it later with `Router.selectSheetDetent`.
     var selectedDetent: UISheetPresentationController.Detent.Identifier?
     /// Sheet corner radius (SwiftUI `presentationCornerRadius`). Nil keeps UIKit's.
     var sheetCornerRadius: CGFloat?

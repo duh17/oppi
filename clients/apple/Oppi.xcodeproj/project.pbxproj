@@ -2125,7 +2125,6 @@
 		F926B016D6D2499767E90E7B /* SSHConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = E552CCBAAE9D0983625EA179 /* SSHConnection.swift */; };
 		F9338774F2E29FCFC115A42E /* MermaidXYChartParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33056886A4351AE6D0E18104 /* MermaidXYChartParser.swift */; };
 		F976AEEF86F68E14C84067B0 /* ScreenAwakeControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34F3E4DC44580B2DFBF8376F /* ScreenAwakeControllerTests.swift */; };
-		F9DC0D4DC005CDCE099F672E /* ChatFileBrowserPanelPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577FA648F3ACBB19A60924FB /* ChatFileBrowserPanelPreview.swift */; };
 		F9E55A4E63101047A88B3F42 /* DoctorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76B817FC02FC19BEC31EE97C /* DoctorView.swift */; };
 		FA634B76C8E9CD3599B996A8 /* MermaidKanbanParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B231D97AE677A326B334E5 /* MermaidKanbanParser.swift */; };
 		FA7B98A1FEC9B12594D68E32 /* TestFactories.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9ADC6C6B9062E402A307F35 /* TestFactories.swift */; };
@@ -2902,7 +2901,6 @@
 		5763C2F904C35B1FD4387D15 /* DurableSubagentE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DurableSubagentE2ETests.swift; sourceTree = "<group>"; };
 		577582711070FCAB57323F39 /* MacModelPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacModelPickerSheet.swift; sourceTree = "<group>"; };
 		577CCB65C6CF16D1A88E5597 /* CodeGutterAlignmentHarnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeGutterAlignmentHarnessView.swift; sourceTree = "<group>"; };
-		577FA648F3ACBB19A60924FB /* ChatFileBrowserPanelPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFileBrowserPanelPreview.swift; sourceTree = "<group>"; };
 		5798FD637A227DD071255EBD /* ChatFocusOwnershipTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFocusOwnershipTests.swift; sourceTree = "<group>"; };
 		579D62B4FDE02BFFB4A2E5B2 /* SugiyamaLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SugiyamaLayout.swift; sourceTree = "<group>"; };
 		57EB3ADB300AE76A9BF3C3AB /* ChatRoutesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatRoutesUITests.swift; sourceTree = "<group>"; };
@@ -4615,7 +4613,6 @@
 			children = (
 				ACC79E91DB825A9B99333FA1 /* AudioScreenshotPreview.swift */,
 				297029F5FF9AD59ABAF23F30 /* BuiltInToolFactsPreview.swift */,
-				577FA648F3ACBB19A60924FB /* ChatFileBrowserPanelPreview.swift */,
 				910457729A89345B3E40DA72 /* ComposerScreenshotPreview.swift */,
 				4B14EED6D0DBEBB2878012FF /* FeatureEducationTipsPreview.swift */,
 				160CFF74C09A355850112083 /* FullscreenChromePreview.swift */,
@@ -9054,7 +9051,6 @@
 				053FCCCBB8F4F31C80468CCB /* ChatComposerDraftController.swift in Sources */,
 				A612502A7810BD421E95FA21 /* ChatComposerOwner.swift in Sources */,
 				A980E139A897C42DB213D124 /* ChatFileBrowserPanel.swift in Sources */,
-				F9DC0D4DC005CDCE099F672E /* ChatFileBrowserPanelPreview.swift in Sources */,
 				8D9B4E343CFD62EFC949944B /* ChatFooterViews.swift in Sources */,
 				12316A59121A62100202DF9A /* ChatItem.swift in Sources */,
 				101C65C1AEE2CA71312F8B7D /* ChatOutlineColdHarnessView.swift in Sources */,

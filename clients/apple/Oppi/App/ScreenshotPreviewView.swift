@@ -109,8 +109,6 @@ struct ScreenshotPreviewView: View {
             BuiltInToolFactsPreview(isEdit: false)
         case "old-server-edit":
             BuiltInToolFactsPreview(isEdit: true)
-        case "chat-file-panel":
-            ChatFileBrowserPanelPreview()
         case "file-browser-motion":
             FileBrowserMotionPreview()
         case "review-file-motion":

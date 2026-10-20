@@ -521,14 +521,11 @@ struct RouterHostFactoryTests {
     /// its field must not switch off the chat's keyboard avoidance.
     @Test("a field in a sheet over the screen keeps the screen following the keyboard")
     func sheetFieldKeepsTheScreenFollowingTheKeyboard() async throws {
-        let state = RouteState()
         let panelField = UITextField()
-        let screen = HostFactory.screen(root: makeTestAppRoot()) {
-            ColumnScreen(state: state, panelField: panelField)
-        }
+        let screen = ColumnScreen(panelField: panelField)
         let window = try showInWindow(RouterNavigationController(rootViewController: screen))
         defer { hide(window) }
-        state.item = RouteItem(id: "panel")
+        screen.showPanel(root: makeTestAppRoot())
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { panelField.window === window })
         let sheet = UIViewController()
         let sheetField = UITextField()
@@ -539,15 +536,12 @@ struct RouterHostFactoryTests {
         })
 
         beginEditing(sheetField)
-        #expect(screen.safeAreaRegions == .all)
+        #expect(screen.followsKeyboard)
     }
 
     private func expectColumnFieldLeavesScreenInPlace(inNavigationController: Bool) async throws {
-        let state = RouteState()
         let panelField = UITextField()
-        let screen = HostFactory.screen(root: makeTestAppRoot()) {
-            ColumnScreen(state: state, panelField: panelField)
-        }
+        let screen = ColumnScreen(panelField: panelField)
         let window = try showInWindow(
             inNavigationController ? RouterNavigationController(rootViewController: screen) : screen
         )
@@ -555,19 +549,19 @@ struct RouterHostFactoryTests {
         let screenField = UITextField()
         screen.view.addSubview(screenField)
 
-        state.item = RouteItem(id: "panel")
+        screen.showPanel(root: makeTestAppRoot())
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { panelField.window === window })
 
         beginEditing(panelField)
-        #expect(screen.safeAreaRegions == .container)
+        #expect(!screen.followsKeyboard)
         beginEditing(screenField)
-        #expect(screen.safeAreaRegions == .all)
+        #expect(screen.followsKeyboard)
         beginEditing(panelField)
-        #expect(screen.safeAreaRegions == .container)
+        #expect(!screen.followsKeyboard)
 
-        state.item = nil
+        screen.hidePanel()
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { panelField.window == nil })
-        #expect(screen.safeAreaRegions == .all)
+        #expect(screen.followsKeyboard)
     }
 }
 
@@ -583,20 +577,43 @@ private struct RouteItem: Identifiable {
     let id: String
 }
 
-/// A screen with a trailing column whose UIKit panel holds `panelField`.
-private struct ColumnScreen: View {
-    @Bindable var state: RouteState
-    let panelField: UITextField
+/// A UIKit screen with a trailing column whose panel holds `panelField`,
+/// mounted the way the chat mounts its column.
+private final class ColumnScreen: UIViewController, TrailingColumnKeyboardScreen {
+    var followsKeyboard = true
+    private let panelField: UITextField
+    private lazy var column = TrailingColumnController(screen: self)
 
-    var body: some View {
-        Text("Screen")
-            .routerTrailingColumn(item: state.item, minWidth: 100, idealWidth: 150, screen: { _ in
-                .controller {
-                    let panel = UIViewController()
-                    panel.view.addSubview(panelField)
-                    return panel
-                }
-            })
+    init(panelField: UITextField) {
+        self.panelField = panelField
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        addChild(column)
+        column.view.frame = .zero
+        view.addSubview(column.view)
+        column.didMove(toParent: self)
+    }
+
+    func showPanel(root: AppRootEnvironment) {
+        let panelField = panelField
+        column.show(
+            TrailingColumnController.Panel(id: "panel", minWidth: 100, idealWidth: 150, screen: .controller {
+                let panel = UIViewController()
+                panel.view.addSubview(panelField)
+                return panel
+            }),
+            root: root
+        )
+    }
+
+    func hidePanel() {
+        column.show(nil, root: nil)
     }
 }
 

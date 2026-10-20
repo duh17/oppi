@@ -46,9 +46,6 @@
     "clients/apple/Oppi/App/ScreenshotPreviews/BuiltInToolFactsPreview.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/App/ScreenshotPreviews/ChatFileBrowserPanelPreview.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/App/ScreenshotPreviews/ComposerScreenshotPreview.swift": {
       "import SwiftUI": 1
     },
@@ -344,9 +341,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Onboarding/WhatsNewView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Review/TrailingSidePanelPolicy.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Schedules/ScheduleHostedScreens.swift": {

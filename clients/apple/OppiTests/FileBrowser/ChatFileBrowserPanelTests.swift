@@ -38,7 +38,7 @@ struct ChatFileBrowserPanelTests {
     @Test func trailingColumnFollowsRegularWidthNotAPointThreshold() {
         #expect(TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: .regular))
         #expect(TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: .compact) == false)
-        #expect(TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: nil) == false)
+        #expect(TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: .unspecified) == false)
     }
 
     @Test func fileBrowserColumnStaysOnRegularWidthInEitherOrientation() {

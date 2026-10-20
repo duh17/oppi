@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// When auxiliary side content opens as a trailing column instead of a sheet:
@@ -9,109 +8,25 @@ import UIKit
 /// Compact, including the Duo's cover display, keeps the sheet or stack so a
 /// column does not adapt into a second one.
 enum TrailingSidePanelPolicy {
-    static func usesTrailingColumn(horizontalSizeClass: UserInterfaceSizeClass?) -> Bool {
-        horizontalSizeClass == .regular
-    }
-
     static func usesTrailingColumn(horizontalSizeClass: UIUserInterfaceSizeClass) -> Bool {
         horizontalSizeClass == .regular
     }
 }
 
-/// A UIKit screen that shows a trailing column itself (the chat): it adds a
-/// `TrailingColumnController(screen:)` as a child and calls `show`. While the
-/// column is up, the column turns `followsKeyboard` off when a field in its
-/// panel has the keyboard, so the screen's own inputs stay where they are.
+/// A screen beside a trailing column that follows the keyboard itself (the
+/// chat). While the column is up, the column turns `followsKeyboard` off when
+/// a field in its panel has the keyboard, so the screen's own inputs stay
+/// where they are.
 @MainActor
 protocol TrailingColumnKeyboardScreen: UIViewController {
     var followsKeyboard: Bool { get set }
 }
 
-extension View {
-    /// A side panel in a full-height trailing column beside this screen,
-    /// hosted by UIKit, like an iPadOS inspector. Replaces SwiftUI
-    /// `.inspector`.
-    ///
-    /// `item` shows the column; nil hides it. The caller applies
-    /// `TrailingSidePanelPolicy` and, at compact width, presents the same
-    /// panel with `routerModal` instead. The panel is a `HostFactory` screen
-    /// (or a UIKit controller, `RouterScreen.controller`) at the root of the
-    /// column's own `RouterNavigationController`, for its title and bar items,
-    /// level with this screen's bar; a hosted panel pushes and searches
-    /// through its `ScreenNavigator`. A new `item.id` replaces the
-    /// panel. The column sits on the navigation controller that holds this
-    /// screen while the screen is on screen, and that controller's safe area
-    /// makes room for it: this screen's bar items and content stay beside
-    /// the column. Content that ignores the trailing safe area runs under it.
-    ///
-    /// The panel content runs in its own graph with the app root services.
-    /// Presenter-local values (server scope, review scope, bindings into an
-    /// `@Observable`) go on `content` explicitly. Close it through the
-    /// caller's state: the column is neither pushed nor presented, so
-    /// `ScreenNavigator.finish()` has nothing to close.
-    func routerTrailingColumn<Item: Identifiable, Panel: View>(
-        item: Item?,
-        minWidth: CGFloat,
-        idealWidth: CGFloat,
-        @ViewBuilder content: @escaping (Item) -> Panel
-    ) -> some View {
-        routerTrailingColumn(item: item, minWidth: minWidth, idealWidth: idealWidth, screen: { item in
-            RouterScreen.hosted { AnyView(content(item)) }
-        })
-    }
-
-    /// `routerTrailingColumn(item:minWidth:idealWidth:content:)` whose panel
-    /// may be a UIKit view controller (`RouterScreen.controller`), built once
-    /// per `item.id`.
-    func routerTrailingColumn<Item: Identifiable>(
-        item: Item?,
-        minWidth: CGFloat,
-        idealWidth: CGFloat,
-        screen: @escaping (Item) -> RouterScreen
-    ) -> some View {
-        background {
-            RouterTrailingColumnHost(
-                panel: item.map { item in
-                    TrailingColumnController.Panel(
-                        id: AnyHashable(item.id),
-                        minWidth: minWidth,
-                        idealWidth: idealWidth,
-                        screen: screen(item)
-                    )
-                }
-            )
-            .frame(width: 0, height: 0)
-        }
-    }
-}
-
-private struct RouterTrailingColumnHost: UIViewControllerRepresentable {
-    let panel: TrailingColumnController.Panel?
-    @Environment(\.appRootEnvironment) private var root
-
-    func makeUIViewController(context: Context) -> TrailingColumnController {
-        TrailingColumnController()
-    }
-
-    func updateUIViewController(_ column: TrailingColumnController, context: Context) {
-        // The anchor is always there; only a shown panel needs the root.
-        guard let panel else {
-            column.show(nil, root: nil)
-            return
-        }
-        guard let root else {
-            preconditionFailure("routerTrailingColumn needs appRootEnvironment(_:) above its view")
-        }
-        column.show(panel, root: root)
-    }
-
-    static func dismantleUIViewController(_ column: TrailingColumnController, coordinator: ()) {
-        column.show(nil, root: nil)
-    }
-}
-
-/// UIKit owner of a trailing column: an invisible child of the screen that
-/// asked for it. The panel is one screen (hosted or UIKit) at the root of the column's
+/// A side panel in a full-height trailing column beside a UIKit screen, like
+/// an iPadOS inspector: an invisible child of the screen that asked for it,
+/// which calls `show` with the panel (nil hides it) and, at compact width,
+/// presents the same panel as a router sheet instead. A new panel id replaces
+/// the panel. The panel is one screen (hosted or UIKit) at the root of the column's
 /// own navigation controller, shown in a `TrailingColumnOverlayView` on top
 /// of the navigation controller that holds the screen (the screen's top
 /// ancestor outside one), whose child the column's controller becomes:
@@ -139,13 +54,12 @@ final class TrailingColumnController: UIViewController {
     private var hostInset: CGFloat = 0
     /// The screen beside the column while it is attached.
     private weak var screen: UIViewController?
-    /// The UIKit screen that owns this column, when one does
-    /// (`TrailingColumnKeyboardScreen`); otherwise the hosted screen above it.
-    private weak var explicitScreen: UIViewController?
+    /// The UIKit screen that owns this column.
+    private weak var owningScreen: UIViewController?
     private var isOnScreen = false
 
-    init(screen: UIViewController? = nil) {
-        explicitScreen = screen
+    init(screen: UIViewController) {
+        owningScreen = screen
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -249,29 +163,11 @@ final class TrailingColumnController: UIViewController {
         detach()
     }
 
-    /// The navigation controller that holds the hosted screen this column
-    /// belongs to, so the column runs beside its bar; a screen outside one
-    /// hosts the column itself. A harness with no hosted screen uses its top
-    /// ancestor.
+    /// The navigation controller that holds the screen this column belongs
+    /// to, so the column runs beside its bar; a screen outside one hosts the
+    /// column itself.
     private var hostController: UIViewController? {
-        if let screen = owningScreen {
-            return screen.navigationController ?? screen
-        }
-        var top: UIViewController = self
-        while let parent = top.parent { top = parent }
-        return top === self ? nil : top
-    }
-
-    /// The screen that asked for this column: the UIKit screen that owns it,
-    /// or the hosted screen above it.
-    private var owningScreen: UIViewController? {
-        if let explicitScreen { return explicitScreen }
-        var candidate = parent
-        while let current = candidate {
-            if let screen = current as? HostedScreenController { return screen }
-            candidate = current.parent
-        }
-        return nil
+        owningScreen.map { $0.navigationController ?? $0 }
     }
 
     private func attach() {
@@ -326,15 +222,7 @@ final class TrailingColumnController: UIViewController {
     }
 
     private func screenFollowsKeyboard(_ follows: Bool) {
-        if let screen = screen as? TrailingColumnKeyboardScreen {
-            screen.followsKeyboard = follows
-            return
-        }
-        guard let screen = screen as? HostedScreenController else { return }
-        let regions: SafeAreaRegions = follows ? .all : .container
-        if screen.safeAreaRegions != regions {
-            screen.safeAreaRegions = regions
-        }
+        (screen as? TrailingColumnKeyboardScreen)?.followsKeyboard = follows
     }
 
     /// Insets the host's safe area so the screen's bar items and content stop
