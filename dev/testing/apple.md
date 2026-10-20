@@ -338,10 +338,8 @@ The case owns the rest:
 
 - Find fixtures by id (`session.nav.<id>`), not by fixture title; every case that calls `createLabSessions` adds another `Screenshot Lab Session 1`.
 - Screen-local state, such as a collapsed stopped-sessions group, outlives the case in the running app; put it back.
-- The running app reads some catalogs at launch (the workspace sidebar). A case that seeds rows it needs to see sets `e2eRequiresFreshLaunch`, and a case that seeds many rows deletes them in `tearDownWithError` and calls `terminateSharedApp()`.
-- `e2eStartsInAutoCreatedChat` accepts any open chat; a case that needs the e2e workspace's chat sets `e2eRequiresFreshLaunch` too.
-
-Keep one run under about 10 minutes. The pairing approver refreshes the bootstrap device's access token when it expires, which can rotate away the token the lab API fixtures use; every fixture call after that fails with `HTTP 401` (the server log shows `auth.unauthorized` with reason `unknown_token`). Split a long class or run its cases in separate invocations.
+- The running app refreshes its catalogs on a throttle, so rows a case seeds after launch (the workspace sidebar's) may not show. A case that needs them sets `e2eRequiresFreshLaunch`, and a case that seeds many rows deletes them in `tearDownWithError` and calls `terminateSharedApp()`.
+- `e2eStartsInAutoCreatedChat` requires a chat in the e2e workspace and relaunches from any other workspace's chat; a class whose launch opens its own workspace overrides `e2eChatWorkspaceName`.
 
 #### Durable sessions and the faux model
 
