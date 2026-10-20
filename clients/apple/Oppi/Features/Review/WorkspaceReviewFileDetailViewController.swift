@@ -163,9 +163,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     private var tabs: UISegmentedControl?
     private var divider: UIView?
     private var diffReader: DiffReaderView?
-    private var summary: HostedLeaf?
-    private var summaryValues: [String]?
-    private var summarySlot: UIView?
+    private var summary: ReviewFileSummaryBarView?
     private(set) var currentFileViewer: FileViewerViewController?
     private var backSwipe: HorizontalBackSwipeGestureInstaller?
 #if DEBUG
@@ -239,16 +237,6 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
             sourceLabel: currentFile.path.lastPathComponentForDisplay,
             filePath: currentFile.path
         )
-    }
-
-    private var sortedQuickActionOptions: [WorkspaceQuickActionOption] {
-        quickActionOptions.sorted { left, right in
-            if left.sourceScope != right.sourceScope {
-                if left.sourceScope == "project" { return true }
-                if right.sourceScope == "project" { return false }
-            }
-            return left.commandName.localizedCaseInsensitiveCompare(right.commandName) == .orderedAscending
-        }
     }
 
     private var currentRenderer: WorkspaceReviewFileRenderer {
@@ -385,7 +373,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         let palette = themeID.palette
         view.backgroundColor = UIColor(palette.bgDark)
         reconcileContent()
-        updateMountedContent(palette: palette)
+        updateMountedContent(themeID: themeID)
         adjacentButtons.update(
             on: view,
             canGoPrevious: !isEditingCurrentFile && adjacentReviewFile(.previous) != nil,
@@ -441,28 +429,9 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         add(page, to: pageView)
         switch key.body {
         case .loading:
-            let spinner = UIActivityIndicatorView(style: .medium)
-            spinner.startAnimating()
-            let label = UILabel()
-            label.text = String(localized: "Loading file review…")
-            label.font = .preferredFont(forTextStyle: .body)
-            label.textColor = .secondaryLabel
-            let stack = UIStackView(arrangedSubviews: [spinner, label])
-            stack.axis = .vertical
-            stack.spacing = 8
-            stack.alignment = .center
-            stack.translatesAutoresizingMaskIntoConstraints = false
-            page.addSubview(stack)
-            NSLayoutConstraint.activate([
-                stack.centerXAnchor.constraint(equalTo: page.safeAreaLayoutGuide.centerXAnchor),
-                stack.centerYAnchor.constraint(equalTo: page.safeAreaLayoutGuide.centerYAnchor),
-            ])
+            ReviewPagePlaceholder.showLoading(String(localized: "Loading file review…"), on: page)
         case .unavailable(let message):
-            var configuration = UIContentUnavailableConfiguration.empty()
-            configuration.image = UIImage(systemName: "exclamationmark.triangle")
-            configuration.text = String(localized: "Review Unavailable")
-            configuration.secondaryText = message
-            add(UIContentUnavailableView(configuration: configuration), to: page)
+            add(ReviewPagePlaceholder.unavailable(title: String(localized: "Review Unavailable"), message: message), to: page)
         case .currentFile, .deletedDiff, .tabs:
             mountReview(key.body, on: page)
         }
@@ -502,10 +471,9 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
             stack.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
         ])
-        let summarySlot = UIView()
-        stack.addArrangedSubview(summarySlot)
-        self.summarySlot = summarySlot
-        summaryValues = nil
+        let summary = ReviewFileSummaryBarView()
+        stack.addArrangedSubview(summary)
+        self.summary = summary
 
         if case .tabs(let tab) = body {
             let tabs = UISegmentedControl(items: DetailTab.allCases.map(\.title))
@@ -604,13 +572,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         for view in pageView.subviews {
             view.removeFromSuperview()
         }
-        if let summary {
-            summary.host.willMove(toParent: nil)
-            summary.host.removeFromParent()
-        }
         summary = nil
-        summarySlot = nil
-        summaryValues = nil
         tabs = nil
         divider = nil
         diffReader = nil
@@ -634,8 +596,9 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
 
     /// Updates what stays mounted: the header's counts, the tabs, the
     /// divider's theme color, the diff.
-    private func updateMountedContent(palette: ThemePalette) {
-        updateSummary()
+    private func updateMountedContent(themeID: ThemeID) {
+        let palette = themeID.palette
+        updateSummary(themeID: themeID)
         divider?.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.2)
         tabs?.superview?.isHidden = isEditingCurrentFile
         if let tabs, tabs.selectedSegmentIndex != selectedTab.rawValue {
@@ -655,42 +618,19 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         }
     }
 
-    /// `ReviewFileSummaryBar` stays SwiftUI (Commit Detail shares it); it is
-    /// rebuilt when its values change.
-    private func updateSummary() {
-        guard let summarySlot, let root = HostFactory.root(near: self) else { return }
+    private func updateSummary(themeID: ThemeID) {
+        guard let summary else { return }
         let file = currentFile
-        let added = currentRenderer == .workspaceFile ? file.addedLines : diff?.addedLines
-        let removed = currentRenderer == .workspaceFile ? file.removedLines : diff?.removedLines
-        let values = [file.path, file.status, file.statusLabel, "\(added ?? -1)", "\(removed ?? -1)"]
-        guard values != summaryValues else { return }
-        summaryValues = values
-        if let summary {
-            summary.host.willMove(toParent: nil)
-            summary.view.removeFromSuperview()
-            summary.host.removeFromParent()
-        }
-        let leaf = HostFactory.leaf(
-            ReviewFileSummaryBar(
+        summary.apply(
+            ReviewFileSummaryBarView.Values(
                 path: file.path,
                 status: file.status,
                 statusLabel: file.statusLabel,
-                addedLines: added,
-                removedLines: removed
+                addedLines: currentRenderer == .workspaceFile ? file.addedLines : diff?.addedLines,
+                removedLines: currentRenderer == .workspaceFile ? file.removedLines : diff?.removedLines
             ),
-            root: root
+            themeID: themeID
         )
-        addChild(leaf.host)
-        leaf.view.translatesAutoresizingMaskIntoConstraints = false
-        summarySlot.addSubview(leaf.view)
-        NSLayoutConstraint.activate([
-            leaf.view.topAnchor.constraint(equalTo: summarySlot.topAnchor),
-            leaf.view.bottomAnchor.constraint(equalTo: summarySlot.bottomAnchor),
-            leaf.view.leadingAnchor.constraint(equalTo: summarySlot.leadingAnchor),
-            leaf.view.trailingAnchor.constraint(equalTo: summarySlot.trailingAnchor),
-        ])
-        leaf.host.didMove(toParent: self)
-        summary = leaf
     }
 
     // MARK: File list column
@@ -806,34 +746,15 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     }
 
     private func actionMenuElements() -> [UIMenuElement] {
-        let disabled: UIMenuElement.Attributes = launchActionInFlightTitle != nil ? .disabled : []
-        let newSession = UIAction(
-            title: String(localized: "New Session"),
-            image: UIImage(systemName: "square.and.pencil"),
-            attributes: disabled
-        ) { [weak self] _ in
-            Task { await self?.startEmptySession() }
-        }
-        let templates: [UIMenuElement]
-        if isLoadingQuickActions && quickActionOptions.isEmpty {
-            templates = [UIAction(title: String(localized: "Loading templates…"), attributes: .disabled) { _ in }]
-        } else if sortedQuickActionOptions.isEmpty {
-            templates = [UIAction(title: String(localized: "No prompt templates"), attributes: .disabled) { _ in }]
-        } else {
-            templates = sortedQuickActionOptions.map { option in
-                UIAction(
-                    title: "/\(option.commandName)",
-                    image: UIImage(systemName: SlashCommand.Source.prompt.iconName),
-                    attributes: disabled
-                ) { [weak self] _ in
-                    Task { await self?.createQuickActionSession(option: option) }
-                }
-            }
-        }
-        return [
-            newSession,
-            UIMenu(title: String(localized: "Prompt Templates"), options: .displayInline, children: templates),
-        ]
+        let busy = launchActionInFlightTitle != nil
+        return WorkspaceQuickActionMenu.elements(
+            options: quickActionOptions,
+            isLoading: isLoadingQuickActions,
+            newSessionDisabled: busy,
+            templatesDisabled: busy,
+            onNewSession: { [weak self] in await self?.startEmptySession() },
+            onTemplate: { [weak self] option in await self?.createQuickActionSession(option: option) }
+        )
     }
 
     // MARK: Sessions
@@ -912,13 +833,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     }
 
     private func presentLaunchError(_ message: String) {
-        let alert = UIAlertController(
-            title: String(localized: "Unable to start action"),
-            message: message,
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .cancel))
-        present(alert, animated: true)
+        WorkspaceQuickActionMenu.presentLaunchError(message, from: self)
     }
 
     private func loadQuickActionsIfNeeded() async {
@@ -1162,9 +1077,105 @@ final class ReviewFileListViewController: UICollectionViewController {
     }
 }
 
-/// "Starting new session…" or a template's progress over the review.
+/// New Session and the prompt templates that start a session about a file
+/// or commit, as review screens list them in their overflow menu.
 @MainActor
-private final class ReviewLaunchProgressPanel: UIView {
+enum WorkspaceQuickActionMenu {
+    /// Project templates first, then by command name.
+    static func sorted(_ options: [WorkspaceQuickActionOption]) -> [WorkspaceQuickActionOption] {
+        options.sorted { left, right in
+            if left.sourceScope != right.sourceScope {
+                if left.sourceScope == "project" { return true }
+                if right.sourceScope == "project" { return false }
+            }
+            return left.commandName.localizedCaseInsensitiveCompare(right.commandName) == .orderedAscending
+        }
+    }
+
+    static func elements(
+        options: [WorkspaceQuickActionOption],
+        isLoading: Bool,
+        newSessionDisabled: Bool,
+        templatesDisabled: Bool,
+        onNewSession: @escaping @MainActor () async -> Void,
+        onTemplate: @escaping @MainActor (WorkspaceQuickActionOption) async -> Void
+    ) -> [UIMenuElement] {
+        let newSession = UIAction(
+            title: String(localized: "New Session"),
+            image: UIImage(systemName: "square.and.pencil"),
+            attributes: newSessionDisabled ? .disabled : []
+        ) { _ in
+            Task { await onNewSession() }
+        }
+        let sortedOptions = sorted(options)
+        let templates: [UIMenuElement]
+        if isLoading && options.isEmpty {
+            templates = [UIAction(title: String(localized: "Loading templates…"), attributes: .disabled) { _ in }]
+        } else if sortedOptions.isEmpty {
+            templates = [UIAction(title: String(localized: "No prompt templates"), attributes: .disabled) { _ in }]
+        } else {
+            templates = sortedOptions.map { option in
+                UIAction(
+                    title: "/\(option.commandName)",
+                    image: UIImage(systemName: SlashCommand.Source.prompt.iconName),
+                    attributes: templatesDisabled ? .disabled : []
+                ) { _ in
+                    Task { await onTemplate(option) }
+                }
+            }
+        }
+        return [
+            newSession,
+            UIMenu(title: String(localized: "Prompt Templates"), options: .displayInline, children: templates),
+        ]
+    }
+
+    static func presentLaunchError(_ message: String, from presenter: UIViewController) {
+        let alert = UIAlertController(
+            title: String(localized: "Unable to start action"),
+            message: message,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .cancel))
+        presenter.present(alert, animated: true)
+    }
+}
+
+/// A review page while it loads, or when it cannot show its content.
+@MainActor
+enum ReviewPagePlaceholder {
+    /// A spinner over `text`, centered in `page`'s safe area.
+    static func showLoading(_ text: String, on page: UIView) {
+        let spinner = UIActivityIndicatorView(style: .medium)
+        spinner.startAnimating()
+        let label = UILabel()
+        label.text = text
+        label.font = .preferredFont(forTextStyle: .body)
+        label.textColor = .secondaryLabel
+        let stack = UIStackView(arrangedSubviews: [spinner, label])
+        stack.axis = .vertical
+        stack.spacing = 8
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        page.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: page.safeAreaLayoutGuide.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: page.safeAreaLayoutGuide.centerYAnchor),
+        ])
+    }
+
+    static func unavailable(title: String, systemImage: String = "exclamationmark.triangle", message: String) -> UIView {
+        var configuration = UIContentUnavailableConfiguration.empty()
+        configuration.image = UIImage(systemName: systemImage)
+        configuration.text = title
+        configuration.secondaryText = message
+        return UIContentUnavailableView(configuration: configuration)
+    }
+}
+
+/// "Starting new session…" or a template's progress over a review screen.
+@MainActor
+final class ReviewLaunchProgressPanel: UIView {
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let label = UILabel()
 

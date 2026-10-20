@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// Chat composition's builder and presenter for destinations the timeline requests.
@@ -19,18 +18,52 @@ struct ChatTimelineDestinationPresenter {
         }
     }
 
+    /// The commit viewer at the root of its router navigation controller; a
+    /// chat started from it pushes onto the same stack.
     private func presentCommitDetail(sha: String, request: ChatTimelineDestinationRequest) {
-        let view = TimelineCommitDetailHost(
+        let viewer = Self.commitViewer(
             workspaceId: request.workspaceId,
-            commit: GitCommitSummary(sha: sha, message: "", date: "")
+            sha: sha,
+            reviewCommentSelectionScope: request.reviewCommentSelectionScope,
+            connection: connection
         )
-        .withServerScopedEnvironment(connection)
-        .environment(\.reviewCommentSelectionScope, request.reviewCommentSelectionScope)
-
         Router.present(
+            viewer,
             presentation: .largeViewer(for: request.sourceView.traitCollection).inNavigation(),
-            from: request.presenter
-        ) { view }
+            from: request.presenter,
+            theme: HostFactory.root(near: request.presenter)?.themeStore,
+            onDismiss: nil
+        )
+    }
+
+    /// The viewer runs its own chat stack inside the modal. A `ChatViewController`
+    /// pushed there must not take the app's pending quick-session message (it
+    /// would send it into this session) or change the app's split state
+    /// underneath, so it gets a navigation of its own.
+    static func commitViewer(
+        workspaceId: String,
+        sha: String,
+        reviewCommentSelectionScope: ReviewCommentSelectionScope?,
+        connection: ServerConnection,
+        testingQuickActionDestination: QuickActionSessionNavDestination? = nil
+    ) -> CommitDetailViewController {
+        let viewer = CommitDetailViewController(
+            configuration: .init(
+                workspaceId: workspaceId,
+                commit: GitCommitSummary(sha: sha, message: "", date: ""),
+                reviewCommentSelectionScope: reviewCommentSelectionScope,
+                closeAccessibilityIdentifier: "chat.commit-detail.dismiss",
+                testingQuickActionDestination: testingQuickActionDestination
+            ),
+            connection: connection,
+            apiClient: connection.apiClient,
+            navigation: AppNavigation()
+        )
+        viewer.onClose = { [weak viewer] in
+            guard let viewer else { return }
+            Router.finish(viewer)
+        }
+        return viewer
     }
 
     /// The file viewer at the root of a router navigation controller; its
@@ -75,39 +108,5 @@ struct ChatTimelineDestinationPresenter {
             source: source,
             sessionId: request.sessionId
         )
-    }
-}
-
-/// The commit viewer at the root of its router navigation controller
-/// (`.inNavigation()`); a chat started from it pushes onto the same stack.
-struct TimelineCommitDetailHost: View {
-    let workspaceId: String
-    let commit: GitCommitSummary
-    var testingQuickActionDestination: QuickActionSessionNavDestination? = nil
-    @Environment(\.screenNavigator) private var navigator
-    /// The viewer runs its own chat stack inside the modal. A `ChatViewController` pushed
-    /// here must not take the app's pending quick-session message (it would
-    /// send it into this session) or change the app's split state underneath,
-    /// so it gets a navigation of its own.
-    @State private var modalNavigation = AppNavigation()
-
-    var body: some View {
-        CommitDetailView(
-            workspaceId: workspaceId,
-            commit: commit,
-            testingQuickActionDestination: testingQuickActionDestination
-        )
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button(action: navigator.finish) {
-                    Label(
-                        FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel,
-                        systemImage: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName
-                    )
-                }
-                .accessibilityIdentifier("chat.commit-detail.dismiss")
-            }
-        }
-        .environment(modalNavigation)
     }
 }

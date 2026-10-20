@@ -474,8 +474,8 @@ struct UserTimelineRowContentTests {
 
         let presented = try #require(host.presentedViewController as? RouterNavigationController)
         #expect(
-            presented.viewControllers.first is HostedScreenController,
-            "Commit viewer must be a hosted screen in a router navigation controller, where its New Session chat pushes"
+            presented.viewControllers.first is CommitDetailViewController,
+            "Commit viewer must be the root of a router navigation controller, where its New Session chat pushes"
         )
         #expect(presented.modalPresentationStyle == .pageSheet)
         #expect(presented.sheetPresentationController?.prefersGrabberVisible == true)
@@ -646,7 +646,7 @@ struct UserTimelineRowContentTests {
         let store = ThemeStore(initialSystemColorScheme: .dark)
         store.mode = .system
         store.updateSystemColorScheme(.dark)
-        let darkColor = UIColor(store.activeThemeID.appTheme.bg.secondary)
+        let darkColor = UIColor(store.activeThemeID.palette.bgDark)
 
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         defer {
@@ -655,13 +655,16 @@ struct UserTimelineRowContentTests {
         }
 
         store.updateSystemColorScheme(.light)
-        let lightColor = UIColor(store.activeThemeID.appTheme.bg.secondary)
+        let lightColor = UIColor(store.activeThemeID.palette.bgDark)
         #expect(!color(darkColor, approximatelyEquals: lightColor, tolerance: 0.08))
 
         store.updateSystemColorScheme(.dark)
-        let liveHost = HostFactory.screen(root: makeTestAppRoot(themeStore: store)) {
-            commitViewerForThemeTest()
-        }
+        let liveHost = makeTimelineCommitHostController(
+            connection: ServerConnection(),
+            destination: nil,
+            root: makeTestAppRoot(themeStore: store)
+        )
+        let viewer = try #require(liveHost.viewControllers.first)
         window.rootViewController = liveHost
         window.makeKeyAndVisible()
         liveHost.view.layoutIfNeeded()
@@ -671,13 +674,13 @@ struct UserTimelineRowContentTests {
             await MainActor.run {
                 liveHost.view.setNeedsLayout()
                 liveHost.view.layoutIfNeeded()
-                guard let sample = commitViewerThemeBackground(in: liveHost.view) else { return false }
+                guard let sample = viewer.view.backgroundColor else { return false }
                 return color(sample, approximatelyEquals: lightColor, tolerance: 0.12)
             }
         }
         #expect(
             switched,
-            "The root theme store must repaint the mounted viewer; sampled \(commitViewerThemeBackground(in: liveHost.view)?.description ?? "nil") expected light \(lightColor)"
+            "The root theme store must repaint the mounted viewer; sampled \(viewer.view.backgroundColor?.description ?? "nil") expected light \(lightColor)"
         )
     }
 
@@ -2002,15 +2005,16 @@ private func makeTimelineCommitHostController(
     root: AppRootEnvironment? = nil
 ) -> RouterNavigationController {
     // As `ChatTimelineDestinationPresenter` presents it: `.inNavigation()`.
-    let screen = HostFactory.screen(root: root ?? makeTestAppRoot(composerDraftStore: composerDraftStore)) {
-        TimelineCommitDetailHost(
-            workspaceId: "ws-test",
-            commit: GitCommitSummary(sha: "0486bc75", message: "", date: ""),
-            testingQuickActionDestination: destination
-        )
-        .withServerScopedEnvironment(connection)
-    }
-    return RouterNavigationController(rootViewController: screen)
+    let viewer = ChatTimelineDestinationPresenter.commitViewer(
+        workspaceId: "ws-test",
+        sha: "0486bc75",
+        reviewCommentSelectionScope: nil,
+        connection: connection,
+        testingQuickActionDestination: destination
+    )
+    let navigation = RouterNavigationController(rootViewController: viewer)
+    navigation.traitOverrides.appRootEnvironment = root ?? makeTestAppRoot(composerDraftStore: composerDraftStore)
+    return navigation
 }
 
 @MainActor
@@ -2027,43 +2031,3 @@ private func composerInputText(in root: UIView) -> String? {
     return input.accessibilityValue
 }
 
-private struct CommitViewerThemeConsumer: View {
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        CommitViewerThemeSwatch(color: UIColor(theme.bg.secondary))
-    }
-}
-
-private struct CommitViewerThemeSwatch: UIViewRepresentable {
-    var color: UIColor
-
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.accessibilityIdentifier = "commit.viewer.theme-bg"
-        view.backgroundColor = color
-        return view
-    }
-
-    func updateUIView(_ view: UIView, context: Context) {
-        view.backgroundColor = color
-    }
-}
-
-@MainActor
-private func commitViewerForThemeTest() -> some View {
-    NavigationStack {
-        CommitDetailView(
-            workspaceId: "ws-test",
-            commit: GitCommitSummary(sha: "0486bc75", message: "", date: "")
-        )
-        .background {
-            CommitViewerThemeConsumer()
-        }
-    }
-}
-
-@MainActor
-private func commitViewerThemeBackground(in root: UIView) -> UIColor? {
-    firstSubview(withAccessibilityIdentifier: "commit.viewer.theme-bg", in: root)?.backgroundColor
-}

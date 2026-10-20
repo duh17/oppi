@@ -161,8 +161,6 @@ struct ScreenshotPreviewView: View {
             FullscreenHTMLChromePreview()
         case "fullscreen-svg":
             FullscreenSVGChromePreview()
-        case "context-bar-overlap":
-            ContextBarOverlapPreview()
         case "feature-tips":
             FeatureEducationTipsPreview()
         case "feature-tip-p0":

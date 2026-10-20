@@ -104,14 +104,10 @@ struct FeatureEducationP0TipPreview: View {
     }
 
     private var changedFilesBar: some View {
-        WorkspaceContextBar(
-            gitStatus: Self.gitStatus,
-            isLoading: false,
-            appliesOuterHorizontalPadding: false,
-            workspaceId: "feature-tip-workspace",
-            showCleanWorkspace: false
-        )
-        .accessibilityIdentifier("feature-tip-p0.changed-files.surface")
+        // Room for the bar and the tip it shows under its collapsed row.
+        FeatureEducationChangedFilesBarRepresentable(connection: connection, gitStatus: Self.gitStatus)
+            .frame(height: 160)
+            .accessibilityIdentifier("feature-tip-p0.changed-files.surface")
     }
 
     private var promptCard: some View {
@@ -288,6 +284,34 @@ private struct FeatureEducationReviewSelectionRepresentable: UIViewRepresentable
     }
 
     func updateUIView(_ uiView: FullScreenReviewCommentTextView, context: Context) {}
+}
+
+/// The production context bar (UIKit), pinned to the top of its slot at its
+/// natural height, as the chat pins it.
+private struct FeatureEducationChangedFilesBarRepresentable: UIViewRepresentable {
+    let connection: ServerConnection
+    let gitStatus: GitStatus
+
+    func makeUIView(context: Context) -> UIView {
+        let slot = UIView()
+        let bar = WorkspaceContextBarView(
+            context: .init(gitStatus: gitStatus, workspaceId: "feature-tip-workspace"),
+            options: .init(appliesOuterHorizontalPadding: false),
+            connection: connection,
+            apiClient: connection.apiClient,
+            navigation: AppNavigation()
+        )
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        slot.addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: slot.topAnchor),
+            bar.leadingAnchor.constraint(equalTo: slot.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: slot.trailingAnchor),
+        ])
+        return slot
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
 }
 
 private struct FeatureEducationToolRowRepresentable: UIViewRepresentable {

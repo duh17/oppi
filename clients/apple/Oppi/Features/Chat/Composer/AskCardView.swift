@@ -59,7 +59,11 @@ final class AskCardView: UIView, UIScrollViewDelegate {
 
     let scrollView = UIScrollView()
     private let contentStack = UIStackView()
-    private let tipHost = FeatureEducationAskPromptTipHostView()
+    private let tipHost = FeatureEducationTipHostView(
+        tip: FeatureEducationTips.AnswerPromptTip(),
+        descriptor: FeatureEducationTips.answerPrompt,
+        insets: NSDirectionalEdgeInsets(top: 0, leading: 12, bottom: 8, trailing: 12)
+    )
     private let questionRow = UIView()
     private let questionLabel = UILabel()
     private let expandButton = UIButton(type: .system)

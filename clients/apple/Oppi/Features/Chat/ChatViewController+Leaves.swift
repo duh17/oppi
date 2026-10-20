@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-// The chat's SwiftUI leaf content: the context bar, the footer rows around
+// The chat's leaf content: the context bar (UIKit), the footer rows around
 // the composer, the jump-to-bottom hint, the session title, the SwiftUI
 // panels it presents (review comments, Share), and the pages
 // the UIKit Files panel pushes (`SessionFilePages`). UIKit owns the screen
@@ -53,8 +53,39 @@ extension ChatViewController {
         )
     }
 
-    func makeContextBarLeaf(root: AppRootEnvironment) -> HostedLeaf {
-        hostedLeaf(ChatContextBarLeaf(context: ChatLeafContext(chat: self)), root: root)
+    /// The workspace context bar over the top of the timeline, below the bar.
+    /// Its reviews present from this chat, on its server and navigation.
+    func makeContextBar() -> WorkspaceContextBarView {
+        let bar = WorkspaceContextBarView(
+            context: contextBarContext,
+            options: .init(
+                onReviewInCurrentSession: { [weak self] prompt, files in
+                    self?.stageWorkspaceReviewInCurrentSession(prompt: prompt, files: files)
+                },
+                fileDetailReviewCommentScope: .activeSession(reviewCommentSelectionRouter)
+            ),
+            connection: connection,
+            apiClient: apiClient,
+            navigation: appNavigation
+        )
+        bar.presenter = self
+        bar.onExpandedChanged = { [weak self] in self?.handleContextBarExpandedChanged($0) }
+        return bar
+    }
+
+    /// The context bar's Git status and session. Read in `updateProperties()`,
+    /// so the bar follows the Git status store and the session.
+    var contextBarContext: WorkspaceContextBarView.Context {
+        let session = session
+        return WorkspaceContextBarView.Context(
+            gitStatus: connection.gitStatusStore.gitStatus,
+            isLoading: connection.gitStatusStore.isLoading,
+            workspaceId: session?.workspaceId,
+            sessionId: sessionId,
+            worktreeId: session?.worktreeId,
+            serverId: serverIdHint ?? connection.currentServerId,
+            collapseToken: model.contextBarCollapseToken
+        )
     }
 
     func makeFooterAboveLeaf(root: AppRootEnvironment) -> HostedLeaf {
@@ -347,31 +378,6 @@ extension ChatViewController: ChatComposerSource {
 }
 
 // MARK: - Leaves
-
-/// The workspace context bar over the top of the timeline, below the bar.
-private struct ChatContextBarLeaf: View {
-    let context: ChatLeafContext
-
-    var body: some View {
-        if let chat = context.chat {
-            let session = chat.session
-            WorkspaceContextBar(
-                gitStatus: chat.connection.gitStatusStore.gitStatus,
-                isLoading: chat.connection.gitStatusStore.isLoading,
-                workspaceId: session?.workspaceId,
-                sessionId: chat.sessionId,
-                worktreeId: session?.worktreeId,
-                serverId: chat.serverIdHint ?? chat.connection.currentServerId,
-                onReviewInCurrentSession: { [weak chat] prompt, files in
-                    chat?.stageWorkspaceReviewInCurrentSession(prompt: prompt, files: files)
-                },
-                fileDetailReviewCommentScope: .activeSession(chat.reviewCommentSelectionRouter),
-                collapseToken: chat.model.contextBarCollapseToken,
-                onExpandedChanged: { [weak chat] in chat?.handleContextBarExpandedChanged($0) }
-            )
-        }
-    }
-}
 
 /// The rows above the composer: the extension strip with the review-comment
 /// and now-playing pills, their drawers, the reconnect failure, and session

@@ -55,9 +55,6 @@
     "clients/apple/Oppi/App/ScreenshotPreviews/ComposerScreenshotPreview.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/App/ScreenshotPreviews/ContextBarOverlapPreview.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/App/ScreenshotPreviews/ExtensionSurfacePreview.swift": {
       "import SwiftUI": 1
     },
@@ -253,9 +250,6 @@
     "clients/apple/Oppi/Features/Agents/AgentNativeEditPages.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/ChatTimelineDestinationPresenter.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/ChatViewController+Leaves.swift": {
       "import SwiftUI": 1
     },
@@ -308,9 +302,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/Sharing/ShareSessionRedactionSheet.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownUSDZView.swift": {
@@ -410,12 +401,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Onboarding/WhatsNewView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Review/CommitDetailView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Review/ReviewFileSummaryBar.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Review/TrailingSidePanelPolicy.swift": {

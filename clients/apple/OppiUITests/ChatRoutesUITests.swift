@@ -614,10 +614,9 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
     }
 
-    /// The git bar's commit rows take taps on their text only: the space
-    /// between message and chevron is not hit-testable.
+    /// The git bar's commit row: one button across the row.
     private func tapCommitRow() {
-        app.staticTexts["Route commit"].firstMatch.tap()
+        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Route commit")).firstMatch.tap()
     }
 
     /// Expands the git bar and waits for its rows to stop moving.

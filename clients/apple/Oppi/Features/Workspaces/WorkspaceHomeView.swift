@@ -276,58 +276,6 @@ struct WorkspaceCreateSheetContext: Identifiable {
     }
 }
 
-/// The git context bar over a workspace's sessions
-/// (`WorkspaceDetailViewController`), on the workspace's server.
-@MainActor
-enum WorkspaceContextBarHost {
-    struct Parameters: Equatable {
-        let gitStatus: GitStatus
-        let workspaceId: String
-        let worktreeId: String
-        let serverId: String
-        /// Incremented to collapse an expanded bar (a tap on the scrim).
-        let collapseToken: Int
-    }
-
-    /// Hosts the bar at its natural height: the host's view reports each
-    /// height (collapsed or expanded) through `onHeightChange`; pin its top
-    /// and sides and give it that height. Pass the existing `host` to update it.
-    static func make(
-        updating host: HostedContentController?,
-        _ parameters: Parameters,
-        root: AppRootEnvironment,
-        connection: ServerConnection,
-        navigator: ScreenNavigator,
-        onExpandedChanged: @escaping (Bool) -> Void,
-        onHeightChange: @escaping (CGFloat) -> Void
-    ) -> HostedContentController {
-        let content = WorkspaceContextBar(
-            gitStatus: parameters.gitStatus,
-            isLoading: false,
-            workspaceId: parameters.workspaceId,
-            worktreeId: parameters.worktreeId,
-            serverId: parameters.serverId,
-            showCleanWorkspace: true,
-            collapseToken: parameters.collapseToken,
-            onExpandedChanged: onExpandedChanged
-        )
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .top)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { onHeightChange($0) }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .withServerScopedEnvironment(connection)
-        .environment(\.screenNavigator, navigator)
-        if let host {
-            host.setContent(content)
-            return host
-        }
-        let host = HostFactory.content(content, root: root)
-        host.safeAreaRegions = []
-        host.view.backgroundColor = .clear
-        return host
-    }
-}
-
 extension View {
     func withServerScopedEnvironment(_ connection: ServerConnection) -> some View {
         self
@@ -343,6 +291,20 @@ extension View {
             .environment(connection.gitStatusStore)
             .environment(connection.fileIndexStore)
             .environment(connection.messageQueueStore)
+    }
+
+    /// Presenter-local services for a screen pushed or presented from a review
+    /// or chat screen. A hosted screen starts from the app root (the active
+    /// server), so the presenter's own server, API client, and `AppNavigation`
+    /// go on explicitly. The API client wins over the server's for fixtures.
+    func presenterScope(
+        connection: ServerConnection,
+        apiClient: APIClient?,
+        navigation: AppNavigation
+    ) -> some View {
+        environment(\.apiClient, apiClient)
+            .withServerScopedEnvironment(connection)
+            .environment(navigation)
     }
 }
 

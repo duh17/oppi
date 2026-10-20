@@ -148,7 +148,7 @@ final class ChatViewController: UIViewController {
     let composer = ChatComposerOwner()
     let footerStack = UIStackView()
     let scrim = UIView()
-    var contextBarLeaf: HostedLeaf?
+    var contextBar: WorkspaceContextBarView?
     var footerAboveLeaf: HostedLeaf?
     var footerBelowLeaf: HostedLeaf?
     var stoppedFooterLeaf: HostedLeaf?
@@ -805,10 +805,10 @@ final class ChatViewController: UIViewController {
         guard footerAboveLeaf == nil, let root else { return }
         leafNavigator = ScreenNavigator.forUIKitScreen(screen, root: root)
 
-        let contextBar = makeContextBarLeaf(root: root)
-        add(contextBar)
-        view.insertSubview(contextBar.view, aboveSubview: scrim)
-        contextBarLeaf = contextBar
+        let contextBar = makeContextBar()
+        contextBar.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(contextBar, aboveSubview: scrim)
+        self.contextBar = contextBar
 
         let above = makeFooterAboveLeaf(root: root)
         let below = makeFooterBelowLeaf(root: root)
@@ -837,14 +837,15 @@ final class ChatViewController: UIViewController {
         jumpToBottomLeaf = jump
 
         NSLayoutConstraint.activate([
-            contextBar.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            contextBar.view.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            contextBar.view.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            contextBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            contextBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            contextBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             jump.view.widthAnchor.constraint(equalToConstant: ChatViewController.jumpToBottomSlotSize),
             jump.view.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -27),
             jump.view.bottomAnchor.constraint(equalTo: footerStack.topAnchor, constant: -10),
         ])
-        for leaf in [contextBar, above, below, stopped, jump] {
+        contextBar.onHeightChange = { [weak self] _ in self?.view.setNeedsLayout() }
+        for leaf in [above, below, stopped, jump] {
             leaf.onHeightChange = { [weak self] in self?.view.setNeedsLayout() }
         }
     }
@@ -914,8 +915,8 @@ final class ChatViewController: UIViewController {
         guard let timelineView else { return }
         // Measured in window coordinates from the two frames, never from an
         // inset: it covers the bar and the context bar below it.
-        let header: UIView = contextBarLeaf?.view ?? view
-        let headerFrame = contextBarLeaf == nil
+        let header: UIView = contextBar ?? view
+        let headerFrame = contextBar == nil
             ? CGRect(x: 0, y: view.safeAreaInsets.top, width: view.bounds.width, height: 0)
             : header.bounds
         let top = ChatTimelineChromeOverlap.topInset(
@@ -945,6 +946,7 @@ final class ChatViewController: UIViewController {
         observeChanges()
         updateTitleMaxWidth()
         updateTimelineChrome()
+        contextBar?.context = contextBarContext
         updateFooter()
         barItems.update()
         updateSidePanels()

@@ -62,7 +62,6 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
     private let titleButton = WorkspaceTitleButton()
     private let scrim = UIView()
     private let progressPanel = WorkspaceDetailProgressPanel()
-    private lazy var navigator = ScreenNavigator.forUIKitScreen(self, root: root)
 
     // Gate and server scope.
     private var phase: Phase?
@@ -112,10 +111,8 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
     private var hasAppliedSnapshot = false
 
     // Overlays and bars.
-    private var contextBarHost: HostedContentController?
-    private var contextBarParameters: WorkspaceContextBarHost.Parameters?
+    private var contextBar: WorkspaceContextBarView?
     private var contextBarHeight: CGFloat = 0
-    private var contextBarHeightConstraint: NSLayoutConstraint?
     private var barState: BarState?
     private var titleState: TitleState?
     private var composeHost: HostedContentController?
@@ -1140,21 +1137,22 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
     /// the creating / resuming progress panel.
     private func syncOverlays(_ detail: DetailState) {
         if let gitStatus = detail.gitStatus, gitStatus.isGitRepo {
-            let parameters = WorkspaceContextBarHost.Parameters(
+            let context = WorkspaceContextBarView.Context(
                 gitStatus: gitStatus,
                 workspaceId: workspaceId,
                 worktreeId: state.selectedWorktreeId,
                 serverId: serverId,
                 collapseToken: state.contextBarCollapseToken
             )
-            if contextBarHost == nil || contextBarParameters != parameters {
-                contextBarParameters = parameters
-                installContextBar(parameters, connection: detail.connection)
+            if let contextBar {
+                contextBar.context = context
+            } else {
+                installContextBar(context, connection: detail.connection)
             }
         } else {
             removeContextBar()
         }
-        scrim.isHidden = !(state.contextBarExpanded && contextBarHost != nil)
+        scrim.isHidden = !(state.contextBarExpanded && contextBar != nil)
 
         if state.isCreating || state.isImportingLocal {
             progressPanel.text = state.isImportingLocal
@@ -1167,45 +1165,36 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
         }
     }
 
-    private func installContextBar(_ parameters: WorkspaceContextBarHost.Parameters, connection: ServerConnection) {
-        let isNew = contextBarHost == nil
-        let host = WorkspaceContextBarHost.make(
-            updating: contextBarHost,
-            parameters,
-            root: root,
+    /// The bar sizes itself (collapsed or expanded) and reports each height.
+    private func installContextBar(_ context: WorkspaceContextBarView.Context, connection: ServerConnection) {
+        let bar = WorkspaceContextBarView(
+            context: context,
+            options: .init(showCleanWorkspace: true),
             connection: connection,
-            navigator: navigator,
-            onExpandedChanged: { [weak self] expanded in
-                self?.state.contextBarExpanded = expanded
-            },
-            onHeightChange: { [weak self] height in
-                self?.setContextBarHeight(height)
-            }
+            apiClient: connection.apiClient,
+            navigation: navigation
         )
-        contextBarHost = host
-        guard isNew else { return }
-        addChild(host)
-        host.view.translatesAutoresizingMaskIntoConstraints = false
-        view.insertSubview(host.view, aboveSubview: scrim)
-        let height = host.view.heightAnchor.constraint(equalToConstant: contextBarHeight)
+        bar.presenter = self
+        bar.onExpandedChanged = { [weak self] expanded in
+            self?.state.contextBarExpanded = expanded
+        }
+        bar.onHeightChange = { [weak self] height in
+            self?.setContextBarHeight(height)
+        }
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(bar, aboveSubview: scrim)
         NSLayoutConstraint.activate([
-            host.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            host.view.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            host.view.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-            height,
+            bar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            bar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
         ])
-        contextBarHeightConstraint = height
-        host.didMove(toParent: self)
+        contextBar = bar
     }
 
     private func removeContextBar() {
-        guard let host = contextBarHost else { return }
-        host.willMove(toParent: nil)
-        host.view.removeFromSuperview()
-        host.removeFromParent()
-        contextBarHost = nil
-        contextBarParameters = nil
-        contextBarHeightConstraint = nil
+        guard let contextBar else { return }
+        contextBar.removeFromSuperview()
+        self.contextBar = nil
         setContextBarHeight(0)
         if state.contextBarExpanded {
             state.contextBarExpanded = false
@@ -1217,7 +1206,6 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
         let next = max(0, ceil(height))
         guard abs(next - contextBarHeight) > 0.5 else { return }
         contextBarHeight = next
-        contextBarHeightConstraint?.constant = next
         collectionView.contentInset.top = next
         collectionView.verticalScrollIndicatorInsets.top = next
     }

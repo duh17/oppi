@@ -360,14 +360,17 @@ struct FeatureEducationTipBannerHost<TipType: Tip>: View {
     }
 }
 
-/// UIKit host for the answer-prompt tip. Claims through the same coordinator
-/// as the SwiftUI banner so the tip still shows once.
+/// UIKit host for a tip banner (the answer-prompt tip, the changed-files
+/// bar's). Claims through the same coordinator as the SwiftUI banner so each
+/// tip still shows once. It takes height only while its tip is presented.
 @MainActor
-final class FeatureEducationAskPromptTipHostView: UIView {
+final class FeatureEducationTipHostView<TipType: Tip>: UIView {
     var onHeightChange: (() -> Void)?
 
     private let banner = FeatureEducationTipBannerView()
-    private let tip = FeatureEducationTips.AnswerPromptTip()
+    private let tip: TipType
+    private let descriptor: FeatureEducationTipDescriptor
+    private let insets: NSDirectionalEdgeInsets
     private let ownerID = UUID()
     private let coordinator = FeatureEducationTipPresentationCoordinator.shared
     private var heightConstraint: NSLayoutConstraint?
@@ -375,19 +378,21 @@ final class FeatureEducationAskPromptTipHostView: UIView {
     private var revisionObserver: AnyCancellable?
     private var shouldDisplay = false
     private var isPresented = false
-    private let bottomInset: CGFloat = 8
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
+    init(tip: TipType, descriptor: FeatureEducationTipDescriptor, insets: NSDirectionalEdgeInsets) {
+        self.tip = tip
+        self.descriptor = descriptor
+        self.insets = insets
+        super.init(frame: .zero)
         clipsToBounds = true
         banner.translatesAutoresizingMaskIntoConstraints = false
         addSubview(banner)
         let height = heightAnchor.constraint(equalToConstant: 0)
         heightConstraint = height
         NSLayoutConstraint.activate([
-            banner.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            banner.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            banner.topAnchor.constraint(equalTo: topAnchor),
+            banner.leadingAnchor.constraint(equalTo: leadingAnchor, constant: insets.leading),
+            banner.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -insets.trailing),
+            banner.topAnchor.constraint(equalTo: topAnchor, constant: insets.top),
             banner.heightAnchor.constraint(equalToConstant: FeatureEducationTipBannerView.preferredHeight),
             height,
         ])
@@ -424,19 +429,16 @@ final class FeatureEducationAskPromptTipHostView: UIView {
         updatesTask?.cancel()
         updatesTask = nil
         if isPresented {
-            coordinator.release(tipID: FeatureEducationTips.answerPrompt.id, ownerID: ownerID)
+            coordinator.release(tipID: descriptor.id, ownerID: ownerID)
             isPresented = false
             applyHeight()
         }
     }
 
     private func refreshPresentation() {
-        let eligible = shouldDisplay || Self.forceTipsForTesting
+        let eligible = shouldDisplay || forceTipsForTesting
         if isPresented {
-            if !eligible || !coordinator.isActive(
-                tipID: FeatureEducationTips.answerPrompt.id,
-                ownerID: ownerID
-            ) {
+            if !eligible || !coordinator.isActive(tipID: descriptor.id, ownerID: ownerID) {
                 isPresented = false
                 applyHeight()
             }
@@ -444,19 +446,17 @@ final class FeatureEducationAskPromptTipHostView: UIView {
         }
         guard eligible else { return }
         isPresented = coordinator.claim(
-            tipID: FeatureEducationTips.answerPrompt.id,
+            tipID: descriptor.id,
             ownerID: ownerID,
-            force: Self.forceTipsForTesting
+            force: forceTipsForTesting
         )
         if isPresented {
-            banner.configure(descriptor: FeatureEducationTips.answerPrompt) { [weak self] in
-                self?.tip.invalidate(reason: .tipClosed)
-                self?.coordinator.release(
-                    tipID: FeatureEducationTips.answerPrompt.id,
-                    ownerID: self?.ownerID ?? UUID()
-                )
-                self?.isPresented = false
-                self?.applyHeight()
+            banner.configure(descriptor: descriptor) { [weak self] in
+                guard let self else { return }
+                tip.invalidate(reason: .tipClosed)
+                coordinator.release(tipID: descriptor.id, ownerID: ownerID)
+                isPresented = false
+                applyHeight()
             }
         }
         applyHeight()
@@ -465,7 +465,7 @@ final class FeatureEducationAskPromptTipHostView: UIView {
     private func applyHeight() {
         banner.isHidden = !isPresented
         let next: CGFloat = isPresented
-            ? FeatureEducationTipBannerView.preferredHeight + bottomInset
+            ? FeatureEducationTipBannerView.preferredHeight + insets.top + insets.bottom
             : 0
         if heightConstraint?.constant != next {
             heightConstraint?.constant = next
@@ -474,7 +474,7 @@ final class FeatureEducationAskPromptTipHostView: UIView {
         isHidden = next <= 0
     }
 
-    private static var forceTipsForTesting: Bool {
+    private var forceTipsForTesting: Bool {
 #if DEBUG
         ProcessInfo.processInfo.arguments.contains("--show-feature-tips-for-testing")
 #else

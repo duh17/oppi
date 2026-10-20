@@ -1,4 +1,5 @@
-import SwiftUI
+import TipKit
+import UIKit
 
 // MARK: - Scoping logic (testable)
 
@@ -144,128 +145,180 @@ enum ContextBarCrossSessionEdits {
     }
 }
 
-/// Review item owned by the context bar's stable outer presenter.
-/// Keeping this state outside the conditional content branch lets an open
-/// review survive a transient context/status refresh.
-enum WorkspaceContextBarReviewItem: Identifiable, Equatable, Sendable {
-    case file(GitFileStatus)
-    case commit(GitCommitSummary)
+// MARK: - Bar
 
-    var id: String {
-        switch self {
-        case .file(let file): return "file:\(file.id)"
-        case .commit(let commit): return "commit:\(commit.id)"
-        }
-    }
-}
-
-/// Stable presentation state for the context bar's review sheet.
-/// The navigation snapshot belongs here so transient Git scope loss cannot
-/// replace an open file review's adjacent-file list with an empty projection.
-@MainActor @Observable
-final class WorkspaceContextBarReviewPresentation {
-    var selectedReviewItem: WorkspaceContextBarReviewItem?
-    var navigationFiles: [WorkspaceReviewFile] = []
-
-    func presentFile(_ file: GitFileStatus, navigationFiles: [WorkspaceReviewFile]) {
-        self.navigationFiles = navigationFiles
-        selectedReviewItem = .file(file)
-    }
-
-    func presentCommit(_ commit: GitCommitSummary) {
-        navigationFiles = []
-        selectedReviewItem = .commit(commit)
-    }
-
-    func dismiss() {
-        selectedReviewItem = nil
-        navigationFiles = []
-    }
-}
-
-/// Expandable bar showing workspace git status.
+/// Expandable bar showing workspace git status, over the top of the chat's
+/// timeline and of a workspace's sessions.
 ///
-/// Pinned at the top of the chat view. Collapsed shows branch + dirty count + repo-wide +/-.
-/// Expanded shows a tappable file list with file-type icons, per-file line stats,
-/// recent commits, and select-for-review controls. Files open the diff detail view in a sheet.
+/// Collapsed shows branch + dirty count + repo-wide +/-. Expanded shows a
+/// tappable file list with file-type icons, per-file line stats, recent
+/// commits, and select-for-review controls. A file opens its review and a
+/// commit its detail, each in a sheet presented from `presenter`. The sheet
+/// belongs to the presenter, not to this bar, so a transient loss of Git
+/// content (the bar empties) leaves an open review alone.
 ///
 /// Supports swipe-to-select: in select mode, dragging vertically across rows
 /// selects or deselects them (Mail-style — first row touched determines direction).
-struct WorkspaceContextBar: View {
-    let gitStatus: GitStatus?
-    let isLoading: Bool
-    let appliesOuterHorizontalPadding: Bool
-    let workspaceId: String?
-    let sessionId: String?
-    let worktreeId: String?
-    var serverId: String? = nil
-    let showCleanWorkspace: Bool
-    var onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)?
-    var fileDetailReviewCommentScope: ReviewCommentSelectionScope?
-    /// Incremented by the parent to request collapse (e.g. when the user taps the timeline or input).
-    var collapseToken: Int = 0
-    /// Called when the bar expands or collapses. Parents use this to show a dismiss overlay.
-    var onExpandedChanged: ((Bool) -> Void)?
-
-    @Environment(\.apiClient) private var apiClient
-    @Environment(SessionStore.self) private var sessionStore
-    @Environment(ServerConnection.self) private var connection
-    @Environment(AppNavigation.self) private var appNavigation
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.screenNavigator) private var navigator
-
-    @State private var isExpanded = false
-    @State private var reviewPresentation: WorkspaceContextBarReviewPresentation
-    @State private var isSelecting = false
-    @State private var selectedPaths: Set<String> = []
-    @State private var launchActionInFlightTitle: String?
-    @State private var launchError: String?
-    @State private var quickActionOptions: [WorkspaceQuickActionOption] = []
-    @State private var quickActionOptionsContextKey: String?
-    @State private var isLoadingQuickActions = false
-
-    // Commit pagination state
-    @State private var additionalCommits: [GitCommitSummary] = []
-    @State private var hasMoreCommits = true
-    @State private var isLoadingMore = false
-
-    // Drag-select state
-    @State private var rowFrames: [String: CGRect] = [:]
-    @State private var dragSelect = DragSelectState()
-
-    init(
-        gitStatus: GitStatus?,
-        isLoading: Bool,
-        appliesOuterHorizontalPadding: Bool = true,
-        workspaceId: String? = nil,
-        sessionId: String? = nil,
-        worktreeId: String? = nil,
-        serverId: String? = nil,
-        showCleanWorkspace: Bool = false,
-        initialExpanded: Bool = false,
-        onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)? = nil,
-        fileDetailReviewCommentScope: ReviewCommentSelectionScope? = nil,
-        reviewPresentation: WorkspaceContextBarReviewPresentation? = nil,
-        collapseToken: Int = 0,
-        onExpandedChanged: ((Bool) -> Void)? = nil
-    ) {
-        self.gitStatus = gitStatus
-        self.isLoading = isLoading
-        self.appliesOuterHorizontalPadding = appliesOuterHorizontalPadding
-        self.workspaceId = workspaceId
-        self.sessionId = sessionId
-        self.worktreeId = worktreeId
-        self.serverId = serverId
-        self.showCleanWorkspace = showCleanWorkspace
-        _isExpanded = State(initialValue: initialExpanded)
-        self.onReviewInCurrentSession = onReviewInCurrentSession
-        self.fileDetailReviewCommentScope = fileDetailReviewCommentScope
-        _reviewPresentation = State(initialValue: reviewPresentation ?? WorkspaceContextBarReviewPresentation())
-        self.collapseToken = collapseToken
-        self.onExpandedChanged = onExpandedChanged
+@MainActor
+final class WorkspaceContextBarView: UIView {
+    /// What the host shows the bar; the bar redraws when it changes.
+    struct Context: Equatable {
+        var gitStatus: GitStatus?
+        var isLoading = false
+        var workspaceId: String?
+        var sessionId: String?
+        var worktreeId: String?
+        var serverId: String?
+        /// Incremented by the host to collapse an expanded bar (a tap on the
+        /// timeline, the scrim, or the composer).
+        var collapseToken = 0
     }
 
-    // MARK: - Session scoping
+    /// What stays fixed for the bar's life.
+    struct Options {
+        var appliesOuterHorizontalPadding = true
+        /// A workspace with no changes still shows its branch and commits.
+        var showCleanWorkspace = false
+        var initiallyExpanded = false
+        var onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)?
+        var fileDetailReviewCommentScope: ReviewCommentSelectionScope?
+    }
+
+    var context: Context {
+        didSet {
+            guard context != oldValue else { return }
+            contextDidChange(from: oldValue)
+        }
+    }
+    /// Called when the bar expands or collapses. Hosts show a dismiss scrim.
+    var onExpandedChanged: ((Bool) -> Void)?
+    /// Called with the bar's height whenever it lays out at a new one.
+    var onHeightChange: ((CGFloat) -> Void)?
+    /// The screen that shows the bar: presents its reviews and alerts and
+    /// pushes the chats it starts.
+    weak var presenter: UIViewController?
+
+    private let options: Options
+    private let connection: ServerConnection
+    private let apiClient: APIClient?
+    private let navigation: AppNavigation
+
+    private var isExpanded: Bool {
+        didSet {
+            guard isExpanded != oldValue else { return }
+            setNeedsUpdateProperties()
+            onExpandedChanged?(isExpanded)
+        }
+    }
+    private var isSelecting = false {
+        didSet {
+            guard isSelecting != oldValue else { return }
+            setNeedsUpdateProperties()
+            if isSelecting { loadQuickActions() }
+        }
+    }
+    private var selectedPaths: Set<String> = [] {
+        didSet { if selectedPaths != oldValue { setNeedsUpdateProperties() } }
+    }
+    private var launchActionInFlightTitle: String? {
+        didSet { setNeedsUpdateProperties() }
+    }
+    private var quickActionOptions: [WorkspaceQuickActionOption] = [] {
+        didSet { setNeedsUpdateProperties() }
+    }
+    private var quickActionOptionsContextKey: String?
+    private var isLoadingQuickActions = false {
+        didSet { setNeedsUpdateProperties() }
+    }
+    private var additionalCommits: [GitCommitSummary] = [] {
+        didSet { setNeedsUpdateProperties() }
+    }
+    private var hasMoreCommits = true {
+        didSet { setNeedsUpdateProperties() }
+    }
+    private var isLoadingMore = false {
+        didSet { setNeedsUpdateProperties() }
+    }
+    private var dragSelect = DragSelectState()
+    private weak var presentedReview: UIViewController?
+
+    // Derived on each render.
+    private var displayFiles: [GitFileStatus] = []
+    private var sessionScope: SessionScopedGitStatus?
+
+    // Views.
+    private let card = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
+    private let cardStack = UIStackView()
+    private let toggleButton = ContextBarButton(frame: .zero)
+    private let branchIcon = UIImageView()
+    private let branchLabel = UILabel()
+    private let branchGroup = UIStackView()
+    private let changedLabel = UILabel()
+    private let addedLabel = UILabel()
+    private let removedLabel = UILabel()
+    private let linesGroup = UIStackView()
+    private let aheadLabel = UILabel()
+    private let behindLabel = UILabel()
+    private let aheadGroup = UIStackView()
+    private let chevron = UIImageView()
+    private let toggleStack = UIStackView()
+    private let selectDivider = UIView()
+    private let selectButton = ContextBarButton(frame: .zero)
+    private let selectLabel = UILabel()
+    private let tipHost = FeatureEducationTipHostView(
+        tip: FeatureEducationTips.ChangedFilesBarTip(),
+        descriptor: FeatureEducationTips.changedFilesBar,
+        insets: NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
+    )
+    private let expandedStack = UIStackView()
+    private let scrollView = UIScrollView()
+    private let panelStack = UIStackView()
+    private var scrollMaxHeight: NSLayoutConstraint?
+    private let selectionBar = UIStackView()
+    private var emptyHeight: NSLayoutConstraint?
+    private var cardLeading: NSLayoutConstraint?
+    private var cardTrailing: NSLayoutConstraint?
+    private weak var fileList: UIStackView?
+    private var fileRows: [(path: String, view: UIView, mark: UIImageView?)] = []
+    private weak var selectAllButton: UIButton?
+    private weak var selectedCountLabel: UILabel?
+    private lazy var dragSelectGesture: UIPanGestureRecognizer = {
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handleDragSelect(_:)))
+        return pan
+    }()
+    private var panelKey: PanelKey?
+    private var selectionBarKey: SelectionBarKey?
+    private var lastReportedHeight: CGFloat = -1
+    private var tipStarted = false
+
+    init(
+        context: Context,
+        options: Options = Options(),
+        connection: ServerConnection,
+        apiClient: APIClient?,
+        navigation: AppNavigation
+    ) {
+        self.context = context
+        self.options = options
+        self.connection = connection
+        self.apiClient = apiClient
+        self.navigation = navigation
+        isExpanded = options.initiallyExpanded
+        super.init(frame: .zero)
+        setUpViews()
+        registerForTraitChanges(
+            [UITraitHorizontalSizeClass.self, UITraitPreferredContentSizeCategory.self]
+        ) { (bar: Self, _) in
+            bar.panelKey = nil
+            bar.selectionBarKey = nil
+            bar.setNeedsUpdateProperties()
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    // MARK: Review comment scope
 
     @MainActor
     static func makeFileDetailReviewCommentScope(
@@ -286,729 +339,843 @@ struct WorkspaceContextBar: View {
         return fallbackScope
     }
 
-    /// When viewing a session that has touched files, scope the bar to show only those files.
-    /// Returns nil if no session, no changeStats, or the session hasn't modified any files yet.
-    private var sessionScope: SessionScopedGitStatus? {
-        guard let gitStatus, let sessionId else { return nil }
-        guard let session = sessionStore.sessions.first(where: { $0.id == sessionId }) else { return nil }
-        guard let changedFiles = session.changeStats?.changedFiles, !changedFiles.isEmpty else { return nil }
-        return SessionScopedGitStatus.filter(gitStatus: gitStatus, sessionChangedFiles: changedFiles)
-    }
-
-    // MARK: - Computed (scoped)
+    // MARK: Derived state
 
     private var hasContent: Bool {
         ContextBarScoping.hasContent(
-            gitStatus: gitStatus,
-            sessionId: sessionId,
+            gitStatus: context.gitStatus,
+            sessionId: context.sessionId,
             sessionScope: sessionScope,
-            showCleanWorkspace: showCleanWorkspace
+            showCleanWorkspace: options.showCleanWorkspace
         )
     }
 
-    private var displayFileCount: Int {
-        ContextBarScoping.displayFileCount(gitStatus: gitStatus, sessionId: sessionId, sessionScope: sessionScope)
-    }
-
-    private var displayAddedLines: Int {
-        ContextBarScoping.displayAddedLines(gitStatus: gitStatus, sessionId: sessionId, sessionScope: sessionScope)
-    }
-
-    private var displayRemovedLines: Int {
-        ContextBarScoping.displayRemovedLines(gitStatus: gitStatus, sessionId: sessionId, sessionScope: sessionScope)
-    }
-
-    private var dirtyColor: Color {
-        let count = displayFileCount
-        if count == 0 { return .themeDiffAdded }
-        if count <= 5 { return .themeFg }
-        if count <= 15 { return .themeOrange }
-        return .themeDiffRemoved
-    }
-
-    private var selectedFileQuickActions: [WorkspaceQuickActionOption] {
-        quickActionOptions.sorted { left, right in
-            if left.sourceScope != right.sourceScope {
-                if left.sourceScope == "project" { return true }
-                if right.sourceScope == "project" { return false }
-            }
-            return left.commandName.localizedCaseInsensitiveCompare(right.commandName) == .orderedAscending
-        }
-    }
-
-    private var displayFiles: [GitFileStatus] {
-        ContextBarScoping.displayFiles(gitStatus: gitStatus, sessionId: sessionId, sessionScope: sessionScope)
+    /// All commits: recent from git status + any additionally loaded ones.
+    private var allCommits: [GitCommitSummary] {
+        (context.gitStatus?.recentCommits ?? []) + additionalCommits
     }
 
     private var canLaunch: Bool {
         !selectedPaths.isEmpty && launchActionInFlightTitle == nil
     }
 
-    /// All commits: recent from git status + any additionally loaded ones.
-    private var allCommits: [GitCommitSummary] {
-        (gitStatus?.recentCommits ?? []) + additionalCommits
-    }
-
     /// Regular width (iPad, the iPhone Duo inner display) gets the larger git
     /// bar type. This chrome sits above the timeline, so a fold steps it one
     /// text style with the rest of the regular layout; reading text in the
     /// timeline keeps its size.
-    private var usesIPadTypography: Bool {
-        horizontalSizeClass == .regular
+    private var usesRegularTypography: Bool {
+        traitCollection.horizontalSizeClass == .regular
     }
 
-    private func gitBarFont(compact: Font, iPad: Font) -> Font {
-        usesIPadTypography ? iPad : compact
+    private func font(
+        _ compact: UIFont.TextStyle,
+        _ regular: UIFont.TextStyle,
+        _ weight: UIFont.Weight = .regular,
+        mono: Bool = false
+    ) -> UIFont {
+        let style = usesRegularTypography ? regular : compact
+        return mono ? AskUIFont.monospaced(style, weight: weight) : AskUIFont.preferred(style, weight: weight)
+    }
+
+    /// A fixed-size compact font (`Font.app*`) that steps to a text style in
+    /// regular width.
+    private func font(fixed size: CGFloat, _ weight: UIFont.Weight, regular: UIFont.TextStyle, _ regularWeight: UIFont.Weight) -> UIFont {
+        usesRegularTypography
+            ? AskUIFont.preferred(regular, weight: regularWeight)
+            : .systemFont(ofSize: size, weight: weight)
     }
 
     /// Dynamic max height for the scrollable content area.
     /// Estimates row heights to hug content; capped at 480.
-    /// Note: selectionActionBar is outside the ScrollView — not counted here.
-    private func expandedMaxHeight(displayFiles: [GitFileStatus], sharedEditPaths: Set<String>) -> CGFloat {
-        let fileRows = CGFloat(displayFiles.count) * (usesIPadTypography ? 28 : 26)
-        let commitRows = CGFloat(allCommits.count) * (usesIPadTypography ? 20 : 17)
-        let loadMoreRow: CGFloat = hasMoreCommits ? (usesIPadTypography ? 28 : 24) : 0
-        let sectionHeaders: CGFloat = usesIPadTypography ? 28 : 24
-        let overlapHint: CGFloat = sharedEditPaths.isEmpty ? 0 : (usesIPadTypography ? 24 : 22)
+    /// Note: the selection action bar is outside the scroll view — not counted here.
+    private func expandedMaxHeight(sharedEditPaths: Set<String>) -> CGFloat {
+        let regular = usesRegularTypography
+        let fileRows = CGFloat(displayFiles.count) * (regular ? 28 : 26)
+        let commitRows = CGFloat(allCommits.count) * (regular ? 20 : 17)
+        let loadMoreRow: CGFloat = hasMoreCommits ? (regular ? 28 : 24) : 0
+        let sectionHeaders: CGFloat = regular ? 28 : 24
+        let overlapHint: CGFloat = sharedEditPaths.isEmpty ? 0 : (regular ? 24 : 22)
         let chrome: CGFloat = 20
         return min(fileRows + commitRows + loadMoreRow + sectionHeaders + overlapHint + chrome, 480)
     }
 
-    // MARK: - Body
+    // MARK: Setup
 
-    var body: some View {
-        @Bindable var reviewPresentation = reviewPresentation
+    private func setUpViews() {
+        card.layer.cornerRadius = 10
+        card.layer.cornerCurve = .continuous
+        card.clipsToBounds = true
+        card.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(card)
+        cardStack.axis = .vertical
+        cardStack.translatesAutoresizingMaskIntoConstraints = false
+        card.contentView.addSubview(cardStack)
 
-        ZStack(alignment: .topLeading) {
-            if isLoading && gitStatus == nil {
-                EmptyView()
-            } else if hasContent {
-                VStack(spacing: 0) {
-                    collapsedBar
-                    FeatureEducationTipBannerHost(
-                        tip: FeatureEducationTips.ChangedFilesBarTip(),
-                        descriptor: FeatureEducationTips.changedFilesBar,
-                        contentInsets: EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
-                    )
-                    if isExpanded {
-                        expandedContent
-                    }
-                }
-                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .padding(.horizontal, appliesOuterHorizontalPadding ? 16 : 0)
-                .padding(.top, 4)
-                .padding(.bottom, 2)
-            }
+        let leading = card.leadingAnchor.constraint(equalTo: leadingAnchor)
+        let trailing = card.trailingAnchor.constraint(equalTo: trailingAnchor)
+        let top = card.topAnchor.constraint(equalTo: topAnchor, constant: 4)
+        let bottom = card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2)
+        // An empty bar is 0 tall; the card's padding gives way.
+        top.priority = .required - 1
+        bottom.priority = .required - 1
+        let empty = heightAnchor.constraint(equalToConstant: 0)
+        emptyHeight = empty
+        cardLeading = leading
+        cardTrailing = trailing
+        NSLayoutConstraint.activate([
+            leading, trailing, top, bottom,
+            cardStack.topAnchor.constraint(equalTo: card.contentView.topAnchor),
+            cardStack.bottomAnchor.constraint(equalTo: card.contentView.bottomAnchor),
+            cardStack.leadingAnchor.constraint(equalTo: card.contentView.leadingAnchor),
+            cardStack.trailingAnchor.constraint(equalTo: card.contentView.trailingAnchor),
+        ])
+
+        setUpCollapsedRow()
+        cardStack.addArrangedSubview(tipHost)
+
+        expandedStack.axis = .vertical
+        scrollView.alwaysBounceVertical = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        panelStack.axis = .vertical
+        panelStack.alignment = .fill
+        panelStack.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(panelStack)
+        let hug = scrollView.frameLayoutGuide.heightAnchor.constraint(equalTo: panelStack.heightAnchor)
+        hug.priority = .defaultHigh
+        let maxHeight = scrollView.frameLayoutGuide.heightAnchor.constraint(lessThanOrEqualToConstant: 480)
+        scrollMaxHeight = maxHeight
+        NSLayoutConstraint.activate([
+            panelStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            panelStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            panelStack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor),
+            panelStack.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor),
+            hug,
+            maxHeight,
+        ])
+        expandedStack.addArrangedSubview(scrollView)
+        selectionBar.axis = .vertical
+        expandedStack.addArrangedSubview(selectionBar)
+        cardStack.addArrangedSubview(expandedStack)
+
+        dragSelectGesture.isEnabled = false
+        dragSelectGesture.delegate = self
+    }
+
+    private func setUpCollapsedRow() {
+        for stack in [branchGroup, linesGroup, aheadGroup] {
+            stack.axis = .horizontal
+            stack.alignment = .center
+            stack.spacing = 4
+            stack.setContentHuggingPriority(.required, for: .horizontal)
         }
-        // Keep review presenters on the stable outer view. A transient loss of
-        // session-scoped Git content must not unmount an active sheet. The
-        // sheet is a router navigation controller: a commit or file review
-        // pushes its new-session chat there, and that chat its forks.
-        .routerModal(
-            item: $reviewPresentation.selectedReviewItem,
-            presentation: .sheet.inNavigation(),
-            screen: reviewScreen
+        branchIcon.contentMode = .center
+        branchIcon.image = UIImage(systemName: "arrow.branch")
+        branchGroup.addArrangedSubview(branchIcon)
+        branchGroup.addArrangedSubview(branchLabel)
+        branchLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        changedLabel.setContentCompressionResistancePriority(.defaultLow + 1, for: .horizontal)
+        branchGroup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        linesGroup.addArrangedSubview(addedLabel)
+        linesGroup.addArrangedSubview(removedLabel)
+        aheadGroup.addArrangedSubview(aheadLabel)
+        aheadGroup.addArrangedSubview(behindLabel)
+        for label in [addedLabel, removedLabel, aheadLabel, behindLabel] {
+            label.setContentCompressionResistancePriority(.required, for: .horizontal)
+            label.setContentHuggingPriority(.required, for: .horizontal)
+        }
+        chevron.contentMode = .center
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+        let spacer = UIView()
+        spacer.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
+        for view in [branchGroup, changedLabel, linesGroup, spacer, aheadGroup, chevron] {
+            toggleStack.addArrangedSubview(view)
+        }
+        toggleStack.axis = .horizontal
+        toggleStack.alignment = .center
+        toggleStack.spacing = 8
+        toggleStack.isUserInteractionEnabled = false
+        toggleStack.translatesAutoresizingMaskIntoConstraints = false
+        toggleButton.addSubview(toggleStack)
+        NSLayoutConstraint.activate([
+            toggleStack.topAnchor.constraint(equalTo: toggleButton.topAnchor, constant: 8),
+            toggleStack.bottomAnchor.constraint(equalTo: toggleButton.bottomAnchor, constant: -8),
+            toggleStack.leadingAnchor.constraint(equalTo: toggleButton.leadingAnchor, constant: 12),
+            toggleStack.trailingAnchor.constraint(equalTo: toggleButton.trailingAnchor, constant: -12),
+        ])
+        toggleButton.accessibilityIdentifier = "workspace-context-bar.toggle"
+        toggleButton.addAction(UIAction { [weak self] _ in self?.toggleExpanded() }, for: .primaryActionTriggered)
+        toggleButton.content = toggleStack
+
+        selectDivider.translatesAutoresizingMaskIntoConstraints = false
+        let dividerSlot = UIView()
+        dividerSlot.addSubview(selectDivider)
+        NSLayoutConstraint.activate([
+            selectDivider.widthAnchor.constraint(equalToConstant: 1 / max(traitCollection.displayScale, 2)),
+            selectDivider.heightAnchor.constraint(equalToConstant: 18),
+            selectDivider.centerYAnchor.constraint(equalTo: dividerSlot.centerYAnchor),
+            selectDivider.leadingAnchor.constraint(equalTo: dividerSlot.leadingAnchor),
+            selectDivider.trailingAnchor.constraint(equalTo: dividerSlot.trailingAnchor, constant: -2),
+        ])
+        selectLabel.adjustsFontForContentSizeCategory = true
+        let selectContent = Self.padded(selectLabel, NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
+        selectContent.isUserInteractionEnabled = false
+        selectContent.translatesAutoresizingMaskIntoConstraints = false
+        selectButton.addSubview(selectContent)
+        NSLayoutConstraint.activate([
+            selectContent.topAnchor.constraint(equalTo: selectButton.topAnchor),
+            selectContent.bottomAnchor.constraint(equalTo: selectButton.bottomAnchor),
+            selectContent.leadingAnchor.constraint(equalTo: selectButton.leadingAnchor),
+            selectContent.trailingAnchor.constraint(equalTo: selectButton.trailingAnchor),
+        ])
+        selectButton.content = selectContent
+        selectButton.isAccessibilityElement = true
+        selectButton.accessibilityTraits = .button
+        selectButton.addAction(UIAction { [weak self] _ in self?.toggleSelecting() }, for: .primaryActionTriggered)
+        selectButton.setContentHuggingPriority(.required, for: .horizontal)
+        selectButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let row = UIStackView(arrangedSubviews: [toggleButton, dividerSlot, selectButton])
+        row.axis = .horizontal
+        row.alignment = .fill
+        cardStack.addArrangedSubview(row)
+        selectionDividerSlot = dividerSlot
+    }
+
+    private var selectionDividerSlot: UIView?
+
+    // MARK: Render
+
+    override func updateProperties() {
+        super.updateProperties()
+        let root = HostFactory.root(near: self)
+        let themeID = root?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        let palette = themeID.palette
+        let sessions = connection.sessionStore.sessions
+
+        sessionScope = Self.sessionScope(gitStatus: context.gitStatus, sessionId: context.sessionId, sessions: sessions)
+        displayFiles = ContextBarScoping.displayFiles(
+            gitStatus: context.gitStatus,
+            sessionId: context.sessionId,
+            sessionScope: sessionScope
         )
-        .alert(
-            "Unable to start action",
-            isPresented: Binding(
-                get: { launchError != nil },
-                set: { if !$0 { launchError = nil } }
-            )
-        ) {
-            Button("OK", role: .cancel) { launchError = nil }
-        } message: {
-            Text(launchError ?? "")
-        }
-        .onChange(of: collapseToken) {
-            guard isExpanded else { return }
-            collapseBar()
-        }
-        .onChange(of: isExpanded) { _, expanded in
-            onExpandedChanged?(expanded)
-        }
-        .onChange(of: isSelecting) { _, selecting in
-            guard selecting else { return }
-            Task { await loadQuickActionsIfNeeded() }
-        }
-        .onChange(of: workspaceId) { _, _ in
-            resetQuickActionCache()
-            guard isSelecting else { return }
-            Task { await loadQuickActionsIfNeeded() }
-        }
-        .onChange(of: sessionId) { _, _ in
-            resetQuickActionCache()
-            guard isSelecting else { return }
-            Task { await loadQuickActionsIfNeeded() }
-        }
-        .onChange(of: worktreeId) { _, _ in
-            resetQuickActionCache()
-            guard isSelecting else { return }
-            Task { await loadQuickActionsIfNeeded() }
-        }
-    }
+        let showsContent = !(context.isLoading && context.gitStatus == nil) && hasContent
+        card.isHidden = !showsContent
+        emptyHeight?.isActive = !showsContent
+        let padding: CGFloat = options.appliesOuterHorizontalPadding ? 16 : 0
+        cardLeading?.constant = padding
+        cardTrailing?.constant = -padding
+        updateTip(showsContent: showsContent)
+        guard showsContent else { return }
 
-    /// Pushes the new session's chat above the screen that shows this bar,
-    /// with this bar's server and navigation.
-    private func openQuickActionSession(_ destination: QuickActionSessionNavDestination) {
-        let workspaceId = workspaceId
-        let connection = connection
-        let apiClient = apiClient
-        let appNavigation = appNavigation
-        navigator.push(ChatViewController(
-            sessionId: destination.id,
-            connection: connection,
-            navigation: appNavigation,
-            apiClient: apiClient,
-            workspaceIdHint: workspaceId,
-            initialInputText: destination.inputText,
-            initialPendingFiles: destination.pendingFileReferences
-        ))
-    }
-
-    /// A file opens the UIKit review; a commit its SwiftUI detail. Both run
-    /// on this bar's server and navigation.
-    private func reviewScreen(item: WorkspaceContextBarReviewItem) -> RouterScreen {
-        switch item {
-        case .file(let file):
-            return .controller(fileDetailScreen(file: file, navigationFiles: reviewPresentation.navigationFiles))
-        case .commit(let commit):
-            return .hosted {
-                AnyView(commitSheet(commit)
-                    .presenterScope(connection: connection, apiClient: apiClient, navigation: appNavigation))
-            }
-        }
-    }
-
-    private func commitSheet(_ commit: GitCommitSummary) -> some View {
-        CommitDetailView(workspaceId: workspaceId ?? "", commit: commit)
-            .environment(\.reviewCommentSelectionScope, Self.makeFileDetailReviewCommentScope(
-                parentScope: fileDetailReviewCommentScope,
-                fallbackScope: nil,
-                dismissFileDetail: { reviewPresentation.dismiss() }
-            ))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button {
-                        reviewPresentation.dismiss()
-                    } label: {
-                        Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
-                    }
-                    .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
-                }
-            }
-    }
-
-    // MARK: - Collapsed
-
-    private var collapsedBar: some View {
-        HStack(spacing: 0) {
-            Button {
-                let wasExpanded = isExpanded
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isExpanded.toggle()
-                    if !isExpanded {
-                        isSelecting = false
-                        selectedPaths.removeAll()
-                    }
-                }
-                if !wasExpanded, isExpanded {
-                    FeatureEducationTips.markChangedFilesBarExpanded()
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    if let branch = gitStatus?.branch {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.branch")
-                                .font(gitBarFont(compact: .caption2.weight(.semibold), iPad: .caption.weight(.semibold)))
-                            Text(branch)
-                                .font(gitBarFont(
-                                    compact: .caption.monospaced().weight(.medium),
-                                    iPad: .footnote.monospaced().weight(.medium)
-                                ))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(.themeCyan)
-                    }
-
-                    if displayFileCount > 0 {
-                        Text("\(SessionFormatting.compactCount(displayFileCount)) changed")
-                            .font(gitBarFont(
-                                compact: .caption.monospaced().weight(.semibold),
-                                iPad: .footnote.monospaced().weight(.semibold)
-                            ))
-                            .foregroundStyle(dirtyColor)
-                            .lineLimit(1)
-                    }
-
-                    if displayAddedLines > 0 || displayRemovedLines > 0 {
-                        HStack(spacing: 4) {
-                            if displayAddedLines > 0 {
-                                Text("+\(SessionFormatting.compactCount(displayAddedLines))")
-                                    .font(gitBarFont(compact: .caption2.monospaced().bold(), iPad: .caption.monospaced().bold()))
-                                    .foregroundStyle(.themeDiffAdded)
-                                    .lineLimit(1)
-                                    .fixedSize(horizontal: true, vertical: false)
-                            }
-                            if displayRemovedLines > 0 {
-                                Text("-\(SessionFormatting.compactCount(displayRemovedLines))")
-                                    .font(gitBarFont(compact: .caption2.monospaced().bold(), iPad: .caption.monospaced().bold()))
-                                    .foregroundStyle(.themeDiffRemoved)
-                                    .lineLimit(1)
-                                    .fixedSize(horizontal: true, vertical: false)
-                            }
-                        }
-                        .fixedSize(horizontal: true, vertical: false)
-                    }
-
-                    Spacer(minLength: 0)
-
-                    if let ahead = gitStatus?.ahead, let behind = gitStatus?.behind {
-                        if ahead > 0 || behind > 0 {
-                            HStack(spacing: 4) {
-                                if ahead > 0 {
-                                    Text("\u{2191}\(SessionFormatting.compactCount(ahead))")
-                                        .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
-                                        .foregroundStyle(.themeDiffAdded)
-                                        .lineLimit(1)
-                                        .fixedSize(horizontal: true, vertical: false)
-                                }
-                                if behind > 0 {
-                                    Text("\u{2193}\(SessionFormatting.compactCount(behind))")
-                                        .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
-                                        .foregroundStyle(.themeOrange)
-                                        .lineLimit(1)
-                                        .fixedSize(horizontal: true, vertical: false)
-                                }
-                            }
-                        }
-                    }
-
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(gitBarFont(compact: .appTagBold, iPad: .caption2.weight(.bold)))
-                        .foregroundStyle(.themeComment)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("workspace-context-bar.toggle")
-
-            if isExpanded, workspaceId != nil {
-                // Select/cancel toggle
-                Divider()
-                    .frame(height: 18)
-                    .padding(.trailing, 2)
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        isSelecting.toggle()
-                        if !isSelecting { selectedPaths.removeAll() }
-                    }
-                } label: {
-                    Text(isSelecting ? "Cancel" : "Select")
-                        .font(gitBarFont(compact: .caption2.weight(.semibold), iPad: .caption.weight(.semibold)))
-                        .foregroundStyle(isSelecting ? .themeOrange : .themePurple)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    // MARK: - Expanded Content
-
-    private var expandedContent: some View {
-        let files = displayFiles
+        renderCollapsedRow(palette: palette)
+        expandedStack.isHidden = !isExpanded
+        guard isExpanded else { return }
         let sharedPaths = ContextBarCrossSessionEdits.sharedFilePaths(
-            displayFiles: files,
-            currentSessionId: sessionId,
-            workspaceId: workspaceId,
-            sessions: sessionStore.sessions
+            displayFiles: displayFiles,
+            currentSessionId: context.sessionId,
+            workspaceId: context.workspaceId,
+            sessions: sessions
         )
-
-        return VStack(spacing: 0) {
-            ScrollView {
-                expandedPanel(displayFiles: files, sharedEditPaths: sharedPaths)
-            }
-            .frame(maxHeight: expandedMaxHeight(displayFiles: files, sharedEditPaths: sharedPaths))
-
-            if isSelecting {
-                selectionActionBar
-            }
+        renderPanel(sharedPaths: sharedPaths, themeID: themeID)
+        scrollMaxHeight?.constant = expandedMaxHeight(sharedEditPaths: sharedPaths)
+        selectionBar.isHidden = !isSelecting
+        if isSelecting {
+            renderSelectionBar(themeID: themeID)
         }
     }
 
-    // MARK: - Expanded Panel
+    private static func sessionScope(gitStatus: GitStatus?, sessionId: String?, sessions: [Session]) -> SessionScopedGitStatus? {
+        guard let gitStatus, let sessionId else { return nil }
+        guard let session = sessions.first(where: { $0.id == sessionId }) else { return nil }
+        guard let changedFiles = session.changeStats?.changedFiles, !changedFiles.isEmpty else { return nil }
+        return SessionScopedGitStatus.filter(gitStatus: gitStatus, sessionChangedFiles: changedFiles)
+    }
 
-    private func expandedPanel(displayFiles: [GitFileStatus], sharedEditPaths: Set<String>) -> some View {
-        let allFilesSelected = !displayFiles.isEmpty && displayFiles.allSatisfy { selectedPaths.contains($0.path) }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let height = bounds.height
+        guard abs(height - lastReportedHeight) > 0.5 else { return }
+        lastReportedHeight = height
+        onHeightChange?(height)
+    }
 
-        return VStack(alignment: .leading, spacing: 0) {
-            Divider().overlay(Color.themeComment.opacity(0.2))
-
-            // Selection header when selecting
-            if isSelecting {
-                HStack(spacing: 8) {
-                    Button {
-                        if allFilesSelected {
-                            selectedPaths.removeAll()
-                        } else {
-                            selectedPaths = Set(displayFiles.map(\.path))
-                        }
-                    } label: {
-                        Text(allFilesSelected ? "Deselect All" : "Select All")
-                            .font(gitBarFont(compact: .caption2.weight(.semibold), iPad: .caption.weight(.semibold)))
-                            .foregroundStyle(.themePurple)
-                    }
-                    .buttonStyle(.plain)
-
-                    Spacer()
-
-                    if !selectedPaths.isEmpty {
-                        Text("\(selectedPaths.count) selected")
-                            .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
-                            .foregroundStyle(.themeFg)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-
-                Divider().overlay(Color.themeComment.opacity(0.15))
-            }
-
-            // File list
-            if !displayFiles.isEmpty {
-                VStack(alignment: .leading, spacing: 1) {
-                    if !sharedEditPaths.isEmpty {
-                        HStack(spacing: 5) {
-                            Image(systemName: "rectangle.on.rectangle")
-                                .font(gitBarFont(compact: .caption2.weight(.semibold), iPad: .caption.weight(.semibold)))
-                            Text("\(sharedEditPaths.count) file\(sharedEditPaths.count == 1 ? "" : "s") touched in another session")
-                                .font(gitBarFont(compact: .caption2.weight(.medium), iPad: .caption.weight(.medium)))
-                                .lineLimit(1)
-                            Spacer(minLength: 0)
-                        }
-                        .foregroundStyle(.themeOrange)
-                        .padding(.horizontal, 12)
-                        .padding(.top, 6)
-                        .padding(.bottom, 3)
-                        .accessibilityIdentifier("context-bar-overlap-hint")
-                    }
-
-                    ForEach(displayFiles) { file in
-                        contextBarFileRow(file: file, isSharedEdit: sharedEditPaths.contains(file.path))
-                            .background(
-                                GeometryReader { geo in
-                                    Color.clear.preference(
-                                        key: RowFramePreferenceKey.self,
-                                        value: [file.path: geo.frame(in: .named("contextBarFileList"))]
-                                    )
-                                }
-                            )
-                    }
-
-                    if sessionId == nil, let gitStatus, gitStatus.totalFiles > gitStatus.files.count {
-                        Text("... and \(gitStatus.totalFiles - gitStatus.files.count) more")
-                            .font(gitBarFont(compact: .caption2, iPad: .caption))
-                            .foregroundStyle(.themeComment)
-                            .padding(.horizontal, 12)
-                            .padding(.top, 4)
-                    }
-                }
-                .padding(.vertical, 6)
-                .coordinateSpace(name: "contextBarFileList")
-                .onPreferenceChange(RowFramePreferenceKey.self) { rowFrames = $0 }
-                .gesture(
-                    isSelecting
-                        ? DragGesture(minimumDistance: 8, coordinateSpace: .named("contextBarFileList"))
-                            .onChanged { value in
-                                handleDragSelect(at: value.location)
-                            }
-                            .onEnded { _ in
-                                dragSelect.reset()
-                            }
-                        : nil
-                )
-            }
-
-            // Recent commits
-            if !allCommits.isEmpty {
-                Divider().overlay(Color.themeComment.opacity(0.15))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(allCommits) { commit in
-                        Button {
-                            reviewPresentation.presentCommit(commit)
-                        } label: {
-                            HStack(spacing: 8) {
-                                Text(commit.sha)
-                                    .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
-                                    .foregroundStyle(.themeComment)
-                                Text(commit.message)
-                                    .font(gitBarFont(compact: .caption2, iPad: .caption))
-                                    .foregroundStyle(.themeFgDim)
-                                    .lineLimit(1)
-                                Spacer(minLength: 4)
-                                Image(systemName: "chevron.right")
-                                    .font(gitBarFont(compact: .appBadgeLight, iPad: .caption2.weight(.semibold)))
-                                    .foregroundStyle(.themeComment.opacity(0.5))
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    if hasMoreCommits {
-                        Button {
-                            Task { await loadMoreCommits() }
-                        } label: {
-                            if isLoadingMore {
-                                ProgressView().scaleEffect(0.6)
-                            } else {
-                                Text("Load more")
-                                    .font(gitBarFont(compact: .caption2.weight(.semibold), iPad: .caption.weight(.semibold)))
-                                    .foregroundStyle(.themePurple)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 4)
-                    }
-
-                    if let gitStatus, gitStatus.stashCount > 0 {
-                        HStack(spacing: 8) {
-                            Text("\(gitStatus.stashCount) stash")
-                                .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
-                                .foregroundStyle(.themePurple)
-                        }
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-            } else if let gitStatus, gitStatus.isGitRepo {
-                Divider().overlay(Color.themeComment.opacity(0.15))
-
-                HStack(spacing: 8) {
-                    if let sha = gitStatus.headSha {
-                        Text(sha)
-                            .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
-                            .foregroundStyle(.themeComment)
-                    }
-                    if let msg = gitStatus.lastCommitMessage {
-                        Text(msg)
-                            .font(gitBarFont(compact: .caption2, iPad: .caption))
-                            .foregroundStyle(.themeFgDim)
-                            .lineLimit(1)
-                    }
-                    if gitStatus.stashCount > 0 {
-                        Spacer(minLength: 0)
-                        Text("\(gitStatus.stashCount) stash")
-                            .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
-                            .foregroundStyle(.themePurple)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-            }
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        setNeedsUpdateProperties()
+        if window == nil {
+            stopTip()
         }
     }
 
-    // MARK: - File Row
-
-    @ViewBuilder
-    private func contextBarFileRow(file: GitFileStatus, isSharedEdit: Bool) -> some View {
-        let icon = FileIcon.forPath(file.path)
-        let canTap = workspaceId != nil
-
-        Button {
-            if isSelecting {
-                toggleSelection(for: file)
-            } else if canTap {
-                reviewPresentation.presentFile(
-                    file,
-                    navigationFiles: displayFiles.map { $0.toReviewFile() }
-                )
-            }
-        } label: {
-            HStack(spacing: 6) {
-                if isSelecting {
-                    Image(systemName: selectedPaths.contains(file.path) ? "checkmark.circle.fill" : "circle")
-                        .font(gitBarFont(compact: .appLabel, iPad: .caption))
-                        .foregroundStyle(selectedPaths.contains(file.path) ? .themePurple : .themeComment)
-                        .frame(width: 16)
-                }
-
-                icon.iconView(size: 16, font: .appChip)
-
-                Text(file.path.shortenedPath)
-                    .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                Spacer(minLength: 4)
-
-                if isSharedEdit {
-                    Image(systemName: "rectangle.on.rectangle")
-                        .font(gitBarFont(compact: .appBadgeLight, iPad: .caption2.weight(.semibold)))
-                        .foregroundStyle(.themeOrange)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.themeOrange.opacity(0.12), in: Capsule())
-                        .accessibilityLabel("Touched in another session")
-                }
-
-                if let added = file.addedLines, added > 0 {
-                    Text("+\(added)")
-                        .font(gitBarFont(compact: .caption2.monospaced().bold(), iPad: .caption.monospaced().bold()))
-                        .foregroundStyle(.themeDiffAdded)
-                }
-                if let removed = file.removedLines, removed > 0 {
-                    Text("-\(removed)")
-                        .font(gitBarFont(compact: .caption2.monospaced().bold(), iPad: .caption.monospaced().bold()))
-                        .foregroundStyle(.themeDiffRemoved)
-                }
-
-                if !isSelecting, canTap {
-                    Image(systemName: "chevron.right")
-                        .font(gitBarFont(compact: .appBadgeLight, iPad: .caption2.weight(.semibold)))
-                        .foregroundStyle(.themeComment.opacity(0.5))
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, usesIPadTypography ? 5 : 4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Selection Action Bar
-
-    private var selectionActionBar: some View {
-        VStack(spacing: 0) {
-            Divider().overlay(Color.themeComment.opacity(0.2))
-
-            HStack(spacing: 8) {
-                if let launchActionInFlightTitle {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                    Text(launchActionInFlightTitle)
-                        .font(gitBarFont(compact: .caption2, iPad: .caption))
-                        .foregroundStyle(.themeComment)
-                    Spacer()
-                } else {
-                    Text("\(selectedPaths.count) file\(selectedPaths.count == 1 ? "" : "s")")
-                        .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
-                        .foregroundStyle(selectedPaths.isEmpty ? .themeComment : .themeFg)
-
-                    Spacer()
-
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            newSessionButton
-
-                            if selectedFileQuickActions.isEmpty {
-                                Text(isLoadingQuickActions ? "Loading templates…" : "No prompt templates")
-                                    .font(gitBarFont(compact: .caption2, iPad: .caption))
-                                    .foregroundStyle(.themeComment)
-                            } else {
-                                HStack(spacing: 8) {
-                                    ForEach(selectedFileQuickActions) { option in
-                                        quickActionButton(option: option)
-                                    }
-                                }
-                                .disabled(!canLaunch)
-                                .opacity(canLaunch ? 1 : 0.4)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: 280, alignment: .trailing)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-        }
-    }
-
-    // MARK: - File Detail Sheet
-
-    /// Makes the review of `file` with this bar's server and navigation,
-    /// read while the bar renders. Files open only with a workspace
-    /// (`contextBarFileRow`).
-    private func fileDetailScreen(
-        file: GitFileStatus,
-        navigationFiles: [WorkspaceReviewFile]
-    ) -> () -> UIViewController {
-        guard let workspaceId else {
-            preconditionFailure("A context bar file review needs the bar's workspace")
-        }
-        let reviewPresentation = reviewPresentation
-        let configuration = WorkspaceReviewFileDetailViewController.Configuration(
-            workspaceId: workspaceId,
-            selectedSessionId: sessionId,
-            file: file.toReviewFile(),
-            worktreeId: worktreeId,
-            serverId: serverId,
-            reviewCommentSelectionScope: Self.makeFileDetailReviewCommentScope(
-                parentScope: fileDetailReviewCommentScope,
-                fallbackScope: nil,
-                dismissFileDetail: { reviewPresentation.dismiss() }
-            ),
-            navigationFiles: navigationFiles,
-            allowsHorizontalBackSwipe: false
-        )
-        let connection = connection
-        let apiClient = apiClient
-        let appNavigation = appNavigation
-        return {
-            let detail = WorkspaceReviewFileDetailViewController(
-                configuration: configuration,
-                connection: connection,
-                apiClient: apiClient,
-                navigation: appNavigation
-            )
-            detail.onClose = { reviewPresentation.dismiss() }
-            return detail
-        }
-    }
-
-    // MARK: - Selection Logic
-
-    private func toggleSelection(for file: GitFileStatus) {
-        if selectedPaths.contains(file.path) {
-            selectedPaths.remove(file.path)
+    private func updateTip(showsContent: Bool) {
+        if showsContent, window != nil {
+            guard !tipStarted else { return }
+            tipStarted = true
+            tipHost.start()
         } else {
-            selectedPaths.insert(file.path)
+            stopTip()
         }
     }
 
-    private var newSessionButton: some View {
-        Button {
-            Task { await launchEmptySession() }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "square.and.pencil")
-                    .font(gitBarFont(compact: .caption2, iPad: .caption))
-                    .foregroundStyle(.themePurple)
-                    .frame(width: 13)
+    private func stopTip() {
+        guard tipStarted else { return }
+        tipStarted = false
+        tipHost.stop()
+    }
 
-                Text("New Session")
-                    .font(gitBarFont(compact: .caption2.monospaced().weight(.medium), iPad: .caption.monospaced().weight(.medium)))
-                    .foregroundStyle(.themeFg)
+    private func renderCollapsedRow(palette: ThemePalette) {
+        let gitStatus = context.gitStatus
+        let fileCount = ContextBarScoping.displayFileCount(
+            gitStatus: gitStatus,
+            sessionId: context.sessionId,
+            sessionScope: sessionScope
+        )
+        let added = ContextBarScoping.displayAddedLines(gitStatus: gitStatus, sessionId: context.sessionId, sessionScope: sessionScope)
+        let removed = ContextBarScoping.displayRemovedLines(gitStatus: gitStatus, sessionId: context.sessionId, sessionScope: sessionScope)
+
+        let cyan = UIColor(palette.cyan)
+        branchGroup.isHidden = gitStatus?.branch == nil
+        branchLabel.text = gitStatus?.branch
+        branchLabel.font = font(.caption1, .footnote, .medium, mono: true)
+        branchLabel.textColor = cyan
+        branchIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font(.caption2, .caption1, .semibold))
+        branchIcon.tintColor = cyan
+
+        changedLabel.isHidden = fileCount <= 0
+        changedLabel.text = "\(SessionFormatting.compactCount(fileCount)) changed"
+        changedLabel.font = font(.caption1, .footnote, .semibold, mono: true)
+        changedLabel.textColor = Self.dirtyColor(fileCount: fileCount, palette: palette)
+
+        linesGroup.isHidden = added <= 0 && removed <= 0
+        let countFont = font(.caption2, .caption1, .bold, mono: true)
+        addedLabel.isHidden = added <= 0
+        addedLabel.text = "+\(SessionFormatting.compactCount(added))"
+        addedLabel.font = countFont
+        addedLabel.textColor = UIColor(palette.toolDiffAdded)
+        removedLabel.isHidden = removed <= 0
+        removedLabel.text = "-\(SessionFormatting.compactCount(removed))"
+        removedLabel.font = countFont
+        removedLabel.textColor = UIColor(palette.toolDiffRemoved)
+
+        let ahead = gitStatus?.ahead ?? 0
+        let behind = gitStatus?.behind ?? 0
+        let tracksUpstream = gitStatus?.ahead != nil && gitStatus?.behind != nil
+        aheadGroup.isHidden = !tracksUpstream || (ahead <= 0 && behind <= 0)
+        let upstreamFont = font(.caption2, .caption1, mono: true)
+        aheadLabel.isHidden = ahead <= 0
+        aheadLabel.text = "\u{2191}\(SessionFormatting.compactCount(ahead))"
+        aheadLabel.font = upstreamFont
+        aheadLabel.textColor = UIColor(palette.toolDiffAdded)
+        behindLabel.isHidden = behind <= 0
+        behindLabel.text = "\u{2193}\(SessionFormatting.compactCount(behind))"
+        behindLabel.font = upstreamFont
+        behindLabel.textColor = UIColor(palette.orange)
+
+        chevron.image = UIImage(systemName: isExpanded ? "chevron.up" : "chevron.down")
+        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
+            font: font(fixed: 9, .bold, regular: .caption2, .bold)
+        )
+        chevron.tintColor = UIColor(palette.comment)
+
+        toggleButton.accessibilityLabel = [
+            branchGroup.isHidden ? nil : branchLabel.text,
+            changedLabel.isHidden ? nil : changedLabel.text,
+            addedLabel.isHidden || linesGroup.isHidden ? nil : addedLabel.text,
+            removedLabel.isHidden || linesGroup.isHidden ? nil : removedLabel.text,
+            aheadGroup.isHidden || aheadLabel.isHidden ? nil : aheadLabel.text,
+            aheadGroup.isHidden || behindLabel.isHidden ? nil : behindLabel.text,
+        ].compactMap { $0 }.joined(separator: ", ")
+
+        let showsSelect = isExpanded && context.workspaceId != nil
+        selectionDividerSlot?.isHidden = !showsSelect
+        selectButton.isHidden = !showsSelect
+        selectDivider.backgroundColor = .separator
+        selectLabel.text = isSelecting ? String(localized: "Cancel") : String(localized: "Select")
+        selectLabel.font = font(.caption2, .caption1, .semibold)
+        selectLabel.textColor = UIColor(isSelecting ? palette.orange : palette.purple)
+        selectButton.accessibilityLabel = selectLabel.text
+    }
+
+    private static func dirtyColor(fileCount: Int, palette: ThemePalette) -> UIColor {
+        if fileCount == 0 { return UIColor(palette.toolDiffAdded) }
+        if fileCount <= 5 { return UIColor(palette.fg) }
+        if fileCount <= 15 { return UIColor(palette.orange) }
+        return UIColor(palette.toolDiffRemoved)
+    }
+
+    // MARK: Expanded panel
+
+    /// Everything the expanded panel draws but the selection. The panel is
+    /// rebuilt only when this changes, not on every session-store update;
+    /// the selection updates the rows in place, so a drag across them keeps
+    /// its gesture.
+    private struct PanelKey: Equatable {
+        let files: [GitFileStatus]
+        let sharedPaths: Set<String>
+        let isSelecting: Bool
+        let commits: [GitCommitSummary]
+        let hasMoreCommits: Bool
+        let isLoadingMore: Bool
+        let gitStatus: GitStatus?
+        let sessionId: String?
+        let canTap: Bool
+        let regular: Bool
+        let themeID: ThemeID
+    }
+
+    private func renderPanel(sharedPaths: Set<String>, themeID: ThemeID) {
+        let key = PanelKey(
+            files: displayFiles,
+            sharedPaths: sharedPaths,
+            isSelecting: isSelecting,
+            commits: allCommits,
+            hasMoreCommits: hasMoreCommits,
+            isLoadingMore: isLoadingMore,
+            gitStatus: context.gitStatus,
+            sessionId: context.sessionId,
+            canTap: context.workspaceId != nil,
+            regular: usesRegularTypography,
+            themeID: themeID
+        )
+        let palette = themeID.palette
+        defer { applySelection(palette: palette) }
+        guard key != panelKey else { return }
+        panelKey = key
+        panelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        fileRows = []
+        fileList = nil
+        selectAllButton = nil
+        selectedCountLabel = nil
+
+        let comment = UIColor(palette.comment)
+        panelStack.addArrangedSubview(divider(comment.withAlphaComponent(0.2)))
+
+        if isSelecting {
+            panelStack.addArrangedSubview(selectionHeader(palette: palette))
+            panelStack.addArrangedSubview(divider(comment.withAlphaComponent(0.15)))
+        }
+
+        if !displayFiles.isEmpty {
+            panelStack.addArrangedSubview(fileListView(sharedPaths: sharedPaths, palette: palette))
+        }
+
+        if !allCommits.isEmpty {
+            panelStack.addArrangedSubview(divider(comment.withAlphaComponent(0.15)))
+            panelStack.addArrangedSubview(commitList(palette: palette))
+        } else if let gitStatus = context.gitStatus, gitStatus.isGitRepo {
+            panelStack.addArrangedSubview(divider(comment.withAlphaComponent(0.15)))
+            panelStack.addArrangedSubview(headCommitRow(gitStatus, palette: palette))
+        }
+    }
+
+    private var allFilesSelected: Bool {
+        !displayFiles.isEmpty && displayFiles.allSatisfy { selectedPaths.contains($0.path) }
+    }
+
+    private func selectionHeader(palette: ThemePalette) -> UIView {
+        let toggleAll = UIButton(configuration: .plain())
+        toggleAll.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            selectedPaths = allFilesSelected ? [] : Set(displayFiles.map(\.path))
+        }, for: .primaryActionTriggered)
+        let count = Self.label("", font: font(.caption2, .caption1, mono: true), color: UIColor(palette.fg))
+        selectAllButton = toggleAll
+        selectedCountLabel = count
+        return Self.row(
+            [toggleAll, Self.spacer(), count],
+            spacing: 8,
+            insets: NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+        )
+    }
+
+    /// The checkmarks, Select All / Deselect All, and the selected count.
+    private func applySelection(palette: ThemePalette) {
+        guard isSelecting else { return }
+        if let selectAllButton {
+            var configuration = UIButton.Configuration.plain()
+            configuration.attributedTitle = AttributedString(
+                allFilesSelected ? String(localized: "Deselect All") : String(localized: "Select All"),
+                attributes: AttributeContainer([
+                    .font: font(.caption2, .caption1, .semibold),
+                    .foregroundColor: UIColor(palette.purple),
+                ])
+            )
+            configuration.contentInsets = .zero
+            selectAllButton.configuration = configuration
+        }
+        selectedCountLabel?.isHidden = selectedPaths.isEmpty
+        selectedCountLabel?.text = "\(selectedPaths.count) selected"
+        for row in fileRows {
+            let selected = selectedPaths.contains(row.path)
+            row.mark?.image = UIImage(systemName: selected ? "checkmark.circle.fill" : "circle")
+            row.mark?.tintColor = UIColor(selected ? palette.purple : palette.comment)
+            row.view.accessibilityTraits = selected ? [.button, .selected] : .button
+        }
+    }
+
+    private func fileListView(sharedPaths: Set<String>, palette: ThemePalette) -> UIView {
+        let list = UIStackView()
+        list.axis = .vertical
+        list.spacing = 1
+        list.isLayoutMarginsRelativeArrangement = true
+        list.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0)
+
+        if !sharedPaths.isEmpty {
+            let orange = UIColor(palette.orange)
+            let icon = UIImageView(image: UIImage(systemName: "rectangle.on.rectangle"))
+            icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font(.caption2, .caption1, .semibold))
+            icon.tintColor = orange
+            let count = sharedPaths.count
+            let text = Self.label(
+                "\(count) file\(count == 1 ? "" : "s") touched in another session",
+                font: font(.caption2, .caption1, .medium),
+                color: orange
+            )
+            let hint = Self.row(
+                [icon, text, Self.spacer()],
+                spacing: 5,
+                insets: NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 3, trailing: 12)
+            )
+            hint.isAccessibilityElement = true
+            hint.accessibilityLabel = text.text
+            hint.accessibilityIdentifier = "context-bar-overlap-hint"
+            list.addArrangedSubview(hint)
+        }
+
+        for file in displayFiles {
+            let row = fileRow(file, isSharedEdit: sharedPaths.contains(file.path), palette: palette)
+            list.addArrangedSubview(row.view)
+            fileRows.append((file.path, row.view, row.mark))
+        }
+
+        if context.sessionId == nil, let gitStatus = context.gitStatus, gitStatus.totalFiles > gitStatus.files.count {
+            let more = Self.label(
+                "... and \(gitStatus.totalFiles - gitStatus.files.count) more",
+                font: font(.caption2, .caption1),
+                color: UIColor(palette.comment)
+            )
+            list.addArrangedSubview(Self.padded(more, NSDirectionalEdgeInsets(top: 4, leading: 12, bottom: 0, trailing: 12)))
+        }
+
+        list.addGestureRecognizer(dragSelectGesture)
+        dragSelectGesture.isEnabled = isSelecting
+        fileList = list
+        return list
+    }
+
+    /// A changed file's row, and its selection checkmark while selecting.
+    private func fileRow(
+        _ file: GitFileStatus,
+        isSharedEdit: Bool,
+        palette: ThemePalette
+    ) -> (view: UIView, mark: UIImageView?) {
+        let canTap = context.workspaceId != nil
+        var items: [UIView] = []
+        var mark: UIImageView?
+        if isSelecting {
+            let check = UIImageView()
+            check.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font(fixed: 12, .regular, regular: .caption1, .regular))
+            check.contentMode = .center
+            check.widthAnchor.constraint(equalToConstant: 16).isActive = true
+            items.append(check)
+            mark = check
+        }
+        items.append(Self.fileIconView(FileIcon.forPath(file.path)))
+        let path = Self.label(
+            file.path.shortenedPath,
+            font: font(.caption2, .caption1, mono: true),
+            color: UIColor(palette.fg)
+        )
+        path.lineBreakMode = .byTruncatingMiddle
+        path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        path.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        items.append(path)
+
+        var labelParts = [file.path.shortenedPath]
+        if isSharedEdit {
+            let orange = UIColor(palette.orange)
+            let badgeIcon = UIImageView(image: UIImage(systemName: "rectangle.on.rectangle"))
+            badgeIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
+                font: font(fixed: 8, .semibold, regular: .caption2, .semibold)
+            )
+            badgeIcon.tintColor = orange
+            let badge = CapsuleView()
+            Self.pad(badgeIcon, in: badge, NSDirectionalEdgeInsets(top: 2, leading: 5, bottom: 2, trailing: 5))
+            badge.backgroundColor = orange.withAlphaComponent(0.12)
+            badge.isAccessibilityElement = false
+            items.append(badge)
+            labelParts.append(String(localized: "Touched in another session"))
+        }
+        let countFont = font(.caption2, .caption1, .bold, mono: true)
+        if let added = file.addedLines, added > 0 {
+            items.append(Self.label("+\(added)", font: countFont, color: UIColor(palette.toolDiffAdded)))
+            labelParts.append("+\(added)")
+        }
+        if let removed = file.removedLines, removed > 0 {
+            items.append(Self.label("-\(removed)", font: countFont, color: UIColor(palette.toolDiffRemoved)))
+            labelParts.append("-\(removed)")
+        }
+        if !isSelecting, canTap {
+            items.append(rowChevron(palette: palette))
+        }
+        let vertical: CGFloat = usesRegularTypography ? 5 : 4
+        let content = Self.row(items, spacing: 6, insets: NSDirectionalEdgeInsets(top: vertical, leading: 12, bottom: vertical, trailing: 12))
+        // Spacer(minLength: 4) between the path and what trails it.
+        content.setCustomSpacing(16, after: path)
+        let row = Self.button(wrapping: content) { [weak self] in
+            guard let self else { return }
+            if isSelecting {
+                toggleSelection(file.path)
+            } else if canTap {
+                presentFileReview(file)
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .themedSurface(.opaqueCard, in: Capsule())
         }
-        .buttonStyle(.plain)
-        .disabled(launchActionInFlightTitle != nil)
-        .accessibilityLabel("Start new session with selected files")
+        row.accessibilityLabel = labelParts.joined(separator: ", ")
+        return (row, mark)
     }
 
-    private func quickActionSourceLabel(_ sourceScope: String?) -> String {
+    private func rowChevron(palette: ThemePalette) -> UIImageView {
+        let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
+        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
+            font: font(fixed: 8, .semibold, regular: .caption2, .semibold)
+        )
+        chevron.tintColor = UIColor(palette.comment).withAlphaComponent(0.5)
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+        return chevron
+    }
+
+    private func commitList(palette: ThemePalette) -> UIView {
+        let list = UIStackView()
+        list.axis = .vertical
+        list.spacing = 2
+        list.isLayoutMarginsRelativeArrangement = true
+        list.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+        for commit in allCommits {
+            let sha = Self.label(commit.sha, font: font(.caption2, .caption1, mono: true), color: UIColor(palette.comment))
+            sha.setContentCompressionResistancePriority(.required, for: .horizontal)
+            let message = Self.label(commit.message, font: font(.caption2, .caption1), color: UIColor(palette.fgDim))
+            message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            message.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            let content = Self.row([sha, message, rowChevron(palette: palette)], spacing: 8, insets: .zero)
+            content.setCustomSpacing(20, after: message)
+            let row = Self.button(wrapping: content) { [weak self] in self?.presentCommit(commit) }
+            row.accessibilityLabel = "\(commit.sha), \(commit.message)"
+            list.addArrangedSubview(row)
+        }
+
+        if hasMoreCommits {
+            let loadMore: UIView
+            if isLoadingMore {
+                let spinner = UIActivityIndicatorView(style: .medium)
+                spinner.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
+                spinner.startAnimating()
+                loadMore = spinner
+            } else {
+                let button = Self.textButton(
+                    String(localized: "Load more"),
+                    font: font(.caption2, .caption1, .semibold),
+                    color: UIColor(palette.purple),
+                    insets: .zero
+                )
+                button.addAction(UIAction { [weak self] _ in self?.loadMoreCommits() }, for: .primaryActionTriggered)
+                loadMore = button
+            }
+            let centered = UIStackView(arrangedSubviews: [loadMore])
+            centered.axis = .vertical
+            centered.alignment = .center
+            centered.isLayoutMarginsRelativeArrangement = true
+            centered.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 4, leading: 0, bottom: 0, trailing: 0)
+            list.addArrangedSubview(centered)
+        }
+
+        if let gitStatus = context.gitStatus, gitStatus.stashCount > 0 {
+            list.addArrangedSubview(Self.label(
+                "\(gitStatus.stashCount) stash",
+                font: font(.caption2, .caption1, mono: true),
+                color: UIColor(palette.purple)
+            ))
+        }
+        return list
+    }
+
+    private func headCommitRow(_ gitStatus: GitStatus, palette: ThemePalette) -> UIView {
+        var items: [UIView] = []
+        if let sha = gitStatus.headSha {
+            let label = Self.label(sha, font: font(.caption2, .caption1, mono: true), color: UIColor(palette.comment))
+            label.setContentCompressionResistancePriority(.required, for: .horizontal)
+            items.append(label)
+        }
+        if let message = gitStatus.lastCommitMessage {
+            let label = Self.label(message, font: font(.caption2, .caption1), color: UIColor(palette.fgDim))
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            items.append(label)
+        }
+        if gitStatus.stashCount > 0 {
+            items.append(Self.spacer())
+            items.append(Self.label(
+                "\(gitStatus.stashCount) stash",
+                font: font(.caption2, .caption1, mono: true),
+                color: UIColor(palette.purple)
+            ))
+        } else {
+            items.append(Self.spacer())
+        }
+        return Self.row(items, spacing: 8, insets: NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+    }
+
+    // MARK: Selection action bar
+
+    private struct SelectionBarKey: Equatable {
+        let selectedCount: Int
+        let inFlightTitle: String?
+        let options: [WorkspaceQuickActionOption]
+        let isLoadingQuickActions: Bool
+        let regular: Bool
+        let themeID: ThemeID
+    }
+
+    private func renderSelectionBar(themeID: ThemeID) {
+        let key = SelectionBarKey(
+            selectedCount: selectedPaths.count,
+            inFlightTitle: launchActionInFlightTitle,
+            options: quickActionOptions,
+            isLoadingQuickActions: isLoadingQuickActions,
+            regular: usesRegularTypography,
+            themeID: themeID
+        )
+        guard key != selectionBarKey else { return }
+        selectionBarKey = key
+        let palette = themeID.palette
+        selectionBar.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        selectionBar.addArrangedSubview(divider(UIColor(palette.comment).withAlphaComponent(0.2)))
+
+        let insets = NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)
+        if let launchActionInFlightTitle {
+            let spinner = UIActivityIndicatorView(style: .medium)
+            spinner.transform = CGAffineTransform(scaleX: 0.7, y: 0.7)
+            spinner.startAnimating()
+            let title = Self.label(launchActionInFlightTitle, font: font(.caption2, .caption1), color: UIColor(palette.comment))
+            selectionBar.addArrangedSubview(Self.row([spinner, title, Self.spacer()], spacing: 8, insets: insets))
+            return
+        }
+
+        let count = selectedPaths.count
+        let countLabel = Self.label(
+            "\(count) file\(count == 1 ? "" : "s")",
+            font: font(.caption2, .caption1, mono: true),
+            color: UIColor(count == 0 ? palette.comment : palette.fg)
+        )
+        countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let actions = UIStackView()
+        actions.axis = .horizontal
+        actions.alignment = .center
+        actions.spacing = 8
+        actions.addArrangedSubview(newSessionButton(palette: palette))
+        let options = WorkspaceQuickActionMenu.sorted(quickActionOptions)
+        if options.isEmpty {
+            actions.addArrangedSubview(Self.label(
+                isLoadingQuickActions ? String(localized: "Loading templates…") : String(localized: "No prompt templates"),
+                font: font(.caption2, .caption1),
+                color: UIColor(palette.comment)
+            ))
+        } else {
+            for option in options {
+                let button = quickActionButton(option, palette: palette)
+                button.isEnabled = canLaunch
+                button.alpha = canLaunch ? 1 : 0.4
+                actions.addArrangedSubview(button)
+            }
+        }
+        let scroller = TrailingAlignedScrollView(content: actions)
+        let width = scroller.widthAnchor.constraint(equalTo: actions.widthAnchor)
+        width.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            width,
+            scroller.widthAnchor.constraint(lessThanOrEqualToConstant: 280),
+        ])
+        selectionBar.addArrangedSubview(Self.row([countLabel, Self.spacer(), scroller], spacing: 8, insets: insets))
+    }
+
+    private func newSessionButton(palette: ThemePalette) -> UIView {
+        let icon = UIImageView(image: UIImage(systemName: "square.and.pencil"))
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font(.caption2, .caption1))
+        icon.tintColor = UIColor(palette.purple)
+        icon.contentMode = .center
+        icon.widthAnchor.constraint(equalToConstant: 13).isActive = true
+        let title = Self.label(
+            String(localized: "New Session"),
+            font: font(.caption2, .caption1, .medium, mono: true),
+            color: UIColor(palette.fg)
+        )
+        let button = capsuleButton([icon, title], palette: palette) { [weak self] in
+            Task { await self?.launchEmptySession() }
+        }
+        button.isEnabled = launchActionInFlightTitle == nil
+        button.accessibilityLabel = String(localized: "Start new session with selected files")
+        return button
+    }
+
+    private func quickActionButton(_ option: WorkspaceQuickActionOption, palette: ThemePalette) -> UIButton {
+        let route = ContextBarQuickActionRouting.defaultTapRoute(
+            sessionId: context.sessionId,
+            canReviewInCurrentSession: options.onReviewInCurrentSession != nil
+        )
+        let icon = UIImageView(image: UIImage(systemName: SlashCommand.Source.prompt.iconName))
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font(.caption2, .caption1))
+        icon.tintColor = Self.quickActionSourceColor(option.sourceScope, palette: palette)
+        icon.contentMode = .center
+        icon.widthAnchor.constraint(equalToConstant: 13).isActive = true
+        let name = Self.label(
+            "/\(option.commandName)",
+            font: font(.caption2, .caption1, .medium, mono: true),
+            color: UIColor(palette.blue)
+        )
+        let source = Self.label(
+            Self.quickActionSourceLabel(option.sourceScope),
+            font: font(.caption2, .caption1, mono: true),
+            color: UIColor(palette.comment)
+        )
+        let button = capsuleButton([icon, name, source], palette: palette) { [weak self] in
+            switch route {
+            case .currentSession:
+                Task { await self?.useSelectionInCurrentSession(option: option) }
+            case .newSession:
+                Task { await self?.launchSelection(option: option) }
+            }
+        }
+        button.accessibilityLabel = option.title
+        switch route {
+        case .currentSession:
+            button.menu = UIMenu(children: [
+                UIAction(title: String(localized: "Use in new session")) { [weak self] _ in
+                    Task { await self?.launchSelection(option: option) }
+                },
+            ])
+        case .newSession:
+            if options.onReviewInCurrentSession != nil {
+                button.menu = UIMenu(children: [
+                    UIAction(title: String(localized: "Use in this session")) { [weak self] _ in
+                        Task { await self?.useSelectionInCurrentSession(option: option) }
+                    },
+                ])
+            }
+        }
+        return button
+    }
+
+    private func capsuleButton(_ items: [UIView], palette: ThemePalette, action: @escaping () -> Void) -> UIButton {
+        let content = Self.row(items, spacing: 6, insets: NSDirectionalEdgeInsets(top: 6, leading: 9, bottom: 6, trailing: 9))
+        let button = Self.button(wrapping: content, action: action)
+        let surface = ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette)
+        button.backgroundColor = UIColor(surface.fill)
+        button.layer.borderColor = surface.stroke.map { UIColor($0).cgColor }
+        button.layer.borderWidth = surface.stroke == nil ? 0 : surface.strokeLineWidth
+        button.isCapsule = true
+        return button
+    }
+
+    private static func quickActionSourceLabel(_ sourceScope: String?) -> String {
         switch sourceScope {
         case "project": return "Project"
         case "user": return "User"
@@ -1017,67 +1184,292 @@ struct WorkspaceContextBar: View {
         }
     }
 
-    private func quickActionSourceColor(_ sourceScope: String?) -> Color {
+    private static func quickActionSourceColor(_ sourceScope: String?, palette: ThemePalette) -> UIColor {
         switch sourceScope {
-        case "project": return .themeOrange
-        case "temporary": return SlashCommand.Source.prompt.iconColor
-        default: return SlashCommand.Source.prompt.iconColor
+        case "project": return UIColor(palette.orange)
+        default: return UIColor(palette.green)
         }
     }
 
-    private func quickActionButton(option: WorkspaceQuickActionOption) -> some View {
-        let route = ContextBarQuickActionRouting.defaultTapRoute(
-            sessionId: sessionId,
-            canReviewInCurrentSession: onReviewInCurrentSession != nil
+    // MARK: View helpers
+
+    private static func label(_ text: String, font: UIFont, color: UIColor) -> UILabel {
+        let label = UILabel()
+        label.text = text
+        label.font = font
+        label.textColor = color
+        label.numberOfLines = 1
+        label.adjustsFontForContentSizeCategory = true
+        // Only the labels that take a row's free width (paths, messages)
+        // lower this.
+        label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        return label
+    }
+
+    private static func row(_ items: [UIView], spacing: CGFloat, insets: NSDirectionalEdgeInsets) -> UIStackView {
+        let row = UIStackView(arrangedSubviews: items)
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = spacing
+        row.isLayoutMarginsRelativeArrangement = true
+        row.directionalLayoutMargins = insets
+        return row
+    }
+
+    private static func spacer() -> UIView {
+        let spacer = UIView()
+        spacer.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+        return spacer
+    }
+
+    private static func padded(_ view: UIView, _ insets: NSDirectionalEdgeInsets) -> UIView {
+        let container = UIView()
+        pad(view, in: container, insets)
+        return container
+    }
+
+    private static func pad(_ view: UIView, in container: UIView, _ insets: NSDirectionalEdgeInsets) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: container.topAnchor, constant: insets.top),
+            view.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -insets.bottom),
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: insets.leading),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -insets.trailing),
+        ])
+    }
+
+    private func divider(_ color: UIColor) -> UIView {
+        let divider = UIView()
+        divider.backgroundColor = color
+        divider.heightAnchor.constraint(equalToConstant: 1 / max(traitCollection.displayScale, 1)).isActive = true
+        return divider
+    }
+
+    /// A row-wide plain button around `content`: the whole row takes the tap
+    /// and dims while pressed.
+    private static func button(wrapping content: UIView, action: @escaping () -> Void) -> ContextBarButton {
+        let button = ContextBarButton(frame: .zero)
+        button.content = content
+        content.isUserInteractionEnabled = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: button.topAnchor),
+            content.bottomAnchor.constraint(equalTo: button.bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+        ])
+        button.addAction(UIAction { _ in action() }, for: .primaryActionTriggered)
+        button.isAccessibilityElement = true
+        button.accessibilityTraits = .button
+        return button
+    }
+
+    /// A plain text button (Select, Select All, Load more).
+    private static func textButton(_ title: String, font: UIFont, color: UIColor, insets: NSDirectionalEdgeInsets) -> UIButton {
+        var configuration = UIButton.Configuration.plain()
+        configuration.attributedTitle = AttributedString(title, attributes: AttributeContainer([
+            .font: font,
+            .foregroundColor: color,
+        ]))
+        configuration.contentInsets = insets
+        return UIButton(configuration: configuration)
+    }
+
+    /// The 16 pt file-type glyph of a row.
+    private static func fileIconView(_ icon: FileIcon) -> UIImageView {
+        let view = UIImageView(image: icon.uiImage(pointSize: 10, weight: .semibold))
+        view.tintColor = UIColor(icon.tint.snapshotColor)
+        view.contentMode = icon.isAssetImage ? .scaleAspectFit : .center
+        NSLayoutConstraint.activate([
+            view.widthAnchor.constraint(equalToConstant: 16),
+            view.heightAnchor.constraint(equalToConstant: 16),
+        ])
+        return view
+    }
+
+    // MARK: Actions
+
+    private func toggleExpanded() {
+        let wasExpanded = isExpanded
+        animateLayout {
+            self.isExpanded.toggle()
+            if !self.isExpanded {
+                self.isSelecting = false
+                self.selectedPaths.removeAll()
+            }
+        }
+        if !wasExpanded, isExpanded {
+            FeatureEducationTips.markChangedFilesBarExpanded()
+        }
+    }
+
+    private func toggleSelecting() {
+        animateLayout(duration: 0.15) {
+            self.isSelecting.toggle()
+            if !self.isSelecting { self.selectedPaths.removeAll() }
+        }
+    }
+
+    private func toggleSelection(_ path: String) {
+        if selectedPaths.contains(path) {
+            selectedPaths.remove(path)
+        } else {
+            selectedPaths.insert(path)
+        }
+    }
+
+    /// Collapses an expanded bar (the host's collapse token changed, or a
+    /// launch finished).
+    private func collapseBar() {
+        animateLayout {
+            self.isExpanded = false
+            self.isSelecting = false
+            self.selectedPaths.removeAll()
+            self.dragSelect.reset()
+        }
+    }
+
+    /// Applies `changes` and animates the bar and its host to the new layout.
+    private func animateLayout(duration: TimeInterval = 0.2, _ changes: @escaping () -> Void) {
+        changes()
+        guard window != nil else { return }
+        UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseInOut, .allowUserInteraction]) {
+            self.updatePropertiesIfNeeded()
+            (self.superview ?? self).layoutIfNeeded()
+        }
+    }
+
+    private func contextDidChange(from old: Context) {
+        setNeedsUpdateProperties()
+        if context.collapseToken != old.collapseToken, isExpanded {
+            collapseBar()
+        }
+        if context.workspaceId != old.workspaceId
+            || context.sessionId != old.sessionId
+            || context.worktreeId != old.worktreeId {
+            resetQuickActionCache()
+            if isSelecting { loadQuickActions() }
+        }
+    }
+
+    @objc private func handleDragSelect(_ gesture: UIPanGestureRecognizer) {
+        switch gesture.state {
+        case .began, .changed:
+            guard isSelecting, let fileList else { return }
+            let location = gesture.location(in: fileList)
+            var frames: [String: CGRect] = [:]
+            for row in fileRows {
+                frames[row.path] = row.view.frame
+            }
+            guard let path = DragSelectState.pathAtLocation(location, in: frames) else { return }
+            var paths = selectedPaths
+            if dragSelect.handleRow(path, selectedPaths: &paths) {
+                selectedPaths = paths
+            }
+        default:
+            dragSelect.reset()
+        }
+    }
+
+    // MARK: Reviews
+
+    private func presentFileReview(_ file: GitFileStatus) {
+        guard let workspaceId = context.workspaceId else { return }
+        let configuration = WorkspaceReviewFileDetailViewController.Configuration(
+            workspaceId: workspaceId,
+            selectedSessionId: context.sessionId,
+            file: file.toReviewFile(),
+            worktreeId: context.worktreeId,
+            serverId: context.serverId,
+            reviewCommentSelectionScope: reviewScopeClosingTheReview(),
+            navigationFiles: displayFiles.map { $0.toReviewFile() },
+            allowsHorizontalBackSwipe: false
         )
+        let detail = WorkspaceReviewFileDetailViewController(
+            configuration: configuration,
+            connection: connection,
+            apiClient: apiClient,
+            navigation: navigation
+        )
+        detail.onClose = { [weak self] in self?.dismissReview() }
+        presentReview(detail)
+    }
 
-        return Button {
-            switch route {
-            case .currentSession:
-                Task { await useSelectionInCurrentSession(option: option) }
-            case .newSession:
-                Task { await launchSelection(option: option) }
-            }
-        } label: {
-            quickActionButtonLabel(option: option)
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            switch route {
-            case .currentSession:
-                Button("Use in new session") {
-                    Task { await launchSelection(option: option) }
-                }
-            case .newSession:
-                if onReviewInCurrentSession != nil {
-                    Button("Use in this session") {
-                        Task { await useSelectionInCurrentSession(option: option) }
-                    }
-                }
-            }
+    private func presentCommit(_ commit: GitCommitSummary) {
+        let viewer = CommitDetailViewController(
+            configuration: .init(
+                workspaceId: context.workspaceId ?? "",
+                commit: commit,
+                reviewCommentSelectionScope: reviewScopeClosingTheReview()
+            ),
+            connection: connection,
+            apiClient: apiClient,
+            navigation: navigation
+        )
+        viewer.onClose = { [weak self] in self?.dismissReview() }
+        presentReview(viewer)
+    }
+
+    /// A comment started in the review closes it first, so it reaches the
+    /// composer under it.
+    private func reviewScopeClosingTheReview() -> ReviewCommentSelectionScope? {
+        Self.makeFileDetailReviewCommentScope(
+            parentScope: options.fileDetailReviewCommentScope,
+            fallbackScope: nil,
+            dismissFileDetail: { [weak self] in self?.dismissReview() }
+        )
+    }
+
+    /// A router sheet with its own navigation: a commit or file review pushes
+    /// its new-session chat there, and that chat its forks.
+    private func presentReview(_ screen: UIViewController) {
+        guard presentedReview == nil, let presenter else { return }
+        presentedReview = screen
+        Router.present(
+            screen,
+            presentation: .sheet.inNavigation(),
+            from: presenter,
+            theme: HostFactory.root(near: self)?.themeStore,
+            onDismiss: nil
+        )
+    }
+
+    private func dismissReview() {
+        guard let presentedReview else { return }
+        self.presentedReview = nil
+        if (presentedReview.navigationController ?? presentedReview).presentingViewController != nil {
+            Router.finish(presentedReview)
         }
     }
 
-    private func quickActionButtonLabel(option: WorkspaceQuickActionOption) -> some View {
-        return HStack(spacing: 6) {
-            Image(systemName: SlashCommand.Source.prompt.iconName)
-                .font(gitBarFont(compact: .caption2, iPad: .caption))
-                .foregroundStyle(quickActionSourceColor(option.sourceScope))
-                .frame(width: 13)
-
-            Text("/\(option.commandName)")
-                .font(gitBarFont(compact: .caption2.monospaced().weight(.medium), iPad: .caption.monospaced().weight(.medium)))
-                .foregroundStyle(.themeBlue)
-
-            Text(quickActionSourceLabel(option.sourceScope))
-                .font(gitBarFont(compact: .caption2.monospaced(), iPad: .caption.monospaced()))
-                .foregroundStyle(.themeComment)
+    /// Pushes the new session's chat above the screen that shows this bar,
+    /// with this bar's server and navigation.
+    private func openQuickActionSession(_ destination: QuickActionSessionNavDestination) {
+        guard let presenter else { return }
+        let chat = ChatViewController(
+            sessionId: destination.id,
+            connection: connection,
+            navigation: navigation,
+            apiClient: apiClient,
+            workspaceIdHint: context.workspaceId,
+            initialInputText: destination.inputText,
+            initialPendingFiles: destination.pendingFileReferences
+        )
+        if let root = HostFactory.root(near: self), chat.traitOverrides.appRootEnvironment == nil {
+            chat.traitOverrides.appRootEnvironment = root
         }
-        .accessibilityLabel(option.title)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .themedSurface(.opaqueCard, in: Capsule())
+        Router.push(chat, from: presenter)
     }
+
+    private func presentLaunchError(_ message: String) {
+        guard let presenter else { return }
+        WorkspaceQuickActionMenu.presentLaunchError(message, from: presenter)
+    }
+
+    // MARK: Quick actions
 
     private func resetQuickActionCache() {
         quickActionOptions = []
@@ -1085,11 +1477,15 @@ struct WorkspaceContextBar: View {
         isLoadingQuickActions = false
     }
 
+    private func loadQuickActions() {
+        Task { await loadQuickActionsIfNeeded() }
+    }
+
     private func loadQuickActionsIfNeeded() async {
         guard isSelecting else { return }
-        guard let workspaceId, let api = apiClient else { return }
-        let selectedSessionId = sessionId
-        let selectedWorktreeId = worktreeId
+        guard let workspaceId = context.workspaceId, let api = apiClient else { return }
+        let selectedSessionId = context.sessionId
+        let selectedWorktreeId = context.worktreeId
         let cacheKey = "\(workspaceId)|\(selectedSessionId ?? "")|\(selectedWorktreeId ?? "")"
         guard quickActionOptionsContextKey != cacheKey else { return }
         guard !isLoadingQuickActions else { return }
@@ -1097,35 +1493,40 @@ struct WorkspaceContextBar: View {
         isLoadingQuickActions = true
         defer { isLoadingQuickActions = false }
 
+        let stillCurrent = { [weak self] in
+            self?.context.workspaceId == workspaceId
+                && self?.context.sessionId == selectedSessionId
+                && self?.context.worktreeId == selectedWorktreeId
+        }
         do {
             let actions = try await api.getWorkspaceQuickActions(
                 workspaceId: workspaceId,
                 selectedSessionId: selectedSessionId,
                 worktreeId: selectedWorktreeId
             ).actions
-            guard self.workspaceId == workspaceId,
-                  self.sessionId == selectedSessionId,
-                  self.worktreeId == selectedWorktreeId else { return }
+            guard stillCurrent() else { return }
             quickActionOptions = actions
             quickActionOptionsContextKey = cacheKey
         } catch {
-            guard self.workspaceId == workspaceId,
-                  self.sessionId == selectedSessionId,
-                  self.worktreeId == selectedWorktreeId else { return }
+            guard stillCurrent() else { return }
             quickActionOptions = []
         }
     }
 
+    private var selectedPathsInListOrder: [String] {
+        displayFiles.filter { selectedPaths.contains($0.path) }.map(\.path)
+    }
+
     private func useSelectionInCurrentSession(option: WorkspaceQuickActionOption) async {
-        guard let workspaceId, !selectedPaths.isEmpty else { return }
+        guard let workspaceId = context.workspaceId, !selectedPaths.isEmpty else { return }
         guard let api = apiClient else {
-            launchError = "Server is offline."
+            presentLaunchError("Server is offline.")
             return
         }
-        guard let onReviewInCurrentSession else { return }
+        guard let onReviewInCurrentSession = options.onReviewInCurrentSession else { return }
         guard launchActionInFlightTitle == nil else { return }
 
-        let paths = displayFiles.filter { selectedPaths.contains($0.path) }.map(\.path)
+        let paths = selectedPathsInListOrder
         guard !paths.isEmpty else { return }
 
         launchActionInFlightTitle = option.progressTitle
@@ -1135,8 +1536,8 @@ struct WorkspaceContextBar: View {
             let response = try await api.prepareWorkspaceQuickActionSelection(
                 workspaceId: workspaceId,
                 paths: paths,
-                selectedSessionId: sessionId,
-                worktreeId: worktreeId,
+                selectedSessionId: context.sessionId,
+                worktreeId: context.worktreeId,
                 promptTemplateName: option.promptTemplateName
             )
             selectedPaths.removeAll()
@@ -1149,28 +1550,28 @@ struct WorkspaceContextBar: View {
                 }
             )
         } catch {
-            launchError = error.localizedDescription
+            presentLaunchError(error.localizedDescription)
         }
     }
 
     private func launchEmptySession() async {
-        guard let workspaceId else { return }
+        guard let workspaceId = context.workspaceId else { return }
         guard let api = apiClient else {
-            launchError = "Server is offline."
+            presentLaunchError("Server is offline.")
             return
         }
         guard launchActionInFlightTitle == nil else { return }
 
-        launchActionInFlightTitle = "Starting new session…"
+        launchActionInFlightTitle = String(localized: "Starting new session…")
         defer { launchActionInFlightTitle = nil }
 
         do {
-            let paths = displayFiles.filter { selectedPaths.contains($0.path) }.map(\.path)
+            let paths = selectedPathsInListOrder
             let response = try await api.createWorkspaceSession(
                 workspaceId: workspaceId,
-                worktreeId: worktreeId
+                worktreeId: context.worktreeId
             )
-            sessionStore.upsert(response.session)
+            connection.sessionStore.upsert(response.session)
             selectedPaths.removeAll()
             isSelecting = false
             openQuickActionSession(QuickActionSessionNavDestination.attaching(
@@ -1178,20 +1579,20 @@ struct WorkspaceContextBar: View {
                 filePaths: paths
             ))
         } catch {
-            launchError = error.localizedDescription
+            presentLaunchError(error.localizedDescription)
         }
     }
 
     private func launchSelection(option: WorkspaceQuickActionOption) async {
-        guard let workspaceId, !selectedPaths.isEmpty else { return }
+        guard let workspaceId = context.workspaceId, !selectedPaths.isEmpty else { return }
         guard let api = apiClient else {
-            launchError = "Server is offline."
+            presentLaunchError("Server is offline.")
             return
         }
         guard launchActionInFlightTitle == nil else { return }
 
         // Preserve file order from the list
-        let paths = displayFiles.filter { selectedPaths.contains($0.path) }.map(\.path)
+        let paths = selectedPathsInListOrder
         guard !paths.isEmpty else { return }
 
         launchActionInFlightTitle = option.progressTitle
@@ -1201,11 +1602,11 @@ struct WorkspaceContextBar: View {
             let response = try await api.createWorkspaceQuickActionSession(
                 workspaceId: workspaceId,
                 paths: paths,
-                selectedSessionId: sessionId,
-                worktreeId: worktreeId,
+                selectedSessionId: context.sessionId,
+                worktreeId: context.worktreeId,
                 promptTemplateName: option.promptTemplateName
             )
-            sessionStore.upsert(response.session)
+            connection.sessionStore.upsert(response.session)
             selectedPaths.removeAll()
             isSelecting = false
             openQuickActionSession(QuickActionSessionNavDestination(
@@ -1215,14 +1616,18 @@ struct WorkspaceContextBar: View {
                 fileDisplayPrefix: option.title
             ))
         } catch {
-            launchError = error.localizedDescription
+            presentLaunchError(error.localizedDescription)
         }
     }
 
-    // MARK: - Load More Commits
+    // MARK: Load more commits
 
-    private func loadMoreCommits() async {
-        guard let workspaceId, let api = apiClient, !isLoadingMore else { return }
+    private func loadMoreCommits() {
+        Task { await loadMoreCommitsIfPossible() }
+    }
+
+    private func loadMoreCommitsIfPossible() async {
+        guard let workspaceId = context.workspaceId, let api = apiClient, !isLoadingMore else { return }
         isLoadingMore = true
         defer { isLoadingMore = false }
         let currentCount = allCommits.count
@@ -1234,34 +1639,74 @@ struct WorkspaceContextBar: View {
             // Silently fail — not critical
         }
     }
+}
 
-    // MARK: - Collapse
-
-    private func collapseBar() {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            isExpanded = false
-            isSelecting = false
-            selectedPaths.removeAll()
-            dragSelect.reset()
-        }
-    }
-
-    // MARK: - Drag-select
-
-    /// Process a drag position: select or deselect the row under the finger.
-    /// Only called when `isSelecting` is already true (gesture is conditionally attached).
-    private func handleDragSelect(at location: CGPoint) {
-        guard isSelecting,
-              let path = DragSelectState.pathAtLocation(location, in: rowFrames) else { return }
-        dragSelect.handleRow(path, selectedPaths: &selectedPaths)
+extension WorkspaceContextBarView: UIGestureRecognizerDelegate {
+    /// While selecting, a drag over the file list selects (Mail-style) instead
+    /// of scrolling the panel.
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldBeRequiredToFailBy other: UIGestureRecognizer
+    ) -> Bool {
+        gestureRecognizer === dragSelectGesture && other === scrollView.panGestureRecognizer
     }
 }
 
-// MARK: - Preference key for row frame collection
-
-private struct RowFramePreferenceKey: PreferenceKey {
-    nonisolated(unsafe) static var defaultValue: [String: CGRect] = [:]
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue()) { _, new in new }
+/// A plain button around custom content (`.buttonStyle(.plain)`): the
+/// content dims while pressed. A capsule rounds its ends at every height.
+@MainActor
+private final class ContextBarButton: UIButton {
+    var isCapsule = false {
+        didSet { setNeedsLayout() }
     }
+    weak var content: UIView?
+
+    override var isHighlighted: Bool {
+        didSet { content?.alpha = isHighlighted ? 0.6 : 1 }
+    }
+
+    /// The content sizes the button; an empty button's own minimum size
+    /// would pad every row.
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard isCapsule else { return }
+        layer.cornerCurve = .continuous
+        layer.cornerRadius = bounds.height / 2
+    }
+}
+
+/// A badge whose ends stay round at every height.
+private final class CapsuleView: UIView {
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layer.cornerCurve = .continuous
+        layer.cornerRadius = bounds.height / 2
+    }
+}
+
+/// A horizontal scroller for the selection bar's actions, scrolled to its
+/// trailing end when they overflow (`ScrollView(.horizontal)` in a frame
+/// aligned trailing).
+@MainActor
+private final class TrailingAlignedScrollView: UIScrollView {
+    init(content: UIView) {
+        super.init(frame: .zero)
+        showsHorizontalScrollIndicator = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: contentLayoutGuide.topAnchor),
+            content.bottomAnchor.constraint(equalTo: contentLayoutGuide.bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: contentLayoutGuide.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: contentLayoutGuide.trailingAnchor),
+            frameLayoutGuide.heightAnchor.constraint(equalTo: content.heightAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 }

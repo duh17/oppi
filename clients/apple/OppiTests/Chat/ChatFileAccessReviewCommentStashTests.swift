@@ -1,4 +1,3 @@
-import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -99,23 +98,20 @@ struct ChatFileAccessReviewCommentStashTests {
     @Test func commitFileDiffShowsStashWhenCommentsAreStaged() async throws {
         let comments = try makeIsolatedReviewComments(stagedCount: 1)
         let router = ReviewCommentSelectionRouter(dispatch: { _ in }, stash: comments)
-        let host = UIHostingController(
-            rootView: NavigationStack {
-                CommitFileDiffView(
-                    workspaceId: "w1",
-                    sha: "abc1234",
-                    file: GitCommitFileInfo(
-                        path: "Sources/App.swift",
-                        status: "M",
-                        addedLines: 2,
-                        removedLines: 1
-                    )
-                )
-                .environment(\.reviewCommentSelectionScope, .activeSession(router))
-                .environment(\.theme, ThemeID.dark.appTheme)
-                .environment(\.themeID, .dark)
-            }
-        )
+        let host = RouterNavigationController(rootViewController: CommitFileDiffViewController(
+            configuration: .init(
+                workspaceId: "w1",
+                sha: "abc1234",
+                file: GitCommitFileInfo(
+                    path: "Sources/App.swift",
+                    status: "M",
+                    addedLines: 2,
+                    removedLines: 1
+                ),
+                reviewCommentSelectionScope: .activeSession(router)
+            ),
+            apiClient: nil
+        ))
         let window = present(host)
         defer { window.isHidden = true }
 
@@ -127,18 +123,6 @@ struct ChatFileAccessReviewCommentStashTests {
         let button = try #require(stashButton(in: host.view))
         #expect(button.accessibilityIdentifier == FullScreenReviewCommentStashControl.accessibilityIdentifier)
         #expect(button.accessibilityValue as? String == "1 staged comment")
-    }
-
-    @Test func chatFileHostsInstallStashChrome() throws {
-        let commit = try chatFileAccessSource("Oppi/Features/Review/CommitDetailView.swift")
-        let touched = try chatFileAccessSource(
-            "Oppi/Features/Chat/Support/SessionFiles/SessionTouchedFileContentView.swift"
-        )
-
-        #expect(commit.contains("fullScreenReviewCommentStashOverlay("))
-        #expect(touched.contains("fullScreenReviewCommentStashOverlay("))
-        #expect(touched.contains("leadingFloatingAccessoryCount:"))
-        #expect(touched.contains("trailingFloatingAccessoryCount:"))
     }
 }
 
@@ -228,13 +212,4 @@ private func makeIsolatedReviewComments(stagedCount: Int) throws -> ChatReviewCo
         ) == nil)
     }
     return comments
-}
-
-private func chatFileAccessSource(_ path: String) throws -> String {
-    let sourceURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: path)
-    return try String(contentsOf: sourceURL, encoding: .utf8)
 }

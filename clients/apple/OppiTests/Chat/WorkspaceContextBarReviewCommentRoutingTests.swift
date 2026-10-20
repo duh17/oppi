@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -14,7 +13,7 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
         let parentScope = ReviewCommentSelectionScope.activeSession(ReviewCommentSelectionRouter { request in
             forwarded = request
         })
-        let scope = try #require(WorkspaceContextBar.makeFileDetailReviewCommentScope(
+        let scope = try #require(WorkspaceContextBarView.makeFileDetailReviewCommentScope(
             parentScope: parentScope,
             fallbackScope: nil,
             dismissFileDetail: { dismissed = true }
@@ -42,7 +41,7 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
             fallback = request
         })
 
-        let scope = try #require(WorkspaceContextBar.makeFileDetailReviewCommentScope(
+        let scope = try #require(WorkspaceContextBarView.makeFileDetailReviewCommentScope(
             parentScope: nil,
             fallbackScope: fallbackScope,
             dismissFileDetail: { dismissed = true }
@@ -60,124 +59,61 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
     }
 
     @Test func fileReviewSheetAndNavigationSurviveContextBecomingUnavailable() async throws {
-        let sessionStore = SessionStore()
-        sessionStore.switchServer(to: "srv1")
-        let reviewStatus = makeReviewGitStatus()
-        let presentation = WorkspaceContextBarReviewPresentation()
-        guard let selectedFile = reviewStatus.files.first else {
-            Issue.record("Expected a review file")
-            return
-        }
-        let navigationFiles = reviewStatus.files.map { $0.toReviewFile() }
-        let reviewItem = WorkspaceContextBarReviewItem.file(selectedFile)
-        let model = WorkspaceContextBarReviewTestModel(gitStatus: reviewStatus)
-        let controller = HostFactory.screen(root: makeTestAppRoot()) {
-            WorkspaceContextBarReviewTestHost(
-                model: model,
-                sessionStore: sessionStore,
-                reviewPresentation: presentation
-            )
-        }
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
-        controller.view.frame = window.bounds
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        controller.loadViewIfNeeded()
-        controller.view.setNeedsLayout()
-        controller.view.layoutIfNeeded()
-        defer {
-            controller.setContent {
-                WorkspaceContextBarReviewTestHost(
-                    model: model,
-                    sessionStore: sessionStore,
-                    reviewPresentation: presentation,
-                    isVisible: false
-                )
-            }
-            window.isHidden = true
-            window.rootViewController = nil
-        }
+        let fixture = ContextBarFixture()
+        defer { fixture.tearDown() }
 
-        presentation.navigationFiles = navigationFiles
-        presentation.selectedReviewItem = reviewItem
+        let row = try #require(fixture.button(labelContaining: "src/App.swift"))
+        row.sendActions(for: .primaryActionTriggered)
 
         let presented = await waitForMainActorCondition {
-            controller.presentedViewController != nil
+            fixture.screen.presentedViewController != nil
         }
         #expect(presented)
-        guard let presentedReview = controller.presentedViewController else { return }
-        #expect(presentation.selectedReviewItem == reviewItem)
-        #expect(presentation.navigationFiles == navigationFiles)
+        let container = try #require(fixture.screen.presentedViewController as? UINavigationController)
+        let review = try #require(container.viewControllers.first as? WorkspaceReviewFileDetailViewController)
+        let navigationFiles = makeReviewGitStatus().files.map { $0.toReviewFile() }
+        #expect(review.configuration.file.path == "src/App.swift")
+        #expect(review.configuration.navigationFiles == navigationFiles)
 
-        model.gitStatus = nil
-        await Task.yield()
+        fixture.bar.context.gitStatus = nil
+        fixture.bar.updatePropertiesIfNeeded()
 
         let remainsPresented = await waitForMainActorConditionToStayTrue(
             for: .milliseconds(500),
             poll: .milliseconds(10)
         ) {
-            controller.presentedViewController === presentedReview
+            fixture.screen.presentedViewController === container
         }
         #expect(remainsPresented, "The same file review sheet should remain presented")
-        #expect(presentation.selectedReviewItem == reviewItem)
-        #expect(presentation.navigationFiles == navigationFiles,
+        #expect(review.configuration.navigationFiles == navigationFiles,
                 "The open review should retain its original navigation files")
     }
 
     @Test func commitReviewSheetSurvivesContextBecomingUnavailable() async throws {
-        let sessionStore = SessionStore()
-        sessionStore.switchServer(to: "srv1")
-        let presentation = WorkspaceContextBarReviewPresentation()
-        let reviewItem = WorkspaceContextBarReviewItem.commit(
-            GitCommitSummary(sha: "abc1234", message: "Review", date: "2026-08-03")
-        )
-        let model = WorkspaceContextBarReviewTestModel(gitStatus: makeReviewGitStatus())
-        let controller = HostFactory.screen(root: makeTestAppRoot()) {
-            WorkspaceContextBarReviewTestHost(
-                model: model,
-                sessionStore: sessionStore,
-                reviewPresentation: presentation
-            )
-        }
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
-        controller.view.frame = window.bounds
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        controller.loadViewIfNeeded()
-        controller.view.setNeedsLayout()
-        controller.view.layoutIfNeeded()
-        defer {
-            controller.setContent {
-                WorkspaceContextBarReviewTestHost(
-                    model: model,
-                    sessionStore: sessionStore,
-                    reviewPresentation: presentation,
-                    isVisible: false
-                )
-            }
-            window.isHidden = true
-            window.rootViewController = nil
-        }
+        let fixture = ContextBarFixture()
+        defer { fixture.tearDown() }
 
-        presentation.selectedReviewItem = reviewItem
+        let row = try #require(fixture.button(labelContaining: "abc1234"))
+        row.sendActions(for: .primaryActionTriggered)
 
         let presented = await waitForMainActorCondition {
-            controller.presentedViewController != nil
+            fixture.screen.presentedViewController != nil
         }
         #expect(presented)
-        guard let presentedReview = controller.presentedViewController else { return }
+        let container = try #require(fixture.screen.presentedViewController as? UINavigationController)
+        let commit = try #require(container.viewControllers.first as? CommitDetailViewController)
+        #expect(commit.configuration.commit.sha == "abc1234")
 
-        model.gitStatus = nil
-        await Task.yield()
+        fixture.bar.context.gitStatus = nil
+        fixture.bar.updatePropertiesIfNeeded()
 
         let remainsPresented = await waitForMainActorConditionToStayTrue(
             for: .milliseconds(500),
             poll: .milliseconds(10)
         ) {
-            controller.presentedViewController === presentedReview
+            fixture.screen.presentedViewController === container
         }
         #expect(remainsPresented, "The same commit review sheet should remain presented")
-        #expect(presentation.selectedReviewItem == reviewItem)
     }
 
     @Test func parentScopeKeepsInlineComposerVoiceInputForFileDetail() async throws {
@@ -189,7 +125,7 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
             voiceInputManager: voiceInputManager
         ))
 
-        let scope = try #require(WorkspaceContextBar.makeFileDetailReviewCommentScope(
+        let scope = try #require(WorkspaceContextBarView.makeFileDetailReviewCommentScope(
             parentScope: parentScope,
             fallbackScope: nil,
             dismissFileDetail: {}
@@ -206,37 +142,49 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
     }
 }
 
-@MainActor @Observable
-private final class WorkspaceContextBarReviewTestModel {
-    var gitStatus: GitStatus?
+/// An expanded bar on a workspace's Git status, pinned to the top of a screen
+/// in a window, presenting from that screen.
+@MainActor
+private struct ContextBarFixture {
+    let screen = UIViewController()
+    let bar: WorkspaceContextBarView
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
 
-    init(gitStatus: GitStatus?) {
-        self.gitStatus = gitStatus
+    init() {
+        let connection = ServerConnection()
+        connection.sessionStore.switchServer(to: "srv1")
+        bar = WorkspaceContextBarView(
+            context: .init(gitStatus: makeReviewGitStatus(), workspaceId: "w1"),
+            options: .init(initiallyExpanded: true),
+            connection: connection,
+            apiClient: nil,
+            navigation: AppNavigation()
+        )
+        bar.presenter = screen
+        screen.traitOverrides.appRootEnvironment = makeTestAppRoot()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        screen.view.addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: screen.view.safeAreaLayoutGuide.topAnchor),
+            bar.leadingAnchor.constraint(equalTo: screen.view.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: screen.view.trailingAnchor),
+        ])
+        window.rootViewController = screen
+        window.makeKeyAndVisible()
+        bar.updatePropertiesIfNeeded()
+        screen.view.layoutIfNeeded()
     }
-}
 
-private struct WorkspaceContextBarReviewTestHost: View {
-    @Bindable var model: WorkspaceContextBarReviewTestModel
-    let sessionStore: SessionStore
-    let reviewPresentation: WorkspaceContextBarReviewPresentation
-    var isVisible = true
+    func button(labelContaining text: String) -> UIButton? {
+        timelineAllViews(in: bar)
+            .compactMap { $0 as? UIButton }
+            .first { $0.accessibilityLabel?.contains(text) == true }
+    }
 
-    var body: some View {
-        Group {
-            if isVisible {
-                WorkspaceContextBar(
-                    gitStatus: model.gitStatus,
-                    isLoading: false,
-                    workspaceId: "w1",
-                    sessionId: nil,
-                    initialExpanded: true,
-                    reviewPresentation: reviewPresentation
-                )
-            } else {
-                EmptyView()
-            }
-        }
-        .environment(sessionStore)
+    func tearDown() {
+        screen.presentedViewController?.dismiss(animated: false)
+        window.isHidden = true
+        window.rootViewController = nil
     }
 }
 
