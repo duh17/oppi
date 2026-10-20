@@ -13,10 +13,7 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         true
     }
 
-    override func setUpWithError() throws {
-        XCUIDevice.shared.orientation = .landscapeLeft
-        try super.setUpWithError()
-    }
+    override var e2eOrientation: UIDeviceOrientation { .landscapeLeft }
 
     override func seedE2EFixtures() throws {
         let workspaceId = try createLabWorkspace(named: anchorWorkspaceName)

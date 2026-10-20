@@ -8,16 +8,6 @@ import XCTest
 /// including while the keyboard is up.
 @MainActor
 final class ChatLayoutSwapE2ETests: E2ETestCase {
-    override func setUpWithError() throws {
-        XCUIDevice.shared.orientation = .portrait
-        try super.setUpWithError()
-    }
-
-    override func tearDownWithError() throws {
-        XCUIDevice.shared.orientation = .portrait
-        try super.tearDownWithError()
-    }
-
     func testOpenChatSurvivesStackSplitSwapWithAndWithoutKeyboard() throws {
         try XCTSkipUnless(
             min(app.frame.width, app.frame.height) >= 700,

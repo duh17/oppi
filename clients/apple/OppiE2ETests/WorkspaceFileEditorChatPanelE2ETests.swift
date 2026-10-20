@@ -13,6 +13,10 @@ final class WorkspaceFileEditorChatPanelE2ETests: E2ETestCase {
 
     override var e2eStartsInAutoCreatedChat: Bool { true }
 
+    // Any open chat satisfies `e2eStartsInAutoCreatedChat`, and this one has to
+    // be the e2e workspace's: its Files panel lists the fixture directory.
+    override var e2eRequiresFreshLaunch: Bool { true }
+
     override func seedE2EFixtures() throws {
         directoryName = "000-oppi-wfe-chat-\(UUID().uuidString.prefix(8).lowercased())"
         let directory = URL(fileURLWithPath: "/tmp", isDirectory: true).appendingPathComponent(directoryName)

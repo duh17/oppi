@@ -66,6 +66,12 @@ class E2ETestCase: XCTestCase {
         false
     }
 
+    /// The orientation the test starts in. Override for iPad landscape labs; a
+    /// test that rotates mid-test needs no override.
+    var e2eOrientation: UIDeviceOrientation {
+        .portrait
+    }
+
     /// Override to add launch environment or arguments before the app starts.
     func configureE2ELaunch(_ application: XCUIApplication) {}
 
@@ -77,6 +83,7 @@ class E2ETestCase: XCTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         continueAfterFailure = false
+        resetDeviceOrientation()
         try seedE2EFixtures()
 
         if e2eRequiresFreshLaunch {
@@ -102,6 +109,33 @@ class E2ETestCase: XCTestCase {
             // Navigate back to workspace detail if a previous test left the app elsewhere.
             try ensureAtWorkspaceDetail()
         }
+    }
+
+    /// Every test starts in `e2eOrientation`. The simulator keeps whatever
+    /// orientation an earlier test, or an earlier run on the same pool device,
+    /// left, and the shared app follows it, so one test that rotated would put
+    /// the next into another layout (iPhone landscape swaps the Message capsule
+    /// for a rail item, and its sheets present full screen).
+    private func resetDeviceOrientation() {
+        XCUIDevice.shared.orientation = e2eOrientation
+        guard let application = Self._app else { return }
+        let wantsLandscape = e2eOrientation.isLandscape
+        let deadline = Date().addingTimeInterval(5)
+        while (application.frame.width > application.frame.height) != wantsLandscape, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+    }
+
+    override func tearDownWithError() throws {
+        XCUIDevice.shared.orientation = .portrait
+        // A failed test can leave a sheet, toast, or half-finished route that
+        // the next setUp cannot navigate away from, so every later test in the
+        // process would fail on that leftover instead of its own claim. The
+        // next setUp relaunches and reuses the persisted pairing.
+        if (testRun?.totalFailureCount ?? 0) > 0 {
+            terminateSharedApp()
+        }
+        try super.tearDownWithError()
     }
 
     // MARK: - Launch & Pairing (once per class)
@@ -290,8 +324,11 @@ class E2ETestCase: XCTestCase {
     }
 
     private func sessionsInboxSurfaceExists(in application: XCUIApplication) -> Bool {
+        // A workspace's own session list also has the Message launcher; only
+        // its Edit control tells the two apart.
         application.buttons["workspace.quickSession.start"].exists
             && application.collectionViews["workspace.sessionList"].exists
+            && !application.buttons["workspace.edit.open"].exists
     }
 
     private func waitForSessionsInbox(

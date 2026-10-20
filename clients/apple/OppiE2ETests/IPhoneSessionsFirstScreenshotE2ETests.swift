@@ -13,6 +13,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     nonisolated(unsafe) private var swipeRegressionSessionId: String?
     nonisolated(unsafe) private var swipeRegressionStoppedSessionId: String?
     nonisolated(unsafe) private var themeSwitchSessionId: String?
+    nonisolated(unsafe) private var recentStoppedSessionId: String?
     nonisolated(unsafe) private var activeScheduleId: String?
     nonisolated(unsafe) private var archivedScheduleId: String?
     nonisolated(unsafe) private var nativeEditorAgentId: String?
@@ -62,7 +63,11 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             let secondWorkspaceId = try createLabWorkspace(named: "Sidebar Review Queue")
             try createLabSessions(count: 1, workspaceId: secondWorkspaceId, stopAfterCreate: false)
         } else if name.contains("testIPhoneRecentStoppedSessionsInboxScreenshot") {
-            try createLabSessions(count: 1, workspaceId: anchorWorkspaceId, stopAfterCreate: true)
+            recentStoppedSessionId = try createLabSessions(
+                count: 1,
+                workspaceId: anchorWorkspaceId,
+                stopAfterCreate: true
+            ).first
             let response = try e2eLabAPIJSON(
                 method: "POST",
                 path: "/workspaces/\(anchorWorkspaceId)/sessions",
@@ -305,7 +310,10 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         ).firstMatch
         XCTAssertTrue(stoppedHeader.waitForExistence(timeout: 15), "Recent stopped section did not appear")
 
-        let stoppedRowTitle = app.staticTexts.matching(identifier: "Screenshot Lab Session 1").firstMatch
+        // Earlier tests in a run leave sessions with the same fixture title, so
+        // find this test's stopped session by id.
+        let stoppedSessionId = try XCTUnwrap(recentStoppedSessionId, "Stopped session was not seeded")
+        let stoppedRowTitle = app.buttons["session.nav.\(stoppedSessionId)"]
         XCTAssertTrue(stoppedRowTitle.waitForExistence(timeout: 10), "Today's stopped session was not expanded")
         XCTAssertFalse(
             app.staticTexts[stoppedIncognitoSessionName].exists,
@@ -326,6 +334,14 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             XCTWaiter.wait(for: [rowCollapsed], timeout: 5),
             .completed,
             "Recent stopped section did not collapse"
+        )
+
+        // The collapse lives in the inbox screen, which the shared app keeps for
+        // later tests, so expand the section again.
+        tap(stoppedHeader, named: "recent stopped section")
+        XCTAssertTrue(
+            stoppedRowTitle.waitForExistence(timeout: 5),
+            "Recent stopped section did not expand again"
         )
     }
 

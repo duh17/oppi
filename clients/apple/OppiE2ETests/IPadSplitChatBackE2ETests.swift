@@ -7,15 +7,7 @@ import XCTest
 final class IPadSplitChatBackE2ETests: E2ETestCase {
     override var e2eStartsInAutoCreatedChat: Bool { true }
 
-    override func setUpWithError() throws {
-        XCUIDevice.shared.orientation = .landscapeLeft
-        try super.setUpWithError()
-    }
-
-    override func tearDownWithError() throws {
-        XCUIDevice.shared.orientation = .portrait
-        try super.tearDownWithError()
-    }
+    override var e2eOrientation: UIDeviceOrientation { .landscapeLeft }
 
     func testIPadLandscapeBackFromChatShowsSessionList() throws {
         try XCTSkipUnless(
