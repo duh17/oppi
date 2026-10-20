@@ -292,9 +292,6 @@
     "clients/apple/Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Support/SessionFiles/SessionTouchedFileContentView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Support/Sharing/ShareSessionRedactionSheet.swift": {
       "import SwiftUI": 1
     },
@@ -362,9 +359,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/FileBrowser/FileBrowserMotionPreviewSupport.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/FileBrowser/FilePushTransition.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Icons/IconPickerView.swift": {

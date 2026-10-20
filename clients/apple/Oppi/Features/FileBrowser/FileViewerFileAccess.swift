@@ -25,6 +25,8 @@ struct FileViewerFileAccess {
                 sessionId: sessionId,
                 path: path
             )
+        case .sessionTouched(let origin):
+            return try await origin.browse(api: api, path: path)
         case .workspaceFile:
             return try await api.browseWorkspaceFile(
                 workspaceId: workspaceId,
@@ -55,6 +57,8 @@ struct FileViewerFileAccess {
                 contentTypeHint: contentTypeHint,
                 sourceFileExtension: sourceFileExtension
             )
+        case .sessionTouched(let origin):
+            return try await origin.mediaSource(api: api, path: path, contentTypeHint: contentTypeHint)
         case .workspaceFile:
             return try await api.makeWorkspaceMediaSource(
                 workspaceId: workspaceId,
@@ -71,8 +75,11 @@ struct FileViewerFileAccess {
         path: String,
         kind: TimedText.MediaKind
     ) async -> TimedText.LoadResult {
+        if case .sessionTouched(let origin) = source {
+            return await origin.loadTimedText(api: api, workspaceId: workspaceId, mediaPath: path, kind: kind)
+        }
         let route: MarkdownVideoMediaSourceRoute = switch source {
-        case .hostFile:
+        case .hostFile, .sessionTouched:
             .host(path: path)
         case .sessionFile(let sessionId):
             .session(workspaceID: workspaceId, sessionID: sessionId, path: path)
@@ -98,6 +105,15 @@ struct FileViewerFileAccess {
     ) -> FullScreenCodeContent {
         guard let api else {
             return .fromText(text, filePath: sourcePath)
+        }
+        if case .sessionTouched(let origin) = source {
+            return origin.fullScreenContent(
+                text: text,
+                filePath: sourcePath,
+                workspaceId: workspaceId,
+                api: api,
+                audioPlayer: audioPlayer
+            )
         }
         let access = self
         return .fromText(
@@ -125,6 +141,8 @@ struct FileViewerFileAccess {
                             sessionId: sourceSessionId,
                             path: filePath
                         )
+                    case .sessionTouched(let origin):
+                        return try await origin.browse(api: api, path: filePath)
                     case .workspaceFile:
                         return try await api.browseWorkspaceFile(
                             workspaceId: wsID.isEmpty ? access.workspaceId : wsID,

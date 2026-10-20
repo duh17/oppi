@@ -3,14 +3,9 @@ import Testing
 
 @Suite("File push transition Reduce Motion")
 struct FileBrowserPushTransitionMotionTests {
-    @Test func reduceMotionDropsDirectionalTravelAndAnimation() {
+    @Test func reduceMotionDropsDirectionalTravel() {
         #expect(FileBrowserPushTransitionPolicy.directionalSpec(for: .next, reduceMotion: true) == nil)
         #expect(FileBrowserPushTransitionPolicy.directionalSpec(for: .previous, reduceMotion: true) == nil)
-        #expect(
-            FileBrowserPushTransitionPolicy.animation(reduceMotion: true)
-                == ThemeMotion.easeInOut(duration: FileBrowserPushTransitionPolicy.duration, reduceMotion: true)
-        )
-        #expect(FileBrowserPushTransitionPolicy.animation(reduceMotion: true) == nil)
     }
 
     @Test func originalDirectionAndTimingRemainWhenReduceMotionIsOff() {
@@ -24,11 +19,6 @@ struct FileBrowserPushTransitionMotionTests {
         )
         #expect(FileBrowserPushTransitionSpec.spec(for: .next) == .init(insertion: .trailing, removal: .leading))
         #expect(FileBrowserPushTransitionSpec.spec(for: .previous) == .init(insertion: .leading, removal: .trailing))
-        #expect(
-            FileBrowserPushTransitionPolicy.animation(reduceMotion: false)
-                == ThemeMotion.easeInOut(duration: FileBrowserPushTransitionPolicy.duration, reduceMotion: false)
-        )
-        #expect(FileBrowserPushTransitionPolicy.animation(reduceMotion: false) != nil)
     }
 
     @Test func ordinaryPreviousAndNextDoNotWrapAtBoundaries() {

@@ -11,6 +11,10 @@ enum FileBrowserContentSource: Equatable {
     case workspaceFile
     case sessionFile(sessionId: String)
     case hostFile
+    /// A file the session reported touching (the chat Files panel's Changed
+    /// tab): each path reads from the host or the session's copy, as
+    /// `SessionTouchedFileLoadRoute` decides, and so do its resources.
+    case sessionTouched(SessionTouchedFileOrigin)
 
     var routesFileReferencesThroughSession: Bool {
         if case .sessionFile = self { return true }
@@ -39,7 +43,18 @@ enum FileBrowserContentRenderingPolicy {
         path: String,
         fileName: String
     ) -> String {
-        source == .hostFile ? path : fileName
+        switch source {
+        case .hostFile:
+            path
+        case .sessionTouched(let origin):
+            SessionTouchedFileLoadRoute.navigationTitle(
+                path: path,
+                fileName: fileName,
+                workspaceRuntime: origin.workspaceRuntime
+            )
+        case .workspaceFile, .sessionFile:
+            fileName
+        }
     }
 
     /// The file viewer already owns the filename in navigation chrome.
@@ -153,8 +168,8 @@ enum AdjacentFileNavigatorLayout {
 }
 
 /// Shared previous/next file transition. Directional travel and the 220 ms
-/// ease-in-out are one policy for the UIKit viewers' slide and SwiftUI's
-/// `filePushTransition`. Reduce Motion must win at both owners.
+/// ease-in-out are one policy for every UIKit viewer's slide. Reduce Motion
+/// drops the travel.
 enum FileBrowserPushTransitionPolicy {
     static let duration: Double = 0.22
 

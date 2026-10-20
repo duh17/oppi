@@ -1212,7 +1212,7 @@ final class FileViewerViewController: UIViewController {
         case .hostFile:
             guard let skillFile = configuration.skillFile, path == configuration.filePath else { return nil }
             return WorkspaceFileEditIdentity(serverId: serverId, skillId: skillFile.skillId, path: skillFile.path)
-        case .sessionFile:
+        case .sessionFile, .sessionTouched:
             return nil
         }
     }

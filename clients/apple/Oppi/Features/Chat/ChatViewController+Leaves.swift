@@ -626,10 +626,10 @@ private struct ChatTitleLeaf: View {
     }
 }
 
-/// The pages the Files panel's Changed tab pushes, still SwiftUI: a Git
-/// change's review, or the current bytes of a file the session touched. Each
-/// runs in its own screen, so the panel's server, API client, and navigation
-/// go on explicitly.
+/// The pages the Files panel's Changed tab pushes: a Git change's review,
+/// or the current bytes of a file the session touched. Each runs in its own
+/// screen, so the panel's server, API client, and navigation go on
+/// explicitly.
 @MainActor
 enum SessionFilePages {
     static func reviewDetail(
@@ -676,20 +676,34 @@ enum SessionFilePages {
         inputs: ChatFilePanelInputs,
         navigator: ScreenNavigator
     ) {
-        let page = SessionTouchedFileContentView(
+        let connection = inputs.connection
+        let store = connection.workspaceStore
+        let workspace = store.activeServerId
+            .flatMap { store.workspacesByServer[$0]?.first { $0.id == workspaceId } }
+            ?? store.workspaces.first { $0.id == workspaceId }
+        let configuration = FileViewerViewController.Configuration(
             workspaceId: workspaceId,
-            sessionId: sessionId,
+            serverId: inputs.serverId,
             filePath: path,
             fileName: path.lastPathComponentForDisplay,
-            navigationContext: navigationContext
+            source: .sessionTouched(SessionTouchedFileOrigin(
+                sessionId: sessionId,
+                workspaceRuntime: workspace?.runtime,
+                hostMount: workspace?.hostMount
+            )),
+            sessionId: sessionId,
+            workspaceRuntime: workspace?.runtime,
+            navigationContext: navigationContext,
+            reviewCommentSelectionScope: reviewCommentSelectionScope
         )
-        .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
-        let connection = inputs.connection
-        let apiClient = inputs.apiClient
-        let navigation = inputs.navigation
-        navigator.push {
-            page.presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
-        }
+        navigator.push(FileViewerViewController(
+            configuration: configuration,
+            services: .init(
+                apiClient: inputs.apiClient,
+                audioPlayer: connection.audioPlayer,
+                sessionStore: connection.sessionStore
+            )
+        ))
     }
 
     /// A comment started on a pushed file closes the panel first, so it
