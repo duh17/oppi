@@ -841,6 +841,23 @@ final class RouterModalPresenter {
     /// Dismissing to present the same item again with another style.
     private var isRepresenting = false
 
+    /// A UIKit screen's slot, set from its state in `updateProperties()`: a
+    /// non-nil `id` presents `screen`, nil dismisses, and `clear` resets the
+    /// screen's state after a swipe-down or the modal's own `finish()`.
+    func update(
+        id: AnyHashable?,
+        presentation: ModalPresentation,
+        root: AppRootEnvironment,
+        onDismiss: (() -> Void)? = nil,
+        clear: @escaping () -> Void,
+        screen: () -> RouterScreen
+    ) {
+        self.onDismiss = onDismiss
+        clearItem = clear
+        request = id.map { Request(id: $0, presentation: presentation, root: root, screen: screen()) }
+        sync()
+    }
+
     func sync() {
         if let screen {
             let container = screen.navigationController ?? screen

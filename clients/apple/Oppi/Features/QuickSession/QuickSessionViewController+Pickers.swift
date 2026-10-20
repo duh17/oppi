@@ -13,17 +13,17 @@ extension QuickSessionViewController {
     /// runs only for a request, so the reads in it re-run this only then.
     func updatePresenters(colors: ComposerThemeColors) {
         let pickerPopover = ModalPresentation.popover.keepsPopoverInCompactWidth()
-        update(
-            modelPicker,
+        modelPicker.update(
             id: model.showModelPicker ? "model-picker" : nil,
             presentation: .sheet.inNavigation(),
+            root: root,
             clear: { [weak self] in self?.model.showModelPicker = false },
             screen: { model.modelPickerScreen() }
         )
-        update(
-            workspacePicker,
+        workspacePicker.update(
             id: model.showWorkspacePicker ? "workspace-picker" : nil,
             presentation: pickerPopover,
+            root: root,
             clear: { [weak self] in self?.model.showWorkspacePicker = false },
             screen: {
                 pickerScreen(style: .workspace, content: workspacePickerContent(), colors: colors) { [weak self] in
@@ -31,10 +31,10 @@ extension QuickSessionViewController {
                 }
             }
         )
-        update(
-            worktreePicker,
+        worktreePicker.update(
             id: model.showWorktreePicker && model.showsWorktreePicker ? "worktree-picker" : nil,
             presentation: pickerPopover,
+            root: root,
             clear: { [weak self] in self?.model.showWorktreePicker = false },
             screen: {
                 pickerScreen(style: .worktree, content: worktreePickerContent(colors: colors), colors: colors) { [weak self] in
@@ -44,10 +44,10 @@ extension QuickSessionViewController {
         )
 
         let stacks = stacksActionControls
-        update(
-            agentPicker,
+        agentPicker.update(
             id: stacks && model.showAgentPicker ? "agent-picker" : nil,
             presentation: pickerPopover,
+            root: root,
             clear: { [weak self] in self?.model.showAgentPicker = false },
             screen: {
                 pickerScreen(style: .agent, content: agentPickerContent(colors: colors), colors: colors) { [weak self] id in
@@ -55,10 +55,10 @@ extension QuickSessionViewController {
                 }
             }
         )
-        update(
-            thinkingPicker,
+        thinkingPicker.update(
             id: stacks && showsThinkingPicker ? "thinking-picker" : nil,
             presentation: .popover.arrowDirections(.down).keepsPopoverInCompactWidth(),
+            root: root,
             clear: { [weak self] in self?.showsThinkingPicker = false },
             screen: {
                 let level = model.effectiveThinkingLevel
@@ -90,20 +90,6 @@ extension QuickSessionViewController {
         }, update: { picker in
             picker.apply(content: content, onSelect: onSelect)
         })
-    }
-
-    private func update(
-        _ presenter: RouterModalPresenter,
-        id: String?,
-        presentation: ModalPresentation,
-        clear: @escaping () -> Void,
-        screen: () -> RouterScreen
-    ) {
-        presenter.clearItem = clear
-        presenter.request = id.map {
-            RouterModalPresenter.Request(id: AnyHashable($0), presentation: presentation, root: root, screen: screen())
-        }
-        presenter.sync()
     }
 
     // MARK: Workspaces

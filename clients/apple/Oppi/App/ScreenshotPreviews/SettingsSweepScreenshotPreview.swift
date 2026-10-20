@@ -216,6 +216,9 @@ struct SettingsSweepScreenshotPreview: View {
         case "ssh-setup":
             RouterPreviewControllerStack(root: root) { SSHTerminalSetupViewController() }
                 .ignoresSafeArea()
+        case "theme-import":
+            RouterPreviewControllerStack(root: root) { ThemeImportViewController(root: root) }
+                .ignoresSafeArea()
         // Every other page is the root of a router stack, where its links push.
         default:
             RouterPreviewStack(root: root) { pushedPage }
@@ -251,7 +254,6 @@ struct SettingsSweepScreenshotPreview: View {
                 template: QuickCommentTemplate.builtInDefaults[0], isNew: false, onSave: { _ in }, onCancel: {}
             )
         case "auto-title": AutoTitleSettingsView()
-        case "theme-import": ThemeImportView()
         case "dictionary": DictationDictionaryView(workspaceId: nil)
         case "dictionary-workspace": DictationDictionaryView(workspaceId: "preview-ws")
         case "skill-detail":

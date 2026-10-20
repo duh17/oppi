@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsAppearancePage: View {
     @Environment(ThemeStore.self) private var themeStore
     @Environment(\.screenNavigator) private var navigator
+    @Environment(\.appRootEnvironment) private var root
 
     var body: some View {
         List {
@@ -48,7 +49,10 @@ struct SettingsAppearancePage: View {
 
             Section {
                 SettingsIndexActionRow {
-                    navigator.push { ThemeImportView() }
+                    guard let root else {
+                        return assertionFailure("Custom Themes needs the app root above Appearance")
+                    }
+                    navigator.push(ThemeImportViewController(root: root))
                 } label: {
                     Text("Custom Themes")
                 }

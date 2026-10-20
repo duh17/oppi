@@ -59,23 +59,6 @@ extension ChatViewController {
         ).inNavigation()
     }
 
-    private func update(
-        _ slot: RouterModalPresenter,
-        id: AnyHashable?,
-        presentation: ModalPresentation,
-        root: AppRootEnvironment,
-        onDismiss: (() -> Void)? = nil,
-        clear: @escaping () -> Void,
-        screen: () -> RouterScreen
-    ) {
-        slot.onDismiss = onDismiss
-        slot.clearItem = clear
-        slot.request = id.map {
-            RouterModalPresenter.Request(id: $0, presentation: presentation, root: root, screen: screen())
-        }
-        slot.sync()
-    }
-
     /// Every chat modal is a router modal. Outline, Files, and Context sit in
     /// a router navigation controller, as a modal here or in the trailing
     /// column (`updateSidePanels`). Files and Context push through their
@@ -88,32 +71,28 @@ extension ChatViewController {
         let auxiliaryID = AnyHashable(ChatAuxiliaryModalID(fullScreen: fullScreen))
         let auxiliary = auxiliaryPresentation(fullScreen: fullScreen)
 
-        update(
-            modals.outline,
+        modals.outline.update(
             id: !sidePanel && model.showOutline ? auxiliaryID : nil,
             presentation: auxiliary,
             root: root,
             clear: { [weak self] in self?.model.showOutline = false },
             screen: outlineScreen
         )
-        update(
-            modals.files,
+        modals.files.update(
             id: !sidePanel && model.isFilePanelVisible ? auxiliaryID : nil,
             presentation: auxiliary,
             root: root,
             clear: { [weak self] in self?.model.isFilePanelVisible = false },
             screen: filePanelScreen
         )
-        update(
-            modals.context,
+        modals.context.update(
             id: !sidePanel && model.showContextInspector ? auxiliaryID : nil,
             presentation: auxiliary,
             root: root,
             clear: { [weak self] in self?.model.showContextInspector = false },
             screen: contextScreen
         )
-        update(
-            modals.share,
+        modals.share.update(
             id: model.showShareRedactionSheet ? auxiliaryID : nil,
             presentation: auxiliary,
             root: root,
@@ -121,8 +100,7 @@ extension ChatViewController {
             clear: { [weak self] in self?.model.showShareRedactionSheet = false },
             screen: shareRedactionScreen
         )
-        update(
-            modals.modelPicker,
+        modals.modelPicker.update(
             id: model.showModelPicker ? AnyHashable("model-picker") : nil,
             presentation: .sheet.detents([.medium(), .large()], selected: .large).inNavigation(),
             root: root,
@@ -130,8 +108,7 @@ extension ChatViewController {
             screen: modelPickerScreen
         )
         let stash = model.reviewCommentStashPresentation
-        update(
-            modals.reviewCommentStash,
+        modals.reviewCommentStash.update(
             id: stash.map { AnyHashable($0.id) },
             presentation: .sheet.inNavigation(),
             root: root,

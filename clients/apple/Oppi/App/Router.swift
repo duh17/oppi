@@ -252,10 +252,12 @@ enum Router {
             break
         }
         container.onDismissed = onDismiss
-        if presentation.style == .overFullScreen {
-            // A window-covering modal that keeps the presenter in the window:
-            // drop the presenter's keyboard, as `.fullScreen` does by taking
-            // the presenter out of the window. It would float over the modal.
+        if presentation.style == .overFullScreen || presentation.style == .fullScreen {
+            // A window-covering modal: drop the presenter's keyboard. Over
+            // `.overFullScreen` it would float over the modal. `.fullScreen`
+            // takes the presenter out of the window, but a hosted SwiftUI
+            // field kept first responder there and came back under a stale
+            // keyboard inset with nothing left to dismiss it.
             presenter.view.window?.endEditing(true)
         }
         topPresenter(from: presenter).present(container, animated: true)
