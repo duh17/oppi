@@ -59,11 +59,16 @@ describe("e2e pre-create pair helper", () => {
       ok: false,
       error: 'status=400 body={"error":"devicePublicKey required"}',
     });
-    // 202 approval_required is not an enrollment.
-    const pending = JSON.stringify({ status: "approval_required", approvalId: "pa_1" });
+    // 202 approval_required is not an enrollment, and its body carries a
+    // pendingToken that the message must not echo.
+    const pending = JSON.stringify({
+      status: "approval_required",
+      approvalId: "pa_1",
+      pendingToken: "pt_secret",
+    });
     expect(interpretPairResponse(202, pending)).toEqual({
       ok: false,
-      error: `status=202 body=${pending}`,
+      error: "status=202 status=approval_required",
     });
   });
 });

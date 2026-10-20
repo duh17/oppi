@@ -54,6 +54,14 @@ export function interpretPairResponse(status, text) {
     };
   }
   if (status !== 200) {
+    // A 202 approval_required body carries a pendingToken: report its status and
+    // error fields only. Plain error bodies (400/403/429) stay as they are.
+    if (json && "pendingToken" in json) {
+      const fields = ["status", "error"]
+        .filter((field) => typeof json[field] === "string")
+        .map((field) => `${field}=${json[field]}`);
+      return { ok: false, error: [`status=${status}`, ...fields].join(" ") };
+    }
     return { ok: false, error: `status=${status} body=${text}` };
   }
   return { ok: true, accessToken, deviceId, expiresAt };
