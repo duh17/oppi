@@ -444,6 +444,8 @@ final class FeatureEducationTipHostView: UIView {
     func stop() {
         updatesTask?.cancel()
         updatesTask = nil
+        // A stopped host never claims the tip again until it starts.
+        shouldDisplay = false
         if isPresented {
             coordinator.release(tipID: descriptor.id, ownerID: ownerID)
             isPresented = false
@@ -452,6 +454,9 @@ final class FeatureEducationTipHostView: UIView {
     }
 
     private func refreshPresentation() {
+        // The coordinator announces every claim and release; a stopped host
+        // (off screen, or the composer left busy mode) ignores them.
+        guard updatesTask != nil else { return }
         let eligible = shouldDisplay || forceTipsForTesting
         if isPresented {
             if !eligible || !coordinator.isActive(tipID: descriptor.id, ownerID: ownerID) {

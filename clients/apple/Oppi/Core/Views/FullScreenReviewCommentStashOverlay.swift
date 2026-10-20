@@ -4,17 +4,14 @@ import UIKit
 /// SwiftUI host for the full-screen staged-comment control.
 ///
 /// ``FullScreenCodeViewController`` owns this chrome for timeline and embedded
-/// UIKit readers. Chat file sheets that keep SwiftUI navigation — git context
-/// review, commit file diffs — never create that controller, so they install
-/// the same control here. Previous-file buttons stay in the original leading
-/// slot; stash stacks above them using the same padding as Annotate.
+/// UIKit readers. Review screens that are still SwiftUI (commit file diffs)
+/// never create that controller, so they install the same control here, and
+/// it opens the UIKit stash sheet.
 ///
 /// Hosts pass `scope` explicitly. The control is a UIKit floating button so
 /// `accessibilityIdentifier` lands on a real `UIView` under iOS 26 glass
 /// hosting, matching ``FullScreenCodeViewController``.
 struct FullScreenReviewCommentStashOverlayHost<Content: View>: View {
-    var isEnabled: Bool = true
-    var leadingAccessoryCount: Int = 0
     var reviewCommentSelectionScope: ReviewCommentSelectionScope?
     var content: Content
 
@@ -24,8 +21,6 @@ struct FullScreenReviewCommentStashOverlayHost<Content: View>: View {
         content
             .overlay(alignment: .bottomLeading) {
                 FullScreenReviewCommentStashChromeHost(
-                    isEnabled: isEnabled,
-                    leadingAccessoryCount: leadingAccessoryCount,
                     reviewCommentSelectionScope: reviewCommentSelectionScope,
                     onOpen: {
                         stashPresentation = ReviewCommentStripChrome.StashPresentation()
@@ -35,7 +30,7 @@ struct FullScreenReviewCommentStashOverlayHost<Content: View>: View {
             .routerModal(item: $stashPresentation, presentation: .sheet.inNavigation(), screen: { presentation in
                 let comments = reviewCommentSelectionScope?.router.stash as? ChatReviewCommentsController
                 return .controller({
-                    guard isEnabled, let comments else {
+                    guard let comments else {
                         preconditionFailure("The stash sheet opens only from its staged-comment button")
                     }
                     return ReviewCommentStashViewController(
@@ -49,41 +44,24 @@ struct FullScreenReviewCommentStashOverlayHost<Content: View>: View {
 }
 
 extension View {
-    func fullScreenReviewCommentStashOverlay(
-        isEnabled: Bool = true,
-        leadingAccessoryCount: Int = 0,
-        scope: ReviewCommentSelectionScope? = nil
-    ) -> some View {
-        FullScreenReviewCommentStashOverlayHost(
-            isEnabled: isEnabled,
-            leadingAccessoryCount: leadingAccessoryCount,
-            reviewCommentSelectionScope: scope,
-            content: self
-        )
+    func fullScreenReviewCommentStashOverlay(scope: ReviewCommentSelectionScope? = nil) -> some View {
+        FullScreenReviewCommentStashOverlayHost(reviewCommentSelectionScope: scope, content: self)
     }
 }
 
 private struct FullScreenReviewCommentStashChromeHost: View {
-    var isEnabled: Bool
-    var leadingAccessoryCount: Int
     var reviewCommentSelectionScope: ReviewCommentSelectionScope?
     var onOpen: () -> Void
 
     var body: some View {
-        if isEnabled,
-           let comments = reviewCommentSelectionScope?.router.stash as? ChatReviewCommentsController {
-            FullScreenReviewCommentStashChrome(
-                comments: comments,
-                leadingAccessoryCount: leadingAccessoryCount,
-                onOpen: onOpen
-            )
+        if let comments = reviewCommentSelectionScope?.router.stash as? ChatReviewCommentsController {
+            FullScreenReviewCommentStashChrome(comments: comments, onOpen: onOpen)
         }
     }
 }
 
 private struct FullScreenReviewCommentStashChrome: View {
     var comments: ChatReviewCommentsController
-    var leadingAccessoryCount: Int
     var onOpen: () -> Void
 
     @Environment(\.themeID) private var themeID
@@ -100,12 +78,7 @@ private struct FullScreenReviewCommentStashChrome: View {
                 height: FullScreenFloatingControlChrome.controlSize
             )
             .padding(.leading, FullScreenFloatingControlChrome.leadingPadding)
-            .padding(
-                .bottom,
-                FullScreenReviewCommentStashControl.bottomPadding(
-                    leadingAccessoryCount: leadingAccessoryCount
-                )
-            )
+            .padding(.bottom, FullScreenReviewCommentStashControl.bottomPadding(leadingAccessoryCount: 0))
         }
     }
 }

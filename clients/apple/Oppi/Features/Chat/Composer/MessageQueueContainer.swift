@@ -114,11 +114,24 @@ final class MessageQueueView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func apply(_ configuration: MessageQueueSurfaceConfiguration, palette: ThemePalette) {
+    /// Rebuilds the rows only when the queue, its error, or the theme changed;
+    /// the actions always take the newest configuration.
+    func apply(_ configuration: MessageQueueSurfaceConfiguration, themeID: ThemeID) {
+        let shown = Shown(queue: configuration.queue, error: configuration.error, themeID: themeID)
         self.configuration = configuration
-        self.palette = palette
+        guard shown != self.shown else { return }
+        self.shown = shown
+        palette = themeID.palette
         render()
     }
+
+    private struct Shown: Equatable {
+        let queue: MessageQueueState
+        let error: String?
+        let themeID: ThemeID
+    }
+
+    private var shown: Shown?
 
     private func render() {
         guard let configuration else { return }

@@ -2554,7 +2554,7 @@ struct APIClientTests {
             return self.mockResponse(json: step == 1 ? "{}" : "{\"content\":\"ok\"}")
         }
 
-        _ = try await client.browseSessionTouchedFile(sessionId: "s1", path: specialPath)
+        _ = try await client.getSessionFileData(sessionId: "s1", path: specialPath)
         let content = try await client.getSkillFile(name: "fetch", path: specialSkillPath)
         #expect(content == "ok")
         #expect(step == 2)

@@ -3,7 +3,7 @@ import UIKit
 /// One choice in a Quick Session picker.
 struct QuickSessionPickerRow: Equatable {
     var id: String
-    var icon: QuickSessionIconView.Content
+    var icon: IconChoiceUIView.Content
     var iconAssetCache: IconAssetCache?
     var title: String
     var subtitle: String?
@@ -327,7 +327,7 @@ private final class QuickSessionPickerRowButton: UIButton {
         pressedOverlay.layer.cornerCurve = .continuous
         pressedOverlay.isHidden = true
 
-        let icon = QuickSessionIconView(size: style.iconSize, frameSize: style.iconFrame)
+        let icon = IconChoiceUIView(size: style.iconSize, frameSize: style.iconFrame)
         icon.apply(row.icon, colors: colors, assetCache: row.iconAssetCache)
         let title = UILabel()
         title.text = row.title

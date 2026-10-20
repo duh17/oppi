@@ -258,12 +258,16 @@ final class ReviewCommentStashViewController: UIViewController, UITextViewDelega
         errorLabel.numberOfLines = 0
         commentText.heightAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
 
+        // The editor ends at the keyboard, so the comment field scrolls clear of it.
+        view.keyboardLayoutGuide.usesBottomSafeArea = false
         for page in [scrollView, empty, editor] as [UIView] {
             page.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(page)
             NSLayoutConstraint.activate([
                 page.topAnchor.constraint(equalTo: view.topAnchor),
-                page.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                page.bottomAnchor.constraint(
+                    equalTo: page === editor ? view.keyboardLayoutGuide.topAnchor : view.bottomAnchor
+                ),
                 page.leadingAnchor.constraint(equalTo: view.leadingAnchor),
                 page.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             ])
@@ -372,9 +376,18 @@ final class ReviewCommentStashViewController: UIViewController, UITextViewDelega
         }
     }
 
+    /// Adds or refreshes only the error row: reloading the list would take
+    /// the keyboard from the comment field.
     private func showError(_ message: String) {
+        let hadError = errorLabel.text != nil
         errorLabel.text = message
-        editor.reloadData()
+        guard let section = editorSections.firstIndex(of: .comment) else { return }
+        let row = IndexPath(item: 1, section: section)
+        if hadError {
+            editor.reconfigureItems(at: [row])
+        } else {
+            editor.insertItems(at: [row])
+        }
     }
 }
 

@@ -10,6 +10,22 @@ private extension ChatViewController {
     var chromeThemeID: ThemeID {
         root?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
     }
+
+    /// What an extension drawer opens: this chat's links and reader. The
+    /// reader looks a native surface up by protocol id each time it renders,
+    /// so it follows the updates the drawer would show.
+    func extensionDrawerActions() -> ExtensionSurfaceDrawerActions {
+        let sessionId = sessionId
+        let connection = connection
+        return ExtensionSurfaceDrawerActions(
+            linkContext: extensionSurfaceLinkContext,
+            onOpenURL: { [weak self] in self?.openExtensionSurfaceURL($0) ?? false },
+            openReader: { [weak self] in self?.openTimelineReader($0) },
+            liveSurface: { [weak connection] id in
+                connection?.extensionSurfaces.surface(for: sessionId).layout.nativeSurfaces[id]?.surface
+            }
+        )
+    }
 }
 
 /// A view inset 16pt from the chat's safe edges, as the footer rows are.
@@ -39,13 +55,14 @@ final class ChatFooterAboveView: UIView {
     let nowPlayingPill: HostedContentController
 
     private let stack = UIStackView()
-    private let panel = ExtensionSurfacePanelView(placement: .aboveEditor)
+    private let panel: ExtensionSurfacePanelView
     private let reviewPill = ReviewCommentStripPillView()
     private let notifyChip = ExtensionNotifyChipView()
     private let reviewDrawer = ReviewCommentStashDrawerView()
     private let nowPlayingDrawer = ChatNowPlayingDrawerView()
     private let notifyDrawer = ExtensionNotifyDrawerView()
-    private let notices = UIStackView()
+    private let noticeStack = UIStackView()
+    private var shownNotices: Notices?
     private lazy var panelRow = footerInset(panel)
     private lazy var reviewDrawerRow = footerInset(reviewDrawer)
     private lazy var nowPlayingDrawerRow = footerInset(nowPlayingDrawer)
@@ -54,6 +71,7 @@ final class ChatFooterAboveView: UIView {
     init(chat: ChatViewController, nowPlayingPill: HostedContentController) {
         self.chat = chat
         self.nowPlayingPill = nowPlayingPill
+        panel = ExtensionSurfacePanelView(placement: .aboveEditor, actions: chat.extensionDrawerActions())
         super.init(frame: .zero)
         stack.axis = .vertical
         stack.alignment = .fill
@@ -66,9 +84,9 @@ final class ChatFooterAboveView: UIView {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
-        notices.axis = .vertical
-        notices.spacing = 8
-        for row in [panelRow, reviewDrawerRow, nowPlayingDrawerRow, notifyDrawerRow, notices] {
+        noticeStack.axis = .vertical
+        noticeStack.spacing = 8
+        for row in [panelRow, reviewDrawerRow, nowPlayingDrawerRow, notifyDrawerRow, noticeStack] {
             stack.addArrangedSubview(row)
         }
 
@@ -149,12 +167,7 @@ final class ChatFooterAboveView: UIView {
                 notifyChip.apply(notifyState, palette: palette)
                 trailing.append(notifyChip)
             }
-            panel.actions = ExtensionSurfaceDrawerActions(
-                linkContext: chat.extensionSurfaceLinkContext,
-                onOpenURL: { [weak chat] in chat?.openExtensionSurfaceURL($0) ?? false },
-                openReader: { [weak chat] in chat?.openTimelineReader($0) },
-                liveSurface: Self.liveSurfaceLookup(chat)
-            )
+            panel.actions = chat.extensionDrawerActions()
             panel.setStripAccessories(leading: leading, trailing: trailing)
             panel.apply(ExtensionSurfacePanelView.Content(
                 surface: surface,
@@ -171,33 +184,36 @@ final class ChatFooterAboveView: UIView {
         }
         let showsNowPlayingDrawer = showsStrip && showsNowPlayingPill && chat.model.nowPlayingDrawerExpanded
         nowPlayingDrawerRow.setHiddenIfChanged(!showsNowPlayingDrawer)
-        if showsNowPlayingDrawer {
-            nowPlayingDrawer.apply(audioPlayer: chat.audioPlayer, palette: palette)
-        }
+        // The drawer reads the player's clock itself, so playback ticks repaint
+        // the drawer, not this footer; a closed drawer reads nothing.
+        nowPlayingDrawer.audioPlayer = showsNowPlayingDrawer ? chat.audioPlayer : nil
         let showsNotifyDrawer = showsStrip && notifyState?.isExpanded == true
         notifyDrawerRow.setHiddenIfChanged(!showsNotifyDrawer)
         if showsNotifyDrawer, let notifyState {
             notifyDrawer.apply(notifyState, themeID: themeID)
         }
 
-        let messages: [(String, UIColor)] = (reconnectFailure.map { [($0, UIColor(palette.red))] } ?? [])
-            + warnings.map { ($0, UIColor(palette.yellow)) }
-        for view in notices.arrangedSubviews { view.removeFromSuperview() }
-        for (text, color) in messages {
-            notices.addArrangedSubview(ChatFooterNoticeView(text: text, color: color, palette: palette))
+        let notices = Notices(reconnectFailure: reconnectFailure, warnings: warnings, themeID: themeID)
+        if notices != shownNotices {
+            shownNotices = notices
+            for view in noticeStack.arrangedSubviews { view.removeFromSuperview() }
+            let messages: [(String, UIColor)] = (reconnectFailure.map { [($0, UIColor(palette.red))] } ?? [])
+                + warnings.map { ($0, UIColor(palette.yellow)) }
+            for (text, color) in messages {
+                noticeStack.addArrangedSubview(ChatFooterNoticeView(text: text, color: color, palette: palette))
+            }
         }
-        notices.setHiddenIfChanged(messages.isEmpty)
-        setHiddenIfChanged(!showsStrip && messages.isEmpty)
+        noticeStack.setHiddenIfChanged(notices.isEmpty)
+        setHiddenIfChanged(!showsStrip && notices.isEmpty)
     }
 
-    /// Looks a native surface up by protocol id each time the reader renders,
-    /// so a reader opened from the drawer follows the same updates.
-    private static func liveSurfaceLookup(_ chat: ChatViewController) -> (String) -> ExtensionUINativeSurface? {
-        let sessionId = chat.sessionId
-        let connection = chat.connection
-        return { [weak connection] id in
-            connection?.extensionSurfaces.surface(for: sessionId).layout.nativeSurfaces[id]?.surface
-        }
+    /// The reconnect failure and warnings shown; rebuilt only when they change.
+    private struct Notices: Equatable {
+        let reconnectFailure: String?
+        let warnings: [String]
+        let themeID: ThemeID
+
+        var isEmpty: Bool { reconnectFailure == nil && warnings.isEmpty }
     }
 }
 
@@ -314,8 +330,17 @@ final class ChatNowPlayingDrawerView: ExtensionDrawerPanelView {
 
     @objc private func open() { onOpen?() }
 
-    /// Reads the player's observable state: call from `updateProperties()`.
-    func apply(audioPlayer: AudioPlayerService, palette: ThemePalette) {
+    /// The player it shows. The drawer reads its state in its own
+    /// `updateProperties()`, so the lyric clock repaints only the drawer.
+    weak var audioPlayer: AudioPlayerService? {
+        didSet { if audioPlayer !== oldValue { setNeedsUpdateProperties() } }
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        guard let audioPlayer else { return }
+        let themeID = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        let palette = themeID.palette
         surface.apply(palette: palette)
         let title = audioPlayer.nowPlayingPresentation?.title ?? "Now Playing"
         titleLabel.text = title
@@ -365,10 +390,11 @@ final class ChatNowPlayingDrawerView: ExtensionDrawerPanelView {
 /// The extension panel below the composer, 8pt under it.
 final class ChatFooterBelowView: UIView {
     weak var chat: ChatViewController?
-    private let panel = ExtensionSurfacePanelView(placement: .belowEditor)
+    private let panel: ExtensionSurfacePanelView
 
     init(chat: ChatViewController) {
         self.chat = chat
+        panel = ExtensionSurfacePanelView(placement: .belowEditor, actions: chat.extensionDrawerActions())
         super.init(frame: .zero)
         let row = footerInset(panel, top: 8)
         row.translatesAutoresizingMaskIntoConstraints = false
@@ -393,12 +419,7 @@ final class ChatFooterBelowView: UIView {
             return
         }
         setHiddenIfChanged(false)
-        panel.actions = ExtensionSurfaceDrawerActions(
-            linkContext: chat.extensionSurfaceLinkContext,
-            onOpenURL: { [weak chat] in chat?.openExtensionSurfaceURL($0) ?? false },
-            openReader: { [weak chat] in chat?.openTimelineReader($0) },
-            liveSurface: nil
-        )
+        panel.actions = chat.extensionDrawerActions()
         panel.apply(ExtensionSurfacePanelView.Content(
             surface: chat.extensionSurfaceState,
             messageQueue: nil,
@@ -426,13 +447,7 @@ final class ChatStoppedFooterView: UIView {
         super.init(frame: .zero)
         endedLabel.text = "Session ended"
         for label in [tokensLabel, costLabel] {
-            let base = UIFont.preferredFont(
-                forTextStyle: .caption1,
-                compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
-            )
-            label.font = UIFontMetrics(forTextStyle: .caption1).scaledFont(
-                for: .monospacedDigitSystemFont(ofSize: base.pointSize, weight: .regular)
-            )
+            label.font = ExtensionChromeFont.monospacedDigits(.caption1)
             label.adjustsFontForContentSizeCategory = true
         }
         let spacer = UIView()
@@ -523,7 +538,7 @@ final class ChatJumpToBottomView: UIView {
     private let idleArrow = UIImageView()
     private let busyGlass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
     private let busyRing = CAShapeLayer()
-    private let spinner = ChatJumpSpinnerView()
+    private let spinner = WorkingSpinnerUIView(side: 20)
     private let badge = UIImageView()
     private var shownVisible: Bool?
     private var shownBusy: Bool?
@@ -687,50 +702,6 @@ final class ChatJumpToBottomView: UIView {
     }
 }
 
-/// The working spinner in the jump hint, in the style chosen in Settings:
-/// Metal orbs, braille dots, or Game of Life.
-private final class ChatJumpSpinnerView: UIView {
-    private let braille = BrailleSpinnerUIView()
-    private let life = GameOfLifeUIView(gridSize: 6)
-    private let orb = OrbMetalView(style: .working, sizeClass: .workingCompact)
-    var isAnimating = false {
-        didSet { orb.isAnimationEnabled = isAnimating && !orb.isHidden }
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        for view in [braille, life, orb] as [UIView] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(view)
-            NSLayoutConstraint.activate([
-                view.topAnchor.constraint(equalTo: topAnchor),
-                view.bottomAnchor.constraint(equalTo: bottomAnchor),
-                view.leadingAnchor.constraint(equalTo: leadingAnchor),
-                view.trailingAnchor.constraint(equalTo: trailingAnchor),
-            ])
-        }
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func apply(tint: UIColor, palette: ThemePalette) {
-        let style = SpinnerStyle.current
-        braille.isHidden = style != .brailleDots
-        life.isHidden = style != .gameOfLife
-        orb.isHidden = style.orbStyle == nil
-        braille.tintUIColor = tint
-        life.tintUIColor = tint
-        orb.tintUIColor = tint
-        orb.accentUIColors = [palette.blue, palette.cyan, palette.purple, palette.orange].map { UIColor($0) }
-        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
-        UIColor(palette.bg).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        orb.isDarkBackground = OrbTint.isDarkBackground(red: red, green: green, blue: blue)
-        if let orbStyle = style.orbStyle { orb.style = orbStyle }
-        orb.isAnimationEnabled = isAnimating && !orb.isHidden
-    }
-}
-
 // MARK: - Title
 
 /// The session title in the bar: the assistant's avatar, the session name,
@@ -739,42 +710,43 @@ private final class ChatJumpSpinnerView: UIView {
 /// the tap, the menu, and accessibility.
 final class ChatTitleView: UIView {
     weak var chat: ChatViewController?
-    private let avatar = UIImageView()
-    private let emoji = UILabel()
-    private let avatarSlot = UIView()
+    /// The Pi mark on its rounded tile, or the session's Agent icon.
+    private let piTile = UIView()
+    private let piIcon = IconChoiceUIView(size: 20, frameSize: 20)
+    private let agentIcon = IconChoiceUIView(
+        size: AgentIconSizingPolicy.titleTextMinimum,
+        frameSize: AgentIconSizingPolicy.titleSlotSize
+    )
     private let nameLabel = ExtensionChromeFont.label(.subheadline, .semibold)
     private let costLabel = UILabel()
     private let mirror = TerminalMirrorGlyphView()
     private let durableLabel = ExtensionChromeFont.label(.caption2, .semibold)
     private let subtitleLabel = ExtensionChromeFont.label(.caption2)
-    private var avatarSize: [NSLayoutConstraint] = []
     private var maxWidth: NSLayoutConstraint?
-    private var genmojiTask: Task<Void, Never>?
-    private var genmojiAssetID: String?
+    private var appliedAvatar: AvatarKey?
+    private var isDurableSession = false
     nonisolated(unsafe) private var defaultsObserver: NSObjectProtocol?
+
+    /// What the avatar shows; it renders again only when this changes.
+    private struct AvatarKey: Equatable {
+        let identity: AssistantIdentityPresentation
+        let icon: IconChoice?
+        let themeID: ThemeID
+        let hasAssetCache: Bool
+    }
 
     init(chat: ChatViewController) {
         self.chat = chat
         super.init(frame: .zero)
         clipsToBounds = true
         isUserInteractionEnabled = false
-        avatar.contentMode = .scaleAspectFit
-        emoji.textAlignment = .center
-        for view in [avatar, emoji] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            avatarSlot.addSubview(view)
-        }
-        avatarSlot.clipsToBounds = true
-        avatarSlot.layer.cornerCurve = .continuous
+        piTile.layer.cornerRadius = 20 * 0.32
+        piTile.layer.cornerCurve = .continuous
+        piIcon.translatesAutoresizingMaskIntoConstraints = false
+        piTile.addSubview(piIcon)
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let base = UIFont.preferredFont(
-            forTextStyle: .caption2,
-            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
-        )
-        costLabel.font = UIFontMetrics(forTextStyle: .caption2).scaledFont(
-            for: .monospacedDigitSystemFont(ofSize: base.pointSize, weight: .regular)
-        )
+        costLabel.font = ExtensionChromeFont.monospacedDigits(.caption2)
         costLabel.adjustsFontForContentSizeCategory = true
         durableLabel.text = "Durable"
         durableLabel.accessibilityIdentifier = "chat.title.durable"
@@ -784,7 +756,7 @@ final class ChatTitleView: UIView {
             label.setContentCompressionResistancePriority(.required, for: .horizontal)
             label.setContentHuggingPriority(.required, for: .horizontal)
         }
-        let row = UIStackView(arrangedSubviews: [avatarSlot, nameLabel, costLabel, mirror, durableLabel])
+        let row = UIStackView(arrangedSubviews: [piTile, agentIcon, nameLabel, costLabel, mirror, durableLabel])
         row.axis = .horizontal
         row.alignment = .center
         row.spacing = 6
@@ -803,20 +775,20 @@ final class ChatTitleView: UIView {
             column.trailingAnchor.constraint(equalTo: trailingAnchor),
             row.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor),
             subtitleLabel.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor),
-            avatar.centerXAnchor.constraint(equalTo: avatarSlot.centerXAnchor),
-            avatar.centerYAnchor.constraint(equalTo: avatarSlot.centerYAnchor),
-            emoji.centerXAnchor.constraint(equalTo: avatarSlot.centerXAnchor),
-            emoji.centerYAnchor.constraint(equalTo: avatarSlot.centerYAnchor),
+            piIcon.topAnchor.constraint(equalTo: piTile.topAnchor),
+            piIcon.bottomAnchor.constraint(equalTo: piTile.bottomAnchor),
+            piIcon.leadingAnchor.constraint(equalTo: piTile.leadingAnchor),
+            piIcon.trailingAnchor.constraint(equalTo: piTile.trailingAnchor),
             maxWidth,
         ])
         // The Durable mark follows the experiment switch in Settings. Defaults
-        // post from any thread; the title updates on main.
+        // post from any thread and on every write; only the mark updates.
         defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.setNeedsUpdateProperties() }
+            MainActor.assumeIsolated { self?.applyDurableMark() }
         }
     }
 
@@ -824,15 +796,20 @@ final class ChatTitleView: UIView {
     required init?(coder: NSCoder) { nil }
 
     deinit {
-        genmojiTask?.cancel()
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+    }
+
+    private func applyDurableMark() {
+        let hidden = !(isDurableSession && AppPreferences.Experiments.durableSessionsEnabled)
+        if durableLabel.isHidden != hidden { durableLabel.isHidden = hidden }
     }
 
     override func updateProperties() {
         super.updateProperties()
         guard let chat else { return }
         let session = chat.session
-        let palette = chat.chromeThemeID.palette
+        let themeID = chat.chromeThemeID
+        let palette = themeID.palette
         maxWidth?.constant = chat.model.titleMaxWidth
         nameLabel.text = chat.sessionDisplayName
         nameLabel.textColor = UIColor(palette.fg)
@@ -846,97 +823,32 @@ final class ChatTitleView: UIView {
         let mirrorPresentation = TerminalMirrorIndicatorPresentation(session: session)
         mirror.isHidden = mirrorPresentation == nil
         if let mirrorPresentation { mirror.apply(mirrorPresentation) }
-        durableLabel.isHidden = !(session?.engine == .durable && AppPreferences.Experiments.durableSessionsEnabled)
+        isDurableSession = session?.engine == .durable
+        applyDurableMark()
         durableLabel.textColor = UIColor(palette.comment)
         let subtitle = chat.conversationTitleSubtitle
         subtitleLabel.text = subtitle
         subtitleLabel.isHidden = subtitle == nil
         subtitleLabel.textColor = UIColor(palette.comment)
-        applyAvatar(chat: chat, palette: palette)
-    }
 
-    private func setAvatarSize(_ side: CGFloat, imageSide: CGFloat) {
-        NSLayoutConstraint.deactivate(avatarSize)
-        avatarSize = [
-            avatarSlot.widthAnchor.constraint(equalToConstant: side),
-            avatarSlot.heightAnchor.constraint(equalToConstant: side),
-            avatar.widthAnchor.constraint(equalToConstant: imageSide),
-            avatar.heightAnchor.constraint(equalToConstant: imageSide),
-        ]
-        NSLayoutConstraint.activate(avatarSize)
-    }
-
-    private func applyAvatar(chat: ChatViewController, palette: ThemePalette) {
-        switch chat.assistantIdentityPresentation {
-        case .globalAvatar:
-            setAvatarSize(20, imageSide: 20)
-            avatarSlot.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.10)
-            avatarSlot.layer.cornerRadius = 20 * 0.32
-            avatar.image = PiAvatarRenderer.render(size: 40, themeID: chat.chromeThemeID)
-            avatar.isHidden = false
-            emoji.isHidden = true
-            cancelGenmoji()
-        case .agent(let content):
-            let envelope = AgentIconSizingPolicy.titleVisualEnvelope
-            setAvatarSize(AgentIconSizingPolicy.titleSlotSize, imageSide: envelope)
-            avatarSlot.backgroundColor = .clear
-            avatarSlot.layer.cornerRadius = 0
-            let blue = UIColor(palette.blue)
-            switch content {
-            case .symbol(let name):
-                avatar.image = UIImage(
-                    systemName: name,
-                    withConfiguration: UIImage.SymbolConfiguration(pointSize: envelope, weight: .medium)
-                )?.withTintColor(blue, renderingMode: .alwaysOriginal)
-                showImage()
-            case .text(let text):
-                let size = AgentIconSizingPolicy.titleTextSize(
-                    for: UIFontMetrics(forTextStyle: .body).scaledValue(for: AgentIconSizingPolicy.titleTextMinimum)
-                )
-                emoji.font = .systemFont(ofSize: size)
-                emoji.text = text
-                avatar.isHidden = true
-                emoji.isHidden = false
-                cancelGenmoji()
-            case .genmoji(let assetId, _):
-                loadGenmoji(assetId: assetId, chat: chat, fallback: blue)
-            case .fallback:
-                avatar.image = UIImage(
-                    systemName: IconChoiceRenderPurpose.agent.defaultSymbolName,
-                    withConfiguration: UIImage.SymbolConfiguration(pointSize: envelope, weight: .medium)
-                )?.withTintColor(blue, renderingMode: .alwaysOriginal)
-                showImage()
-            }
-        }
-    }
-
-    private func showImage() {
-        avatar.isHidden = false
-        emoji.isHidden = true
-        cancelGenmoji()
-    }
-
-    private func cancelGenmoji() {
-        genmojiTask?.cancel()
-        genmojiTask = nil
-        genmojiAssetID = nil
-    }
-
-    private func loadGenmoji(assetId: String, chat: ChatViewController, fallback: UIColor) {
-        avatar.isHidden = false
-        emoji.isHidden = true
-        guard genmojiAssetID != assetId else { return }
-        genmojiTask?.cancel()
-        genmojiAssetID = assetId
-        avatar.image = UIImage(
-            systemName: IconChoiceRenderPurpose.agent.defaultSymbolName,
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: AgentIconSizingPolicy.titleVisualEnvelope, weight: .medium)
-        )?.withTintColor(fallback, renderingMode: .alwaysOriginal)
-        guard let cache = chat.connection.iconAssetCache else { return }
-        genmojiTask = Task { [weak self] in
-            let image = try? await cache.image(assetId: assetId, size: AgentIconSizingPolicy.titleVisualEnvelope * 2)
-            guard let self, !Task.isCancelled, self.genmojiAssetID == assetId, let image else { return }
-            self.avatar.image = image
+        let assetCache = chat.connection.iconAssetCache
+        let avatar = AvatarKey(
+            identity: chat.assistantIdentityPresentation,
+            icon: session?.launch?.agentIcon,
+            themeID: themeID,
+            hasAssetCache: assetCache != nil
+        )
+        guard avatar != appliedAvatar else { return }
+        appliedAvatar = avatar
+        let colors = ComposerThemeColors(palette: palette)
+        let isAgent = if case .agent = avatar.identity { true } else { false }
+        piTile.isHidden = isAgent
+        agentIcon.isHidden = !isAgent
+        if isAgent {
+            agentIcon.apply(.choice(avatar.icon, purpose: .agent, sandbox: false), colors: colors, assetCache: assetCache)
+        } else {
+            piTile.backgroundColor = colors.comment.withAlphaComponent(0.10)
+            piIcon.apply(.piAvatar, colors: colors)
         }
     }
 }

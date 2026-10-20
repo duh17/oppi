@@ -25,9 +25,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
 
     private let stackView = UIStackView()
     private let indicatorContainer = UIView()
-    private let brailleView = BrailleSpinnerUIView()
-    private let golView = GameOfLifeUIView(gridSize: 6)
-    private let metalView = OrbMetalView(style: .working, sizeClass: .workingCompact)
+    private let spinner = WorkingSpinnerUIView(side: spinnerSide)
     private let customIndicatorLabel = UILabel()
     private let workingLabel = UILabel()
 
@@ -43,7 +41,6 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
     private struct RenderedIndicator: Equatable {
         let indicator: ExtensionUIWorkingIndicator?
         let modelId: String?
-        let style: SpinnerStyle
     }
 
     init(configuration: WorkingIndicatorTimelineRowConfiguration) {
@@ -53,12 +50,6 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
             self,
             selector: #selector(reduceMotionStatusDidChange),
             name: UIAccessibility.reduceMotionStatusDidChangeNotification,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(spinnerStyleDidChange),
-            name: AppPreferenceStore.Appearance.spinnerDidChangeNotification,
             object: nil
         )
         setupViews()
@@ -89,8 +80,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         let working = currentConfiguration.surface?.layout.working
         let indicator = RenderedIndicator(
             indicator: working?.indicator,
-            modelId: currentConfiguration.modelId,
-            style: SpinnerStyle.current
+            modelId: currentConfiguration.modelId
         )
         if indicator != renderedIndicator {
             renderedIndicator = indicator
@@ -113,9 +103,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
 
         stackView.translatesAutoresizingMaskIntoConstraints = false
         indicatorContainer.translatesAutoresizingMaskIntoConstraints = false
-        brailleView.translatesAutoresizingMaskIntoConstraints = false
-        golView.translatesAutoresizingMaskIntoConstraints = false
-        metalView.translatesAutoresizingMaskIntoConstraints = false
+        spinner.translatesAutoresizingMaskIntoConstraints = false
         customIndicatorLabel.translatesAutoresizingMaskIntoConstraints = false
         workingLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -126,9 +114,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         stackView.addArrangedSubview(indicatorContainer)
         stackView.addArrangedSubview(workingLabel)
 
-        indicatorContainer.addSubview(brailleView)
-        indicatorContainer.addSubview(golView)
-        indicatorContainer.addSubview(metalView)
+        indicatorContainer.addSubview(spinner)
         indicatorContainer.addSubview(customIndicatorLabel)
 
         workingLabel.text = "Working..."
@@ -148,20 +134,10 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
             indicatorContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.spinnerSide),
             indicatorContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: Self.spinnerSide),
 
-            brailleView.centerXAnchor.constraint(equalTo: indicatorContainer.centerXAnchor),
-            brailleView.centerYAnchor.constraint(equalTo: indicatorContainer.centerYAnchor),
-            brailleView.widthAnchor.constraint(equalToConstant: Self.spinnerSide),
-            brailleView.heightAnchor.constraint(equalToConstant: Self.spinnerSide),
-
-            golView.centerXAnchor.constraint(equalTo: indicatorContainer.centerXAnchor),
-            golView.centerYAnchor.constraint(equalTo: indicatorContainer.centerYAnchor),
-            golView.widthAnchor.constraint(equalToConstant: Self.spinnerSide),
-            golView.heightAnchor.constraint(equalToConstant: Self.spinnerSide),
-
-            metalView.centerXAnchor.constraint(equalTo: indicatorContainer.centerXAnchor),
-            metalView.centerYAnchor.constraint(equalTo: indicatorContainer.centerYAnchor),
-            metalView.widthAnchor.constraint(equalToConstant: Self.spinnerSide),
-            metalView.heightAnchor.constraint(equalToConstant: Self.spinnerSide),
+            spinner.centerXAnchor.constraint(equalTo: indicatorContainer.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: indicatorContainer.centerYAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: Self.spinnerSide),
+            spinner.heightAnchor.constraint(equalToConstant: Self.spinnerSide),
 
             customIndicatorLabel.leadingAnchor.constraint(equalTo: indicatorContainer.leadingAnchor),
             customIndicatorLabel.trailingAnchor.constraint(equalTo: indicatorContainer.trailingAnchor),
@@ -204,27 +180,11 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
         let hidesIndicator = rawCustomFrames?.isEmpty == true
         let showsCustomIndicator = customFrames?.isEmpty == false
 
-        let style = rendered.style
-        let showsMetal = style.orbStyle != nil
-        brailleView.isHidden = hidesIndicator || showsCustomIndicator || style != .brailleDots
-        golView.isHidden = hidesIndicator || showsCustomIndicator || style != .gameOfLife
-        metalView.isHidden = hidesIndicator || showsCustomIndicator || !showsMetal
+        // Every Settings style draws; only an extension's empty frames hide it.
+        spinner.isAnimating = !hidesIndicator && !showsCustomIndicator
+        spinner.apply(tint: providerColor, palette: palette)
         customIndicatorLabel.isHidden = !showsCustomIndicator
-        indicatorContainer.isHidden = hidesIndicator || (!showsCustomIndicator && !showsMetal
-            && style != .brailleDots && style != .gameOfLife)
-
-        brailleView.tintUIColor = providerColor
-        golView.tintUIColor = providerColor
-        metalView.tintUIColor = providerColor
-        metalView.accentUIColors = [palette.blue, palette.cyan, palette.purple, palette.orange].map { UIColor($0) }
-        var bgR: CGFloat = 0, bgG: CGFloat = 0, bgB: CGFloat = 0, bgA: CGFloat = 0
-        UIColor(palette.bg).getRed(&bgR, green: &bgG, blue: &bgB, alpha: &bgA)
-        metalView.isDarkBackground = OrbTint.isDarkBackground(red: bgR, green: bgG, blue: bgB)
-        if let orbStyle = style.orbStyle {
-            metalView.style = orbStyle
-            metalView.sizeClass = .workingCompact
-        }
-        metalView.isAnimationEnabled = !metalView.isHidden
+        indicatorContainer.isHidden = hidesIndicator
         customIndicatorLabel.textColor = providerColor
         workingLabel.textColor = UIColor(palette.comment).withAlphaComponent(0.6)
 
@@ -277,10 +237,6 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
     }
 
     @objc private func reduceMotionStatusDidChange() {
-        apply(configuration: currentConfiguration)
-    }
-
-    @objc private func spinnerStyleDidChange() {
         apply(configuration: currentConfiguration)
     }
 

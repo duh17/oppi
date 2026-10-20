@@ -100,13 +100,7 @@ final class ReviewCommentStripPillView: ExtensionStripPillControl {
         row.spacing = 8
         row.isLayoutMarginsRelativeArrangement = true
         row.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6)
-        let base = UIFont.preferredFont(
-            forTextStyle: .subheadline,
-            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
-        )
-        countLabel.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(
-            for: .monospacedDigitSystemFont(ofSize: base.pointSize, weight: .semibold)
-        )
+        countLabel.font = ExtensionChromeFont.monospacedDigits(.subheadline, .semibold)
         countLabel.adjustsFontForContentSizeCategory = true
         countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         row.addArrangedSubview(icon)

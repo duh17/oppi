@@ -168,6 +168,17 @@ enum ExtensionChromeFont {
         AskUIFont.preferred(style, weight: weight)
     }
 
+    /// `text` with digits of one width (counts, costs, token totals).
+    static func monospacedDigits(_ style: UIFont.TextStyle, _ weight: UIFont.Weight = .regular) -> UIFont {
+        let base = UIFont.preferredFont(
+            forTextStyle: style,
+            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
+        )
+        return UIFontMetrics(forTextStyle: style).scaledFont(
+            for: .monospacedDigitSystemFont(ofSize: base.pointSize, weight: weight)
+        )
+    }
+
     static func symbol(
         _ name: String,
         _ style: UIFont.TextStyle,
@@ -572,7 +583,7 @@ struct ExtensionSurfaceDrawerActions {
     var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)?
     /// Opens the chat's reader (a native surface or a terminal widget full screen).
-    var openReader: (ChatReaderPayload) -> Void = { _ in }
+    var openReader: (ChatReaderPayload) -> Void
     /// The session's current snapshot of a native surface, by protocol id, so
     /// the reader follows updates the drawer would show.
     var liveSurface: ((String) -> ExtensionUINativeSurface?)?
@@ -760,7 +771,7 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             )
         case .messageQueue:
             if let configuration {
-                messageQueue?.apply(configuration, palette: palette)
+                messageQueue?.apply(configuration, themeID: themeID)
             }
             messageQueue?.isHidden = configuration == nil
         case .title(let title):
@@ -825,7 +836,7 @@ final class ExtensionSurfacePanelView: UIView {
     }
 
     let placement: ExtensionSurfacePlacementGroup
-    var actions = ExtensionSurfaceDrawerActions()
+    var actions: ExtensionSurfaceDrawerActions
     /// An entry expanded (true) or collapsed (false).
     var onExpandedEntryChange: ((Bool) -> Void)?
 
@@ -840,8 +851,9 @@ final class ExtensionSurfacePanelView: UIView {
     private var lastCollapseRequestID: Int?
     private var lastContent: Content?
 
-    init(placement: ExtensionSurfacePlacementGroup) {
+    init(placement: ExtensionSurfacePlacementGroup, actions: ExtensionSurfaceDrawerActions) {
         self.placement = placement
+        self.actions = actions
         super.init(frame: .zero)
         stack.axis = .vertical
         stack.alignment = .fill

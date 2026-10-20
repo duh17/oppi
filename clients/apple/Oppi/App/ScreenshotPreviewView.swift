@@ -117,8 +117,6 @@ struct ScreenshotPreviewView: View {
             FileBrowserMotionPreview()
         case "review-file-motion":
             ReviewFileMotionPreview()
-        case "extension-widget":
-            ExtensionSurfacePreview()
         case "live-voice-composer":
             LiveVoiceComposerPreview(pinned: nil)
                 .ignoresSafeArea()

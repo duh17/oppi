@@ -259,7 +259,7 @@ final class ChatBarItems {
     }
 }
 
-/// The session title in the bar: the hosted title view (avatar, name, cost,
+/// The session title in the bar: `ChatTitleView` (avatar, name, cost,
 /// mirror and durable marks, Conversation subtitle). A tap renames; a long
 /// press offers Copy Session ID and Share Session. One element for
 /// accessibility, whose activation is the same rename.
@@ -267,7 +267,7 @@ final class ChatBarItems {
 final class ChatTitleControl: UIControl {
     var onTap: (() -> Void)?
     var menuProvider: (() -> UIMenu?)?
-    private(set) var hostedView: UIView?
+    private(set) var titleView: UIView?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -280,10 +280,10 @@ final class ChatTitleControl: UIControl {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// Installs the hosted title once; its content follows the session itself.
+    /// Installs the title view once; its content follows the session itself.
     func install(_ view: UIView) {
-        guard hostedView == nil else { return }
-        hostedView = view
+        guard titleView == nil else { return }
+        titleView = view
         view.translatesAutoresizingMaskIntoConstraints = false
         view.isUserInteractionEnabled = false
         view.backgroundColor = .clear

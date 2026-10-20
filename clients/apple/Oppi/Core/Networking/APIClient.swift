@@ -2338,14 +2338,6 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
     }
 
-    /// Fetch content of a file reported by a specific session.
-    ///
-    /// Relative paths resolve against the session workspace or worktree. The server also accepts
-    /// exact external paths present in that session's changed-file metadata or tool arguments.
-    func browseSessionTouchedFile(sessionId: String, path: String) async throws -> Data {
-        try await getSessionFileData(sessionId: sessionId, path: path)
-    }
-
     // MARK: - Push Registration
 
     /// Give the server this device's push key and relay send token (protocol/push/spec.md, section 5).

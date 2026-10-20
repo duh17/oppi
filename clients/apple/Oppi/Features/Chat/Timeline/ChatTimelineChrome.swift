@@ -52,17 +52,28 @@ enum ChatTimelineChromeOverlap {
     }
 }
 
-/// The empty timeline: the session's Agent icon or the Pi mark, centered in
-/// the space between the bars. It fades in after 300 ms, so a session that
-/// is only briefly empty while its history loads never flashes it.
+/// The empty timeline: the session's Agent icon (Genmoji included) or the Pi
+/// mark, centered in the space between the bars. It fades in after 300 ms,
+/// so a session that is only briefly empty while its history loads never
+/// flashes it.
 final class ChatEmptyStateView: UIView {
-    private let icon = UIImageView()
-    private let emoji = UILabel()
-    private let tile = UIView()
+    private static let side: CGFloat = 112
+    private let piTile = UIView()
+    private let piIcon = IconChoiceUIView(size: side, frameSize: side)
+    private let agentIcon = IconChoiceUIView(size: 64, frameSize: side)
     private var top: NSLayoutConstraint?
     private var bottom: NSLayoutConstraint?
     private var shownSessionID: String?
+    private var appliedIcon: IconKey?
     private var revealTask: Task<Void, Never>?
+
+    /// What the icon shows; it renders again only when this changes.
+    private struct IconKey: Equatable {
+        let identity: AssistantIdentityPresentation
+        let icon: IconChoice?
+        let themeID: ThemeID
+        let hasAssetCache: Bool
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -70,14 +81,19 @@ final class ChatEmptyStateView: UIView {
         backgroundColor = .clear
         let area = UILayoutGuide()
         addLayoutGuide(area)
-        tile.layer.cornerCurve = .continuous
-        tile.clipsToBounds = true
-        emoji.textAlignment = .center
-        icon.contentMode = .scaleAspectFit
-        // The tile is the one element; the glyph inside it is not another.
-        icon.accessibilityElementsHidden = true
-        emoji.accessibilityElementsHidden = true
-        for view in [tile, icon, emoji] {
+        piTile.layer.cornerRadius = Self.side * 0.32
+        piTile.layer.cornerCurve = .continuous
+        piTile.isAccessibilityElement = true
+        piTile.accessibilityTraits = .image
+        piTile.accessibilityLabel = PiAvatar.accessibilityLabel
+        // The hero agent icon scales optically like the chat's other agent marks.
+        agentIcon.transform = CGAffineTransform(
+            scaleX: ChatAgentIconStyle.heroVisualScale,
+            y: ChatAgentIconStyle.heroVisualScale
+        )
+        agentIcon.isAccessibilityElement = true
+        agentIcon.accessibilityTraits = .image
+        for view in [piTile, piIcon, agentIcon] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -89,14 +105,14 @@ final class ChatEmptyStateView: UIView {
             top, bottom,
             area.leadingAnchor.constraint(equalTo: leadingAnchor),
             area.trailingAnchor.constraint(equalTo: trailingAnchor),
-            tile.centerXAnchor.constraint(equalTo: area.centerXAnchor),
-            tile.centerYAnchor.constraint(equalTo: area.centerYAnchor),
-            tile.widthAnchor.constraint(equalToConstant: 112),
-            tile.heightAnchor.constraint(equalToConstant: 112),
-            icon.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
-            icon.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
-            emoji.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
-            emoji.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
+            piTile.centerXAnchor.constraint(equalTo: area.centerXAnchor),
+            piTile.centerYAnchor.constraint(equalTo: area.centerYAnchor),
+            piTile.widthAnchor.constraint(equalToConstant: Self.side),
+            piTile.heightAnchor.constraint(equalToConstant: Self.side),
+            piIcon.centerXAnchor.constraint(equalTo: piTile.centerXAnchor),
+            piIcon.centerYAnchor.constraint(equalTo: piTile.centerYAnchor),
+            agentIcon.centerXAnchor.constraint(equalTo: area.centerXAnchor),
+            agentIcon.centerYAnchor.constraint(equalTo: area.centerYAnchor),
         ])
     }
 
@@ -110,45 +126,34 @@ final class ChatEmptyStateView: UIView {
     func apply(configuration: ChatTimelineConfiguration, themeID: ThemeID) {
         top?.constant = configuration.topOverlap
         bottom?.constant = -configuration.bottomOverlap
-        let palette = themeID.palette
-        switch AssistantIdentityPresentation.resolve(agentId: configuration.agentId, agentIcon: configuration.agentIcon) {
-        case .globalAvatar:
-            tile.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.10)
-            tile.layer.cornerRadius = 112 * 0.32
-            icon.image = PiAvatarRenderer.render(size: 224, themeID: themeID)
-            icon.transform = .identity
-            setIconSize(112)
-            icon.isHidden = false
-            emoji.isHidden = true
-            tile.accessibilityLabel = PiAvatar.accessibilityLabel
-        case .agent(let content):
-            tile.backgroundColor = .clear
-            tile.layer.cornerRadius = 0
-            // The hero agent icon: 64pt content in its 112pt frame, scaled
-            // optically like the chat's other agent marks.
-            let side = AgentIconSizingPolicy.contentSize(
-                baseSize: 64,
-                scaledSize: UIFontMetrics(forTextStyle: .body).scaledValue(for: 64),
-                frameSize: 112
-            )
-            let scale = CGAffineTransform(scaleX: ChatAgentIconStyle.heroVisualScale, y: ChatAgentIconStyle.heroVisualScale)
-            icon.transform = scale
-            emoji.transform = scale
-            switch content {
-            case .text(let text):
-                emoji.text = text
-                emoji.font = .systemFont(ofSize: side)
-                icon.isHidden = true
-                emoji.isHidden = false
-            case .symbol(let name):
-                showSymbol(name, side: side, palette: palette)
-            case .genmoji, .fallback:
-                showSymbol(IconChoiceRenderPurpose.agent.defaultSymbolName, side: side, palette: palette)
+        let key = IconKey(
+            identity: AssistantIdentityPresentation.resolve(agentId: configuration.agentId, agentIcon: configuration.agentIcon),
+            icon: configuration.agentIcon,
+            themeID: themeID,
+            hasAssetCache: configuration.iconAssetCache != nil
+        )
+        if key != appliedIcon {
+            appliedIcon = key
+            let colors = ComposerThemeColors(palette: themeID.palette)
+            switch key.identity {
+            case .globalAvatar:
+                piTile.backgroundColor = colors.comment.withAlphaComponent(0.10)
+                piIcon.apply(.piAvatar, colors: colors)
+                piTile.isHidden = false
+                piIcon.isHidden = false
+                agentIcon.isHidden = true
+            case .agent(let content):
+                agentIcon.apply(
+                    .choice(key.icon, purpose: .agent, sandbox: false),
+                    colors: colors,
+                    assetCache: configuration.iconAssetCache
+                )
+                agentIcon.accessibilityLabel = content.accessibilityDescription
+                piTile.isHidden = true
+                piIcon.isHidden = true
+                agentIcon.isHidden = false
             }
-            tile.accessibilityLabel = content.accessibilityDescription
         }
-        tile.isAccessibilityElement = true
-        tile.accessibilityTraits = .image
 
         guard shownSessionID != configuration.sessionId else { return }
         shownSessionID = configuration.sessionId
@@ -163,23 +168,6 @@ final class ChatEmptyStateView: UIView {
                 UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseIn) { self.alpha = 1 }
             }
         }
-    }
-
-    private var iconSize: [NSLayoutConstraint] = []
-
-    private func setIconSize(_ side: CGFloat) {
-        NSLayoutConstraint.deactivate(iconSize)
-        iconSize = [icon.widthAnchor.constraint(equalToConstant: side), icon.heightAnchor.constraint(equalToConstant: side)]
-        NSLayoutConstraint.activate(iconSize)
-    }
-
-    private func showSymbol(_ name: String, side: CGFloat, palette: ThemePalette) {
-        icon.image = UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: side))?
-            .withTintColor(UIColor(palette.blue), renderingMode: .alwaysOriginal)
-        NSLayoutConstraint.deactivate(iconSize)
-        iconSize = []
-        icon.isHidden = false
-        emoji.isHidden = true
     }
 }
 

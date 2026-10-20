@@ -2132,7 +2132,7 @@ private struct UIHangHarnessMessageQueue: UIViewRepresentable {
     }
 
     func updateUIView(_ view: MessageQueueView, context: Context) {
-        view.apply(configuration, palette: themeID.palette)
+        view.apply(configuration, themeID: themeID)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: MessageQueueView, context: Context) -> CGSize? {
