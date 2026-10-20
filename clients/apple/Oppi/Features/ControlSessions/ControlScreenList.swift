@@ -38,6 +38,18 @@ enum ControlScreenList {
     }
 
     /// The theme's page behind the list and its color scheme on the screen.
+    /// Sets the bar's items only when they changed, as the chat does:
+    /// `updateProperties()` runs often, and each assignment lays the bar out
+    /// again.
+    static func setBarItems(trailing: [UIBarButtonItem], leading: [UIBarButtonItem], on item: UINavigationItem) {
+        if !(item.rightBarButtonItems ?? []).elementsEqual(trailing, by: ===) {
+            item.rightBarButtonItems = trailing
+        }
+        if !(item.leftBarButtonItems ?? []).elementsEqual(leading, by: ===) {
+            item.leftBarButtonItems = leading
+        }
+    }
+
     /// Reads the theme store: call from `updateProperties()` to follow it.
     static func applyTheme(_ theme: ThemeStore, to screen: UIViewController, collectionView: UICollectionView) {
         screen.overrideUserInterfaceStyle = theme.userInterfaceStyle
@@ -152,6 +164,18 @@ enum ControlScreenList {
         AskUIFont.preferred(style, weight: weight)
     }
 
+    /// `font` with digits of one width (a version, a relative date), scaled
+    /// once from the style's default size as `AskUIFont` does.
+    static func monospacedDigitFont(_ style: UIFont.TextStyle, _ weight: UIFont.Weight = .regular) -> UIFont {
+        let base = UIFont.preferredFont(
+            forTextStyle: style,
+            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
+        )
+        return UIFontMetrics(forTextStyle: style).scaledFont(
+            for: .monospacedDigitSystemFont(ofSize: base.pointSize, weight: weight)
+        )
+    }
+
     /// Presents an action sheet over `screen`, centered when it pops over.
     static func presentActionSheet(_ sheet: UIAlertController, from screen: UIViewController) {
         if let popover = sheet.popoverPresentationController {
@@ -160,5 +184,21 @@ enum ControlScreenList {
             popover.permittedArrowDirections = []
         }
         Router.topPresenter(from: screen).present(sheet, animated: true)
+    }
+}
+
+/// A screen's error as an alert with OK (SwiftUI `.alert(title, isPresented:)`
+/// over an optional error): shown once while the message stays set; OK runs
+/// `clear`, which unsets it.
+@MainActor
+final class ControlErrorAlert {
+    private weak var alert: UIAlertController?
+
+    func show(title: String, message: String?, from screen: UIViewController, clear: @escaping () -> Void) {
+        guard let message, alert == nil, screen.viewIfLoaded?.window != nil else { return }
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .cancel) { _ in clear() })
+        self.alert = alert
+        Router.topPresenter(from: screen).present(alert, animated: true)
     }
 }

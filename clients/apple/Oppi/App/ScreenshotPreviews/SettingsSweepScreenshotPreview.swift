@@ -219,6 +219,9 @@ struct SettingsSweepScreenshotPreview: View {
         case "theme-import":
             RouterPreviewControllerStack(root: root) { ThemeImportViewController(root: root) }
                 .ignoresSafeArea()
+        case "schedules":
+            RouterPreviewControllerStack(root: root) { ScheduleListViewController(root: root) }
+                .ignoresSafeArea()
         // Every other page is the root of a router stack, where its links push.
         default:
             RouterPreviewStack(root: root) { pushedPage }
@@ -262,7 +265,6 @@ struct SettingsSweepScreenshotPreview: View {
             ServerExtensionDetailView(target: .init(serverId: server.id, kind: .extension, resourceId: "workflow"))
         case "agents-pi", "agents-pi-file": PiAgentDetailView()
         case "agents": AgentManagementView()
-        case "schedules": ScheduleManagementView()
         case "skill-file-review":
             ServerSkillFileView(target: .init(serverId: server.id, resourceId: "release", path: "SKILL.md"))
         case "skill-file-edit":

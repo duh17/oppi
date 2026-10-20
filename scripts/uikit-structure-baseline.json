@@ -511,7 +511,7 @@
     "clients/apple/Oppi/Features/Review/WorkspaceReviewFileDetailView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Schedules/ScheduleManagementView.swift": {
+    "clients/apple/Oppi/Features/Schedules/ScheduleHostedScreens.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Schedules/ScheduleNativeEditView.swift": {

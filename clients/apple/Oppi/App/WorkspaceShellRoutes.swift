@@ -4,7 +4,8 @@ import SwiftUI
 // (`ShellRouter.swift`, `WorkspaceShellController.swift`). Most routes are a
 // `ShellRouteView` hosted through `HostFactory`; All Sessions, the workspace
 // sidebar, a workspace's sessions, a session's chat
-// (`ChatRouteViewController`), and SSH Terminal's host list are UIKit screens.
+// (`ChatRouteViewController`), SSH Terminal's host list, and Schedules are
+// UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -26,6 +27,9 @@ enum ShellRouteScreens {
             let screen = SSHTerminalHostListViewController(showsSidebarToggle: placement == .splitDetailRoot)
             screen.traitOverrides.appRootEnvironment = root
             return screen
+        }
+        if case .utility(.schedules) = route {
+            return ScheduleListViewController(root: root, showsSidebarToggle: placement == .splitDetailRoot)
         }
         if case .sidebar = route {
             return WorkspaceSidebarViewController(root: root)
@@ -58,6 +62,10 @@ enum ShellRouteScreens {
             return
         }
         if let list = screen as? SSHTerminalHostListViewController {
+            list.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
+        if let list = screen as? ScheduleListViewController {
             list.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
@@ -317,7 +325,8 @@ private struct WorkspaceUtilityDestinationView: View {
         if target.isReleaseEnabled {
             switch target {
             case .schedules:
-                ScheduleManagementView()
+                // The shell hosts this route as ScheduleListViewController.
+                EmptyView()
             case .agents:
                 AgentManagementView()
             case .skills:
