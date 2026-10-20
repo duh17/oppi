@@ -367,9 +367,6 @@
     "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTipBanner.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditChrome.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/FileBrowser/FileBrowserMotionPreviewSupport.swift": {
       "import SwiftUI": 1
     },

@@ -187,7 +187,7 @@ final class FileViewerViewController: UIViewController {
     private var editNotice: String? {
         didSet { setNeedsUpdateProperties() }
     }
-    private weak var conflictReview: HostedScreenController?
+    private weak var conflictReview: WorkspaceFileConflictReviewViewController?
     private var reportedEditing = false
     /// While content loads, the stack's bar stays as the last settled content
     /// left it, so next/previous between two text files never slides it.
@@ -214,6 +214,7 @@ final class FileViewerViewController: UIViewController {
     private weak var editor: WorkspaceFileEditorViewController?
     private var appliedReplacementID: UUID?
     private var editorHeader: UIStackView?
+    private var editBanner: WorkspaceFileEditBannerView?
     private var checkoutLabel: UILabel?
     private var noticeLabel: UILabel?
     private var sizeWarning: FileViewerSizeWarningView?
@@ -571,6 +572,7 @@ final class FileViewerViewController: UIViewController {
         editor = nil
         appliedReplacementID = nil
         editorHeader = nil
+        editBanner = nil
         checkoutLabel = nil
         noticeLabel = nil
         sizeWarning = nil
@@ -701,19 +703,13 @@ final class FileViewerViewController: UIViewController {
         header.addArrangedSubview(Self.padded(checkout, horizontal: 12, vertical: 4))
         checkoutLabel = checkout
 
-        if let root = HostFactory.root(near: self) {
-            let banner = WorkspaceFileEditLeaves.banner(
-                session: session,
-                root: root,
-                onReview: { [weak self] in self?.presentConflictReview() },
-                onUseDisk: { [weak self] in self?.confirmUseDiskVersion() }
-            )
-            addChild(banner.host)
-            header.addArrangedSubview(banner.view)
-            banner.host.didMove(toParent: self)
-            mountedChildren.append(banner.host)
-            mountedLeaves.append(banner)
-        }
+        let banner = WorkspaceFileEditBannerView(
+            session: session,
+            onReview: { [weak self] in self?.presentConflictReview() },
+            onUseDisk: { [weak self] in self?.confirmUseDiskVersion() }
+        )
+        header.addArrangedSubview(banner)
+        editBanner = banner
 
         let notice = UILabel()
         notice.font = .preferredFont(forTextStyle: .footnote)
@@ -964,6 +960,7 @@ final class FileViewerViewController: UIViewController {
     /// player's lyrics, and the theme colors of the pages this viewer draws.
     private func updateMountedContent(palette: ThemePalette) {
         sizeWarning?.apply(palette)
+        editBanner?.update(palette: palette)
         videoPage?.backgroundColor = UIColor(palette.bgDark)
         checkoutLabel?.textColor = UIColor(palette.comment)
         noticeLabel?.textColor = UIColor(palette.comment)
@@ -1354,11 +1351,10 @@ final class FileViewerViewController: UIViewController {
 
     private func presentConflictReview() {
         guard conflictReview == nil, let editSession else { return }
-        conflictReview = WorkspaceFileEditLeaves.presentConflictReview(
+        let review = WorkspaceFileConflictReviewViewController(
             session: editSession,
             filePath: currentFilePath,
             reviewCommentSelectionScope: configuration.reviewCommentSelectionScope,
-            from: self,
             onUseDisk: { [weak self] in
                 self?.closeConflictReview()
                 self?.useDiskVersion()
@@ -1367,7 +1363,14 @@ final class FileViewerViewController: UIViewController {
                 editSession.replaceDiskVersion()
                 self?.closeConflictReview()
             },
-            onClose: { [weak self] in self?.closeConflictReview() },
+            onClose: { [weak self] in self?.closeConflictReview() }
+        )
+        conflictReview = review
+        Router.present(
+            review,
+            presentation: .sheet.inNavigation(),
+            from: self,
+            theme: HostFactory.root(near: self)?.themeStore,
             onDismiss: { [weak self] in self?.conflictReview = nil }
         )
     }

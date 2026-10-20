@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// Spoken save-state words and toolbar glyphs for the editor.
@@ -137,7 +136,7 @@ private final class WorkspaceFileEditStatusSymbolCanvas: UIView {
         symbolImage?.draw(in: rect)
     }
 
-    /// `Color.themeComment` is a snapshot. UIKit toolbar glyphs are not
+    /// The palette's comment color is a snapshot. UIKit toolbar glyphs are not
     /// recreated when the palette changes, so redraw from the live palette.
     @objc private func themeDidChange() {
         redrawSymbol()
@@ -152,7 +151,7 @@ private final class WorkspaceFileEditStatusSymbolCanvas: UIView {
         guard !name.isEmpty else { return nil }
         let config = UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)
         guard let symbol = UIImage(systemName: name, withConfiguration: config) else { return nil }
-        let tinted = symbol.withTintColor(UIColor(Color.themeComment), renderingMode: .alwaysOriginal)
+        let tinted = symbol.withTintColor(UIColor(ThemeRuntimeState.currentPalette().comment), renderingMode: .alwaysOriginal)
         let format = UIGraphicsImageRendererFormat.preferred()
         format.opaque = false
         return UIGraphicsImageRenderer(size: tinted.size, format: format).image { _ in
@@ -161,12 +160,52 @@ private final class WorkspaceFileEditStatusSymbolCanvas: UIView {
     }
 }
 
-struct WorkspaceFileEditBanner: View {
-    let session: WorkspaceFileEditSession
-    let onReview: () -> Void
-    let onUseDisk: () -> Void
+/// The editor's status banner: what went wrong with the save and, for a
+/// conflict or a failure, Review Changes and Use Disk Version. Hidden while
+/// there is nothing to say. The owner calls `update(palette:)` from its
+/// `updateProperties()`, which reads the session's `@Observable` state.
+@MainActor
+final class WorkspaceFileEditBannerView: UIView {
+    private let session: WorkspaceFileEditSession
+    private let label = UILabel()
+    private let reviewButton: UIButton
+    private let useDiskButton: UIButton
+    private let actions: UIStackView
 
-    var body: some View {
+    init(session: WorkspaceFileEditSession, onReview: @escaping () -> Void, onUseDisk: @escaping () -> Void) {
+        self.session = session
+        let font = AskUIFont.preferred(.footnote, weight: .semibold)
+        reviewButton = WorkspaceFileEditButtons.bordered(String(localized: "Review Changes"), font: font, action: onReview)
+        reviewButton.accessibilityIdentifier = "workspace-file-editor.review"
+        useDiskButton = WorkspaceFileEditButtons.bordered(String(localized: "Use Disk Version"), font: font, action: onUseDisk)
+        useDiskButton.accessibilityIdentifier = "workspace-file-editor.use-disk"
+        actions = UIStackView(arrangedSubviews: [reviewButton, useDiskButton])
+        super.init(frame: .zero)
+        label.font = .preferredFont(forTextStyle: .footnote)
+        label.adjustsFontForContentSizeCategory = true
+        label.numberOfLines = 0
+        label.accessibilityIdentifier = "workspace-file-editor.banner"
+        actions.axis = .horizontal
+        actions.spacing = 12
+        let column = UIStackView(arrangedSubviews: [label, actions])
+        column.axis = .vertical
+        column.alignment = .leading
+        column.spacing = 8
+        column.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(column)
+        NSLayoutConstraint.activate([
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+        ])
+        update(palette: ThemeRuntimeState.currentPalette())
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func update(palette: ThemePalette) {
         let lines = WorkspaceFileEditStatusPresentation.bannerLines(
             status: session.status,
             maxBytes: session.maxBytes,
@@ -174,40 +213,48 @@ struct WorkspaceFileEditBanner: View {
             draftNotice: session.draftNotice,
             recovered: session.recoveredDraft
         )
-        if !lines.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(lines.joined(separator: "\n"))
-                    .font(.footnote)
-                    .foregroundStyle(.themeFg)
-                    .accessibilityIdentifier("workspace-file-editor.banner")
-                if WorkspaceFileEditStatusPresentation.offersConflictActions(session.status) {
-                    HStack(spacing: 12) {
-                        Button(String(localized: "Review Changes"), action: onReview)
-                            .accessibilityIdentifier("workspace-file-editor.review")
-                        Button(String(localized: "Use Disk Version"), role: .destructive, action: onUseDisk)
-                            .accessibilityIdentifier("workspace-file-editor.use-disk")
-                    }
-                    .font(.footnote.weight(.semibold))
-                    .buttonStyle(.bordered)
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.themeBgHighlight)
-        }
+        isHidden = lines.isEmpty
+        label.text = lines.joined(separator: "\n")
+        label.textColor = UIColor(palette.fg)
+        actions.isHidden = !WorkspaceFileEditStatusPresentation.offersConflictActions(session.status)
+        backgroundColor = UIColor(palette.bgHighlight)
+        // Hosted SwiftUI buttons took the root's `.themeBlue` tint.
+        tintColor = UIColor(palette.blue)
     }
 }
 
-/// Disk version against the draft. Replace uses the tag of exactly this read.
-struct WorkspaceFileConflictReviewView: View {
-    let session: WorkspaceFileEditSession
-    let filePath: String
-    let onUseDisk: () -> Void
-    let onReplace: () -> Void
-    let onClose: () -> Void
+/// SwiftUI `.bordered` and `.borderedProminent` capsules in the tint color,
+/// for the banner and the conflict review. (SwiftUI drew the Use Disk
+/// Version buttons' destructive role in the tint as well.)
+@MainActor
+enum WorkspaceFileEditButtons {
+    static func bordered(
+        _ title: String,
+        font: UIFont,
+        prominent: Bool = false,
+        action: @escaping () -> Void
+    ) -> UIButton {
+        var configuration: UIButton.Configuration = prominent ? .borderedProminent() : .tinted()
+        configuration.cornerStyle = .capsule
+        configuration.title = title
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = font
+            return outgoing
+        }
+        // One line, at its full width, as SwiftUI laid it out.
+        configuration.titleLineBreakMode = .byTruncatingTail
+        let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in action() })
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return button
+    }
+}
 
-    @State private var phase: Phase = .loading
-
+/// Disk version against the draft, in a sheet with a bar. Replace uses the
+/// tag of exactly this read.
+@MainActor
+final class WorkspaceFileConflictReviewViewController: UIViewController {
     private enum Phase {
         case loading
         case diff(FullScreenCodeContent)
@@ -215,64 +262,168 @@ struct WorkspaceFileConflictReviewView: View {
         case unavailable
     }
 
-    var body: some View {
-        content
-            .safeAreaInset(edge: .bottom, spacing: 0) { actions }
-            .navigationTitle(String(localized: "Review Changes"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(String(localized: "Keep Editing"), systemImage: "pencil", action: onClose)
-                        .accessibilityIdentifier("workspace-file-review.close")
-                }
-            }
-            .task { await load() }
+    private let session: WorkspaceFileEditSession
+    private let filePath: String
+    private let reviewCommentSelectionScope: ReviewCommentSelectionScope?
+    private var phase: Phase = .loading {
+        didSet { mountContent() }
+    }
+    private var loadTask: Task<Void, Never>?
+    private let contentView = UIView()
+    private let actionsBar = UIView()
+    private var replaceButton: UIButton?
+    private weak var reader: FullScreenCodeViewController?
+
+    init(
+        session: WorkspaceFileEditSession,
+        filePath: String,
+        reviewCommentSelectionScope: ReviewCommentSelectionScope?,
+        onUseDisk: @escaping () -> Void,
+        onReplace: @escaping () -> Void,
+        onClose: @escaping () -> Void
+    ) {
+        self.session = session
+        self.filePath = filePath
+        self.reviewCommentSelectionScope = reviewCommentSelectionScope
+        super.init(nibName: nil, bundle: nil)
+        title = String(localized: "Review Changes")
+        navigationItem.largeTitleDisplayMode = .never
+        let close = UIBarButtonItem(
+            title: String(localized: "Keep Editing"),
+            image: UIImage(systemName: "pencil"),
+            primaryAction: UIAction { _ in onClose() }
+        )
+        close.accessibilityIdentifier = "workspace-file-review.close"
+        navigationItem.leftBarButtonItem = close
+        let font = AskUIFont.preferred(.subheadline, weight: .semibold)
+        let useDisk = WorkspaceFileEditButtons.bordered(String(localized: "Use Disk Version"), font: font, action: onUseDisk)
+        useDisk.accessibilityIdentifier = "workspace-file-review.use-disk"
+        let replace = WorkspaceFileEditButtons.bordered(
+            String(localized: "Replace Disk Version"),
+            font: font,
+            prominent: true,
+            action: onReplace
+        )
+        replace.accessibilityIdentifier = "workspace-file-review.replace"
+        replaceButton = replace
+        let spacer = UIView()
+        spacer.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
+        let row = UIStackView(arrangedSubviews: [useDisk, spacer, replace])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 12
+        row.translatesAutoresizingMaskIntoConstraints = false
+        actionsBar.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: actionsBar.topAnchor, constant: 12),
+            row.bottomAnchor.constraint(equalTo: actionsBar.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            row.leadingAnchor.constraint(equalTo: actionsBar.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            row.trailingAnchor.constraint(equalTo: actionsBar.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+        ])
     }
 
-    /// Plain SwiftUI row, not a toolbar group: the diff body is a UIKit
-    /// controller, and the actions must stay visible above it.
-    private var actions: some View {
-        HStack(spacing: 12) {
-            Button(String(localized: "Use Disk Version"), role: .destructive, action: onUseDisk)
-                .accessibilityIdentifier("workspace-file-review.use-disk")
-            Spacer(minLength: 0)
-            if session.status == .conflict, session.reviewedDisk?.etag != nil {
-                Button(String(localized: "Replace Disk Version"), action: onReplace)
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("workspace-file-review.replace")
-            }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        for subview in [contentView, actionsBar] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(subview)
         }
-        .font(.subheadline.weight(.semibold))
-        .buttonStyle(.bordered)
-        .padding(12)
-        .frame(maxWidth: .infinity)
-        .background(.themeBgHighlight)
+        // The actions stay visible above the diff; their fill runs to the
+        // bottom edge.
+        NSLayoutConstraint.activate([
+            contentView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            contentView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            contentView.bottomAnchor.constraint(equalTo: actionsBar.topAnchor),
+            actionsBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            actionsBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            actionsBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        mountContent()
+        loadTask = Task { [weak self] in await self?.load() }
     }
 
-    @ViewBuilder
-    private var content: some View {
+    deinit {
+        loadTask?.cancel()
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        let themeID = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        // The hosted screen's page background, under the bar.
+        view.backgroundColor = UIColor(themeID.palette.bg)
+        actionsBar.backgroundColor = UIColor(themeID.palette.bgHighlight)
+        // Hosted SwiftUI buttons and bar items took the root's `.themeBlue` tint.
+        view.tintColor = UIColor(themeID.palette.blue)
+        navigationItem.leftBarButtonItem?.tintColor = UIColor(themeID.palette.blue)
+        reader?.applyThemeIfNeeded(themeID)
+        replaceButton?.isHidden = !(session.status == .conflict && session.reviewedDisk?.etag != nil)
+    }
+
+    private func mountContent() {
+        guard isViewLoaded else { return }
+        for child in children {
+            child.willMove(toParent: nil)
+            child.view.removeFromSuperview()
+            child.removeFromParent()
+        }
+        contentView.subviews.forEach { $0.removeFromSuperview() }
+        let content: UIView
         switch phase {
         case .loading:
-            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .diff(let content):
-            EmbeddedFileViewerView(content: content, showsNavigationChrome: false)
+            let spinner = UIActivityIndicatorView(style: .medium)
+            spinner.startAnimating()
+            spinner.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(spinner)
+            NSLayoutConstraint.activate([
+                spinner.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+                spinner.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            ])
+            return
+        case .diff(let diff):
+            let reader = FullScreenCodeViewController(
+                content: diff,
+                presentationMode: .contentOnly(),
+                reviewCommentSelectionContext: reviewCommentSelectionScope?.makeContext()
+            )
+            addChild(reader)
+            pin(reader.view)
+            reader.didMove(toParent: self)
+            self.reader = reader
+            return
         case .resolved:
-            ContentUnavailableView(
-                String(localized: "Already Saved"),
+            content = ReviewPagePlaceholder.unavailable(
+                title: String(localized: "Already Saved"),
                 systemImage: "checkmark.circle",
-                description: Text(String(localized: "The disk version matches your edits."))
+                message: String(localized: "The disk version matches your edits.")
             )
         case .unavailable:
-            ContentUnavailableView(
-                String(localized: "Unable to Load"),
+            content = ReviewPagePlaceholder.unavailable(
+                title: String(localized: "Unable to Load"),
                 systemImage: "wifi.exclamationmark",
-                description: Text(String(localized: "The disk version could not be read. Your edits were not changed."))
+                message: String(localized: "The disk version could not be read. Your edits were not changed.")
             )
         }
+        pin(content)
+    }
+
+    private func pin(_ content: UIView) {
+        content.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: contentView.topAnchor),
+            content.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+        ])
     }
 
     private func load() async {
         let outcome = await session.reviewDisk()
+        guard !Task.isCancelled else { return }
         let draft = session.currentText
         switch outcome {
         case .snapshot(let snapshot):
@@ -480,54 +631,12 @@ final class WorkspaceFileEditStatusView: UIView {
         switch WorkspaceFileEditStatusPresentation.indicator(for: status) {
         case .progress:
             canvas.isHidden = true
-            spinner.color = UIColor(Color.themeComment)
+            spinner.color = UIColor(ThemeRuntimeState.currentPalette().comment)
             spinner.startAnimating()
         case .symbol(let name):
             spinner.stopAnimating()
             canvas.systemName = name
             canvas.isHidden = false
-        }
-    }
-}
-
-// MARK: - Edit banner and conflict review (SwiftUI leaves)
-
-@MainActor
-enum WorkspaceFileEditLeaves {
-    /// The editor's status banner at its natural height. Pin its top and sides.
-    static func banner(
-        session: WorkspaceFileEditSession,
-        root: AppRootEnvironment,
-        onReview: @escaping () -> Void,
-        onUseDisk: @escaping () -> Void
-    ) -> HostedLeaf {
-        HostFactory.leaf(
-            WorkspaceFileEditBanner(session: session, onReview: onReview, onUseDisk: onUseDisk),
-            root: root
-        )
-    }
-
-    /// Disk version against the draft, in a sheet with a bar.
-    @discardableResult
-    static func presentConflictReview(
-        session: WorkspaceFileEditSession,
-        filePath: String,
-        reviewCommentSelectionScope: ReviewCommentSelectionScope?,
-        from presenter: UIViewController,
-        onUseDisk: @escaping () -> Void,
-        onReplace: @escaping () -> Void,
-        onClose: @escaping () -> Void,
-        onDismiss: @escaping () -> Void
-    ) -> HostedScreenController {
-        Router.present(presentation: .sheet.inNavigation(), from: presenter, onDismiss: onDismiss) {
-            WorkspaceFileConflictReviewView(
-                session: session,
-                filePath: filePath,
-                onUseDisk: onUseDisk,
-                onReplace: onReplace,
-                onClose: onClose
-            )
-            .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
         }
     }
 }
