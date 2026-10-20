@@ -32,7 +32,7 @@ describe("Storage config validation", () => {
     expect(result.config?.oppiCliPrompt?.enabled).toBe(true);
     // New configs leave TLS undecided; first `init`/`serve`/`pair` chooses it.
     expect(result.config?.tls?.mode).toBe("disabled");
-    expect(result.config?.images?.autoResize).toBe(false);
+    expect(result.config?.images?.autoResize).toBe(true);
   });
 
   it.each([true, false])("validates the opt-in durable boolean %s", (serverDurable) => {

@@ -353,7 +353,7 @@ struct ChatComposerDraftControllerTests {
         controller.attach(store: store, key: key, isEphemeral: false)
 
         let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
-        controller.clearVisibleTextForDispatchedSubmission(submission)
+        controller.clearVisibleDraftForDispatchedSubmission(submission)
 
         #expect(controller.text.isEmpty)
         // The frame is not on the wire yet. Keep the persisted draft so a
@@ -371,6 +371,119 @@ struct ChatComposerDraftControllerTests {
         #expect(store.record(for: key)?.payload.text == "again how efficient")
     }
 
+    @Test func dispatchedSubmissionRestoresHiddenAttachmentOnFailure() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let (video, videoBytes, draftURL) = try fixture.makeImportedVideo(
+            store: store,
+            named: "clip.mp4",
+            byte: 0x22
+        )
+        let controller = ChatComposerDraftController(initialText: "look")
+        controller.attach(store: store, key: key, isEphemeral: false)
+        #expect(controller.setPendingAttachments([video]))
+
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.clearVisibleDraftForDispatchedSubmission(submission)
+        #expect(controller.pendingAttachments.isEmpty)
+
+        controller.failSubmission(submission)
+        #expect(controller.text == "look")
+        #expect(controller.pendingAttachments.map(\.id) == [video.id])
+        #expect(controller.pendingAttachments.first?.localFileURL?.standardizedFileURL == draftURL.standardizedFileURL)
+        #expect(store.record(for: key)?.payload.attachments.map(\.id) == [video.id])
+        #expect(try Data(contentsOf: draftURL) == videoBytes)
+    }
+
+    @Test func draftReplacedDuringDispatchStillRestoresHiddenAttachmentOnFailure() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let (video, videoBytes, draftURL) = try fixture.makeImportedVideo(
+            store: store,
+            named: "clip.mp4",
+            byte: 0x44
+        )
+        let controller = ChatComposerDraftController(initialText: "steer")
+        controller.attach(store: store, key: key, isEphemeral: false)
+        #expect(controller.setPendingAttachments([video]))
+
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.clearVisibleDraftForDispatchedSubmission(submission)
+        // A queue restore rewrites the draft from the visible field while the send is in flight.
+        controller.replaceMessage(text: "queued text", pendingAttachments: [])
+        #expect(store.record(for: key)?.payload.attachments.map(\.id) == [video.id])
+        #expect(try Data(contentsOf: draftURL) == videoBytes)
+
+        controller.failSubmission(submission)
+        #expect(controller.pendingAttachments.map(\.id) == [video.id])
+        #expect(store.record(for: key)?.payload.attachments.map(\.id) == [video.id])
+        #expect(try Data(contentsOf: draftURL) == videoBytes)
+    }
+
+    @Test func sendFailingDuringACallReturnsItsAttachmentWithTheDraftAfterTheCall() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let file = PendingAttachment.localFile(name: "notes.txt", data: Data("notes".utf8), mimeType: "text/plain")
+        let controller = ChatComposerDraftController(initialText: "sent before the call")
+        controller.attach(store: store, key: key, isEphemeral: false)
+        #expect(controller.setPendingAttachments([file]))
+
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.clearVisibleDraftForDispatchedSubmission(submission)
+        controller.setAsideMessage()
+        controller.updateVisibleText("typed on the call", for: .message)
+        controller.failSubmission(submission)
+
+        // The call's field never gets the failed send's chip.
+        #expect(controller.text == "typed on the call")
+        #expect(controller.pendingAttachments.isEmpty)
+
+        controller.restoreSetAsideMessage()
+        #expect(controller.text == "sent before the call\n\ntyped on the call")
+        #expect(controller.pendingAttachments.map(\.id) == [file.id])
+        #expect(store.record(for: key)?.payload.attachments.map(\.id) == [file.id])
+    }
+
+    @Test func ephemeralDispatchKeepsHiddenImportedFileUntilAcknowledgement() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let (video, videoBytes, draftURL) = try fixture.makeImportedVideo(
+            store: store,
+            named: "clip.mp4",
+            byte: 0x33
+        )
+        let controller = ChatComposerDraftController(initialText: "private")
+        controller.attach(store: store, key: key, isEphemeral: true)
+        #expect(controller.setPendingAttachments([video]))
+
+        let failed = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.clearVisibleDraftForDispatchedSubmission(failed)
+        #expect(controller.pendingAttachments.isEmpty)
+        // A retry after failure still needs the file.
+        #expect(try Data(contentsOf: draftURL) == videoBytes)
+        controller.failSubmission(failed)
+        #expect(controller.pendingAttachments.map(\.id) == [video.id])
+
+        let sent = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.clearVisibleDraftForDispatchedSubmission(sent)
+        #expect(FileManager.default.fileExists(atPath: draftURL.path))
+        controller.completeSubmission(sent)
+        #expect(controller.pendingAttachments.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: draftURL.path))
+    }
+
     @Test func dispatchedSubmissionDoesNotHideTextTheUserChanged() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -382,7 +495,7 @@ struct ChatComposerDraftControllerTests {
 
         let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
         controller.text = "still writing"
-        controller.clearVisibleTextForDispatchedSubmission(submission)
+        controller.clearVisibleDraftForDispatchedSubmission(submission)
 
         #expect(controller.text == "still writing")
         #expect(store.record(for: key)?.payload.text == "still writing")
@@ -406,11 +519,10 @@ struct ChatComposerDraftControllerTests {
         #expect(controller.setPendingAttachments([video]))
 
         let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
-        controller.clearVisibleTextForDispatchedSubmission(submission)
+        controller.clearVisibleDraftForDispatchedSubmission(submission)
 
         #expect(controller.text.isEmpty)
-        #expect(controller.pendingAttachments.map(\.id) == [video.id])
-        #expect(controller.pendingAttachments.first?.localFileURL?.standardizedFileURL == draftURL.standardizedFileURL)
+        #expect(controller.pendingAttachments.isEmpty)
         #expect(store.record(for: key)?.payload.text == "send this")
         #expect(store.record(for: key)?.payload.attachments.map(\.id) == [video.id])
         #expect(try Data(contentsOf: draftURL) == videoBytes)
@@ -939,7 +1051,7 @@ struct ChatComposerDraftControllerTests {
         // Typing and sending during the call is an ordinary message and leaves the stored draft.
         controller.updateVisibleText("typed on the call", for: .message)
         let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
-        controller.clearVisibleTextForDispatchedSubmission(submission)
+        controller.clearVisibleDraftForDispatchedSubmission(submission)
         controller.completeSubmission(submission)
         #expect(controller.text.isEmpty)
         #expect(store.record(for: key)?.payload.text == "draft before the call")
@@ -971,7 +1083,7 @@ struct ChatComposerDraftControllerTests {
         controller.setAsideMessage()
         controller.updateVisibleText("sent on the call", for: .message)
         let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
-        controller.clearVisibleTextForDispatchedSubmission(submission)
+        controller.clearVisibleDraftForDispatchedSubmission(submission)
         // End lands before the server acknowledges the send.
         controller.restoreSetAsideMessage()
         controller.completeSubmission(submission)
@@ -1005,7 +1117,7 @@ struct ChatComposerDraftControllerTests {
         controller.setAsideMessage()
         controller.updateVisibleText("sent on the call", for: .message)
         let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
-        controller.clearVisibleTextForDispatchedSubmission(submission)
+        controller.clearVisibleDraftForDispatchedSubmission(submission)
         controller.restoreSetAsideMessage()
         controller.failSubmission(submission)
 

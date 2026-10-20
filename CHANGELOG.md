@@ -91,6 +91,7 @@ Example:
 - **Server:** In a Git repository, `@` file suggestions and Files search list tracked files and new files no ignore rule matches, and leave out Git-ignored ones like terminal Pi's `@`. They load much faster in large repositories, and source files no longer drop off a list filled with ignored files. Sandbox workspaces and folders outside Git still include ignored files. See [Document viewers](docs/document-viewers.md).
 - **Client/Server:** Extension status, widgets, titles, and working text reach only the open chat of their session, not every connected app. With several busy sessions, the iPhone app uses less CPU on every screen, since a per-second working timer in one session no longer redraws the chat you are reading. In the chat itself, that timer now updates only the working row instead of rebuilding the timeline every second.
 - **Server:** The Release Preflight Grafana dashboard adds voice playback latency and errors and a device CPU and memory table by screen and app state. It drops panels for metrics the app no longer sends (app launch, timeline hitch, remote ASR chunks, internal dispatch latency, inbound queue depth) and the WebSocket lane tables that duplicate Server Health.
+- **Client/Server:** Sending a screenshot or photo is faster. New servers default `images.autoResize` to `true`, so the app shrinks images larger than 2000 px before upload, the size Pi would shrink them to anyway, without stalling the composer. When you send a message, its images and files leave the input bar along with its text, and come back if the send fails. See [config schema](server/docs/config-schema.md#images).
 
 ### Fixed
 
@@ -137,6 +138,7 @@ Example:
 
 ### Migration notes
 
+- **Server:** Existing servers keep the `images.autoResize: false` saved in `config.json`. Run `oppi config set images.autoResize true` for faster image sends, or keep `false` to store full-size originals in sessions.
 - **Server:** The first start opens each durable store (`$OPPI_DATA_DIR/durable/`) with pi-durable 1.4.0, which migrates its SQLite file for good: an `oppi-server` built on Pi 1.3.0 or earlier cannot open it afterwards, so durable sessions do not survive a downgrade past this release. Classic sessions are unaffected.
 - **Compatibility:** Build 56 requires `oppi-server@0.53.0` and `oppi-mirror@0.53.0`; update the app and the server together. Against 0.52.0, Live Voice fails to start, read aloud and Server Metrics are hidden, push alerts can show only "You have a new notification", durable chats miss streamed cards and older pages, and **Edit with Oppi** on an extension fails.
 - **Compatibility:** After an extension has had an **Edit with Oppi** session in the last 3 days, Builds 53 and 54 cannot load that server's session list or finish pairing from an invite.

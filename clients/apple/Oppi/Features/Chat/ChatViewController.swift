@@ -2269,7 +2269,7 @@ final class ChatViewController: UIViewController {
                         // The timeline row or queue item is the send confirmation.
                         // Waiting for ack left this draft in the field while the
                         // agent was already working on it.
-                        self.composerDraftController.clearVisibleTextForDispatchedSubmission(submission)
+                        self.composerDraftController.clearVisibleDraftForDispatchedSubmission(submission)
                         self.model.composerTextBeforeRecording = nil
 
                         // Scroll after the optimistic row is in the collection.

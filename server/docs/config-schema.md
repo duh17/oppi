@@ -165,7 +165,7 @@ Controls client-side preprocessing for image attachments before upload.
 
 | Setting             | Type    | Default | Description                                                                                                                                                                                              |
 | ------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `images.autoResize` | boolean | `false` | When `true`, clients resize oversized image attachments before upload to fit a 2000 px max dimension and about a 4.5 MB base64 budget. When `false`, clients upload original image bytes where possible. |
+| `images.autoResize` | boolean | `true` | When `true`, clients resize oversized image attachments before upload to fit a 2000 px max dimension and about a 4.5 MB base64 budget, the same limits Pi applies before a model sees the image. Uploads are smaller and the prompt starts sooner, but the session keeps the resized copy. When `false`, clients upload original image bytes where possible and Pi resizes the model's copy on the server. |
 
 ### Extensions
 
@@ -198,7 +198,7 @@ Extensions own approval behavior. When a session needs approval before an action
   "oppiDocsPrompt": { "enabled": true },
   "tls": { "mode": "tailscale" },
   "autoTitle": { "enabled": true, "model": "omlx/Qwen3.5-122B-A10B-4bit" },
-  "images": { "autoResize": false }
+  "images": { "autoResize": true }
 }
 ```
 

@@ -47,10 +47,13 @@ final class ChatComposerDraftController {
     var pendingAttachments: [PendingAttachment] {
         didSet {
             if isEphemeral, store != nil {
-                discardImportedFiles(in: oldValue, retaining: pendingAttachments + (setAside?.attachments ?? []))
+                discardImportedFiles(
+                    in: oldValue,
+                    retaining: pendingAttachments + (setAside?.attachments ?? []) + dispatchedHiddenAttachments
+                )
             }
             guard !isApplyingVisiblePayload, mode == .message else { return }
-            messagePayload.attachments = pendingAttachments.map(\.composerDraftMetadata)
+            messagePayload.attachments = draftAttachmentMetadata
             persistMessagePayload()
         }
     }
@@ -73,6 +76,10 @@ final class ChatComposerDraftController {
     /// ack, failure, or any different edit.
     @ObservationIgnored private var dispatchedVisibleClearEcho: String?
     @ObservationIgnored private var dispatchedVisibleClearEchoUntil: Date?
+    /// Attachments of a send already in the timeline or queue, hidden from the
+    /// composer with its text. The draft keeps them until ack; failure puts
+    /// them back, so their imported files stay until the send settles.
+    @ObservationIgnored private var dispatchedHiddenAttachments: [PendingAttachment] = []
     /// The message draft set aside while a Live Voice call holds the composer. The store
     /// keeps it, untouched by the call's own typing and sends, so a crash mid-call still
     /// restores it.
@@ -176,7 +183,7 @@ final class ChatComposerDraftController {
 
     isolated deinit {
         guard isEphemeral else { return }
-        discardImportedFiles(pendingAttachments + (setAside?.attachments ?? []))
+        discardImportedFiles(pendingAttachments + (setAside?.attachments ?? []) + dispatchedHiddenAttachments)
     }
 
     /// A Live Voice call starts with an empty field. The draft typed before it waits, and
@@ -185,7 +192,10 @@ final class ChatComposerDraftController {
         // A new call before the last one's send settled keeps the same draft aside.
         restoresSetAsideAfterSubmission = false
         guard setAside == nil else { return }
-        setAside = (messagePayload, pendingAttachments)
+        // The set-aside draft takes over an in-flight send's hidden attachments:
+        // a failure during the call must not add them to what the call typed.
+        setAside = (messagePayload, pendingAttachments + dispatchedHiddenAttachments)
+        dispatchedHiddenAttachments = []
         messagePayload = .empty
         isApplyingVisiblePayload = true
         pendingAttachments = []
@@ -294,7 +304,7 @@ final class ChatComposerDraftController {
         }
         if let pendingAttachments {
             self.pendingAttachments = pendingAttachments
-            messagePayload.attachments = pendingAttachments.map(\.composerDraftMetadata)
+            messagePayload.attachments = draftAttachmentMetadata
         }
         persistMessagePayload()
         if mode == .message {
@@ -353,11 +363,11 @@ final class ChatComposerDraftController {
         return snapshot
     }
 
-    /// The send is now visible (optimistic user row or queued item). Hide that
-    /// text immediately. The persisted draft stays until ack so a crash before
-    /// the frame is acknowledged can still restore it; failure paints the
-    /// in-memory snapshot back into the field.
-    func clearVisibleTextForDispatchedSubmission(_ snapshot: SubmissionSnapshot) {
+    /// The send is now visible (optimistic user row or queued item). Hide its
+    /// text and attachments immediately. The persisted draft stays until ack so
+    /// a crash before the frame is acknowledged can still restore it; failure
+    /// paints the in-memory snapshot back into the field.
+    func clearVisibleDraftForDispatchedSubmission(_ snapshot: SubmissionSnapshot) {
         guard activeSubmissionID == snapshot.id else { return }
         guard snapshot.draftClearance == .afterSuccess, mode == .message else { return }
         guard messagePayload.text == snapshot.payload.text,
@@ -378,6 +388,38 @@ final class ChatComposerDraftController {
             repoPointers: [],
             attachments: messagePayload.attachments
         ))
+
+        let submittedAttachmentIDs = Set(snapshot.pendingAttachments.map(\.id))
+        dispatchedHiddenAttachments = pendingAttachments.filter { submittedAttachmentIDs.contains($0.id) }
+        isApplyingVisiblePayload = true
+        pendingAttachments.removeAll { submittedAttachmentIDs.contains($0.id) }
+        isApplyingVisiblePayload = false
+    }
+
+    /// The draft payload's attachments: the field's, plus a dispatched send's
+    /// hidden ones until it settles, so an edit during the send (a queue
+    /// restore, say) cannot drop them from the crash draft.
+    private var draftAttachmentMetadata: [ComposerDraftAttachment] {
+        Self.combinedAttachments(failed: dispatchedHiddenAttachments, current: pendingAttachments)
+            .map(\.composerDraftMetadata)
+    }
+
+    /// Ack: the hidden attachments were sent. Ephemeral drafts delete their
+    /// imported files, as they would had the attachments stayed visible.
+    private func discardSentHiddenAttachmentFiles(_ sent: [PendingAttachment]) {
+        guard isEphemeral, store != nil else { return }
+        discardImportedFiles(in: sent, retaining: pendingAttachments + (setAside?.attachments ?? []))
+    }
+
+    /// Failure: the hidden attachments go back into the field ahead of any
+    /// added since. The draft payload never dropped them.
+    private func restoreDispatchedHiddenAttachments() {
+        guard !dispatchedHiddenAttachments.isEmpty else { return }
+        let restored = Self.combinedAttachments(failed: dispatchedHiddenAttachments, current: pendingAttachments)
+        dispatchedHiddenAttachments = []
+        isApplyingVisiblePayload = true
+        pendingAttachments = restored
+        isApplyingVisiblePayload = false
     }
 
     @discardableResult
@@ -394,6 +436,11 @@ final class ChatComposerDraftController {
             isSubmissionInFlight = false
             dispatchedVisibleClearEcho = nil
             dispatchedVisibleClearEchoUntil = nil
+            // Settle the hidden attachments first: clearing the field below must
+            // not write them back into the draft payload.
+            let sentHidden = dispatchedHiddenAttachments
+            dispatchedHiddenAttachments = []
+            defer { discardSentHiddenAttachmentFiles(sentHidden) }
 
             if snapshot.draftClearance == .afterSuccess {
                 if messagePayload == snapshot.payload {
@@ -465,6 +512,7 @@ final class ChatComposerDraftController {
         isSubmissionInFlight = false
         dispatchedVisibleClearEcho = nil
         dispatchedVisibleClearEchoUntil = nil
+        restoreDispatchedHiddenAttachments()
 
         if snapshot.draftClearance == .afterSuccess {
             if messagePayload.isEmpty {
@@ -539,10 +587,11 @@ final class ChatComposerDraftController {
         if messagePayload.isEmpty {
             store.clearDraft(for: key)
         } else {
+            let draftAttachments = pendingAttachments + dispatchedHiddenAttachments
             let record = store.setDraft(
                 messagePayload,
-                attachmentData: Self.attachmentData(from: pendingAttachments),
-                attachmentFiles: Self.attachmentFiles(from: pendingAttachments),
+                attachmentData: Self.attachmentData(from: draftAttachments),
+                attachmentFiles: Self.attachmentFiles(from: draftAttachments),
                 for: key
             )
             if let record {

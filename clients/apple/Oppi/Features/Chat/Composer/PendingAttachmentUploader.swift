@@ -41,25 +41,25 @@ enum PendingAttachmentUploader {
                 guard let imageAttachment = pending.imageAttachment else {
                     throw APIError.server(status: 400, message: "Invalid pending image data")
                 }
-                let uploadAttachment = PendingImage.uploadAttachment(
-                    from: imageAttachment,
-                    autoResize: imageAutoResize
-                )
-                guard let data = Data(
-                    base64Encoded: uploadAttachment.data,
-                    options: .ignoreUnknownCharacters
-                ) else {
+                // Decoding, resizing, and re-encoding a full-size screenshot takes
+                // long enough to hitch the composer on the main actor.
+                let prepared = await Task.detached(priority: .userInitiated) {
+                    let upload = PendingImage.uploadAttachment(from: imageAttachment, autoResize: imageAutoResize)
+                    return Data(base64Encoded: upload.data, options: .ignoreUnknownCharacters)
+                        .map { (data: $0, mimeType: upload.mimeType) }
+                }.value
+                guard let prepared else {
                     throw APIError.server(status: 400, message: "Invalid pending image data")
                 }
                 let name = imageUploadName(
                     displayName: pending.displayName,
-                    mimeType: uploadAttachment.mimeType,
+                    mimeType: prepared.mimeType,
                     index: uploadIndex - 1
                 )
                 attachment = try await uploadData(
-                    data,
+                    prepared.data,
                     name: name,
-                    mimeType: uploadAttachment.mimeType,
+                    mimeType: prepared.mimeType,
                     api: api,
                     scope: scope,
                     sessionId: sessionId
@@ -130,12 +130,9 @@ enum PendingAttachmentUploader {
         )
     }
 
+    /// Missing or unreadable server info falls back to the server default (`true`).
     private static func imageAutoResizeEnabled(api: APIClient) async -> Bool {
-        do {
-            return try await api.serverInfo().images?.autoResize ?? false
-        } catch {
-            return false
-        }
+        (try? await api.serverInfo().images?.autoResize) ?? true
     }
 
     private static func imageUploadName(

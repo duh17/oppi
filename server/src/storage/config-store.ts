@@ -195,8 +195,10 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     providerQuotas: {
       openaiUseCodexPlan: false,
     },
+    // Phones shrink screenshots before upload. Pi resizes anything over 2000 px
+    // anyway, and doing it on the server delays the prompt ack by seconds.
     images: {
-      autoResize: false,
+      autoResize: true,
     },
     uploadStore: {
       mode: "local",

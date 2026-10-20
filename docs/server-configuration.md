@@ -254,7 +254,7 @@ Pi's host MCP commands (`pi mcp list`, `login`, `logout`), which the MCP Servers
 | `asr.liveVoiceBackend`                  | Live Voice ears and voice for a call on a session: `yuwp` (local ASR from `asr.sttEndpoint`, speech from `tts`) or `grok-voice` (no restart: each new call reads `asr` and `tts` from disk; Grok uses the xAI `tts.voice`, else `eve`). The app offers Live Voice only while this backend is ready; see [Voice backend health](#voice-backend-health) |
 | `runtimeEnv.<NAME>`                     | Host runtime env, including TTS URLs (restart)                      |
 | `extensions.voice.defaultVoiceId`       | Default voice id                                                    |
-| `images.autoResize`                     | Client image preprocessing preference                               |
+| `images.autoResize`                     | Phones resize images over 2000 px before upload (default `true`; `false` keeps originals and leaves resizing to Pi on the server) |
 | `providerQuotas.openaiUseCodexPlan`     | Opt in to legacy Codex plan-wide usage on the OpenAI row; same account required (default `false`; restart; see [provider quotas](provider-quotas.md)) |
 | `auth.tailscalePairing`                 | Same-user Tailscale pairing (`POST /pair/tailscale`); `false` turns it off (default `true`; restart; see [onboarding](onboarding.md#turn-off-tailscale-pairing)) |
 | `auth.module`                           | Absolute path to an owner auth module (restart; see [Auth module](#auth-module)) |
