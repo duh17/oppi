@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// Theme snapshot and type scale for the UIKit audio player chrome.
@@ -777,34 +776,5 @@ final class AudioPlaybackSeekBar: UIControl {
 
     private static func percentValue(_ fraction: Double) -> String {
         String(localized: "\(Int((min(1, max(0, fraction)) * 100).rounded())) percent")
-    }
-}
-
-/// SwiftUI host for the UIKit transport, used by the expanded Now Playing drawer.
-struct AudioPlaybackTransportControls: UIViewRepresentable {
-    let itemID: String
-    let audioPlayer: AudioPlayerService?
-    let play: () -> Void
-    var openFile: (() -> Void)? = nil
-    var density: AudioPlaybackTransportDensity = .fullScreen
-    var accessibilityPrefix = "audioLyrics"
-
-    func makeUIView(context: Context) -> AudioPlaybackTransportView {
-        AudioPlaybackTransportView(density: density, accessibilityPrefix: accessibilityPrefix)
-    }
-
-    func updateUIView(_ view: AudioPlaybackTransportView, context: Context) {
-        view.apply(.init(itemID: itemID, audioPlayer: audioPlayer, play: play, openFile: openFile))
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: AudioPlaybackTransportView, context: Context) -> CGSize? {
-        guard let width = proposal.width, width.isFinite else { return nil }
-        uiView.updatePropertiesIfNeeded()
-        let height = uiView.systemLayoutSizeFitting(
-            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        ).height
-        return CGSize(width: width, height: height)
     }
 }

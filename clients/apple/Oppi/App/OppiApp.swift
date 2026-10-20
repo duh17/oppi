@@ -463,6 +463,9 @@ final class OppiApp {
     /// The window's root: a debug harness chosen by launch arguments, else the app.
     func makeRootViewController() -> UIViewController {
 #if DEBUG
+        if ReviewCommentStashHarnessConfig.isEnabled {
+            return ReviewCommentStashHarnessController(root: root)
+        }
         if let debugHarness {
             // Harnesses and previews render app screens, the timeline, and
             // UIKit-hosted SwiftUI without the app's root controller. The
@@ -660,9 +663,6 @@ final class OppiApp {
         }
         if WikiLineAnchorHarnessConfig.isEnabled {
             return AnyView(WikiLineAnchorHarnessView().ignoresSafeArea())
-        }
-        if ReviewCommentStashHarnessConfig.isEnabled {
-            return AnyView(ReviewCommentStashHarnessView())
         }
         if SemanticPickHarnessConfig.isEnabled {
             return AnyView(SemanticPickHarnessView().ignoresSafeArea())

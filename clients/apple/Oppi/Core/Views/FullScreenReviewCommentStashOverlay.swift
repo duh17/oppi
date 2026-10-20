@@ -32,14 +32,19 @@ struct FullScreenReviewCommentStashOverlayHost<Content: View>: View {
                     }
                 )
             }
-            .routerModal(item: $stashPresentation, presentation: .sheet.inNavigation()) { presentation in
-                FullScreenReviewCommentStashSheetGate(
-                    isEnabled: isEnabled,
-                    presentation: presentation,
-                    reviewCommentSelectionScope: reviewCommentSelectionScope,
-                    onClose: { stashPresentation = nil }
-                )
-            }
+            .routerModal(item: $stashPresentation, presentation: .sheet.inNavigation(), screen: { presentation in
+                let comments = reviewCommentSelectionScope?.router.stash as? ChatReviewCommentsController
+                return .controller({
+                    guard isEnabled, let comments else {
+                        preconditionFailure("The stash sheet opens only from its staged-comment button")
+                    }
+                    return ReviewCommentStashViewController(
+                        stash: comments,
+                        editing: presentation.initialEditingComment,
+                        onClose: { stashPresentation = nil }
+                    )
+                })
+            })
     }
 }
 
@@ -71,24 +76,6 @@ private struct FullScreenReviewCommentStashChromeHost: View {
                 comments: comments,
                 leadingAccessoryCount: leadingAccessoryCount,
                 onOpen: onOpen
-            )
-        }
-    }
-}
-
-private struct FullScreenReviewCommentStashSheetGate: View {
-    var isEnabled: Bool
-    var presentation: ReviewCommentStripChrome.StashPresentation
-    var reviewCommentSelectionScope: ReviewCommentSelectionScope?
-    var onClose: () -> Void
-
-    var body: some View {
-        if isEnabled,
-           let comments = reviewCommentSelectionScope?.router.stash as? ChatReviewCommentsController {
-            FullScreenReviewCommentStashSheetHost(
-                comments: comments,
-                presentation: presentation,
-                onClose: onClose
             )
         }
     }
@@ -208,26 +195,5 @@ private final class FullScreenReviewCommentStashButtonView: UIView {
 
     @objc private func open() {
         onOpen()
-    }
-}
-
-private struct FullScreenReviewCommentStashSheetHost: View {
-    var comments: ChatReviewCommentsController
-    var presentation: ReviewCommentStripChrome.StashPresentation
-    var onClose: () -> Void
-
-    var body: some View {
-        ReviewCommentStashContent(
-            comments: comments.stagedComments,
-            focusedCommentId: nil,
-            onEdit: { comment, body in
-                comments.update(comment, body: body) == nil
-            },
-            onDelete: { comment in
-                comments.delete(comment)
-            },
-            onClose: onClose,
-            initialEditingComment: presentation.initialEditingComment
-        )
     }
 }

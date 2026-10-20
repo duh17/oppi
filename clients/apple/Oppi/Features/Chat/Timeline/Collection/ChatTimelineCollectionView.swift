@@ -647,7 +647,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     deinit {
         MainActor.assumeIsolated {
             ownedClock.isObserving = false
-            ownedClock.emptyOverlayController = nil
+            ownedClock.emptyOverlay = nil
             let observedAudioPlayer = audioPlayer
             toolOutputLoader.cancelAllWork()
             preparationRunway.cancelAll()

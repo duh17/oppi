@@ -54,7 +54,7 @@ final class ReviewCommentStashFloatingButton {
     private let badge = UILabel()
     private var bottom: NSLayoutConstraint?
     private var lastCount = 0
-    private weak var sheet: HostedScreenController?
+    private weak var sheet: UIViewController?
 
     init() {
         badge.translatesAutoresizingMaskIntoConstraints = false
@@ -136,21 +136,17 @@ final class ReviewCommentStashFloatingButton {
 
     private func openSheet(comments: ChatReviewCommentsController, from presenter: UIViewController) {
         if let sheet, sheet.presentingViewController != nil { return }
-        // The sheet's content runs in its own screen and reads the comments
-        // there, so edits and deletions show while it is open.
-        sheet = Router.present(presentation: .sheet.inNavigation(), from: presenter) { [weak self] in
-            ReviewCommentStashContent(
-                comments: comments.stagedComments,
-                focusedCommentId: nil,
-                onEdit: { comment, body in
-                    comments.update(comment, body: body) == nil
-                },
-                onDelete: { comment in
-                    comments.delete(comment)
-                },
-                onClose: { self?.closeSheet() }
-            )
-        }
+        // The sheet reads the comments itself, so edits and deletions show
+        // while it is open.
+        let sheet = ReviewCommentStashViewController(stash: comments, onClose: { [weak self] in self?.closeSheet() })
+        Router.present(
+            sheet,
+            presentation: .sheet.inNavigation(),
+            from: presenter,
+            theme: HostFactory.root(near: presenter)?.themeStore,
+            onDismiss: nil
+        )
+        self.sheet = sheet
     }
 
     private func closeSheet() {

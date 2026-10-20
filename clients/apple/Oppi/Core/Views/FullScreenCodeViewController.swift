@@ -120,7 +120,7 @@ final class FullScreenCodeViewController: UIViewController {
     private var trailingFloatingAccessoryCount = 0
     private var viewingOptionsBottomConstraint: NSLayoutConstraint?
     private var lastPresentedStashCount = 0
-    private weak var presentedStashSheet: HostedScreenController?
+    private weak var presentedStashSheet: UIViewController?
     private var isSnapshotting = false
     private let addToChatDestination: ComposerCanvasDestination?
     private(set) var didDismissAfterCanvasDeliveryForTesting = false
@@ -1111,7 +1111,6 @@ final class FullScreenCodeViewController: UIViewController {
         guard isViewLoaded, let host = contentHostController else { return }
         configureFloatingStashButton(on: host, palette: bodyThemeID.palette)
         installRightBarItems(on: host, palette: bodyThemeID.palette)
-        refreshPresentedStashSheet()
     }
 
     private func configureFloatingStashButton(
@@ -1316,38 +1315,26 @@ final class FullScreenCodeViewController: UIViewController {
     /// The router presents from the window's front-most controller, which is
     /// not this viewer when it is embedded, so the sheet is tracked by its own
     /// presentation rather than by `presentedViewController`.
-    private var openStashSheet: HostedScreenController? {
+    private var openStashSheet: UIViewController? {
         guard let sheet = presentedStashSheet, sheet.presentingViewController != nil else { return nil }
         return sheet
     }
 
     private func presentReviewCommentStashSheet() {
-        guard let sheet = makeStashSheet() else { return }
+        guard let stash = reviewCommentStash else { return }
         openStashSheet?.dismiss(animated: false)
-        presentedStashSheet = Router.present(presentation: .pageSheet.inNavigation(), from: self) { sheet }
-    }
-
-    private func makeStashSheet() -> ReviewCommentStashContent? {
-        guard let stash = reviewCommentStash else { return nil }
-        return ReviewCommentStashContent(
-            comments: stash.stagedComments,
-            focusedCommentId: nil,
-            onEdit: { [weak self] comment, body in
-                guard let stash = self?.reviewCommentStash else { return false }
-                return stash.update(comment, body: body) == nil
-            },
-            onDelete: { [weak self] comment in
-                self?.reviewCommentStash?.delete(comment)
-            },
-            onClose: { [weak self] in
-                self?.dismissReviewCommentStashSheet()
-            }
+        // The sheet reads the stash itself, so edits and removals show while it is up.
+        let sheet = ReviewCommentStashViewController(stash: stash, onClose: { [weak self] in
+            self?.dismissReviewCommentStashSheet()
+        })
+        Router.present(
+            sheet,
+            presentation: .pageSheet.inNavigation(),
+            from: self,
+            theme: HostFactory.root(near: self)?.themeStore,
+            onDismiss: nil
         )
-    }
-
-    private func refreshPresentedStashSheet() {
-        guard let open = openStashSheet, let sheet = makeStashSheet() else { return }
-        open.setContent { sheet }
+        presentedStashSheet = sheet
     }
 
     private func dismissReviewCommentStashSheet() {

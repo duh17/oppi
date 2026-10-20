@@ -881,7 +881,7 @@ private struct UIHangHarnessContent: View {
             controlsBar
 
             if UIHangHarnessConfig.queueHarnessEnabled, showsQueueContainer {
-                MessageQueueContainer(configuration: MessageQueueSurfaceConfiguration(
+                UIHangHarnessMessageQueue(configuration: MessageQueueSurfaceConfiguration(
                     queue: currentQueueState,
                     onRemove: { itemId in
                         var queue = currentQueueState
@@ -2118,6 +2118,32 @@ private struct UIHangHarnessTimeline: UIViewRepresentable {
 
     static func dismantleUIView(_ collectionView: UICollectionView, coordinator: ChatTimelineController) {
         coordinator.dismantle(collectionView)
+    }
+}
+
+// The harness's standalone queue among its SwiftUI controls, as the timeline
+// above: the chat shows the same view in the extension strip's drawer.
+private struct UIHangHarnessMessageQueue: UIViewRepresentable {
+    let configuration: MessageQueueSurfaceConfiguration
+    @Environment(\.themeID) private var themeID
+
+    func makeUIView(context: Context) -> MessageQueueView {
+        MessageQueueView(presentation: .standalone)
+    }
+
+    func updateUIView(_ view: MessageQueueView, context: Context) {
+        view.apply(configuration, palette: themeID.palette)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: MessageQueueView, context: Context) -> CGSize? {
+        let width = proposal.width ?? uiView.bounds.width
+        guard width.isFinite, width > 0 else { return nil }
+        let size = uiView.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        return CGSize(width: width, height: size.height)
     }
 }
 

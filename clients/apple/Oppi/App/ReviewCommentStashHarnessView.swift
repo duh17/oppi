@@ -1,5 +1,6 @@
 #if DEBUG
-import SwiftUI
+import Observation
+import UIKit
 
 enum ReviewCommentStashHarnessConfig {
     static var isEnabled: Bool {
@@ -14,49 +15,75 @@ enum ReviewCommentStashHarnessConfig {
 }
 
 /// The stash sheet at the root of a router navigation controller, as chat
-/// presents it. The screen is its own SwiftUI graph, so the comments it edits
-/// live in an observable model.
-struct ReviewCommentStashHarnessView: View {
-    @State private var model = ReviewCommentStashHarnessModel()
+/// presents it, over one fixture comment, with a diagnostic of the last save.
+@MainActor
+final class ReviewCommentStashHarnessController: UIViewController {
+    private let stash = ReviewCommentStashHarnessModel()
+    private let saved = UILabel()
 
-    var body: some View {
-        let model = model
-        RouterPreviewNavigation {
-            ReviewCommentStashContent(
-                comments: model.comments,
-                focusedCommentId: nil,
-                onEdit: { comment, body in model.update(comment, body: body) },
-                onDelete: { comment in
-                    model.comments.removeAll { $0.id == comment.id }
-                },
-                onClose: {}
-            )
-        }
-        .ignoresSafeArea()
-        .overlay(alignment: .topLeading) {
-            Text(model.didSave ? "1" : "0")
-                .font(.system(size: 1))
-                .opacity(0.02)
-                .accessibilityLabel("Review comment save completed")
-                .accessibilityValue(model.didSave ? "1" : "0")
-                .accessibilityIdentifier("diag.reviewCommentStash.saved")
-        }
+    init(root: AppRootEnvironment) {
+        super.init(nibName: nil, bundle: nil)
+        traitOverrides.appRootEnvironment = root
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let navigation = RouterNavigationController(
+            rootViewController: ReviewCommentStashViewController(stash: stash, onClose: {})
+        )
+        addChild(navigation)
+        navigation.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(navigation.view)
+        navigation.didMove(toParent: self)
+
+        saved.font = .systemFont(ofSize: 1)
+        saved.alpha = 0.02
+        saved.isAccessibilityElement = true
+        saved.accessibilityLabel = "Review comment save completed"
+        saved.accessibilityIdentifier = "diag.reviewCommentStash.saved"
+        saved.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(saved)
+        NSLayoutConstraint.activate([
+            navigation.view.topAnchor.constraint(equalTo: view.topAnchor),
+            navigation.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            navigation.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            navigation.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            saved.topAnchor.constraint(equalTo: view.topAnchor),
+            saved.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+        ])
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        let value = stash.didSave ? "1" : "0"
+        saved.text = value
+        saved.accessibilityValue = value
     }
 }
 
 @MainActor @Observable
-private final class ReviewCommentStashHarnessModel {
+private final class ReviewCommentStashHarnessModel: ReviewCommentStashHandling {
     var comments = [ReviewCommentStashHarnessModel.fixtureComment]
     var didSave = false
 
-    func update(_ comment: ReviewComment, body: String) -> Bool {
+    var stagedComments: [ReviewComment] { comments }
+    var stagedCount: Int { comments.count }
+
+    func update(_ comment: ReviewComment, body: String) -> String? {
         guard let index = comments.firstIndex(where: { $0.id == comment.id }) else {
-            return false
+            return "Missing comment"
         }
         comments[index].body = body
         comments[index].updatedAt += 1
         didSave = true
-        return true
+        return nil
+    }
+
+    func delete(_ comment: ReviewComment) {
+        comments.removeAll { $0.id == comment.id }
     }
 
     private static let fixtureComment = ReviewComment(

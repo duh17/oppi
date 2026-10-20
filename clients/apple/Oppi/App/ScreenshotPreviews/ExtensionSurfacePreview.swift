@@ -124,7 +124,7 @@ struct ExtensionSurfacePreview: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                ExtensionSurfacePanel(surface: Self.surface, placement: .aboveEditor)
+                ExtensionSurfacePanelPreview(surface: Self.surface)
 
                 Spacer()
             }
@@ -132,6 +132,30 @@ struct ExtensionSurfacePreview: View {
             .padding(.top, 24)
         }
         .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+/// The chat's UIKit extension strip, laid out among this preview's SwiftUI.
+private struct ExtensionSurfacePanelPreview: UIViewRepresentable {
+    let surface: ExtensionSurfaceState
+    @Environment(\.themeID) private var themeID
+
+    func makeUIView(context: Context) -> ExtensionSurfacePanelView {
+        ExtensionSurfacePanelView(placement: .aboveEditor)
+    }
+
+    func updateUIView(_ view: ExtensionSurfacePanelView, context: Context) {
+        view.apply(.init(surface: surface, messageQueue: nil, themeID: themeID, collapseRequestID: 0))
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: ExtensionSurfacePanelView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite else { return nil }
+        let height = uiView.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        return CGSize(width: width, height: height)
     }
 }
 #endif

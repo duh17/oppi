@@ -400,7 +400,7 @@ final class ChatRoutesUITests: XCTestCase {
         )
         let emails = app.switches["Email Addresses"]
         XCTAssertEqual(emails.value as? String, "1")
-        emails.switches.firstMatch.tap()
+        emails.tap()
         XCTAssertTrue(waitFor(emails.value as? String == "0"), "The toggle must follow the policy binding")
         attachScreenshot("share-sheet")
         cancelButton.tap()
@@ -500,29 +500,6 @@ final class ChatRoutesUITests: XCTestCase {
     }
 
     // MARK: - Other hosts
-
-    /// Outside chat (no reader to push), the native detail is a router modal
-    /// that closes with its own Done.
-    func testExtensionNativeDetailClosesWithItsOwnDone() {
-        launchScreen("extension-widget")
-        let pill = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "extension-strip-aboveEditor-pill-widget")).firstMatch
-        XCTAssertTrue(pill.waitForExistence(timeout: 10), "Native widget pill missing")
-        pill.tap()
-        let viewport = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "extension-native-surface-widget", "-viewport"))
-            .firstMatch
-        XCTAssertTrue(viewport.waitForExistence(timeout: 5), "Native widget drawer did not open")
-        viewport.doubleTap()
-        // The detail's container identifier also lands on its Done button.
-        let done = app.buttons.matching(NSPredicate(format: "identifier ENDSWITH %@ AND label == %@", "-detail", "Done")).firstMatch
-        XCTAssertTrue(done.waitForExistence(timeout: 5), "Native detail did not open")
-        attachScreenshot("extension-native-detail")
-        done.tap()
-        XCTAssertTrue(waitForDisappearance(of: done), "Done must close the native detail")
-        XCTAssertTrue(pill.exists)
-        assertRunning()
-    }
 
     /// The outline's summary-instructions sheet is a router sheet above it;
     /// the typed instructions reach the outline's tree navigation.

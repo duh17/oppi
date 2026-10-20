@@ -1,59 +1,8 @@
-import SwiftUI
+import UIKit
 
-/// Strip pill for extension `ctx.ui.notify()`, on the above-composer row.
-struct ExtensionNotifyChip: View {
-    let state: ExtensionNotifyChipStore.SessionState
-    var onToggleExpanded: () -> Void
-
-    var body: some View {
-        Button(action: onToggleExpanded) {
-            HStack(spacing: 7) {
-                Image(systemName: ExtensionNotifyChipChrome.iconName(for: state.newest.notifyType))
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(ExtensionNotifyChipChrome.iconColor(for: state.newest.notifyType))
-                    .accessibilityHidden(true)
-
-                Text(state.newest.extensionDisplayName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: 180, alignment: .leading)
-
-                if state.count > 1 {
-                    Text("\(state.count)")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.themeComment)
-                        .lineLimit(1)
-                }
-
-                Image(systemName: state.isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.themeComment)
-                    .accessibilityHidden(true)
-            }
-            .extensionStripPillSurface(
-                isActive: state.isExpanded,
-                activeStroke: ExtensionNotifyChipChrome.activeStroke(for: state.newest.notifyType)
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(collapsedAccessibilityLabel)
-        .accessibilityHint(state.isExpanded ? "Collapses the notification" : "Expands the notification")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityIdentifier("chat.extensionNotify.chip")
-        .accessibilityValue(state.isExpanded ? "Expanded" : "Collapsed")
-    }
-
-    private var collapsedAccessibilityLabel: String {
-        let newest = state.newest
-        let base = "Notification from \(newest.extensionDisplayName): \(newest.message)"
-        if state.count > 1 {
-            return "\(base). \(state.count) notifications"
-        }
-        return base
-    }
-
+/// Link detection for extension `ctx.ui.notify()` messages: http(s) links
+/// only, never file or app URLs.
+enum ExtensionNotifyChip {
     static func attributedMessage(_ message: String) -> AttributedString {
         var attributed = AttributedString(message)
         guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
@@ -84,147 +33,178 @@ struct ExtensionNotifyChip: View {
         return scheme == "http" || scheme == "https"
     }
 
-    fileprivate static func openHTTPURL(
-        _ url: URL,
-        onOpenURL: ((URL) -> Bool)?
-    ) -> OpenURLAction.Result {
-        guard isHTTPURL(url) else { return .discarded }
-        return onOpenURL?(url) == true ? .handled : .discarded
+    fileprivate static func iconName(for notifyType: String?) -> String {
+        switch notifyType {
+        case "error": "exclamationmark.circle.fill"
+        case "warning": "exclamationmark.triangle.fill"
+        default: "bell"
+        }
+    }
+
+    fileprivate static func tint(for notifyType: String?, palette: ThemePalette) -> UIColor {
+        let color = switch notifyType {
+        case "error": palette.red
+        case "warning": palette.orange
+        default: palette.cyan
+        }
+        return UIColor(color)
     }
 }
 
-/// Drawer under the above-composer strip for extension `ctx.ui.notify()`.
-struct ExtensionNotifyDrawer: View {
-    let state: ExtensionNotifyChipStore.SessionState
-    var onCollapse: () -> Void
-    var onDismiss: () -> Void
+/// Strip pill for extension `ctx.ui.notify()`, on the above-composer row.
+final class ExtensionNotifyChipView: ExtensionStripPillControl {
+    var onToggleExpanded: (() -> Void)?
+    private let icon = UIImageView()
+    private let nameLabel = ExtensionChromeFont.label(.caption1, .semibold)
+    private let countLabel = ExtensionChromeFont.label(.caption2, .semibold)
+    private let chevron = UIImageView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 180).isActive = true
+        for view in [icon, nameLabel, countLabel, chevron] {
+            row.addArrangedSubview(view)
+        }
+        accessibilityIdentifier = "chat.extensionNotify.chip"
+        addAction(UIAction { [weak self] _ in self?.onToggleExpanded?() }, for: .touchUpInside)
+    }
+
+    func apply(_ state: ExtensionNotifyChipStore.SessionState, palette: ThemePalette) {
+        let newest = state.newest
+        let tint = ExtensionNotifyChip.tint(for: newest.notifyType, palette: palette)
+        icon.image = ExtensionChromeFont.symbol(
+            ExtensionNotifyChip.iconName(for: newest.notifyType), .caption1, .bold, color: tint
+        )
+        nameLabel.text = newest.extensionDisplayName
+        nameLabel.textColor = UIColor(palette.fg)
+        countLabel.text = "\(state.count)"
+        countLabel.textColor = UIColor(palette.comment)
+        countLabel.isHidden = state.count <= 1
+        chevron.image = ExtensionChromeFont.symbol(
+            state.isExpanded ? "chevron.down" : "chevron.right", .caption2, .bold, color: UIColor(palette.comment)
+        )
+        surface.apply(palette: palette, active: state.isExpanded ? tint : nil)
+
+        let base = "Notification from \(newest.extensionDisplayName): \(newest.message)"
+        accessibilityLabel = state.count > 1 ? "\(base). \(state.count) notifications" : base
+        accessibilityHint = state.isExpanded ? "Collapses the notification" : "Expands the notification"
+        accessibilityValue = state.isExpanded ? "Expanded" : "Collapsed"
+    }
+}
+
+/// Drawer under the above-composer strip for extension `ctx.ui.notify()`:
+/// who sent it, collapse and dismiss, then every notification, newest first.
+final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
+    var onCollapse: (() -> Void)?
+    var onDismiss: (() -> Void)?
     var onOpenURL: ((URL) -> Bool)?
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("From extension · \(state.newest.extensionDisplayName)")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
-                    if state.count > 1 {
-                        Text("\(state.count) notifications")
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+    private let titleLabel = ExtensionChromeFont.label(.subheadline, .semibold)
+    private let countLabel = ExtensionChromeFont.label(.caption1)
+    private let collapseButton = UIButton(type: .custom)
+    private let dismissButton = UIButton(type: .custom)
+    private let entries = UIStackView()
+    private var shown: (state: ExtensionNotifyChipStore.SessionState, themeID: ThemeID)?
 
-                Button(action: onCollapse) {
-                    Image(systemName: "chevron.up")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.themeComment)
-                        .frame(width: 32, height: 32)
-                        .background(.themeFg.opacity(0.04), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Collapse notification")
-
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.themeFgDim)
-                        .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Dismiss")
-                .accessibilityIdentifier("chat.extensionNotify.dismiss")
-            }
-
-            NativeSurfaceViewportScrollContainer(
-                maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight,
-                accessibilityIdentifier: "chat.extensionNotify.list"
-            ) {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(state.entries.enumerated()), id: \.element.id) { index, entry in
-                        expandedEntry(entry, showsName: showsPerEntryName && index > 0)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
+    init() {
+        super.init(spacing: 10)
+        accessibilityIdentifier = "chat.extensionNotify.expanded"
+        collapseButton.accessibilityLabel = "Collapse notification"
+        collapseButton.addAction(UIAction { [weak self] _ in self?.onCollapse?() }, for: .touchUpInside)
+        dismissButton.accessibilityLabel = "Dismiss"
+        dismissButton.accessibilityIdentifier = "chat.extensionNotify.dismiss"
+        dismissButton.addAction(UIAction { [weak self] _ in self?.onDismiss?() }, for: .touchUpInside)
+        for button in [collapseButton, dismissButton] {
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: 32),
+                button.heightAnchor.constraint(equalToConstant: 32),
+            ])
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .extensionGlassPanel(cornerRadius: 18)
-        .accessibilityIdentifier("chat.extensionNotify.expanded")
+        let titles = UIStackView(arrangedSubviews: [titleLabel, countLabel])
+        titles.axis = .vertical
+        titles.alignment = .leading
+        titles.spacing = 2
+        let header = UIStackView(arrangedSubviews: [titles, collapseButton, dismissButton])
+        header.axis = .horizontal
+        header.alignment = .top
+        header.spacing = 10
+
+        entries.axis = .vertical
+        entries.alignment = .fill
+        entries.spacing = 10
+        let list = CappedScrollView(content: entries, maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight)
+        list.scrollView.accessibilityIdentifier = "chat.extensionNotify.list"
+
+        stack.addArrangedSubview(header)
+        stack.addArrangedSubview(list)
     }
 
-    @ViewBuilder
-    private func expandedEntry(
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(_ state: ExtensionNotifyChipStore.SessionState, themeID: ThemeID) {
+        guard shown?.state != state || shown?.themeID != themeID else { return }
+        shown = (state, themeID)
+        let palette = themeID.palette
+        surface.apply(palette: palette)
+        titleLabel.text = "From extension · \(state.newest.extensionDisplayName)"
+        titleLabel.textColor = UIColor(palette.fg)
+        countLabel.text = "\(state.count) notifications"
+        countLabel.textColor = UIColor(palette.comment)
+        countLabel.isHidden = state.count <= 1
+
+        var collapse = UIButton.Configuration.plain()
+        collapse.image = ExtensionChromeFont.symbol("chevron.up", .caption1, .bold, color: UIColor(palette.comment))
+        collapse.background.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.04)
+        collapse.background.cornerRadius = 16
+        collapse.contentInsets = .zero
+        collapseButton.configuration = collapse
+        var dismiss = UIButton.Configuration.plain()
+        dismiss.image = ExtensionChromeFont.symbol("xmark", .caption1, .bold, color: UIColor(palette.fgDim))
+        dismiss.contentInsets = .zero
+        dismissButton.configuration = dismiss
+
+        for view in entries.arrangedSubviews { view.removeFromSuperview() }
+        let showsNames = Set(state.entries.map(\.extensionDisplayName)).count > 1
+        for (index, entry) in state.entries.enumerated() {
+            entries.addArrangedSubview(entryView(entry, showsName: showsNames && index > 0, palette: palette))
+        }
+    }
+
+    private func entryView(
         _ entry: ExtensionNotifyChipStore.Entry,
-        showsName: Bool
-    ) -> some View {
+        showsName: Bool,
+        palette: ThemePalette
+    ) -> UIView {
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.alignment = .fill
+        stack.spacing = 4
+        if showsName {
+            let name = ExtensionChromeFont.label(.caption2)
+            name.text = "From extension · \(entry.extensionDisplayName)"
+            name.textColor = UIColor(palette.fgDim)
+            stack.addArrangedSubview(name)
+        }
         let attributed = ExtensionNotifyChip.attributedMessage(entry.message)
-        let hasLinks = ExtensionNotifyChip.containsHTTPLinks(attributed)
-        let entryBody = VStack(alignment: .leading, spacing: 4) {
-            if showsName {
-                Text("From extension · \(entry.extensionDisplayName)")
-                    .font(.caption2)
-                    .foregroundStyle(.themeFgDim)
-            }
-            Text(attributed)
-                .font(.footnote)
-                .foregroundStyle(.themeFg)
-                .fixedSize(horizontal: false, vertical: true)
-                .environment(\.openURL, OpenURLAction { url in
-                    ExtensionNotifyChip.openHTTPURL(url, onOpenURL: onOpenURL)
-                })
+        let message = ExtensionNativeLinkTextView()
+        let text = NSMutableAttributedString(attributed)
+        text.addAttributes([
+            .font: ExtensionChromeFont.text(.footnote),
+            .foregroundColor: UIColor(palette.fg),
+        ], range: NSRange(location: 0, length: text.length))
+        message.attributedText = text
+        message.linkTextAttributes = [.foregroundColor: UIColor(palette.blue)]
+        message.openURL = { [weak self] url in
+            guard ExtensionNotifyChip.isHTTPURL(url) else { return }
+            _ = self?.onOpenURL?(url)
         }
-        if hasLinks {
-            entryBody.accessibilityElement(children: .contain)
-        } else {
-            entryBody
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(
-                    "From extension · \(entry.extensionDisplayName). \(entry.message)"
-                )
+        stack.addArrangedSubview(message)
+        if !ExtensionNotifyChip.containsHTTPLinks(attributed) {
+            stack.isAccessibilityElement = true
+            stack.accessibilityLabel = "From extension · \(entry.extensionDisplayName). \(entry.message)"
         }
-    }
-
-    private var showsPerEntryName: Bool {
-        Set(state.entries.map(\.extensionDisplayName)).count > 1
-    }
-}
-
-private enum ExtensionNotifyChipChrome {
-    static func iconName(for notifyType: String?) -> String {
-        switch notifyType {
-        case "error":
-            return "exclamationmark.circle.fill"
-        case "warning":
-            return "exclamationmark.triangle.fill"
-        default:
-            return "bell"
-        }
-    }
-
-    static func iconColor(for notifyType: String?) -> ThemeShapeStyle {
-        switch notifyType {
-        case "error":
-            return .themeRed
-        case "warning":
-            return .themeOrange
-        default:
-            return .themeCyan
-        }
-    }
-
-    static func activeStroke(for notifyType: String?) -> Color {
-        switch notifyType {
-        case "error":
-            return .themeRed
-        case "warning":
-            return .themeOrange
-        default:
-            return .themeCyan
-        }
+        return stack
     }
 }

@@ -1,346 +1,485 @@
-import SwiftUI
+import UIKit
 
 enum ReviewCommentStashChrome {
     case sheet
     case drawer
 }
 
-/// The staged review comments: a sheet at the root of a router navigation
-/// controller (`.sheet` chrome, its title and close in that bar), or the
-/// chat's inline drawer.
-struct ReviewCommentStashContent: View {
-    let comments: [ReviewComment]
-    let focusedCommentId: String?
-    var onEdit: ((ReviewComment, String) -> Bool)?
-    let onDelete: (ReviewComment) -> Void
-    var onClose: (() -> Void)? = nil
-    var chrome: ReviewCommentStashChrome = .sheet
-    var initialEditingComment: ReviewComment? = nil
-    var onRequestEdit: ((ReviewComment) -> Void)? = nil
+// MARK: - List
 
-    @State private var editingComment: ReviewComment?
+/// The staged comments, oldest first, one row each: location, Edit and
+/// Remove, the selected text, and the body (which also edits). Rows sit
+/// flush in the drawer and 16pt in from the sheet's edges.
+final class ReviewCommentStashListView: UIView {
+    var onRequestEdit: ((ReviewComment) -> Void)?
+    var onDelete: ((ReviewComment) -> Void)?
 
-    init(
-        comments: [ReviewComment],
-        focusedCommentId: String?,
-        onEdit: ((ReviewComment, String) -> Bool)? = nil,
-        onDelete: @escaping (ReviewComment) -> Void,
-        onClose: (() -> Void)? = nil,
-        chrome: ReviewCommentStashChrome = .sheet,
-        initialEditingComment: ReviewComment? = nil,
-        onRequestEdit: ((ReviewComment) -> Void)? = nil
-    ) {
-        self.comments = comments
-        self.focusedCommentId = focusedCommentId
-        self.onEdit = onEdit
-        self.onDelete = onDelete
-        self.onClose = onClose
+    private let chrome: ReviewCommentStashChrome
+    private let stack = UIStackView()
+    private var shown: [ReviewComment] = []
+    private var shownTheme: ThemeID?
+
+    init(chrome: ReviewCommentStashChrome) {
         self.chrome = chrome
-        self.initialEditingComment = initialEditingComment
-        self.onRequestEdit = onRequestEdit
-        _editingComment = State(initialValue: chrome == .sheet ? initialEditingComment : nil)
+        super.init(frame: .zero)
+        stack.axis = .vertical
+        stack.alignment = .fill
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
     }
 
-    private var sortedComments: [ReviewComment] {
-        comments.sorted { left, right in
-            if left.id == focusedCommentId { return true }
-            if right.id == focusedCommentId { return false }
-            return left.createdAt < right.createdAt
-        }
-    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 
-    var body: some View {
-        let editingCommentBinding = $editingComment
-
-        Group {
-            if chrome == .sheet, let editingComment {
-                ReviewCommentEditorView(
-                    comment: editingComment,
-                    onSave: { body in
-                        guard let onEdit, onEdit(editingComment, body) else { return false }
-                        editingCommentBinding.wrappedValue = nil
-                        return true
-                    },
-                    onCancel: { editingCommentBinding.wrappedValue = nil }
-                )
-            } else if sortedComments.isEmpty {
-                ContentUnavailableView(
-                    "No Staged Review Comments",
-                    systemImage: "text.bubble",
-                    description: Text("Comments you add from selected text will appear here before you send them.")
-                )
-            } else {
-                commentsList
+    func apply(comments: [ReviewComment], themeID: ThemeID) {
+        let sorted = comments.sorted { $0.createdAt < $1.createdAt }
+        guard sorted != shown || shownTheme != themeID else { return }
+        shown = sorted
+        shownTheme = themeID
+        let palette = themeID.palette
+        for view in stack.arrangedSubviews { view.removeFromSuperview() }
+        let inset: CGFloat = chrome == .drawer ? 0 : 16
+        for (index, comment) in sorted.enumerated() {
+            let row = ReviewCommentStashRowView(comment: comment, among: comments, palette: palette)
+            row.onEdit = { [weak self] in self?.onRequestEdit?(comment) }
+            row.onDelete = { [weak self] in self?.onDelete?(comment) }
+            stack.addArrangedSubview(Self.padded(row, horizontal: inset, vertical: 4))
+            if index < sorted.count - 1 {
+                let divider = UIView()
+                divider.backgroundColor = UIColor.separator
+                divider.heightAnchor.constraint(equalToConstant: 1 / max(1, traitCollection.displayScale)).isActive = true
+                stack.addArrangedSubview(Self.padded(divider, horizontal: 0, leading: inset))
             }
         }
-        .modifier(ReviewCommentStashSheetChromeModifier(
-            chrome: chrome,
-            title: editingComment == nil
-                ? ReviewCommentStripChrome.stashTitle(count: comments.count)
-                : "Edit Comment",
-            showsEditorCancel: editingComment != nil,
-            onCancelEditor: { editingComment = nil },
-            onClose: onClose
-        ))
-        .onAppear {
-            guard chrome == .sheet else { return }
-            editingComment = initialEditingComment
-        }
     }
+
+    private static func padded(
+        _ view: UIView,
+        horizontal: CGFloat,
+        leading: CGFloat? = nil,
+        vertical: CGFloat = 0
+    ) -> UIView {
+        let box = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: box.topAnchor, constant: vertical),
+            view.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -vertical),
+            view.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: leading ?? horizontal),
+            view.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -horizontal),
+        ])
+        return box
+    }
+}
+
+private final class ReviewCommentStashRowView: UIView {
+    var onEdit: (() -> Void)?
+    var onDelete: (() -> Void)?
+
+    init(comment: ReviewComment, among comments: [ReviewComment], palette: ThemePalette) {
+        super.init(frame: .zero)
+        let icon = UIImageView(image: ExtensionChromeFont.symbol(
+            "text.bubble.fill", .caption1, .semibold, color: UIColor(palette.cyan)
+        ))
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        let location = UILabel()
+        location.font = AskUIFont.monospaced(.caption1, weight: .regular)
+        location.adjustsFontForContentSizeCategory = true
+        location.textColor = UIColor(palette.comment)
+        location.numberOfLines = 2
+        location.lineBreakMode = .byTruncatingMiddle
+        location.text = ReviewCommentStashLocation.compactText(for: comment, among: comments)
+        location.accessibilityLabel = ReviewCommentStashLocation.completeText(for: comment)
+        location.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let edit = Self.iconButton("pencil", color: UIColor(palette.blue), label: "Edit review comment")
+        edit.addAction(UIAction { [weak self] _ in self?.onEdit?() }, for: .touchUpInside)
+        let delete = Self.iconButton("trash", color: UIColor(palette.red), label: "Remove review comment")
+        delete.addAction(UIAction { [weak self] _ in self?.onDelete?() }, for: .touchUpInside)
+        let header = UIStackView(arrangedSubviews: [icon, location, edit, delete])
+        header.axis = .horizontal
+        header.alignment = .center
+        header.spacing = 8
+
+        let stack = UIStackView(arrangedSubviews: [header])
+        stack.axis = .vertical
+        stack.alignment = .fill
+        stack.spacing = 10
+        if let selectedText = comment.stashSelectedText {
+            let selected = UILabel()
+            selected.font = AskUIFont.monospaced(.caption1, weight: .regular)
+            selected.adjustsFontForContentSizeCategory = true
+            selected.textColor = UIColor(palette.fgDim)
+            selected.numberOfLines = 3
+            selected.text = selectedText
+            let well = UIView()
+            well.backgroundColor = UIColor(palette.bgHighlight).withAlphaComponent(0.55)
+            well.layer.cornerRadius = 10
+            well.layer.cornerCurve = .continuous
+            selected.translatesAutoresizingMaskIntoConstraints = false
+            well.addSubview(selected)
+            NSLayoutConstraint.activate([
+                selected.topAnchor.constraint(equalTo: well.topAnchor, constant: 8),
+                selected.bottomAnchor.constraint(equalTo: well.bottomAnchor, constant: -8),
+                selected.leadingAnchor.constraint(equalTo: well.leadingAnchor, constant: 10),
+                selected.trailingAnchor.constraint(equalTo: well.trailingAnchor, constant: -10),
+            ])
+            stack.addArrangedSubview(well)
+        }
+        let body = UIButton(type: .custom)
+        var configuration = UIButton.Configuration.plain()
+        var title = AttributedString(comment.body)
+        title.font = UIFont.preferredFont(forTextStyle: .body)
+        title.foregroundColor = UIColor(palette.fg)
+        configuration.attributedTitle = title
+        configuration.contentInsets = .zero
+        configuration.titleAlignment = .leading
+        configuration.titleLineBreakMode = .byWordWrapping
+        body.configuration = configuration
+        body.contentHorizontalAlignment = .leading
+        body.accessibilityLabel = "Edit review comment"
+        body.addAction(UIAction { [weak self] _ in self?.onEdit?() }, for: .touchUpInside)
+        stack.addArrangedSubview(body)
+
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    private static func iconButton(_ symbol: String, color: UIColor, label: String) -> UIButton {
+        let button = UIButton(type: .custom)
+        button.setImage(ExtensionChromeFont.symbol(symbol, .caption1, .semibold, color: color), for: .normal)
+        button.accessibilityLabel = label
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 44),
+            button.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        return button
+    }
+}
+
+// MARK: - Sheet
+
+/// The staged review comments in a sheet, at the root of a router navigation
+/// controller (`.inNavigation()`): the list, or one comment's editor in its
+/// place. It reads the stash live, so edits and removals show while it is up.
+final class ReviewCommentStashViewController: UIViewController, UITextViewDelegate {
+    private let stash: any ReviewCommentStashHandling
+    private let onClose: () -> Void
+    private var editingComment: ReviewComment?
+
+    private let scrollView = UIScrollView()
+    private let list = ReviewCommentStashListView(chrome: .sheet)
+    private let empty = UIContentUnavailableView(configuration: .empty())
+    private let editor = ReviewCommentStashViewController.makeEditorList()
+    private let commentText = UITextView()
+    private let errorLabel = UILabel()
+    private lazy var saveItem: UIBarButtonItem = {
+        let item = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak self] _ in self?.save() })
+        item.style = .prominent
+        item.accessibilityLabel = "Save"
+        return item
+    }()
+    private lazy var editorRowRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, IndexPath> { [weak self] cell, indexPath, _ in
+        self?.configureEditorRow(cell, at: indexPath)
+    }
+    private lazy var editorHeaderRegistration = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
+        elementKind: UICollectionView.elementKindSectionHeader
+    ) { [weak self] header, _, indexPath in self?.configureEditorHeader(header, at: indexPath) }
+    private lazy var cancelItem: UIBarButtonItem = {
+        let item = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in
+            self?.endEditing()
+        })
+        item.accessibilityLabel = "Cancel"
+        return item
+    }()
+    private lazy var closeItem: UIBarButtonItem = {
+        let item = UIBarButtonItem(systemItem: .close, primaryAction: UIAction { [weak self] _ in
+            self?.onClose()
+        })
+        item.accessibilityLabel = "Close"
+        return item
+    }()
+
+    /// `editing` opens straight on that comment's editor.
+    init(
+        stash: any ReviewCommentStashHandling,
+        editing: ReviewComment? = nil,
+        onClose: @escaping () -> Void
+    ) {
+        self.stash = stash
+        editingComment = editing
+        self.onClose = onClose
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        navigationItem.largeTitleDisplayMode = .never
+        list.onRequestEdit = { [weak self] in self?.beginEditing($0) }
+        list.onDelete = { [weak self] in self?.stash.delete($0) }
+        list.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.alwaysBounceVertical = false
+        scrollView.addSubview(list)
+        var emptyConfiguration = UIContentUnavailableConfiguration.empty()
+        emptyConfiguration.image = UIImage(systemName: "text.bubble")
+        emptyConfiguration.text = "No Staged Review Comments"
+        emptyConfiguration.secondaryText = "Comments you add from selected text will appear here before you send them."
+        empty.configuration = emptyConfiguration
+
+        // Registrations exist before the list asks for a cell.
+        _ = (editorRowRegistration, editorHeaderRegistration)
+        editor.dataSource = self
+        editor.keyboardDismissMode = .interactive
+        commentText.font = .preferredFont(forTextStyle: .body)
+        commentText.adjustsFontForContentSizeCategory = true
+        commentText.backgroundColor = .clear
+        commentText.accessibilityLabel = "Review comment text"
+        commentText.delegate = self
+        errorLabel.font = .preferredFont(forTextStyle: .caption1)
+        errorLabel.adjustsFontForContentSizeCategory = true
+        errorLabel.numberOfLines = 0
+        commentText.heightAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
+
+        for page in [scrollView, empty, editor] as [UIView] {
+            page.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(page)
+            NSLayoutConstraint.activate([
+                page.topAnchor.constraint(equalTo: view.topAnchor),
+                page.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                page.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                page.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            ])
+        }
+        NSLayoutConstraint.activate([
+            list.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            list.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -12),
+            list.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            list.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            list.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+        ])
+        if let editingComment { showEditor(for: editingComment) }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if editingComment != nil { commentText.becomeFirstResponder() }
+    }
+
+    private var themeID: ThemeID {
+        HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+    }
+
+    private var palette: ThemePalette { themeID.palette }
+
+    /// Observation re-runs this when the staged comments or the theme change.
+    override func updateProperties() {
+        super.updateProperties()
+        let themeID = themeID
+        let palette = themeID.palette
+        let comments = stash.stagedComments
+        let background = UIColor(palette.bg)
+        view.backgroundColor = background
+        scrollView.backgroundColor = background
+        empty.backgroundColor = background
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = background
+        appearance.shadowColor = .clear
+        navigationItem.standardAppearance = appearance
+        navigationItem.scrollEdgeAppearance = appearance
+        navigationItem.compactAppearance = appearance
+        list.apply(comments: comments, themeID: themeID)
+        errorLabel.textColor = UIColor(palette.red)
+        // The theme's accent, as the app root's SwiftUI tint gave the sheet.
+        view.tintColor = UIColor(palette.blue)
+        for item in [cancelItem, closeItem] { item.tintColor = UIColor(palette.blue) }
+
+        let isEditing = editingComment != nil
+        title = isEditing ? "Edit Comment" : ReviewCommentStripChrome.stashTitle(count: comments.count)
+        editor.isHidden = !isEditing
+        scrollView.isHidden = isEditing || comments.isEmpty
+        empty.isHidden = isEditing || !comments.isEmpty
+        navigationItem.leftBarButtonItem = isEditing ? cancelItem : closeItem
+        navigationItem.rightBarButtonItem = isEditing ? saveItem : nil
+        if isEditing { updateSaveEnabled() }
+    }
+
+    // MARK: Editing
 
     private func beginEditing(_ comment: ReviewComment) {
-        if chrome == .drawer {
-            onRequestEdit?(comment)
-            return
-        }
+        showEditor(for: comment)
+        commentText.becomeFirstResponder()
+    }
+
+    private func showEditor(for comment: ReviewComment) {
         editingComment = comment
+        commentText.text = comment.body
+        errorLabel.text = nil
+        editor.reloadData()
+        setNeedsUpdateProperties()
     }
 
-    @ViewBuilder
-    private var commentsStack: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(sortedComments) { comment in
-                ReviewCommentStashRow(
-                    comment: comment,
-                    comments: comments,
-                    isFocused: comment.id == focusedCommentId,
-                    onEdit: { beginEditing(comment) },
-                    onDelete: { onDelete(comment) }
-                )
-                .padding(.horizontal, chrome == .drawer ? 0 : 16)
-                .padding(.vertical, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    comment.id == focusedCommentId
-                        ? Color.themeCyan.opacity(0.12)
-                        : Color.clear
-                )
-                if comment.id != sortedComments.last?.id {
-                    Divider()
-                        .padding(.leading, chrome == .drawer ? 0 : 16)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var commentsList: some View {
-        switch chrome {
-        case .sheet:
-            ScrollView {
-                commentsStack
-                    .padding(.bottom, 12)
-            }
-            .scrollBounceBehavior(.basedOnSize)
-        case .drawer:
-            commentsStack
-        }
-    }
-}
-
-private struct ReviewCommentStashSheetChromeModifier: ViewModifier {
-    let chrome: ReviewCommentStashChrome
-    let title: String
-    let showsEditorCancel: Bool
-    let onCancelEditor: () -> Void
-    let onClose: (() -> Void)?
-
-    @Environment(\.theme) private var theme
-    @Environment(\.themeID) private var themeID
-
-    func body(content: Content) -> some View {
-        switch chrome {
-        case .drawer:
-            content
-        case .sheet:
-            content
-                .navigationTitle(title)
-                .navigationBarTitleDisplayMode(.inline)
-                .background(theme.bg.primary)
-                .toolbarBackground(theme.bg.primary, for: .navigationBar)
-                .toolbarBackground(.visible, for: .navigationBar)
-                .toolbarColorScheme(themeID.preferredColorScheme, for: .navigationBar)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        if showsEditorCancel {
-                            Button(role: .cancel, action: onCancelEditor)
-                        } else if let onClose {
-                            Button(role: .close, action: onClose)
-                        }
-                    }
-                }
-        }
-    }
-}
-
-private struct ReviewCommentStashRow: View {
-    let comment: ReviewComment
-    let comments: [ReviewComment]
-    let isFocused: Bool
-    let onEdit: () -> Void
-    let onDelete: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "text.bubble.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeCyan)
-
-                Text(ReviewCommentStashLocation.compactText(for: comment, among: comments))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.themeComment)
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityLabel(ReviewCommentStashLocation.completeText(for: comment))
-
-                if isFocused {
-                    Image(systemName: "scope")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.themeCyan)
-                }
-
-                Button(action: onEdit) {
-                    Image(systemName: "pencil")
-                        .font(.caption.weight(.semibold))
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.themeBlue)
-                .accessibilityLabel("Edit review comment")
-
-                Button(role: .destructive, action: onDelete) {
-                    Image(systemName: "trash")
-                        .font(.caption.weight(.semibold))
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.themeRed)
-                .accessibilityLabel("Remove review comment")
-            }
-
-            if let selectedText = comment.stashSelectedText {
-                Text(selectedText)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.themeFgDim)
-                    .lineLimit(3)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.themeBgHighlight.opacity(0.55), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-
-            Button(action: onEdit) {
-                Text(comment.body)
-                    .font(.body)
-                    .foregroundStyle(.themeFg)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Edit review comment")
-        }
-        .padding(.vertical, 8)
-    }
-}
-
-private struct ReviewCommentEditorView: View {
-    let comment: ReviewComment
-    let onSave: (String) -> Bool
-    let onCancel: () -> Void
-
-    @State private var bodyText: String
-    @State private var errorMessage: String?
-    @FocusState private var isEditorFocused: Bool
-
-    init(
-        comment: ReviewComment,
-        onSave: @escaping (String) -> Bool,
-        onCancel: @escaping () -> Void
-    ) {
-        self.comment = comment
-        self.onSave = onSave
-        self.onCancel = onCancel
-        _bodyText = State(initialValue: comment.body)
+    private func endEditing() {
+        view.endEditing(true)
+        editingComment = nil
+        setNeedsUpdateProperties()
     }
 
     private var trimmedBody: String {
-        bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        (commentText.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var saveDisabled: Bool {
-        trimmedBody.isEmpty || trimmedBody == comment.body
+    private func updateSaveEnabled() {
+        saveItem.isEnabled = !trimmedBody.isEmpty && trimmedBody != editingComment?.body
     }
 
-    var body: some View {
-        Form {
-            Section("Location") {
-                Text(ReviewCommentStashLocation.completeText(for: comment))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.themeComment)
-            }
-
-            if let selectedText = comment.stashSelectedText {
-                Section("Selected Text") {
-                    Text(selectedText)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.themeFgDim)
-                        .textSelection(.enabled)
-                }
-            }
-
-            Section("Comment") {
-                TextEditor(text: $bodyText)
-                    .font(.body)
-                    .frame(minHeight: 180, alignment: .topLeading)
-                    .focused($isEditorFocused)
-                    .accessibilityLabel("Review comment text")
-
-                if let errorMessage {
-                    Text(errorMessage)
-                        .font(.caption)
-                        .foregroundStyle(.themeRed)
-                }
-            }
-        }
-        // Save and Cancel live only in the navigation bar (Cancel from the
-        // stash chrome modifier). An inline copy in the form duplicated both.
-        .navigationTitle("Edit Comment")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button(role: .confirm, action: save)
-                    .disabled(saveDisabled)
-                    .accessibilityLabel("Save")
-            }
-        }
-        .onAppear {
-            isEditorFocused = true
-        }
+    func textViewDidChange(_ textView: UITextView) {
+        updateSaveEnabled()
     }
 
     private func save() {
+        guard let comment = editingComment else { return }
         guard !trimmedBody.isEmpty else {
-            errorMessage = "Review comment body is required."
+            showError("Review comment body is required.")
             return
         }
         guard trimmedBody != comment.body else {
-            onCancel()
+            endEditing()
             return
         }
-        if onSave(trimmedBody) {
-            onCancel()
+        if stash.update(comment, body: trimmedBody) == nil {
+            endEditing()
         } else {
-            errorMessage = "Could not save the review comment."
+            showError("Could not save the review comment.")
         }
+    }
+
+    private func showError(_ message: String) {
+        errorLabel.text = message
+        editor.reloadData()
     }
 }
 
-private extension ReviewComment {
-    var stashSelectedText: String? {
+// MARK: Editor list
+
+extension ReviewCommentStashViewController: UICollectionViewDataSource {
+    fileprivate enum EditorSection {
+        case location, selectedText, comment
+    }
+
+    private var editorSections: [EditorSection] {
+        guard let editingComment else { return [] }
+        return editingComment.stashSelectedText == nil ? [.location, .comment] : [.location, .selectedText, .comment]
+    }
+
+    static func makeEditorList() -> UICollectionView {
+        var configuration = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
+        configuration.headerMode = .supplementary
+        let list = UICollectionView(
+            frame: .zero,
+            collectionViewLayout: UICollectionViewCompositionalLayout.list(using: configuration)
+        )
+        list.allowsSelection = false
+        return list
+    }
+
+    func numberOfSections(in collectionView: UICollectionView) -> Int {
+        editorSections.count
+    }
+
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        editorSections[section] == .comment && errorLabel.text != nil ? 2 : 1
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        viewForSupplementaryElementOfKind kind: String,
+        at indexPath: IndexPath
+    ) -> UICollectionReusableView {
+        collectionView.dequeueConfiguredReusableSupplementary(using: editorHeaderRegistration, for: indexPath)
+    }
+
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        collectionView.dequeueConfiguredReusableCell(using: editorRowRegistration, for: indexPath, item: indexPath)
+    }
+
+    fileprivate func configureEditorHeader(_ header: UICollectionViewListCell, at indexPath: IndexPath) {
+        var content = UIListContentConfiguration.groupedHeader()
+        content.text = switch editorSections[indexPath.section] {
+        case .location: "Location"
+        case .selectedText: "Selected Text"
+        case .comment: "Comment"
+        }
+        header.contentConfiguration = content
+    }
+
+    fileprivate func configureEditorRow(_ cell: UICollectionViewListCell, at indexPath: IndexPath) {
+        // Rows embed their own views; a reused cell drops the previous row's.
+        cell.contentConfiguration = nil
+        for view in cell.contentView.subviews { view.removeFromSuperview() }
+        let palette = palette
+        guard let editing = editingComment else { return }
+        switch editorSections[indexPath.section] {
+        case .location:
+            var content = UIListContentConfiguration.cell()
+            content.text = ReviewCommentStashLocation.completeText(for: editing)
+            content.textProperties.font = AskUIFont.monospaced(.caption1, weight: .regular)
+            content.textProperties.color = UIColor(palette.comment)
+            cell.contentConfiguration = content
+        case .selectedText:
+            let text = UITextView()
+            text.isEditable = false
+            text.isScrollEnabled = false
+            text.backgroundColor = .clear
+            // The list row's text inset, as a plain text row gets.
+            text.textContainerInset = UIEdgeInsets(top: 11, left: 0, bottom: 11, right: 0)
+            text.textContainer.lineFragmentPadding = 0
+            text.font = AskUIFont.monospaced(.caption1, weight: .regular)
+            text.adjustsFontForContentSizeCategory = true
+            text.textColor = UIColor(palette.fgDim)
+            text.text = editing.stashSelectedText
+            embed(text, in: cell)
+        case .comment where indexPath.item == 0:
+            embed(commentText, in: cell)
+        case .comment:
+            embed(errorLabel, in: cell)
+        }
+    }
+
+    private func embed(_ content: UIView, in cell: UICollectionViewListCell) {
+        content.removeFromSuperview()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        cell.contentView.addSubview(content)
+        let margins = cell.contentView.layoutMarginsGuide
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: margins.topAnchor),
+            content.bottomAnchor.constraint(equalTo: margins.bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
+        ])
+    }
+}
+
+extension ReviewComment {
+    fileprivate var stashSelectedText: String? {
         guard let text = reference.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else { return nil }
         return text

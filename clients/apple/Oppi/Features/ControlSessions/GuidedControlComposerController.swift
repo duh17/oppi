@@ -22,7 +22,10 @@ final class GuidedControlComposerController: UIViewController {
     private let screenErrorLabel = UILabel()
     private let screenErrorRow = UIView()
     private var screenError: String?
-    private var reviewStrip: HostedLeaf?
+    /// The staged-comment pill and, while open, its drawer.
+    private let reviewStrip = UIStackView()
+    private let reviewPill = ReviewCommentStripPillView()
+    private let reviewDrawer = ReviewCommentStashDrawerView()
     private let stackedPanel = UIStackView()
     private let stackedWorkspacePill = ComposerToolbarPillButton()
     private let stackedModelPill = ComposerToolbarPillButton()
@@ -114,12 +117,8 @@ final class GuidedControlComposerController: UIViewController {
         buildErrorRow(errorRow, label: errorLabel)
         errorLabel.accessibilityIdentifier = "\(model.identifierPrefix).error"
         // Only a revision of reviewed text stages comments.
-        if model.configuration.stagedComments != nil {
-            let strip = GuidedControlComposerHosted.reviewCommentStrip(model, root: root)
-            addChild(strip.host)
-            stack.addArrangedSubview(strip.view)
-            strip.host.didMove(toParent: self)
-            reviewStrip = strip
+        if let comments = model.configuration.stagedComments {
+            buildReviewStrip(comments: comments)
         }
 
         composer.source = self
@@ -170,7 +169,7 @@ final class GuidedControlComposerController: UIViewController {
             screenErrorRow.isHidden = true
         }
         model.reconcileReviewCommentDrawer()
-        reviewStrip?.view.isHidden = !model.reviewCommentPresentation.showsPill
+        updateReviewStrip()
         // The workspace pill stays usable while the composer waits for one.
         composer.view.isUserInteractionEnabled = model.acceptsInput
         updateStackedPanel(colors: colors)
@@ -203,8 +202,56 @@ final class GuidedControlComposerController: UIViewController {
             presentation: .sheet.inNavigation(),
             root: root,
             clear: { [weak model] in model?.reviewCommentStashPresentation = nil },
-            screen: { GuidedControlComposerHosted.reviewCommentStash(model, presentation: stash ?? .init()) }
+            screen: {
+                .controller({ [weak model] in
+                    guard let model, let comments = model.configuration.stagedComments else {
+                        preconditionFailure("The stash sheet opens only with staged comments")
+                    }
+                    return ReviewCommentStashViewController(
+                        stash: comments,
+                        editing: stash?.initialEditingComment,
+                        onClose: { [weak model] in model?.reviewCommentStashPresentation = nil }
+                    )
+                })
+            }
         )
+    }
+
+    // MARK: - Staged comments
+
+    private func buildReviewStrip(comments: ChatReviewCommentsController) {
+        reviewStrip.axis = .vertical
+        reviewStrip.alignment = .fill
+        reviewStrip.spacing = 8
+        reviewStrip.isLayoutMarginsRelativeArrangement = true
+        reviewStrip.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16)
+        let pillRow = UIStackView(arrangedSubviews: [reviewPill, UIView()])
+        pillRow.axis = .horizontal
+        pillRow.alignment = .center
+        reviewStrip.addArrangedSubview(pillRow)
+        reviewStrip.addArrangedSubview(reviewDrawer)
+        reviewPill.onToggle = { [weak model] in model?.toggleReviewCommentDrawer() }
+        reviewPill.onOpenFullScreen = { [weak model] in model?.presentReviewCommentStash() }
+        reviewDrawer.onEdit = { [weak model] in model?.presentReviewCommentStash(editing: $0) }
+        reviewDrawer.onDelete = { [weak comments] in comments?.delete($0) }
+        stack.addArrangedSubview(reviewStrip)
+    }
+
+    private func updateReviewStrip() {
+        guard let comments = model.configuration.stagedComments else { return }
+        let presentation = model.reviewCommentPresentation
+        reviewStrip.isHidden = !presentation.showsPill
+        guard presentation.showsPill else { return }
+        let themeID = root.themeStore.activeThemeID
+        reviewPill.apply(
+            count: presentation.pendingCount,
+            isExpanded: model.reviewCommentDrawerExpanded,
+            palette: themeID.palette
+        )
+        reviewDrawer.isHidden = !model.reviewCommentDrawerExpanded
+        if model.reviewCommentDrawerExpanded {
+            reviewDrawer.apply(comments: comments.stagedComments, themeID: themeID)
+        }
     }
 
     /// The stacked thinking pill's popover, as the action row's pill shows

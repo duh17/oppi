@@ -1,4 +1,4 @@
-import SwiftUI
+import UIKit
 
 enum ReviewCommentStripChrome {
     static let pillAccessibilityIdentifier = "chat.reviewComments.pill"
@@ -85,95 +85,113 @@ enum ReviewCommentStripChrome {
     }
 }
 
-struct ReviewCommentStripPill: View {
-    let count: Int
-    var isExpanded = false
-    let onToggle: () -> Void
-    let onOpenFullScreen: () -> Void
+/// The staged-comment pill on the strip: its count over the strip-pill
+/// surface. A tap peeks the drawer, a double tap opens the stash sheet. One
+/// accessibility element, activated like the tap, with Open Full Screen as a
+/// custom action. Touches land across a 44pt band.
+final class ReviewCommentStripPillView: ExtensionStripPillControl {
+    var onToggle: (() -> Void)?
+    var onOpenFullScreen: (() -> Void)?
+    private let icon = UIImageView()
+    private let countLabel = UILabel()
 
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "text.bubble")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.themeCyan)
-                .accessibilityHidden(true)
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        row.spacing = 8
+        row.isLayoutMarginsRelativeArrangement = true
+        row.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6)
+        let base = UIFont.preferredFont(
+            forTextStyle: .subheadline,
+            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
+        )
+        countLabel.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(
+            for: .monospacedDigitSystemFont(ofSize: base.pointSize, weight: .semibold)
+        )
+        countLabel.adjustsFontForContentSizeCategory = true
+        countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        row.addArrangedSubview(icon)
+        row.addArrangedSubview(countLabel)
+        accessibilityIdentifier = ReviewCommentStripChrome.pillAccessibilityIdentifier
 
-            Text(ReviewCommentStripChrome.pillCountText(count: count))
-                .font(.subheadline.monospacedDigit().weight(.semibold))
-                .foregroundStyle(.themeFg)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-        }
-        .padding(.horizontal, 6)
-        .accessibilityHidden(true)
-        .extensionStripPillSurface(isActive: isExpanded, activeStroke: .themeCyan)
-        .overlay {
-            Color.clear
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(Rectangle())
-                .accessibilityElement()
-                .accessibilityIdentifier(ReviewCommentStripChrome.pillAccessibilityIdentifier)
-                .accessibilityAddTraits(.isButton)
-                .accessibilityLabel(ReviewCommentStripChrome.pillAccessibilityLabel(count: count))
-                .accessibilityValue(ReviewCommentStripChrome.pillAccessibilityValue(count: count))
-                .accessibilityHint(
-                    isExpanded
-                        ? "Collapses the staged review comments"
-                        : "Shows the review comments staged for the next message"
-                )
-                .accessibilityAction(named: Text("Open Full Screen"), onOpenFullScreen)
-                .gesture(
-                    TapGesture(count: 2).onEnded {
-                        handleTaps(2)
-                    }
-                    .exclusively(before: TapGesture(count: 1).onEnded {
-                        handleTaps(1)
-                    })
-                )
-        }
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap))
+        doubleTap.numberOfTapsRequired = 2
+        let singleTap = UITapGestureRecognizer(target: self, action: #selector(handleSingleTap))
+        singleTap.require(toFail: doubleTap)
+        addGestureRecognizer(doubleTap)
+        addGestureRecognizer(singleTap)
+        accessibilityCustomActions = [
+            UIAccessibilityCustomAction(name: "Open Full Screen") { [weak self] _ in
+                self?.onOpenFullScreen?()
+                return true
+            },
+        ]
     }
 
-    private func handleTaps(_ tapCount: Int) {
-        switch ReviewCommentStripChrome.pillAction(tapCount: tapCount) {
-        case .peek:
-            onToggle()
-        case .sheet:
-            onOpenFullScreen()
-        case nil:
-            break
+    func apply(count: Int, isExpanded: Bool, palette: ThemePalette) {
+        icon.image = ExtensionChromeFont.symbol("text.bubble", .subheadline, .semibold, color: UIColor(palette.cyan))
+        countLabel.text = ReviewCommentStripChrome.pillCountText(count: count)
+        countLabel.textColor = UIColor(palette.fg)
+        surface.apply(palette: palette, active: isExpanded ? UIColor(palette.cyan) : nil)
+        accessibilityLabel = ReviewCommentStripChrome.pillAccessibilityLabel(count: count)
+        accessibilityValue = ReviewCommentStripChrome.pillAccessibilityValue(count: count)
+        accessibilityHint = isExpanded
+            ? "Collapses the staged review comments"
+            : "Shows the review comments staged for the next message"
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let band = max(0, (44 - bounds.height) / 2)
+        return bounds.insetBy(dx: 0, dy: -band).contains(point)
+    }
+
+    override func accessibilityActivate() -> Bool {
+        handleTaps(1)
+        return true
+    }
+
+    @objc private func handleSingleTap() { handleTaps(1) }
+    @objc private func handleDoubleTap() { handleTaps(2) }
+
+    private func handleTaps(_ count: Int) {
+        switch ReviewCommentStripChrome.pillAction(tapCount: count) {
+        case .peek: onToggle?()
+        case .sheet: onOpenFullScreen?()
+        case nil: break
         }
     }
 }
 
-struct ReviewCommentStashDrawer: View {
-    let comments: [ReviewComment]
-    let focusedCommentId: String?
-    let onEdit: (ReviewComment) -> Void
-    let onDelete: (ReviewComment) -> Void
+/// The staged comments under the strip: their count, then the rows in a
+/// viewport capped like an extension drawer's. Edit opens the stash sheet on
+/// that comment.
+final class ReviewCommentStashDrawerView: ExtensionDrawerPanelView {
+    var onEdit: ((ReviewComment) -> Void)? {
+        get { list.onRequestEdit }
+        set { list.onRequestEdit = newValue }
+    }
+    var onDelete: ((ReviewComment) -> Void)? {
+        get { list.onDelete }
+        set { list.onDelete = newValue }
+    }
+    private let titleLabel = ExtensionChromeFont.label(.caption1, .semibold)
+    private let list = ReviewCommentStashListView(chrome: .drawer)
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(ReviewCommentStripChrome.stashTitle(count: comments.count))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.themeComment)
-                .frame(maxWidth: .infinity, alignment: .leading)
+    init() {
+        super.init(spacing: 10)
+        let viewport = CappedScrollView(content: list, maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight)
+        viewport.scrollView.accessibilityIdentifier = ReviewCommentStripChrome.drawerAccessibilityIdentifier
+        stack.addArrangedSubview(titleLabel)
+        stack.addArrangedSubview(viewport)
+    }
 
-            NativeSurfaceViewportScrollContainer(
-                maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight,
-                accessibilityIdentifier: ReviewCommentStripChrome.drawerAccessibilityIdentifier
-            ) {
-                ReviewCommentStashContent(
-                    comments: comments,
-                    focusedCommentId: focusedCommentId,
-                    onDelete: onDelete,
-                    chrome: .drawer,
-                    onRequestEdit: onEdit
-                )
-                .frame(maxWidth: .infinity, alignment: .top)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .top)
-        .extensionGlassPanel(cornerRadius: 18)
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(comments: [ReviewComment], themeID: ThemeID) {
+        let palette = themeID.palette
+        surface.apply(palette: palette)
+        titleLabel.text = ReviewCommentStripChrome.stashTitle(count: comments.count)
+        titleLabel.textColor = UIColor(palette.comment)
+        list.apply(comments: comments, themeID: themeID)
     }
 }

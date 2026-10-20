@@ -23,7 +23,7 @@ final class ChatTimelineOwnedClockState {
     var scrollCommandNonce = 0
     var lastScrollToBottomNonce: UInt = 0
     var lastConfiguration: ChatTimelineConfiguration?
-    var emptyOverlayController: UIViewController?
+    var emptyOverlay: ChatEmptyStateView?
     /// Bumped on session bind and dismantle so deferred chrome publishes cannot
     /// land on a stale reducer.
     var bindEpoch: UInt64 = 0
@@ -92,7 +92,7 @@ extension ChatTimelineController {
         ownedClock.isObserving = false
         ownedClock.didScheduleAttachRetry = false
         collectionView?.backgroundView = nil
-        ownedClock.emptyOverlayController = nil
+        ownedClock.emptyOverlay = nil
     }
 
     func applyOwnedProjection(to collectionView: UICollectionView? = nil) {

@@ -1,5 +1,3 @@
-import Foundation
-import SwiftUI
 import UIKit
 
 enum ExtensionStripPillMetrics {
@@ -12,418 +10,244 @@ enum ExtensionNativeSurfaceLayout {
     static let expandedMaxHeight: CGFloat = 260
 }
 
-extension View {
-    func extensionGlassPanel(cornerRadius: CGFloat = 18) -> some View {
-        self
-            .themedSurface(
-                .elevatedPanel,
-                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            )
-            .shadow(color: Color.black.opacity(0.18), radius: 10, x: 0, y: 2)
+// MARK: - Surfaces
+
+/// The `.elevatedPanel` themed surface behind a strip pill (capsule) or a
+/// drawer (rounded, with the panel shadow): Liquid Glass, the role's fill over
+/// it, its hairline, and an optional active stroke. Paints only; put it behind
+/// the content and pin it to the content's edges.
+final class ElevatedSurfaceView: UIView {
+    enum Shape {
+        case capsule
+        case rounded(CGFloat)
     }
 
-    func extensionStripPillSurface(isActive: Bool, activeStroke: Color) -> some View {
-        self
-            .padding(.horizontal, ExtensionStripPillMetrics.horizontalPadding)
-            .padding(.vertical, ExtensionStripPillMetrics.verticalPadding)
-            .frame(minHeight: ExtensionStripPillMetrics.visualHeight)
-            .themedSurface(.elevatedPanel, in: Capsule())
-            .overlay {
-                if isActive {
-                    Capsule()
-                        .stroke(activeStroke.opacity(0.45), lineWidth: 1)
-                }
-            }
-            .contentShape(Capsule())
-    }
-}
+    private let shape: Shape
+    private let glass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
+    private let activeStroke = CAShapeLayer()
 
-private extension View {
-    func extensionSubtleInset(cornerRadius: CGFloat = 12) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        return self
-            .background(.themeFg.opacity(0.035), in: shape)
-            .overlay {
-                shape.stroke(.themeFg.opacity(0.08), lineWidth: 0.5)
-            }
-    }
-
-    @ViewBuilder
-    func extensionFullScreenAccessibilityAction(
-        enabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        if enabled {
-            accessibilityAction(named: Text("Open Full Screen")) {
-                action()
-            }
-        } else {
-            self
-        }
-    }
-}
-
-/// The drawer's capped, scrolling body for one extension entry. Blocks paint in
-/// UIKit (`ExtensionNativeBlocksView`); double tap opens the full-screen view.
-private struct ExtensionSurfaceExpandedViewport: View {
-    let content: ExtensionNativeBlockContent
-    let accessibilityIdentifier: String
-    let onOpenFullScreen: () -> Void
-    var contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
-    var linkContext: ExtensionSurfaceLinkContext = .empty
-    var onOpenURL: ((URL) -> Bool)?
-
-    var body: some View {
-        ExtensionNativeBlocksView(
-            content: content,
-            sizing: .capped(maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight),
-            contentInsets: contentInsets,
-            accessibilityIdentifier: accessibilityIdentifier,
-            linkContext: linkContext,
-            onOpenURL: onOpenURL,
-            onDoubleTap: onOpenFullScreen
-        )
-        .accessibilityHint("Double tap to open full screen.")
-        .accessibilityAction(named: Text("Open Full Screen")) {
-            onOpenFullScreen()
-        }
-    }
-}
-
-struct NativeSurfaceViewportScrollContainer<Content: View>: UIViewRepresentable {
-    let maxHeight: CGFloat
-    let accessibilityIdentifier: String
-    let onDoubleTap: (() -> Void)?
-    let content: Content
-
-    init(
-        maxHeight: CGFloat,
-        accessibilityIdentifier: String,
-        onDoubleTap: (() -> Void)? = nil,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.maxHeight = maxHeight
-        self.accessibilityIdentifier = accessibilityIdentifier
-        self.onDoubleTap = onDoubleTap
-        self.content = content()
-    }
-
-    func makeUIView(context: Context) -> NativeSurfaceViewportContainerView<Content> {
-        NativeSurfaceViewportContainerView(
-            rootView: content,
-            appRoot: context.environment.appRootEnvironment,
-            maxHeight: maxHeight,
-            accessibilityIdentifier: accessibilityIdentifier,
-            onDoubleTap: onDoubleTap
-        )
-    }
-
-    func updateUIView(_ uiView: NativeSurfaceViewportContainerView<Content>, context: Context) {
-        uiView.update(
-            rootView: content,
-            maxHeight: maxHeight,
-            accessibilityIdentifier: accessibilityIdentifier,
-            onDoubleTap: onDoubleTap
-        )
-    }
-
-    func sizeThatFits(
-        _ proposal: ProposedViewSize,
-        uiView: NativeSurfaceViewportContainerView<Content>,
-        context: Context
-    ) -> CGSize? {
-        let measuredWidth = proposal.width ?? uiView.bounds.width
-        guard measuredWidth.isFinite, measuredWidth > 0 else { return nil }
-        return CGSize(
-            width: measuredWidth,
-            height: uiView.viewportHeight(for: measuredWidth)
-        )
-    }
-}
-
-final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGestureRecognizerDelegate {
-    private let scrollView = UIScrollView()
-    private let hostingController: HostedContentController
-    private var hostedHeightConstraint: NSLayoutConstraint?
-    private var maxHeight: CGFloat
-    private var onDoubleTap: (() -> Void)?
-    private var lastIntrinsicHeight: CGFloat = 0
-
-    private lazy var doubleTapRecognizer: UITapGestureRecognizer = {
-        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
-        recognizer.numberOfTapsRequired = 2
-        recognizer.cancelsTouchesInView = false
-        recognizer.delegate = self
-        return recognizer
-    }()
-
-    /// `appRoot` comes from the embedding representable: the hosted content is
-    /// measured before this view is in a window, so it cannot wait for traits.
-    init(
-        rootView: Content,
-        appRoot: AppRootEnvironment?,
-        maxHeight: CGFloat,
-        accessibilityIdentifier: String,
-        onDoubleTap: (() -> Void)?
-    ) {
-        hostingController = HostFactory.content(rootView, root: appRoot)
-        self.maxHeight = maxHeight
-        self.onDoubleTap = onDoubleTap
+    /// Drawers cast the panel shadow; pills do not.
+    init(shape: Shape, castsShadow: Bool = false) {
+        self.shape = shape
         super.init(frame: .zero)
-        setup(accessibilityIdentifier: accessibilityIdentifier)
+        isUserInteractionEnabled = false
+        isAccessibilityElement = false
+        glass.clipsToBounds = true
+        glass.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(glass)
+        NSLayoutConstraint.activate([
+            glass.topAnchor.constraint(equalTo: topAnchor),
+            glass.bottomAnchor.constraint(equalTo: bottomAnchor),
+            glass.leadingAnchor.constraint(equalTo: leadingAnchor),
+            glass.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+        activeStroke.fillColor = UIColor.clear.cgColor
+        activeStroke.lineWidth = 1
+        layer.addSublayer(activeStroke)
+        if castsShadow {
+            layer.shadowColor = UIColor.black.cgColor
+            layer.shadowOpacity = 0.18
+            layer.shadowRadius = 10
+            layer.shadowOffset = CGSize(width: 0, height: 2)
+        }
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        return nil
-    }
+    required init?(coder: NSCoder) { nil }
 
-    override var intrinsicContentSize: CGSize {
-        let width = bounds.width > 0 ? bounds.width : ((superview?.bounds.width).flatMap { $0 > 0 ? $0 : nil } ?? 390)
-        return CGSize(width: UIView.noIntrinsicMetric, height: viewportHeight(for: width))
+    /// `active` strokes the shape at 45% over the hairline (an expanded pill).
+    func apply(palette: ThemePalette, active: UIColor? = nil) {
+        let style = ThemeSurfaceStyle.resolve(.elevatedPanel, palette: palette)
+        glass.contentView.backgroundColor = UIColor(style.fill)
+        glass.layer.borderColor = style.stroke.map { UIColor($0).cgColor }
+        glass.layer.borderWidth = style.strokeLineWidth
+        activeStroke.strokeColor = active?.withAlphaComponent(0.45).cgColor
+        activeStroke.isHidden = active == nil
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        updateScrollBehavior()
+        let radius: CGFloat = switch shape {
+        case .capsule: bounds.height / 2
+        case .rounded(let radius): radius
+        }
+        glass.layer.cornerRadius = radius
+        glass.layer.cornerCurve = .continuous
+        let path = UIBezierPath(roundedRect: bounds, cornerRadius: radius)
+        activeStroke.path = path.cgPath
+        activeStroke.frame = bounds
+        if layer.shadowOpacity > 0 {
+            layer.shadowPath = path.cgPath
+        }
+    }
+}
+
+/// A drawer under the strip: the glass panel with the panel shadow, and its
+/// content in a column 12pt in from every edge.
+class ExtensionDrawerPanelView: UIView {
+    let surface = ElevatedSurfaceView(shape: .rounded(18), castsShadow: true)
+    let stack = UIStackView()
+
+    init(spacing: CGFloat) {
+        super.init(frame: .zero)
+        stack.axis = .vertical
+        stack.alignment = .fill
+        stack.spacing = spacing
+        for view in [surface, stack] as [UIView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            surface.topAnchor.constraint(equalTo: topAnchor),
+            surface.bottomAnchor.constraint(equalTo: bottomAnchor),
+            surface.leadingAnchor.constraint(equalTo: leadingAnchor),
+            surface.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+        ])
     }
 
-    func update(
-        rootView: Content,
-        maxHeight: CGFloat,
-        accessibilityIdentifier: String,
-        onDoubleTap: (() -> Void)?
-    ) {
-        hostingController.setContent(rootView)
-        hostingController.view.invalidateIntrinsicContentSize()
-        self.maxHeight = maxHeight
-        self.onDoubleTap = onDoubleTap
-        scrollView.accessibilityIdentifier = accessibilityIdentifier
-        syncDoubleTapRecognizer()
-        setNeedsLayout()
-        invalidateIntrinsicContentSize()
-    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+}
 
-    private func setup(accessibilityIdentifier: String) {
-        backgroundColor = .clear
-        setContentHuggingPriority(.required, for: .vertical)
-        setContentCompressionResistancePriority(.required, for: .vertical)
+/// A drawer body that hugs its content up to `maxHeight` and scrolls past it.
+/// The height is all constraints, so a drawer measures in one pass.
+final class CappedScrollView: UIView {
+    let scrollView = UIScrollView()
 
+    init(content: UIView, maxHeight: CGFloat) {
+        super.init(frame: .zero)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.backgroundColor = .clear
         scrollView.alwaysBounceVertical = false
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.showsVerticalScrollIndicator = true
-        scrollView.accessibilityIdentifier = accessibilityIdentifier
         addSubview(scrollView)
-        syncDoubleTapRecognizer()
-
-        let hostedView = hostingController.view
-        hostedView?.translatesAutoresizingMaskIntoConstraints = false
-        hostedView?.backgroundColor = .clear
-        hostedView?.setContentHuggingPriority(.required, for: .vertical)
-        hostedView?.setContentCompressionResistancePriority(.required, for: .vertical)
-        if let hostedView {
-            let heightConstraint = hostedView.heightAnchor.constraint(equalToConstant: 1)
-            hostedHeightConstraint = heightConstraint
-            scrollView.addSubview(hostedView)
-            NSLayoutConstraint.activate([
-                hostedView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-                hostedView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-                hostedView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-                hostedView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-                hostedView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-                heightConstraint,
-            ])
-        }
-
+        content.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(content)
+        // Below the content's own compression resistance: the viewport hugs
+        // the content, never squeezes it.
+        let hug = scrollView.frameLayoutGuide.heightAnchor.constraint(equalTo: content.heightAnchor)
+        hug.priority = .defaultLow - 1
         NSLayoutConstraint.activate([
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            content.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            content.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            content.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+            scrollView.frameLayoutGuide.heightAnchor.constraint(lessThanOrEqualToConstant: maxHeight),
+            hug,
         ])
     }
 
-    private func updateScrollBehavior() {
-        guard bounds.width > 0 else { return }
-        let contentHeight = measuredContentHeight(for: bounds.width)
-        hostedHeightConstraint?.constant = max(1, contentHeight)
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 
-        let targetHeight = viewportHeight(for: bounds.width)
-        let canScrollVertically = contentHeight > maxHeight + 0.5
-        scrollView.isScrollEnabled = canScrollVertically
-        scrollView.alwaysBounceVertical = canScrollVertically
-        clampContentOffset(contentHeight: contentHeight, canScrollVertically: canScrollVertically)
-
-        if abs(targetHeight - lastIntrinsicHeight) > 0.5 {
-            lastIntrinsicHeight = targetHeight
-            invalidateIntrinsicContentSize()
-        }
-    }
-
-    func viewportHeight(for width: CGFloat) -> CGFloat {
-        let contentHeight = measuredContentHeight(for: width)
-        return min(max(1, maxHeight), max(1, contentHeight))
-    }
-
-    private func measuredContentHeight(for width: CGFloat) -> CGFloat {
-        let measuredHeight = hostingController.sizeThatFits(
-            in: CGSize(width: max(1, width), height: CGFloat.greatestFiniteMagnitude)
-        ).height
-        return measuredHeight.isFinite ? measuredHeight : maxHeight
-    }
-
-    private func clampContentOffset(contentHeight: CGFloat, canScrollVertically: Bool) {
-        let currentOffset = scrollView.contentOffset
-        let maxOffsetY = canScrollVertically ? max(0, contentHeight - scrollView.bounds.height) : 0
-        let clampedY = min(max(currentOffset.y, 0), maxOffsetY)
-        guard abs(currentOffset.y - clampedY) > 0.5 || abs(currentOffset.x) > 0.5 else { return }
-        scrollView.setContentOffset(CGPoint(x: 0, y: clampedY), animated: false)
-    }
-
-    private func syncDoubleTapRecognizer() {
-        let isInstalled = doubleTapRecognizer.view === scrollView
-        if onDoubleTap != nil {
-            if !isInstalled {
-                scrollView.addGestureRecognizer(doubleTapRecognizer)
-            }
-        } else if isInstalled {
-            scrollView.removeGestureRecognizer(doubleTapRecognizer)
-        }
-    }
-
-    @objc private func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
-        guard recognizer.state == .ended else { return }
-        onDoubleTap?()
-    }
-
-    func gestureRecognizer(
-        _ gestureRecognizer: UIGestureRecognizer,
-        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-    ) -> Bool {
-        true
-    }
-}
-
-struct ExtensionNativeSurfaceDetailSheet: View {
-    @Environment(\.dismiss) private var dismiss
-
-    let surface: ExtensionUINativeSurface
-    let identifierSuffix: String
-    let title: String
-    let subtitle: String?
-    let statusText: String?
-    var linkContext: ExtensionSurfaceLinkContext = .empty
-    var onOpenURL: ((URL) -> Bool)?
-    /// Reads the session's current snapshot for this surface id. Observation
-    /// re-renders the reader on each widget update, which the server already
-    /// throttles and size-limits; no extra data is fetched. When the surface is
-    /// cleared, the reader keeps the last snapshot it showed.
-    var liveSurface: (@MainActor () -> ExtensionUINativeSurface?)? = nil
-    var usesNavigationBackChrome = false
-
-    @State private var lastLiveSurface: ExtensionUINativeSurface?
-
-    private var displayedSurface: ExtensionUINativeSurface {
-        liveSurface?() ?? lastLiveSurface ?? surface
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 12) {
-                if usesNavigationBackChrome {
-                    Button(action: { dismiss() }, label: {
-                        Image(systemName: "chevron.backward")
-                            .font(.body.weight(.semibold))
-                    })
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(String(localized: "Back"))
-                    .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail-back")
-                } else {
-                    Button("Done") {
-                        dismiss()
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail-done")
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if let subtitle = subtitle?.trimmedNonEmpty, subtitle != title {
-                        Text(subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                            .lineLimit(2)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 18)
-            .padding(.bottom, 12)
-
-            Divider()
-
-            ExtensionNativeBlocksView(
-                content: ExtensionNativeBlockContent(surface: displayedSurface),
-                sizing: .fill,
-                contentInsets: NSDirectionalEdgeInsets(top: 18, leading: 18, bottom: 18, trailing: 18),
-                spacing: 12,
-                linkContext: linkContext,
-                onOpenURL: onOpenURL
-            )
-        }
-        .themedScrollSurface()
-        .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail")
-        .onChange(of: liveSurface?()) { _, current in
-            if let current { lastLiveSurface = current }
-        }
-        .horizontalBackSwipeGesture(isEnabled: usesNavigationBackChrome) {
-            dismiss()
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let canScroll = scrollView.contentSize.height > scrollView.bounds.height + 0.5
+        scrollView.isScrollEnabled = canScroll
+        scrollView.alwaysBounceVertical = canScroll
+        let maxOffset = max(0, scrollView.contentSize.height - scrollView.bounds.height)
+        if scrollView.contentOffset.y > maxOffset + 0.5 {
+            scrollView.contentOffset.y = maxOffset
         }
     }
 }
 
-private extension Optional where Wrapped == String {
-    var trimmedNonEmpty: String? {
-        guard let trimmed = self?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
-            return nil
-        }
-        return trimmed
+/// Fonts and symbols for the strip and drawers, scaled for Dynamic Type.
+enum ExtensionChromeFont {
+    static func text(_ style: UIFont.TextStyle, _ weight: UIFont.Weight = .regular) -> UIFont {
+        AskUIFont.preferred(style, weight: weight)
+    }
+
+    static func symbol(
+        _ name: String,
+        _ style: UIFont.TextStyle,
+        _ weight: UIFont.Weight,
+        color: UIColor
+    ) -> UIImage? {
+        UIImage(
+            systemName: name,
+            withConfiguration: UIImage.SymbolConfiguration(font: text(style, weight))
+        )?.withTintColor(color, renderingMode: .alwaysOriginal)
+    }
+
+    static func label(
+        _ style: UIFont.TextStyle,
+        _ weight: UIFont.Weight = .regular,
+        lines: Int = 1
+    ) -> UILabel {
+        let label = UILabel()
+        label.font = text(style, weight)
+        label.adjustsFontForContentSizeCategory = true
+        label.numberOfLines = lines
+        return label
     }
 }
 
-private struct ExtensionSurfaceHeaderText {
-    let title: String
-    let subtitle: String?
-    let didPromoteStatus: Bool
+/// A capsule strip pill: content in a row over the pill surface, at least
+/// `ExtensionStripPillMetrics.visualHeight` tall.
+class ExtensionStripPillControl: UIControl {
+    let row = UIStackView()
+    let surface = ElevatedSurfaceView(shape: .capsule)
 
-    init(title rawTitle: String, statusText rawStatusText: String?) {
-        let title = rawTitle.trimmedNonEmpty ?? "Extension"
-        guard let statusText = rawStatusText.trimmedNonEmpty else {
-            self.title = title
-            self.subtitle = nil
-            self.didPromoteStatus = false
-            return
-        }
-
-        if statusText.hasExtensionSurfaceWordPrefix(title) {
-            self.title = statusText
-            self.subtitle = nil
-            self.didPromoteStatus = true
-        } else {
-            self.title = title
-            self.subtitle = statusText
-            self.didPromoteStatus = false
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        surface.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(surface)
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 7
+        row.isUserInteractionEnabled = false
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        let metrics = ExtensionStripPillMetrics.self
+        NSLayoutConstraint.activate([
+            surface.topAnchor.constraint(equalTo: topAnchor),
+            surface.bottomAnchor.constraint(equalTo: bottomAnchor),
+            surface.leadingAnchor.constraint(equalTo: leadingAnchor),
+            surface.trailingAnchor.constraint(equalTo: trailingAnchor),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: metrics.horizontalPadding),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -metrics.horizontalPadding),
+            row.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: metrics.verticalPadding),
+            row.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: metrics.visualHeight),
+        ])
+        let fit = row.topAnchor.constraint(equalTo: topAnchor, constant: metrics.verticalPadding)
+        fit.priority = .defaultHigh
+        fit.isActive = true
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        addAction(UIAction { [weak self] _ in self?.dimForPress() }, for: .touchDown)
+        for event: UIControl.Event in [.touchUpInside, .touchUpOutside, .touchCancel] {
+            addAction(UIAction { [weak self] _ in self?.alpha = 1 }, for: event)
         }
     }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    private func dimForPress() {
+        alpha = 0.7
+    }
+
+    override func accessibilityActivate() -> Bool {
+        sendActions(for: .touchUpInside)
+        return true
+    }
 }
+
+// MARK: - Strip entries
 
 private extension String {
     var trimmedNonEmpty: String? {
@@ -445,15 +269,10 @@ private extension String {
         }
         return Array(words.prefix(prefixWords.count)) == prefixWords
     }
-}
 
-private extension String {
     var extensionAccessibilityIdentifierComponent: String {
         let raw = lowercased().map { character -> Character in
-            if character.isLetter || character.isNumber {
-                return character
-            }
-            return "-"
+            character.isLetter || character.isNumber ? character : "-"
         }
         let collapsed = String(raw)
             .split(separator: "-")
@@ -463,7 +282,32 @@ private extension String {
     }
 }
 
-private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
+private extension Optional where Wrapped == String {
+    var trimmedNonEmpty: String? { self?.trimmedNonEmpty }
+}
+
+private struct ExtensionSurfaceHeaderText {
+    let title: String
+    let subtitle: String?
+
+    init(title rawTitle: String, statusText rawStatusText: String?) {
+        let title = rawTitle.trimmedNonEmpty ?? "Extension"
+        guard let statusText = rawStatusText.trimmedNonEmpty else {
+            self.title = title
+            self.subtitle = nil
+            return
+        }
+        if statusText.hasExtensionSurfaceWordPrefix(title) {
+            self.title = statusText
+            self.subtitle = nil
+        } else {
+            self.title = title
+            self.subtitle = statusText
+        }
+    }
+}
+
+private enum ExtensionSurfaceStripEntry: Equatable {
     case title(String)
     case status(id: String, key: String, text: String)
     case native(ExtensionNativeSurfaceState, statusText: String?)
@@ -472,11 +316,11 @@ private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
 
     var id: String {
         switch self {
-        case .title: return "title"
-        case .status(let id, _, _): return "status:\(id)"
-        case .native(let nativeSurface, _): return "native:\(nativeSurface.key)"
-        case .widget(let widget, _, _): return "widget:\(widget.key)"
-        case .messageQueue: return "message-queue"
+        case .title: "title"
+        case .status(let id, _, _): "status:\(id)"
+        case .native(let nativeSurface, _): "native:\(nativeSurface.key)"
+        case .widget(let widget, _, _): "widget:\(widget.key)"
+        case .messageQueue: "message-queue"
         }
     }
 
@@ -525,58 +369,50 @@ private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
     }
 
     var mediaSubtitle: String? {
-        switch self {
-        case .messageQueue(_, _, let photoCount, let fileCount):
-            return MessageQueueAttachmentPresentation.mediaHint(
-                photoCount: photoCount,
-                fileCount: fileCount
-            )
-        case .title, .status, .native, .widget:
-            return nil
-        }
+        guard case .messageQueue(_, _, let photoCount, let fileCount) = self else { return nil }
+        return MessageQueueAttachmentPresentation.mediaHint(photoCount: photoCount, fileCount: fileCount)
     }
 
     var kindLabel: String {
         switch self {
-        case .title: return "title"
-        case .status: return "status"
-        case .native: return "surface"
-        case .widget: return "widget"
-        case .messageQueue: return "queue"
+        case .title: "title"
+        case .status: "status"
+        case .native: "surface"
+        case .widget: "widget"
+        case .messageQueue: "queue"
         }
     }
 
     var identifierSuffix: String {
         switch self {
-        case .title(let title): return "title-\(title.extensionAccessibilityIdentifierComponent)"
-        case .status(_, let key, _): return "status-\(key.extensionAccessibilityIdentifierComponent)"
-        case .native(let nativeSurface, _): return nativeSurface.surface.id.extensionAccessibilityIdentifierComponent
-        case .widget(let widget, _, _): return widget.key.extensionAccessibilityIdentifierComponent
-        case .messageQueue: return "message-queue"
+        case .title(let title): "title-\(title.extensionAccessibilityIdentifierComponent)"
+        case .status(_, let key, _): "status-\(key.extensionAccessibilityIdentifierComponent)"
+        case .native(let nativeSurface, _): nativeSurface.surface.id.extensionAccessibilityIdentifierComponent
+        case .widget(let widget, _, _): widget.key.extensionAccessibilityIdentifierComponent
+        case .messageQueue: "message-queue"
         }
     }
 
     var stateTone: ExtensionSurfaceStripTone {
         switch self {
-        case .native(let nativeSurface, _):
-            return Self.nativeTone(nativeSurface.surface)
-        case .widget:
-            return .accent
+        case .native(let nativeSurface, _): Self.nativeTone(nativeSurface.surface)
+        case .widget, .status: .accent
         case .messageQueue(let steeringCount, let followUpCount, _, _):
-            return steeringCount + followUpCount > 0 ? .success : .neutral
-        case .status:
-            return .accent
-        case .title:
-            return .neutral
+            steeringCount + followUpCount > 0 ? .success : .neutral
+        case .title: .neutral
         }
     }
 
     var leadingSystemImage: String? {
+        if case .messageQueue = self { return "text.append" }
+        return nil
+    }
+
+    /// Native surfaces and terminal widgets open full screen.
+    var supportsFullScreen: Bool {
         switch self {
-        case .messageQueue:
-            return "text.append"
-        case .title, .status, .native, .widget:
-            return nil
+        case .native, .widget: true
+        case .title, .status, .messageQueue: false
         }
     }
 
@@ -630,355 +466,516 @@ private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
         ]
         return priority.first { tones.contains($0.0) }?.1 ?? .accent
     }
-
 }
 
 private enum ExtensionSurfaceStripTone {
-    case neutral
-    case accent
-    case running
-    case queued
-    case success
-    case warning
-    case danger
+    case neutral, accent, running, queued, success, warning, danger
 
-    var color: Color {
+    func color(_ palette: ThemePalette) -> UIColor {
+        let color = switch self {
+        case .neutral: palette.comment
+        case .accent: palette.cyan
+        case .running: palette.blue
+        case .queued: palette.purple
+        case .success: palette.green
+        case .warning: palette.orange
+        case .danger: palette.red
+        }
+        return UIColor(color)
+    }
+}
+
+private extension ExtensionSurfacePlacementGroup {
+    var accessibilityIdentifierComponent: String {
         switch self {
-        case .neutral: return .themeComment
-        case .accent: return .themeCyan
-        case .running: return .themeBlue
-        case .queued: return .themePurple
-        case .success: return .themeGreen
-        case .warning: return .themeOrange
-        case .danger: return .themeRed
+        case .aboveEditor: "aboveEditor"
+        case .belowEditor: "belowEditor"
         }
     }
 }
 
-private struct ExtensionSurfaceStripPill: View {
-    let entry: ExtensionSurfaceStripEntry
-    let isActive: Bool
-    let placement: ExtensionSurfacePlacementGroup
-    let onTap: () -> Void
+// MARK: - Strip pill
 
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 7) {
-                if let leadingSystemImage = entry.leadingSystemImage {
-                    Image(systemName: leadingSystemImage)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(entry.stateTone.color)
-                        .accessibilityHidden(true)
-                } else {
-                    Circle()
-                        .fill(entry.stateTone.color)
-                        .frame(width: 8, height: 8)
-                        .accessibilityHidden(true)
-                }
+/// One extension entry's pill: a tone dot (or the queue's icon), title,
+/// subtitle, media hint, and a disclosure chevron.
+private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
+    private let marker = UIImageView()
+    private let dot = UIView()
+    private let titleLabel = ExtensionChromeFont.label(.caption1, .semibold)
+    private let subtitleLabel = ExtensionChromeFont.label(.caption2, .semibold)
+    private let mediaLabel = ExtensionChromeFont.label(.caption2, .semibold)
+    private let chevron = UIImageView()
+    var onTap: (() -> Void)?
 
-                Text(entry.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: 180, alignment: .leading)
-
-                if let subtitle = entry.subtitle?.trimmedNonEmpty {
-                    Text(subtitle)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.themeComment)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: 150, alignment: .leading)
-                }
-
-                if let mediaSubtitle = entry.mediaSubtitle?.trimmedNonEmpty {
-                    Text(mediaSubtitle)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .accessibilityIdentifier("chat.messageQueue.widget.media")
-                }
-
-                Image(systemName: isActive ? "chevron.down" : "chevron.right")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.themeComment)
-                    .accessibilityHidden(true)
-            }
-            .extensionStripPillSurface(isActive: isActive, activeStroke: entry.stateTone.color)
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        dot.layer.cornerRadius = 4
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.lineBreakMode = .byTruncatingTail
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+        mediaLabel.accessibilityIdentifier = "chat.messageQueue.widget.media"
+        for view in [marker, dot, titleLabel, subtitleLabel, mediaLabel, chevron] {
+            row.addArrangedSubview(view)
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-pill-\(entry.identifierSuffix)")
-        .accessibilityLabel("\(isActive ? "Collapse" : "Expand") \(entry.title) \(entry.kindLabel)")
-        .accessibilityValue(accessibilityValueText)
+        NSLayoutConstraint.activate([
+            dot.widthAnchor.constraint(equalToConstant: 8),
+            dot.heightAnchor.constraint(equalToConstant: 8),
+            titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 180),
+            subtitleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 150),
+        ])
+        addAction(UIAction { [weak self] _ in self?.onTap?() }, for: .touchUpInside)
     }
 
-    private var accessibilityValueText: String {
-        let parts = [entry.subtitle, entry.mediaSubtitle]
-            .compactMap { $0?.trimmedNonEmpty }
-        if !parts.isEmpty {
-            return parts.joined(separator: " • ")
+    func apply(
+        _ entry: ExtensionSurfaceStripEntry,
+        isActive: Bool,
+        placement: ExtensionSurfacePlacementGroup,
+        palette: ThemePalette
+    ) {
+        let tone = entry.stateTone.color(palette)
+        if let image = entry.leadingSystemImage {
+            marker.image = ExtensionChromeFont.symbol(image, .caption1, .bold, color: tone)
+            marker.isHidden = false
+            dot.isHidden = true
+        } else {
+            dot.backgroundColor = tone
+            dot.isHidden = false
+            marker.isHidden = true
         }
-        return isActive ? "Expanded" : "Collapsed"
+        titleLabel.text = entry.title
+        titleLabel.textColor = UIColor(palette.fg)
+        let subtitle = entry.subtitle?.trimmedNonEmpty
+        subtitleLabel.text = subtitle
+        subtitleLabel.textColor = UIColor(palette.comment)
+        subtitleLabel.isHidden = subtitle == nil
+        let media = entry.mediaSubtitle?.trimmedNonEmpty
+        mediaLabel.text = media
+        mediaLabel.textColor = UIColor(palette.fg)
+        mediaLabel.isHidden = media == nil
+        chevron.image = ExtensionChromeFont.symbol(
+            isActive ? "chevron.down" : "chevron.right", .caption2, .bold, color: UIColor(palette.comment)
+        )
+        surface.apply(palette: palette, active: isActive ? tone : nil)
+
+        accessibilityIdentifier = "extension-strip-\(placement.accessibilityIdentifierComponent)-pill-\(entry.identifierSuffix)"
+        accessibilityLabel = "\(isActive ? "Collapse" : "Expand") \(entry.title) \(entry.kindLabel)"
+        let parts = [subtitle, media].compactMap(\.self)
+        accessibilityValue = parts.isEmpty ? (isActive ? "Expanded" : "Collapsed") : parts.joined(separator: " • ")
     }
 }
 
-private struct ExtensionSurfaceDrawer: View {
-    let entry: ExtensionSurfaceStripEntry
-    let placement: ExtensionSurfacePlacementGroup
-    var messageQueue: MessageQueueSurfaceConfiguration?
+// MARK: - Drawer
+
+/// What a drawer opens and reads outside itself.
+@MainActor
+struct ExtensionSurfaceDrawerActions {
     var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)?
-    let onCollapse: () -> Void
+    /// Opens the chat's reader (a native surface or a terminal widget full screen).
+    var openReader: (ChatReaderPayload) -> Void = { _ in }
+    /// The session's current snapshot of a native surface, by protocol id, so
+    /// the reader follows updates the drawer would show.
+    var liveSurface: ((String) -> ExtensionUINativeSurface?)?
+}
 
-    @Environment(\.openChatReader) private var openChatReader
-    @Environment(ServerConnection.self) private var connection: ServerConnection?
-    @State private var nativeDetailPresented = false
-    @State private var terminalDetailPresented = false
+/// The expanded body of one strip entry, under the strip: a header with the
+/// entry's title and a collapse button, then the entry's content.
+private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
+    let entryID: String
+    /// The entry as last applied; same id, newer values.
+    private var entry: ExtensionSurfaceStripEntry
+    private let placement: ExtensionSurfacePlacementGroup
+    var actions: ExtensionSurfaceDrawerActions
+    private let titleLabel = ExtensionChromeFont.label(.subheadline, .semibold)
+    private let subtitleLabel = ExtensionChromeFont.label(.caption1, lines: 0)
+    private let mediaLabel = ExtensionChromeFont.label(.caption1, .semibold)
+    private let collapseButton = UIButton(type: .custom)
+    private var nativeViewport: ExtensionNativeBlockScrollView?
+    /// The rounded well around a status or native body.
+    private var inset: UIView?
+    private var bodyLabel: UILabel?
+    private var statusKeyLabel: UILabel?
+    private var messageQueue: MessageQueueView?
+    private var adoptedWidth: CGFloat = 0
+    var onCollapse: (() -> Void)?
 
-    private var identifierSuffix: String {
-        entry.identifierSuffix
-    }
+    init(
+        entry: ExtensionSurfaceStripEntry,
+        placement: ExtensionSurfacePlacementGroup,
+        actions: ExtensionSurfaceDrawerActions
+    ) {
+        self.entryID = entry.id
+        self.entry = entry
+        self.placement = placement
+        self.actions = actions
+        super.init(spacing: 10)
+        let placementID = placement.accessibilityIdentifierComponent
+        accessibilityIdentifier = "extension-strip-\(placementID)-drawer-\(entry.identifierSuffix)"
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
-                    if let subtitle = entry.subtitle?.trimmedNonEmpty {
-                        Text(subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                    }
-                    if let mediaSubtitle = entry.mediaSubtitle?.trimmedNonEmpty {
-                        Text(mediaSubtitle)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.themeFg)
-                            .lineLimit(1)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+        let titles = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel, mediaLabel])
+        titles.axis = .vertical
+        titles.alignment = .leading
+        titles.spacing = 2
+        collapseButton.layer.cornerRadius = 16
+        collapseButton.accessibilityIdentifier = "extension-strip-\(placementID)-drawer-collapse"
+        collapseButton.accessibilityLabel = "Collapse \(entry.title) \(entry.kindLabel)"
+        collapseButton.addAction(UIAction { [weak self] _ in self?.onCollapse?() }, for: .touchUpInside)
+        let header = UIStackView(arrangedSubviews: [titles, collapseButton])
+        header.axis = .horizontal
+        header.alignment = .top
+        header.spacing = 10
 
-                Button(action: onCollapse) {
-                    Image(systemName: "chevron.up")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.themeComment)
-                        .frame(width: 32, height: 32)
-                        .background(.themeFg.opacity(0.04), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-drawer-collapse")
-                .accessibilityLabel("Collapse \(entry.title) \(entry.kindLabel)")
-            }
-
-            drawerContent
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 12)
-        .extensionGlassPanel(cornerRadius: 18)
-        .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-drawer-\(identifierSuffix)")
-        // Covers the chat without taking it out of the window (`.overFullScreen`),
-        // so the chat keeps its appearance state. The detail is the presented
-        // screen itself, so its own dismiss() closes it.
-        .routerModal(isPresented: $nativeDetailPresented, presentation: ModalPresentation(style: .overFullScreen)) {
-            if case .native(let nativeSurface, let statusText) = entry {
-                ExtensionNativeSurfaceDetailSheet(
-                    surface: nativeSurface.surface,
-                    identifierSuffix: identifierSuffix,
-                    title: entry.title,
-                    subtitle: entry.subtitle,
-                    statusText: statusText,
-                    linkContext: linkContext,
-                    onOpenURL: onOpenURL
-                )
-            }
-        }
-        .fullScreenViewer(
-            isPresented: $terminalDetailPresented,
-            content: terminalFullScreenContent,
-            sourceLabel: entry.title
-        )
-        .extensionFullScreenAccessibilityAction(enabled: supportsFullScreen) {
-            openFullScreen()
+        stack.addArrangedSubview(header)
+        NSLayoutConstraint.activate([
+            collapseButton.widthAnchor.constraint(equalToConstant: 32),
+            collapseButton.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        collapseButton.setContentHuggingPriority(.required, for: .horizontal)
+        buildContent()
+        if entry.supportsFullScreen {
+            accessibilityCustomActions = [
+                UIAccessibilityCustomAction(name: "Open Full Screen") { [weak self] _ in
+                    self?.openFullScreen()
+                    return true
+                },
+            ]
         }
     }
 
-    @ViewBuilder
-    private var drawerContent: some View {
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    private func buildContent() {
         switch entry {
-        case .title(let title):
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.themeFg)
-                .fixedSize(horizontal: false, vertical: true)
-        case .status(_, let key, let text):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(key)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.themeComment)
-                Text(text)
-                    .font(.caption)
-                    .foregroundStyle(.themeFg)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(10)
-            .extensionSubtleInset(cornerRadius: 12)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(key), \(text)")
-        case .native(let nativeSurface, _):
-            ExtensionSurfaceExpandedViewport(
-                content: ExtensionNativeBlockContent(surface: nativeSurface.surface),
-                accessibilityIdentifier: "extension-native-surface-\(identifierSuffix)-viewport",
-                onOpenFullScreen: { openNativeDetail() },
-                linkContext: linkContext,
-                onOpenURL: onOpenURL
-            )
-            .extensionSubtleInset(cornerRadius: 12)
-        case .widget(let widget, _, _):
+        case .title:
+            let label = ExtensionChromeFont.label(.caption1, lines: 0)
+            stack.addArrangedSubview(label)
+            bodyLabel = label
+        case .status:
+            let keyLabel = ExtensionChromeFont.label(.caption2, .semibold)
+            keyLabel.setContentHuggingPriority(.required, for: .horizontal)
+            keyLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+            let textLabel = ExtensionChromeFont.label(.caption1, lines: 0)
+            let row = UIStackView(arrangedSubviews: [keyLabel, textLabel])
+            row.axis = .horizontal
+            row.alignment = .firstBaseline
+            row.spacing = 8
+            let box = Self.subtleInset(row, padding: 10)
+            box.isAccessibilityElement = true
+            stack.addArrangedSubview(box)
+            inset = box
+            statusKeyLabel = keyLabel
+            bodyLabel = textLabel
+        case .native:
+            let viewport = ExtensionNativeBlockScrollView()
+            viewport.accessibilityHint = "Double tap to open full screen."
+            nativeViewport = viewport
+            let box = Self.subtleInset(viewport, padding: 0)
+            stack.addArrangedSubview(box)
+            inset = box
+        case .widget:
             // The terminal block draws its own inset; no outer padding.
-            ExtensionSurfaceExpandedViewport(
+            let viewport = ExtensionNativeBlockScrollView()
+            viewport.accessibilityHint = "Double tap to open full screen."
+            nativeViewport = viewport
+            stack.addArrangedSubview(viewport)
+        case .messageQueue:
+            let queue = MessageQueueView(presentation: .drawer)
+            messageQueue = queue
+            stack.addArrangedSubview(queue)
+        }
+    }
+
+    private static func subtleInset(_ content: UIView, padding: CGFloat) -> UIView {
+        let box = UIView()
+        box.layer.cornerRadius = 12
+        box.layer.cornerCurve = .continuous
+        box.layer.borderWidth = 0.5
+        box.clipsToBounds = true
+        content.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: box.topAnchor, constant: padding),
+            content.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -padding),
+            content.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: padding),
+            content.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -padding),
+        ])
+        return box
+    }
+
+    func apply(
+        _ entry: ExtensionSurfaceStripEntry,
+        themeID: ThemeID,
+        messageQueue configuration: MessageQueueSurfaceConfiguration?
+    ) {
+        self.entry = entry
+        let palette = themeID.palette
+        surface.apply(palette: palette)
+        titleLabel.text = entry.title
+        titleLabel.textColor = UIColor(palette.fg)
+        let subtitle = entry.subtitle?.trimmedNonEmpty
+        subtitleLabel.text = subtitle
+        subtitleLabel.textColor = UIColor(palette.comment)
+        subtitleLabel.isHidden = subtitle == nil
+        let media = entry.mediaSubtitle?.trimmedNonEmpty
+        mediaLabel.text = media
+        mediaLabel.textColor = UIColor(palette.fg)
+        mediaLabel.isHidden = media == nil
+        var buttonConfiguration = UIButton.Configuration.plain()
+        buttonConfiguration.image = ExtensionChromeFont.symbol("chevron.up", .caption1, .bold, color: UIColor(palette.comment))
+        buttonConfiguration.background.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.04)
+        buttonConfiguration.background.cornerRadius = 16
+        buttonConfiguration.contentInsets = .zero
+        collapseButton.configuration = buttonConfiguration
+        inset?.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.035)
+        inset?.layer.borderColor = UIColor(palette.fg).withAlphaComponent(0.08).cgColor
+        bodyLabel?.textColor = UIColor(palette.fg)
+        statusKeyLabel?.textColor = UIColor(palette.comment)
+        let placementID = placement.accessibilityIdentifierComponent
+        let context = ExtensionNativeBlockContext(
+            themeID: themeID,
+            linkContext: actions.linkContext,
+            onOpenURL: actions.onOpenURL
+        )
+        switch entry {
+        case .native(let nativeSurface, _):
+            nativeViewport?.update(
+                content: ExtensionNativeBlockContent(surface: nativeSurface.surface),
+                context: context,
+                sizing: .capped(maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight),
+                contentInsets: NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10),
+                spacing: 10,
+                accessibilityIdentifier: "extension-native-surface-\(entry.identifierSuffix)-viewport",
+                onDoubleTap: { [weak self] in self?.openFullScreen() }
+            )
+        case .widget(let widget, _, _):
+            nativeViewport?.update(
                 content: .terminalLines(widget.lines),
-                accessibilityIdentifier: "extension-strip-\(placement.accessibilityIdentifierComponent)-terminal-\(identifierSuffix)",
-                onOpenFullScreen: { openTerminalDetail() },
+                context: context,
+                sizing: .capped(maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight),
                 contentInsets: NSDirectionalEdgeInsets(),
-                linkContext: linkContext,
-                onOpenURL: onOpenURL
+                spacing: 10,
+                accessibilityIdentifier: "extension-strip-\(placementID)-terminal-\(entry.identifierSuffix)",
+                onDoubleTap: { [weak self] in self?.openFullScreen() }
             )
         case .messageQueue:
-            if let messageQueue {
-                MessageQueueContainer(configuration: messageQueue, presentation: .drawer)
+            if let configuration {
+                messageQueue?.apply(configuration, palette: palette)
             }
+            messageQueue?.isHidden = configuration == nil
+        case .title(let title):
+            bodyLabel?.text = title
+        case .status(_, let key, let text):
+            statusKeyLabel?.text = key
+            bodyLabel?.text = text
+            inset?.accessibilityLabel = "\(key), \(text)"
         }
     }
 
-    private var supportsFullScreen: Bool {
-        switch entry {
-        case .native, .widget: return true
-        case .title, .status, .messageQueue: return false
-        }
-    }
-
-    private var terminalFullScreenContent: FullScreenCodeContent {
-        guard case .widget(let widget, _, _) = entry else {
-            return .terminal(content: "", command: nil)
-        }
-        return .terminal(content: widget.lines.joined(separator: "\n"), command: nil)
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Blocks whose height follows the width measure at the width they get.
+        guard let nativeViewport, nativeViewport.bounds.width > 0,
+              abs(nativeViewport.bounds.width - adoptedWidth) > 0.5 else { return }
+        adoptedWidth = nativeViewport.bounds.width
+        nativeViewport.adoptLayoutWidth(adoptedWidth)
+        nativeViewport.contentDidChange()
     }
 
     private func openFullScreen() {
         switch entry {
-        case .native:
-            openNativeDetail()
-        case .widget:
-            openTerminalDetail()
+        case .native(let nativeSurface, let statusText):
+            let id = nativeSurface.surface.id
+            var liveSurface: (@MainActor () -> ExtensionUINativeSurface?)?
+            if let lookup = actions.liveSurface {
+                liveSurface = { lookup(id) }
+            }
+            actions.openReader(.extensionNative(ExtensionNativeReaderContent(
+                surface: nativeSurface.surface,
+                identifierSuffix: entry.identifierSuffix,
+                title: entry.title,
+                subtitle: entry.subtitle,
+                statusText: statusText,
+                linkContext: actions.linkContext,
+                onOpenURL: actions.onOpenURL,
+                liveSurface: liveSurface
+            )))
+        case .widget(let widget, _, _):
+            actions.openReader(.document(
+                content: .terminal(content: widget.lines.joined(separator: "\n"), command: nil)
+            ))
         case .title, .status, .messageQueue:
             break
         }
     }
-
-    private func openNativeDetail() {
-        guard case .native(let nativeSurface, let statusText) = entry else { return }
-        if let openChatReader {
-            openChatReader(
-                .extensionNative(
-                    ExtensionNativeReaderContent(
-                        surface: nativeSurface.surface,
-                        identifierSuffix: identifierSuffix,
-                        title: entry.title,
-                        subtitle: entry.subtitle,
-                        statusText: statusText,
-                        linkContext: linkContext,
-                        onOpenURL: onOpenURL,
-                        liveSurface: liveSurfaceLookup(id: nativeSurface.surface.id)
-                    )
-                )
-            )
-            return
-        }
-        nativeDetailPresented = true
-    }
-
-    /// Looks the surface up by protocol id each time the reader renders, so a
-    /// pushed reader follows updates the drawer would show.
-    private func liveSurfaceLookup(id: String) -> (@MainActor () -> ExtensionUINativeSurface?)? {
-        guard let sessionID = linkContext.sessionID else { return nil }
-        return { [weak connection] in
-            connection?.extensionSurfaces.surface(for: sessionID).layout.nativeSurfaces[id]?.surface
-        }
-    }
-
-    private func openTerminalDetail() {
-        if let openChatReader {
-            openChatReader(.document(content: terminalFullScreenContent))
-            return
-        }
-        terminalDetailPresented = true
-    }
 }
 
-struct ExtensionSurfacePanel<LeadingStripContent: View, TrailingStripContent: View>: View {
-    let surface: ExtensionSurfaceState
+// MARK: - Panel
+
+/// An extension placement's strip of pills and, while one is expanded, its
+/// drawer. Above the composer the strip also carries the chat's own leading
+/// pills (review comments, now playing) and trailing notification chip.
+final class ExtensionSurfacePanelView: UIView {
+    struct Content {
+        var surface: ExtensionSurfaceState
+        var messageQueue: MessageQueueSurfaceConfiguration?
+        var themeID: ThemeID
+        /// A new id collapses the expanded entry.
+        var collapseRequestID: Int
+    }
+
     let placement: ExtensionSurfacePlacementGroup
-    var messageQueue: MessageQueueSurfaceConfiguration? = nil
-    var linkContext: ExtensionSurfaceLinkContext = .empty
-    var onOpenURL: ((URL) -> Bool)? = nil
-    var onExpandedEntryChange: ((Bool) -> Void)? = nil
-    var collapseRequestID: Int = 0
-    var showsLeadingStripContent = false
-    var showsTrailingStripContent = false
-    var leadingStripContent: LeadingStripContent
-    var trailingStripContent: TrailingStripContent
+    var actions = ExtensionSurfaceDrawerActions()
+    /// An entry expanded (true) or collapsed (false).
+    var onExpandedEntryChange: ((Bool) -> Void)?
 
-    init(
-        surface: ExtensionSurfaceState,
-        placement: ExtensionSurfacePlacementGroup,
-        messageQueue: MessageQueueSurfaceConfiguration? = nil,
-        linkContext: ExtensionSurfaceLinkContext = .empty,
-        onOpenURL: ((URL) -> Bool)? = nil,
-        onExpandedEntryChange: ((Bool) -> Void)? = nil,
-        collapseRequestID: Int = 0,
-        showsLeadingStripContent: Bool = false,
-        showsTrailingStripContent: Bool = false,
-        @ViewBuilder leadingStripContent: () -> LeadingStripContent = { EmptyView() },
-        @ViewBuilder trailingStripContent: () -> TrailingStripContent = { EmptyView() }
-    ) {
-        self.surface = surface
+    private let stripScroll = UIScrollView()
+    private let stripRow = UIStackView()
+    private let stack = UIStackView()
+    private var leadingViews: [UIView] = []
+    private var trailingViews: [UIView] = []
+    private var pills: [String: ExtensionSurfaceStripPill] = [:]
+    private var drawer: ExtensionSurfaceDrawerView?
+    private var expandedEntryID: String?
+    private var lastCollapseRequestID: Int?
+    private var lastContent: Content?
+
+    init(placement: ExtensionSurfacePlacementGroup) {
         self.placement = placement
-        self.messageQueue = messageQueue
-        self.linkContext = linkContext
-        self.onOpenURL = onOpenURL
-        self.onExpandedEntryChange = onExpandedEntryChange
-        self.collapseRequestID = collapseRequestID
-        self.showsLeadingStripContent = showsLeadingStripContent
-        self.showsTrailingStripContent = showsTrailingStripContent
-        self.leadingStripContent = leadingStripContent()
-        self.trailingStripContent = trailingStripContent()
+        super.init(frame: .zero)
+        stack.axis = .vertical
+        stack.alignment = .fill
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        stripScroll.showsHorizontalScrollIndicator = false
+        stripScroll.alwaysBounceVertical = false
+        stripScroll.contentInsetAdjustmentBehavior = .never
+        stripScroll.accessibilityIdentifier = "extension-strip-\(placement.accessibilityIdentifierComponent)-collapsed"
+        stripRow.axis = .horizontal
+        stripRow.alignment = .center
+        stripRow.spacing = 8
+        stripRow.translatesAutoresizingMaskIntoConstraints = false
+        stripScroll.addSubview(stripRow)
+        stack.addArrangedSubview(stripScroll)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stripRow.topAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.topAnchor),
+            stripRow.bottomAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.bottomAnchor),
+            stripRow.leadingAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.leadingAnchor),
+            stripRow.trailingAnchor.constraint(equalTo: stripScroll.contentLayoutGuide.trailingAnchor),
+            stripScroll.frameLayoutGuide.heightAnchor.constraint(equalTo: stripRow.heightAnchor),
+        ])
     }
 
-    @State private var expandedEntryID: String?
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 
-    private var sortedStatuses: [(id: String, key: String, text: String)] {
-        surface.standaloneStatusEntries()
+    /// Views the strip shows before its entries (chat pills) and after them.
+    func setStripAccessories(leading: [UIView], trailing: [UIView]) {
+        guard !leading.elementsEqual(leadingViews, by: ===) || !trailing.elementsEqual(trailingViews, by: ===) else {
+            return
+        }
+        leadingViews = leading
+        trailingViews = trailing
+        lastContent.map(apply)
     }
 
-    private var entries: [ExtensionSurfacePanelEntry] {
-        surface.widgetEntries(in: placement)
+    /// Whether the panel shows anything for `content`.
+    func hasVisibleContent(_ content: Content) -> Bool {
+        !leadingViews.isEmpty || !trailingViews.isEmpty || !stripEntries(content).isEmpty
     }
 
-    private var stripEntries: [ExtensionSurfaceStripEntry] {
+    func apply(_ content: Content) {
+        lastContent = content
+        let palette = content.themeID.palette
+        let entries = stripEntries(content)
+        let ids = entries.map(\.id)
+
+        if let lastCollapseRequestID, lastCollapseRequestID != content.collapseRequestID {
+            expandedEntryID = nil
+            onExpandedEntryChange?(false)
+        }
+        lastCollapseRequestID = content.collapseRequestID
+        if let expandedEntryID, !ids.contains(expandedEntryID) {
+            self.expandedEntryID = nil
+            onExpandedEntryChange?(false)
+        }
+
+        var arranged: [UIView] = leadingViews
+        var keptPills: [String: ExtensionSurfaceStripPill] = [:]
+        for entry in entries {
+            let pill = pills[entry.id] ?? ExtensionSurfaceStripPill()
+            pill.apply(entry, isActive: entry.id == expandedEntryID, placement: placement, palette: palette)
+            let id = entry.id
+            pill.onTap = { [weak self] in self?.toggle(id) }
+            keptPills[entry.id] = pill
+            arranged.append(pill)
+        }
+        arranged.append(contentsOf: trailingViews)
+        pills = keptPills
+        if !stripRow.arrangedSubviews.elementsEqual(arranged, by: ===) {
+            for view in stripRow.arrangedSubviews where !arranged.contains(where: { $0 === view }) {
+                view.removeFromSuperview()
+            }
+            for (index, view) in arranged.enumerated() {
+                stripRow.insertArrangedSubview(view, at: index)
+            }
+        }
+        stripScroll.isHidden = arranged.isEmpty
+
+        let active = expandedEntryID.flatMap { id in entries.first { $0.id == id } }
+        if let active {
+            if drawer?.entryID != active.id {
+                drawer?.removeFromSuperview()
+                let next = ExtensionSurfaceDrawerView(entry: active, placement: placement, actions: actions)
+                next.onCollapse = { [weak self] in self?.setExpanded(nil) }
+                stack.addArrangedSubview(next)
+                drawer = next
+            }
+            drawer?.actions = actions
+            drawer?.apply(active, themeID: content.themeID, messageQueue: content.messageQueue)
+        } else if let drawer {
+            drawer.removeFromSuperview()
+            self.drawer = nil
+        }
+    }
+
+    private func toggle(_ id: String) {
+        setExpanded(expandedEntryID == id ? nil : id)
+    }
+
+    private func setExpanded(_ id: String?) {
+        let changed = expandedEntryID != id
+        expandedEntryID = id
+        if changed, let lastContent {
+            // A host that sizes this panel from outside (a SwiftUI preview)
+            // measures it again.
+            invalidateIntrinsicContentSize()
+            UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.10, delay: 0, options: .curveEaseOut) {
+                self.apply(lastContent)
+                self.superview?.layoutIfNeeded()
+            }
+        }
+        onExpandedEntryChange?(id != nil)
+    }
+
+    private func stripEntries(_ content: Content) -> [ExtensionSurfaceStripEntry] {
+        let surface = content.surface
         var result: [ExtensionSurfaceStripEntry] = []
-        if placement.showsChrome,
-           let title = surface.title?.trimmedNonEmpty {
-            result.append(.title(title))
-        }
         if placement.showsChrome {
-            result.append(contentsOf: sortedStatuses.map { .status(id: $0.id, key: $0.key, text: $0.text) })
+            if let title = surface.title?.trimmedNonEmpty {
+                result.append(.title(title))
+            }
+            result.append(contentsOf: surface.standaloneStatusEntries().map {
+                .status(id: $0.id, key: $0.key, text: $0.text)
+            })
         }
-        result.append(contentsOf: entries.map { entry in
+        result.append(contentsOf: surface.widgetEntries(in: placement).map { entry in
             switch entry {
             case .native(let nativeSurface):
                 return .native(
@@ -991,15 +988,12 @@ struct ExtensionSurfacePanel<LeadingStripContent: View, TrailingStripContent: Vi
             case .widget(let widget):
                 return .widget(
                     widget,
-                    statusText: surface.attachedStatusText(
-                        for: widget.key,
-                        extensionScopeId: widget.extensionScopeId
-                    ),
+                    statusText: surface.attachedStatusText(for: widget.key, extensionScopeId: widget.extensionScopeId),
                     titleOverride: surface.displayTitle(for: widget)
                 )
             }
         })
-        if let messageQueue, messageQueue.hasVisibleEntry {
+        if let messageQueue = content.messageQueue, messageQueue.hasVisibleEntry {
             let media = MessageQueueAttachmentPresentation.mediaCounts(in: messageQueue.queue)
             result.append(.messageQueue(
                 steeringCount: messageQueue.queue.steering.count,
@@ -1009,86 +1003,5 @@ struct ExtensionSurfacePanel<LeadingStripContent: View, TrailingStripContent: Vi
             ))
         }
         return result
-    }
-
-    private var activeEntry: ExtensionSurfaceStripEntry? {
-        guard let expandedEntryID else { return nil }
-        return stripEntries.first { $0.id == expandedEntryID }
-    }
-
-    private var showsStrip: Bool {
-        showsLeadingStripContent || showsTrailingStripContent || !stripEntries.isEmpty
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if showsStrip {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        if showsLeadingStripContent {
-                            leadingStripContent
-                        }
-                        ForEach(stripEntries) { entry in
-                            ExtensionSurfaceStripPill(
-                                entry: entry,
-                                isActive: activeEntry?.id == entry.id,
-                                placement: placement,
-                                onTap: { toggle(entry) }
-                            )
-                        }
-                        if showsTrailingStripContent {
-                            trailingStripContent
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-collapsed")
-            }
-
-            if let activeEntry {
-                ExtensionSurfaceDrawer(
-                    entry: activeEntry,
-                    placement: placement,
-                    messageQueue: messageQueue,
-                    linkContext: linkContext,
-                    onOpenURL: onOpenURL,
-                    onCollapse: collapseActiveEntry
-                )
-                .id(activeEntry.id)
-                .transition(.opacity)
-            }
-        }
-        .onChange(of: collapseRequestID) { _, _ in
-            collapseActiveEntry()
-        }
-        .onChange(of: stripEntries.map(\.id)) { _, ids in
-            if let expandedEntryID, !ids.contains(expandedEntryID) {
-                self.expandedEntryID = nil
-                onExpandedEntryChange?(false)
-            }
-        }
-    }
-
-    private func toggle(_ entry: ExtensionSurfaceStripEntry) {
-        withAnimation(.easeOut(duration: 0.10)) {
-            expandedEntryID = expandedEntryID == entry.id ? nil : entry.id
-        }
-        onExpandedEntryChange?(expandedEntryID != nil)
-    }
-
-    private func collapseActiveEntry() {
-        withAnimation(.easeOut(duration: 0.10)) {
-            expandedEntryID = nil
-        }
-        onExpandedEntryChange?(false)
-    }
-}
-
-private extension ExtensionSurfacePlacementGroup {
-    var accessibilityIdentifierComponent: String {
-        switch self {
-        case .aboveEditor: return "aboveEditor"
-        case .belowEditor: return "belowEditor"
-        }
     }
 }

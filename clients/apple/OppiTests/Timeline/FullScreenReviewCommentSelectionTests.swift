@@ -2919,7 +2919,7 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(presented)
         // The stash sits at the root of a router navigation controller, whose bar holds its title and close.
         let navigation = try #require(fixture.controller.presentedViewController as? RouterNavigationController)
-        #expect(navigation.viewControllers.first is HostedScreenController)
+        #expect(navigation.viewControllers.first is ReviewCommentStashViewController)
         #expect(navigation.modalPresentationStyle == .pageSheet)
     }
 

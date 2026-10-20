@@ -149,15 +149,10 @@ final class ChatViewController: UIViewController {
     let footerStack = UIStackView()
     let scrim = UIView()
     var contextBar: WorkspaceContextBarView?
-    var footerAboveLeaf: HostedLeaf?
-    var footerBelowLeaf: HostedLeaf?
-    var stoppedFooterLeaf: HostedLeaf?
-    var jumpToBottomLeaf: HostedLeaf?
-    private var titleHost: HostedContentController?
+    /// Set once the footer rows, title, and jump hint are installed.
+    private var footerAbove: ChatFooterAboveView?
     let canvasAnchor = ComposerCanvasDestinationAnchorController()
     lazy var trailingColumn = TrailingColumnController(screen: self)
-    /// The navigator the chat's hosted leaves push and present through.
-    var leafNavigator: ScreenNavigator?
     /// Modals the chat presents; each is one router presentation slot.
     let modals = ChatModalSlots()
     let barItems = ChatBarItems()
@@ -799,64 +794,46 @@ final class ChatViewController: UIViewController {
         }
     }
 
-    /// Hosted leaves need the app root, which a controller finds once it is
-    /// in its stack.
+    /// The now-playing pill's host needs the app root, which a controller
+    /// finds once it is in its stack.
     private func installLeavesIfNeeded() {
-        guard footerAboveLeaf == nil, let root else { return }
-        leafNavigator = ScreenNavigator.forUIKitScreen(screen, root: root)
+        guard footerAbove == nil, let root else { return }
 
         let contextBar = makeContextBar()
         contextBar.translatesAutoresizingMaskIntoConstraints = false
         view.insertSubview(contextBar, aboveSubview: scrim)
         self.contextBar = contextBar
 
-        let above = makeFooterAboveLeaf(root: root)
-        let below = makeFooterBelowLeaf(root: root)
-        let stopped = makeStoppedFooterLeaf(root: root)
-        for leaf in [above, below, stopped] {
-            add(leaf)
-        }
-        footerStack.addArrangedSubview(above.view)
+        let pill = makeNowPlayingPillHost(root: root)
+        addChild(pill)
+        let above = ChatFooterAboveView(chat: self, nowPlayingPill: pill)
+        pill.didMove(toParent: self)
+        footerStack.addArrangedSubview(above)
         footerStack.addArrangedSubview(composer.view)
-        footerStack.addArrangedSubview(below.view)
-        footerStack.addArrangedSubview(stopped.view)
-        footerAboveLeaf = above
-        footerBelowLeaf = below
-        stoppedFooterLeaf = stopped
+        footerStack.addArrangedSubview(ChatFooterBelowView(chat: self))
+        footerStack.addArrangedSubview(ChatStoppedFooterView(chat: self))
+        footerAbove = above
 
-        // The title view lives in the navigation bar, outside this
-        // controller's view, so its host is not a child controller: UIKit
-        // raises when a child's view sits outside its parent's.
-        let title = makeTitleHost(root: root)
-        titleHost = title
-        barItems.titleControl.install(title.view)
+        barItems.titleControl.install(ChatTitleView(chat: self))
 
-        let jump = makeJumpToBottomLeaf(root: root)
-        add(jump)
-        view.addSubview(jump.view)
-        jumpToBottomLeaf = jump
+        let jump = ChatJumpToBottomView(chat: self)
+        jump.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(jump)
 
         NSLayoutConstraint.activate([
             contextBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             contextBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             contextBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-            jump.view.widthAnchor.constraint(equalToConstant: ChatViewController.jumpToBottomSlotSize),
-            jump.view.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -27),
-            jump.view.bottomAnchor.constraint(equalTo: footerStack.topAnchor, constant: -10),
+            jump.widthAnchor.constraint(equalToConstant: Self.jumpToBottomSlotSize),
+            jump.heightAnchor.constraint(equalToConstant: Self.jumpToBottomSlotSize),
+            jump.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -27),
+            jump.bottomAnchor.constraint(equalTo: footerStack.topAnchor, constant: -10),
         ])
         contextBar.onHeightChange = { [weak self] _ in self?.view.setNeedsLayout() }
-        for leaf in [above, below, stopped, jump] {
-            leaf.onHeightChange = { [weak self] in self?.view.setNeedsLayout() }
-        }
     }
 
     /// The jump-to-bottom hint's slot; the button sits at its bottom trailing corner.
     static let jumpToBottomSlotSize: CGFloat = 44
-
-    private func add(_ leaf: HostedLeaf) {
-        addChild(leaf.host)
-        leaf.host.didMove(toParent: self)
-    }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
@@ -1174,10 +1151,6 @@ final class ChatViewController: UIViewController {
         let stopped = isStopped
         composer.view.isHidden = stopped
         scrim.isHidden = !model.contextBarExpanded
-        let jumpVisible = scrollController.isJumpToBottomHintVisible
-        // The hint's slot stays laid out so the button can animate in and
-        // out; it takes touches only while the button shows.
-        jumpToBottomLeaf?.view.isUserInteractionEnabled = jumpVisible
     }
 
     // MARK: - Keyboard

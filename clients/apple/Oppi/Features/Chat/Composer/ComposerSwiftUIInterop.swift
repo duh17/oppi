@@ -30,7 +30,6 @@ enum ComposerProviderIconRenderer {
     }
 }
 
-
 extension ComposerThemeColors {
     init(palette: ThemePalette) {
         let elevated = ThemeSurfaceStyle.resolve(.elevatedPanel, palette: palette)

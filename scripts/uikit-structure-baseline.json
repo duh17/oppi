@@ -37,9 +37,6 @@
     "clients/apple/Oppi/App/OppiApp.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/App/ReviewCommentStashHarnessView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/App/ScreenshotPreviewView.swift": {
       "import SwiftUI": 1
     },
@@ -256,9 +253,6 @@
     "clients/apple/Oppi/Features/Chat/Composer/ComposerShared.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Composer/MessageQueueContainer.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Composer/MicButtonLabel.swift": {
       "import SwiftUI": 1
     },
@@ -268,37 +262,16 @@
     "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentInlineDraftPresenter.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentStashContent.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentStripChrome.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Selection/ReviewCommentSelection.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Support/ChatSubviews.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Support/ExtensionNotifyChip.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Support/Sharing/ShareSessionRedactionSheet.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownUSDZView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Timeline/ChatTimelineChrome.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Collection/ChatTimelineCollectionView+DataSource.swift": {
@@ -311,9 +284,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioLyricsPlayerViewController.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioPlaybackTransportView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Rows/UserTimelineRowContent.swift": {
@@ -344,9 +314,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowViewStyler.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/ControlSessions/GuidedControlComposerHosted.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Extensions/ServerExtensionDetailView.swift": {

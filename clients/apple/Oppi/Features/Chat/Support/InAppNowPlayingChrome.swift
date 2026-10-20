@@ -399,86 +399,22 @@ struct InAppNowPlayingPill: View {
     }
 }
 
-struct InAppNowPlayingDrawer: View {
-    @Bindable var audioPlayer: AudioPlayerService
-    var accessibilityPrefix: String
-    let onOpen: () -> Void
-
-    private var itemID: String {
-        audioPlayer.playingItemID ?? audioPlayer.loadingItemID ?? ""
-    }
-
-    private var title: String {
-        audioPlayer.nowPlayingPresentation?.title ?? "Now Playing"
-    }
-
-    private var subtitlePresentation: InAppNowPlayingChrome.SubtitlePresentation {
-        InAppNowPlayingChrome.subtitlePresentation(
-            in: audioPlayer.nowPlayingTimedText,
-            at: audioPlayer.currentTime,
-            isLoading: audioPlayer.isNowPlayingTimedTextLoading
-        )
-    }
-
-    @ViewBuilder
-    private var subtitleView: some View {
-        switch subtitlePresentation {
-        case .cue(let text):
-            Text(text)
-                .font(.body.weight(.medium))
-                .foregroundStyle(.themeFg)
-        case .loading:
-            HStack(spacing: 6) {
-                ProgressView()
-                    .controlSize(.mini)
-                Text("Loading lyrics…")
+private extension View {
+    /// The strip pill's padding, height, and surface, as the UIKit strip pills
+    /// draw it (`ExtensionStripPillControl`).
+    func extensionStripPillSurface(isActive: Bool, activeStroke: Color) -> some View {
+        self
+            .padding(.horizontal, ExtensionStripPillMetrics.horizontalPadding)
+            .padding(.vertical, ExtensionStripPillMetrics.verticalPadding)
+            .frame(minHeight: ExtensionStripPillMetrics.visualHeight)
+            .themedSurface(.elevatedPanel, in: Capsule())
+            .overlay {
+                if isActive {
+                    Capsule()
+                        .stroke(activeStroke.opacity(0.45), lineWidth: 1)
+                }
             }
-            .font(.callout)
-            .foregroundStyle(.themeComment)
-        case .gap:
-            Text("…")
-                .font(.body.weight(.medium))
-                .foregroundStyle(.themeComment)
-                .accessibilityLabel("No lyric at the current position")
-        case .unavailable:
-            Text("No lyrics")
-                .font(.callout)
-                .foregroundStyle(.themeComment)
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeComment)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                subtitleView
-            }
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .contentShape(Rectangle())
-            .accessibilityElement(children: .combine)
-            .accessibilityHint("Double tap to open the full-screen audio player")
-            .accessibilityAction(named: Text("Open Full Screen"), onOpen)
-            .onTapGesture(count: 2, perform: onOpen)
-
-            AudioPlaybackTransportControls(
-                itemID: itemID,
-                audioPlayer: audioPlayer,
-                play: {
-                    if audioPlayer.isPaused {
-                        audioPlayer.resume()
-                    }
-                },
-                density: .drawer,
-                accessibilityPrefix: "\(accessibilityPrefix).drawer"
-            )
-        }
-        .padding(12)
-        .extensionGlassPanel(cornerRadius: 18)
-        .accessibilityIdentifier("\(accessibilityPrefix).drawer")
+            .contentShape(Capsule())
     }
 }
 
