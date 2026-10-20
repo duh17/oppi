@@ -683,7 +683,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     private let endCallButton = ComposerCircleActionButton()
     private let busyTipContainer = UIView()
     private var busyTipHeightConstraint: NSLayoutConstraint?
-    private var busyTipChild: UIViewController?
+    private var busyTipView: UIView?
     private var busyTipNaturalHeight: CGFloat = 0
     private let actionRowStack = UIStackView()
     private var actionRowMinHeight: NSLayoutConstraint?
@@ -935,11 +935,24 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         presentActionPopover(id: id)
     }
 
-    func installBusyTip(_ child: UIViewController?) {
-        embed(child, in: busyTipContainer, stored: &busyTipChild)
+    /// The tip view sizes nothing itself: the container's height follows
+    /// `setBusyTipHeight`, and clips the tip while it is zero.
+    func installBusyTip(_ tip: UIView?) {
+        if busyTipView === tip { return }
+        busyTipView?.removeFromSuperview()
+        busyTipView = tip
+        guard let tip else { return }
+        tip.translatesAutoresizingMaskIntoConstraints = false
+        busyTipContainer.addSubview(tip)
+        NSLayoutConstraint.activate([
+            tip.leadingAnchor.constraint(equalTo: busyTipContainer.leadingAnchor),
+            tip.trailingAnchor.constraint(equalTo: busyTipContainer.trailingAnchor),
+            tip.topAnchor.constraint(equalTo: busyTipContainer.topAnchor),
+            tip.heightAnchor.constraint(equalToConstant: FeatureEducationTipBannerView.preferredHeight + 10),
+        ])
     }
 
-    /// The hosted busy-mode tip's own height. It is zero while the tip is not
+    /// The busy-mode tip's own height. It is zero while the tip is not
     /// presented (closed, already learned, or ineligible), so a busy bar never
     /// reserves an empty band for it.
     /// Returns whether the height changed.

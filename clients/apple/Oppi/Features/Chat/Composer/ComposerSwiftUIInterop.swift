@@ -1,35 +1,7 @@
-import SwiftUI
 import UIKit
 
-// What the UIKit composer takes from SwiftUI: the theme palette's colors,
-// provider icon tints, and the hosted busy-mode education tip.
-
-/// The busy-mode education tip in the composer's tip slot (`ChatComposerOwner`).
-@MainActor
-enum ComposerBusyTip {
-    /// The tip claims height only while it is presented; `onHeight` reports
-    /// each height it lays out at, so the bar does not keep an empty band
-    /// once the tip is learned.
-    static func makeHost(
-        root: AppRootEnvironment,
-        onHeight: @escaping @MainActor (CGFloat) -> Void
-    ) -> HostedContentController {
-        let tip = FeatureEducationTipBannerHost(
-            tip: FeatureEducationTips.BusySendModeTip(),
-            descriptor: FeatureEducationTips.busySendMode,
-            contentInsets: EdgeInsets(top: 8, leading: 12, bottom: 2, trailing: 12)
-        )
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.size.height
-        } action: { height in
-            onHeight(height)
-        }
-        let hosted = HostFactory.content(tip, root: root)
-        hosted.sizingOptions = []
-        hosted.view.backgroundColor = .clear
-        return hosted
-    }
-}
+// What the UIKit composer takes from the SwiftUI theme types: the palette's
+// colors and provider icon tints.
 
 @MainActor
 enum ComposerProviderIconRenderer {

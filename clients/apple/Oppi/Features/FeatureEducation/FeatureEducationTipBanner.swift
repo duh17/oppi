@@ -360,42 +360,63 @@ struct FeatureEducationTipBannerHost<TipType: Tip>: View {
     }
 }
 
-/// UIKit host for a tip banner (the answer-prompt tip, the changed-files
-/// bar's). Claims through the same coordinator as the SwiftUI banner so each
-/// tip still shows once. It takes height only while its tip is presented.
+/// UIKit host for one education tip in a banner. Claims through the same
+/// coordinator as the SwiftUI banner, so each tip still shows once. It claims
+/// height (`reservedHeight`) only while the tip is presented.
 @MainActor
-final class FeatureEducationTipHostView<TipType: Tip>: UIView {
+final class FeatureEducationTipHostView: UIView {
     var onHeightChange: (() -> Void)?
+    /// The banner plus its insets while presented; zero otherwise.
+    private(set) var reservedHeight: CGFloat = 0
 
     private let banner = FeatureEducationTipBannerView()
-    private let tip: TipType
     private let descriptor: FeatureEducationTipDescriptor
     private let insets: NSDirectionalEdgeInsets
     private let ownerID = UUID()
     private let coordinator = FeatureEducationTipPresentationCoordinator.shared
+    private let invalidateTip: () -> Void
+    private let observeTip: (@escaping @MainActor (Bool) -> Void) -> Task<Void, Never>
     private var heightConstraint: NSLayoutConstraint?
     private var updatesTask: Task<Void, Never>?
     private var revisionObserver: AnyCancellable?
     private var shouldDisplay = false
     private var isPresented = false
 
-    init(tip: TipType, descriptor: FeatureEducationTipDescriptor, insets: NSDirectionalEdgeInsets) {
-        self.tip = tip
+    /// `ownsHeight` pins this view's height to `reservedHeight`; a host whose
+    /// container sizes the slot from `reservedHeight` passes false.
+    init<TipType: Tip>(
+        tip: TipType,
+        descriptor: FeatureEducationTipDescriptor,
+        insets: NSDirectionalEdgeInsets,
+        ownsHeight: Bool = true
+    ) {
         self.descriptor = descriptor
         self.insets = insets
+        invalidateTip = { tip.invalidate(reason: .tipClosed) }
+        observeTip = { update in
+            Task { @MainActor in
+                update(tip.shouldDisplay)
+                for await display in tip.shouldDisplayUpdates {
+                    if Task.isCancelled { return }
+                    update(display)
+                }
+            }
+        }
         super.init(frame: .zero)
         clipsToBounds = true
         banner.translatesAutoresizingMaskIntoConstraints = false
         addSubview(banner)
-        let height = heightAnchor.constraint(equalToConstant: 0)
-        heightConstraint = height
         NSLayoutConstraint.activate([
             banner.leadingAnchor.constraint(equalTo: leadingAnchor, constant: insets.leading),
             banner.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -insets.trailing),
             banner.topAnchor.constraint(equalTo: topAnchor, constant: insets.top),
             banner.heightAnchor.constraint(equalToConstant: FeatureEducationTipBannerView.preferredHeight),
-            height,
         ])
+        if ownsHeight {
+            let height = heightAnchor.constraint(equalToConstant: 0)
+            height.isActive = true
+            heightConstraint = height
+        }
         banner.isHidden = true
         revisionObserver = coordinator.objectWillChange.sink { [weak self] _ in
             Task { @MainActor in
@@ -413,18 +434,13 @@ final class FeatureEducationTipHostView<TipType: Tip>: UIView {
 
     func start() {
         guard updatesTask == nil else { return }
-        updatesTask = Task { [weak self] in
-            guard let self else { return }
-            shouldDisplay = tip.shouldDisplay
-            refreshPresentation()
-            for await display in tip.shouldDisplayUpdates {
-                if Task.isCancelled { return }
-                shouldDisplay = display
-                refreshPresentation()
-            }
+        updatesTask = observeTip { [weak self] display in
+            self?.shouldDisplay = display
+            self?.refreshPresentation()
         }
     }
 
+    /// Stops listening and gives the tip back, as leaving the screen does.
     func stop() {
         updatesTask?.cancel()
         updatesTask = nil
@@ -453,10 +469,10 @@ final class FeatureEducationTipHostView<TipType: Tip>: UIView {
         if isPresented {
             banner.configure(descriptor: descriptor) { [weak self] in
                 guard let self else { return }
-                tip.invalidate(reason: .tipClosed)
-                coordinator.release(tipID: descriptor.id, ownerID: ownerID)
-                isPresented = false
-                applyHeight()
+                self.invalidateTip()
+                self.coordinator.release(tipID: self.descriptor.id, ownerID: self.ownerID)
+                self.isPresented = false
+                self.applyHeight()
             }
         }
         applyHeight()
@@ -467,11 +483,11 @@ final class FeatureEducationTipHostView<TipType: Tip>: UIView {
         let next: CGFloat = isPresented
             ? FeatureEducationTipBannerView.preferredHeight + insets.top + insets.bottom
             : 0
-        if heightConstraint?.constant != next {
-            heightConstraint?.constant = next
-            onHeightChange?()
-        }
         isHidden = next <= 0
+        guard reservedHeight != next else { return }
+        reservedHeight = next
+        heightConstraint?.constant = next
+        onHeightChange?()
     }
 
     private var forceTipsForTesting: Bool {

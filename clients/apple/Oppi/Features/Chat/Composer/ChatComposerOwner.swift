@@ -63,7 +63,19 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
     private let stack = UIStackView()
     private let failureView = ComposerDictationFailureView()
     private var heightConstraint: NSLayoutConstraint?
-    private var tipHost: HostedContentController?
+    private lazy var tipHost: FeatureEducationTipHostView = {
+        let host = FeatureEducationTipHostView(
+            tip: FeatureEducationTips.BusySendModeTip(),
+            descriptor: FeatureEducationTips.busySendMode,
+            insets: NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 2, trailing: 12),
+            ownsHeight: false
+        )
+        host.onHeightChange = { [weak self, weak host] in
+            guard let self, let host, self.bar.setBusyTipHeight(host.reservedHeight) else { return }
+            self.updateHeight()
+        }
+        return host
+    }()
     private var tipShown = false
     private let expandedPresenter = RouterModalPresenter()
 
@@ -220,18 +232,15 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
         guard show else {
             if tipShown {
                 tipShown = false
+                tipHost.stop()
                 bar.installBusyTip(nil)
             }
             return
         }
-        guard !tipShown, let root = HostFactory.root(near: self) else { return }
+        guard !tipShown else { return }
         tipShown = true
-        let host = tipHost ?? ComposerBusyTip.makeHost(root: root) { [weak self] height in
-            guard let self, self.bar.setBusyTipHeight(height) else { return }
-            self.updateHeight()
-        }
-        tipHost = host
-        bar.installBusyTip(host)
+        bar.installBusyTip(tipHost)
+        tipHost.start()
     }
 
     // MARK: - Voice

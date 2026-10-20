@@ -256,9 +256,6 @@
     "clients/apple/Oppi/Features/Chat/Composer/ComposerShared.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Composer/ComposerSwiftUIInterop.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Composer/MessageQueueContainer.swift": {
       "import SwiftUI": 1
     },
