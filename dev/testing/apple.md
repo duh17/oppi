@@ -339,7 +339,7 @@ The case owns the rest:
 - Find fixtures by id (`session.nav.<id>`), not by fixture title; every case that calls `createLabSessions` adds another `Screenshot Lab Session 1`.
 - Screen-local state, such as a collapsed stopped-sessions group, outlives the case in the running app; put it back.
 - The running app refreshes its catalogs on a throttle, so rows a case seeds after launch (the workspace sidebar's) may not show. A case that needs them sets `e2eRequiresFreshLaunch`, and a case that seeds many rows deletes them in `tearDownWithError` and calls `terminateSharedApp()`.
-- `e2eStartsInAutoCreatedChat` requires a chat in the workspace the launch opens (`OPPI_E2E_AUTO_OPEN_WORKSPACE`, `e2e-workspace` by default) and relaunches from any other workspace's chat. A class that opens its own workspace sets that variable in `configureE2ELaunch`.
+- `e2eStartsInAutoCreatedChat` requires a chat in the class's `e2eAutoOpenWorkspaceName` (`e2e-workspace` by default; `launchAndPair` passes it to the app as `OPPI_E2E_AUTO_OPEN_WORKSPACE`) and relaunches from any other workspace's chat. A class that opens its own workspace overrides that property rather than setting the variable, so the check never reads another class's launch back from the shared app.
 
 #### Durable sessions and the faux model
 

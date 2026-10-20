@@ -21,9 +21,7 @@ final class WorkspaceWorktreeE2ETests: E2ETestCase {
     override var e2eRequiresFreshLaunch: Bool { true }
     override var e2eSkipsLaunchNavigation: Bool { true }
 
-    override func configureE2ELaunch(_ application: XCUIApplication) {
-        application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = worktreeWorkspaceName
-    }
+    override var e2eAutoOpenWorkspaceName: String { worktreeWorkspaceName }
 
     /// Seeds once per run: the launch hint opens the workspace by name, so a
     /// second same-named workspace would shadow the id the cases look up.
@@ -49,19 +47,7 @@ final class WorkspaceWorktreeE2ETests: E2ETestCase {
             "Fixture workspace detail did not open"
         )
 
-        XCUIDevice.shared.orientation = .landscapeLeft
-        let deadline = Date().addingTimeInterval(8)
-        while app.frame.width <= app.frame.height, Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-        XCTAssertGreaterThan(app.frame.width, app.frame.height, "App did not rotate to landscape")
-
-        let launcher = app.buttons["workspace.quickSession.start"]
-        XCTAssertTrue(
-            launcher.waitForExistence(timeout: 10) && launcher.isHittable,
-            "Landscape workspace detail must keep the Message launcher in the bottom bar. Overflow present: \(app.buttons["BottomOverflowBarButtonItem"].exists)"
-        )
-        XCTAssertTrue(app.buttons["workspace.files.open"].isHittable, "Landscape bottom bar lost the Files button")
+        assertLandscapeBottomBarKeepsMessageLauncher(screen: "workspace detail")
     }
 
     func testWorktreeSelectionCreatesSessionInLinkedWorktree() throws {

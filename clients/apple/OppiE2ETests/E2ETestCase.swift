@@ -72,11 +72,12 @@ class E2ETestCase: XCTestCase {
         .portrait
     }
 
-    /// The workspace `e2eStartsInAutoCreatedChat` expects the chat to be in:
-    /// the one the launch opens, so a class that opens its own workspace in
-    /// `configureE2ELaunch` needs nothing more.
-    private var e2eChatWorkspaceName: String {
-        app.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] ?? "e2e-workspace"
+    /// The workspace the launch opens, and the one `e2eStartsInAutoCreatedChat`
+    /// expects the chat to be in. Override in a class that opens its own
+    /// workspace. It is the class's own property, not read back from the shared
+    /// app, whose launch environment belongs to whichever class launched last.
+    var e2eAutoOpenWorkspaceName: String {
+        "e2e-workspace"
     }
 
     /// Override to add launch environment or arguments before the app starts.
@@ -169,7 +170,7 @@ class E2ETestCase: XCTestCase {
         // documented that the UI runner does not inherit the host env.
         application.launchEnvironment["OPPI_E2E_LAUNCH_INVITE"] = inviteURL
         if !e2eLaunchesWorkspaceHomeOnly && !e2eLaunchesSessionsInboxOnly {
-            application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = "e2e-workspace"
+            application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = e2eAutoOpenWorkspaceName
             if e2eAutoCreatesSessionOnLaunch {
                 application.launchEnvironment["OPPI_E2E_AUTO_CREATE_SESSION"] = "1"
             }
@@ -442,7 +443,7 @@ class E2ETestCase: XCTestCase {
         )
     }
 
-    /// Ensures the app is inside a chat session of `e2eChatWorkspaceName` before each test.
+    /// Ensures the app is inside a chat session of `e2eAutoOpenWorkspaceName` before each test.
     ///
     /// Another class's chat (its own workspace and host mount) must not
     /// satisfy this: relative paths and the Files panel resolve against the
@@ -479,7 +480,7 @@ class E2ETestCase: XCTestCase {
         )
     }
 
-    /// Whether the focused chat's session belongs to `e2eChatWorkspaceName`.
+    /// Whether the focused chat's session belongs to `e2eAutoOpenWorkspaceName`.
     private func openChatIsInE2EWorkspace() throws -> Bool {
         let focused = app.staticTexts["e2e.ws.focusedSession"]
         let deadline = Date().addingTimeInterval(5)
@@ -488,7 +489,7 @@ class E2ETestCase: XCTestCase {
         }
         guard focused.exists, focused.label != "none" else { return false }
         let session = try e2eSession(sessionId: focused.label)
-        let workspaceId = try e2eWorkspaceId(named: e2eChatWorkspaceName)
+        let workspaceId = try e2eWorkspaceId(named: e2eAutoOpenWorkspaceName)
         return session["workspaceId"] as? String == workspaceId
     }
 
@@ -776,13 +777,38 @@ class E2ETestCase: XCTestCase {
     /// `XCUIElement.swipeRight()` starts inward of the 20pt edge claim, so it
     /// never pops those destinations.
     ///
-    /// The drag runs through the navigation bar band (y = 0.15), not the screen
-    /// middle: a content control under the finger there (a stopped-sessions
-    /// header, a Settings summary row) can win the touch over the edge pop.
+    /// The drag runs near the top of the content, just under the bar (y = 0.15),
+    /// not through the screen middle: a content control under the finger there
+    /// (a stopped-sessions header, a Settings summary row) can win the touch
+    /// over the edge pop.
     func swipeBackFromLeadingEdge() {
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.15))
         let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.15))
         start.press(forDuration: 0.05, thenDragTo: end)
+    }
+
+    /// Rotates to landscape and checks the Message launcher is a hittable item of
+    /// the bottom bar, beside Files, not folded into the bar's overflow menu. The
+    /// vertical position tells it from the side rail's item with the same id.
+    func assertLandscapeBottomBarKeepsMessageLauncher(screen: String) {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let deadline = Date().addingTimeInterval(8)
+        while app.frame.width <= app.frame.height, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertGreaterThan(app.frame.width, app.frame.height, "App did not rotate to landscape")
+
+        let launcher = app.buttons["workspace.quickSession.start"]
+        XCTAssertTrue(
+            launcher.waitForExistence(timeout: 10) && launcher.isHittable,
+            "Landscape \(screen) must keep the Message launcher in the bottom bar. Overflow present: \(app.buttons["BottomOverflowBarButtonItem"].exists)"
+        )
+        XCTAssertGreaterThan(
+            launcher.frame.minY,
+            app.frame.midY,
+            "Landscape \(screen) Message launcher is not in the bottom bar. Frame: \(launcher.frame)"
+        )
+        XCTAssertTrue(app.buttons["workspace.files.open"].isHittable, "Landscape \(screen) bottom bar lost the Files button")
     }
 
     /// Navigates back from a chat session to the workspace detail screen.

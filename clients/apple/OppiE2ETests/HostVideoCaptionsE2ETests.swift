@@ -15,8 +15,9 @@ final class HostVideoCaptionsE2ETests: E2ETestCase {
     override var e2eStartsInAutoCreatedChat: Bool { true }
     override var e2eRequiresFreshLaunch: Bool { true }
 
+    override var e2eAutoOpenWorkspaceName: String { workspaceName }
+
     override func configureE2ELaunch(_ application: XCUIApplication) {
-        application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = workspaceName
         application.launchEnvironment["OPPI_E2E_AUTO_CREATE_SESSION"] = "1"
         application.launchEnvironment["OPPI_E2E_DIAGNOSTICS"] = "1"
     }
