@@ -793,20 +793,17 @@ final class ChatViewController: UIViewController {
         }
     }
 
-    /// The now-playing pill's host needs the app root, which a controller
-    /// finds once it is in its stack.
+    /// The chrome follows the app root's theme, which a controller finds once
+    /// it is in its stack.
     private func installLeavesIfNeeded() {
-        guard footerAbove == nil, let root else { return }
+        guard footerAbove == nil, root != nil else { return }
 
         let contextBar = makeContextBar()
         contextBar.translatesAutoresizingMaskIntoConstraints = false
         view.insertSubview(contextBar, aboveSubview: scrim)
         self.contextBar = contextBar
 
-        let pill = makeNowPlayingPillHost(root: root)
-        addChild(pill)
-        let above = ChatFooterAboveView(chat: self, nowPlayingPill: pill)
-        pill.didMove(toParent: self)
+        let above = ChatFooterAboveView(chat: self)
         footerStack.addArrangedSubview(above)
         footerStack.addArrangedSubview(composer.view)
         footerStack.addArrangedSubview(ChatFooterBelowView(chat: self))

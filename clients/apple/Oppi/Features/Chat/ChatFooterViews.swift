@@ -50,13 +50,11 @@ private func footerInset(_ view: UIView, top: CGFloat = 0) -> UIView {
 /// and from the composer.
 final class ChatFooterAboveView: UIView {
     weak var chat: ChatViewController?
-    /// The now-playing pill stays SwiftUI for now (its session-list sibling is
-    /// converting separately); the chat adds this host as its child.
-    let nowPlayingPill: HostedContentController
 
     private let stack = UIStackView()
     private let panel: ExtensionSurfacePanelView
     private let reviewPill = ReviewCommentStripPillView()
+    private let nowPlayingPill: InAppNowPlayingPillView
     private let notifyChip = ExtensionNotifyChipView()
     private let reviewDrawer = ReviewCommentStashDrawerView()
     private let nowPlayingDrawer = ChatNowPlayingDrawerView()
@@ -68,9 +66,18 @@ final class ChatFooterAboveView: UIView {
     private lazy var nowPlayingDrawerRow = footerInset(nowPlayingDrawer)
     private lazy var notifyDrawerRow = footerInset(notifyDrawer)
 
-    init(chat: ChatViewController, nowPlayingPill: HostedContentController) {
+    init(chat: ChatViewController) {
         self.chat = chat
-        self.nowPlayingPill = nowPlayingPill
+        nowPlayingPill = InAppNowPlayingPillView(
+            audioPlayer: chat.audioPlayer,
+            accessibilityPrefix: "chat.nowPlaying",
+            density: .chat,
+            onExpand: { [weak chat] in chat?.toggleNowPlayingDrawer() },
+            onOpen: { [weak chat] in
+                guard let chat else { return }
+                chat.openTimelineReader(.nowPlaying(chat.audioPlayer))
+            }
+        )
         panel = ExtensionSurfacePanelView(placement: .aboveEditor, actions: chat.extensionDrawerActions())
         super.init(frame: .zero)
         stack.axis = .vertical
@@ -159,8 +166,12 @@ final class ChatFooterAboveView: UIView {
                 leading.append(reviewPill)
             }
             if showsNowPlayingPill {
-                chat.updateNowPlayingPill(nowPlayingPill)
-                leading.append(nowPlayingPill.view)
+                nowPlayingPill.update(
+                    audioPlayer: chat.audioPlayer,
+                    density: .chat,
+                    isExpanded: chat.model.nowPlayingDrawerExpanded
+                )
+                leading.append(nowPlayingPill)
             }
             var trailing: [UIView] = []
             if let notifyState {

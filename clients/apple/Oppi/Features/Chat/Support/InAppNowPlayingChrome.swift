@@ -180,244 +180,6 @@ enum InAppNowPlayingChrome {
     }
 }
 
-struct InAppNowPlayingStopButton: View {
-    let audioPlayer: AudioPlayerService
-    var accessibilityIdentifier: String
-    var size: CGFloat = 44
-
-    var body: some View {
-        Button(action: { audioPlayer.stop() }, label: {
-            Image(systemName: "xmark")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.themeFg)
-                .frame(width: size, height: size)
-                .contentShape(Rectangle())
-        })
-        .buttonStyle(.plain)
-        .accessibilityLabel("Stop Playback")
-        .accessibilityIdentifier(accessibilityIdentifier)
-    }
-}
-
-struct InAppNowPlayingPill: View {
-    @Bindable var audioPlayer: AudioPlayerService
-    var accessibilityPrefix: String
-    var density: InAppNowPlayingChrome.PillDensity = .chat
-    var isExpanded = false
-    var onExpand: (() -> Void)? = nil
-    let onOpen: () -> Void
-
-    private var title: String {
-        audioPlayer.nowPlayingPresentation?.title ?? "Now Playing"
-    }
-
-    private var controlAction: AudioPlaybackControlAction {
-        AudioPlaybackControlAction.resolve(
-            isLoading: audioPlayer.loadingItemID != nil && audioPlayer.playingItemID == nil,
-            isActive: audioPlayer.playingItemID != nil,
-            isPaused: audioPlayer.isPaused
-        )
-    }
-
-    private var expandsOnTap: Bool {
-        onExpand != nil
-    }
-
-    @ViewBuilder
-    var body: some View {
-        if density == .chat {
-            chatPill
-        } else {
-            toolbarPill
-        }
-    }
-
-    private var chatPill: some View {
-        HStack(spacing: 7) {
-            // Reserve the 44pt play/pause hit region without making the visible
-            // capsule taller than neighboring extension pills.
-            Color.clear
-                .frame(
-                    width: density.playPauseHitSize
-                        - ExtensionStripPillMetrics.horizontalPadding
-                        - 7,
-                    height: 20
-                )
-                .accessibilityHidden(true)
-            titleContent
-                .accessibilityHidden(true)
-            Color.clear
-                .frame(
-                    width: density.stopHitSize
-                        - ExtensionStripPillMetrics.horizontalPadding
-                        - 7,
-                    height: 20
-                )
-                .accessibilityHidden(true)
-        }
-        .extensionStripPillSurface(isActive: isExpanded, activeStroke: .themeFg)
-        .frame(minHeight: density.visualHeight)
-        .overlay(alignment: .leading) {
-            playPauseButton
-        }
-        .overlay {
-            chatTitleHitTarget
-        }
-        .overlay(alignment: .trailing) {
-            stopButton
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("\(accessibilityPrefix).pill")
-    }
-
-    private var toolbarPill: some View {
-        HStack(spacing: 4) {
-            playPauseButton
-            if density.showsTitle {
-                toolbarTitleButton
-            }
-            stopButton
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("\(accessibilityPrefix).pill")
-    }
-
-    private var playPauseButton: some View {
-        Button(action: togglePlayback) {
-            if controlAction == .cancelLoading {
-                AudioLoadingCancelControl(size: density.playPauseHitSize)
-            } else {
-                Image(systemName: controlAction == .pause ? "pause.fill" : "play.fill")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                    .frame(width: density.playPauseHitSize, height: density.playPauseHitSize)
-                    .contentShape(Rectangle())
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(controlAccessibilityLabel)
-        .accessibilityIdentifier("\(accessibilityPrefix).playPause")
-    }
-
-    private var controlAccessibilityLabel: String {
-        switch controlAction {
-        case .cancelLoading: return "Cancel Loading"
-        case .pause: return "Pause"
-        case .resume, .start: return "Play"
-        }
-    }
-
-    private var titleContent: some View {
-        HStack(spacing: 7) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.themeFg)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(
-                    minWidth: density.titleMinWidth,
-                    maxWidth: density.titleMaxWidth,
-                    alignment: .leading
-                )
-                .layoutPriority(1)
-
-            if expandsOnTap {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.themeComment)
-                    .accessibilityHidden(true)
-            }
-        }
-    }
-
-    private var toolbarTitleButton: some View {
-        Button(action: onOpen) {
-            titleContent
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Now Playing, \(title)")
-        .accessibilityHint("Opens the full-screen audio player")
-    }
-
-    private var chatTitleHitTarget: some View {
-        HStack(spacing: 0) {
-            Color.clear
-                .frame(width: density.playPauseHitSize)
-                .allowsHitTesting(false)
-            Color.clear
-                .frame(maxWidth: .infinity, minHeight: density.playPauseHitSize)
-                .contentShape(Rectangle())
-                .accessibilityLabel("Now Playing, \(title)")
-                .accessibilityHint(isExpanded ? "Collapses the player" : "Expands the player")
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction(named: Text("Open Full Screen"), onOpen)
-                .gesture(
-                    TapGesture(count: 2).onEnded {
-                        handleTitleTaps(2)
-                    }
-                    .exclusively(before: TapGesture(count: 1).onEnded {
-                        handleTitleTaps(1)
-                    })
-                )
-            Color.clear
-                .frame(width: density.stopHitSize)
-                .allowsHitTesting(false)
-        }
-    }
-
-    private var stopButton: some View {
-        InAppNowPlayingStopButton(
-            audioPlayer: audioPlayer,
-            accessibilityIdentifier: "\(accessibilityPrefix).stop",
-            size: density.stopHitSize
-        )
-    }
-
-    private func handleTitleTaps(_ tapCount: Int) {
-        switch InAppNowPlayingChrome.titleAction(tapCount: tapCount, expandsOnTap: expandsOnTap) {
-        case .expandOrCollapse:
-            onExpand?()
-        case .openFullScreen:
-            onOpen()
-        case nil:
-            break
-        }
-    }
-
-    private func togglePlayback() {
-        switch controlAction {
-        case .cancelLoading:
-            audioPlayer.stop()
-        case .pause:
-            audioPlayer.pause()
-        case .resume:
-            audioPlayer.resume()
-        case .start:
-            break
-        }
-    }
-}
-
-private extension View {
-    /// The strip pill's padding, height, and surface, as the UIKit strip pills
-    /// draw it (`ExtensionStripPillControl`).
-    func extensionStripPillSurface(isActive: Bool, activeStroke: Color) -> some View {
-        self
-            .padding(.horizontal, ExtensionStripPillMetrics.horizontalPadding)
-            .padding(.vertical, ExtensionStripPillMetrics.verticalPadding)
-            .frame(minHeight: ExtensionStripPillMetrics.visualHeight)
-            .themedSurface(.elevatedPanel, in: Capsule())
-            .overlay {
-                if isActive {
-                    Capsule()
-                        .stroke(activeStroke.opacity(0.45), lineWidth: 1)
-                }
-            }
-            .contentShape(Capsule())
-    }
-}
-
 struct InAppNowPlayingPlayerScreen: View {
     let audioPlayer: AudioPlayerService
     @Environment(\.dismiss) private var dismiss
@@ -454,49 +216,86 @@ struct InAppNowPlayingPlayerScreen: View {
     }
 }
 
-/// The session lists' now-playing pill in the bottom bar: play/pause (a
-/// cancel spinner while loading), the title that opens the full-screen
-/// player, and stop. Reads `AudioPlayerService` in `updateProperties()`, so
-/// it follows playback on its own. The chat footer still draws the SwiftUI
-/// `InAppNowPlayingPill` (`.chat` density, expand on tap).
+/// The now-playing pill: play/pause (a cancel spinner while loading), the
+/// title, and stop. Reads `AudioPlayerService` in `updateProperties()`, so it
+/// follows playback on its own. In the session lists' bottom bar a tap on the
+/// title opens the full-screen player. On the chat's strip (`.chat`, with
+/// `onExpand`) it draws the strip-pill surface at the strip pills' height:
+/// a tap on the title opens or closes the player drawer, a double tap opens
+/// the full-screen player, and VoiceOver gets Open Full Screen as an action.
 final class InAppNowPlayingPillView: UIView {
     private var audioPlayer: AudioPlayerService
-    private let accessibilityPrefix: String
+    private let onExpand: (() -> Void)?
     private let onOpen: () -> Void
     private var density: InAppNowPlayingChrome.PillDensity
+    private var isExpanded = false
 
+    private let surface = ElevatedSurfaceView(shape: .capsule)
     private let stack = UIStackView()
     private let playPause = UIButton(type: .custom)
     private let loading = AudioLoadingCancelView(style: AudioPlayerChromeStyle())
-    private let titleButton = UIButton(type: .custom)
-    private let titleWidth: NSLayoutConstraint
+    private let titleArea = TitleArea()
+    private let titleRow = UIStackView()
+    private let titleLabel = UILabel()
+    private let chevron = UIImageView()
+    private let titleMinWidth: NSLayoutConstraint
+    private let titleMaxWidth: NSLayoutConstraint
     private let stop = UIButton(type: .custom)
 
     init(
         audioPlayer: AudioPlayerService,
         accessibilityPrefix: String,
         density: InAppNowPlayingChrome.PillDensity,
+        onExpand: (() -> Void)? = nil,
         onOpen: @escaping () -> Void
     ) {
         self.audioPlayer = audioPlayer
-        self.accessibilityPrefix = accessibilityPrefix
         self.density = density
+        self.onExpand = onExpand
         self.onOpen = onOpen
-        titleWidth = titleButton.widthAnchor.constraint(lessThanOrEqualToConstant: density.titleMaxWidth)
+        titleMinWidth = titleLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: density.titleMinWidth)
+        titleMaxWidth = titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: density.titleMaxWidth)
         super.init(frame: .zero)
         accessibilityIdentifier = "\(accessibilityPrefix).pill"
         accessibilityContainerType = .semanticGroup
+        let isStripPill = density == .chat
 
         playPause.accessibilityIdentifier = "\(accessibilityPrefix).playPause"
         playPause.addAction(UIAction { [weak self] _ in self?.togglePlayback() }, for: .touchUpInside)
         loading.translatesAutoresizingMaskIntoConstraints = false
         playPause.addSubview(loading)
 
-        titleButton.contentHorizontalAlignment = .leading
-        titleButton.titleLabel?.lineBreakMode = .byTruncatingMiddle
-        titleButton.accessibilityHint = String(localized: "Opens the full-screen audio player")
-        titleButton.addAction(UIAction { [weak self] _ in self?.onOpen() }, for: .touchUpInside)
-        titleButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+        chevron.isHidden = onExpand == nil
+        titleRow.axis = .horizontal
+        titleRow.alignment = .center
+        titleRow.spacing = 7
+        titleRow.isUserInteractionEnabled = false
+        titleRow.translatesAutoresizingMaskIntoConstraints = false
+        titleRow.addArrangedSubview(titleLabel)
+        titleRow.addArrangedSubview(chevron)
+        titleArea.addSubview(titleRow)
+        titleArea.isAccessibilityElement = true
+        titleArea.accessibilityTraits = .button
+        titleArea.onActivate = { [weak self] in self?.handleTitleTaps(1) }
+        if onExpand != nil {
+            let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleTitleDoubleTap))
+            doubleTap.numberOfTapsRequired = 2
+            let singleTap = UITapGestureRecognizer(target: self, action: #selector(handleTitleTap))
+            singleTap.require(toFail: doubleTap)
+            titleArea.addGestureRecognizer(doubleTap)
+            titleArea.addGestureRecognizer(singleTap)
+            titleArea.accessibilityCustomActions = [
+                UIAccessibilityCustomAction(name: String(localized: "Open Full Screen")) { [weak self] _ in
+                    self?.onOpen()
+                    return true
+                },
+            ]
+        } else {
+            titleArea.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTitleTap)))
+        }
 
         stop.accessibilityLabel = String(localized: "Stop Playback")
         stop.accessibilityIdentifier = "\(accessibilityPrefix).stop"
@@ -504,13 +303,25 @@ final class InAppNowPlayingPillView: UIView {
 
         stack.axis = .horizontal
         stack.alignment = .center
-        stack.spacing = 4
+        // The strip pill's title starts and ends at the 44 pt hit regions.
+        stack.spacing = isStripPill ? 0 : 4
         stack.translatesAutoresizingMaskIntoConstraints = false
-        [playPause, titleButton, stop].forEach(stack.addArrangedSubview)
+        [playPause, titleArea, stop].forEach(stack.addArrangedSubview)
+        surface.translatesAutoresizingMaskIntoConstraints = false
+        surface.isHidden = !isStripPill
+        addSubview(surface)
         addSubview(stack)
+
+        // The strip pill is as tall as its neighbors; its 44 pt hit regions
+        // overhang the surface, and `point(inside:)` takes touches there.
+        let titleInset = isStripPill ? ExtensionStripPillMetrics.verticalPadding : 0
+        let titleFit = titleArea.heightAnchor.constraint(equalTo: titleRow.heightAnchor, constant: 2 * titleInset)
+        titleFit.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            surface.topAnchor.constraint(equalTo: topAnchor),
+            surface.bottomAnchor.constraint(equalTo: bottomAnchor),
+            surface.leadingAnchor.constraint(equalTo: leadingAnchor),
+            surface.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             playPause.widthAnchor.constraint(equalToConstant: density.playPauseHitSize),
@@ -519,23 +330,49 @@ final class InAppNowPlayingPillView: UIView {
             stop.heightAnchor.constraint(equalToConstant: density.stopHitSize),
             loading.centerXAnchor.constraint(equalTo: playPause.centerXAnchor),
             loading.centerYAnchor.constraint(equalTo: playPause.centerYAnchor),
-            titleWidth,
+            titleRow.leadingAnchor.constraint(equalTo: titleArea.leadingAnchor),
+            titleRow.trailingAnchor.constraint(equalTo: titleArea.trailingAnchor),
+            titleRow.centerYAnchor.constraint(equalTo: titleArea.centerYAnchor),
+            titleRow.topAnchor.constraint(greaterThanOrEqualTo: titleArea.topAnchor, constant: titleInset),
+            titleFit,
+            titleMinWidth,
+            titleMaxWidth,
         ])
+        if isStripPill {
+            NSLayoutConstraint.activate([
+                stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+                titleArea.heightAnchor.constraint(equalTo: heightAnchor),
+                heightAnchor.constraint(greaterThanOrEqualToConstant: density.visualHeight),
+            ])
+        } else {
+            NSLayoutConstraint.activate([
+                stack.topAnchor.constraint(equalTo: topAnchor),
+                stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+        }
+        setContentHuggingPriority(.required, for: .horizontal)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// The list's current player and density; also repaints for a theme change.
-    func update(audioPlayer: AudioPlayerService, density: InAppNowPlayingChrome.PillDensity) {
+    /// The current player, density, and drawer state; also repaints for a
+    /// theme change.
+    func update(
+        audioPlayer: AudioPlayerService,
+        density: InAppNowPlayingChrome.PillDensity,
+        isExpanded: Bool = false
+    ) {
         self.audioPlayer = audioPlayer
         self.density = density
+        self.isExpanded = isExpanded
         setNeedsUpdateProperties()
     }
 
     override func updateProperties() {
         super.updateProperties()
-        let style = AudioPlayerChromeStyle()
+        let palette = ThemeRuntimeState.currentPalette()
+        let style = AudioPlayerChromeStyle(palette)
         let action = AudioPlaybackControlAction.resolve(
             isLoading: audioPlayer.loadingItemID != nil && audioPlayer.playingItemID == nil,
             isActive: audioPlayer.playingItemID != nil,
@@ -543,6 +380,9 @@ final class InAppNowPlayingPillView: UIView {
         )
         let title = audioPlayer.nowPlayingPresentation?.title ?? "Now Playing"
 
+        if !surface.isHidden {
+            surface.apply(palette: palette, active: isExpanded ? style.foreground : nil)
+        }
         loading.apply(style)
         loading.setVisible(action == .cancelLoading)
         playPause.setImage(
@@ -558,16 +398,45 @@ final class InAppNowPlayingPillView: UIView {
         case .resume, .start: String(localized: "Play")
         }
 
-        titleButton.isHidden = !density.showsTitle
-        titleWidth.constant = density.titleMaxWidth
-        titleButton.setAttributedTitle(NSAttributedString(string: title, attributes: [
-            .font: AudioPlayerChromeStyle.font(.caption1, weight: .semibold),
-            .foregroundColor: style.foreground,
-        ]), for: .normal)
-        titleButton.accessibilityLabel = "Now Playing, \(title)"
+        titleArea.isHidden = !density.showsTitle
+        titleMinWidth.constant = density.titleMinWidth
+        titleMaxWidth.constant = density.titleMaxWidth
+        titleLabel.text = title
+        titleLabel.font = AudioPlayerChromeStyle.font(.caption1, weight: .semibold)
+        titleLabel.textColor = style.foreground
+        chevron.image = AudioPlayerChromeStyle.symbol(
+            isExpanded ? "chevron.down" : "chevron.right",
+            style: .caption2,
+            weight: .bold
+        )
+        chevron.tintColor = style.comment
+        titleArea.accessibilityLabel = "Now Playing, \(title)"
+        titleArea.accessibilityHint = if onExpand == nil {
+            String(localized: "Opens the full-screen audio player")
+        } else if isExpanded {
+            String(localized: "Collapses the player")
+        } else {
+            String(localized: "Expands the player")
+        }
 
         stop.setImage(AudioPlayerChromeStyle.symbol("xmark", style: .body, weight: .semibold), for: .normal)
         stop.tintColor = style.foreground
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let band = max(0, (density.playPauseHitSize - bounds.height) / 2)
+        return bounds.insetBy(dx: 0, dy: -band).contains(point)
+    }
+
+    @objc private func handleTitleTap() { handleTitleTaps(1) }
+    @objc private func handleTitleDoubleTap() { handleTitleTaps(2) }
+
+    private func handleTitleTaps(_ tapCount: Int) {
+        switch InAppNowPlayingChrome.titleAction(tapCount: tapCount, expandsOnTap: onExpand != nil) {
+        case .expandOrCollapse: onExpand?()
+        case .openFullScreen: onOpen()
+        case nil: break
+        }
     }
 
     private func togglePlayback() {
@@ -580,6 +449,16 @@ final class InAppNowPlayingPillView: UIView {
         case .pause: audioPlayer.pause()
         case .resume: audioPlayer.resume()
         case .start: break
+        }
+    }
+
+    /// The title's touch and VoiceOver target: activating it is a tap.
+    private final class TitleArea: UIView {
+        var onActivate: (() -> Void)?
+
+        override func accessibilityActivate() -> Bool {
+            onActivate?()
+            return true
         }
     }
 }

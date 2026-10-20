@@ -1,11 +1,10 @@
 import SwiftUI
 import UIKit
 
-// The chat's one remaining SwiftUI leaf (the now-playing pill), the screens
-// it presents, and the pages the UIKit Files panel pushes
-// (`SessionFilePages`). UIKit owns the screen (`ChatViewController`), its
-// context bar, and its footer, title, and jump hint (`ChatFooterViews`). The
-// pill is hosted with `HostFactory.content`.
+// The chat's context bar, the screens it presents, and the pages the UIKit
+// Files panel pushes (`SessionFilePages`). UIKit owns the screen
+// (`ChatViewController`) and its footer, title, and jump hint
+// (`ChatFooterViews`).
 
 extension AppScenePhase {
     var isActive: Bool { phase == .active }
@@ -53,27 +52,6 @@ extension ChatViewController {
             serverId: serverIdHint ?? connection.currentServerId,
             collapseToken: model.contextBarCollapseToken
         )
-    }
-
-    /// The now-playing pill on the strip above the composer, still SwiftUI;
-    /// `ChatFooterAboveView` places it and asks for its content.
-    func makeNowPlayingPillHost(root: AppRootEnvironment) -> HostedContentController {
-        let host = HostFactory.content(EmptyView(), root: root)
-        host.sizingOptions = .intrinsicContentSize
-        host.safeAreaRegions = []
-        host.view.backgroundColor = .clear
-        return host
-    }
-
-    func updateNowPlayingPill(_ host: HostedContentController) {
-        let audioPlayer = audioPlayer
-        host.setContent(InAppNowPlayingPill(
-            audioPlayer: audioPlayer,
-            accessibilityPrefix: "chat.nowPlaying",
-            isExpanded: model.nowPlayingDrawerExpanded,
-            onExpand: { [weak self] in self?.toggleNowPlayingDrawer() },
-            onOpen: { [weak self] in self?.openTimelineReader(.nowPlaying(audioPlayer)) }
-        ))
     }
 
     /// The Files panel (UIKit), as a sheet or in the trailing column. It

@@ -114,7 +114,7 @@ struct InAppNowPlayingChromeTests {
         #expect(!toolbar.parksNowPlayingNextToCompose)
     }
 
-    @Test func pillsUseFilenameWithoutWaveformAndKeepPlayPauseHit() throws {
+    @Test func pillsKeep44ptPlayPauseAndStopHitRegions() {
         #expect(InAppNowPlayingChrome.PillDensity.sessionList.showsTitle)
         #expect(InAppNowPlayingChrome.PillDensity.sessionList.playPauseHitSize == 44)
         #expect(InAppNowPlayingChrome.PillDensity.sessionList.stopHitSize == 44)
@@ -126,10 +126,6 @@ struct InAppNowPlayingChromeTests {
         #expect(InAppNowPlayingChrome.PillDensity.chat.stopHitSize == 44)
         #expect(InAppNowPlayingChrome.PillDensity.chat.titleMaxWidth > 180)
         #expect(InAppNowPlayingChrome.PillDensity.chat.visualHeight == ExtensionStripPillMetrics.visualHeight)
-
-        let source = try nowPlayingChromeSource()
-        #expect(!source.contains("InAppNowPlayingWaveform"))
-        #expect(!source.contains("waveformLevels"))
     }
 
     @Test func playbackControlsExposeLoadingAsCancel() {
@@ -513,42 +509,6 @@ struct InAppNowPlayingChromeTests {
         #expect(InAppNowPlayingChrome.titleAction(tapCount: 3, expandsOnTap: true) == nil)
     }
 
-    @Test func exclusiveTitleGesturesDoNotRunBothActions() throws {
-        var expandCount = 0
-        var openCount = 0
-        func record(_ tapCount: Int) {
-            switch InAppNowPlayingChrome.titleAction(tapCount: tapCount, expandsOnTap: true) {
-            case .expandOrCollapse:
-                expandCount += 1
-            case .openFullScreen:
-                openCount += 1
-            case nil:
-                break
-            }
-        }
-
-        let siblingActions = [1, 2].compactMap {
-            InAppNowPlayingChrome.titleAction(tapCount: $0, expandsOnTap: true)
-        }
-        #expect(Set(siblingActions) == [.expandOrCollapse, .openFullScreen])
-
-        let competing: Set<Int> = [1, 2]
-        if competing.contains(2) {
-            record(2)
-        } else if competing.contains(1) {
-            record(1)
-        }
-        #expect(expandCount == 0)
-        #expect(openCount == 1)
-        #expect(expandCount + openCount == 1)
-
-        let source = try nowPlayingChromeSource()
-        #expect(source.contains("TapGesture(count: 2)"))
-        #expect(source.contains(".exclusively(before:"))
-        #expect(source.contains("TapGesture(count: 1)"))
-        #expect(!source.contains("highPriorityGesture"))
-    }
-
     @Test func visibleStripCollectorFindsOnscreenNativeAudioStrip() {
         let fixture = nestedAudioStripFixture(
             itemID: "voice-visible",
@@ -601,15 +561,7 @@ struct InAppNowPlayingChromeTests {
         #expect(ids.isEmpty)
     }
 
-    @Test func stopControlIsLabeledIdentifiedAnd44pt() throws {
-        let chrome = try nowPlayingChromeSource()
-        #expect(chrome.contains("Stop Playback"))
-        #expect(chrome.contains("\\(accessibilityPrefix).stop"))
-        #expect(chrome.contains("stopHitSize"))
-        #expect(chrome.contains("frame(width: size, height: size)"))
-    }
-
-    @Test func stopEndsActivePlaybackWhilePauseAndDoneDoNot() throws {
+    @Test func stopEndsActivePlaybackWhilePauseDoesNot() {
         let player = AudioPlayerService()
         player._setPlaybackStateForTesting(playing: "voice-1", loading: nil)
         player.pause()
@@ -617,59 +569,6 @@ struct InAppNowPlayingChromeTests {
         #expect(player.isPaused)
         player.stop()
         #expect(!player.hasActivePlayback)
-
-        let chrome = try nowPlayingChromeSource()
-        let stopButton = try #require(sourceSlice(
-            chrome,
-            from: "struct InAppNowPlayingStopButton",
-            to: "struct InAppNowPlayingPill"
-        ))
-        #expect(stopButton.contains("audioPlayer.stop()"))
-        #expect(!stopButton.contains("audioPlayer.pause()"))
-        #expect(stopButton.contains("Stop Playback"))
-        #expect(stopButton.contains("xmark"))
-        #expect(chrome.contains("case .pause:\n            audioPlayer.pause()"))
-        #expect(chrome.contains("case .cancelLoading:\n            audioPlayer.stop()"))
-    }
-
-    @Test func titlePlayAndStopHitRegionsStayDistinct() throws {
-        let chrome = try nowPlayingChromeSource()
-        #expect(chrome.contains("overlay(alignment: .leading)"))
-        #expect(chrome.contains("overlay(alignment: .trailing)"))
-        #expect(chrome.contains("frame(width: density.playPauseHitSize)"))
-        #expect(chrome.contains("frame(width: density.stopHitSize)"))
-        #expect(chrome.contains("allowsHitTesting(false)"))
-        #expect(chrome.contains("TapGesture(count: 2)"))
-        #expect(chrome.contains(".exclusively(before:"))
-        #expect(chrome.contains("TapGesture(count: 1)"))
-        #expect(!chrome.contains("highPriorityGesture"))
-    }
-
-    @Test func compactSessionListKeepsPlayAndStopWithoutTitle() throws {
-        #expect(!InAppNowPlayingChrome.PillDensity.sessionListCompact.showsTitle)
-        #expect(InAppNowPlayingChrome.PillDensity.sessionListCompact.playPauseHitSize == 44)
-        let chrome = try nowPlayingChromeSource()
-        let toolbar = try #require(sourceSlice(
-            chrome,
-            from: "private var toolbarPill:",
-            to: "private var playPauseButton"
-        ))
-        #expect(toolbar.contains("playPauseButton"))
-        #expect(toolbar.contains("InAppNowPlayingStopButton") || toolbar.contains("stopButton"))
-        #expect(toolbar.contains("if density.showsTitle"))
-    }
-
-    @Test func loadingCancelStaysOnLeadingPlayControl() throws {
-        #expect(AudioLoadingCancelControl.cancelSymbolName == "xmark")
-        let chrome = try nowPlayingChromeSource()
-        let playPause = try #require(sourceSlice(
-            chrome,
-            from: "private var playPauseButton:",
-            to: "private var controlAccessibilityLabel"
-        ))
-        #expect(playPause.contains("AudioLoadingCancelControl"))
-        #expect(playPause.contains("Cancel Loading") || chrome.contains("case .cancelLoading: return \"Cancel Loading\""))
-        #expect(!playPause.contains("Stop Playback"))
     }
 
     /// Stop belongs to presented players (modal Done, pushed Back). The file
@@ -707,24 +606,6 @@ private func firstSubview(withAccessibilityIdentifier identifier: String, in roo
         if let match = firstSubview(withAccessibilityIdentifier: identifier, in: subview) { return match }
     }
     return nil
-}
-
-private func nowPlayingChromeSource() throws -> String {
-    let sourceURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: "Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift")
-    return try String(contentsOf: sourceURL, encoding: .utf8)
-}
-
-private func sourceSlice(_ source: String, from start: String, to end: String) -> String? {
-    guard let startRange = source.range(of: start) else { return nil }
-    let rest = source[startRange.lowerBound...]
-    guard let endRange = rest.range(of: end), endRange.lowerBound > rest.startIndex else {
-        return String(rest)
-    }
-    return String(rest[..<endRange.lowerBound])
 }
 
 private func makeSilentWAV(sampleRate: Int = 24_000, frames: Int = 2_400) -> Data {
