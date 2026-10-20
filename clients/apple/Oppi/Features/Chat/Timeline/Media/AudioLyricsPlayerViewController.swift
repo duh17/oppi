@@ -158,7 +158,7 @@ final class AudioLyricsPlayerViewController: UIViewController {
         stopButton.configuration?.baseForegroundColor = style.foreground
         doneButton.configuration = style.capsuleConfiguration(
             title: String(localized: "Done"),
-            font: AudioPlayerChromeStyle.font(.body, weight: .semibold),
+            font: UIFont.scaled(.body, .semibold),
             foreground: style.cyan,
             insets: NSDirectionalEdgeInsets(top: 8, leading: 14, bottom: 8, trailing: 14)
         )
@@ -168,7 +168,7 @@ final class AudioLyricsPlayerViewController: UIViewController {
         followButton.configuration = style.capsuleConfiguration(
             title: String(localized: "Current Line"),
             symbol: "text.line.first.and.arrowtriangle.forward",
-            font: AudioPlayerChromeStyle.font(.subheadline, weight: .semibold),
+            font: UIFont.scaled(.subheadline, .semibold),
             foreground: style.foreground,
             fillAlpha: 0.95,
             insets: NSDirectionalEdgeInsets(top: 8, leading: 14, bottom: 8, trailing: 14)
@@ -329,7 +329,7 @@ final class AudioLyricsPlayerViewController: UIViewController {
             self?.configuration.audioPlayer?.stop()
         }, for: .primaryActionTriggered)
 
-        titleLabel.font = AudioPlayerChromeStyle.font(.subheadline, weight: .semibold)
+        titleLabel.font = UIFont.scaled(.subheadline, .semibold)
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textAlignment = .center
         titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -406,7 +406,7 @@ final class AudioLyricsPlayerViewController: UIViewController {
         var configuration = UIButton.Configuration.plain()
         configuration.attributedTitle = AttributedString(
             label,
-            attributes: AttributeContainer([.font: AudioPlayerChromeStyle.font(.caption1, weight: .semibold)])
+            attributes: AttributeContainer([.font: UIFont.scaled(.caption1, .semibold)])
         )
         configuration.baseForegroundColor = style.purple
         configuration.titleLineBreakMode = .byTruncatingTail
@@ -449,7 +449,7 @@ final class AudioLyricsPlayerViewController: UIViewController {
 
     private func buildBody() -> UIView {
         emptyLabel.text = String(localized: "No lyrics")
-        emptyLabel.font = AudioPlayerChromeStyle.font(.title2)
+        emptyLabel.font = UIFont.scaled(.title2)
         emptyLabel.adjustsFontForContentSizeCategory = true
         emptyLabel.accessibilityIdentifier = "audioLyrics.empty"
 
@@ -638,7 +638,7 @@ final class AudioCastStripView: UIView {
         }
 
         func setSpeaking(_ isSpeaking: Bool, animated: Bool) {
-            label.font = AudioPlayerChromeStyle.font(.footnote, weight: isSpeaking ? .semibold : .regular)
+            label.font = UIFont.scaled(.footnote, isSpeaking ? .semibold : .regular)
             accessibilityTraits = isSpeaking ? .selected : []
             let apply = {
                 self.label.textColor = isSpeaking ? self.style.foreground : self.style.dimmed

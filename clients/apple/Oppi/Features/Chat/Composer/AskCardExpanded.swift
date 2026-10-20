@@ -208,7 +208,7 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
         backButton.configuration = backConfig
         backButton.addAction(UIAction { [weak self] _ in self?.navigateBack() }, for: .touchUpInside)
 
-        titleLabel.font = AskUIFont.preferred(.subheadline, weight: .medium)
+        titleLabel.font = UIFont.scaled(.subheadline, .medium)
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textAlignment = .center
 
@@ -312,7 +312,7 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
             bottomChrome.addSubview(view)
         }
 
-        customHint.font = AskUIFont.preferred(.subheadline, weight: .medium)
+        customHint.font = UIFont.scaled(.subheadline, .medium)
         customHint.adjustsFontForContentSizeCategory = true
         customHint.text = "Or type your answer"
         let bodyFont = UIFont.preferredFont(forTextStyle: .body)
@@ -525,7 +525,7 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
             config.baseForegroundColor = colors.blue
             config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
                 var outgoing = incoming
-                outgoing.font = AskUIFont.preferred(.subheadline, weight: .semibold)
+                outgoing.font = UIFont.scaled(.subheadline, .semibold)
                 return outgoing
             }
             config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 18, bottom: 0, trailing: 18)
@@ -668,7 +668,7 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
         config.baseForegroundColor = foreground
         config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
             var outgoing = incoming
-            outgoing.font = AskUIFont.preferred(.body, weight: weight)
+            outgoing.font = UIFont.scaled(.body, weight)
             return outgoing
         }
         config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20)

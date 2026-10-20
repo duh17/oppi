@@ -110,7 +110,7 @@ final class ScopedLockCoverViewController: UIViewController {
             withConfiguration: UIImage.SymbolConfiguration(pointSize: 40, weight: .semibold)
         )
         symbol.isAccessibilityElement = false
-        titleLabel.font = AskUIFont.preferred(.title3, weight: .semibold)
+        titleLabel.font = UIFont.scaled(.title3, .semibold)
         titleLabel.numberOfLines = 2
         titleLabel.textAlignment = .center
         lockedLabel.text = String(localized: "Locked")

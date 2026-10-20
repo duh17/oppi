@@ -278,7 +278,7 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
             }
             return
         }
-        let mono = { (style: UIFont.TextStyle) in AskUIFont.monospaced(style, weight: .regular) }
+        let mono = { (style: UIFont.TextStyle) in UIFont.scaledMonospaced(style, .regular) }
         var content = UIListContentConfiguration.cell()
         switch previewRows[indexPath.item] {
         case .analyzing:
@@ -293,7 +293,7 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
             content.textProperties.color = UIColor(palette.red)
         case .summary(let count):
             content.text = "Detected \(count) replacements"
-            content.textProperties.font = AskUIFont.preferred(.subheadline, weight: .semibold)
+            content.textProperties.font = UIFont.scaled(.subheadline, .semibold)
             cell.accessibilityIdentifier = "share-redaction-summary"
         case .noFindings:
             content.text = "No configured PII findings detected in this preview."

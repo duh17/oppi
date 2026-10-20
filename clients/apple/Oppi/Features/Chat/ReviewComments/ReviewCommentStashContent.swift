@@ -84,12 +84,10 @@ private final class ReviewCommentStashRowView: UIView {
 
     init(comment: ReviewComment, among comments: [ReviewComment], palette: ThemePalette) {
         super.init(frame: .zero)
-        let icon = UIImageView(image: ExtensionChromeFont.symbol(
-            "text.bubble.fill", .caption1, .semibold, color: UIColor(palette.cyan)
-        ))
+        let icon = UIImageView(image: UIImage.scaledSymbol("text.bubble.fill", style: .caption1, weight: .semibold, color: UIColor(palette.cyan)))
         icon.setContentHuggingPriority(.required, for: .horizontal)
         let location = UILabel()
-        location.font = AskUIFont.monospaced(.caption1, weight: .regular)
+        location.font = UIFont.scaledMonospaced(.caption1, .regular)
         location.adjustsFontForContentSizeCategory = true
         location.textColor = UIColor(palette.comment)
         location.numberOfLines = 2
@@ -112,7 +110,7 @@ private final class ReviewCommentStashRowView: UIView {
         stack.spacing = 10
         if let selectedText = comment.stashSelectedText {
             let selected = UILabel()
-            selected.font = AskUIFont.monospaced(.caption1, weight: .regular)
+            selected.font = UIFont.scaledMonospaced(.caption1, .regular)
             selected.adjustsFontForContentSizeCategory = true
             selected.textColor = UIColor(palette.fgDim)
             selected.numberOfLines = 3
@@ -161,7 +159,7 @@ private final class ReviewCommentStashRowView: UIView {
 
     private static func iconButton(_ symbol: String, color: UIColor, label: String) -> UIButton {
         let button = UIButton(type: .custom)
-        button.setImage(ExtensionChromeFont.symbol(symbol, .caption1, .semibold, color: color), for: .normal)
+        button.setImage(UIImage.scaledSymbol(symbol, style: .caption1, weight: .semibold, color: color), for: .normal)
         button.accessibilityLabel = label
         button.setContentHuggingPriority(.required, for: .horizontal)
         NSLayoutConstraint.activate([
@@ -454,7 +452,7 @@ extension ReviewCommentStashViewController: UICollectionViewDataSource {
         case .location:
             var content = UIListContentConfiguration.cell()
             content.text = ReviewCommentStashLocation.completeText(for: editing)
-            content.textProperties.font = AskUIFont.monospaced(.caption1, weight: .regular)
+            content.textProperties.font = UIFont.scaledMonospaced(.caption1, .regular)
             content.textProperties.color = UIColor(palette.comment)
             cell.contentConfiguration = content
         case .selectedText:
@@ -465,7 +463,7 @@ extension ReviewCommentStashViewController: UICollectionViewDataSource {
             // The list row's text inset, as a plain text row gets.
             text.textContainerInset = UIEdgeInsets(top: 11, left: 0, bottom: 11, right: 0)
             text.textContainer.lineFragmentPadding = 0
-            text.font = AskUIFont.monospaced(.caption1, weight: .regular)
+            text.font = UIFont.scaledMonospaced(.caption1, .regular)
             text.adjustsFontForContentSizeCategory = true
             text.textColor = UIColor(palette.fgDim)
             text.text = editing.stashSelectedText

@@ -1050,7 +1050,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private func configureSearchHeader(_ view: UICollectionViewListCell) {
         var content = UIListContentConfiguration.plainHeader()
         content.text = compactSearchHeader
-        content.textProperties.font = Self.monospacedDigitFont(.caption2)
+        content.textProperties.font = UIFont.scaled(.caption2, monospacedDigits: true)
         content.textProperties.color = UIColor(palette.comment)
         content.textProperties.transform = .none
         view.contentConfiguration = content
@@ -1265,7 +1265,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         case .searchCount(let text):
             var content = UIListContentConfiguration.cell()
             content.text = text
-            content.textProperties.font = Self.monospacedDigitFont(.caption2)
+            content.textProperties.font = UIFont.scaled(.caption2, monospacedDigits: true)
             content.textProperties.color = comment
             content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 8, bottom: 4, trailing: 8)
             cell.contentConfiguration = content
@@ -1373,7 +1373,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 content.attributedText = title
                 content.textProperties.numberOfLines = 1
                 content.secondaryText = result.directory
-                content.secondaryTextProperties.font = Self.monospacedFont(.caption2)
+                content.secondaryTextProperties.font = UIFont.scaledMonospaced(.caption2)
                 content.secondaryTextProperties.color = comment
                 content.secondaryTextProperties.numberOfLines = 1
                 content.secondaryTextProperties.lineBreakMode = .byTruncatingMiddle
@@ -1438,7 +1438,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         content.textProperties.numberOfLines = 1
         content.textProperties.lineBreakMode = .byTruncatingMiddle
         content.secondaryText = subtitle
-        content.secondaryTextProperties.font = Self.monospacedFont(.caption2)
+        content.secondaryTextProperties.font = UIFont.scaledMonospaced(.caption2)
         content.secondaryTextProperties.color = comment
         content.secondaryTextProperties.numberOfLines = 1
         content.secondaryTextProperties.lineBreakMode = .byTruncatingMiddle
@@ -1542,16 +1542,6 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     private static func font(_ style: UIFont.TextStyle, _ weight: UIFont.Weight) -> UIFont {
         FileBrowserBreadcrumbCell.font(style, weight)
-    }
-
-    private static func monospacedFont(_ style: UIFont.TextStyle) -> UIFont {
-        let size = UIFont.preferredFont(forTextStyle: style).pointSize
-        return UIFontMetrics(forTextStyle: style).scaledFont(for: .monospacedSystemFont(ofSize: size, weight: .regular))
-    }
-
-    private static func monospacedDigitFont(_ style: UIFont.TextStyle) -> UIFont {
-        let size = UIFont.preferredFont(forTextStyle: style).pointSize
-        return UIFontMetrics(forTextStyle: style).scaledFont(for: .monospacedDigitSystemFont(ofSize: size, weight: .regular))
     }
 
     // MARK: Selection

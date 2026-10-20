@@ -174,7 +174,7 @@ final class WorkspaceFileEditBannerView: UIView {
 
     init(session: WorkspaceFileEditSession, onReview: @escaping () -> Void, onUseDisk: @escaping () -> Void) {
         self.session = session
-        let font = AskUIFont.preferred(.footnote, weight: .semibold)
+        let font = UIFont.scaled(.footnote, .semibold)
         reviewButton = WorkspaceFileEditButtons.bordered(String(localized: "Review Changes"), font: font, action: onReview)
         reviewButton.accessibilityIdentifier = "workspace-file-editor.review"
         useDiskButton = WorkspaceFileEditButtons.bordered(String(localized: "Use Disk Version"), font: font, action: onUseDisk)
@@ -295,7 +295,7 @@ final class WorkspaceFileConflictReviewViewController: UIViewController {
         )
         close.accessibilityIdentifier = "workspace-file-review.close"
         navigationItem.leftBarButtonItem = close
-        let font = AskUIFont.preferred(.subheadline, weight: .semibold)
+        let font = UIFont.scaled(.subheadline, .semibold)
         let useDisk = WorkspaceFileEditButtons.bordered(String(localized: "Use Disk Version"), font: font, action: onUseDisk)
         useDisk.accessibilityIdentifier = "workspace-file-review.use-disk"
         let replace = WorkspaceFileEditButtons.bordered(

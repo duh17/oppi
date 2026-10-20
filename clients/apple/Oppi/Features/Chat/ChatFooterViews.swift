@@ -240,9 +240,7 @@ private final class ChatFooterNoticeView: UIView {
         card.clipsToBounds = true
         let glass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
         glass.contentView.backgroundColor = color.withAlphaComponent(0.08)
-        let icon = UIImageView(image: ExtensionChromeFont.symbol(
-            "exclamationmark.triangle.fill", .caption1, .regular, color: color
-        ))
+        let icon = UIImageView(image: UIImage.scaledSymbol("exclamationmark.triangle.fill", style: .caption1, weight: .regular, color: color))
         icon.setContentHuggingPriority(.required, for: .horizontal)
         let label = ExtensionChromeFont.label(.caption1, lines: 0)
         label.text = text
@@ -366,16 +364,16 @@ final class ChatNowPlayingDrawerView: ExtensionDrawerPanelView {
         switch presentation {
         case .cue(let text):
             lyricLabel.text = text
-            lyricLabel.font = ExtensionChromeFont.text(.body, .medium)
+            lyricLabel.font = UIFont.scaled(.body, .medium)
             lyricLabel.textColor = UIColor(palette.fg)
         case .gap:
             lyricLabel.text = "…"
-            lyricLabel.font = ExtensionChromeFont.text(.body, .medium)
+            lyricLabel.font = UIFont.scaled(.body, .medium)
             lyricLabel.textColor = UIColor(palette.comment)
             lyricLabel.accessibilityLabel = "No lyric at the current position"
         case .unavailable:
             lyricLabel.text = "No lyrics"
-            lyricLabel.font = ExtensionChromeFont.text(.callout)
+            lyricLabel.font = UIFont.scaled(.callout)
             lyricLabel.textColor = UIColor(palette.comment)
         case .loading:
             break
@@ -456,7 +454,7 @@ final class ChatStoppedFooterView: UIView {
         super.init(frame: .zero)
         endedLabel.text = "Session ended"
         for label in [tokensLabel, costLabel] {
-            label.font = ExtensionChromeFont.monospacedDigits(.caption1)
+            label.font = UIFont.scaled(.caption1, monospacedDigits: true)
             label.adjustsFontForContentSizeCategory = true
         }
         let spacer = UIView()
@@ -501,7 +499,7 @@ final class ChatStoppedFooterView: UIView {
         let palette = chat.chromeThemeID.palette
         let comment = UIColor(palette.comment)
         rule.backgroundColor = comment.withAlphaComponent(0.3)
-        icon.image = ExtensionChromeFont.symbol("checkmark.circle", .subheadline, .regular, color: comment)
+        icon.image = UIImage.scaledSymbol("checkmark.circle", style: .subheadline, weight: .regular, color: comment)
         endedLabel.textColor = comment
         tokensLabel.textColor = comment
         costLabel.textColor = comment
@@ -521,7 +519,7 @@ final class ChatStoppedFooterView: UIView {
         configuration.cornerStyle = .fixed
         configuration.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 0, bottom: 10, trailing: 0)
         var title = AttributedString(isResuming ? "Resuming…" : "Resume Session")
-        title.font = ExtensionChromeFont.text(.subheadline, .medium)
+        title.font = UIFont.scaled(.subheadline, .medium)
         configuration.attributedTitle = title
         configuration.imagePadding = 6
         configuration.showsActivityIndicator = isResuming
@@ -621,7 +619,7 @@ final class ChatJumpToBottomView: UIView {
         let busy = chat.isBusy
         let palette = chat.chromeThemeID.palette
         let provider = UIColor(ProviderColor.color(for: chat.session?.model, palette: palette))
-        idleArrow.image = ExtensionChromeFont.symbol("arrow.down", .caption1, .bold, color: UIColor(palette.fg))
+        idleArrow.image = UIImage.scaledSymbol("arrow.down", style: .caption1, weight: .bold, color: UIColor(palette.fg))
         badge.backgroundColor = provider
         badge.image = UIImage(
             systemName: "arrow.down",
@@ -766,7 +764,7 @@ final class ChatTitleView: UIView {
         piTile.addSubview(piIcon)
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        costLabel.font = ExtensionChromeFont.monospacedDigits(.caption2)
+        costLabel.font = UIFont.scaled(.caption2, monospacedDigits: true)
         costLabel.adjustsFontForContentSizeCategory = true
         durableLabel.text = "Durable"
         durableLabel.accessibilityIdentifier = "chat.title.durable"

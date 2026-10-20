@@ -64,31 +64,6 @@ enum AskCardShared {
     }
 }
 
-/// Dynamic Type fonts at a fixed weight. Labels that use them set
-/// `adjustsFontForContentSizeCategory`, so text size changes reflow the card
-/// without a rebuild.
-enum AskUIFont {
-    static func preferred(_ style: UIFont.TextStyle, weight: UIFont.Weight) -> UIFont {
-        let base = UIFont.preferredFont(
-            forTextStyle: style,
-            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
-        )
-        return UIFontMetrics(forTextStyle: style).scaledFont(
-            for: UIFont.systemFont(ofSize: base.pointSize, weight: weight)
-        )
-    }
-
-    static func monospaced(_ style: UIFont.TextStyle, weight: UIFont.Weight) -> UIFont {
-        let base = UIFont.preferredFont(
-            forTextStyle: style,
-            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
-        )
-        return UIFontMetrics(forTextStyle: style).scaledFont(
-            for: UIFont.monospacedSystemFont(ofSize: base.pointSize, weight: weight)
-        )
-    }
-}
-
 /// "Select multiple" capsule under a multi-select question.
 final class AskSelectionModePillView: UIView {
     private let iconView = UIImageView()
@@ -98,7 +73,7 @@ final class AskSelectionModePillView: UIView {
         super.init(frame: frame)
         accessibilityIdentifier = "ask.selectionMode.multi"
         isAccessibilityElement = true
-        let font = AskUIFont.preferred(.caption2, weight: .semibold)
+        let font = UIFont.scaled(.caption2, .semibold)
         iconView.contentMode = .scaleAspectFit
         iconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font)
         iconView.image = UIImage(systemName: "checkmark.square")
@@ -154,10 +129,10 @@ final class AskOptionChoiceRowView: UIControl {
         /// In the expanded Ask sheet.
         case expanded
 
-        fileprivate var titleFont: UIFont {
+        @MainActor fileprivate var titleFont: UIFont {
             switch self {
-            case .inline: AskUIFont.preferred(.subheadline, weight: .semibold)
-            case .expanded: AskUIFont.preferred(.body, weight: .semibold)
+            case .inline: UIFont.scaled(.subheadline, .semibold)
+            case .expanded: UIFont.scaled(.body, .semibold)
             }
         }
 

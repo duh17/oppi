@@ -28,22 +28,8 @@ struct AudioPlayerChromeStyle {
             .map { UIColor($0) }
     }
 
-    /// Dynamic Type font at a text style with an explicit weight.
-    static func font(_ style: UIFont.TextStyle, weight: UIFont.Weight = .regular) -> UIFont {
-        let base = UIFontDescriptor.preferredFontDescriptor(
-            withTextStyle: style,
-            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
-        )
-        let descriptor = base.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: weight]])
-        return UIFontMetrics(forTextStyle: style).scaledFont(for: UIFont(descriptor: descriptor, size: 0))
-    }
-
     static func symbol(_ name: String, pointSize: CGFloat, weight: UIImage.SymbolWeight = .semibold) -> UIImage? {
         UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: pointSize, weight: weight))
-    }
-
-    static func symbol(_ name: String, style: UIFont.TextStyle, weight: UIFont.Weight) -> UIImage? {
-        UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(font: font(style, weight: weight)))
     }
 
     /// Capsule chip used for header and listening controls.
@@ -213,7 +199,7 @@ final class AudioPlaybackTransportView: UIView {
         var openFile = UIButton.Configuration.plain()
         openFile.attributedTitle = AttributedString(
             String(localized: "Open file"),
-            attributes: AttributeContainer([.font: AudioPlayerChromeStyle.font(.subheadline)])
+            attributes: AttributeContainer([.font: UIFont.scaled(.subheadline)])
         )
         openFile.baseForegroundColor = style.purple
         openFileButton.configuration = openFile
@@ -231,7 +217,7 @@ final class AudioPlaybackTransportView: UIView {
     // MARK: - Hierarchy
 
     private func buildHierarchy() {
-        chapterTitleLabel.font = AudioPlayerChromeStyle.font(.subheadline, weight: .semibold)
+        chapterTitleLabel.font = UIFont.scaled(.subheadline, .semibold)
         chapterTitleLabel.adjustsFontForContentSizeCategory = true
         chapterTitleLabel.accessibilityIdentifier = "\(accessibilityPrefix).chapterTitle"
 
@@ -249,7 +235,7 @@ final class AudioPlaybackTransportView: UIView {
         }
 
         for label in [elapsedLabel, durationLabel] {
-            label.font = AudioPlayerChromeStyle.font(.caption1)
+            label.font = UIFont.scaled(.caption1)
             label.adjustsFontForContentSizeCategory = true
         }
         let times = UIStackView(arrangedSubviews: [elapsedLabel, durationLabel])
@@ -274,7 +260,7 @@ final class AudioPlaybackTransportView: UIView {
             controls.addArrangedSubview(button)
         }
 
-        failureLabel.font = AudioPlayerChromeStyle.font(.footnote)
+        failureLabel.font = UIFont.scaled(.footnote)
         failureLabel.adjustsFontForContentSizeCategory = true
         failureLabel.textAlignment = .center
         failureLabel.numberOfLines = 0
@@ -313,7 +299,7 @@ final class AudioPlaybackTransportView: UIView {
     }
 
     private static func chipFont() -> UIFont {
-        AudioPlayerChromeStyle.font(.subheadline, weight: .semibold)
+        UIFont.scaled(.subheadline, .semibold)
     }
 
     private static func centered(_ content: UIView) -> UIView {

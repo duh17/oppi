@@ -388,7 +388,7 @@ final class InAppNowPlayingPillView: UIView {
         playPause.setImage(
             action == .cancelLoading
                 ? nil
-                : AudioPlayerChromeStyle.symbol(action == .pause ? "pause.fill" : "play.fill", style: .body, weight: .semibold),
+                : UIImage.scaledSymbol(action == .pause ? "pause.fill" : "play.fill", style: .body, weight: .semibold),
             for: .normal
         )
         playPause.tintColor = style.foreground
@@ -402,13 +402,9 @@ final class InAppNowPlayingPillView: UIView {
         titleMinWidth.constant = density.titleMinWidth
         titleMaxWidth.constant = density.titleMaxWidth
         titleLabel.text = title
-        titleLabel.font = AudioPlayerChromeStyle.font(.caption1, weight: .semibold)
+        titleLabel.font = UIFont.scaled(.caption1, .semibold)
         titleLabel.textColor = style.foreground
-        chevron.image = AudioPlayerChromeStyle.symbol(
-            isExpanded ? "chevron.down" : "chevron.right",
-            style: .caption2,
-            weight: .bold
-        )
+        chevron.image = UIImage.scaledSymbol(isExpanded ? "chevron.down" : "chevron.right", style: .caption2, weight: .bold)
         chevron.tintColor = style.comment
         titleArea.accessibilityLabel = "Now Playing, \(title)"
         titleArea.accessibilityHint = if onExpand == nil {
@@ -419,7 +415,7 @@ final class InAppNowPlayingPillView: UIView {
             String(localized: "Expands the player")
         }
 
-        stop.setImage(AudioPlayerChromeStyle.symbol("xmark", style: .body, weight: .semibold), for: .normal)
+        stop.setImage(UIImage.scaledSymbol("xmark", style: .body, weight: .semibold), for: .normal)
         stop.tintColor = style.foreground
     }
 

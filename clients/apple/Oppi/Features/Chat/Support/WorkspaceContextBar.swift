@@ -386,14 +386,14 @@ final class WorkspaceContextBarView: UIView {
         mono: Bool = false
     ) -> UIFont {
         let style = usesRegularTypography ? regular : compact
-        return mono ? AskUIFont.monospaced(style, weight: weight) : AskUIFont.preferred(style, weight: weight)
+        return mono ? UIFont.scaledMonospaced(style, weight) : UIFont.scaled(style, weight)
     }
 
     /// A fixed-size compact font (`Font.app*`) that steps to a text style in
     /// regular width.
     private func font(fixed size: CGFloat, _ weight: UIFont.Weight, regular: UIFont.TextStyle, _ regularWeight: UIFont.Weight) -> UIFont {
         usesRegularTypography
-            ? AskUIFont.preferred(regular, weight: regularWeight)
+            ? UIFont.scaled(regular, regularWeight)
             : .systemFont(ofSize: size, weight: weight)
     }
 

@@ -39,7 +39,7 @@ final class ReviewFileSummaryBarView: UIView {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconTile.addSubview(iconView)
 
-        nameLabel.font = AskUIFont.preferred(.subheadline, weight: .semibold)
+        nameLabel.font = UIFont.scaled(.subheadline, .semibold)
         parentLabel.font = UIFont.preferredFont(forTextStyle: .caption2)
         parentLabel.lineBreakMode = .byTruncatingMiddle
         let countFont = UIFont.scaled(.caption2, .semibold, monospacedDigits: true)

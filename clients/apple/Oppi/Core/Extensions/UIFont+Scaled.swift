@@ -8,20 +8,38 @@ extension UIFont {
     /// few fonts while they scroll.
     @MainActor
     static func scaled(_ style: TextStyle, _ weight: Weight = .regular, monospacedDigits: Bool = false) -> UIFont {
+        scaled(style, weight, design: monospacedDigits ? .monospacedDigits : .proportional)
+    }
+
+    /// `scaled(style, weight)` in the monospaced system font: code, paths,
+    /// shell output.
+    @MainActor
+    static func scaledMonospaced(_ style: TextStyle, _ weight: Weight = .regular) -> UIFont {
+        scaled(style, weight, design: .monospaced)
+    }
+
+    private enum ScaledDesign: String {
+        case proportional, monospacedDigits, monospaced
+    }
+
+    @MainActor
+    private static func scaled(_ style: TextStyle, _ weight: Weight, design: ScaledDesign) -> UIFont {
         let category = UIApplication.shared.preferredContentSizeCategory
         if category != ScaledFontCache.category {
             ScaledFontCache.category = category
             ScaledFontCache.fonts.removeAll()
         }
-        let key = "\(style.rawValue)|\(weight.rawValue)|\(monospacedDigits)"
+        let key = "\(style.rawValue)|\(weight.rawValue)|\(design.rawValue)"
         if let font = ScaledFontCache.fonts[key] { return font }
         let size = UIFont.preferredFont(
             forTextStyle: style,
             compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
         ).pointSize
-        let base = monospacedDigits
-            ? UIFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
-            : UIFont.systemFont(ofSize: size, weight: weight)
+        let base = switch design {
+        case .proportional: UIFont.systemFont(ofSize: size, weight: weight)
+        case .monospacedDigits: UIFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
+        case .monospaced: UIFont.monospacedSystemFont(ofSize: size, weight: weight)
+        }
         let font = UIFontMetrics(forTextStyle: style).scaledFont(for: base)
         ScaledFontCache.fonts[key] = font
         return font

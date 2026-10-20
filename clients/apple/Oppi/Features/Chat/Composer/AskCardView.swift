@@ -210,7 +210,7 @@ final class AskCardView: UIView, UIScrollViewDelegate {
     /// corner. The control's 44 pt square reaches into the card padding so its
     /// glyph centers on the first line of text.
     private func buildQuestionRow() {
-        questionLabel.font = AskUIFont.preferred(.subheadline, weight: .medium)
+        questionLabel.font = UIFont.scaled(.subheadline, .medium)
         questionLabel.adjustsFontForContentSizeCategory = true
         questionLabel.numberOfLines = 0
         questionLabel.lineBreakMode = .byTruncatingTail
@@ -536,7 +536,7 @@ final class AskCardView: UIView, UIScrollViewDelegate {
         config.baseForegroundColor = foreground
         config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
             var outgoing = incoming
-            outgoing.font = AskUIFont.preferred(.footnote, weight: .semibold)
+            outgoing.font = UIFont.scaled(.footnote, .semibold)
             return outgoing
         }
         config.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 14)
@@ -584,10 +584,10 @@ private final class AskCommandPreviewView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        titleLabel.font = AskUIFont.preferred(.caption2, weight: .semibold)
+        titleLabel.font = UIFont.scaled(.caption2, .semibold)
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.text = "Command"
-        commandLabel.font = AskUIFont.monospaced(.footnote, weight: .semibold)
+        commandLabel.font = UIFont.scaledMonospaced(.footnote, .semibold)
         commandLabel.adjustsFontForContentSizeCategory = true
         commandLabel.numberOfLines = 2
         commandLabel.lineBreakMode = .byTruncatingTail

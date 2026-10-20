@@ -433,24 +433,24 @@ private final class CommitDetailContentView: UIScrollView {
         alwaysBounceVertical = true
 
         shaLabel.text = detail.sha
-        shaLabel.font = AskUIFont.monospaced(.caption1, weight: .semibold)
+        shaLabel.font = UIFont.scaledMonospaced(.caption1, .semibold)
         messageLabel.text = detail.message
-        messageLabel.font = AskUIFont.preferred(.subheadline, weight: .medium)
+        messageLabel.font = UIFont.scaled(.subheadline, .medium)
         messageLabel.numberOfLines = 0
         authorLabel.text = detail.author
         authorLabel.font = .preferredFont(forTextStyle: .caption2)
         authorLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         dateLabel.text = Self.relativeDate(from: detail.date)
-        dateLabel.font = AskUIFont.monospaced(.caption2, weight: .regular)
+        dateLabel.font = UIFont.scaledMonospaced(.caption2, .regular)
         dateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         addedLabel.text = "+\(detail.addedLines)"
         addedLabel.isHidden = detail.addedLines <= 0
         removedLabel.text = "-\(detail.removedLines)"
         removedLabel.isHidden = detail.removedLines <= 0
         for label in [addedLabel, removedLabel] {
-            label.font = AskUIFont.monospaced(.caption2, weight: .bold)
+            label.font = UIFont.scaledMonospaced(.caption2, .bold)
         }
-        filesHeaderLabel.font = AskUIFont.monospaced(.caption2, weight: .semibold)
+        filesHeaderLabel.font = UIFont.scaledMonospaced(.caption2, .semibold)
         for label in [shaLabel, messageLabel, authorLabel, dateLabel, addedLabel, removedLabel, filesHeaderLabel] {
             label.adjustsFontForContentSizeCategory = true
         }
@@ -533,7 +533,7 @@ private final class CommitDetailContentView: UIScrollView {
         let statusColor = Self.statusColor(file.status, palette: palette)
         let status = UILabel()
         status.text = file.status
-        status.font = AskUIFont.preferred(.caption2, weight: .medium)
+        status.font = UIFont.scaled(.caption2, .medium)
         status.adjustsFontForContentSizeCategory = true
         status.textColor = statusColor
         status.setContentHuggingPriority(.required, for: .horizontal)
@@ -556,8 +556,8 @@ private final class CommitDetailContentView: UIScrollView {
             afterCounts: [badge],
             showsChevron: true,
             fonts: .init(
-                path: AskUIFont.monospaced(.caption2, weight: .regular),
-                count: AskUIFont.monospaced(.caption2, weight: .bold),
+                path: UIFont.scaledMonospaced(.caption2, .regular),
+                count: UIFont.scaledMonospaced(.caption2, .bold),
                 chevron: .systemFont(ofSize: 8, weight: .semibold)
             ),
             verticalInset: 4,

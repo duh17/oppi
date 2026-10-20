@@ -162,42 +162,16 @@ final class CappedScrollView: UIView {
     }
 }
 
-/// Fonts and symbols for the strip and drawers, scaled for Dynamic Type.
+/// Labels for the strip and drawers, scaled for Dynamic Type.
+@MainActor
 enum ExtensionChromeFont {
-    static func text(_ style: UIFont.TextStyle, _ weight: UIFont.Weight = .regular) -> UIFont {
-        AskUIFont.preferred(style, weight: weight)
-    }
-
-    /// `text` with digits of one width (counts, costs, token totals).
-    static func monospacedDigits(_ style: UIFont.TextStyle, _ weight: UIFont.Weight = .regular) -> UIFont {
-        let base = UIFont.preferredFont(
-            forTextStyle: style,
-            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
-        )
-        return UIFontMetrics(forTextStyle: style).scaledFont(
-            for: .monospacedDigitSystemFont(ofSize: base.pointSize, weight: weight)
-        )
-    }
-
-    static func symbol(
-        _ name: String,
-        _ style: UIFont.TextStyle,
-        _ weight: UIFont.Weight,
-        color: UIColor
-    ) -> UIImage? {
-        UIImage(
-            systemName: name,
-            withConfiguration: UIImage.SymbolConfiguration(font: text(style, weight))
-        )?.withTintColor(color, renderingMode: .alwaysOriginal)
-    }
-
     static func label(
         _ style: UIFont.TextStyle,
         _ weight: UIFont.Weight = .regular,
         lines: Int = 1
     ) -> UILabel {
         let label = UILabel()
-        label.font = text(style, weight)
+        label.font = .scaled(style, weight)
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = lines
         return label
@@ -545,7 +519,7 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
     ) {
         let tone = entry.stateTone.color(palette)
         if let image = entry.leadingSystemImage {
-            marker.image = ExtensionChromeFont.symbol(image, .caption1, .bold, color: tone)
+            marker.image = UIImage.scaledSymbol(image, style: .caption1, weight: .bold, color: tone)
             marker.isHidden = false
             dot.isHidden = true
         } else {
@@ -563,9 +537,7 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
         mediaLabel.text = media
         mediaLabel.textColor = UIColor(palette.fg)
         mediaLabel.isHidden = media == nil
-        chevron.image = ExtensionChromeFont.symbol(
-            isActive ? "chevron.down" : "chevron.right", .caption2, .bold, color: UIColor(palette.comment)
-        )
+        chevron.image = UIImage.scaledSymbol(isActive ? "chevron.down" : "chevron.right", style: .caption2, weight: .bold, color: UIColor(palette.comment))
         surface.apply(palette: palette, active: isActive ? tone : nil)
 
         accessibilityIdentifier = "extension-strip-\(placement.accessibilityIdentifierComponent)-pill-\(entry.identifierSuffix)"
@@ -733,7 +705,7 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         mediaLabel.textColor = UIColor(palette.fg)
         mediaLabel.isHidden = media == nil
         var buttonConfiguration = UIButton.Configuration.plain()
-        buttonConfiguration.image = ExtensionChromeFont.symbol("chevron.up", .caption1, .bold, color: UIColor(palette.comment))
+        buttonConfiguration.image = UIImage.scaledSymbol("chevron.up", style: .caption1, weight: .bold, color: UIColor(palette.comment))
         buttonConfiguration.background.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.04)
         buttonConfiguration.background.cornerRadius = 16
         buttonConfiguration.contentInsets = .zero

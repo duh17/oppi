@@ -73,17 +73,13 @@ final class ExtensionNotifyChipView: ExtensionStripPillControl {
     func apply(_ state: ExtensionNotifyChipStore.SessionState, palette: ThemePalette) {
         let newest = state.newest
         let tint = ExtensionNotifyChip.tint(for: newest.notifyType, palette: palette)
-        icon.image = ExtensionChromeFont.symbol(
-            ExtensionNotifyChip.iconName(for: newest.notifyType), .caption1, .bold, color: tint
-        )
+        icon.image = UIImage.scaledSymbol(ExtensionNotifyChip.iconName(for: newest.notifyType), style: .caption1, weight: .bold, color: tint)
         nameLabel.text = newest.extensionDisplayName
         nameLabel.textColor = UIColor(palette.fg)
         countLabel.text = "\(state.count)"
         countLabel.textColor = UIColor(palette.comment)
         countLabel.isHidden = state.count <= 1
-        chevron.image = ExtensionChromeFont.symbol(
-            state.isExpanded ? "chevron.down" : "chevron.right", .caption2, .bold, color: UIColor(palette.comment)
-        )
+        chevron.image = UIImage.scaledSymbol(state.isExpanded ? "chevron.down" : "chevron.right", style: .caption2, weight: .bold, color: UIColor(palette.comment))
         surface.apply(palette: palette, active: state.isExpanded ? tint : nil)
 
         let base = "Notification from \(newest.extensionDisplayName): \(newest.message)"
@@ -155,13 +151,13 @@ final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
         countLabel.isHidden = state.count <= 1
 
         var collapse = UIButton.Configuration.plain()
-        collapse.image = ExtensionChromeFont.symbol("chevron.up", .caption1, .bold, color: UIColor(palette.comment))
+        collapse.image = UIImage.scaledSymbol("chevron.up", style: .caption1, weight: .bold, color: UIColor(palette.comment))
         collapse.background.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.04)
         collapse.background.cornerRadius = 16
         collapse.contentInsets = .zero
         collapseButton.configuration = collapse
         var dismiss = UIButton.Configuration.plain()
-        dismiss.image = ExtensionChromeFont.symbol("xmark", .caption1, .bold, color: UIColor(palette.fgDim))
+        dismiss.image = UIImage.scaledSymbol("xmark", style: .caption1, weight: .bold, color: UIColor(palette.fgDim))
         dismiss.contentInsets = .zero
         dismissButton.configuration = dismiss
 
@@ -191,7 +187,7 @@ final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
         let message = ExtensionNativeLinkTextView()
         let text = NSMutableAttributedString(attributed)
         text.addAttributes([
-            .font: ExtensionChromeFont.text(.footnote),
+            .font: UIFont.scaled(.footnote),
             .foregroundColor: UIColor(palette.fg),
         ], range: NSRange(location: 0, length: text.length))
         message.attributedText = text

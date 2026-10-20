@@ -93,7 +93,7 @@ final class MessageQueueView: UIView {
         stack.addArrangedSubview(sections)
 
         editButton.accessibilityIdentifier = "chat.messageQueue.editInComposer"
-        editButton.titleLabel?.font = ExtensionChromeFont.text(.caption1, .semibold)
+        editButton.titleLabel?.font = UIFont.scaled(.caption1, .semibold)
         editButton.titleLabel?.adjustsFontForContentSizeCategory = true
         editButton.setTitle("Edit in composer", for: .normal)
         editButton.addAction(UIAction { [weak self] _ in
@@ -145,7 +145,7 @@ final class MessageQueueView: UIView {
             toggleCount.textColor = UIColor(palette.fg)
             toggleChevron.image = UIImage(
                 systemName: isExpanded ? "chevron.down" : "chevron.right",
-                withConfiguration: UIImage.SymbolConfiguration(font: ExtensionChromeFont.text(.body))
+                withConfiguration: UIImage.SymbolConfiguration(font: UIFont.scaled(.body))
             )
             toggleChevron.tintColor = UIColor(palette.fg)
             toggle.accessibilityLabel = "Message Queue"
@@ -268,7 +268,7 @@ final class MessageQueueView: UIView {
         } else {
             tile.backgroundColor = UIColor(palette.bg.opacity(0.30))
             tile.contentMode = .center
-            tile.image = ExtensionChromeFont.symbol("photo", .caption1, .semibold, color: UIColor(palette.comment))
+            tile.image = UIImage.scaledSymbol("photo", style: .caption1, weight: .semibold, color: UIColor(palette.comment))
         }
         tile.isAccessibilityElement = true
         tile.accessibilityIdentifier = "chat.messageQueue.attachment.\(id)"
@@ -284,7 +284,7 @@ final class MessageQueueView: UIView {
         let icon = UIImageView(image: FileIcon.forPath(name).uiImage(pointSize: 12))
         icon.contentMode = .scaleAspectFit
         let label = UILabel()
-        label.font = AskUIFont.monospaced(.caption2, weight: .regular)
+        label.font = UIFont.scaledMonospaced(.caption2, .regular)
         label.adjustsFontForContentSizeCategory = true
         label.text = name
         label.textColor = UIColor(palette.fg)

@@ -100,7 +100,7 @@ final class ReviewCommentStripPillView: ExtensionStripPillControl {
         row.spacing = 8
         row.isLayoutMarginsRelativeArrangement = true
         row.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6)
-        countLabel.font = ExtensionChromeFont.monospacedDigits(.subheadline, .semibold)
+        countLabel.font = UIFont.scaled(.subheadline, .semibold, monospacedDigits: true)
         countLabel.adjustsFontForContentSizeCategory = true
         countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         row.addArrangedSubview(icon)
@@ -122,7 +122,7 @@ final class ReviewCommentStripPillView: ExtensionStripPillControl {
     }
 
     func apply(count: Int, isExpanded: Bool, palette: ThemePalette) {
-        icon.image = ExtensionChromeFont.symbol("text.bubble", .subheadline, .semibold, color: UIColor(palette.cyan))
+        icon.image = UIImage.scaledSymbol("text.bubble", style: .subheadline, weight: .semibold, color: UIColor(palette.cyan))
         countLabel.text = ReviewCommentStripChrome.pillCountText(count: count)
         countLabel.textColor = UIColor(palette.fg)
         surface.apply(palette: palette, active: isExpanded ? UIColor(palette.cyan) : nil)
