@@ -1300,52 +1300,6 @@ struct ComposerBarTests {
         #expect(displayedText == "because the larger tables should download")
     }
 
-    @Test("Camera capture lets SwiftUI cover own dismissal")
-    func cameraCaptureDoesNotSelfDismissPresenter() {
-        let picker = DismissSpyImagePickerController()
-        let image = makeTinyImage()
-        var capturedImage: UIImage?
-        var didCancel = false
-
-        let coordinator = CameraPicker.Coordinator(
-            onCapture: { capturedImage = $0 },
-            onCancel: { didCancel = true }
-        )
-
-        coordinator.imagePickerController(
-            picker,
-            didFinishPickingMediaWithInfo: [.originalImage: image]
-        )
-
-        #expect(capturedImage === image)
-        #expect(!didCancel)
-        #expect(
-            picker.dismissCallCount == 0,
-            "CameraPicker must let composerCameraCover's binding dismiss only the camera cover; UIKit self-dismiss can also close the parent quick-session sheet."
-        )
-    }
-
-    @Test("Camera cancel lets SwiftUI cover own dismissal")
-    func cameraCancelDoesNotSelfDismissPresenter() {
-        let picker = DismissSpyImagePickerController()
-        var didCapture = false
-        var didCancel = false
-
-        let coordinator = CameraPicker.Coordinator(
-            onCapture: { _ in didCapture = true },
-            onCancel: { didCancel = true }
-        )
-
-        coordinator.imagePickerControllerDidCancel(picker)
-
-        #expect(!didCapture)
-        #expect(didCancel)
-        #expect(
-            picker.dismissCallCount == 0,
-            "CameraPicker must let composerCameraCover's binding dismiss only the camera cover; UIKit self-dismiss can also close the parent quick-session sheet."
-        )
-    }
-
     @Test("Dictation indicator change posted off the main thread does not trap a live mic button")
     func dictationIndicatorChangeOffMainDoesNotTrapMicButton() async {
         let button = MicButtonChromeView()
@@ -1844,13 +1798,6 @@ struct ComposerBarTests {
         return nil
     }
 
-    private func makeTinyImage() -> UIImage {
-        UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).image { context in
-            UIColor.systemBlue.setFill()
-            context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
-        }
-    }
-
     private func makeRecordingVoiceInputManager(
         source: ComposerShared.VoiceInputOwner
     ) async throws -> (VoiceInputManager, MockVoiceSession) {
@@ -2102,13 +2049,4 @@ private final class ComposerBarTestHost: ComposerBarHosting {
     func notifyFileSuggestionContext(for text: String) {}
     func discardFailedVoiceTake() { discardCount += 1 }
     func restoreKeyboardFromSuppression() {}
-}
-
-private final class DismissSpyImagePickerController: UIImagePickerController {
-    private(set) var dismissCallCount = 0
-
-    override func dismiss(animated flag: Bool, completion: (() -> Void)? = nil) {
-        dismissCallCount += 1
-        completion?()
-    }
 }

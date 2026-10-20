@@ -1532,6 +1532,8 @@ struct VoiceInputManagerTests {
                 draft.text = edited.text
                 draft.prefix = edited.textBeforeRecording
             }
+            // The failure notice must stay legible at a large text size.
+            screen.traitOverrides.preferredContentSizeCategory = .accessibilityMedium
             window.rootViewController = screen
             hostView = screen.view
         }

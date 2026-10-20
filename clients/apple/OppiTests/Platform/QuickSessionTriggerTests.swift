@@ -788,6 +788,6 @@ struct OppiShortcutsProviderTests {
 
     @Test func providesShortcuts() {
         let shortcuts = OppiShortcutsProvider.appShortcuts
-        #expect(shortcuts.count == 2)
+        #expect(shortcuts.count == 4)
     }
 }

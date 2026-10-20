@@ -190,9 +190,6 @@
     "clients/apple/Oppi/Core/Views/AuthenticatedMediaPlayback.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/CameraPicker.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Views/EmbeddedFileViewerView.swift": {
       "import SwiftUI": 1
     },
@@ -209,9 +206,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/FullScreenReviewCommentStashOverlay.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/ImageBlobView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/InlineMediaPlayback.swift": {

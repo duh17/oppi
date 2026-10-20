@@ -127,19 +127,6 @@ struct ScreenshotPreviewView: View {
                 rawValue: String(ScreenshotPreviewConfig.screen.dropFirst("live-voice-composer-".count))
             ))
             .ignoresSafeArea()
-        case "quick-session-dictation-composer":
-            QuickSessionDictationComposerPreview()
-        case "dictation-non-wipe-composer":
-            QuickSessionDictationComposerPreview(
-                title: "Non-wipe dictation composer",
-                subtitle: "Earlier utterances stay when a later short phrase arrives.",
-                transcriptSteps: [
-                    ("hello world this is a test", 0),
-                    ("hello world this is a test testing now", 11),
-                ],
-                initialDelay: .milliseconds(400),
-                stepDelay: .milliseconds(900)
-            )
         case "streaming-flicker":
             StreamingFlickerPreviewView()
         case "latex-rendering":
