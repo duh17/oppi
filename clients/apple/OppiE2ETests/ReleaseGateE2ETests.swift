@@ -406,6 +406,7 @@ final class TimelineDocumentPositionE2ETests: E2ETestCase {
     nonisolated(unsafe) private var workspaceName = ""
 
     override var e2eStartsInAutoCreatedChat: Bool { true }
+    override var e2eChatWorkspaceName: String { workspaceName }
     override var e2eRequiresFreshLaunch: Bool { true }
 
     override func configureE2ELaunch(_ application: XCUIApplication) {

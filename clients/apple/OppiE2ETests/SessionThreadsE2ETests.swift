@@ -178,7 +178,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
     }
 
     func testRealSnapshotThreadsOutlineAndTimeline() throws {
-        XCUIDevice.shared.orientation = .portrait
         let orchestrator = try id(Self.orchestratorKey)
         let donkeyMaster = try id(Self.donkeyMasterKey)
         let reviewCleanup = try id(Self.reviewCleanupKey)
@@ -352,7 +351,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
     /// detail. They are separate targets, and swiping either one never navigates. Stopped roots
     /// and children open as ended history and stay stopped on the server.
     func testRootBodyAndThreadStripAreDisjointTargetsAndStoppedHistoryStaysStopped() throws {
-        XCUIDevice.shared.orientation = .portrait
         let orchestrator = try id(Self.orchestratorKey)
         let stoppedRoot = try id(Self.stoppedRootKey)
         let stoppedChild = try id(Self.stoppedRootChildKey)
@@ -431,7 +429,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
     /// and workspace lists; the saved choice, the remembered thread view, and the saved layout
     /// survive a relaunch.
     func testSessionRowsPreviewAppliesImmediatelyAcrossListsAndRelaunch() throws {
-        XCUIDevice.shared.orientation = .portrait
         let orchestrator = try id(Self.orchestratorKey)
         let donkeyMaster = try id(Self.donkeyMasterKey)
         let inbox = app.collectionViews["workspace.sessionList"]
@@ -577,7 +574,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
     /// stays a row there with an In thread link that opens the same thread, whose Outline names
     /// that workspace. Flat List lists the child in the root's workspace again.
     func testWorkspaceListsShareLayoutAndMarkCrossWorkspaceThreads() throws {
-        XCUIDevice.shared.orientation = .portrait
         let root = try id(Self.mirrorRootKey)
         let localChild = try id(Self.mirrorChildKey)
         let remoteChild = try id(Self.crossWorkspaceChildKey)
@@ -639,7 +635,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
     /// flat, Settings has no Layout picker, and Session Rows has no Thread options. Turning the
     /// Experiments toggle on brings back strips, Thread detail, and the Thread options.
     func testSessionThreadsStayOffUntilEnabledInSettings() throws {
-        XCUIDevice.shared.orientation = .portrait
         let orchestrator = try id(Self.orchestratorKey)
         let donkeyMaster = try id(Self.donkeyMasterKey)
         let inbox = app.collectionViews["workspace.sessionList"]
@@ -683,7 +678,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
 
     /// Thread detail's compose bar starts a session that joins the thread as a child of the root.
     func testThreadComposeStartsSessionInThread() throws {
-        XCUIDevice.shared.orientation = .portrait
         let root = try id(Self.orchestratorKey)
         let inbox = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
@@ -748,7 +742,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
 
     /// Row appearance saved in the editor also drives the workspace list's stopped-history rows.
     func testSavedRowAppearanceAppliesToWorkspaceStoppedHistoryRows() throws {
-        XCUIDevice.shared.orientation = .portrait
         let stoppedRoot = try id(Self.stoppedRootKey)
         XCTAssertTrue(app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 20), "Inbox missing")
         try resetRowDisplayToDefaults()
@@ -774,7 +767,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
     /// Opening the editor and changing rows leaves the inbox's own state alone: the
     /// stopped-day group a user toggled and an active search with its results.
     func testSearchAndStoppedGroupStateSurviveRowEditing() throws {
-        XCUIDevice.shared.orientation = .portrait
         let donkey = try id(Self.donkeyMasterKey)
         let inbox = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
@@ -1078,7 +1070,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
     /// A stopped counterpart outside the recent-session list must open as ended
     /// history. Only an explicit Resume may start a stopped session.
     func testStoppedCounterpartOutsideRecentListOpensWithoutStartingUntilExplicitResume() throws {
-        XCUIDevice.shared.orientation = .portrait
         let orchestrator = try id(Self.orchestratorKey)
         let archived = try id(Self.archivedCounterpartKey)
         let finishedFix = try id(Self.finishedFixKey)

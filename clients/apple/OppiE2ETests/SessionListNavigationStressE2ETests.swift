@@ -96,7 +96,6 @@ final class SessionListNavigationStressE2ETests: E2ETestCase {
     }
 
     func testDenseWorkspaceExpandsTodayOnlyAndNavigatesWithoutStalling() throws {
-        XCUIDevice.shared.orientation = .portrait
         let sessionId = try XCTUnwrap(activeSessionId, "Active navigation session was not seeded")
 
         openWorkspace()

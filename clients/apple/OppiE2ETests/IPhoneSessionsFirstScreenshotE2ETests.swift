@@ -32,8 +32,9 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         false
     }
 
-    /// The sidebar reads its workspace catalog at launch, so the 18 workspaces
-    /// this case seeds only show up in an app launched after them.
+    /// The sidebar's workspace catalog refreshes on a throttle, so the 18
+    /// workspaces this case seeds only reliably show up in an app launched
+    /// after them.
     override var e2eRequiresFreshLaunch: Bool {
         name.contains("testIPhoneWorkspaceSidebarScrolls")
     }
@@ -176,8 +177,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testSessionRowLeadingSwipeDoesNotNavigate() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         let sessionId = try XCTUnwrap(swipeRegressionSessionId, "Swipe regression session was not seeded")
         let stoppedSessionId = try XCTUnwrap(
             swipeRegressionStoppedSessionId,
@@ -246,8 +245,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testIPhoneAllActiveSessionsInboxScreenshot() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         let sessionList = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "iPhone sessions inbox did not appear")
         sessionList.swipeDown()
@@ -267,8 +264,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testServerMenuShowsOneConsolidatedConnectionStatus() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         let sessionList = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "iPhone sessions inbox did not appear")
         let serverSwitcher = app.buttons.matching(
@@ -276,8 +271,9 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         ).firstMatch
         tap(serverSwitcher, named: "server switcher", timeout: 10)
 
+        // The route reads "local network", "paired HTTPS", or Tailscale by path.
         let consolidatedStatus = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label == %@", "Connected via paired HTTP")
+            NSPredicate(format: "label BEGINSWITH %@", "Connected via ")
         )
         XCTAssertTrue(
             consolidatedStatus.firstMatch.waitForExistence(timeout: 5),
@@ -293,8 +289,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testThemeSwitchRefreshesMountedInboxAndSidebar() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         let sessionId = try XCTUnwrap(themeSwitchSessionId, "Theme-switch session was not seeded")
         let sessionRow = app.buttons["session.nav.\(sessionId)"]
         XCTAssertTrue(sessionRow.waitForExistence(timeout: 15), "Theme-switch session row did not appear")
@@ -328,8 +322,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testIPhoneRecentStoppedSessionsInboxScreenshot() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         let sessionList = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "iPhone sessions inbox did not appear")
         sessionList.swipeDown()
@@ -375,8 +367,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testIPhoneAllSessionsSidebarEdgeSwipeScreenshot() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         let sessionList = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "iPhone sessions inbox did not appear")
         sessionList.swipeDown()
@@ -446,8 +436,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testAgentGuidedComposerLaunchesExistingControlSessionTimeline() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         openWorkspaceSidebar()
         tap(app.buttons["workspace.agents.open"], named: "Agents sidebar destination")
         XCTAssertTrue(app.navigationBars["Agents"].waitForExistence(timeout: 10))
@@ -482,8 +470,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testNativeAgentEditorSavesReplacePromptAndThinking() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         let agentId = try XCTUnwrap(nativeEditorAgentId, "Native editor Agent was not seeded")
         let agentName = try XCTUnwrap(nativeEditorAgentName, "Native editor Agent name was not seeded")
         openWorkspaceSidebar()
@@ -558,8 +544,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     /// after its editor saved and closed. The SwiftUI Quick Session opened on
     /// Pi instead.
     func testAgentDetailStartSessionPreselectsTheAgent() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         let agentId = try XCTUnwrap(launchAgentId, "Launch Agent was not seeded")
         let agentName = try XCTUnwrap(launchAgentName, "Launch Agent name was not seeded")
         openWorkspaceSidebar()
@@ -590,8 +574,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testNativeScheduleEditorSavesThinkingAndPrompt() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         let scheduleId = try XCTUnwrap(nativeEditorScheduleId, "Native editor schedule was not seeded")
         openWorkspaceSidebar()
         tap(app.buttons["workspace.schedules.open"], named: "Schedules sidebar destination")
@@ -619,8 +601,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testNativeCustomScheduleEditorScreenshot() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         let scheduleId = try XCTUnwrap(customCronScheduleId, "Custom cron schedule was not seeded")
         openWorkspaceSidebar()
         tap(app.buttons["workspace.schedules.open"], named: "Schedules sidebar destination")
@@ -637,8 +617,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testScheduleScreenCreatesAndRestoresWithSimpleControls() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         let activeId = try XCTUnwrap(activeScheduleId, "Active schedule was not seeded")
         let archivedId = try XCTUnwrap(archivedScheduleId, "Archived schedule was not seeded")
         openWorkspaceSidebar()
@@ -748,8 +726,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testIPhoneSidebarAgentsAndSchedulesNavigate() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         openWorkspaceSidebar()
         tap(app.buttons["workspace.agents.open"], named: "Agents sidebar destination")
         XCTAssertTrue(
@@ -772,7 +748,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testIPhoneWorkspaceScopedSeparateControlsScreenshot() throws {
-        XCUIDevice.shared.orientation = .portrait
         openAnchorWorkspace()
 
         let sessionList = app.collectionViews["workspace.sessionList"]
@@ -788,7 +763,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testLeavingWorkspaceSettingsReturnsToScopedSessions() throws {
-        XCUIDevice.shared.orientation = .portrait
         openAnchorWorkspace()
         XCTAssertTrue(
             app.buttons["workspace.edit.open"].waitForExistence(timeout: 10),
@@ -821,7 +795,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testIPhoneHierarchicalBackSwipeNavigation() throws {
-        XCUIDevice.shared.orientation = .portrait
         openAnchorWorkspace()
 
         let sessionList = app.collectionViews["workspace.sessionList"]
@@ -842,7 +815,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testIPhoneWorkspaceDeepLinkPresentsPrefilledCreate() throws {
-        XCUIDevice.shared.orientation = .portrait
         let url = try XCTUnwrap(
             URL(string: "oppi://workspace?path=/tmp&name=Deep%20Link%20Workspace")
         )
@@ -871,8 +843,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     func testIPhoneWorkspaceSidebarScrolls() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         let sessionList = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "iPhone sessions inbox did not appear")
         sessionList.swipeDown()
@@ -932,12 +902,13 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     private func selectManualTheme(_ themeName: String) {
-        let serverSwitcher = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "Current server:")
-        ).firstMatch
-        tap(serverSwitcher, named: "server switcher", timeout: 10)
+        // App Settings is at the foot of the workspace sidebar, and its theme
+        // picker is one level down, on Appearance.
+        openWorkspaceSidebar()
         tap(app.buttons["App Settings"], named: "app settings", timeout: 5)
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10), "Settings did not open")
+        tap(app.buttons["settings.row.appearance"], named: "Appearance settings row", timeout: 5)
+        XCTAssertTrue(app.navigationBars["Appearance"].waitForExistence(timeout: 10), "Appearance did not open")
 
         let themePicker = app.buttons.matching(
             NSPredicate(format: "label == %@ OR label BEGINSWITH %@", "Theme", "Theme,")
@@ -945,11 +916,18 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         tap(themePicker, named: "manual theme picker", timeout: 5)
         tap(app.buttons[themeName], named: "\(themeName) theme", timeout: 5)
 
-        let backButton = app.navigationBars["Settings"].buttons.firstMatch
-        tap(backButton, named: "settings back button", timeout: 5)
+        tap(app.navigationBars["Appearance"].buttons.firstMatch, named: "appearance back button", timeout: 5)
+        tap(app.navigationBars["Settings"].buttons.firstMatch, named: "settings back button", timeout: 5)
         XCTAssertTrue(
             app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 10),
             "Sessions inbox did not return after selecting \(themeName)"
+        )
+        if app.buttons["workspace.create.sidebar.open"].isHittable {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.50)).tap()
+        }
+        XCTAssertTrue(
+            waitForHittable(app.buttons["workspace.sidebar.open"], timeout: 5),
+            "Sidebar did not close after selecting \(themeName)"
         )
     }
 

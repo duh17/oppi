@@ -72,6 +72,12 @@ class E2ETestCase: XCTestCase {
         .portrait
     }
 
+    /// The workspace `e2eStartsInAutoCreatedChat` expects the chat to be in.
+    /// Override in a class whose launch opens its own workspace.
+    var e2eChatWorkspaceName: String {
+        "e2e-workspace"
+    }
+
     /// Override to add launch environment or arguments before the app starts.
     func configureE2ELaunch(_ application: XCUIApplication) {}
 
@@ -124,9 +130,14 @@ class E2ETestCase: XCTestCase {
         while (application.frame.width > application.frame.height) != wantsLandscape, Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
+        if (application.frame.width > application.frame.height) != wantsLandscape {
+            XCTFail("App did not rotate to \(e2eOrientation.isLandscape ? "landscape" : "portrait"). Frame: \(application.frame)")
+        }
     }
 
     override func tearDownWithError() throws {
+        // The next case resets orientation itself; this is for the UI suites
+        // that share the pool device and never do.
         XCUIDevice.shared.orientation = .portrait
         // A failed test can leave a sheet, toast, or half-finished route that
         // the next setUp cannot navigate away from, so every later test in the
@@ -430,11 +441,27 @@ class E2ETestCase: XCTestCase {
         )
     }
 
-    /// Ensures the app is inside a chat session before each test.
+    /// Ensures the app is inside a chat session of `e2eChatWorkspaceName` before each test.
+    ///
+    /// Another class's chat (its own workspace and host mount) must not
+    /// satisfy this: relative paths and the Files panel resolve against the
+    /// chat's workspace. Neither may a chat that an earlier case left under a
+    /// sheet (the chat Files panel), where taps would land on the sheet. Both
+    /// mean a relaunch, which opens the e2e workspace's auto-created chat.
     private func ensureAtChatSession() throws {
         dismissExtensionSheetIfNeeded(timeout: 1)
 
         if waitForChatSessionSurface(in: app, timeout: 3) {
+            if openChatIsInE2EWorkspace(), openChatIsUncovered() {
+                return
+            }
+            Self._app?.terminate()
+            Self._app = nil
+            try launchAndPair()
+            XCTAssertTrue(
+                waitForChatSessionSurface(in: app, timeout: 30),
+                "Chat session not reachable after leaving another workspace's chat"
+            )
             return
         }
 
@@ -449,6 +476,26 @@ class E2ETestCase: XCTestCase {
             waitForChatSessionSurface(in: app, timeout: 30),
             "Chat session not reachable after relaunch"
         )
+    }
+
+    /// Whether the focused chat's session belongs to `e2eChatWorkspaceName`.
+    private func openChatIsInE2EWorkspace() -> Bool {
+        let focused = app.staticTexts["e2e.ws.focusedSession"]
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, !focused.exists || focused.label == "none" || focused.label.isEmpty {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        guard focused.exists, focused.label != "none",
+              let session = try? e2eSession(sessionId: focused.label),
+              let workspaceId = try? e2eWorkspaceId(named: e2eChatWorkspaceName) else { return false }
+        return session["workspaceId"] as? String == workspaceId
+    }
+
+    /// Whether the chat takes touches: a sheet over it leaves its toolbar,
+    /// which the sheet covers, unhittable.
+    private func openChatIsUncovered() -> Bool {
+        let files = app.buttons["chat.toolbar.files"]
+        return files.exists ? files.isHittable : app.textViews["chat.input"].isHittable
     }
 
     private func workspaceDetailSurfaceExists(in application: XCUIApplication) -> Bool {

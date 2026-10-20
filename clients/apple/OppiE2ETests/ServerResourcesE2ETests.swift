@@ -12,8 +12,6 @@ final class ServerResourcesE2ETests: E2ETestCase {
     }
 
     func testIPhoneSkillsSearchShowsNoResults() throws {
-        XCUIDevice.shared.orientation = .portrait
-
         openCompactSidebar()
         tap(app.buttons["workspace.skills.open"], named: "Skills sidebar destination")
         XCTAssertTrue(app.navigationBars["Skills"].waitForExistence(timeout: 10))

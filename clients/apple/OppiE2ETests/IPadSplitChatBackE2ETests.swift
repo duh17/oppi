@@ -72,11 +72,6 @@ final class IPadSplitChatBackE2ETests: E2ETestCase {
 final class IPhoneStackChatBackE2ETests: E2ETestCase {
     override var e2eStartsInAutoCreatedChat: Bool { true }
 
-    override func setUpWithError() throws {
-        XCUIDevice.shared.orientation = .portrait
-        try super.setUpWithError()
-    }
-
     func testIPhoneStackBackFromChatShowsSessionList() throws {
         try XCTSkipUnless(
             min(app.frame.width, app.frame.height) < 700,

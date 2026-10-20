@@ -27,7 +27,6 @@ final class OfflinePairedServerE2ETests: E2ETestCase {
     }
 
     func testOfflinePickerInboxSidebarRetrySettingsAndConfirmedRemoval() async throws {
-        XCUIDevice.shared.orientation = .portrait
         // The Xcode test runner does not pass arbitrary host environment values.
         // Match E2ETestCase's /tmp invite-file handoff for this isolated fixture.
         let fixtureData = try Data(contentsOf: URL(fileURLWithPath: "/tmp/oppi-e2e-two-server.json"))
