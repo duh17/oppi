@@ -595,6 +595,9 @@ final class WorkspaceFileEditStatusView: UIView {
         isAccessibilityElement = true
         accessibilityIdentifier = "workspace-file-editor.status"
         accessibilityTraits = []
+        // This view speaks the status; the glyph inside is not a second element.
+        canvas.isAccessibilityElement = false
+        canvas.accessibilityIdentifier = nil
         for subview in [canvas, spinner] as [UIView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             addSubview(subview)

@@ -662,26 +662,31 @@ enum SessionFilePages {
         serverId: String?,
         reviewCommentSelectionScope: ReviewCommentSelectionScope?,
         navigationFiles: [WorkspaceReviewFile]
-    ) -> WorkspaceReviewFileDetailView {
-        WorkspaceReviewFileDetailView(
+    ) -> WorkspaceReviewFileDetailViewController.Configuration {
+        WorkspaceReviewFileDetailViewController.Configuration(
             workspaceId: workspaceId,
             selectedSessionId: sessionId,
             file: file,
             worktreeId: worktreeId,
             serverId: serverId,
-            reviewCommentSelectionScopeOverride: reviewCommentSelectionScope,
+            reviewCommentSelectionScope: reviewCommentSelectionScope,
             navigationFiles: navigationFiles,
             showsFileListInspector: false
         )
     }
 
-    static func pushReview(_ detail: WorkspaceReviewFileDetailView, inputs: ChatFilePanelInputs, navigator: ScreenNavigator) {
-        let connection = inputs.connection
-        let apiClient = inputs.apiClient
-        let navigation = inputs.navigation
-        navigator.push {
-            detail.presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
-        }
+    /// Pushes the review with the chat's server, API client, and navigation.
+    static func pushReview(
+        _ configuration: WorkspaceReviewFileDetailViewController.Configuration,
+        inputs: ChatFilePanelInputs,
+        navigator: ScreenNavigator
+    ) {
+        navigator.push(WorkspaceReviewFileDetailViewController(
+            configuration: configuration,
+            connection: inputs.connection,
+            apiClient: inputs.apiClient,
+            navigation: inputs.navigation
+        ))
     }
 
     static func pushSessionTouchedFile(

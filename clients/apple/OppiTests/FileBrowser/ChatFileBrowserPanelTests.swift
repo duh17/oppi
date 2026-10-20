@@ -117,14 +117,19 @@ struct ChatFileBrowserPanelTests {
         let changed = SessionFilesListViewController(root: root, navigator: .unattached)
         changed.update(inputs: inputs, searchText: "")
         let review = try #require(changed.debugReviewDetailForTesting(file: file))
-        #expect(review.debugWorktreeIdForTesting == "wt-agent")
-        #expect(review.debugServerIdForTesting == "server-1")
-        let current = review.debugCurrentFileContentForTesting()
-        #expect(current.debugSourceForTesting == .workspaceFile)
-        #expect(current.debugWorkspaceIdForTesting == "workspace-1")
-        #expect(current.debugWorktreeIdForTesting == "wt-agent")
-        #expect(current.debugServerIdForTesting == "server-1")
-        #expect(current.debugSessionIdForTesting == "session-1")
+        #expect(review.worktreeId == "wt-agent")
+        #expect(review.serverId == "server-1")
+        let current = WorkspaceReviewFileDetailViewController(
+            configuration: review,
+            connection: ServerConnection(),
+            apiClient: nil,
+            navigation: AppNavigation()
+        ).currentFileViewerConfiguration
+        #expect(current.source == .workspaceFile)
+        #expect(current.workspaceId == "workspace-1")
+        #expect(current.worktreeId == "wt-agent")
+        #expect(current.serverId == "server-1")
+        #expect(current.sessionId == "session-1")
     }
 
     @Test func checkoutSubtitleNamesWorktreeOrWarnsWhenChatIsOnOne() {

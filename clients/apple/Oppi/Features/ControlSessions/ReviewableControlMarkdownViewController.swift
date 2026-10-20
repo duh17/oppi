@@ -1,4 +1,4 @@
-import SwiftUI
+import UIKit
 
 enum ReviewableControlMarkdownDraftKey {
     static func make(
@@ -215,30 +215,47 @@ enum ControlRevisionSessionLaunchCoordinator {
 
 /// Full-screen Markdown or text-file review that keeps selected-text comments
 /// local until the user explicitly asks an Oppi control session to apply them.
-struct ReviewableControlMarkdownView: View {
-    @Environment(\.apiClient) private var apiClient
-    @Environment(ServerConnection.self) private var connection
-    @Environment(SessionStore.self) private var sessionStore
-    @Environment(AppNavigation.self) private var navigation
-    @Environment(QuickCommentTemplateStore.self) private var quickCommentTemplateStore
-    @Environment(\.dismiss) private var dismiss
-
+///
+/// Text the caller already holds shows in the full-screen reader, presented
+/// as a sheet whose reader bar has the dismiss control and Edit (Edit with
+/// Oppi). A file on the server's host shows in the file viewer with the
+/// stack's bar; a Skill's own file also opens in the editor there. Edit runs
+/// a revision session directly, or through the guided revision sheet.
+@MainActor
+final class ReviewableControlMarkdownViewController: UIViewController, RouterModalContainer {
     private enum Viewer {
         /// Text the caller already holds, in the full-screen reader.
         case fullScreen(FullScreenCodeContent)
-        /// A file on the server's host, in the shared file reader. A Skill's
-        /// own file also opens in the editor there.
-        case hostFile(serverId: String, title: String, skillFile: SkillFileEditTarget?)
+        /// A file on the server's host, in the shared file viewer, read on
+        /// the target's server.
+        case hostFile(serverId: String, title: String, skillFile: SkillFileEditTarget?, connection: ServerConnection)
     }
 
-    private let viewer: Viewer
-    private let languageHint: String?
+    var onDismissed: (() -> Void)?
+
     let domain: ControlSessionDomain
     let targetId: String
     let targetName: String
     let sourceLabel: String
     let sourcePath: String
     let editFlow: ReviewableControlMarkdownEditFlow
+    private let viewer: Viewer
+    private let languageHint: String?
+
+    private let comments = ChatReviewCommentsController()
+    private var guidedSessionHandoff = ControlRevisionSheetHandoff()
+    private weak var guidedSheet: HostedScreenController?
+    private var isCreatingSession = false {
+        didSet { setNeedsUpdateProperties() }
+    }
+    private var createdSession: Session?
+    private var starterPromptDelivered = false
+    private let starterPromptRequestId = UUID().uuidString
+    private var loadedDraftSessionId: String?
+
+    private var reader: FullScreenCodeViewController?
+    /// The file viewer of a host file; its bar is this screen's.
+    private(set) var fileViewer: FileViewerViewController?
 
     init(
         content: String,
@@ -249,19 +266,20 @@ struct ReviewableControlMarkdownView: View {
         sourcePath: String,
         editFlow: ReviewableControlMarkdownEditFlow = .directSession
     ) {
-        self.viewer = .fullScreen(.markdown(content: content, filePath: sourcePath))
-        self.languageHint = "markdown"
+        viewer = .fullScreen(.markdown(content: content, filePath: sourcePath))
+        languageHint = "markdown"
         self.domain = domain
         self.targetId = targetId
         self.targetName = targetName
         self.sourceLabel = sourceLabel
         self.sourcePath = sourcePath
         self.editFlow = editFlow
+        super.init(nibName: nil, bundle: nil)
     }
 
     /// A file at `hostFilePath` on the server, read directly from the host
     /// like any other host file: images, PDFs, and relative Markdown images
-    /// work. Host files keep the system bar, so Edit is a bar button there;
+    /// work. Host files keep the stack's bar, so Edit is a bar item there;
     /// with `skillFile` it offers the editor beside Edit with Oppi.
     init(
         hostFilePath: String,
@@ -272,31 +290,39 @@ struct ReviewableControlMarkdownView: View {
         targetId: String,
         targetName: String,
         sourceLabel: String,
-        editFlow: ReviewableControlMarkdownEditFlow = .directSession
+        editFlow: ReviewableControlMarkdownEditFlow = .directSession,
+        connection: ServerConnection
     ) {
-        self.viewer = .hostFile(serverId: serverId, title: title, skillFile: skillFile)
-        self.languageHint = Self.languageHint(for: hostFilePath)
+        viewer = .hostFile(serverId: serverId, title: title, skillFile: skillFile, connection: connection)
+        languageHint = Self.languageHint(for: hostFilePath)
         self.domain = domain
         self.targetId = targetId
         self.targetName = targetName
         self.sourceLabel = sourceLabel
         self.sourcePath = hostFilePath
         self.editFlow = editFlow
+        super.init(nibName: nil, bundle: nil)
+        navigationItem.largeTitleDisplayMode = .never
     }
 
-    @State private var comments = ChatReviewCommentsController()
-    @State private var showGuidedRevision = false
-    @State private var guidedSessionHandoff = ControlRevisionSheetHandoff()
-    @State private var isCreatingSession = false
-    @State private var createdSession: Session?
-    @State private var starterPromptDelivered = false
-    @State private var starterPromptRequestId = UUID().uuidString
-    @State private var error: String?
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    private var root: AppRootEnvironment? {
+        HostFactory.root(near: self)
+    }
+
+    /// A skill file opens under its own server's scope; other targets live
+    /// on the active server.
+    private var connection: ServerConnection? {
+        if case .hostFile(_, _, _, let connection) = viewer { return connection }
+        return root?.coordinator.activeConnection
+    }
 
     private var draftSessionId: String {
         ReviewableControlMarkdownDraftKey.make(
-            serverId: connection.currentServerId,
-            fallbackServerId: sessionStore.activeServerId,
+            serverId: connection?.currentServerId,
+            fallbackServerId: connection?.sessionStore.activeServerId,
             domain: domain,
             targetId: targetId
         )
@@ -304,24 +330,20 @@ struct ReviewableControlMarkdownView: View {
 
     private var selectionContext: ReviewCommentSelectionContext {
         ReviewCommentSelectionContext(
-            dispatcher: selectionRouter,
+            dispatcher: ReviewCommentSelectionRouter(
+                dispatch: { _ in },
+                inlineSave: { [weak self] body, request in
+                    self?.saveComment(body: body, request: request) ?? false
+                },
+                inlineQuickComments: QuickCommentTemplate.quickCommentTemplates(
+                    root?.quickCommentTemplateStore.templates ?? []
+                ),
+                stash: comments
+            ),
             sessionId: draftSessionId,
             sourceLabel: sourceLabel,
             filePath: sourcePath,
             languageHint: languageHint
-        )
-    }
-
-    private var selectionRouter: ReviewCommentSelectionRouter {
-        ReviewCommentSelectionRouter(
-            dispatch: { _ in },
-            inlineSave: { body, request in
-                saveComment(body: body, request: request)
-            },
-            inlineQuickComments: QuickCommentTemplate.quickCommentTemplates(
-                quickCommentTemplateStore.templates
-            ),
-            stash: comments
         )
     }
 
@@ -333,17 +355,104 @@ struct ReviewableControlMarkdownView: View {
                 systemImage: DocumentEditLabels.systemImage,
                 accessibilityLabel: DocumentEditLabels.editWithOppi,
                 isEnabled: !isCreatingSession,
-                handler: startEdit
+                handler: { [weak self] in self?.startEdit() }
             ),
         ]
     }
+
+    private var agentEdit: DocumentAgentEditAction {
+        DocumentAgentEditAction(isStarting: isCreatingSession) { [weak self] in self?.startEdit() }
+    }
+
+    // MARK: Lifecycle
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        guard case .hostFile(let serverId, let title, let skillFile, let connection) = viewer else { return }
+        let fileViewer = FileViewerViewController(
+            configuration: .init(
+                workspaceId: "",
+                serverId: serverId,
+                filePath: sourcePath,
+                fileName: (sourcePath as NSString).lastPathComponent,
+                title: title,
+                source: .hostFile,
+                reviewCommentSelectionContext: selectionContext,
+                skillFile: skillFile
+            ),
+            services: .init(connection: connection)
+        )
+        fileViewer.agentEdit = agentEdit
+        self.fileViewer = fileViewer
+        embed(fileViewer)
+    }
+
+    /// The full-screen reader, built once the sheet is in the window, where
+    /// the app root (quick comments, the active server) is.
+    private func embedReaderIfNeeded() {
+        guard reader == nil, case .fullScreen(let content) = viewer else { return }
+        let reader = FullScreenCodeViewController(
+            content: content,
+            reviewCommentSelectionContext: selectionContext,
+            navigationActions: navigationActions
+        )
+        self.reader = reader
+        embed(reader)
+    }
+
+    private func embed(_ content: UIViewController) {
+        addChild(content)
+        content.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(content.view)
+        NSLayoutConstraint.activate([
+            content.view.topAnchor.constraint(equalTo: view.topAnchor),
+            content.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            content.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            content.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+        content.didMove(toParent: self)
+    }
+
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+        loadComments()
+        embedReaderIfNeeded()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        // Once per presentation: UIKit can report the disappearance again.
+        if isBeingDismissed || presentingViewController == nil, let onDismissed {
+            self.onDismissed = nil
+            onDismissed()
+        }
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        reader?.setNavigationActions(navigationActions)
+        if let fileViewer {
+            fileViewer.agentEdit = agentEdit
+            fileViewer.bar.apply(to: navigationItem)
+        }
+    }
+
+    /// The target's staged comments, keyed by server, domain, and target.
+    private func loadComments() {
+        let draftSessionId = draftSessionId
+        guard draftSessionId != loadedDraftSessionId else { return }
+        loadedDraftSessionId = draftSessionId
+        comments.load(localScopeId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
+    }
+
+    // MARK: Edit
 
     private func startEdit() {
         switch editFlow {
         case .directSession:
             Task { await createOrOpenRevisionSession() }
         case .guidedRevision:
-            showGuidedRevision = true
+            presentGuidedRevision()
         }
     }
 
@@ -358,77 +467,48 @@ struct ReviewableControlMarkdownView: View {
         )
     }
 
-    var body: some View {
-        viewerBody
-        .task(id: draftSessionId) {
-            comments.load(
-                localScopeId: ReviewCommentLocalScope.controlDraft,
-                sessionId: draftSessionId
-            )
-        }
-        .routerModal(
-            isPresented: $showGuidedRevision,
+    private func presentGuidedRevision() {
+        guard guidedSheet == nil, let connection else { return }
+        let domain = domain
+        let targetId = targetId
+        let targetName = targetName
+        let targetPath = domain == .skills ? sourcePath : nil
+        let comments = comments
+        guidedSheet = Router.present(
             presentation: .sheet.inNavigation(),
-            onDismiss: completeGuidedSessionHandoff
-        ) {
-            GuidedControlSessionSheet(
-                domain: domain,
-                intent: .revise,
-                targetId: targetId,
-                targetName: targetName,
-                targetPath: domain == .skills ? sourcePath : nil,
-                placeholder: "Describe how this \(domainTitle) should change…",
-                stagedComments: comments,
-                onSessionPrepared: { target in
-                    guidedSessionHandoff.prepare(target)
-                    showGuidedRevision = false
-                }
-            )
-            // A skill file opens under its own server's scope, not
-            // necessarily the active one.
-            .withServerScopedEnvironment(connection)
-        }
-        .alert("Unable to Edit", isPresented: Binding(
-            get: { error != nil },
-            set: { if !$0 { error = nil } }
-        )) {
-            Button("OK", role: .cancel) { error = nil }
-        } message: {
-            Text(error ?? "")
-        }
+            from: self,
+            onDismiss: { [weak self] in self?.completeGuidedSessionHandoff() },
+            content: { [weak self] in
+                GuidedControlSessionSheet(
+                    domain: domain,
+                    intent: .revise,
+                    targetId: targetId,
+                    targetName: targetName,
+                    targetPath: targetPath,
+                    placeholder: "Describe how this \(domain.title) should change…",
+                    stagedComments: comments,
+                    onSessionPrepared: { target in
+                        self?.guidedSessionHandoff.prepare(target)
+                        self?.closeGuidedRevision()
+                    }
+                )
+                // A skill file opens under its own server's scope, not
+                // necessarily the active one.
+                .withServerScopedEnvironment(connection)
+            }
+        )
     }
 
-    @ViewBuilder
-    private var viewerBody: some View {
-        switch viewer {
-        case .fullScreen(let content):
-            FullScreenCodeView(
-                content: content,
-                reviewCommentSelectionContext: selectionContext,
-                navigationActions: navigationActions
-            )
-        case .hostFile(let serverId, let title, let skillFile):
-            FileBrowserContentView(
-                workspaceId: "",
-                serverId: serverId,
-                filePath: sourcePath,
-                fileName: (sourcePath as NSString).lastPathComponent,
-                title: title,
-                source: .hostFile,
-                reviewCommentSelectionContext: selectionContext,
-                skillFile: skillFile,
-                agentEdit: DocumentAgentEditAction(isStarting: isCreatingSession, start: startEdit)
-            )
-        }
+    private func closeGuidedRevision() {
+        guard let guidedSheet, guidedSheet.presentingViewController != nil else { return }
+        Router.finish(guidedSheet)
     }
 
-    @MainActor
     private func completeGuidedSessionHandoff() {
+        guidedSheet = nil
         guard let target = guidedSessionHandoff.completeAfterDismissal() else { return }
-        navigation.openWorkspaceSession(target)
+        root?.navigation.openWorkspaceSession(target)
     }
-
-    private var domainTitle: String { domain.title }
 
     private static func languageHint(for path: String) -> String? {
         switch FileType.detect(from: path, content: "") {
@@ -443,7 +523,6 @@ struct ReviewableControlMarkdownView: View {
         }
     }
 
-    @MainActor
     private func saveComment(body: String, request: ReviewCommentSelectionRequest) -> Bool {
         if let saveError = comments.save(
             body: body,
@@ -451,23 +530,38 @@ struct ReviewableControlMarkdownView: View {
             localScopeId: ReviewCommentLocalScope.controlDraft,
             sessionId: draftSessionId
         ) {
-            error = saveError
+            presentError(saveError)
             return false
         }
         return true
     }
 
-    @MainActor
+    private func presentError(_ message: String) {
+        let alert = UIAlertController(
+            title: String(localized: "Unable to Edit"),
+            message: message,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .cancel))
+        present(alert, animated: true)
+    }
+
     private func createOrOpenRevisionSession() async {
         guard !isCreatingSession else { return }
         isCreatingSession = true
         defer { isCreatingSession = false }
 
         do {
-            guard let apiClient else {
-                error = "Server is offline"
+            guard let connection, let apiClient = connection.apiClient, let navigation = root?.navigation else {
+                presentError("Server is offline")
                 return
             }
+            let sessionStore = connection.sessionStore
+            let domain = domain
+            let targetId = targetId
+            let targetName = targetName
+            let starterPrompt = starterPrompt
+            let requestId = starterPromptRequestId
 
             let prepared = try await ControlRevisionSessionLaunchCoordinator.prepare(
                 existingSession: createdSession,
@@ -480,17 +574,17 @@ struct ReviewableControlMarkdownView: View {
                         targetName: targetName,
                         name: "Revise \(targetName)",
                         prompt: starterPrompt,
-                        launchIdempotencyKey: starterPromptRequestId
+                        launchIdempotencyKey: requestId
                     ))
                     return (
                         response.session,
                         response.prompted ?? (response.session.firstMessage != nil)
                     )
                 },
-                onSessionCreated: { session, delivered in
-                    createdSession = session
-                    starterPromptDelivered = delivered
-                    sessionStore.cacheSessionForNavigation(session)
+                onSessionCreated: { [weak self] session, delivered in
+                    self?.createdSession = session
+                    self?.starterPromptDelivered = delivered
+                    _ = sessionStore.cacheSessionForNavigation(session)
                 }
             )
             let session = prepared.session
@@ -505,12 +599,20 @@ struct ReviewableControlMarkdownView: View {
                 comments: comments
             )
 
-            error = nil
-            dismiss()
+            close()
             await Task.yield()
             navigation.openWorkspaceSession(sessionTarget)
         } catch {
-            self.error = "\(error.localizedDescription) Your staged comments are still saved."
+            presentError("\(error.localizedDescription) Your staged comments are still saved.")
         }
+    }
+
+    /// Closes the screen this review is: the presented sheet, or the pushed page.
+    private func close() {
+        var screen: UIViewController = self
+        while let parent = screen.parent, !(parent is UINavigationController) {
+            screen = parent
+        }
+        Router.finish(screen)
     }
 }

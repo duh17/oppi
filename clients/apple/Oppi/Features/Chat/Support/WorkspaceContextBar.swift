@@ -406,11 +406,9 @@ struct WorkspaceContextBar: View {
         // pushes its new-session chat there, and that chat its forks.
         .routerModal(
             item: $reviewPresentation.selectedReviewItem,
-            presentation: .sheet.inNavigation()
-        ) { item in
-            reviewSheet(item: item)
-                .presenterScope(connection: connection, apiClient: apiClient, navigation: appNavigation)
-        }
+            presentation: .sheet.inNavigation(),
+            screen: reviewScreen
+        )
         .alert(
             "Unable to start action",
             isPresented: Binding(
@@ -468,29 +466,37 @@ struct WorkspaceContextBar: View {
         ))
     }
 
-    @ViewBuilder
-    private func reviewSheet(item: WorkspaceContextBarReviewItem) -> some View {
+    /// A file opens the UIKit review; a commit its SwiftUI detail. Both run
+    /// on this bar's server and navigation.
+    private func reviewScreen(item: WorkspaceContextBarReviewItem) -> RouterScreen {
         switch item {
         case .file(let file):
-            fileDetailSheet(file: file, navigationFiles: reviewPresentation.navigationFiles)
+            return .controller(fileDetailScreen(file: file, navigationFiles: reviewPresentation.navigationFiles))
         case .commit(let commit):
-            CommitDetailView(workspaceId: workspaceId ?? "", commit: commit)
-                .environment(\.reviewCommentSelectionScope, Self.makeFileDetailReviewCommentScope(
-                    parentScope: fileDetailReviewCommentScope,
-                    fallbackScope: nil,
-                    dismissFileDetail: { reviewPresentation.dismiss() }
-                ))
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button {
-                            reviewPresentation.dismiss()
-                        } label: {
-                            Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
-                        }
-                        .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
-                    }
-                }
+            return .hosted {
+                AnyView(commitSheet(commit)
+                    .presenterScope(connection: connection, apiClient: apiClient, navigation: appNavigation))
+            }
         }
+    }
+
+    private func commitSheet(_ commit: GitCommitSummary) -> some View {
+        CommitDetailView(workspaceId: workspaceId ?? "", commit: commit)
+            .environment(\.reviewCommentSelectionScope, Self.makeFileDetailReviewCommentScope(
+                parentScope: fileDetailReviewCommentScope,
+                fallbackScope: nil,
+                dismissFileDetail: { reviewPresentation.dismiss() }
+            ))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        reviewPresentation.dismiss()
+                    } label: {
+                        Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
+                    }
+                    .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
+                }
+            }
     }
 
     // MARK: - Collapsed
@@ -929,38 +935,43 @@ struct WorkspaceContextBar: View {
 
     // MARK: - File Detail Sheet
 
-    @ViewBuilder
-    private func fileDetailSheet(
+    /// Makes the review of `file` with this bar's server and navigation,
+    /// read while the bar renders. Files open only with a workspace
+    /// (`contextBarFileRow`).
+    private func fileDetailScreen(
         file: GitFileStatus,
         navigationFiles: [WorkspaceReviewFile]
-    ) -> some View {
-        if let workspaceId {
-            let reviewCommentScope = Self.makeFileDetailReviewCommentScope(
+    ) -> () -> UIViewController {
+        guard let workspaceId else {
+            preconditionFailure("A context bar file review needs the bar's workspace")
+        }
+        let reviewPresentation = reviewPresentation
+        let configuration = WorkspaceReviewFileDetailViewController.Configuration(
+            workspaceId: workspaceId,
+            selectedSessionId: sessionId,
+            file: file.toReviewFile(),
+            worktreeId: worktreeId,
+            serverId: serverId,
+            reviewCommentSelectionScope: Self.makeFileDetailReviewCommentScope(
                 parentScope: fileDetailReviewCommentScope,
                 fallbackScope: nil,
                 dismissFileDetail: { reviewPresentation.dismiss() }
+            ),
+            navigationFiles: navigationFiles,
+            allowsHorizontalBackSwipe: false
+        )
+        let connection = connection
+        let apiClient = apiClient
+        let appNavigation = appNavigation
+        return {
+            let detail = WorkspaceReviewFileDetailViewController(
+                configuration: configuration,
+                connection: connection,
+                apiClient: apiClient,
+                navigation: appNavigation
             )
-            WorkspaceReviewFileDetailView(
-                workspaceId: workspaceId,
-                selectedSessionId: sessionId,
-                file: file.toReviewFile(),
-                worktreeId: worktreeId,
-                serverId: serverId,
-                reviewCommentSelectionScopeOverride: reviewCommentScope,
-                navigationFiles: navigationFiles,
-                allowsHorizontalBackSwipe: false
-            )
-            .environment(\.reviewCommentSelectionScope, reviewCommentScope)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button {
-                        reviewPresentation.dismiss()
-                    } label: {
-                        Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
-                    }
-                    .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
-                }
-            }
+            detail.onClose = { reviewPresentation.dismiss() }
+            return detail
         }
     }
 

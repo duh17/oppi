@@ -5,8 +5,9 @@ import SwiftUI
 // `ShellRouteView` hosted through `HostFactory`; All Sessions, the workspace
 // sidebar, a workspace's sessions, a session's chat
 // (`ChatRouteViewController`), Files (`FileBrowserViewController`), a linked
-// file (`WorkspaceLinkedFileViewController`), SSH Terminal's host list,
-// Schedules, and Agents are UIKit screens.
+// file (`WorkspaceLinkedFileViewController`), a Skill file
+// (`ServerSkillFileViewController`), SSH Terminal's host list, Schedules, and
+// Agents are UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -57,6 +58,9 @@ enum ShellRouteScreens {
         }
         if case .linkedFile(let target) = route {
             return WorkspaceLinkedFileViewController(target: target, placement: placement, root: root)
+        }
+        if case .serverSkillFile(let target) = route {
+            return ServerSkillFileViewController(target: target, root: root)
         }
         return HostFactory.screen(root: root, bars: route.bars) {
             ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
@@ -189,11 +193,11 @@ struct ShellRouteView: View {
     @ViewBuilder
     private var content: some View {
         switch route {
-        case .inbox, .sidebar, .workspace, .session, .fileBrowser, .linkedFile:
+        case .inbox, .sidebar, .workspace, .session, .fileBrowser, .linkedFile, .serverSkillFile:
             // UIKit screens (SessionInboxViewController,
             // WorkspaceSidebarViewController, WorkspaceDetailViewController,
             // ChatRouteViewController, FileBrowserViewController,
-            // WorkspaceLinkedFileViewController).
+            // WorkspaceLinkedFileViewController, ServerSkillFileViewController).
             mountedByUIKitScreen
         case .chatReader(let target):
             if let chatReaderPayloadStore {
@@ -214,8 +218,6 @@ struct ShellRouteView: View {
             ServerResourceDetailDestinationView(target: target)
         case .serverSkillBrowser(let target):
             ServerSkillBrowserScopedDestinationView(target: target)
-        case .serverSkillFile(let target):
-            ServerSkillFileScopedDestinationView(target: target)
         case .sessionThread(let target):
             SessionThreadDetailView(target: target)
         }

@@ -130,14 +130,12 @@ struct ChatFileAccessReviewCommentStashTests {
     }
 
     @Test func chatFileHostsInstallStashChrome() throws {
-        let review = try chatFileAccessSource("Oppi/Features/Review/WorkspaceReviewFileDetailView.swift")
         let commit = try chatFileAccessSource("Oppi/Features/Review/CommitDetailView.swift")
         let files = try chatFileAccessSource("Oppi/Features/FileBrowser/FileBrowserContentView.swift")
         let touched = try chatFileAccessSource(
             "Oppi/Features/Chat/Support/SessionFiles/SessionTouchedFileContentView.swift"
         )
 
-        #expect(review.contains("fullScreenReviewCommentStashOverlay("))
         #expect(commit.contains("fullScreenReviewCommentStashOverlay("))
         #expect(files.contains("fullScreenReviewCommentStashOverlay("))
         #expect(files.contains("leadingFloatingAccessoryCount:"))
@@ -150,7 +148,7 @@ struct ChatFileAccessReviewCommentStashTests {
 
 @MainActor
 private struct ReviewDetailStashFixture {
-    let host: UIHostingController<AnyView>
+    let host: UIViewController
     let window: UIWindow
     let comments: ChatReviewCommentsController
 }
@@ -169,25 +167,20 @@ private func makeReviewDetailFixture(
         addedLines: 340,
         removedLines: 0
     ).toReviewFile()
-    let host = UIHostingController(
-        rootView: AnyView(
-            NavigationStack {
-                WorkspaceReviewFileDetailView(
-                    workspaceId: "w1",
-                    selectedSessionId: "session-1",
-                    file: current,
-                    reviewCommentSelectionScopeOverride: .activeSession(router),
-                    navigationFiles: navigationFiles
-                )
-                .environment(SessionStore())
-                // The app root supplies these to every hosted screen.
-                .environment(ServerConnection())
-                .environment(AppNavigation())
-                .environment(\.theme, ThemeID.dark.appTheme)
-                .environment(\.themeID, .dark)
-            }
-        )
+    let detail = WorkspaceReviewFileDetailViewController(
+        configuration: .init(
+            workspaceId: "w1",
+            selectedSessionId: "session-1",
+            file: current,
+            reviewCommentSelectionScope: .activeSession(router),
+            navigationFiles: navigationFiles
+        ),
+        connection: ServerConnection(),
+        apiClient: nil,
+        navigation: AppNavigation()
     )
+    let host = UINavigationController(rootViewController: detail)
+    host.traitOverrides.appRootEnvironment = makeTestAppRoot()
     let window = present(host)
     return ReviewDetailStashFixture(host: host, window: window, comments: comments)
 }

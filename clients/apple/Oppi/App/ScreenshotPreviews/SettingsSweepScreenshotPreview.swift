@@ -228,11 +228,28 @@ struct SettingsSweepScreenshotPreview: View {
         case "agents-pi", "agents-pi-file":
             RouterPreviewControllerStack(root: root) { PiAgentDetailViewController(root: root) }
                 .ignoresSafeArea()
+        case "skill-file-review":
+            skillFilePage
+        case "skill-file-edit":
+            // The editor needs the server's file-editing capability first.
+            ServerInfoLoaded(client: client) { skillFilePage }
         // Every other page is the root of a router stack, where its links push.
         default:
             RouterPreviewStack(root: root) { pushedPage }
                 .ignoresSafeArea()
         }
+    }
+
+    /// The release Skill's SKILL.md, the route's screen at the stack root.
+    private var skillFilePage: some View {
+        RouterPreviewControllerStack(root: root) { [server, root, connection] in
+            ServerSkillFileViewController(
+                target: .init(serverId: server.id, resourceId: "release", path: "SKILL.md"),
+                root: root,
+                connection: connection
+            )
+        }
+        .ignoresSafeArea()
     }
 
     @ViewBuilder
@@ -269,12 +286,6 @@ struct SettingsSweepScreenshotPreview: View {
             ServerSkillDetailView(target: .init(serverId: server.id, kind: .skill, resourceId: "release"))
         case "extension-detail":
             ServerExtensionDetailView(target: .init(serverId: server.id, kind: .extension, resourceId: "workflow"))
-        case "skill-file-review":
-            ServerSkillFileView(target: .init(serverId: server.id, resourceId: "release", path: "SKILL.md"))
-        case "skill-file-edit":
-            ServerInfoLoaded(client: client) {
-                ServerSkillFileView(target: .init(serverId: server.id, resourceId: "release", path: "SKILL.md"))
-            }
         default: TailnetSettingsView(previewProbes: Self.tailnetProbes)
         }
     }

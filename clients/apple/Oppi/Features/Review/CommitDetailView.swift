@@ -581,3 +581,46 @@ struct CommitFileDiffView: View {
         }
     }
 }
+
+/// SwiftUI seam for a commit file's diff, which is still SwiftUI. The reader
+/// itself is UIKit (`DiffReaderView`); the workspace file review uses it
+/// directly.
+struct WorkspaceReviewDiffView: View {
+    let diff: WorkspaceReviewDiffResponse
+    let filePath: String
+
+    var body: some View {
+        DiffReaderRepresentable(hunks: diff.hunks, filePath: filePath)
+            .ignoresSafeArea(.keyboard)
+    }
+}
+
+private struct DiffReaderRepresentable: UIViewRepresentable {
+    let hunks: [WorkspaceReviewDiffHunk]
+    let filePath: String
+
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
+    @Environment(\.horizontalBackSwipeAction) private var horizontalBackSwipeAction
+
+    func makeUIView(context: Context) -> DiffReaderView {
+        let reader = DiffReaderView()
+        update(reader)
+        return reader
+    }
+
+    func updateUIView(_ reader: DiffReaderView, context: Context) {
+        update(reader)
+    }
+
+    private func update(_ reader: DiffReaderView) {
+        let selection = reviewCommentSelectionScope?.makeContext()
+        reader.reviewCommentSelectionContext = selection
+        reader.sourceContext = selection?.sourceContext(surface: .fullScreenDiff, filePath: filePath)
+        reader.installBackSwipe(action: horizontalBackSwipeAction)
+        reader.setDiff(
+            hunks: hunks,
+            filePath: filePath,
+            emptyDescription: "This file has no textual diff to show."
+        )
+    }
+}

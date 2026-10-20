@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The SwiftUI screens a schedule's UIKit detail presents: the native editor
-/// and the reviewable prompt reader.
+/// The screens a schedule's UIKit detail presents: the SwiftUI native editor
+/// and the UIKit reviewable prompt reader.
 @MainActor
 enum ScheduleHostedScreens {
     static func nativeEdit(
@@ -15,16 +15,19 @@ enum ScheduleHostedScreens {
     }
 
     static func promptReader(_ schedule: AgentSchedule?) -> RouterScreen {
-        .hosted {
-            guard let schedule else { return AnyView(EmptyView()) }
-            return AnyView(ReviewableControlMarkdownView(
+        .controller({
+            // Opened only from the loaded schedule's prompt row.
+            guard let schedule else {
+                preconditionFailure("The prompt review opens only for a loaded schedule")
+            }
+            return ReviewableControlMarkdownViewController(
                 content: SchedulePresentation.prompt(in: schedule.action),
                 domain: .schedules,
                 targetId: schedule.id,
                 targetName: schedule.name,
                 sourceLabel: "\(schedule.name) prompt",
                 sourcePath: "Schedules/\(schedule.id)/Prompt.md"
-            ))
-        }
+            )
+        })
     }
 }

@@ -570,7 +570,8 @@ extension EnvironmentValues {
 /// The root screen of a router modal or trailing column: SwiftUI content
 /// hosted through `HostFactory.screen`, or a UIKit view controller that owns
 /// its `navigationItem` (title, bar items, search) itself. A UIKit root needs
-/// a navigation presentation (`.inNavigation()`). It is built once per
+/// a navigation presentation (`.inNavigation()`) unless it is a
+/// `RouterModalContainer` that presents bare (`Router.present`). It is built once per
 /// presentation. When the presenter re-renders, hosted content refreshes and
 /// a controller's `update` runs with the presenter's current values, so a
 /// UIKit modal that mirrors presenter state stays live like hosted content.

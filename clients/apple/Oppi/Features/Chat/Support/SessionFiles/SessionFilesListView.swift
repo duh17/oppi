@@ -530,7 +530,7 @@ extension SessionFilesListViewController {
         workspaceId: String,
         inputs: ChatFilePanelInputs,
         scope: ReviewCommentSelectionScope?
-    ) -> WorkspaceReviewFileDetailView {
+    ) -> WorkspaceReviewFileDetailViewController.Configuration {
         SessionFilePages.reviewDetail(
             workspaceId: workspaceId,
             sessionId: inputs.sessionId,
@@ -544,7 +544,7 @@ extension SessionFilesListViewController {
 
 #if DEBUG
     /// The review a row for `file` opens, as the list builds it.
-    func debugReviewDetailForTesting(file: WorkspaceReviewFile) -> WorkspaceReviewFileDetailView? {
+    func debugReviewDetailForTesting(file: WorkspaceReviewFile) -> WorkspaceReviewFileDetailViewController.Configuration? {
         guard let inputs, let workspaceId = inputs.workspaceId else { return nil }
         return Self.reviewDetail(
             file: file,

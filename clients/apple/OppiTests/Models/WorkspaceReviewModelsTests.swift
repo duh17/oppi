@@ -185,33 +185,6 @@ struct WorkspaceReviewModelsTests {
         #expect(WorkspaceReviewFileDetailPhase.resolve(diff: diff, error: "boom") == .loaded(diff))
     }
 
-    @Test func fileDetailToolbarKeepsActionMenuWhileAdjacentFileLoads() {
-        let loaded = WorkspaceReviewFileDetailToolbarState.make(
-            hasShareableContent: true,
-            launchActionInFlightTitle: nil
-        )
-        let reloadingAfterNavigation = WorkspaceReviewFileDetailToolbarState.make(
-            hasShareableContent: false,
-            launchActionInFlightTitle: nil
-        )
-
-        #expect(loaded.showsShare)
-        #expect(loaded.showsActionMenu)
-        #expect(reloadingAfterNavigation.showsShare == false)
-        #expect(reloadingAfterNavigation.showsActionMenu)
-        #expect(reloadingAfterNavigation.actionMenuAccessibilityLabel == "Actions")
-    }
-
-    @Test func fileDetailToolbarDisablesActionMenuOnlyDuringLaunch() {
-        let launching = WorkspaceReviewFileDetailToolbarState.make(
-            hasShareableContent: true,
-            launchActionInFlightTitle: "Starting /review…"
-        )
-
-        #expect(launching.showsActionMenu)
-        #expect(launching.actionMenuDisabled)
-    }
-
     @Test func commitDetailActionMenuKeepsNewSessionEnabledWhileCommitLoads() {
         let loading = CommitDetailActionMenuState.make(
             workspaceId: "w1",
@@ -246,7 +219,7 @@ struct WorkspaceReviewModelsTests {
         let file = makeReviewFile(addedLines: 2, removedLines: 5)
         let emptySessionDiff = makeReviewDiff(addedLines: 0, removedLines: 0, hunkCount: 0)
 
-        #expect(WorkspaceReviewFileDetailView.shouldFallbackToWorkspaceDiff(
+        #expect(WorkspaceReviewFileDetailViewController.shouldFallbackToWorkspaceDiff(
             sessionDiff: emptySessionDiff,
             file: file
         ))
@@ -256,7 +229,7 @@ struct WorkspaceReviewModelsTests {
         let file = makeReviewFile(addedLines: 2, removedLines: 5)
         let sessionDiff = makeReviewDiff(addedLines: 1, removedLines: 1, hunkCount: 1)
 
-        #expect(!WorkspaceReviewFileDetailView.shouldFallbackToWorkspaceDiff(
+        #expect(!WorkspaceReviewFileDetailViewController.shouldFallbackToWorkspaceDiff(
             sessionDiff: sessionDiff,
             file: file
         ))

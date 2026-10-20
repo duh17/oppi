@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// The SwiftUI screens the UIKit Agents screens present or push: Pi's Tools
-/// page, the icon picker, and the prompt readers.
+/// The screens the UIKit Agents screens present or push: Pi's Tools page, the
+/// icon picker, and Pi's default prompt in SwiftUI; the reviewable Markdown
+/// reader in UIKit.
 @MainActor
 enum AgentHostedScreens {
     /// Pi's Tools page. It edits `tools`, which saves each change and once
@@ -35,16 +36,16 @@ enum AgentHostedScreens {
         sourceLabel: String,
         sourcePath: String
     ) -> RouterScreen {
-        .hosted {
-            AnyView(ReviewableControlMarkdownView(
+        .controller({
+            ReviewableControlMarkdownViewController(
                 content: content,
                 domain: .agents,
                 targetId: targetId,
                 targetName: targetName,
                 sourceLabel: sourceLabel,
                 sourcePath: sourcePath
-            ))
-        }
+            )
+        })
     }
 
     /// Pi's built-in system prompt, read only.

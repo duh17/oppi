@@ -433,9 +433,6 @@
     "clients/apple/Oppi/Features/ControlSessions/GuidedControlSessionComposer.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/ControlSessions/ReviewableControlMarkdownView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Extensions/ServerExtensionDetailView.swift": {
       "import SwiftUI": 1
     },
@@ -497,9 +494,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Review/TrailingSidePanelPolicy.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Review/WorkspaceReviewFileDetailView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Schedules/ScheduleHostedScreens.swift": {
@@ -629,9 +623,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Skills/ServerSkillDetailView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Skills/ServerSkillFileView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Skills/ServerSkillsView.swift": {

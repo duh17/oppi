@@ -28,6 +28,8 @@ enum FileBrowserMotionPreviewSupport {
     }
 }
 
+/// The file viewer as a tree pane at the root of a router stack, between
+/// two neighbors.
 struct FileBrowserMotionPreview: View {
     private let apiClient = FileBrowserMotionPreviewSupport.makeClient()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -35,20 +37,23 @@ struct FileBrowserMotionPreview: View {
     var body: some View {
         let files = FileBrowserMotionPreviewSupport.files
         let middle = files[1]
-        RouterPreviewNavigation {
-            FileBrowserContentView(
-                workspaceId: FileBrowserMotionPreviewSupport.workspaceId,
-                filePath: middle.path,
-                fileName: middle.name,
-                fileSize: 240,
-                chromeMode: .treePane,
-                navigationContext: FileBrowserNavigationContext(
-                    files: files.map {
-                        FileBrowserSelection(path: $0.path, name: $0.name, size: 240)
-                    }
-                )
+        let apiClient = apiClient
+        RouterPreviewControllerNavigation(id: "file-browser-motion") {
+            FileViewerViewController(
+                configuration: .init(
+                    workspaceId: FileBrowserMotionPreviewSupport.workspaceId,
+                    filePath: middle.path,
+                    fileName: middle.name,
+                    fileSize: 240,
+                    chromeMode: .treePane,
+                    navigationContext: FileBrowserNavigationContext(
+                        files: files.map {
+                            FileBrowserSelection(path: $0.path, name: $0.name, size: 240)
+                        }
+                    )
+                ),
+                services: .init(apiClient: apiClient)
             )
-            .environment(\.apiClient, apiClient)
         }
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
@@ -59,9 +64,9 @@ struct FileBrowserMotionPreview: View {
     }
 }
 
+/// The review screen at the root of a router stack, between two neighbors.
 struct ReviewFileMotionPreview: View {
     private let apiClient = FileBrowserMotionPreviewSupport.makeClient()
-    @State private var sessionStore = SessionStore()
     @State private var connection = ServerConnection()
     @State private var navigation = AppNavigation()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -79,18 +84,22 @@ struct ReviewFileMotionPreview: View {
                 selectedSessionTouched: true
             )
         }
-        RouterPreviewNavigation {
-            WorkspaceReviewFileDetailView(
-                workspaceId: FileBrowserMotionPreviewSupport.workspaceId,
-                selectedSessionId: nil,
-                file: files[1],
-                navigationFiles: files
+        let apiClient = apiClient
+        let connection = connection
+        let navigation = navigation
+        RouterPreviewControllerNavigation(id: "review-file-motion") {
+            // The review pushes a quick-action chat with these.
+            WorkspaceReviewFileDetailViewController(
+                configuration: .init(
+                    workspaceId: FileBrowserMotionPreviewSupport.workspaceId,
+                    selectedSessionId: nil,
+                    file: files[1],
+                    navigationFiles: files
+                ),
+                connection: connection,
+                apiClient: apiClient,
+                navigation: navigation
             )
-            // The review reads both; it pushes a quick-action chat with them.
-            .environment(connection)
-            .environment(navigation)
-            .environment(sessionStore)
-            .environment(\.apiClient, apiClient)
         }
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
