@@ -219,6 +219,9 @@ final class FileViewerViewController: UIViewController {
     private var noticeLabel: UILabel?
     private var sizeWarning: FileViewerSizeWarningView?
     private var videoPage: UIView?
+    /// Under the reader: the reader's own page color, so the band below its
+    /// safe area (the home indicator) does not show the viewer's lighter page.
+    private var readerPage: UIView?
     private var audioPlayerController: AudioLyricsPlayerViewController?
     private var videoModel: AuthenticatedMediaPlayerModel?
     private var videoHost: AuthenticatedMediaPlayerHostController?
@@ -577,6 +580,7 @@ final class FileViewerViewController: UIViewController {
         noticeLabel = nil
         sizeWarning = nil
         videoPage = nil
+        readerPage = nil
         audioPlayerController = nil
         videoModel = nil
         videoHost = nil
@@ -675,6 +679,7 @@ final class FileViewerViewController: UIViewController {
         reader.didMove(toParent: self)
         mountedChildren.append(reader)
         self.reader = reader
+        readerPage = page
         return page
     }
 
@@ -962,6 +967,7 @@ final class FileViewerViewController: UIViewController {
         sizeWarning?.apply(palette)
         editBanner?.update(palette: palette)
         videoPage?.backgroundColor = UIColor(palette.bgDark)
+        readerPage?.backgroundColor = UIColor(palette.bgDark)
         checkoutLabel?.textColor = UIColor(palette.comment)
         noticeLabel?.textColor = UIColor(palette.comment)
         if let reader {
