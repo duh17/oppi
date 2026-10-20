@@ -45,7 +45,7 @@ final class WorkspaceLinkedFileViewController: UIViewController {
         didSet { setNeedsUpdateProperties() }
     }
     private var shown: Shown?
-    private var lockCover: HostedContentController?
+    private var lockCover: ScopedLockCoverViewController?
     private(set) var viewer: FileViewerViewController?
     private weak var viewerConnection: ServerConnection?
     private var connectTask: Task<Void, Never>?
@@ -117,7 +117,7 @@ final class WorkspaceLinkedFileViewController: UIViewController {
         if ScopedLockService.shared.isLocked(lock) {
             needsConnect = true
             show(.locked)
-            lockCover = ScopedLockScreenCover.make(updating: lockCover, target: lock, title: fileName, root: root)
+            lockCover?.coverTitle = fileName
         } else {
             if needsConnect, isOnScreen {
                 needsConnect = false
@@ -174,7 +174,7 @@ final class WorkspaceLinkedFileViewController: UIViewController {
             connectTask?.cancel()
             connectTask = nil
             connectionState = .connecting
-            let cover = ScopedLockScreenCover.make(updating: nil, target: Self.lockTarget(for: target), title: fileName, root: root)
+            let cover = ScopedLockCoverViewController(target: Self.lockTarget(for: target), title: fileName)
             embed(cover)
             lockCover = cover
         } else {

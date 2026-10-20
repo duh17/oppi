@@ -369,7 +369,7 @@ struct FileBrowserReviewCommentSelectionTests {
 
         let covered = await waitForMainActorCondition(timeout: .seconds(5)) {
             navigation.view.layoutIfNeeded()
-            return route.children.contains { $0 is HostedContentController }
+            return route.children.contains { $0 is ScopedLockCoverViewController }
         }
         #expect(covered, "a locked linked file showed no lock cover")
         let stayedLocked = await waitForMainActorConditionToStayTrue(for: .seconds(1)) {
@@ -406,7 +406,7 @@ struct FileBrowserReviewCommentSelectionTests {
         ScopedLockService.shared.lock(.workspace(serverId: serverId, workspaceId: workspaceId))
         let locked = await waitForMainActorCondition(timeout: .seconds(5)) {
             navigation.view.layoutIfNeeded()
-            return route.children.contains { $0 is HostedContentController }
+            return route.children.contains { $0 is ScopedLockCoverViewController }
                 && !route.children.contains { $0 is FileViewerViewController }
         }
         #expect(locked, "locking left the viewer mounted or showed no cover")

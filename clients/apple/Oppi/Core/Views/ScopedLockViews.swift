@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The one lock indicator for servers, workspaces, and sessions: `lock.fill`
 /// while locked, `lock.open.fill` while unlocked for now. Place it right
@@ -79,36 +80,91 @@ extension ScopedLockGate where Accessory == EmptyView {
 
 /// `ScopedLockGate`'s cover for UIKit screens: the screen shows this in place
 /// of its content while `target` is locked, and tears its content down.
+/// Unlock authorizes `target`. Draws what `ScopedLockCoverView` draws.
 @MainActor
-enum ScopedLockScreenCover {
-    /// The cover with Unlock for `target`; pass the existing `host` to retitle it.
-    static func make(
-        updating host: HostedContentController?,
-        target: ScopedLockTarget,
-        title: String,
-        root: AppRootEnvironment
-    ) -> HostedContentController {
-        let content = ScopedLockTargetCover(target: target, title: title)
-        if let host {
-            host.setContent(content)
-            return host
-        }
-        return HostFactory.content(content, root: root)
+final class ScopedLockCoverViewController: UIViewController {
+    /// The locked item's name.
+    var coverTitle: String {
+        didSet { if coverTitle != oldValue { setNeedsUpdateProperties() } }
     }
-}
 
-private struct ScopedLockTargetCover: View {
-    let target: ScopedLockTarget
-    let title: String
+    private let target: ScopedLockTarget
+    private let symbol = UIImageView()
+    private let titleLabel = UILabel()
+    private let lockedLabel = UILabel()
+    private let unlockButton = UIButton(configuration: .borderedProminent())
 
-    @State private var locks = ScopedLockService.shared
+    init(target: ScopedLockTarget, title: String) {
+        self.target = target
+        coverTitle = title
+        super.init(nibName: nil, bundle: nil)
+    }
 
-    var body: some View {
-        ScopedLockCoverView(title: title, isAuthenticating: locks.isAuthenticating) {
-            Task { _ = await locks.authorize(target) }
-        } accessory: {
-            EmptyView()
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        symbol.image = UIImage(
+            systemName: "lock.fill",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 40, weight: .semibold)
+        )
+        symbol.isAccessibilityElement = false
+        titleLabel.font = AskUIFont.preferred(.title3, weight: .semibold)
+        titleLabel.numberOfLines = 2
+        titleLabel.textAlignment = .center
+        lockedLabel.text = String(localized: "Locked")
+        lockedLabel.font = .preferredFont(forTextStyle: .subheadline)
+        for label in [titleLabel, lockedLabel] {
+            label.adjustsFontForContentSizeCategory = true
         }
+        unlockButton.accessibilityIdentifier = "scopedLock.unlock"
+        unlockButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            let target = target
+            Task { _ = await ScopedLockService.shared.authorize(target) }
+        }, for: .primaryActionTriggered)
+        // SwiftUI's `minWidth: 180` sat on the label, inside the large
+        // button's 20 pt sides.
+        unlockButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+
+        let stack = UIStackView(arrangedSubviews: [symbol, titleLabel, lockedLabel, unlockButton])
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 14
+        stack.setCustomSpacing(20, after: lockedLabel)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 32),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -32),
+        ])
+        view.accessibilityIdentifier = "scopedLock.cover"
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        let palette = (HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
+        view.backgroundColor = UIColor(palette.bg)
+        symbol.tintColor = UIColor(palette.comment)
+        titleLabel.text = coverTitle
+        titleLabel.textColor = UIColor(palette.fg)
+        lockedLabel.textColor = UIColor(palette.comment)
+
+        let method = AppLockService.shared.method
+        var configuration = unlockButton.configuration ?? .borderedProminent()
+        configuration.title = method == .passcode
+            ? String(localized: "Unlock")
+            : String(localized: "Unlock with \(method.name)")
+        configuration.image = UIImage(systemName: method.systemImage)
+        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(scale: .medium)
+        configuration.imagePadding = 8
+        configuration.buttonSize = .large
+        configuration.baseBackgroundColor = UIColor(palette.blue)
+        unlockButton.configuration = configuration
+        unlockButton.isEnabled = !ScopedLockService.shared.isAuthenticating
     }
 }
 

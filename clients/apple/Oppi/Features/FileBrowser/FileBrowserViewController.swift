@@ -84,7 +84,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     // Gate (shell route).
     private var phase: Phase?
-    private var lockCover: HostedContentController?
+    private var lockCover: ScopedLockCoverViewController?
     private var connectTask: Task<Void, Never>?
 
     // Content state, fresh each time the content mounts (after an unlock).
@@ -301,12 +301,6 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         }
         if let lockTarget, isLocked {
             show(.locked)
-            lockCover = ScopedLockScreenCover.make(
-                updating: lockCover,
-                target: lockTarget,
-                title: String(localized: "Files"),
-                root: root
-            )
             return
         }
         guard let services else {
@@ -383,12 +377,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             connectTask?.cancel()
             connectTask = nil
             services = nil
-            let cover = ScopedLockScreenCover.make(
-                updating: nil,
-                target: lockTarget,
-                title: String(localized: "Files"),
-                root: root
-            )
+            let cover = ScopedLockCoverViewController(target: lockTarget, title: String(localized: "Files"))
             embed(cover, in: view)
             lockCover = cover
         }

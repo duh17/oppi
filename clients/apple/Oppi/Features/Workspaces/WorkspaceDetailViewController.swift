@@ -66,7 +66,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
 
     // Gate and server scope.
     private var phase: Phase?
-    private var lockCover: HostedContentController?
+    private var lockCover: ScopedLockCoverViewController?
     /// The workspace server's connection once it is ready. Dropped with the
     /// content when the workspace locks; unlocking connects again.
     private var connection: ServerConnection? {
@@ -291,12 +291,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
 
         if ScopedLockService.shared.isLocked(lockTarget) {
             show(.locked)
-            lockCover = ScopedLockScreenCover.make(
-                updating: lockCover,
-                target: lockTarget,
-                title: routeWorkspace.name,
-                root: root
-            )
+            lockCover?.coverTitle = routeWorkspace.name
             return
         }
         guard let connection else {
@@ -351,12 +346,7 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
             connectTask?.cancel()
             connectTask = nil
             connection = nil
-            let cover = ScopedLockScreenCover.make(
-                updating: nil,
-                target: lockTarget,
-                title: routeWorkspace.name,
-                root: root
-            )
+            let cover = ScopedLockCoverViewController(target: lockTarget, title: routeWorkspace.name)
             addChild(cover)
             cover.view.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(cover.view)
