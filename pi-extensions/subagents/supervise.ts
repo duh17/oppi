@@ -297,7 +297,9 @@ export function launchPlan(input: LaunchPlanInput): LaunchPlan {
 	pushFlag(args, "--tools", input.tools);
 	pushFlag(args, "--exclude-tools", input.excludeTools);
 	pushFlag(args, "--idempotency-key", input.idempotencyKey);
-	if (input.autoStop) args.push("--auto-stop");
+	// Omitted: Oppi stops a child once it settles with nothing pending.
+	if (input.autoStop === true) args.push("--auto-stop");
+	if (input.autoStop === false) args.push("--no-auto-stop");
 	if (input.allowNested) args.push("--allow-nested-delegation");
 	const env: Record<string, string> = {};
 	if (input.parentId) env[CALLER_ENV] = input.parentId;

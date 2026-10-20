@@ -194,6 +194,9 @@ const TABLE: readonly Entry[] = [
     cmd: ["session", "create"],
     input: obj({ workspace: str, prompt: str }, ["workspace", "prompt"]),
     output: obj({ session_id: str }, ["session_id"]),
+    // The owner's session, not crew: it keeps the idle timeout like one started in the app,
+    // although the control session is its caller and so its parent.
+    fixed: ["--no-auto-stop"],
     write: true,
   },
   {

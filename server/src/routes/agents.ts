@@ -239,7 +239,7 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         agentVersion: agent.version,
         parentSessionId: body.parentSessionId,
         allowNestedDelegation: body.allowNestedDelegation === true,
-        autoStop: body.autoStop === true,
+        autoStop: body.autoStop,
         target: { workspace, worktreeId: worktreeSelection.worktreeId },
         prompt,
         attachments: parsedPrompt.attachments,

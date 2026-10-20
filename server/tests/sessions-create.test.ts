@@ -808,6 +808,22 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(defaultResponse.session.launch?.autoStop).toBeUndefined();
   });
 
+  it("auto-stops a child launch by default and keeps it loaded when it opts out", async () => {
+    const root = makeSession({ id: "root-1" });
+    const launchChild = async (body: Record<string, unknown>) => {
+      const mock = createMockContext();
+      mock.storage.getSession.mockImplementation((id: string) => (id === root.id ? root : undefined));
+      await dispatchCreate(mock, { prompt: "Review", parentSessionId: root.id, ...body });
+      expect(mock.errors).toEqual([]);
+      return (mock.responses[0]!.data as { session: Session }).session.launch;
+    };
+
+    expect(await launchChild({})).toMatchObject({ parentSessionId: root.id, autoStop: true });
+    const optedOut = await launchChild({ autoStop: false });
+    expect(optedOut?.parentSessionId).toBe(root.id);
+    expect(optedOut?.autoStop).toBeUndefined();
+  });
+
   it("rejects non-boolean autoStop with HTTP 400", async () => {
     const mock = createMockContext();
 

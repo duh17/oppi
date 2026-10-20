@@ -61,6 +61,10 @@ export interface AgentLaunchRequest {
   prompt?: string;
   attachments?: ChatAttachmentRef[];
   idempotencyKey?: string;
+  /**
+   * Stop the session once a turn settles with nothing pending. Omitted: on for a child
+   * (`parentSessionId`), off for a root. A child's parent starts it again with its next message.
+   */
   autoStop?: boolean;
   leaseOwner?: string;
   source?: NonNullable<Session["launch"]>["source"];
@@ -203,6 +207,7 @@ export class AgentLaunchService {
 
   async launch(request: AgentLaunchRequest): Promise<AgentLaunchResult> {
     const delegation = this.resolveDelegation(request);
+    const autoStop = request.autoStop ?? delegation.parentSessionId !== undefined;
     const idempotencyKey = normalizedText(request.idempotencyKey);
     const leaseOwner = normalizedText(request.leaseOwner) ?? DEFAULT_LEASE_OWNER;
     const now = this.nowMs();
@@ -211,7 +216,7 @@ export class AgentLaunchService {
       const existing = this.deps.storage.findSessionByLaunchIdempotencyKey(idempotencyKey);
       if (existing) {
         this.assertIdempotentDelegationMatches(existing, delegation);
-        this.assertIdempotentAutoStopMatches(existing, request.autoStop);
+        this.assertIdempotentAutoStopMatches(existing, autoStop);
         this.assertIdempotentEngineMatches(existing, request.engine);
         const existingResult = this.resultForExistingLaunch(existing, now);
         if (
@@ -224,7 +229,14 @@ export class AgentLaunchService {
       }
     }
 
-    const session = this.buildSession(request, delegation, idempotencyKey, leaseOwner, now);
+    const session = this.buildSession(
+      request,
+      delegation,
+      autoStop,
+      idempotencyKey,
+      leaseOwner,
+      now,
+    );
     try {
       this.deps.storage.saveSession(session);
     } catch (error) {
@@ -233,7 +245,7 @@ export class AgentLaunchService {
         : undefined;
       if (existing) {
         this.assertIdempotentDelegationMatches(existing, delegation);
-        this.assertIdempotentAutoStopMatches(existing, request.autoStop);
+        this.assertIdempotentAutoStopMatches(existing, autoStop);
         this.assertIdempotentEngineMatches(existing, request.engine);
         return this.resultForExistingLaunch(existing, now);
       }
@@ -323,6 +335,7 @@ export class AgentLaunchService {
       parentSessionId?: string;
       allowsNestedDelegation?: boolean;
     },
+    autoStop: boolean,
     idempotencyKey: string | undefined,
     leaseOwner: string,
     now: number,
@@ -373,7 +386,7 @@ export class AgentLaunchService {
       parentSessionId: delegation.parentSessionId,
       allowsNestedDelegation: delegation.allowsNestedDelegation,
       idempotencyKey,
-      ...(request.autoStop === true ? { autoStop: true } : {}),
+      ...(autoStop ? { autoStop: true } : {}),
       schedule: request.schedule,
       target: {
         workspaceId: request.target.workspace.id,
@@ -510,10 +523,8 @@ export class AgentLaunchService {
     }
   }
 
-  private assertIdempotentAutoStopMatches(existing: Session, autoStop?: boolean): void {
-    const existingAutoStop = existing.launch?.autoStop === true;
-    const requestedAutoStop = autoStop === true;
-    if (existingAutoStop !== requestedAutoStop) {
+  private assertIdempotentAutoStopMatches(existing: Session, autoStop: boolean): void {
+    if ((existing.launch?.autoStop === true) !== autoStop) {
       throw new DelegationPolicyError(
         "Idempotency key is already associated with a different autoStop value",
       );

@@ -582,6 +582,7 @@ describe("AgentLaunchService", () => {
       launch: {
         parentSessionId: child.id,
         idempotencyKey: "legacy-grandchild",
+        autoStop: true,
         status: "accepted",
         requestedAt: 1,
       },
@@ -657,6 +658,7 @@ describe("AgentLaunchService", () => {
       launch: {
         parentSessionId: root.id,
         idempotencyKey: "delegated-retry",
+        autoStop: true,
         status: "accepted",
         requestedAt: 1,
         promptDispatch: "delivered",

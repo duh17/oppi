@@ -595,7 +595,12 @@ async function createSession(
   const thinking = resolveThinkingFromFlags(flags, resolvedModel?.thinkingLevel);
   const savedAgent = savedAgentReference(flags.agent);
   const allowNestedDelegation = flags["allow-nested-delegation"] === "true";
-  const autoStop = flags["auto-stop"] === "true";
+  if (flags["auto-stop"] !== undefined && flags["no-auto-stop"] !== undefined) {
+    throw new Error("Conflicting flags: --auto-stop and --no-auto-stop");
+  }
+  // Omitted: the server stops a child (a caller session is set) once it settles, not a root.
+  const autoStop =
+    flags["auto-stop"] === "true" ? true : flags["no-auto-stop"] === "true" ? false : undefined;
   const result = savedAgent
     ? await localApiRequest<{ session: Session; receipt?: Record<string, unknown> }>(
         storage,
@@ -620,7 +625,7 @@ async function createSession(
               : {}),
             ...(parentSessionId ? { parentSessionId } : {}),
             ...(allowNestedDelegation ? { allowNestedDelegation: true } : {}),
-            ...(autoStop ? { autoStop: true } : {}),
+            ...(autoStop !== undefined ? { autoStop } : {}),
             ...(flags.engine ? { engine: flags.engine } : {}),
             ...(flags["idempotency-key"] ? { idempotencyKey: flags["idempotency-key"] } : {}),
           },
@@ -640,7 +645,7 @@ async function createSession(
             ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
             ...(parentSessionId ? { parentSessionId } : {}),
             ...(allowNestedDelegation ? { allowNestedDelegation: true } : {}),
-            ...(autoStop ? { autoStop: true } : {}),
+            ...(autoStop !== undefined ? { autoStop } : {}),
             ...(flags.engine ? { engine: flags.engine } : {}),
             ...(flags["idempotency-key"] ? { launchIdempotencyKey: flags["idempotency-key"] } : {}),
           },
@@ -671,6 +676,7 @@ const SESSION_FLAGS: Record<string, readonly string[]> = {
     "json",
     "model",
     "name",
+    "no-auto-stop",
     "no-builtin-tools",
     "no-tools",
     "prompt",

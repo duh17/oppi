@@ -4,8 +4,9 @@
  * Bash waits 15 seconds. If the command is still running, it becomes a
  * background job and the composer pill shows it. Finished results are batched
  * at a safe model boundary, or sent once when the session is idle. In an Oppi
- * auto-stop session (or when that cannot be confirmed), a final turn stays
- * busy while jobs run; Stop and queued input interrupt that wait. A trailing
+ * auto-stop session (or when that cannot be confirmed) with no other pending
+ * wake, a final turn stays busy while jobs run; Stop and queued input interrupt
+ * that wait. A trailing
  * `&` backgrounds immediately. Polling a running job is blocked.
  */
 
@@ -175,13 +176,27 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 	let flushStartedAt: number | undefined;
 	let latestUi: ExtensionUIContext | undefined;
 	let wakeTurnWait: (() => void) | undefined;
-	// Holding the final turn exists only so Oppi auto-stop cannot end the session
-	// before job results arrive. Pi cannot tell this wait about custom messages
-	// other extensions queue (hasPendingMessages counts user input only), so a
-	// hold starves them. Hold unless Oppi confirms the session will not
-	// auto-stop; its idle timeout ignores open runs, so holding there protects
-	// nothing. Asked lazily, at most once per session, only when a hold would start.
+	// Holding the final turn keeps an auto-stop session (supervised crew) busy
+	// until its jobs report, so its parent's settlement carries the final answer
+	// instead of "waiting on the build". Oppi keeps a session with running jobs
+	// loaded through the pending wake either way. Hold unless Oppi confirms the
+	// session will not auto-stop. Asked lazily, at most once per session, only
+	// when a hold would start.
 	let autoStopLookup: Promise<boolean | undefined> | undefined;
+	// Pi cannot tell the hold about custom messages other extensions queue
+	// (hasPendingMessages counts user input only), so a hold would starve them.
+	// Extensions that will wake this session say so on the pending-wake channel
+	// (a supervised subagent's settlement); while any does, the turn settles.
+	const otherWakes = new Map<string, number>();
+	pi.events.on(PENDING_WAKE_CHANNEL, (data) => {
+		const { source, count } = (data ?? {}) as { source?: unknown; count?: unknown };
+		if (typeof source !== "string" || source === PILL_KEY) return;
+		if (typeof count === "number" && count > 0) {
+			otherWakes.set(source, count);
+			// A wake reported during a hold would queue behind the jobs; settle now.
+			wakeTurnWait?.();
+		} else otherWakes.delete(source);
+	});
 	// Job ids restart at bash-1 in every instance; this run id makes stored keys unique.
 	const run = randomUUID();
 	const keyFor = (jobId: string) => `${run}:${jobId}`;
@@ -568,7 +583,8 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 		const wouldFinishWithJobsRunning = () =>
 			!closed && !signal?.aborted && event.outcome === "completed" &&
 			!event.continue && !event.context.canContinue && !ctx.hasPendingMessages() &&
-			buffer.pendingCount() === 0 && manager.visibleRunning().length > 0;
+			buffer.pendingCount() === 0 && manager.visibleRunning().length > 0 &&
+			otherWakes.size === 0;
 		if (signal && wouldFinishWithJobsRunning()) {
 			autoStopLookup ??= lookupOppiAutoStop(ctx.sessionManager.getSessionId());
 			const autoStop = await autoStopLookup;

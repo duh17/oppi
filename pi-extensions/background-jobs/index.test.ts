@@ -158,7 +158,7 @@ async function fixture(
 	});
 	return {
 		session, waiting: waiting.promise, afterResult: afterResult.promise, connections,
-		errors, observed, wakes, requests: () => requests,
+		errors, observed, wakes, events, requests: () => requests,
 		lookups: async () => (await readFile(lookups, "utf8").catch(() => "")).split("\n").filter(Boolean),
 		results: () => session.messages.filter((message) =>
 			message.role === "custom" && message.customType === "background-job"),
@@ -248,8 +248,13 @@ describe("background jobs keep Pi busy", () => {
 		expect(f.errors).toEqual([]);
 	}, 10_000);
 
-	test("a session Oppi will not auto-stop settles while jobs run, so other extensions' follow-ups start a turn", async () => {
-		const f = await fixture(1, "background_job", { autoStop: false });
+	test.each([
+		["a session Oppi will not auto-stop", false],
+		["an auto-stop session with a supervised subagent still due", true],
+	])("%s settles while jobs run, so other extensions' follow-ups start a turn", async (_name, autoStop) => {
+		const f = await fixture(1, "background_job", { autoStop });
+		// What the subagents extension reports while a supervised child has not settled.
+		if (autoStop) f.events.emit("oppi:pending-wake:v1", { source: "subagents", count: 1 });
 		await f.session.prompt("Start a build");
 		const socket = await f.connections[0]!.promise;
 		expect(f.session.isIdle).toBe(true);
@@ -274,12 +279,16 @@ describe("background jobs keep Pi busy", () => {
 		await resultTurn.promise;
 		expect(f.results()).toHaveLength(1);
 		expect(f.results()[0]!.content).toContain("build done");
-		expect(await f.lookups()).toEqual([`session get ${f.session.sessionId} --json`]);
+		// Another wake decides without asking Oppi.
+		expect(await f.lookups()).toEqual(autoStop ? [] : [`session get ${f.session.sessionId} --json`]);
 		expect(f.errors).toEqual([]);
 	}, 10_000);
 
 	test("an Oppi auto-stop session holds every final turn while jobs run and asks Oppi only once", async () => {
 		const f = await fixture(2, "background_job", { autoStop: true });
+		// A supervised child that already reported no longer keeps the turn from holding.
+		f.events.emit("oppi:pending-wake:v1", { source: "subagents", count: 1 });
+		f.events.emit("oppi:pending-wake:v1", { source: "subagents", count: 0 });
 		const run = f.session.prompt("Start the builds");
 		const sockets = await Promise.all(f.connections.map((connection) => connection.promise));
 		await f.waiting;

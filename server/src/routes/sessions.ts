@@ -322,7 +322,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         leaseOwner: body.launchLeaseOwner,
         parentSessionId: body.parentSessionId,
         allowNestedDelegation: body.allowNestedDelegation === true,
-        autoStop: body.autoStop === true,
+        autoStop: body.autoStop,
         engine: requestedEngine.engine,
       });
       const requiredModelFailure = requiredModelLaunchFailureMessage(result.session);
