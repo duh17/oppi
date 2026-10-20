@@ -107,7 +107,7 @@ final class ReviewFileSummaryBarView: UIView {
         nameLabel.textColor = UIColor(palette.fg)
         statusPill.apply(
             text: values.statusLabel,
-            tone: GitStatusColor.color(for: values.status, palette: palette),
+            tone: Self.statusColor(values.status, palette: palette),
             emphasis: .tinted,
             palette: palette
         )
@@ -123,5 +123,16 @@ final class ReviewFileSummaryBarView: UIView {
         removedLabel.text = "-\(removed)"
         removedLabel.textColor = UIColor(palette.toolDiffRemoved)
         removedLabel.isHidden = removed <= 0
+    }
+
+    /// A Git status code's pill color, from the theme.
+    private static func statusColor(_ status: String, palette: ThemePalette) -> UIColor {
+        switch status.trimmingCharacters(in: .whitespaces) {
+        case "M": UIColor(palette.orange)
+        case "A": UIColor(palette.green)
+        case "D", "UU", "AA", "DD": UIColor(palette.red)
+        case "R", "C": UIColor(palette.cyan)
+        default: UIColor(palette.comment)
+        }
     }
 }

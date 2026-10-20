@@ -128,8 +128,8 @@ enum ShellRouteScreens {
     }
 
     /// A locked session's cover in place of its chat.
-    static func sessionLockCover(target: ScopedLockTarget, title: String, root: AppRootEnvironment) -> UIViewController {
-        HostFactory.content(ShellSessionLockCover(target: target, title: title), root: root)
+    static func sessionLockCover(target: ScopedLockTarget, title: String) -> UIViewController {
+        ScopedLockCoverViewController(target: target, title: title)
     }
 
     /// A session route waiting for its server.
@@ -140,22 +140,6 @@ enum ShellRouteScreens {
                 .background(.themeBg),
             root: root
         )
-    }
-}
-
-/// A session's lock cover; Unlock authorizes the session's scope.
-private struct ShellSessionLockCover: View {
-    let target: ScopedLockTarget
-    let title: String
-
-    @State private var locks = ScopedLockService.shared
-
-    var body: some View {
-        ScopedLockCoverView(title: title, isAuthenticating: locks.isAuthenticating) {
-            Task { _ = await locks.authorize(target) }
-        } accessory: {
-            EmptyView()
-        }
     }
 }
 

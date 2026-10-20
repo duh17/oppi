@@ -104,8 +104,7 @@ final class ChatRouteViewController: UIViewController {
                 ShellRouteScreens.sessionLockCover(
                     target: lockTarget,
                     title: locks.sessionLookup(target.serverId, target.sessionId)?.displayTitle
-                        ?? String(localized: "Session"),
-                    root: root
+                        ?? String(localized: "Session")
                 )
             }
         } else {

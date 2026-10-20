@@ -1995,8 +1995,9 @@ private func color(_ lhs: UIColor?, approximatelyEquals rhs: UIColor, tolerance:
         abs(la - ra) <= tolerance
 }
 
-/// The commit viewer as chat presents it: hosted with the app root, scoped to
-/// the chat's connection.
+/// The commit viewer as chat presents it, scoped to the chat's connection.
+/// `destination` opens as the viewer's New Session would, once the caller
+/// has put the viewer in its window.
 @MainActor
 private func makeTimelineCommitHostController(
     connection: ServerConnection,
@@ -2009,11 +2010,13 @@ private func makeTimelineCommitHostController(
         workspaceId: "ws-test",
         sha: "0486bc75",
         reviewCommentSelectionScope: nil,
-        connection: connection,
-        testingQuickActionDestination: destination
+        connection: connection
     )
     let navigation = RouterNavigationController(rootViewController: viewer)
     navigation.traitOverrides.appRootEnvironment = root ?? makeTestAppRoot(composerDraftStore: composerDraftStore)
+    if let destination {
+        DispatchQueue.main.async { viewer.openQuickActionSession(destination) }
+    }
     return navigation
 }
 

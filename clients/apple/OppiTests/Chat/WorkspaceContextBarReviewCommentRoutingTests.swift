@@ -15,7 +15,6 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
         })
         let scope = try #require(WorkspaceContextBarView.makeFileDetailReviewCommentScope(
             parentScope: parentScope,
-            fallbackScope: nil,
             dismissFileDetail: { dismissed = true }
         ))
 
@@ -32,30 +31,6 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
 
         #expect(forwarded == request)
         #expect(dismissed == true)
-    }
-
-    @Test func missingParentScopeReturnsFallbackScope() throws {
-        var fallback: ReviewCommentSelectionRequest?
-        var dismissed = false
-        let fallbackScope = ReviewCommentSelectionScope.activeSession(ReviewCommentSelectionRouter { request in
-            fallback = request
-        })
-
-        let scope = try #require(WorkspaceContextBarView.makeFileDetailReviewCommentScope(
-            parentScope: nil,
-            fallbackScope: fallbackScope,
-            dismissFileDetail: { dismissed = true }
-        ))
-
-        let request = ReviewCommentSelectionRequest(
-            selectedText: "+ changed line",
-            source: ReviewCommentSourceContext(sessionId: "s1", surface: .fullScreenDiff)
-        )
-
-        scope.router.dispatch(request)
-
-        #expect(fallback == request)
-        #expect(dismissed == false)
     }
 
     @Test func fileReviewSheetAndNavigationSurviveContextBecomingUnavailable() async throws {
@@ -127,7 +102,6 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
 
         let scope = try #require(WorkspaceContextBarView.makeFileDetailReviewCommentScope(
             parentScope: parentScope,
-            fallbackScope: nil,
             dismissFileDetail: {}
         ))
 

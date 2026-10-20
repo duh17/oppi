@@ -1679,7 +1679,6 @@
 		C6471326D53540B24009C49D /* CodeGutterAlignmentUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E30CBB4CB2CB4AC13B4CC204 /* CodeGutterAlignmentUITests.swift */; };
 		C680FE8306AD79676CB8A8CD /* SSHTerminalAttention.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7604543D7376547482B645A2 /* SSHTerminalAttention.swift */; };
 		C696B3EC38ED9056AAB2A824 /* AudioLongformListening.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12ED902524EA11CF9202B517 /* AudioLongformListening.swift */; };
-		C6DA679F2E8C52793FF36600 /* GitStatusColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DE2C82DD7BB3B28DE411751 /* GitStatusColor.swift */; };
 		C6EEDA5A059277A7DE587593 /* MermaidGanttRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F18A5EDD0D5360E79FEC7967 /* MermaidGanttRenderer.swift */; };
 		C7530CAD67D0627823512ACD /* WorkspaceSandboxMcpPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD322FBF4D6D46DC9BBC904D /* WorkspaceSandboxMcpPage.swift */; };
 		C75F2E6631D3A6FFD0EF292C /* UnifiedPatchParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DF5DA555AFB287996FF1BDA /* UnifiedPatchParser.swift */; };
@@ -2724,7 +2723,6 @@
 		3DA62DE78DD7E384238541A0 /* MacWebSocketFrameCodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWebSocketFrameCodecTests.swift; sourceTree = "<group>"; };
 		3DCD513FA3DAF9646FAC4510 /* WorkspaceShellScreenshotPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceShellScreenshotPreview.swift; sourceTree = "<group>"; };
 		3DDA46585AC22AC019611EEC /* SessionScopedGitStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionScopedGitStatus.swift; sourceTree = "<group>"; };
-		3DE2C82DD7BB3B28DE411751 /* GitStatusColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitStatusColor.swift; sourceTree = "<group>"; };
 		3DE2EBB31EF5354A5CD88B58 /* QuietModePreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuietModePreferencesTests.swift; sourceTree = "<group>"; };
 		3E32650EFD98AE8E1B704FD6 /* ServerConnectionModelCommandsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionModelCommandsTests.swift; sourceTree = "<group>"; };
 		3E36D83EA919E4B66F59D11B /* MarkdownBlockSerializerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlockSerializerTests.swift; sourceTree = "<group>"; };
@@ -5199,7 +5197,6 @@
 			isa = PBXGroup;
 			children = (
 				2728D56D1C552B9C9AC45DAE /* CommitDetailViewController.swift */,
-				3DE2C82DD7BB3B28DE411751 /* GitStatusColor.swift */,
 				F4DC08E1289A614CB4C81937 /* ReviewFileSummaryBarView.swift */,
 				DF85E4D412BDDB553B3E8AB2 /* TrailingSidePanelPolicy.swift */,
 				1C1EC84E190082829CF73D3C /* WorkspaceReviewFileDetailViewController.swift */,
@@ -9216,7 +9213,6 @@
 				EE3F7F65CD9848AD4500AD12 /* GeoJSONMountRainierPreview.swift in Sources */,
 				7F81FDAD8DB7E10ACFA21B1A /* GitCommitDetail.swift in Sources */,
 				EF31D3864A7463AA226E338E /* GitStatus.swift in Sources */,
-				C6DA679F2E8C52793FF36600 /* GitStatusColor.swift in Sources */,
 				0413385FF47CC0DB1E864FEF /* GitStatusStore+Environment.swift in Sources */,
 				82BA8028E8E1DEEF77D8A5F8 /* GitStatusStore.swift in Sources */,
 				7ADE8174B66DEEFDC78C8F49 /* GraphicalRendererView.swift in Sources */,

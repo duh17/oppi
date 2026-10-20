@@ -44,16 +44,14 @@ struct ChatTimelineDestinationPresenter {
         workspaceId: String,
         sha: String,
         reviewCommentSelectionScope: ReviewCommentSelectionScope?,
-        connection: ServerConnection,
-        testingQuickActionDestination: QuickActionSessionNavDestination? = nil
+        connection: ServerConnection
     ) -> CommitDetailViewController {
         let viewer = CommitDetailViewController(
             configuration: .init(
                 workspaceId: workspaceId,
                 commit: GitCommitSummary(sha: sha, message: "", date: ""),
                 reviewCommentSelectionScope: reviewCommentSelectionScope,
-                closeAccessibilityIdentifier: "chat.commit-detail.dismiss",
-                testingQuickActionDestination: testingQuickActionDestination
+                closeAccessibilityIdentifier: "chat.commit-detail.dismiss"
             ),
             connection: connection,
             apiClient: connection.apiClient,

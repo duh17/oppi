@@ -249,7 +249,7 @@ final class WorkspaceContextBarView: UIView {
     // Views.
     private let card = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
     private let cardStack = UIStackView()
-    private let toggleButton = ContextBarButton(frame: .zero)
+    private var toggleButton = PlainRowButton(frame: .zero)
     private let branchIcon = UIImageView()
     private let branchLabel = UILabel()
     private let branchGroup = UIStackView()
@@ -261,9 +261,8 @@ final class WorkspaceContextBarView: UIView {
     private let behindLabel = UILabel()
     private let aheadGroup = UIStackView()
     private let chevron = UIImageView()
-    private let toggleStack = UIStackView()
     private let selectDivider = UIView()
-    private let selectButton = ContextBarButton(frame: .zero)
+    private var selectButton = PlainRowButton(frame: .zero)
     private let selectLabel = UILabel()
     private let tipHost = FeatureEducationTipHostView(
         tip: FeatureEducationTips.ChangedFilesBarTip(),
@@ -273,7 +272,6 @@ final class WorkspaceContextBarView: UIView {
     private let expandedStack = UIStackView()
     private let scrollView = UIScrollView()
     private let panelStack = UIStackView()
-    private var scrollMaxHeight: NSLayoutConstraint?
     private let selectionBar = UIStackView()
     private var emptyHeight: NSLayoutConstraint?
     private var cardLeading: NSLayoutConstraint?
@@ -320,23 +318,21 @@ final class WorkspaceContextBarView: UIView {
 
     // MARK: Review comment scope
 
+    /// `parentScope` with a dispatch that closes the review first, so the
+    /// comment reaches the composer under it.
     @MainActor
     static func makeFileDetailReviewCommentScope(
         parentScope: ReviewCommentSelectionScope?,
-        fallbackScope: ReviewCommentSelectionScope?,
         dismissFileDetail: @escaping () -> Void
     ) -> ReviewCommentSelectionScope? {
-        if let parentScope {
-            switch parentScope {
-            case .activeSession(let router):
-                return .activeSession(router.retargetingDispatch { request in
-                    dismissFileDetail()
-                    router.dispatch(request)
-                })
-            }
+        guard let parentScope else { return nil }
+        switch parentScope {
+        case .activeSession(let router):
+            return .activeSession(router.retargetingDispatch { request in
+                dismissFileDetail()
+                router.dispatch(request)
+            })
         }
-
-        return fallbackScope
     }
 
     // MARK: Derived state
@@ -385,20 +381,6 @@ final class WorkspaceContextBarView: UIView {
             : .systemFont(ofSize: size, weight: weight)
     }
 
-    /// Dynamic max height for the scrollable content area.
-    /// Estimates row heights to hug content; capped at 480.
-    /// Note: the selection action bar is outside the scroll view — not counted here.
-    private func expandedMaxHeight(sharedEditPaths: Set<String>) -> CGFloat {
-        let regular = usesRegularTypography
-        let fileRows = CGFloat(displayFiles.count) * (regular ? 28 : 26)
-        let commitRows = CGFloat(allCommits.count) * (regular ? 20 : 17)
-        let loadMoreRow: CGFloat = hasMoreCommits ? (regular ? 28 : 24) : 0
-        let sectionHeaders: CGFloat = regular ? 28 : 24
-        let overlapHint: CGFloat = sharedEditPaths.isEmpty ? 0 : (regular ? 24 : 22)
-        let chrome: CGFloat = 20
-        return min(fileRows + commitRows + loadMoreRow + sectionHeaders + overlapHint + chrome, 480)
-    }
-
     // MARK: Setup
 
     private func setUpViews() {
@@ -442,8 +424,8 @@ final class WorkspaceContextBarView: UIView {
         scrollView.addSubview(panelStack)
         let hug = scrollView.frameLayoutGuide.heightAnchor.constraint(equalTo: panelStack.heightAnchor)
         hug.priority = .defaultHigh
+        // The panel hugs its rows up to 480 pt, then scrolls.
         let maxHeight = scrollView.frameLayoutGuide.heightAnchor.constraint(lessThanOrEqualToConstant: 480)
-        scrollMaxHeight = maxHeight
         NSLayoutConstraint.activate([
             panelStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             panelStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
@@ -487,24 +469,13 @@ final class WorkspaceContextBarView: UIView {
         chevron.setContentHuggingPriority(.required, for: .horizontal)
         let spacer = UIView()
         spacer.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
-        for view in [branchGroup, changedLabel, linesGroup, spacer, aheadGroup, chevron] {
-            toggleStack.addArrangedSubview(view)
-        }
-        toggleStack.axis = .horizontal
-        toggleStack.alignment = .center
-        toggleStack.spacing = 8
-        toggleStack.isUserInteractionEnabled = false
-        toggleStack.translatesAutoresizingMaskIntoConstraints = false
-        toggleButton.addSubview(toggleStack)
-        NSLayoutConstraint.activate([
-            toggleStack.topAnchor.constraint(equalTo: toggleButton.topAnchor, constant: 8),
-            toggleStack.bottomAnchor.constraint(equalTo: toggleButton.bottomAnchor, constant: -8),
-            toggleStack.leadingAnchor.constraint(equalTo: toggleButton.leadingAnchor, constant: 12),
-            toggleStack.trailingAnchor.constraint(equalTo: toggleButton.trailingAnchor, constant: -12),
-        ])
+        let toggleStack = Self.row(
+            [branchGroup, changedLabel, linesGroup, spacer, aheadGroup, chevron],
+            spacing: 8,
+            insets: NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)
+        )
+        toggleButton = PlainRowButton(wrapping: toggleStack) { [weak self] in self?.toggleExpanded() }
         toggleButton.accessibilityIdentifier = "workspace-context-bar.toggle"
-        toggleButton.addAction(UIAction { [weak self] _ in self?.toggleExpanded() }, for: .primaryActionTriggered)
-        toggleButton.content = toggleStack
 
         selectDivider.translatesAutoresizingMaskIntoConstraints = false
         let dividerSlot = UIView()
@@ -517,20 +488,9 @@ final class WorkspaceContextBarView: UIView {
             selectDivider.trailingAnchor.constraint(equalTo: dividerSlot.trailingAnchor, constant: -2),
         ])
         selectLabel.adjustsFontForContentSizeCategory = true
-        let selectContent = Self.padded(selectLabel, NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
-        selectContent.isUserInteractionEnabled = false
-        selectContent.translatesAutoresizingMaskIntoConstraints = false
-        selectButton.addSubview(selectContent)
-        NSLayoutConstraint.activate([
-            selectContent.topAnchor.constraint(equalTo: selectButton.topAnchor),
-            selectContent.bottomAnchor.constraint(equalTo: selectButton.bottomAnchor),
-            selectContent.leadingAnchor.constraint(equalTo: selectButton.leadingAnchor),
-            selectContent.trailingAnchor.constraint(equalTo: selectButton.trailingAnchor),
-        ])
-        selectButton.content = selectContent
-        selectButton.isAccessibilityElement = true
-        selectButton.accessibilityTraits = .button
-        selectButton.addAction(UIAction { [weak self] _ in self?.toggleSelecting() }, for: .primaryActionTriggered)
+        selectButton = PlainRowButton(
+            wrapping: Self.padded(selectLabel, NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
+        ) { [weak self] in self?.toggleSelecting() }
         selectButton.setContentHuggingPriority(.required, for: .horizontal)
         selectButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
@@ -577,7 +537,6 @@ final class WorkspaceContextBarView: UIView {
             sessions: sessions
         )
         renderPanel(sharedPaths: sharedPaths, themeID: themeID)
-        scrollMaxHeight?.constant = expandedMaxHeight(sharedEditPaths: sharedPaths)
         selectionBar.isHidden = !isSelecting
         if isSelecting {
             renderSelectionBar(themeID: themeID)
@@ -870,28 +829,15 @@ final class WorkspaceContextBarView: UIView {
         palette: ThemePalette
     ) -> (view: UIView, mark: UIImageView?) {
         let canTap = context.workspaceId != nil
-        var items: [UIView] = []
         var mark: UIImageView?
         if isSelecting {
             let check = UIImageView()
             check.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font(fixed: 12, .regular, regular: .caption1, .regular))
             check.contentMode = .center
             check.widthAnchor.constraint(equalToConstant: 16).isActive = true
-            items.append(check)
             mark = check
         }
-        items.append(Self.fileIconView(FileIcon.forPath(file.path)))
-        let path = Self.label(
-            file.path.shortenedPath,
-            font: font(.caption2, .caption1, mono: true),
-            color: UIColor(palette.fg)
-        )
-        path.lineBreakMode = .byTruncatingMiddle
-        path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        path.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        items.append(path)
-
-        var labelParts = [file.path.shortenedPath]
+        var badges: [UIView] = []
         if isSharedEdit {
             let orange = UIColor(palette.orange)
             let badgeIcon = UIImageView(image: UIImage(systemName: "rectangle.on.rectangle"))
@@ -903,26 +849,28 @@ final class WorkspaceContextBarView: UIView {
             Self.pad(badgeIcon, in: badge, NSDirectionalEdgeInsets(top: 2, leading: 5, bottom: 2, trailing: 5))
             badge.backgroundColor = orange.withAlphaComponent(0.12)
             badge.isAccessibilityElement = false
-            items.append(badge)
-            labelParts.append(String(localized: "Touched in another session"))
+            badges.append(badge)
         }
-        let countFont = font(.caption2, .caption1, .bold, mono: true)
-        if let added = file.addedLines, added > 0 {
-            items.append(Self.label("+\(added)", font: countFont, color: UIColor(palette.toolDiffAdded)))
-            labelParts.append("+\(added)")
+        let content = ChangedFileRow.content(
+            path: file.path,
+            added: file.addedLines,
+            removed: file.removedLines,
+            leading: mark.map { [$0] } ?? [],
+            beforeCounts: badges,
+            showsChevron: !isSelecting && canTap,
+            fonts: .init(
+                path: font(.caption2, .caption1, mono: true),
+                count: font(.caption2, .caption1, .bold, mono: true),
+                chevron: font(fixed: 8, .semibold, regular: .caption2, .semibold)
+            ),
+            verticalInset: usesRegularTypography ? 5 : 4,
+            palette: palette
+        )
+        var labelParts = content.labelParts
+        if isSharedEdit {
+            labelParts.insert(String(localized: "Touched in another session"), at: 1)
         }
-        if let removed = file.removedLines, removed > 0 {
-            items.append(Self.label("-\(removed)", font: countFont, color: UIColor(palette.toolDiffRemoved)))
-            labelParts.append("-\(removed)")
-        }
-        if !isSelecting, canTap {
-            items.append(rowChevron(palette: palette))
-        }
-        let vertical: CGFloat = usesRegularTypography ? 5 : 4
-        let content = Self.row(items, spacing: 6, insets: NSDirectionalEdgeInsets(top: vertical, leading: 12, bottom: vertical, trailing: 12))
-        // Spacer(minLength: 4) between the path and what trails it.
-        content.setCustomSpacing(16, after: path)
-        let row = Self.button(wrapping: content) { [weak self] in
+        let row = PlainRowButton(wrapping: content.stack) { [weak self] in
             guard let self else { return }
             if isSelecting {
                 toggleSelection(file.path)
@@ -958,7 +906,7 @@ final class WorkspaceContextBarView: UIView {
             message.setContentHuggingPriority(.defaultLow, for: .horizontal)
             let content = Self.row([sha, message, rowChevron(palette: palette)], spacing: 8, insets: .zero)
             content.setCustomSpacing(20, after: message)
-            let row = Self.button(wrapping: content) { [weak self] in self?.presentCommit(commit) }
+            let row = PlainRowButton(wrapping: content) { [weak self] in self?.presentCommit(commit) }
             row.accessibilityLabel = "\(commit.sha), \(commit.message)"
             list.addArrangedSubview(row)
         }
@@ -971,12 +919,16 @@ final class WorkspaceContextBarView: UIView {
                 spinner.startAnimating()
                 loadMore = spinner
             } else {
-                let button = Self.textButton(
+                var configuration = UIButton.Configuration.plain()
+                configuration.attributedTitle = AttributedString(
                     String(localized: "Load more"),
-                    font: font(.caption2, .caption1, .semibold),
-                    color: UIColor(palette.purple),
-                    insets: .zero
+                    attributes: AttributeContainer([
+                        .font: font(.caption2, .caption1, .semibold),
+                        .foregroundColor: UIColor(palette.purple),
+                    ])
                 )
+                configuration.contentInsets = .zero
+                let button = UIButton(configuration: configuration)
                 button.addAction(UIAction { [weak self] _ in self?.loadMoreCommits() }, for: .primaryActionTriggered)
                 loadMore = button
             }
@@ -1166,7 +1118,7 @@ final class WorkspaceContextBarView: UIView {
 
     private func capsuleButton(_ items: [UIView], palette: ThemePalette, action: @escaping () -> Void) -> UIButton {
         let content = Self.row(items, spacing: 6, insets: NSDirectionalEdgeInsets(top: 6, leading: 9, bottom: 6, trailing: 9))
-        let button = Self.button(wrapping: content, action: action)
+        let button = PlainRowButton(wrapping: content, action: action)
         let surface = ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette)
         button.backgroundColor = UIColor(surface.fill)
         button.layer.borderColor = surface.stroke.map { UIColor($0).cgColor }
@@ -1245,49 +1197,6 @@ final class WorkspaceContextBarView: UIView {
         divider.backgroundColor = color
         divider.heightAnchor.constraint(equalToConstant: 1 / max(traitCollection.displayScale, 1)).isActive = true
         return divider
-    }
-
-    /// A row-wide plain button around `content`: the whole row takes the tap
-    /// and dims while pressed.
-    private static func button(wrapping content: UIView, action: @escaping () -> Void) -> ContextBarButton {
-        let button = ContextBarButton(frame: .zero)
-        button.content = content
-        content.isUserInteractionEnabled = false
-        content.translatesAutoresizingMaskIntoConstraints = false
-        button.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: button.topAnchor),
-            content.bottomAnchor.constraint(equalTo: button.bottomAnchor),
-            content.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-        ])
-        button.addAction(UIAction { _ in action() }, for: .primaryActionTriggered)
-        button.isAccessibilityElement = true
-        button.accessibilityTraits = .button
-        return button
-    }
-
-    /// A plain text button (Select, Select All, Load more).
-    private static func textButton(_ title: String, font: UIFont, color: UIColor, insets: NSDirectionalEdgeInsets) -> UIButton {
-        var configuration = UIButton.Configuration.plain()
-        configuration.attributedTitle = AttributedString(title, attributes: AttributeContainer([
-            .font: font,
-            .foregroundColor: color,
-        ]))
-        configuration.contentInsets = insets
-        return UIButton(configuration: configuration)
-    }
-
-    /// The 16 pt file-type glyph of a row.
-    private static func fileIconView(_ icon: FileIcon) -> UIImageView {
-        let view = UIImageView(image: icon.uiImage(pointSize: 10, weight: .semibold))
-        view.tintColor = UIColor(icon.tint.snapshotColor)
-        view.contentMode = icon.isAssetImage ? .scaleAspectFit : .center
-        NSLayoutConstraint.activate([
-            view.widthAnchor.constraint(equalToConstant: 16),
-            view.heightAnchor.constraint(equalToConstant: 16),
-        ])
-        return view
     }
 
     // MARK: Actions
@@ -1418,7 +1327,6 @@ final class WorkspaceContextBarView: UIView {
     private func reviewScopeClosingTheReview() -> ReviewCommentSelectionScope? {
         Self.makeFileDetailReviewCommentScope(
             parentScope: options.fileDetailReviewCommentScope,
-            fallbackScope: nil,
             dismissFileDetail: { [weak self] in self?.dismissReview() }
         )
     }
@@ -1433,7 +1341,7 @@ final class WorkspaceContextBarView: UIView {
             presentation: .sheet.inNavigation(),
             from: presenter,
             theme: HostFactory.root(near: self)?.themeStore,
-            onDismiss: nil
+            onDismiss: { [weak self] in self?.presentedReview = nil }
         )
     }
 
@@ -1652,33 +1560,6 @@ extension WorkspaceContextBarView: UIGestureRecognizerDelegate {
     }
 }
 
-/// A plain button around custom content (`.buttonStyle(.plain)`): the
-/// content dims while pressed. A capsule rounds its ends at every height.
-@MainActor
-private final class ContextBarButton: UIButton {
-    var isCapsule = false {
-        didSet { setNeedsLayout() }
-    }
-    weak var content: UIView?
-
-    override var isHighlighted: Bool {
-        didSet { content?.alpha = isHighlighted ? 0.6 : 1 }
-    }
-
-    /// The content sizes the button; an empty button's own minimum size
-    /// would pad every row.
-    override var intrinsicContentSize: CGSize {
-        CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        guard isCapsule else { return }
-        layer.cornerCurve = .continuous
-        layer.cornerRadius = bounds.height / 2
-    }
-}
-
 /// A badge whose ends stay round at every height.
 private final class CapsuleView: UIView {
     override func layoutSubviews() {
@@ -1688,9 +1569,10 @@ private final class CapsuleView: UIView {
     }
 }
 
-/// A horizontal scroller for the selection bar's actions, scrolled to its
-/// trailing end when they overflow (`ScrollView(.horizontal)` in a frame
-/// aligned trailing).
+/// A horizontal scroller for the selection bar's actions: as wide as they
+/// are, up to the 280 pt the bar allows it (pinned trailing), then it
+/// scrolls, starting at the first action (`ScrollView(.horizontal)` in a
+/// trailing-aligned frame).
 @MainActor
 private final class TrailingAlignedScrollView: UIScrollView {
     init(content: UIView) {

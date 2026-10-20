@@ -30,8 +30,6 @@ final class CommitDetailViewController: UIViewController {
         var reviewCommentSelectionScope: ReviewCommentSelectionScope?
         /// The close control's identifier, for a commit that is a modal's root.
         var closeAccessibilityIdentifier: String?
-        /// Unit tests open this chat as soon as the viewer appears.
-        var testingQuickActionDestination: QuickActionSessionNavDestination?
     }
 
     let configuration: Configuration
@@ -59,7 +57,6 @@ final class CommitDetailViewController: UIViewController {
     }
     private var quickActionOptions: [WorkspaceQuickActionOption] = []
     private var isLoadingQuickActions = false
-    private var didOpenTestingQuickAction = false
     private var detailTask: Task<Void, Never>?
     private var quickActionTask: Task<Void, Never>?
 
@@ -165,10 +162,6 @@ final class CommitDetailViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         diffSheet.sync()
-        if let destination = configuration.testingQuickActionDestination, !didOpenTestingQuickAction {
-            didOpenTestingQuickAction = true
-            openQuickActionSession(destination)
-        }
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -306,7 +299,7 @@ final class CommitDetailViewController: UIViewController {
     /// Pushes the new session's chat with this viewer's server and navigation.
     /// The commit viewer opened from a chat keeps an `AppNavigation` of its own
     /// (`ChatTimelineDestinationPresenter`), so its chat leaves the app's alone.
-    private func openQuickActionSession(_ destination: QuickActionSessionNavDestination) {
+    func openQuickActionSession(_ destination: QuickActionSessionNavDestination) {
         let chat = ChatViewController(
             sessionId: destination.id,
             connection: connection,
@@ -429,11 +422,13 @@ private final class CommitDetailContentView: UIScrollView {
     private let removedLabel = UILabel()
     private let filesHeaderLabel = UILabel()
     private let dividers = [UIView(), UIView()]
-    private var rows: [CommitFileRowControl] = []
+    private let fileList = UIStackView()
+    private let onSelect: (GitCommitFileInfo) -> Void
     private var appliedThemeID: ThemeID?
 
     init(detail: GitCommitDetail, onSelect: @escaping (GitCommitFileInfo) -> Void) {
         self.detail = detail
+        self.onSelect = onSelect
         super.init(frame: .zero)
         alwaysBounceVertical = true
 
@@ -486,12 +481,6 @@ private final class CommitDetailContentView: UIScrollView {
         filesHeader.isLayoutMarginsRelativeArrangement = true
         filesHeader.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
 
-        rows = detail.files.map { file in
-            let row = CommitFileRowControl(file: file)
-            row.addAction(UIAction { _ in onSelect(file) }, for: .primaryActionTriggered)
-            return row
-        }
-        let fileList = UIStackView(arrangedSubviews: rows)
         fileList.axis = .vertical
         fileList.spacing = 1
         fileList.isLayoutMarginsRelativeArrangement = true
@@ -532,8 +521,61 @@ private final class CommitDetailContentView: UIScrollView {
         )
         dividers[0].backgroundColor = UIColor(palette.comment).withAlphaComponent(0.2)
         dividers[1].backgroundColor = UIColor(palette.comment).withAlphaComponent(0.15)
-        for row in rows {
-            row.apply(palette: palette)
+        // The rows draw in the palette they are built with.
+        fileList.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for file in detail.files {
+            fileList.addArrangedSubview(fileRow(file, palette: palette))
+        }
+    }
+
+    /// One changed file: icon, path, line counts, status badge, chevron.
+    private func fileRow(_ file: GitCommitFileInfo, palette: ThemePalette) -> UIView {
+        let statusColor = Self.statusColor(file.status, palette: palette)
+        let status = UILabel()
+        status.text = file.status
+        status.font = AskUIFont.preferred(.caption2, weight: .medium)
+        status.adjustsFontForContentSizeCategory = true
+        status.textColor = statusColor
+        status.setContentHuggingPriority(.required, for: .horizontal)
+        status.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let badge = UIView()
+        badge.backgroundColor = statusColor.withAlphaComponent(0.12)
+        badge.layer.cornerRadius = 3
+        status.translatesAutoresizingMaskIntoConstraints = false
+        badge.addSubview(status)
+        NSLayoutConstraint.activate([
+            status.topAnchor.constraint(equalTo: badge.topAnchor, constant: 1),
+            status.bottomAnchor.constraint(equalTo: badge.bottomAnchor, constant: -1),
+            status.leadingAnchor.constraint(equalTo: badge.leadingAnchor, constant: 4),
+            status.trailingAnchor.constraint(equalTo: badge.trailingAnchor, constant: -4),
+        ])
+        let row = ChangedFileRow.content(
+            path: file.path,
+            added: file.addedLines,
+            removed: file.removedLines,
+            afterCounts: [badge],
+            showsChevron: true,
+            fonts: .init(
+                path: AskUIFont.monospaced(.caption2, weight: .regular),
+                count: AskUIFont.monospaced(.caption2, weight: .bold),
+                chevron: .systemFont(ofSize: 8, weight: .semibold)
+            ),
+            verticalInset: 4,
+            palette: palette
+        )
+        let button = PlainRowButton(wrapping: row.stack) { [onSelect] in onSelect(file) }
+        button.accessibilityIdentifier = "commit-detail.file"
+        button.accessibilityLabel = (row.labelParts + [file.status]).joined(separator: ", ")
+        return button
+    }
+
+    private static func statusColor(_ status: String, palette: ThemePalette) -> UIColor {
+        switch status {
+        case "M": UIColor(palette.orange)
+        case "A": UIColor(palette.toolDiffAdded)
+        case "D": UIColor(palette.toolDiffRemoved)
+        case "R", "C": UIColor(palette.cyan)
+        default: UIColor(palette.comment)
         }
     }
 
@@ -549,125 +591,132 @@ private final class CommitDetailContentView: UIScrollView {
     }
 }
 
-/// One changed file: icon, path, line counts, status badge, chevron.
+/// A row-wide plain button around custom content (`.buttonStyle(.plain)`):
+/// the content takes the whole row's tap, dims while pressed, and sizes the
+/// button. A capsule rounds its ends at every height. The commit's file rows
+/// and the git context bar's rows and pills.
 @MainActor
-private final class CommitFileRowControl: UIButton {
-    private let file: GitCommitFileInfo
-    private let icon: FileIcon
-    private let iconView = UIImageView()
-    private let pathLabel = UILabel()
-    private let addedLabel = UILabel()
-    private let removedLabel = UILabel()
-    private let statusLabel = UILabel()
-    private let statusBadge = UIView()
-    private let chevron = UIImageView()
-    private let stack = UIStackView()
+final class PlainRowButton: UIButton {
+    var isCapsule = false {
+        didSet { setNeedsLayout() }
+    }
+    weak var content: UIView?
 
-    init(file: GitCommitFileInfo) {
-        self.file = file
-        icon = FileIcon.forPath(file.path)
-        super.init(frame: .zero)
-        iconView.image = icon.uiImage(pointSize: 10, weight: .semibold)
-        iconView.contentMode = icon.isAssetImage ? .scaleAspectFit : .center
-        pathLabel.text = file.path.shortenedPath
-        pathLabel.font = AskUIFont.monospaced(.caption2, weight: .regular)
-        pathLabel.lineBreakMode = .byTruncatingMiddle
-        pathLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let added = file.addedLines ?? 0
-        let removed = file.removedLines ?? 0
-        addedLabel.text = "+\(added)"
-        addedLabel.isHidden = added <= 0
-        removedLabel.text = "-\(removed)"
-        removedLabel.isHidden = removed <= 0
-        for label in [addedLabel, removedLabel] {
-            label.font = AskUIFont.monospaced(.caption2, weight: .bold)
-        }
-        statusLabel.text = file.status
-        statusLabel.font = AskUIFont.preferred(.caption2, weight: .medium)
-        for label in [pathLabel, addedLabel, removedLabel, statusLabel] {
-            label.adjustsFontForContentSizeCategory = true
-            let trailing = label !== pathLabel
-            label.setContentCompressionResistancePriority(trailing ? .required : .defaultLow, for: .horizontal)
-            label.setContentHuggingPriority(trailing ? .required : .defaultLow, for: .horizontal)
-        }
-        statusBadge.setContentHuggingPriority(.required, for: .horizontal)
-        chevron.setContentHuggingPriority(.required, for: .horizontal)
-        statusBadge.layer.cornerRadius = 3
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusBadge.addSubview(statusLabel)
-        chevron.image = UIImage(
-            systemName: "chevron.right",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 8, weight: .semibold)
-        )
-        chevron.contentMode = .center
-
-        for subview in [iconView, pathLabel, addedLabel, removedLabel, statusBadge, chevron] {
-            stack.addArrangedSubview(subview)
-        }
-        stack.axis = .horizontal
-        stack.alignment = .center
-        stack.spacing = 6
-        // Spacer(minLength: 4) between the path and the trailing items.
-        stack.setCustomSpacing(16, after: pathLabel)
-        stack.isUserInteractionEnabled = false
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+    /// `content` pinned to the button's edges; `action` runs on a tap.
+    convenience init(wrapping content: UIView, action: @escaping () -> Void) {
+        self.init(frame: .zero)
+        content.isUserInteractionEnabled = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
         NSLayoutConstraint.activate([
-            iconView.widthAnchor.constraint(equalToConstant: 16),
-            iconView.heightAnchor.constraint(equalToConstant: 16),
-            statusLabel.topAnchor.constraint(equalTo: statusBadge.topAnchor, constant: 1),
-            statusLabel.bottomAnchor.constraint(equalTo: statusBadge.bottomAnchor, constant: -1),
-            statusLabel.leadingAnchor.constraint(equalTo: statusBadge.leadingAnchor, constant: 4),
-            statusLabel.trailingAnchor.constraint(equalTo: statusBadge.trailingAnchor, constant: -4),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            content.topAnchor.constraint(equalTo: topAnchor),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
-
+        self.content = content
+        addAction(UIAction { _ in action() }, for: .primaryActionTriggered)
         isAccessibilityElement = true
         accessibilityTraits = .button
-        accessibilityIdentifier = "commit-detail.file"
-        accessibilityLabel = [
-            pathLabel.text,
-            addedLabel.isHidden ? nil : addedLabel.text,
-            removedLabel.isHidden ? nil : removedLabel.text,
-            statusLabel.text,
-        ].compactMap { $0 }.joined(separator: ", ")
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
 
     override var isHighlighted: Bool {
-        didSet { stack.alpha = isHighlighted ? 0.6 : 1 }
+        didSet { content?.alpha = isHighlighted ? 0.6 : 1 }
     }
 
-    /// The row's content sizes it; an empty button's own minimum size would pad it.
+    /// The content sizes the button; an empty button's own minimum size
+    /// would pad every row.
     override var intrinsicContentSize: CGSize {
         CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
     }
 
-    func apply(palette: ThemePalette) {
-        iconView.tintColor = UIColor(icon.tint.snapshotColor)
-        pathLabel.textColor = UIColor(palette.fg)
-        addedLabel.textColor = UIColor(palette.toolDiffAdded)
-        removedLabel.textColor = UIColor(palette.toolDiffRemoved)
-        let statusColor = Self.statusColor(file.status, palette: palette)
-        statusLabel.textColor = statusColor
-        statusBadge.backgroundColor = statusColor.withAlphaComponent(0.12)
-        chevron.tintColor = UIColor(palette.comment).withAlphaComponent(0.5)
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard isCapsule else { return }
+        layer.cornerCurve = .continuous
+        layer.cornerRadius = bounds.height / 2
+    }
+}
+
+/// A changed file's row, in the commit's file list and the git context bar:
+/// the caller's leading views, the file-type icon, the path (middle
+/// truncated), then badges around the line counts and a chevron.
+@MainActor
+enum ChangedFileRow {
+    struct Fonts {
+        let path: UIFont
+        let count: UIFont
+        let chevron: UIFont
     }
 
-    private static func statusColor(_ status: String, palette: ThemePalette) -> UIColor {
-        switch status {
-        case "M": UIColor(palette.orange)
-        case "A": UIColor(palette.toolDiffAdded)
-        case "D": UIColor(palette.toolDiffRemoved)
-        case "R", "C": UIColor(palette.cyan)
-        default: UIColor(palette.comment)
+    /// The row and the words VoiceOver reads for it (path and counts).
+    static func content(
+        path: String,
+        added: Int?,
+        removed: Int?,
+        leading: [UIView] = [],
+        beforeCounts: [UIView] = [],
+        afterCounts: [UIView] = [],
+        showsChevron: Bool,
+        fonts: Fonts,
+        verticalInset: CGFloat,
+        palette: ThemePalette
+    ) -> (stack: UIStackView, labelParts: [String]) {
+        let icon = FileIcon.forPath(path)
+        let iconView = UIImageView(image: icon.uiImage(pointSize: 10, weight: .semibold))
+        iconView.tintColor = UIColor(icon.tint.snapshotColor)
+        iconView.contentMode = icon.isAssetImage ? .scaleAspectFit : .center
+        NSLayoutConstraint.activate([
+            iconView.widthAnchor.constraint(equalToConstant: 16),
+            iconView.heightAnchor.constraint(equalToConstant: 16),
+        ])
+        let pathLabel = label(path.shortenedPath, font: fonts.path, color: UIColor(palette.fg))
+        pathLabel.lineBreakMode = .byTruncatingMiddle
+        // The path takes the row's free width; everything else hugs.
+        pathLabel.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
+        pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        var items = leading + [iconView, pathLabel] + beforeCounts
+        var labelParts = [path.shortenedPath]
+        if let added, added > 0 {
+            items.append(label("+\(added)", font: fonts.count, color: UIColor(palette.toolDiffAdded)))
+            labelParts.append("+\(added)")
         }
+        if let removed, removed > 0 {
+            items.append(label("-\(removed)", font: fonts.count, color: UIColor(palette.toolDiffRemoved)))
+            labelParts.append("-\(removed)")
+        }
+        items += afterCounts
+        if showsChevron {
+            let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
+            chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: fonts.chevron)
+            chevron.tintColor = UIColor(palette.comment).withAlphaComponent(0.5)
+            items.append(chevron)
+        }
+        for item in items where item !== pathLabel {
+            item.setContentHuggingPriority(.required, for: .horizontal)
+            item.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        let stack = UIStackView(arrangedSubviews: items)
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 6
+        // Spacer(minLength: 4) between the path and what trails it.
+        stack.setCustomSpacing(16, after: pathLabel)
+        stack.isLayoutMarginsRelativeArrangement = true
+        stack.directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: verticalInset, leading: 12, bottom: verticalInset, trailing: 12
+        )
+        return (stack, labelParts)
+    }
+
+    private static func label(_ text: String, font: UIFont, color: UIColor) -> UILabel {
+        let label = UILabel()
+        label.text = text
+        label.font = font
+        label.textColor = color
+        label.adjustsFontForContentSizeCategory = true
+        return label
     }
 }
 
