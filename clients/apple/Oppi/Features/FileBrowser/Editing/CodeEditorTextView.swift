@@ -78,6 +78,7 @@ final class CodeEditorTextView: UITextView {
     private let blockCursor = UIView()
     private var cachedLineIndex: CodeLineIndex?
     private var gutterWidth: CGFloat = 0
+    private var revealedWidth: CGFloat = 0
 
     init() {
         // A nil container on iOS 16+ means TextKit 2.
@@ -157,8 +158,33 @@ final class CodeEditorTextView: UITextView {
 
     // MARK: - Layout
 
+    /// UITextView keeps its content as wide as the view even when lines run
+    /// past it, so unwrapped text could not scroll sideways. Widen it to the
+    /// laid-out text; TextKit 2 lays out lazily, so this grows as rows arrive.
+    override var contentSize: CGSize {
+        get { super.contentSize }
+        set { super.contentSize = CGSize(width: max(newValue.width, unwrappedContentWidth), height: newValue.height) }
+    }
+
+    private var unwrappedContentWidth: CGFloat {
+        guard !wrapsLines, let layout = textLayoutManager else { return 0 }
+        let usage = layout.usageBoundsForTextContainer
+        return ceil(usage.maxX + textContainer.lineFragmentPadding + textContainerInset.left + textContainerInset.right)
+    }
+
     override func layoutSubviews() {
+        keepContainerUnwrapped()
         super.layoutSubviews()
+        keepContainerUnwrapped()
+        widenContentIfNeeded()
+        // A width change (rotation, Split View, first layout) resets the
+        // sideways offset, so bring the caret back into view. Height changes
+        // with the keyboard every frame and keeps the offset; revealing then
+        // would undo the user's sideways scroll.
+        if bounds.width != revealedWidth {
+            revealedWidth = bounds.width
+            if selectedRange.length == 0 { revealHorizontally(offset: selectedRange.location) }
+        }
         // Only the unobscured viewport: rows under the bars stay behind their blur.
         let insets = adjustedContentInset
         gutter.frame = CGRect(
@@ -172,10 +198,43 @@ final class CodeEditorTextView: UITextView {
         updateCurrentLine()
     }
 
-    /// Selection moved: repaint the current line and its number.
+    /// Re-sets the content size so the widening setter sees text laid out
+    /// since UITextView last sized it.
+    private func widenContentIfNeeded() {
+        if !wrapsLines, contentSize.width < unwrappedContentWidth { contentSize = super.contentSize }
+    }
+
+    /// Selection moved: repaint the current line and its number, and keep an
+    /// unwrapped caret in view sideways. A range is left alone so a touch
+    /// drag of the selection handles is never fought; Vim's Visual mode
+    /// reveals its moving end itself.
     func selectionDidMove() {
+        if selectedRange.length == 0 { revealHorizontally(offset: selectedRange.location) }
         updateCurrentLine()
         gutter.setNeedsDisplay()
+    }
+
+    /// UITextView follows the caret only vertically. Unwrapped, also keep the
+    /// caret at `offset` in view sideways, clear of the gutter that covers the
+    /// left edge; when it fits on the first screen, scroll all the way back.
+    func revealHorizontally(offset: Int) {
+        guard !wrapsLines, bounds.width > 0,
+              let position = position(from: beginningOfDocument, offset: min(offset, textStorage.length)) else { return }
+        let caret = caretRect(for: position)
+        guard !caret.isNull, !caret.isInfinite else { return }
+        // Measuring the caret may lay out a line wider than the content so far.
+        widenContentIfNeeded()
+        let margin = font?.pointSize ?? 15
+        let minX = -adjustedContentInset.left
+        let maxX = max(minX, contentSize.width + adjustedContentInset.right - bounds.width)
+        var x = contentOffset.x
+        if caret.minX < x + gutterWidth + margin {
+            x = caret.maxX <= minX + bounds.width - margin ? minX : caret.minX - gutterWidth - margin
+        } else if caret.maxX > x + bounds.width - margin {
+            x = caret.maxX - bounds.width + margin
+        }
+        x = min(max(minX, x), maxX)
+        if x != contentOffset.x { contentOffset.x = x }
     }
 
     private func digits(for lineCount: Int) -> Int {
@@ -193,14 +252,29 @@ final class CodeEditorTextView: UITextView {
         setNeedsLayout()
     }
 
+    private static let unwrappedContainerWidth: CGFloat = 100_000
+
     private func applyWrap() {
         textContainer.widthTracksTextView = wrapsLines
-        if !wrapsLines {
-            textContainer.size = CGSize(width: 100_000, height: CGFloat.greatestFiniteMagnitude)
-        }
         alwaysBounceHorizontal = !wrapsLines
         showsHorizontalScrollIndicator = !wrapsLines
+        if wrapsLines {
+            let width = max(0, bounds.width - textContainerInset.left - textContainerInset.right)
+            textContainer.size = CGSize(width: width, height: .greatestFiniteMagnitude)
+            contentOffset.x = -adjustedContentInset.left
+            contentSize.width = bounds.width
+        } else {
+            keepContainerUnwrapped()
+        }
         setNeedsLayout()
+    }
+
+    /// UITextView fits its container to the view on frame and inset changes
+    /// even with `widthTracksTextView` off, which rewrapped unwrapped text on
+    /// the next layout (opening the editor, a caret move that relaid it out).
+    private func keepContainerUnwrapped() {
+        guard !wrapsLines, textContainer.size.width != Self.unwrappedContainerWidth else { return }
+        textContainer.size = CGSize(width: Self.unwrappedContainerWidth, height: .greatestFiniteMagnitude)
     }
 
     /// The band covers the caret's whole logical line, wrapped rows included.

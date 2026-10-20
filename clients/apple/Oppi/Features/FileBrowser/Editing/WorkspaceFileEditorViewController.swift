@@ -462,7 +462,10 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         textView.usesBlockCaret = block
         textView.tintColor = block && !textView.isFloatingCursorActive ? .clear : UIColor(appliedThemeID.palette.blue)
         if keyCommandCache?.key != keyCommandKey { keyCommandCache = nil }
-        if scrolls { textView.scrollRangeToVisible(textView.selectedRange) }
+        if scrolls {
+            textView.scrollRangeToVisible(textView.selectedRange)
+            if vimEnabled, vim.mode.isVisual { textView.revealHorizontally(offset: vim.cursorOffset) }
+        }
         refreshStatus()
     }
 
