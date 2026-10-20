@@ -14,7 +14,7 @@ struct OppiLiveActivity: Widget {
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 8) {
-                        Glyph(state: context.state, size: 24)
+                        LiveActivityPiMark(state: context.state, size: 22)
                         Text("Oppi")
                             .font(.caption.bold())
                     }
@@ -33,13 +33,15 @@ struct OppiLiveActivity: Widget {
                         .accessibilityHidden(true)
                 }
             } compactLeading: {
-                Glyph(state: context.state, size: 18)
+                LiveActivityPiMark(state: context.state, size: 18)
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel(spokenSummary(context.state))
             } compactTrailing: {
                 CompactCounts(state: context.state)
                     .accessibilityHidden(true)
             } minimal: {
-                Glyph(state: context.state, size: 16)
+                MinimalView(state: context.state)
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel(spokenSummary(context.state))
             }
         }
@@ -53,7 +55,7 @@ private struct LockScreenView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Glyph(state: state, size: 34)
+            LiveActivityPiMark(state: state, size: 30)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Oppi")
                     .font(.subheadline.bold())
@@ -70,25 +72,20 @@ private struct LockScreenView: View {
 
 // MARK: - Parts
 
-private struct Glyph: View {
+/// Minimal shows live data over a logo when it can (HIG): the waiting count while anything
+/// needs you, otherwise the pi mark.
+private struct MinimalView: View {
     let state: OppiActivityAttributes.ContentState
-    let size: CGFloat
 
     var body: some View {
-        let accent = LiveActivityPresentation.color(state)
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.38, style: .continuous)
-                .fill(accent.opacity(0.16))
-            RoundedRectangle(cornerRadius: size * 0.38, style: .continuous)
-                .strokeBorder(accent.opacity(0.28), lineWidth: 0.9)
-            Image(systemName: LiveActivityPresentation.symbol(state))
-                .font(.system(size: size * 0.56, weight: .semibold))
-                .foregroundStyle(accent)
-                .contentTransition(.symbolEffect(.replace))
-                .symbolEffect(.pulse, options: .repeating, isActive: state.running > 0 && state.needsYou == 0)
+        if state.needsYou > 0 {
+            Text("\(state.needsYou)")
+                .font(.callout.monospacedDigit().bold())
+                .foregroundStyle(LiveActivityPresentation.needsYouColor)
+                .contentTransition(.numericText(value: Double(state.needsYou)))
+        } else {
+            LiveActivityPiMark(state: state, size: 16)
         }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }
 

@@ -27,8 +27,7 @@ struct LiveActivityPreviewScreen: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 HStack(spacing: 10) {
-                    Image(systemName: LiveActivityPresentation.symbol(state))
-                        .foregroundStyle(LiveActivityPresentation.color(state))
+                    LiveActivityPiMark(state: state, size: 18)
                     Spacer()
                     HStack(spacing: 4) {
                         if state.running > 0 || state.needsYou == 0 {
@@ -49,14 +48,7 @@ struct LiveActivityPreviewScreen: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 HStack(spacing: 12) {
-                    Image(systemName: LiveActivityPresentation.symbol(state))
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(LiveActivityPresentation.color(state))
-                        .frame(width: 34, height: 34)
-                        .background(
-                            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                .fill(LiveActivityPresentation.color(state).opacity(0.16))
-                        )
+                    LiveActivityPiMark(state: state, size: 30)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Oppi").font(.subheadline.bold())
                         Text(LiveActivityPresentation.summary(state))
