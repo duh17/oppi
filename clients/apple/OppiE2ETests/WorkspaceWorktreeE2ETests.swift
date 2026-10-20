@@ -25,7 +25,10 @@ final class WorkspaceWorktreeE2ETests: E2ETestCase {
         application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = worktreeWorkspaceName
     }
 
+    /// Seeds once per run: the launch hint opens the workspace by name, so a
+    /// second same-named workspace would shadow the id the cases look up.
     override func seedE2EFixtures() throws {
+        guard Self.workspaceId == nil else { return }
         let fixture = try createLabGitWorktreeFixture(
             directoryName: "native-worktree-e2e",
             branchName: worktreeBranchName
@@ -34,6 +37,31 @@ final class WorkspaceWorktreeE2ETests: E2ETestCase {
             named: worktreeWorkspaceName,
             hostMount: fixture.hostMount
         )
+    }
+
+    /// Landscape insets shrink the bar below the view's full width. The Message
+    /// capsule used to be sized from the full width, did not fit beside the
+    /// folder, and moved into the bottom bar's overflow menu.
+    func testLandscapeBottomBarKeepsMessageLauncherVisible() throws {
+        dismissExtensionSheetIfNeeded(timeout: 3)
+        XCTAssertTrue(
+            app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 20),
+            "Fixture workspace detail did not open"
+        )
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let deadline = Date().addingTimeInterval(8)
+        while app.frame.width <= app.frame.height, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertGreaterThan(app.frame.width, app.frame.height, "App did not rotate to landscape")
+
+        let launcher = app.buttons["workspace.quickSession.start"]
+        XCTAssertTrue(
+            launcher.waitForExistence(timeout: 10) && launcher.isHittable,
+            "Landscape workspace detail must keep the Message launcher in the bottom bar. Overflow present: \(app.buttons["BottomOverflowBarButtonItem"].exists)"
+        )
+        XCTAssertTrue(app.buttons["workspace.files.open"].isHittable, "Landscape bottom bar lost the Files button")
     }
 
     func testWorktreeSelectionCreatesSessionInLinkedWorktree() throws {

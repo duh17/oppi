@@ -267,7 +267,10 @@ final class WorkspaceDetailViewController: UIViewController, UICollectionViewDel
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        columnWidth = view.bounds.width
+        // The bottom bar lays out inside the safe area. Landscape insets are
+        // wider than the Message capsule's reserve leaves room for, so sizing
+        // from the full width pushed the capsule into the bar's overflow menu.
+        columnWidth = view.bounds.width - view.safeAreaInsets.left - view.safeAreaInsets.right
         if isWaitingToAllowSearchHiding {
             allowSearchToHide()
         }
