@@ -327,6 +327,22 @@ Prerequisites:
 
 - a Pi Anthropic login in `~/.pi/agent/auth.json` (`pi`, then `/login`). E2E sessions run `anthropic/claude-haiku-5-5`; the server gets only a current access token, never the refresh token. A subscription login also needs `E2E_ANTHROPIC_EXTENSION` (see `server/e2e/README.md`). See `server/e2e/model-lane.ts`.
 
+#### Writing order-independent E2E cases
+
+All cases in a run share one app instance, one E2E server, and one simulator, so a case sees what the earlier ones left. `E2ETestCase` resets what it can:
+
+- Orientation: every case starts in `e2eOrientation` (portrait; iPad landscape labs override it) and resets to portrait afterwards. A case that rotates mid-case needs no cleanup.
+- Failures: a case that recorded a failure terminates the shared app, so the next case relaunches and reuses the persisted pairing instead of failing on a leftover sheet or toast.
+
+The case owns the rest:
+
+- Find fixtures by id (`session.nav.<id>`), not by fixture title; every case that calls `createLabSessions` adds another `Screenshot Lab Session 1`.
+- Screen-local state, such as a collapsed stopped-sessions group, outlives the case in the running app; put it back.
+- The running app reads some catalogs at launch (the workspace sidebar). A case that seeds rows it needs to see sets `e2eRequiresFreshLaunch`, and a case that seeds many rows deletes them in `tearDownWithError` and calls `terminateSharedApp()`.
+- `e2eStartsInAutoCreatedChat` accepts any open chat; a case that needs the e2e workspace's chat sets `e2eRequiresFreshLaunch` too.
+
+Keep one run under about 10 minutes. The pairing approver refreshes the bootstrap device's access token when it expires, which can rotate away the token the lab API fixtures use; every fixture call after that fails with `HTTP 401` (the server log shows `auth.unauthorized` with reason `unknown_token`). Split a long class or run its cases in separate invocations.
+
 #### Durable sessions and the faux model
 
 Two opt-in `sim-test` switches, both native-only. Without them every E2E keeps classic sessions on Haiku.
