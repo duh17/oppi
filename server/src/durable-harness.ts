@@ -448,11 +448,16 @@ export class SessionHost {
    * The tasks behind `hasPendingWake`: conversation `id`'s live reporters and its background
    * jobs not yet delivered. Each one ends; tickers (pills, working words) are not among them.
    * A parent's reporter waits on these of its child to report the child's later answers.
+   * A blocked task (parked by the crash-loop guard, or with no definition to run it) does not
+   * end by itself, so it is not among them either: it would hold the idle timeout forever.
    */
   async pendingWakers(id: ConversationId): Promise<TaskId[]> {
     if (!this.opening || this.closed || this.closing) return [];
     const { harness } = await this.opening;
     const live = await harness.inspect(BACKGROUND_CONTEXT);
+    const blocked = new Set<number>(
+      live.tasks.flatMap(({ record, state }) => (state.kind === "blocked" ? [record.id] : [])),
+    );
     const reporters = live.tasks.flatMap(({ record }) =>
       record.conversationId === id && record.kind === SESSION_REPORTER_TASK ? [record.id] : [],
     );
@@ -462,7 +467,7 @@ export class SessionHost {
       ...(jobs?.jobs ?? [])
         .filter((job) => job.decision === "background" && !job.delivered)
         .map((job) => job.taskId),
-    ];
+    ].filter((task) => !blocked.has(task));
   }
 
   /**

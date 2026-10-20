@@ -49,7 +49,8 @@ export const Subagents = defineDoc<{
   // A fork of the parent starts without its children.
   fork: "initial",
   initial: () => ({ children: {}, calls: {} }),
-  // Written by every spawn for the conversation's lifetime; a base bounds its replay.
+  // Written by every spawn, send, and report for the conversation's lifetime, and `reported`
+  // and `reporters` only grow; a base bounds its replay.
   checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 

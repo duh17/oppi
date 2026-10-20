@@ -20,6 +20,7 @@ import {
   LiveDoc,
   type ConversationId,
   type Harness,
+  type TaskId,
   type ToolExecutionApi,
 } from "@earendil-works/pi-durable";
 import { createDurableSessions } from "../extensions/durable/sessions/durable.js";
@@ -1409,7 +1410,67 @@ describe("durable-native threads", () => {
 
       await expectTwoReports(f, child, parentConversation);
     });
+
+    it("keeps following its child after a long run of crashes", async () => {
+      const { f, child, parentConversation } = await jobFixture();
+      // Cut off by 9 crashes in a row while it waited; pi-durable's default would park it at 5.
+      await restartWithFollower(f, [child], parentConversation, "$.restarts", 9);
+      await expectTwoReports(f, child, parentConversation);
+    });
+
+    it("lets the parent idle when its follower cannot run", async () => {
+      const { f, child, parentConversation } = await jobFixture();
+      // Stored by a newer Oppi than this one: no installed definition takes it.
+      const follower = await restartWithFollower(f, [child], parentConversation, "$.version", 99);
+      const harness = await f.harness();
+      const inspected = (await harness.inspect(context)).tasks.find(
+        ({ record }) => record.id === follower,
+      );
+      expect(inspected?.state).toMatchObject({ kind: "blocked", reason: "task_too_old" });
+      // A blocked task never ends by itself, so it must not hold the parent's idle timeout.
+      expect(await (await f.owner()).hasPendingWake(parentConversation)).toBe(false);
+    });
   });
+
+  /**
+   * Restart the server with the parent's follower of Builder stored with `value` at `path` of
+   * its task record. Returns the follower's id.
+   */
+  async function restartWithFollower(
+    f: Fixture,
+    children: Session[],
+    parentConversation: ConversationId,
+    path: string,
+    value: number,
+  ): Promise<TaskId> {
+    const harness = await f.harness();
+    const followerOf = async () =>
+      (await harness.snapshot(Subagents, parentConversation, context))?.children.Builder?.follower;
+    // A reporter becomes the follower in its first follow round.
+    await until(async () => (await followerOf()) !== undefined, "the follower");
+    const follower = (await followerOf())!;
+    recordLiveSessionsForRestart(f.storage, [
+      f.manager.getActiveSession(f.parent.id)!,
+      ...children.map((child) => f.manager.getActiveSession(child.id)!),
+    ]);
+    await f.manager.close();
+    managers.splice(managers.indexOf(f.manager), 1);
+    const storeId = f.storage.getSession(f.parent.id)!.serverDurable!.storeId!;
+    const db = new DatabaseSync(durableStoreSqlitePath(f.dir, storeId));
+    try {
+      db.prepare("UPDATE tasks SET record = json_set(record, ?, ?) WHERE id = ?").run(
+        path,
+        value,
+        follower,
+      );
+    } finally {
+      db.close();
+    }
+    const restarted = new SessionManager(new Storage(f.dir));
+    managers.push(restarted);
+    await restarted.resumeDurableSessions();
+    return follower;
+  }
 
   it("spawns a saved Agent as its AgentChange: model, tools, replaced instructions without project context", async () => {
     const f = await fixture(
