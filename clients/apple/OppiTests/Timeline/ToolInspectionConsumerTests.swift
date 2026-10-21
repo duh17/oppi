@@ -39,27 +39,8 @@ struct ToolInspectionConsumerTests {
         let projection = QuietTimelineProjection.make(items: reducer.items, isQuiet: true, isBusy: false,
             expandedTurnIDs: [], toolInspection: { reducer.toolInspection(for: $0) })
         guard case .quietWork(let line) = projection.rows.first else { Issue.record("Missing work strip"); return }
-        #expect(line.buckets == [.init(kind: .edit, count: 1, editStats: .init(added: resultPatch ? 1 : 3, removed: 1), statsProvenance: resultPatch ? .result : .requested)])
-        #expect(line.workSummary == (resultPatch ? "edit +1 −1" : "Requested edit +3 −1"))
-    }
-
-    @Test(arguments: [0, 1, 2])
-    func quietStatsDiscloseMixedRequestedAndResultProvenance(resultCount: Int) throws {
-        let reducer = TimelineReducer()
-        for index in 0..<2 {
-            let id = "edit-\(index)"
-            reducer.process(.toolStart(sessionId: "s", toolEventId: id, tool: "edit",
-                args: ["path": "Example.swift", "edits": [["oldText": "a", "newText": "b"]]]))
-            reducer.process(.toolEnd(sessionId: "s", toolEventId: id,
-                details: index < resultCount ? ["diff": "- 1 a\n+ 1 b"] : nil))
-        }
-        let projection = QuietTimelineProjection.make(items: reducer.items, isQuiet: true, isBusy: false,
-            expandedTurnIDs: [], toolInspection: { reducer.toolInspection(for: $0) },
-            isInteractiveTool: { reducer.isInteractiveTool($0) })
-        guard case .quietWork(let line) = projection.rows.first else { Issue.record("Missing work strip"); return }
-        #expect(line.workSummary == [
-            "Requested edit +2 −2", "edit (includes Requested) +2 −2", "edit +2 −2"
-        ][resultCount])
+        #expect(line.buckets == [.init(kind: .edit, count: 1, editStats: .init(added: resultPatch ? 1 : 3, removed: 1))])
+        #expect(line.workSummary == (resultPatch ? "edit +1 −1" : "edit +3 −1"))
     }
 
     @Test func quietVisibilityUsesFactsAndResolvesEachFoldedToolOnce() {

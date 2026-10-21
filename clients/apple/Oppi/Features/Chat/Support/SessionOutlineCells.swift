@@ -46,7 +46,6 @@ final class SessionOutlineEntryCell: UICollectionViewListCell {
     let summaryLabel = UILabel()
     private let iconView = UIImageView()
     private let compactionBadge = InsetLabel.outlineBadge()
-    private let requestedLabel = UILabel()
     private let addedLabel = UILabel()
     private let removedLabel = UILabel()
     private let timeLabel = UILabel()
@@ -60,15 +59,14 @@ final class SessionOutlineEntryCell: UICollectionViewListCell {
         summaryLabel.adjustsFontForContentSizeCategory = true
         summaryLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         summaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for label in [requestedLabel, addedLabel, removedLabel, timeLabel] {
+        for label in [addedLabel, removedLabel, timeLabel] {
             label.adjustsFontForContentSizeCategory = true
             label.setContentHuggingPriority(.required, for: .horizontal)
             label.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
-        requestedLabel.text = "Requested"
         compactionBadge.text = "Compaction"
 
-        let diffStack = UIStackView(arrangedSubviews: [requestedLabel, addedLabel, removedLabel])
+        let diffStack = UIStackView(arrangedSubviews: [addedLabel, removedLabel])
         diffStack.spacing = 3
         let stack = UIStackView(arrangedSubviews: [iconView, summaryLabel, compactionBadge, diffStack, timeLabel])
         stack.axis = .horizontal
@@ -112,9 +110,6 @@ final class SessionOutlineEntryCell: UICollectionViewListCell {
         compactionBadge.backgroundColor = UIColor(palette.orange.opacity(0.18))
 
         let stats = entry.diffStats
-        requestedLabel.isHidden = stats == nil || !entry.diffRequested
-        requestedLabel.font = SessionOutlineStyle.font(.caption2)
-        requestedLabel.textColor = UIColor(palette.comment)
         addedLabel.isHidden = (stats?.added ?? 0) <= 0
         addedLabel.text = stats.map { "+\($0.added)" }
         addedLabel.font = SessionOutlineStyle.font(.caption2, bold: true, monospaced: true)
@@ -166,7 +161,6 @@ final class SessionOutlineEntryCell: UICollectionViewListCell {
         var parts = [entry.summary]
         if entry.isCompaction { parts.append("Compaction") }
         if let stats = entry.diffStats {
-            if entry.diffRequested { parts.append("Requested") }
             if stats.added > 0 { parts.append("+\(stats.added)") }
             if stats.removed > 0 { parts.append("-\(stats.removed)") }
         }

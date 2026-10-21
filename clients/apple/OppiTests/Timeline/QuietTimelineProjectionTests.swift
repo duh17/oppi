@@ -155,9 +155,9 @@ struct QuietTimelineProjectionTests {
 
         let line = try #require(workLines(in: projection).first)
         #expect(line.buckets == [
-            .init(kind: .edit, count: 2, editStats: .init(added: 3, removed: 2), statsProvenance: .requested),
+            .init(kind: .edit, count: 2, editStats: .init(added: 3, removed: 2)),
         ])
-        #expect(line.wordsSummary(now: timestamp) == "Requested edit +3 −2")
+        #expect(line.wordsSummary(now: timestamp) == "edit +3 −2")
     }
 
     @Test func editSummaryFallsBackToFileCountWhenAnyStatsAreMissing() throws {
@@ -173,7 +173,7 @@ struct QuietTimelineProjectionTests {
         )
 
         let line = try #require(workLines(in: projection).first)
-        #expect(line.buckets == [.init(kind: .edit, count: 2, statsProvenance: .requested)])
+        #expect(line.buckets == [.init(kind: .edit, count: 2)])
         #expect(line.wordsSummary(now: timestamp) == "edit 2")
     }
 

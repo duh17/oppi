@@ -30,7 +30,7 @@ struct QuietWorkStripPreview: View {
             expandedTurnIDs: [], toolInspection: { inspectionFixture.toolInspection(for: $0) },
             isInteractiveTool: { inspectionFixture.isInteractiveTool($0) })
         return VStack(alignment: .leading, spacing: 10) {
-            Text("Mixed requested/result edit totals").font(.caption.weight(.semibold))
+            Text("Edit totals").font(.caption.weight(.semibold))
             ForEach(projection.rows) { row in
                 if case .quietWork(let line) = row {
                     QuietWorkStripRowPreview(workLine: line, style: .words).frame(height: 44)

@@ -55,14 +55,14 @@ struct BuiltInToolFactsTests {
         #expect(row.glyph == "arrow.left.arrow.right")
         #expect(row.editAdded == 2)
         #expect(row.editRemoved == 1)
-        #expect(row.trailing == "Requested")
+        #expect(row.trailing == nil)
         let reducer = TimelineReducer()
         reducer.process(.toolStart(sessionId: "s", toolEventId: "t", tool: "edit", args: args))
         reducer.process(.toolEnd(sessionId: "s", toolEventId: "t"))
         let projection = QuietTimelineProjection.make(items: reducer.items, isQuiet: true, isBusy: false,
             expandedTurnIDs: [], toolInspection: { reducer.toolInspection(for: $0) })
         guard case .quietWork(let line) = projection.rows.first else { Issue.record("Expected edit bucket"); return }
-        #expect(line.workSummary == "Requested edit +2 −1")
+        #expect(line.workSummary == "edit +2 −1")
     }
 
     @Test func oldServerAskSettlesOnceLiveAndAfterReload() throws {

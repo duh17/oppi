@@ -77,21 +77,11 @@ struct QuietWorkBucket: Equatable {
     let kind: QuietWorkBucketKind
     let count: Int
     let editStats: EditStats?
-    enum StatsProvenance: Equatable { case result, requested, mixed }
-    let statsProvenance: StatsProvenance
-    var editStatsTitle: String {
-        switch statsProvenance {
-        case .result: return "edit"
-        case .requested: return "Requested edit"
-        case .mixed: return "edit (includes Requested)"
-        }
-    }
 
-    init(kind: QuietWorkBucketKind, count: Int, editStats: EditStats? = nil, statsProvenance: StatsProvenance = .result) {
+    init(kind: QuietWorkBucketKind, count: Int, editStats: EditStats? = nil) {
         self.kind = kind
         self.count = count
         self.editStats = editStats
-        self.statsProvenance = statsProvenance
     }
 
     var words: String {
@@ -102,7 +92,7 @@ struct QuietWorkBucket: Equatable {
             return "write \(count) \(count == 1 ? "file" : "files")"
         case .edit:
             if let editStats {
-                return "\(editStatsTitle) +\(editStats.added) −\(editStats.removed)"
+                return "edit +\(editStats.added) −\(editStats.removed)"
             }
             return "edit \(count)"
         case .media:
@@ -407,8 +397,6 @@ struct QuietTimelineProjection: Equatable {
         var editAdded = 0
         var editRemoved = 0
         var hasCompleteEditStats = true
-        var hasRequestedStats = false
-        var hasResultStats = false
 
         for item in items {
             guard case .toolCall = item else { continue }
@@ -428,7 +416,6 @@ struct QuietTimelineProjection: Equatable {
                 if let stats = inspection?.file?.stats {
                     editAdded += stats.added
                     editRemoved += stats.removed
-                    if inspection?.file?.provenance == .requested { hasRequestedStats = true } else { hasResultStats = true }
                 } else {
                     hasCompleteEditStats = false
                 }
@@ -443,10 +430,7 @@ struct QuietTimelineProjection: Equatable {
             } else {
                 editStats = nil
             }
-            let provenance: QuietWorkBucket.StatsProvenance = hasRequestedStats
-                ? (hasResultStats ? .mixed : .requested) : .result
-            return QuietWorkBucket(kind: kind, count: count, editStats: editStats,
-                statsProvenance: kind == .edit ? provenance : .result)
+            return QuietWorkBucket(kind: kind, count: count, editStats: editStats)
         }
     }
 

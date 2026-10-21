@@ -24,7 +24,6 @@ struct OutlineEntry: Identifiable {
     let timestamp: Date?
     let summary: String
     let diffStats: ToolCallFormatting.DiffStats?
-    let diffRequested: Bool
     let glyph: String?
     let isAudioClip: Bool
     let isCompaction: Bool
@@ -115,7 +114,6 @@ enum SessionOutlineIndex {
                 timestamp: item.timestamp,
                 summary: outlineSummary(for: item, inspection: inspection),
                 diffStats: diffStats,
-                diffRequested: inspection?.file?.provenance == .requested,
                 glyph: inspection?.glyph,
                 isAudioClip: isAudioClip,
                 isCompaction: isCompaction,
@@ -143,7 +141,6 @@ enum SessionOutlineIndex {
             summary: inspection?.outlineSummary(argsSummary: "", fallback: snapshot.summary,
                 displayPath: inspection?.file?.path?.shortenedPath) ?? snapshot.summary,
             diffStats: inspection?.file?.stats,
-            diffRequested: inspection?.file?.provenance == .requested,
             glyph: inspection?.glyph,
             isAudioClip: false,
             isCompaction: snapshot.kind == OutlineEntryKind.compaction.rawValue,
