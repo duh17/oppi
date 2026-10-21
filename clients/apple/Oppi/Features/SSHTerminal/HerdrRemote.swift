@@ -143,18 +143,33 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
     func agents(in workspace: Workspace) -> [Agent] { agents.filter { $0.workspaceID == workspace.workspaceID } }
     func tabLabel(_ id: String) -> String? { tabs.first { $0.tabID == id }?.label }
 
-    /// The workspace that already has a pane in `folder`.
+    /// The workspace that already has a pane in any spelling of the folder: its
+    /// logical path and the path the host's filesystem reports, so a symlinked
+    /// mount (`/tmp` on macOS, a home reached through a link) matches the folder
+    /// Herdr names instead of opening a second workspace for it.
     ///
-    /// The comparison is exact: a Herdr workspace is a place someone works, not
-    /// a subtree, and a subfolder is a different place. The focused workspace
-    /// wins when several match, so opening a folder that is already in front
-    /// changes nothing.
-    func workspace(withPaneIn folder: String) -> Workspace? {
-        guard !folder.isEmpty else { return nil }
+    /// Each comparison is exact — a Herdr workspace is a place someone works, not
+    /// a subtree, and a subfolder is a different place — apart from a trailing
+    /// slash. The focused workspace wins when several match, so opening a folder
+    /// that is already in front changes nothing.
+    func workspace(withPaneInAny folders: [String]) -> Workspace? {
+        let wanted = Set(folders.map(Self.comparablePath).filter { !$0.isEmpty })
+        guard !wanted.isEmpty else { return nil }
         let matches = workspaces.filter { workspace in
-            panes.contains { $0.workspaceID == workspace.workspaceID && $0.cwd == folder }
+            panes.contains { pane in
+                pane.workspaceID == workspace.workspaceID
+                    && pane.cwd.map(Self.comparablePath).map(wanted.contains) == true
+            }
         }
         return matches.first(where: \.focused) ?? matches.first
+    }
+
+    /// A folder as it is compared: no surrounding whitespace and no trailing
+    /// slash, except the root folder itself.
+    static func comparablePath(_ path: String) -> String {
+        var value = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        while value.count > 1 && value.hasSuffix("/") { value.removeLast() }
+        return value
     }
 }
 

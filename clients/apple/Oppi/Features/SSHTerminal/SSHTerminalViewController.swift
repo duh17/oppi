@@ -69,6 +69,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var pasteNoticeTask: Task<Void, Never>?
     private var openNotice: String?
     private var openNoticeTask: Task<Void, Never>?
+    /// What the open notice's Retry button runs, while that notice offers one.
+    private var openNoticeRetry: (() -> Void)?
     /// The paired server's home folder, once known: the root every owner-host
     /// file path opens inside.
     private var pairedHome: String?
@@ -531,6 +533,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         pasteNotice = nil
         copyNoticeText = nil
         openNotice = nil
+        openNoticeRetry = nil
         pairedHome = nil
         pairedHomeTask?.cancel()
         pairedHomeTask = nil
@@ -792,7 +795,13 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         }
         openBanner.isHidden = openNotice == nil
         if let openNotice {
-            openBanner.apply(text: openNotice, color: UIColor(themeID.palette.fg))
+            openBanner.apply(
+                text: openNotice,
+                color: UIColor(themeID.palette.fg),
+                action: openNoticeRetry.map { handler in
+                    SSHTerminalTextBannerView.Action(title: String(localized: "Retry"), handler: handler)
+                }
+            )
         }
     }
 
@@ -1474,13 +1483,17 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         }
     }
 
-    private func showOpenNotice(_ text: String) {
+    private func showOpenNotice(_ text: String, retry: (() -> Void)? = nil) {
         openNotice = text
+        openNoticeRetry = retry
         openNoticeTask?.cancel()
         openNoticeTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(4))
+            // A notice that offers a retry stays long enough to start the
+            // program by hand first.
+            try? await Task.sleep(for: .seconds(retry == nil ? 4 : 20))
             guard !Task.isCancelled else { return }
             self?.openNotice = nil
+            self?.openNoticeRetry = nil
             self?.setNeedsUpdateProperties()
         }
         setNeedsUpdateProperties()
@@ -1578,14 +1591,27 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// folder is focused, or created, on this already-connected terminal, over
     /// its side exec channel. Nothing is typed into the program.
     ///
-    /// One attempt per connection. A refusal — Herdr not running yet, a command
-    /// error — shows over the terminal, which is where the person stays either
-    /// way, so the Herdr session is still there to use by hand.
+    /// One attempt per connection, and a failed one offers Retry: a Herdr that
+    /// was not running yet can be started by hand in the terminal underneath and
+    /// then opened without leaving it.
     private func openMultiplexerFolderIfNeeded() {
         guard let session, let target = session.multiplexerFolder, channel.connected else { return }
         session.multiplexerFolder = nil
         guard let kind = SSHTerminalMultiplexerKind.detected(in: session.connectedProfile?.startupCommand),
               kind.placement == .hostTerminal else { return }
+        openFolderInMultiplexer(target, kind: kind)
+    }
+
+    /// Runs, or re-runs from Retry, the multiplexer's folder open on this
+    /// connection. A refusal shows over the terminal, which is where the person
+    /// stays either way.
+    private func openFolderInMultiplexer(_ target: SSHTerminalFolderTarget, kind: SSHTerminalMultiplexerKind) {
+        // Whatever this notice said is answered by this attempt, which reports
+        // its own result when it finishes.
+        openNotice = nil
+        openNoticeRetry = nil
+        openNoticeTask?.cancel()
+        setNeedsUpdateProperties()
         let multiplexer = kind.multiplexer
         Task { [weak self] in
             guard let self else { return }
@@ -1595,7 +1621,11 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
                 await herdr.refresh(on: channel)
             } catch {
                 showOpenNotice(
-                    "Could not open \(target.folderLabel) in \(kind.name): \(error.localizedDescription)"
+                    "Could not open \(target.folderLabel) in \(kind.name): \(error.localizedDescription)",
+                    retry: { [weak self] in
+                        guard let self, channel.connected else { return }
+                        openFolderInMultiplexer(target, kind: kind)
+                    }
                 )
             }
         }

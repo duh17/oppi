@@ -77,9 +77,11 @@ enum SSHTerminalHostMatch {
     }
 
     /// The saved host to open a folder terminal on, best first: an exact host
-    /// name beats a short name matched against its FQDN, and within one kind a
-    /// host with no Run on Connect beats one with a command, then the order
-    /// they were saved in.
+    /// name beats a short name matched against its FQDN. Within one kind a host
+    /// whose Run on Connect command starts a multiplexer comes first — its
+    /// folder opens inside Herdr or tmux, which is what makes the folder survive
+    /// a disconnect — then a host with no command, then one with any other
+    /// command, then the order they were saved in.
     static func bestMatch(in profiles: [SSHTerminalProfile], serverHost: String) -> SSHTerminalProfile? {
         let server = normalize(serverHost)
         guard !server.isEmpty else { return nil }
@@ -95,8 +97,13 @@ enum SSHTerminalHostMatch {
             }
         }
         let candidates = exact.isEmpty ? byName : exact
-        guard !candidates.isEmpty else { return nil }
-        return candidates.first(where: hasNoStartupCommand) ?? candidates.first
+        if let multiplexer = candidates.first(where: startsAMultiplexer) { return multiplexer }
+        if let plain = candidates.first(where: hasNoStartupCommand) { return plain }
+        return candidates.first
+    }
+
+    private static func startsAMultiplexer(_ profile: SSHTerminalProfile) -> Bool {
+        SSHTerminalMultiplexerKind.detected(in: profile.startupCommand) != nil
     }
 
     private static func hasNoStartupCommand(_ profile: SSHTerminalProfile) -> Bool {

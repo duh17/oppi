@@ -27,7 +27,7 @@ struct SSHTerminalHostMatchTests {
 
     @Test func anExactNameBeatsAShortNameMatch() {
         // The exact saved name is the same machine the server named, so it wins
-        // even though it runs a command and the short-name host does not.
+        // even though the short-name host runs the nicer command.
         let exactWithCommand = profile("mac-studio.tail1234.ts.net", startup: "herdr")
         let shortName = profile("Mac-Studio", startup: nil)
         #expect(
@@ -35,31 +35,60 @@ struct SSHTerminalHostMatchTests {
                 in: [shortName, exactWithCommand], serverHost: "mac-studio.tail1234.ts.net"
             )?.id == exactWithCommand.id
         )
+        // Even a plain exact name beats a short-name host running a multiplexer.
+        let exactPlain = profile("mac-studio.tail1234.ts.net", startup: nil)
+        let shortNameMultiplexer = profile("Mac-Studio", startup: "herdr")
+        #expect(
+            SSHTerminalHostMatch.bestMatch(
+                in: [shortNameMultiplexer, exactPlain], serverHost: "mac-studio.tail1234.ts.net"
+            )?.id == exactPlain.id
+        )
     }
 
-    @Test func withinOneKindAHostWithNoRunOnConnectWinsThenTheFirstSaved() {
-        // Both saved names are the same exact host (case and dot ignored); the
-        // plain machine beats a host that runs a command.
-        let withCommand = profile("mac-studio.tail1234.ts.net", startup: "herdr")
+    @Test func withinOneKindAMultiplexerWinsThenAPlainHostThenAnotherCommand() {
+        // Both saved names are the same exact host (case and dot ignored). The
+        // host whose Run on Connect command is a multiplexer wins, because its
+        // folder opens inside Herdr or tmux: saving the machine twice, once with
+        // `herdr` and once plain, must not hide the multiplexer.
+        let herdr = profile("mac-studio.tail1234.ts.net", startup: "herdr")
         let plain = profile("MAC-STUDIO.TAIL1234.TS.NET.", startup: nil)
         #expect(
             SSHTerminalHostMatch.bestMatch(
-                in: [withCommand, plain], serverHost: "mac-studio.tail1234.ts.net"
+                in: [plain, herdr], serverHost: "mac-studio.tail1234.ts.net"
+            )?.id == herdr.id
+        )
+        // tmux counts the same way, and a host with no command beats one running
+        // something that is not a multiplexer.
+        let tmux = profile("mac-studio.tail1234.ts.net", startup: "tmux new -A -s main")
+        let other = profile("mac-studio.tail1234.ts.net", startup: "htop")
+        #expect(
+            SSHTerminalHostMatch.bestMatch(
+                in: [other, tmux], serverHost: "mac-studio.tail1234.ts.net"
+            )?.id == tmux.id
+        )
+        #expect(
+            SSHTerminalHostMatch.bestMatch(
+                in: [other, plain], serverHost: "mac-studio.tail1234.ts.net"
             )?.id == plain.id
         )
-        // Both exact and both with commands: the first saved one.
-        let second = profile("mac-studio.tail1234.ts.net", startup: "tmux new -A -s main")
+        // Two multiplexer hosts: the first saved one.
+        let later = profile("mac-studio.tail1234.ts.net", startup: "tmux")
         #expect(
             SSHTerminalHostMatch.bestMatch(
-                in: [withCommand, second], serverHost: "mac-studio.tail1234.ts.net"
-            )?.id == withCommand.id
+                in: [herdr, later], serverHost: "mac-studio.tail1234.ts.net"
+            )?.id == herdr.id
         )
-        // Both are short-name matches for the FQDN, and neither runs a command.
-        let first = profile("mac-studio")
-        let other = profile("other")
         #expect(
             SSHTerminalHostMatch.bestMatch(
-                in: [profile("mac-mini", startup: "herdr"), first, other],
+                in: [later, herdr], serverHost: "mac-studio.tail1234.ts.net"
+            )?.id == later.id
+        )
+        // Two plain hosts: still the first saved one.
+        let first = profile("mac-studio")
+        let second = profile("other")
+        #expect(
+            SSHTerminalHostMatch.bestMatch(
+                in: [profile("mac-mini", startup: "herdr"), first, second],
                 serverHost: "MAC-STUDIO.tail1234.ts.net."
             )?.id == first.id
         )

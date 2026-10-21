@@ -46,9 +46,15 @@ struct SSHTerminalMultiplexerDetectionTests {
 @Suite("Herdr folder plan")
 @MainActor
 struct HerdrMultiplexerTests {
+    /// One snapshot envelope, as `herdr api snapshot` prints it.
+    static let snapshotJSON = """
+    {"id":"cli:api:snapshot","result":{"snapshot":\
+    {"workspaces":[],"tabs":[],"agents":[],"panes":[]}}}
+    """
+
     private func snapshot(
-        workspaces: [(id: String, label: String, focused: Bool)],
-        panes: [(id: String, workspace: String, cwd: String)]
+        workspaces: [(id: String, label: String, focused: Bool)] = [],
+        panes: [(id: String, workspace: String, cwd: String)] = []
     ) throws -> HerdrSnapshot {
         let workspaceJSON = workspaces.map { workspace in
             """
@@ -72,7 +78,8 @@ struct HerdrMultiplexerTests {
             panes: [("w1:p1", "w1", "/Users/chen/oppi"), ("w2:p2", "w2", "/Users/chen/scratch")]
         )
         let commands = try HerdrMultiplexer.commands(
-            folder: "/Users/chen/oppi", label: "oppi", isWorktree: false, snapshot: snapshot
+            folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
+            matching: ["/Users/chen/oppi"], snapshot: snapshot
         )
         #expect(commands == ["herdr workspace focus w1"])
     }
@@ -85,7 +92,8 @@ struct HerdrMultiplexerTests {
             panes: [("w3:p1", "w3", "/Users/chen/oppi-fix-x")]
         )
         let commands = try HerdrMultiplexer.commands(
-            folder: "/Users/chen/oppi-fix-x", label: "oppi · fix-x", isWorktree: true, snapshot: snapshot
+            folder: "/Users/chen/oppi-fix-x", label: "oppi · fix-x", isWorktree: true,
+            matching: ["/Users/chen/oppi-fix-x"], snapshot: snapshot
         )
         #expect(commands == ["herdr workspace focus w3"])
     }
@@ -97,7 +105,8 @@ struct HerdrMultiplexerTests {
         )
         #expect(
             try HerdrMultiplexer.commands(
-                folder: "/Users/chen/oppi", label: "oppi", isWorktree: false, snapshot: snapshot
+                folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
+                matching: ["/Users/chen/oppi"], snapshot: snapshot
             ) == ["herdr workspace focus w2"]
         )
     }
@@ -110,7 +119,8 @@ struct HerdrMultiplexerTests {
             panes: [("w1:p1", "w1", "/Users/chen/oppi")]
         )
         let commands = try HerdrMultiplexer.commands(
-            folder: "/Users/chen/oppi/Sources", label: "oppi", isWorktree: false, snapshot: snapshot
+            folder: "/Users/chen/oppi/Sources", label: "oppi", isWorktree: false,
+            matching: ["/Users/chen/oppi/Sources"], snapshot: snapshot
         )
         #expect(commands.count == 1)
         #expect(commands[0].contains("herdr workspace create --cwd"))
@@ -123,7 +133,7 @@ struct HerdrMultiplexerTests {
         )
         let folder = "/Users/chen/oppi"
         let commands = try HerdrMultiplexer.commands(
-            folder: folder, label: "oppi", isWorktree: false, snapshot: snapshot
+            folder: folder, label: "oppi", isWorktree: false, matching: [folder], snapshot: snapshot
         )
         let command = try #require(commands.first)
         #expect(commands.count == 1)
@@ -141,13 +151,89 @@ struct HerdrMultiplexerTests {
         let snapshot = try snapshot(workspaces: [("w1", "scratch", true)], panes: [])
         let folder = "/Users/chen/oppi-fix-x"
         let commands = try HerdrMultiplexer.commands(
-            folder: folder, label: "oppi · fix-x", isWorktree: true, snapshot: snapshot
+            folder: folder, label: "oppi · fix-x", isWorktree: true, matching: [folder], snapshot: snapshot
         )
         let command = try #require(commands.first)
         #expect(command.contains("herdr worktree open --path \"$p\" --label \"$l\" --focus"))
         #expect(!command.contains("workspace create"))
         #expect(command.contains(SSHTerminalRemoteShell.octalEncoded(folder)))
         #expect(command.contains(SSHTerminalRemoteShell.octalEncoded("oppi · fix-x")))
+    }
+
+    @Test func aSymlinkedFolderMatchesThePathTheHostReports() throws {
+        // The workspace says `/tmp/oppi`; the host's filesystem (and so Herdr's
+        // pane) says `/private/tmp/oppi`. Both spellings are the folder, so the
+        // workspace that already has it is focused instead of a second one.
+        let snapshot = try snapshot(
+            workspaces: [("w1", "oppi", false)],
+            panes: [("w1:p1", "w1", "/private/tmp/oppi")]
+        )
+        let commands = try HerdrMultiplexer.commands(
+            folder: "/tmp/oppi", label: "oppi", isWorktree: false,
+            matching: ["/tmp/oppi", "/private/tmp/oppi"], snapshot: snapshot
+        )
+        #expect(commands == ["herdr workspace focus w1"])
+    }
+
+    @Test func aTrailingSlashIsStillTheSameFolder() throws {
+        for pane in ["/Users/chen/oppi/", "/Users/chen/oppi"] {
+            let snapshot = try snapshot(
+                workspaces: [("w1", "oppi", true)],
+                panes: [("w1:p1", "w1", pane)]
+            )
+            #expect(
+                try HerdrMultiplexer.commands(
+                    folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
+                    matching: ["/Users/chen/oppi"], snapshot: snapshot
+                ) == ["herdr workspace focus w1"],
+                "\(pane)"
+            )
+        }
+        // The root folder keeps its only slash.
+        #expect(HerdrSnapshot.comparablePath("/") == "/")
+        #expect(HerdrSnapshot.comparablePath("/a/b/") == "/a/b")
+        #expect(HerdrSnapshot.comparablePath("  /a/b  ") == "/a/b")
+    }
+
+    @Test func theLookupReadsTheHomeAndThePhysicalFolder() throws {
+        let lookup = try HerdrMultiplexer.parse(SSHExecResult(
+            output: Data("""
+            oppi-home /Users/chen
+            oppi-cwd /private/tmp/oppi
+            \(Self.snapshotJSON)
+
+            """.utf8),
+            errorOutput: Data(),
+            exitStatus: 0
+        ))
+        #expect(lookup.home == "/Users/chen")
+        #expect(lookup.physicalFolder == "/private/tmp/oppi")
+        #expect(lookup.snapshot == (try snapshot(workspaces: [], panes: [])))
+    }
+
+    @Test func aMissingFolderHasNoPhysicalPath() throws {
+        // `cd` failed, so nothing can match and Herdr's create reports it.
+        let lookup = try HerdrMultiplexer.parse(SSHExecResult(
+            output: Data("oppi-home /Users/chen\noppi-cwd\n\(Self.snapshotJSON)\n".utf8),
+            errorOutput: Data(),
+            exitStatus: 0
+        ))
+        #expect(lookup.physicalFolder == nil)
+    }
+
+    @Test func aHerdrRefusalKeepsItsOwnMessage() {
+        // A Herdr that is not running or refuses answers with its own error, and
+        // that message is what the notice shows.
+        let refused = SSHExecResult(
+            output: Data(#"{"error":{"message":"herdr server is not running"}}"#.utf8),
+            errorOutput: Data(),
+            exitStatus: 1
+        )
+        #expect(throws: HerdrRemoteError.rejected("herdr server is not running")) {
+            try HerdrMultiplexer.parse(refused)
+        }
+        let missing = SSHExecResult(output: Data(), errorOutput: Data(), exitStatus: 127)
+        #expect(throws: HerdrRemoteError.notInstalled) { try HerdrMultiplexer.parse(missing) }
     }
 
     @Test func aNamespaceWithoutANameIsCalledAfterItsFolder() throws {
@@ -167,7 +253,8 @@ struct HerdrMultiplexerTests {
         let snapshot = try JSONDecoder().decode(HerdrSnapshot.self, from: Data(json.utf8))
         #expect(throws: HerdrRemoteError.unusableID) {
             try HerdrMultiplexer.commands(
-                folder: "/Users/chen/oppi", label: "oppi", isWorktree: false, snapshot: snapshot
+                folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
+                matching: ["/Users/chen/oppi"], snapshot: snapshot
             )
         }
     }
@@ -187,8 +274,14 @@ struct HerdrMultiplexerTests {
         #expect(HerdrMultiplexer.absoluteFolder("~/x", home: "") == nil)
         #expect(HerdrMultiplexer.absoluteFolder("~/x", home: "relative/home") == nil)
         #expect(HerdrMultiplexer.absoluteFolder("relative/x", home: "/Users/chen") == nil)
-        // The home lookup is one word, quoted for the remote login shell.
-        #expect(HerdrMultiplexer.homeCommand == "sh -c 'printf %s \"$HOME\"'")
+        // The lookup is one word, quoted for the remote login shell.
+        let lookup = try? #require(HerdrMultiplexer.lookupCommand(folder: "~/workspace/oppi"))
+        #expect(lookup?.hasPrefix("sh -c '") == true)
+        #expect(lookup?.contains("p=\"$HOME\"/\"$(printf \"") == true)
+        #expect(lookup?.contains("pwd -P") == true)
+        #expect(lookup?.contains("exec herdr api snapshot") == true)
+        // A relative folder has nothing to look up.
+        #expect(HerdrMultiplexer.lookupCommand(folder: "relative/x") == nil)
     }
 }
 
@@ -320,12 +413,28 @@ struct SSHTerminalMultiplexerQuotingTests {
                     #expect(command.contains(SSHTerminalRemoteShell.octalEncoded(trimmed)), "tmux \(folder)")
                 }
             }
+            if let lookup = HerdrMultiplexer.lookupCommand(folder: folder) {
+                try assertSafeWord(lookup, "herdr lookup \(folder)")
+                if trimmed != "~" {
+                    #expect(
+                        lookup.contains(SSHTerminalRemoteShell.octalEncoded(trimmed)),
+                        "herdr lookup \(folder)"
+                    )
+                }
+            }
             let absolute = folder.hasPrefix("/") ? folder : "/Users/chen/oppi"
-            for (index, command) in [
-                try HerdrMultiplexer.commands(folder: absolute, label: folder, isWorktree: false, snapshot: snapshot),
-                try HerdrMultiplexer.commands(folder: absolute, label: folder, isWorktree: true, snapshot: snapshot),
-            ].enumerated() {
-                let command = try #require(command.first)
+            let plans = [
+                try HerdrMultiplexer.commands(
+                    folder: absolute, label: folder, isWorktree: false,
+                    matching: [absolute], snapshot: snapshot
+                ),
+                try HerdrMultiplexer.commands(
+                    folder: absolute, label: folder, isWorktree: true,
+                    matching: [absolute], snapshot: snapshot
+                ),
+            ]
+            for (index, plan) in plans.enumerated() {
+                let command = try #require(plan.first)
                 try assertSafeWord(command, "herdr \(index) \(folder)")
                 #expect(command.contains(SSHTerminalRemoteShell.octalEncoded(trimmed)), "herdr \(index) \(folder)")
                 #expect(!command.contains(folder) || folder == "/", "herdr \(index) \(folder)")

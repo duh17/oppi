@@ -102,11 +102,15 @@ enum SSHTerminalMultiplexerFailure: Error, Equatable, LocalizedError {
     /// The host's home folder could not be read, so a `~` folder cannot become
     /// the absolute path a multiplexer's CLI takes as an argument.
     case noHomeFolder
+    /// The folder is not one the host can open: neither absolute nor `~`.
+    case unusableFolder
 
     var errorDescription: String? {
         switch self {
         case .noHomeFolder:
             "The host did not report its home folder, so this folder could not be resolved."
+        case .unusableFolder:
+            "This folder is not an absolute path on the host, so it cannot be opened there."
         }
     }
 }

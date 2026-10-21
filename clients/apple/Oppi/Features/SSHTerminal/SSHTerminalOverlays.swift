@@ -276,8 +276,17 @@ final class SSHTerminalConnectionBannerView: UIView {
 }
 
 final class SSHTerminalTextBannerView: UIView {
+    /// A control beside the text, for a notice whose failure the person can
+    /// retry where it shows instead of hunting for the action elsewhere.
+    struct Action {
+        let title: String
+        let handler: () -> Void
+    }
+
     private let material = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
     private let label = UILabel()
+    private let actionButton = UIButton(type: .system)
+    private var actionHandler: (() -> Void)?
 
     init(identifier: String) {
         super.init(frame: .zero)
@@ -294,17 +303,30 @@ final class SSHTerminalTextBannerView: UIView {
         label.font = .preferredFont(forTextStyle: .footnote)
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 2
-        material.contentView.addSubview(label)
+
+        var configuration = UIButton.Configuration.plain()
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 0)
+        actionButton.configuration = configuration
+        actionButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        actionButton.accessibilityIdentifier = "\(identifier).action"
+        actionButton.addAction(UIAction { [weak self] _ in self?.actionHandler?() }, for: .touchUpInside)
+
+        let row = UIStackView(arrangedSubviews: [label, actionButton])
+        row.axis = .horizontal
+        row.spacing = 4
+        row.alignment = .center
+        row.translatesAutoresizingMaskIntoConstraints = false
+        material.contentView.addSubview(row)
 
         NSLayoutConstraint.activate([
             material.topAnchor.constraint(equalTo: topAnchor),
             material.bottomAnchor.constraint(equalTo: bottomAnchor),
             material.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             material.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            label.topAnchor.constraint(equalTo: material.contentView.topAnchor, constant: 4),
-            label.bottomAnchor.constraint(equalTo: material.contentView.bottomAnchor, constant: -4),
-            label.leadingAnchor.constraint(equalTo: material.contentView.leadingAnchor, constant: 10),
-            label.trailingAnchor.constraint(equalTo: material.contentView.trailingAnchor, constant: -10),
+            row.topAnchor.constraint(equalTo: material.contentView.topAnchor, constant: 4),
+            row.bottomAnchor.constraint(equalTo: material.contentView.bottomAnchor, constant: -4),
+            row.leadingAnchor.constraint(equalTo: material.contentView.leadingAnchor, constant: 10),
+            row.trailingAnchor.constraint(equalTo: material.contentView.trailingAnchor, constant: -10),
             heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
         ])
     }
@@ -312,10 +334,22 @@ final class SSHTerminalTextBannerView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func apply(text: String, color: UIColor) {
+    /// `action` adds a button after the text; without one the banner is a single
+    /// readable element, as it has always been.
+    func apply(text: String, color: UIColor, action: Action? = nil) {
         label.text = text
         label.textColor = color
-        accessibilityLabel = text
+        actionHandler = action?.handler
+        actionButton.isHidden = action == nil
+        if let action {
+            actionButton.setTitle(action.title, for: .normal)
+            actionButton.tintColor = color
+            actionButton.accessibilityLabel = action.title
+        }
+        // With a button, the pieces are the elements: VoiceOver reads the text
+        // and can activate the retry.
+        isAccessibilityElement = action == nil
+        accessibilityLabel = action == nil ? text : nil
     }
 }
 
