@@ -284,6 +284,9 @@ final class AppOpener {
     /// A request waiting in App Lock's one deferred slot. It is tracked so a
     /// leftover Siri receipt or a parked drain cannot overwrite it.
     @ObservationIgnored private var deferredRequest: AppOpenRequest?
+    /// The parked request has already said its server is unreachable; retries
+    /// stay silent.
+    @ObservationIgnored private var didToastUnreachable = false
     /// The request the current task is running, so a newer open can abandon
     /// its Siri receipt instead of replaying it at the next launch.
     @ObservationIgnored private var activeRequest: AppOpenRequest?
@@ -458,6 +461,7 @@ final class AppOpener {
     private func clearParked() {
         parked = nil
         parkedAt = nil
+        didToastUnreachable = false
     }
 
     /// The server a request needs, when it names one up front. Requests that
@@ -572,6 +576,7 @@ final class AppOpener {
         } else {
             activeRequest = nil
             parkedAt = nil
+            didToastUnreachable = false
         }
     }
 
@@ -850,9 +855,11 @@ final class AppOpener {
     }
 
     /// A request that stays parked says it once: retries on the next
-    /// foreground are silent (`parkedAt` is kept across them).
+    /// foreground are silent. A launch-parked request that only later finds
+    /// its server unreachable still says it once.
     func toastUnreachableIfFirstAttempt(_ serverId: String) {
-        guard parkedAt == nil else { return }
+        guard !didToastUnreachable else { return }
+        didToastUnreachable = true
         toastUnreachable(serverId)
     }
 
