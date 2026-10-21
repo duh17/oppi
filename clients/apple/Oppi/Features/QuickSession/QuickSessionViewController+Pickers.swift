@@ -61,20 +61,13 @@ extension QuickSessionViewController {
             root: root,
             clear: { [weak self] in self?.showsThinkingPicker = false },
             screen: {
-                let level = model.effectiveThinkingLevel
-                let levels = model.supportedThinkingLevels
-                let selectThinking: (ThinkingLevel) -> Void = { [weak self] in self?.model.selectThinkingLevel($0) }
-                return .liveController({
-                    ComposerThinkingPickerController(
-                        levels: levels,
-                        selected: level,
-                        colors: colors,
-                        onSelect: selectThinking,
-                        onSaveDefault: nil
-                    )
-                }, update: { picker in
-                    picker.apply(levels: levels, selected: level, onSelect: selectThinking, onSaveDefault: nil)
-                })
+                ComposerThinkingPickerController.liveScreen(
+                    levels: model.supportedThinkingLevels,
+                    selected: model.effectiveThinkingLevel,
+                    colors: colors,
+                    onSelect: { [weak self] in self?.model.selectThinkingLevel($0) },
+                    onSaveDefault: nil
+                )
             }
         )
     }

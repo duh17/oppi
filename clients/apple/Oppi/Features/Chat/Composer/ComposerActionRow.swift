@@ -48,6 +48,38 @@ struct ComposerActionPopover {
     var preferredWidth: CGFloat = 220
     var make: @MainActor () -> UIViewController
     var update: (@MainActor (UIViewController) -> Void)?
+
+    /// The thinking-level picker a thinking pill opens, refreshed while it is
+    /// open, as `ComposerThinkingPickerController` itself presents it.
+    @MainActor
+    static func thinking(
+        levels: [ThinkingLevel],
+        selected: ThinkingLevel,
+        colors: ComposerThemeColors,
+        onSelect: @escaping (ThinkingLevel) -> Void,
+        onSaveDefault: (() -> Void)?
+    ) -> ComposerActionPopover {
+        ComposerActionPopover(
+            preferredWidth: 220,
+            make: {
+                ComposerThinkingPickerController.make(
+                    levels: levels,
+                    selected: selected,
+                    colors: colors,
+                    onSelect: onSelect,
+                    onSaveDefault: onSaveDefault
+                )
+            },
+            update: { screen in
+                (screen as? ComposerThinkingPickerController)?.apply(
+                    levels: levels,
+                    selected: selected,
+                    onSelect: onSelect,
+                    onSaveDefault: onSaveDefault
+                )
+            }
+        )
+    }
 }
 
 struct ComposerOptionRow {
@@ -98,25 +130,12 @@ extension ComposerAction {
             accessibilityValue: level.displayTitle,
             showsChevron: true,
             chrome: .toolbar,
-            kind: .picker(ComposerActionPopover(
-                preferredWidth: 220,
-                make: {
-                    ComposerThinkingPickerController(
-                        levels: supported,
-                        selected: level,
-                        colors: colors,
-                        onSelect: onSelect,
-                        onSaveDefault: onSaveDefault
-                    )
-                },
-                update: { screen in
-                    (screen as? ComposerThinkingPickerController)?.apply(
-                        levels: supported,
-                        selected: level,
-                        onSelect: onSelect,
-                        onSaveDefault: onSaveDefault
-                    )
-                }
+            kind: .picker(.thinking(
+                levels: supported,
+                selected: level,
+                colors: colors,
+                onSelect: onSelect,
+                onSaveDefault: onSaveDefault
             ))
         )
     }

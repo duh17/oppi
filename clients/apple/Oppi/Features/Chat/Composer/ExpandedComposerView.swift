@@ -726,7 +726,7 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
     }
 
     private func presentThinkingPicker() {
-        let picker = ComposerThinkingPickerController(
+        ComposerThinkingPickerController.present(
             levels: live.supportedThinkingLevels,
             selected: live.thinkingLevel,
             colors: live.colors,
@@ -734,11 +734,7 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
                 self?.live.thinkingLevel = level
                 self?.configuration.onThinkingSelect(level)
             },
-            onSaveDefault: configuration.onSaveThinkingAsDefault
-        )
-        Router.present(
-            picker,
-            presentation: .popover.arrowDirections(.down).keepsPopoverInCompactWidth(),
+            onSaveDefault: configuration.onSaveThinkingAsDefault,
             from: self,
             sourceView: thinkingButton
         )

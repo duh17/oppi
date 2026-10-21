@@ -257,16 +257,12 @@ final class GuidedControlComposerController: UIViewController {
     /// The stacked thinking pill's popover, as the action row's pill shows
     /// its own. The picker closes itself on a choice.
     private func presentStackedThinkingPicker() {
-        let picker = ComposerThinkingPickerController(
+        ComposerThinkingPickerController.present(
             levels: model.supportedThinkingLevels,
             selected: model.thinkingLevel,
             colors: colors,
             onSelect: { [weak model] in model?.selectThinkingLevel($0) },
-            onSaveDefault: nil
-        )
-        Router.present(
-            picker,
-            presentation: .popover.arrowDirections(.down).keepsPopoverInCompactWidth(),
+            onSaveDefault: nil,
             from: self,
             sourceView: stackedThinkingPill
         )

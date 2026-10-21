@@ -375,6 +375,63 @@ final class ComposerThinkingPickerController: UIViewController, RouterModalConta
     }
 }
 
+@MainActor
+extension ComposerThinkingPickerController {
+    /// The thinking levels beside a composer's thinking pill. One presentation
+    /// for the bar, the expanded composer, and the stacked action controls, so
+    /// their popovers cannot drift apart.
+    static func present(
+        levels: [ThinkingLevel],
+        selected: ThinkingLevel,
+        colors: ComposerThemeColors,
+        onSelect: @escaping (ThinkingLevel) -> Void,
+        onSaveDefault: (() -> Void)?,
+        from presenter: UIViewController,
+        sourceView: UIView
+    ) {
+        Router.present(
+            make(levels: levels, selected: selected, colors: colors, onSelect: onSelect, onSaveDefault: onSaveDefault),
+            presentation: .popover.arrowDirections(.down).keepsPopoverInCompactWidth(),
+            from: presenter,
+            sourceView: sourceView
+        )
+    }
+
+    /// The same picker as a router modal slot: Quick Session's stacked action
+    /// controls keep it live while it is open.
+    static func liveScreen(
+        levels: [ThinkingLevel],
+        selected: ThinkingLevel,
+        colors: ComposerThemeColors,
+        onSelect: @escaping (ThinkingLevel) -> Void,
+        onSaveDefault: (() -> Void)?
+    ) -> RouterScreen {
+        .liveController({
+            make(levels: levels, selected: selected, colors: colors, onSelect: onSelect, onSaveDefault: onSaveDefault)
+        }, update: { picker in
+            picker.apply(levels: levels, selected: selected, onSelect: onSelect, onSaveDefault: onSaveDefault)
+        })
+    }
+
+    /// The picker every thinking entry point builds, so the arguments that make
+    /// it (and the `apply` that refreshes it) stay one list.
+    static func make(
+        levels: [ThinkingLevel],
+        selected: ThinkingLevel,
+        colors: ComposerThemeColors,
+        onSelect: @escaping (ThinkingLevel) -> Void,
+        onSaveDefault: (() -> Void)?
+    ) -> ComposerThinkingPickerController {
+        ComposerThinkingPickerController(
+            levels: levels,
+            selected: selected,
+            colors: colors,
+            onSelect: onSelect,
+            onSaveDefault: onSaveDefault
+        )
+    }
+}
+
 /// Busy-mode list. Same chrome as thinking, identifiers `chat.busyMode.option.*`.
 final class ComposerBusyModePickerController: UIViewController, RouterModalContainer {
     var onDismissed: (() -> Void)?
