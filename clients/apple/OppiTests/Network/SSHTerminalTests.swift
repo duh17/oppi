@@ -1734,15 +1734,6 @@ struct SSHTerminalTests {
 
         keyboard(top: window.bounds.maxY)
         #expect(try !hiddenFromVoiceOver("sshTerminal.back"), "Back is back with the keyboard down")
-        // 3 pt above the glass is the bar's inset strip, and the container
-        // hands it to the pill: the live view must answer it.
-        let backButton = try control("sshTerminal.back")
-        let aboveBack = backButton.convert(CGPoint(x: backButton.bounds.midX, y: -3), to: terminal.view)
-        let aboveHit = terminal.view.hitTest(aboveBack, with: nil)
-        #expect(
-            aboveHit === backButton,
-            "3 pt above Back reaches it, not \(String(describing: aboveHit.map { type(of: $0) }))"
-        )
         // Settle past the transition's hold.
         try await Task.sleep(for: .milliseconds(500))
         nav.view.layoutIfNeeded()
@@ -1758,6 +1749,15 @@ struct SSHTerminalTests {
             - SSHTerminalBottomBar.topInset
         let gridBottom = grid.convert(CGPoint(x: 0, y: grid.bounds.maxY), to: terminal.view).y
         #expect(abs((barTop - gridBottom) - SSHTerminalBottomBar.gridGap) < 0.5)
+        // 3 pt above the glass is the bar's inset strip, and the container
+        // hands it to the pill: the live view must answer it.
+        #expect(await waitForMainActorCondition {
+            terminal.updatePropertiesIfNeeded()
+            nav.view.layoutIfNeeded()
+            guard let back = try? control("sshTerminal.back") else { return false }
+            let point = back.convert(CGPoint(x: back.bounds.midX, y: -3), to: terminal.view)
+            return terminal.view.hitTest(point, with: nil) === back
+        }, "3 pt above Back reaches it")
         #expect(
             channel.engine.geometry.rows == Int(grid.bounds.height / grid.cellSize.height),
             "the remote terminal is the grid above the bar"
@@ -1827,11 +1827,6 @@ struct SSHTerminalTests {
         )
         defer { mounted.dismiss(); channel.close(reason: "done") }
         let grid = try #require(mounted.controller.gridView)
-        let resizes = SSHTerminalResizeLog()
-        let collector = Task { @MainActor in
-            for await geometry in fixture.resizes { resizes.sizes.append(geometry) }
-        }
-        defer { collector.cancel() }
         let terminal = mounted.controller
 
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -1876,8 +1871,8 @@ struct SSHTerminalTests {
             return (try? backPillTop()).map { $0 < gridBottom() } == true
         }, "with the keyboard up the bar floats over the grid")
 
-        // The keyboard goes down: the bar takes its rows back, in one resize.
-        let before = resizes.sizes.count
+        // The keyboard goes down: the bar takes its rows back. A disconnected
+        // channel sends no resize, so this checks the grid and the engine size.
         keyboard(top: mounted.window.bounds.maxY)
         try await Task.sleep(for: .milliseconds(400))
         mounted.host.view.layoutIfNeeded()
@@ -1886,10 +1881,55 @@ struct SSHTerminalTests {
             channel.engine.geometry.rows == Int(grid.bounds.height / grid.cellSize.height),
             "the remote terminal ends above the bar again"
         )
-        #expect(resizes.sizes.count - before <= 1, "one keyboard change, at most one resize")
-        try await Task.sleep(for: .milliseconds(400))
+    }
+
+    /// The bar's 4 pt inset strip must land on the button under the finger,
+    /// not on the pill's first control: with Herdr shown, a touch in front of
+    /// … is …, and one in front of the grid button is Herdr.
+    @Test func theStripAboveTheBarReachesTheButtonUnderTheFinger() async throws {
+        let fixture = TerminalConnectionFixture()
+        let herdr = #"{"id":"cli:api:snapshot","result":{"snapshot":{"agents":[],"tabs":[],"workspaces":[]},"type":"session_snapshot"}}"#
+        await fixture.setRunResult(.init(output: Data(herdr.utf8), errorOutput: Data(), exitStatus: 0))
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let terminal = mounted.controller
+        func control(_ id: String) throws -> UIView {
+            try #require(mounted.find { $0.accessibilityIdentifier == id })
+        }
+        #expect(await waitForMainActorCondition {
+            terminal.updatePropertiesIfNeeded()
+            mounted.host.view.layoutIfNeeded()
+            return (try? control("sshTerminal.herdr"))?.isHidden == false
+        }, "the grid button appears once Herdr answers")
         mounted.host.view.layoutIfNeeded()
-        #expect(resizes.sizes.count - before <= 1, "no resize after it settles")
+
+        func stripPoint(_ id: String) throws -> CGPoint {
+            let button = try control(id)
+            return button.convert(CGPoint(x: button.bounds.midX, y: -3), to: terminal.view)
+        }
+        for (id, expected) in [
+            ("sshTerminal.more", "sshTerminal.more"),
+            ("sshTerminal.herdr", "sshTerminal.herdr"),
+            ("sshTerminal.back", "sshTerminal.back"),
+        ] {
+            let hit = terminal.view.hitTest(try stripPoint(id), with: nil)
+            #expect(
+                hit === (try control(expected)),
+                "3 pt above \(id) reaches \(expected), not \(String(describing: hit.map { $0.accessibilityIdentifier ?? String(describing: type(of: $0)) }))"
+            )
+        }
+        // Between the pills the strip belongs to no control: the touch falls
+        // through to the grid, never to a bar button.
+        let gapPoint = CGPoint(x: terminal.view.bounds.midX, y: try stripPoint("sshTerminal.more").y)
+        let gapHit = terminal.view.hitTest(gapPoint, with: nil)
+        #expect(gapHit !== (try control("sshTerminal.back")))
+        #expect(gapHit !== (try control("sshTerminal.more")))
+        #expect(gapHit !== (try control("sshTerminal.herdr")))
+        #expect(gapHit?.accessibilityIdentifier == nil, "the gap is not a bar control")
     }
 
     @Test func inputAndPasteBannersSitOnAMaterialCard() async throws {
