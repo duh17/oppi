@@ -509,6 +509,37 @@ struct InAppNowPlayingChromeTests {
         #expect(InAppNowPlayingChrome.titleAction(tapCount: 3, expandsOnTap: true) == nil)
     }
 
+    /// The title is the pill's VoiceOver stop, and activating it is the tap:
+    /// the owner toggles the drawer for a touch and for VoiceOver alike.
+    @Test func chatPillTitleAccessibilityActivationAsksTheOwnerToExpand() throws {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: "voice-1", loading: nil)
+        var expansions = 0
+        let pill = InAppNowPlayingPillView(
+            audioPlayer: player,
+            accessibilityPrefix: "chat.nowPlaying",
+            density: .chat,
+            onExpand: { expansions += 1 },
+            onOpen: {}
+        )
+        pill.frame = CGRect(x: 0, y: 0, width: 320, height: 44)
+        pill.update(audioPlayer: player, density: .chat)
+
+        let title = try #require(descendant(of: pill, identifiedBy: "chat.nowPlaying.pill.title"))
+        #expect(title.accessibilityTraits.contains(.button))
+        #expect(title.isAccessibilityElement)
+        #expect(title.accessibilityActivate())
+        #expect(expansions == 1, "Activating the title must ask the chat to toggle its drawer")
+    }
+
+    private func descendant(of root: UIView, identifiedBy identifier: String) -> UIView? {
+        if root.accessibilityIdentifier == identifier { return root }
+        for subview in root.subviews {
+            if let match = descendant(of: subview, identifiedBy: identifier) { return match }
+        }
+        return nil
+    }
+
     @Test func visibleStripCollectorFindsOnscreenNativeAudioStrip() {
         let fixture = nestedAudioStripFixture(
             itemID: "voice-visible",

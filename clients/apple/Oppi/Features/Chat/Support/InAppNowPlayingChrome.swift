@@ -278,6 +278,7 @@ final class InAppNowPlayingPillView: UIView {
         titleRow.addArrangedSubview(chevron)
         titleArea.addSubview(titleRow)
         titleArea.isAccessibilityElement = true
+        titleArea.accessibilityIdentifier = "\(accessibilityPrefix).pill.title"
         titleArea.accessibilityTraits = .button
         titleArea.onActivate = { [weak self] in self?.handleTitleTaps(1) }
         if onExpand != nil {
