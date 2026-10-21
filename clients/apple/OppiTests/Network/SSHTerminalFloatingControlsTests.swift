@@ -172,6 +172,50 @@ struct SSHTerminalFloatingPillTests {
         expect44PointTouch(pill.more, "sshTerminal.more")
     }
 
+    /// The capsule is the effect view's own shape, not a layer mask. UIKit
+    /// draws glass with squared corners by default, so a pill whose mask is
+    /// lost showed as a square-cornered rectangle with a flat grey fill (Chen,
+    /// on device). Strip the mask and the pill must still be a capsule.
+    @Test func glassPillsKeepTheirCapsuleWithoutALayerMask() throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let root = UIViewController()
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        let host = root.view!
+        let back = SSHTerminalBackPill()
+        let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())
+        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), herdrAvailable: true, herdrWaiting: 0, showsStatus: true)
+        host.addSubview(back)
+        host.addSubview(pill)
+        NSLayoutConstraint.activate([
+            back.topAnchor.constraint(equalTo: host.topAnchor, constant: 20),
+            back.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 20),
+            pill.topAnchor.constraint(equalTo: host.topAnchor, constant: 20),
+            pill.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 120),
+        ])
+        host.layoutIfNeeded()
+        #expect(pill.bounds.width > SSHTerminalGlassPill.height, "a wide pill: \(pill.bounds.width)")
+
+        for glassPill in [back.pill, pill] {
+            let glass = try #require(
+                glassPill.subviews.compactMap { $0 as? UIVisualEffectView }.first,
+                "the pill's glass is its only subview"
+            )
+            glass.layer.cornerRadius = 0
+            glass.clipsToBounds = false
+            #expect(
+                glass.effectiveRadius(corner: .allCorners) == SSHTerminalGlassPill.height / 2,
+                "a \(Int(glassPill.bounds.width)) x \(Int(glassPill.bounds.height)) pt pill is a capsule"
+            )
+        }
+    }
+
     /// The terminal puts the pills in a plain container pinned to the bottom
     /// edge, and the grid ends above that container. The container must not
     /// swallow a finger that lands on a pill.

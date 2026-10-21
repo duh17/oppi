@@ -29,6 +29,12 @@ class SSHTerminalGlassPill: UIView {
         super.init(frame: frame)
         translatesAutoresizingMaskIntoConstraints = false
         glass.translatesAutoresizingMaskIntoConstraints = false
+        // The capsule has to be the effect view's own shape. A layer mask is
+        // not part of the glass's rendering path — UIKit draws the glass with
+        // squared corners by default — and when the mask was lost the pill
+        // came out as a square-cornered rectangle with a flat grey fill. The
+        // clip stays for the pill's content; the shape comes from the glass.
+        glass.cornerConfiguration = .capsule()
         glass.layer.cornerRadius = Self.height / 2
         glass.clipsToBounds = true
         addSubview(glass)
@@ -325,6 +331,9 @@ final class SSHTerminalCopyNoticeView: UIView {
         accessibilityIdentifier = "sshTerminal.copyNotice"
 
         glass.translatesAutoresizingMaskIntoConstraints = false
+        // Same as the bar's pills: the 16 pt corner belongs to the glass, not
+        // only to a layer mask the renderer can draw past.
+        glass.cornerConfiguration = .corners(radius: 16)
         glass.layer.cornerRadius = 16
         glass.clipsToBounds = true
         addSubview(glass)
