@@ -1581,6 +1581,78 @@ struct ComposerBarTests {
         #expect(host.askDeliveries.count == 2)
     }
 
+    @Test("A failed Ask send keeps text typed while it was in flight")
+    func failedAskSendKeepsTextTypedInFlight() throws {
+        let host = ComposerBarTestHost()
+        host.holdsAskCompletions = true
+        host.content.askRequest = AskRequest(
+            id: "ask-1",
+            sessionId: "s",
+            questions: [AskQuestion(id: "q1", question: "Why?", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+        let (controller, window) = Self.mountComposer(host)
+        defer { window.rootViewController = nil; window.isHidden = true }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        let input = try #require(descendant(in: controller.view, identifier: "chat.input") as? UITextView)
+        input.text = "sent answer"
+        controller.textViewDidChange(input)
+        let send = try #require(descendant(in: controller.view, identifier: "chat.send") as? UIButton)
+        send.sendActions(for: .touchUpInside)
+        #expect(host.askDeliveries.count == 1)
+        #expect(host.content.text.isEmpty, "Sending clears the submitted answer")
+
+        // The user starts a new draft before the delivery settles.
+        input.text = "typed while sending"
+        controller.textViewDidChange(input)
+
+        host.heldAskCompletions.removeFirst()(.retryableFailure)
+        controller.view.layoutIfNeeded()
+        #expect(
+            host.content.text == "typed while sending",
+            "A failed delivery must not restore the sent answer over newer typing"
+        )
+        #expect(input.text == "typed while sending")
+    }
+
+    @Test("A failed Ask send leaves a type-then-delete edit alone")
+    func failedAskSendDoesNotRestoreAfterAnEditAndDelete() throws {
+        let host = ComposerBarTestHost()
+        host.holdsAskCompletions = true
+        host.content.askRequest = AskRequest(
+            id: "ask-1",
+            sessionId: "s",
+            questions: [AskQuestion(id: "q1", question: "Why?", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+        let (controller, window) = Self.mountComposer(host)
+        defer { window.rootViewController = nil; window.isHidden = true }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        let input = try #require(descendant(in: controller.view, identifier: "chat.input") as? UITextView)
+        input.text = "sent answer"
+        controller.textViewDidChange(input)
+        let send = try #require(descendant(in: controller.view, identifier: "chat.send") as? UIButton)
+        send.sendActions(for: .touchUpInside)
+        #expect(host.askDeliveries.count == 1)
+
+        // The edit is not the text's emptiness: type then delete, so the text
+        // revision moves while the field is empty again.
+        input.text = "typed then removed"
+        controller.textViewDidChange(input)
+        input.text = ""
+        controller.textViewDidChange(input)
+        #expect(host.content.text.isEmpty)
+
+        host.heldAskCompletions.removeFirst()(.retryableFailure)
+        controller.view.layoutIfNeeded()
+        #expect(host.content.text.isEmpty, "The failure must not restore over an emptied field")
+        #expect(input.text.isEmpty)
+    }
+
     private static func mountComposer(_ host: ComposerBarTestHost) -> (ComposerBarController, UIWindow) {
         let controller = ComposerBarController()
         controller.host = host
