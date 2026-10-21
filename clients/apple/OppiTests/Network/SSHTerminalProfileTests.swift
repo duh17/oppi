@@ -194,16 +194,12 @@ struct SSHTerminalProfileTests {
     }
 
     /// Terminal is a regular destination: the sidebar offers it below MCP
-    /// Servers with no saved host, and the host list it opens leads with Add Host.
-    @Test @MainActor func theSidebarAlwaysOffersTerminalBelowMCPServers() {
+    /// Servers, with no saved host.
+    @Test @MainActor func theSidebarOffersTerminalBelowMCPServers() {
         let items = WorkspaceSidebarPrimaryUtilities.items
         let mcp = items.firstIndex { $0.target == .mcpServers }
         #expect(mcp != nil)
         if let mcp { #expect(items[mcp + 1].target == .sshTerminal) }
-        let terminal = items.first { $0.target == .sshTerminal }
-        #expect(terminal?.accessibilityIdentifier == "workspace.terminal.open")
-        #expect(terminal?.accessibilityHint == "Opens your saved SSH hosts")
-        #expect(WorkspaceUtilityNavTarget.sshTerminal.isReleaseEnabled)
     }
 }
 

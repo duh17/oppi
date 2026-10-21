@@ -1380,9 +1380,6 @@ struct AppNavigationShellRoutingTests {
     @Test func agentAndScheduleUtilitiesAreReleaseEnabledAndAppendToStackPath() {
         let navigation = AppNavigation()
 
-        #expect(WorkspaceUtilityNavTarget.agents.isReleaseEnabled)
-        #expect(WorkspaceUtilityNavTarget.schedules.isReleaseEnabled)
-
         navigation.openWorkspaceUtility(.agents)
 
         #expect(navigation.selectedTab == .workspaces)
@@ -1545,9 +1542,6 @@ struct AppNavigationShellRoutingTests {
 
     @Test func skillsAndExtensionsAreReleaseEnabledCompactUtilitiesWithDiagnostics() {
         let navigation = readyNavigation()
-
-        #expect(WorkspaceUtilityNavTarget.skills.isReleaseEnabled)
-        #expect(WorkspaceUtilityNavTarget.extensions.isReleaseEnabled)
 
         navigation.openWorkspaceUtility(.skills)
         #expect(navigation.workspaceStackRouteElements.count == 1)

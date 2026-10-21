@@ -115,13 +115,13 @@ struct SSHTerminalRegistryTests {
         let harness = Harness()
         let attempt = Task<Void, Never> { try? await Task.sleep(for: .seconds(30)) }
         let recorder = AttemptRecorder()
-        harness.registry.track(attempt: UUID(), task: attempt) { recorder.ends.append($0) }
+        harness.registry.track(attempt: UUID(), task: attempt) { recorder.ends += 1 }
         harness.registry.appDidEnterBackground()
         #expect(attempt.isCancelled)
-        #expect(recorder.ends == [.background])
+        #expect(recorder.ends == 1)
         // Done once: a finished attempt is not cancelled again.
         harness.registry.appDidEnterBackground()
-        #expect(recorder.ends == [.background])
+        #expect(recorder.ends == 1)
         #expect(harness.tasks.began == 0)
     }
 
@@ -130,10 +130,10 @@ struct SSHTerminalRegistryTests {
         let attempt = Task<Void, Never> {}
         let recorder = AttemptRecorder()
         let id = UUID()
-        harness.registry.track(attempt: id, task: attempt) { recorder.ends.append($0) }
+        harness.registry.track(attempt: id, task: attempt) { recorder.ends += 1 }
         harness.registry.untrack(attempt: id)
         harness.registry.appDidEnterBackground()
-        #expect(recorder.ends.isEmpty)
+        #expect(recorder.ends == 0)
     }
 
     @Test func aConnectThatOpensInTheBackgroundWithNoGraceIsDiscarded() async throws {
@@ -406,8 +406,9 @@ private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
 }
 
 @MainActor
+/// How many tracked connects were cancelled from outside their screen.
 private final class AttemptRecorder {
-    var ends = [SSHTerminalRegistry.AttemptEnd]()
+    var ends = 0
 }
 
 private final class FakeConnection: SSHTerminalConnection {

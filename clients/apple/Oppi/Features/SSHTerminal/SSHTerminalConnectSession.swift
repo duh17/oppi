@@ -135,10 +135,8 @@ final class SSHTerminalConnectSession {
         if let task {
             // Backgrounding ends this attempt even when no view of this session
             // is mounted (a reconnect from the terminal screen, for one).
-            registry.track(attempt: attempt, task: task) { [weak self] end in
-                switch end {
-                case .background: self?.handleBackground()
-                }
+            registry.track(attempt: attempt, task: task) { [weak self] in
+                self?.handleBackground()
             }
         }
     }

@@ -53,12 +53,10 @@ final class SSHTerminalRegistry {
         fileprivate let tasks: [Task<Void, Never>]
     }
 
-    /// Why a tracked connect was cancelled from outside its screen.
-    enum AttemptEnd { case background }
-
     private struct Attempt {
         let task: Task<Void, Never>
-        let ended: @MainActor (AttemptEnd) -> Void
+        /// Runs when Oppi entering the background cancels this connect.
+        let ended: @MainActor () -> Void
     }
 
     /// One background task and its grace timer. A class: the expiration
@@ -91,7 +89,7 @@ final class SSHTerminalRegistry {
     /// Registers a connect in flight under `id`. Oppi entering the background
     /// cancels it and calls `ended`. The connect calls `untrack` when it
     /// finishes.
-    func track(attempt id: UUID, task: Task<Void, Never>, ended: @escaping @MainActor (AttemptEnd) -> Void) {
+    func track(attempt id: UUID, task: Task<Void, Never>, ended: @escaping @MainActor () -> Void) {
         attempts[id] = Attempt(task: task, ended: ended)
     }
 
@@ -203,7 +201,7 @@ final class SSHTerminalRegistry {
         attempts.removeAll()
         for attempt in pending.values {
             attempt.task.cancel()
-            attempt.ended(.background)
+            attempt.ended()
         }
         guard grace == nil, terminals.values.contains(where: { $0.channel.connected }) else { return }
         // Set before `begin`: iOS may call the expiration handler before it returns.

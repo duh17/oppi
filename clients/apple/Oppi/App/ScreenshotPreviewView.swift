@@ -815,6 +815,20 @@ private struct SettingsPageScreenshotPreview: View {
 
     init(screen: String) {
         self.screen = screen
+        // Pin the theme in the argument domain, before `ThemeStore()` reads it:
+        // the pool simulator's own appearance is dark, so a light capture needs
+        // an explicit light theme and not just a light color scheme.
+        switch ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] {
+        case "dark":
+            ScreenshotVolatileDefaults.applyDarkTheme(true)
+        case "light":
+            ScreenshotVolatileDefaults.apply([
+                "\(AppIdentifiers.subsystem).theme.mode": ThemeMode.manual.rawValue,
+                ThemeID.storageKey: ThemeID.light.rawValue,
+            ])
+        default:
+            break
+        }
         // The App Settings index shows one paired server, so its Servers
         // section reads like a paired app's.
         let coordinator = screen == "settings-root"

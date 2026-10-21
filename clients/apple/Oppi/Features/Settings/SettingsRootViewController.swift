@@ -45,8 +45,9 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         super.init(nibName: nil, bundle: nil)
         traitOverrides.appRootEnvironment = root
         title = String(localized: "Settings")
-        // The shell hosts this route with a large title (`.utility(.appSettings)`
-        // bars); App Settings is the root of its pages, so it keeps one.
+        // App Settings is the root of its pages, so it keeps the large title
+        // the shell used to give it. `applyTitleDisplayMode` drops it where the
+        // system puts the bar on a vertical edge.
         navigationItem.largeTitleDisplayMode = .always
     }
 
@@ -63,8 +64,23 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         collectionView.accessibilityIdentifier = "settings.list"
         SSHTerminalSettingsList.pin(collectionView, in: view)
         installDataSource()
+        installRailReader()
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         setNeedsUpdateProperties()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        navigationController?.navigationBar.prefersLargeTitles = true
+        // A page writes straight to preferences, so the summary it feeds is
+        // re-read on the way back. The cache size is measured here too: Clear
+        // Local Cache on the Storage page writes nothing this screen observes.
+        refreshCacheSize()
+        setNeedsUpdateProperties()
+    }
+
+    /// Measures the local cache again and redraws only when it moved.
+    private func refreshCacheSize() {
         Task { [weak self] in
             let size = await SettingsStoragePage.formattedCacheSize()
             guard let self, cacheSizeText != size else { return }
@@ -73,12 +89,36 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         }
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        navigationController?.navigationBar.prefersLargeTitles = true
-        // A page writes straight to preferences, so the summary it feeds is
-        // re-read on the way back.
-        setNeedsUpdateProperties()
+    /// A large title is wrong where the system puts the bar on a vertical edge
+    /// (the Duo's outer display draws no title area there). UIKit has no read
+    /// API for the system's preferred edge — `UIBarButtonItem.axisBehavior`
+    /// only writes it — so this hosts the same reader `HostedScreenController`
+    /// uses, as a zero-size child.
+    private func installRailReader() {
+        let reader = HostFactory.content(
+            VerticalToolbarEdgeReporter { [weak self] isOnVerticalRail in
+                self?.applyTitleDisplayMode(isOnVerticalRail: isOnVerticalRail)
+            },
+            root: root
+        )
+        addChild(reader)
+        reader.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(reader.view)
+        NSLayoutConstraint.activate([
+            reader.view.topAnchor.constraint(equalTo: view.topAnchor),
+            reader.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            reader.view.widthAnchor.constraint(equalToConstant: 0),
+            reader.view.heightAnchor.constraint(equalToConstant: 0),
+        ])
+        reader.didMove(toParent: self)
+    }
+
+    /// Same rule as `HostedScreenController.applyTitleDisplayMode`: a large
+    /// title shows nothing on the rail, so the title stays inline there.
+    private func applyTitleDisplayMode(isOnVerticalRail: Bool) {
+        let large = !isOnVerticalRail
+        navigationItem.largeTitleDisplayMode = large ? .always : .never
+        if large { navigationController?.navigationBar.prefersLargeTitles = true }
     }
 
     @objc private func themeDidChange() { setNeedsUpdateProperties() }
@@ -107,7 +147,12 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         snapshot.appendSections([.pages])
         snapshot.appendItems(Self.pages, toSection: .pages)
         let shown = Set(dataSource.snapshot().itemIdentifiers)
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { inputs(of: $0) }
+        // The theme is in the key: a light/dark or theme change repaints every
+        // row, which otherwise keeps the colors it was configured with.
+        let themeID = ThemeRuntimeState.currentThemeID()
+        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { item in
+            AnyHashable([AnyHashable(themeID), inputs(of: item)])
+        }
         snapshot.reconfigureItems(changed.filter(shown.contains))
         dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
     }
@@ -380,19 +425,19 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
 /// one button, so a tap, a VoiceOver activation, and `app.buttons[id]` all run
 /// the row's push.
 final class SettingsIndexRowCell: UICollectionViewListCell {
-    private let button = UIButton(type: .system)
+    private let button = SettingsRowButton(type: .system)
     private let iconView = UIImageView()
     private let titleLabel = UILabel()
     private let valueLabel = UILabel()
-    private let chevron = UIImageView()
     private var tapAction: UIAction?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        for view in [iconView, titleLabel, valueLabel, chevron, button] {
+        for view in [iconView, titleLabel, valueLabel, button] {
             view.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(view)
         }
+        button.onHighlight = { [weak self] in self?.setPressed($0) }
         iconView.contentMode = .scaleAspectFit
         iconView.setContentHuggingPriority(.required, for: .horizontal)
         iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -405,8 +450,6 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         valueLabel.textAlignment = .right
         valueLabel.setContentHuggingPriority(.required, for: .horizontal)
         valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
-        chevron.setContentHuggingPriority(.required, for: .horizontal)
         button.accessibilityTraits = .button
         // The labels paint the row; the button above them is its one accessible
         // element, so the row reads as a single control.
@@ -421,15 +464,20 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -12),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: valueLabel.leadingAnchor, constant: -8),
             valueLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            chevron.leadingAnchor.constraint(equalTo: valueLabel.trailingAnchor, constant: 8),
-            chevron.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
-            chevron.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            valueLabel.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             button.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             button.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             button.topAnchor.constraint(equalTo: contentView.topAnchor),
             button.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            // A grouped list's separator starts where the row's title does.
+            separatorLayoutGuide.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
         ])
+    }
+
+    /// The theme's highlight fill, the same one a pressed row uses elsewhere.
+    private func setPressed(_ pressed: Bool) {
+        contentView.backgroundColor = pressed ? .themeBgHighlight : nil
     }
 
     @available(*, unavailable)
@@ -452,9 +500,7 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         valueLabel.text = value
         valueLabel.textColor = UIColor(palette.comment)
         valueLabel.isHidden = value == nil
-        chevron.image = UIImage(systemName: "chevron.forward")
-        chevron.tintColor = UIColor(palette.comment)
-        chevron.isHidden = !showsDisclosure
+        accessories = showsDisclosure ? [.disclosureIndicator()] : []
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = title
         button.accessibilityValue = value
@@ -476,6 +522,21 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         iconView.image = nil
         titleLabel.text = nil
         valueLabel.text = nil
+        setPressed(false)
+    }
+}
+
+/// A row's overlay button. It is transparent over the row's labels, so the
+/// cell's own highlight never fires; this hands the press to the cell, which
+/// paints the pressed fill.
+final class SettingsRowButton: UIButton {
+    var onHighlight: ((Bool) -> Void)?
+
+    override var isHighlighted: Bool {
+        didSet {
+            guard isHighlighted != oldValue else { return }
+            onHighlight?(isHighlighted)
+        }
     }
 }
 
@@ -483,7 +544,7 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
 /// name, its lock badge, and the state word under it, like the SwiftUI row the
 /// host switcher drew.
 final class SettingsServerRowCell: UICollectionViewListCell {
-    private let button = UIButton(type: .system)
+    private let button = SettingsRowButton(type: .system)
     private let badge = SettingsServerBadgeView()
     private let nameLabel = UILabel()
     private let lockView = UIImageView()
@@ -496,6 +557,10 @@ final class SettingsServerRowCell: UICollectionViewListCell {
             view.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(view)
         }
+        button.onHighlight = { [weak self] in self?.setPressed($0) }
+        // A server row pushes Server Settings, so it carries the same
+        // disclosure chevron as every other row that pushes.
+        accessories = [.disclosureIndicator()]
         nameLabel.font = .preferredFont(forTextStyle: .body)
         nameLabel.adjustsFontForContentSizeCategory = true
         nameLabel.numberOfLines = 0
@@ -527,11 +592,18 @@ final class SettingsServerRowCell: UICollectionViewListCell {
             button.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             button.topAnchor.constraint(equalTo: contentView.topAnchor),
             button.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            // The separator starts where the server's name does, past its badge.
+            separatorLayoutGuide.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// The theme's highlight fill, the same one a pressed row uses elsewhere.
+    private func setPressed(_ pressed: Bool) {
+        contentView.backgroundColor = pressed ? .themeBgHighlight : nil
+    }
 
     func configure(
         name: String,
@@ -582,6 +654,7 @@ final class SettingsServerRowCell: UICollectionViewListCell {
         nameLabel.text = nil
         stateLabel.text = nil
         lockView.image = nil
+        setPressed(false)
     }
 }
 

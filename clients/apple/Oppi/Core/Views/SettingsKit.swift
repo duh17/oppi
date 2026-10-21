@@ -6,25 +6,18 @@ import SwiftUI
 
 extension View {
     /// Container for every settings page: inset-grouped list on the themed
-    /// surface, readable width on iPad, and a navigation title. Pushed section
-    /// pages use `.inline`. Nil leaves the title size to the screen's host: the
-    /// Settings root the router hosts with a large title (`ScreenBars.largeTitle`),
-    /// which stays inline on the Duo's vertical rail, where SwiftUI's `.large`
-    /// would show no title.
-    @ViewBuilder
+    /// surface, readable width on iPad, and a navigation title. Every page is a
+    /// pushed section page, so the title is inline; the Settings root is
+    /// `SettingsRootViewController`, which owns its own large title.
     func settingsPage(
         _ title: String,
-        titleDisplayMode: NavigationBarItem.TitleDisplayMode? = .inline
+        titleDisplayMode: NavigationBarItem.TitleDisplayMode = .inline
     ) -> some View {
-        let page = listStyle(.insetGrouped)
+        listStyle(.insetGrouped)
             .themedListSurface()
             .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
             .navigationTitle(title)
-        if let titleDisplayMode {
-            page.navigationBarTitleDisplayMode(titleDisplayMode)
-        } else {
-            page
-        }
+            .navigationBarTitleDisplayMode(titleDisplayMode)
     }
 }
 

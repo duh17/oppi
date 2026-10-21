@@ -334,34 +334,27 @@ private struct WorkspaceUtilityDestinationView: View {
     let target: WorkspaceUtilityNavTarget
 
     var body: some View {
-        if target.isReleaseEnabled {
-            switch target {
-            case .schedules, .agents:
-                // The shell hosts these routes as ScheduleListViewController
-                // and AgentListViewController.
-                EmptyView()
-            case .skills:
-                ServerSkillsView()
-            case .extensions:
-                ServerExtensionsView()
-            case .mcpServers:
-                McpServersView(scopeId: McpScopeSnapshot.globalId)
-            case .sshTerminal:
-                // The shell hosts this route as SSHTerminalHostListViewController.
-                EmptyView()            case .manageServers:
-                ServerView()
-            case .serverMetrics:
-                ServerMetricsScreen()
-            case .appSettings:
-                // The shell hosts this route as SettingsRootViewController.
-                EmptyView()
-            }
-        } else {
-            WorkspaceSplitPlaceholder(
-                title: "Unavailable",
-                systemImage: "eye.slash",
-                description: "This management screen is hidden in this build."
-            )
+        switch target {
+        case .schedules, .agents:
+            // The shell hosts these routes as ScheduleListViewController
+            // and AgentListViewController.
+            EmptyView()
+        case .skills:
+            ServerSkillsView()
+        case .extensions:
+            ServerExtensionsView()
+        case .mcpServers:
+            McpServersView(scopeId: McpScopeSnapshot.globalId)
+        case .sshTerminal:
+            // The shell hosts this route as SSHTerminalHostListViewController.
+            EmptyView()
+        case .manageServers:
+            ServerView()
+        case .serverMetrics:
+            ServerMetricsScreen()
+        case .appSettings:
+            // The shell hosts this route as SettingsRootViewController.
+            EmptyView()
         }
     }
 }
@@ -490,21 +483,5 @@ struct WorkspaceCreationIntakeModifier: ViewModifier {
         guard let target = pendingCreatedWorkspaceTarget else { return }
         pendingCreatedWorkspaceTarget = nil
         navigation.openWorkspace(target)
-    }
-}
-
-private struct WorkspaceSplitPlaceholder: View {
-    let title: String
-    let systemImage: String
-    let description: String
-
-    var body: some View {
-        ContentUnavailableView {
-            Label(title, systemImage: systemImage)
-        } description: {
-            Text(description)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.themeBg)
     }
 }

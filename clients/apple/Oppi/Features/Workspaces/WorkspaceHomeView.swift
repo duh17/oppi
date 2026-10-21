@@ -227,14 +227,6 @@ enum WorkspaceUtilityNavTarget: Hashable {
     /// The active host's CPU, memory, disk, and Oppi process over time.
     case serverMetrics
     case appSettings
-
-    var isReleaseEnabled: Bool {
-        switch self {
-        case .agents, .schedules, .skills, .extensions, .mcpServers, .sshTerminal,
-             .manageServers, .serverMetrics, .appSettings:
-            true
-        }
-    }
 }
 
 struct WorkspaceCreateSheetContext: Identifiable {
@@ -708,6 +700,23 @@ private struct ToolbarVerticalEdgeReader<Content: View>: View {
 
     var body: some View {
         content(edge)
+    }
+}
+
+/// Reports the window's vertical toolbar edge to a UIKit screen that sets its
+/// own title mode. UIKit has no read API for the system's preferred edge
+/// (`UIBarButtonItem.axisBehavior` only writes it), so the screen hosts this
+/// through `HostFactory.content`, the way `HostedScreenController` learns it.
+struct VerticalToolbarEdgeReporter: View {
+    let onChange: (Bool) -> Void
+
+    var body: some View {
+        readingToolbarVerticalEdge { edge in
+            Color.clear
+                .onChange(of: edge != nil, initial: true) { _, isOnVerticalRail in
+                    onChange(isOnVerticalRail)
+                }
+        }
     }
 }
 

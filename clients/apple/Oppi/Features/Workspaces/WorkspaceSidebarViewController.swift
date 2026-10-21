@@ -221,9 +221,7 @@ final class WorkspaceSidebarViewController: UIViewController {
                 && navigation.splitDetailTarget == .utility(target)
         }
 
-        let utilities = WorkspaceSidebarPrimaryUtilities.items
-            .filter { $0.target.isReleaseEnabled }
-        for item in utilities {
+        for item in WorkspaceSidebarPrimaryUtilities.items {
             model.utilities[item.target] = UtilityRow(item: item, isSelected: isUtilitySelected(item.target))
             model.mainItems.append(.utility(item.target))
         }

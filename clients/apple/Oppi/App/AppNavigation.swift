@@ -911,8 +911,6 @@ final class AppNavigation {
     }
 
     func openWorkspaceUtility(_ target: WorkspaceUtilityNavTarget) {
-        guard target.isReleaseEnabled else { return }
-
         selectedTab = .workspaces
         switch workspaceNavigationPresentation {
         case .stack:
@@ -1473,9 +1471,7 @@ final class AppNavigation {
         case .workspaceConfiguration(let target):
             routeElements.append(.workspaceConfiguration(target))
         case .utility(let target):
-            if target.isReleaseEnabled {
-                routeElements.append(.utility(target))
-            }
+            routeElements.append(.utility(target))
         case nil:
             break
         }
@@ -1537,7 +1533,7 @@ final class AppNavigation {
                 detail = .workspaceConfiguration(target)
                 detailPathElements = []
             case .utility(let target):
-                detail = target.isReleaseEnabled ? .utility(target) : nil
+                detail = .utility(target)
                 detailPathElements = []
             case .serverResourceDetail(let target):
                 detailPathElements.append(.serverResourceDetail(target))

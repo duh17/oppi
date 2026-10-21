@@ -32,10 +32,10 @@ enum ShellRoute: Hashable {
     case serverSkillFile(ServerSkillFileNavTarget)
     case sessionThread(SessionThreadNavTarget)
 
-    /// Bars the router applies. App Settings, the root of its pages, has a
-    /// large title.
+    /// Bars the router applies. No route asks for a large title: App Settings
+    /// is `SettingsRootViewController`, which sets its own.
     var bars: ScreenBars {
-        ScreenBars(largeTitle: self == .utility(.appSettings), showsToolbar: true)
+        ScreenBars(showsToolbar: true)
     }
 
     /// The screen a route shows. A workspace route whose workspace was
