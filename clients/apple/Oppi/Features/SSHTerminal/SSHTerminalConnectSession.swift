@@ -63,6 +63,7 @@ final class SSHTerminalConnectSession {
         profile: SSHTerminalProfile,
         suppliedPassword: String? = nil,
         reconnecting: Bool = false,
+        sudoPassword: String? = nil,
         onSaved: ((SSHTerminalProfile) -> Void)? = nil
     ) {
         let value = profile.normalized()
@@ -88,7 +89,7 @@ final class SSHTerminalConnectSession {
         task = Task {
             defer { registry.untrack(attempt: attempt) }
             do {
-                try await Task.detached { try makeStore().save(value, password: suppliedPassword) }.value
+                try await Task.detached { try makeStore().save(value, password: suppliedPassword, sudoPassword: sudoPassword) }.value
                 guard !Task.isCancelled, runID == self.runID else { return }
                 registry.reconcile(saved: value)
                 onSaved?(value)
@@ -180,6 +181,7 @@ final class SSHTerminalConnectSession {
     func saveHost(
         profile: SSHTerminalProfile,
         suppliedPassword: String? = nil,
+        sudoPassword: String? = nil,
         onSaved: ((SSHTerminalProfile) -> Void)? = nil
     ) {
         let value = profile.normalized()
@@ -199,7 +201,7 @@ final class SSHTerminalConnectSession {
             do {
                 // Updating a presence-protected item can wait for approval.
                 // Never block the main actor on a Security call.
-                try await Task.detached { try makeStore().save(value, password: suppliedPassword) }.value
+                try await Task.detached { try makeStore().save(value, password: suppliedPassword, sudoPassword: sudoPassword) }.value
                 guard !Task.isCancelled, runID == self.runID else { return }
                 registry.reconcile(saved: value)
                 onSaved?(value)

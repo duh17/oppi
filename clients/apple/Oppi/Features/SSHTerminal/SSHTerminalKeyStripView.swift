@@ -27,6 +27,7 @@ final class SSHTerminalKeyStripView: UIView {
         var showRawKeyboard: () -> Void = {}
         var useChatBar: () -> Void = {}
         var hideKeyboard: () -> Void = {}
+        var fillPassword: () -> Void = {}
     }
 
     let role: Role
@@ -54,6 +55,11 @@ final class SSHTerminalKeyStripView: UIView {
     /// Lock and "Secure Input" while the keyboard's secure entry is on.
     private var secureCue: UIView?
     private var showsSecureInput = false
+    /// Fill Password, with what stands beside it, hidden until offered.
+    private var fillKey: SSHTerminalKeyButton?
+    private var fillDivider: UIView?
+    /// The label's host (`duh@mac-studio`) while Fill Password is offered, else nil.
+    private var passwordFillHost: String?
     private var appliedSignature = ""
 
     /// Two 46pt rows; each key keeps its 44pt target.
@@ -122,6 +128,21 @@ final class SSHTerminalKeyStripView: UIView {
         guard on != showsSecureInput else { return }
         showsSecureInput = on
         secureCue?.isHidden = !on
+    }
+
+    /// Shows Fill Password for `host` (`duh@mac-studio`) while a password prompt
+    /// is up and the host has a password to fill; nil hides it.
+    func setPasswordFill(host: String?) {
+        guard host != passwordFillHost else { return }
+        passwordFillHost = host
+        applyPasswordFill()
+    }
+
+    private func applyPasswordFill() {
+        let offered = passwordFillHost != nil
+        fillKey?.isHidden = !offered
+        fillDivider?.isHidden = !offered
+        fillKey?.accessibilityLabel = passwordFillHost.map { "Fill password for \($0)" } ?? "Fill password"
     }
 
     func showModifiers() {
@@ -225,6 +246,8 @@ final class SSHTerminalKeyStripView: UIView {
         arrowButtons = []
         pasteControl = nil
         secureCue = nil
+        fillKey = nil
+        fillDivider = nil
         switch role {
         case .composer: rebuildComposer()
         case .accessory: rebuildAccessory()
@@ -233,6 +256,10 @@ final class SSHTerminalKeyStripView: UIView {
     }
 
     private func rebuildComposer() {
+        addFillPasswordKey(to: keys)
+        let divider = addGroupDivider()
+        fillDivider = divider
+        applyPasswordFill()
         let pages = SSHTerminalKeymap.composerPages(for: profile, userFile: userFile)
         for (index, page) in pages.enumerated() {
             if index > 0 { addGroupDivider() }
@@ -294,6 +321,8 @@ final class SSHTerminalKeyStripView: UIView {
             }
         }
         addSecureCue(to: programRow)
+        addFillPasswordKey(to: programRow)
+        applyPasswordFill()
         installPasteControl(in: programRow)
         for action in programActions {
             addKey(
@@ -329,7 +358,8 @@ final class SSHTerminalKeyStripView: UIView {
     }
 
     /// A hairline between the composer's agent, move, and exit groups.
-    private func addGroupDivider() {
+    @discardableResult
+    private func addGroupDivider() -> UIView {
         let divider = UIView()
         divider.isUserInteractionEnabled = false
         divider.isAccessibilityElement = false
@@ -340,6 +370,25 @@ final class SSHTerminalKeyStripView: UIView {
             divider.heightAnchor.constraint(equalToConstant: 20),
         ])
         keys.addArrangedSubview(divider)
+        return divider
+    }
+
+    /// "Fill Password", the key a password prompt offers. Created with the
+    /// strip and shown by `setPasswordFill`, so it keeps one identity.
+    private func addFillPasswordKey(to row: UIStackView) {
+        let key = addKey(
+            title: "Fill Password",
+            systemImage: "key.fill",
+            id: "sshTerminal.key.fillPassword",
+            accessibilityLabel: "Fill password",
+            hint: "Asks for Face ID, then types the saved password without pressing Return",
+            in: row
+        ) { [weak self] in
+            self?.handlers.fillPassword()
+        }
+        key.configuration?.imagePadding = 6
+        key.isHidden = true
+        fillKey = key
     }
 
     @discardableResult

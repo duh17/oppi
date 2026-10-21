@@ -25,6 +25,9 @@ enum SSHTerminalScreenshotStatus: String {
         default: nil
         }
     }
+    /// A Herdr pane at `[sudo] password for duh:` on a device-key host with a
+    /// saved sudo password, so the terminal offers Fill Password.
+    case passwordPrompt
 }
 
 /// The real terminal surface over an in-memory connection: a Herdr-like
@@ -111,9 +114,13 @@ struct SSHTerminalScreenshotPreview: View {
                 }
             }.joined()
             channel?.event(.data(Data("\r\nsent: \(shown)".utf8)))
-        }, command: status == .none ? "herdr" : nil)
+        }, command: status == .none || status == .passwordPrompt ? "herdr" : nil)
         let esc = "\u{1b}["
-        let screen = status == .none ? herdrScreen(esc) : statusScreen(esc)
+        let screen = switch status {
+        case .none: herdrScreen(esc)
+        case .passwordPrompt: passwordPromptScreen(esc)
+        default: statusScreen(esc)
+        }
         var bytes = Data(screen.utf8)
         bytes.append(statusReports(status))
         if status == .kitty { bytes.append(kittyPictures()) }
@@ -150,9 +157,21 @@ struct SSHTerminalScreenshotPreview: View {
         ].joined()
     }
 
+    /// The cursor ends on the prompt's row, right after `password for duh: `.
+    private func passwordPromptScreen(_ esc: String) -> String {
+        [
+            "\(esc)2J\(esc)H",
+            "\(esc)38;5;3m\u{25d0} \(esc)1mdotfiles\(esc)0m                     \(esc)2mtab 1\(esc)0m\r\n",
+            "\(esc)38;5;4m\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\(esc)0m\r\n\r\n",
+            "\(esc)48;5;236m install the build \(esc)0m\r\n\r\n",
+            "\(esc)42;30m[bash]\(esc)0m sudo make install\r\n\r\n",
+            "[sudo] password for duh: ",
+        ].joined()
+    }
+
     private func statusScreen(_ esc: String, step: SSHTerminalScreenshotStatus? = nil) -> String {
         let line: String = switch step ?? status {
-        case .none, .sequence: ""
+        case .none, .sequence, .passwordPrompt: ""
         case .switcher: "chen@mac-studio: login shell"
         case .progressSet, .progressIndeterminate, .progressError, .progressErrorNoPercent, .progressPause, .progressWithStatus:
             "$ cargo build --release"
@@ -185,7 +204,7 @@ struct SSHTerminalScreenshotPreview: View {
         case .tree, .detail:
             return osc("state=working:app=deploy:msg=\(b64("Deploying v2.4.1"))")
                 + osc("state=blocked:kind=permission:id=eu-west:title=\(b64("EU West")):msg=\(b64("Approve deploy to eu-west?"))")
-        case .sequence, .kitty, .switcher, .progressSet, .progressIndeterminate, .progressError, .progressErrorNoPercent, .progressPause:
+        case .sequence, .kitty, .passwordPrompt, .switcher, .progressSet, .progressIndeterminate, .progressError, .progressErrorNoPercent, .progressPause:
             return Data()
         case .progressWithStatus:
             return osc("state=working:app=pi:msg=\(b64("Building"))")
@@ -283,6 +302,11 @@ private struct SSHTerminalPreviewHost: UIViewControllerRepresentable {
             composerConnection: connection
         )
         terminal.presentsStatusDetailOnAppear = status == .detail
+        if status == .passwordPrompt {
+            terminal.previewFillProfile = SSHTerminalProfile(
+                host: "mac-studio", username: "duh", authentication: .deviceKey, savesSudoPassword: true
+            )
+        }
         let style: UIUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
         terminal.overrideUserInterfaceStyle = style
         let navigation = RouterNavigationController(rootViewController: terminal)

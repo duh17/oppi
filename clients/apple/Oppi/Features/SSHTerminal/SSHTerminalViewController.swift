@@ -90,6 +90,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var shownIdentity: SSHTerminalIdentity?
     private var composerDrafts: [SSHTerminalIdentity: SSHTerminalComposerHost.Draft] = [:]
     private var detached = false
+    /// A password prompt is up on the live screen (the grid's secure entry).
+    private var secureEntryActive = false
+    /// The Face ID prompt and send behind a tap on Fill Password, until it ends.
+    private var passwordFillTask: Task<Void, Never>?
     /// The cursor shift was held for history or a touch on the last update.
     private var cursorShiftHeld = false
     private var rawKeyboard = false
@@ -235,6 +239,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         if presentedViewController != nil, !leaving, !coveredByPush { return }
         isOnScreen = false
         channel.isViewed = false
+        passwordFillTask?.cancel()
         pasteNoticeTask?.cancel()
         copyNoticeTask?.cancel()
         openNoticeTask?.cancel()
@@ -359,6 +364,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         updateNotice(themeID: themeID)
         updateCopyAndLive(themeID: themeID)
         updateComposer()
+        updatePasswordFill(connected: connected)
         if let gridView {
             gridView.tapTypesInTerminal = inputMode == .terminal
             gridView.setKeyActions(keymap.actions)
@@ -527,6 +533,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         grid.useChatBar = { [weak self] in self?.showChatBar() }
         grid.keyboardDismissed = { [weak self] in self?.keyboardWasHidden() }
         grid.secureInputChanged = { [weak self] in self?.secureInputChanged($0) }
+        grid.fillPassword = { [weak self] in self?.fillPassword() }
         grid.pasteImage = { [weak self] in self?.pasteImage($0) }
         grid.openTargetForHeldCell = { [weak self] held in self?.heldOpenTarget(held) }
         grid.open = { [weak self] target in self?.open(target) }
@@ -559,6 +566,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         openTask?.cancel()
         openTask = nil
         detached = false
+        passwordFillTask?.cancel()
+        passwordFillTask = nil
+        secureEntryActive = false
         cursorShiftHeld = false
         rawKeyboard = false
         automaticTerminalTyping = false
@@ -964,7 +974,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
                 sendStrokes: { [weak self] strokes in self?.channel.keys(strokes) },
                 sendKey: { [weak self] key in _ = self?.channel.key(key) },
                 sendArrow: { [weak self] key in self?.channel.key(key) ?? false },
-                showRawKeyboard: { [weak self] in self?.showTerminalKeyboard() }
+                showRawKeyboard: { [weak self] in self?.showTerminalKeyboard() },
+                fillPassword: { [weak self] in self?.fillPassword() }
             )
         )
         bar.installKeyStrip(strip)
@@ -1120,6 +1131,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         composerKeyStrip?.handlers.sendKey = { [weak self] key in _ = self?.channel.key(key) }
         composerKeyStrip?.handlers.sendArrow = { [weak self] key in self?.channel.key(key) ?? false }
         composerKeyStrip?.handlers.showRawKeyboard = { [weak self] in self?.showTerminalKeyboard() }
+        composerKeyStrip?.handlers.fillPassword = { [weak self] in self?.fillPassword() }
         composerKeyStrip?.apply(
             profile: keymap.profile,
             userFile: keymap.userFile,
@@ -1314,6 +1326,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// chat bar: the bar is a draft the user can read, save, and dictate into,
     /// so the input moves to the terminal while the prompt is up.
     private func secureInputChanged(_ secure: Bool) {
+        secureEntryActive = secure
+        if !secure { passwordFillTask?.cancel() }
+        setNeedsUpdateProperties()
         if secure {
             guard !automaticTerminalTyping, inputMode == .chat, !rawKeyboard else { return }
             automaticTerminalTyping = true
@@ -1335,6 +1350,56 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             _ = gridView?.resignFirstResponder()
         }
         setNeedsUpdateProperties()
+    }
+
+    // MARK: - Fill Password
+
+    /// The saved host this terminal is connected to, which says whether there
+    /// is a password to fill.
+    private var passwordFillProfile: SSHTerminalProfile? { session?.connectedProfile ?? previewFillProfile }
+
+    /// The screenshot preview has no connect session; it names the host here.
+    var previewFillProfile: SSHTerminalProfile?
+
+    private func isPasswordFillOffered(connected: Bool? = nil) -> Bool {
+        SSHTerminalPasswordFill.isOffered(
+            profile: passwordFillProfile,
+            secureEntry: secureEntryActive,
+            inHistory: detached,
+            connected: connected ?? channel.connected
+        )
+    }
+
+    /// One decision for both keys: the chat bar's strip and the keyboard bar's.
+    private func updatePasswordFill(connected: Bool) {
+        let host = isPasswordFillOffered(connected: connected) ? passwordFillProfile?.endpointLabel : nil
+        composerKeyStrip?.setPasswordFill(host: host)
+        gridView?.setPasswordFill(host: host)
+    }
+
+    /// Asks for Face ID, then types the saved password at the prompt without
+    /// pressing Return. Nothing is typed when the person cancels, the check
+    /// fails, or the prompt is gone by the time it passes.
+    private func fillPassword() {
+        guard passwordFillTask == nil, isPasswordFillOffered(), let profile = passwordFillProfile else { return }
+        let channel = channel
+        passwordFillTask = Task { [weak self] in
+            let outcome = await SSHTerminalPasswordFill.fill(
+                profile: profile,
+                stillOffered: { [weak self] in
+                    guard let self else { return false }
+                    return self.channel === channel && self.isOnScreen && self.isPasswordFillOffered()
+                },
+                send: { channel.send($0) }
+            )
+            guard let self, self.channel === channel else { return }
+            self.passwordFillTask = nil
+            switch outcome {
+            case .filled: self.showPasteNotice("Filled password")
+            case .cancelled: break
+            case .failed(let message): self.showPasteNotice("Password not filled. \(message)")
+            }
+        }
     }
 
     // MARK: - Presentations

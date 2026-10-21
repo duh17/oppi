@@ -68,6 +68,8 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     var rawKeyboardChanged: (Bool) -> Void = { _ in }
     /// A password prompt appeared (true) or ended (false) on the live screen.
     var secureInputChanged: (Bool) -> Void = { _ in }
+    /// The Fill Password key on the keyboard bar was tapped.
+    var fillPassword: () -> Void = {}
     /// The user sent the keyboard away with its hide key or a tap: a manual
     /// choice, so an automatic switch back after a password prompt stands down.
     var keyboardDismissed: () -> Void = {}
@@ -208,6 +210,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private var bar: UIView?
     /// The foreground program's actions, inserted after Paste.
     private var keyActions: [SSHTerminalKeyAction] = []
+    private var passwordFillHost: String?
     private var foreground = UIColor.label
 
     private var metalLayer: CAMetalLayer? { metalHost.metalLayer }
@@ -1495,6 +1498,13 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         selectionOverlay.isHidden = true
     }
 
+    /// The keyboard bar's Fill Password key: shown for `host` (`duh@mac-studio`),
+    /// hidden for nil. The screen decides when it is offered.
+    func setPasswordFill(host: String?) {
+        passwordFillHost = host
+        keyStrip?.setPasswordFill(host: host)
+    }
+
     func setKeyActions(_ actions: [SSHTerminalKeyAction]) {
         keyActions = actions
         keyStrip?.setProgramActions(actions)
@@ -1537,9 +1547,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
                     guard let self else { return }
                     self.keyboardDismissed()
                     _ = self.resignFirstResponder()
-                }
+                },
+                fillPassword: { [weak self] in self?.fillPassword() }
             )
         )
+        strip.setPasswordFill(host: passwordFillHost)
         strip.apply(
             profile: nil,
             userFile: nil,

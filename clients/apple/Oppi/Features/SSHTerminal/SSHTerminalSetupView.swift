@@ -11,6 +11,9 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     private var portText: String
     /// Set when the form was opened for "Open Terminal here".
     private let folderTerminal: SSHTerminalFolderTarget?
+    /// A sudo password typed in this form and not saved yet. The field never
+    /// shows a saved one: reading it takes Face ID.
+    private var sudoPasswordText = ""
     private var deviceKey = SSHTerminalDeviceKeyState()
     private var copied = false
     private let session = SSHTerminalConnectSession()
@@ -25,7 +28,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
 
     private enum Section: Hashable { case host, startup, identity, actions, delete }
     private enum Item: Hashable {
-        case host, port, username, authentication, savePassword
+        case host, port, username, authentication, savePassword, sudoPassword, removeSudoPassword
         case startup
         case publicKey, copyKey, backing, identityStatus, replaceKey
         case connecting, connect, saveHost, failure, trustUnknown, trustMismatch
@@ -149,9 +152,9 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
             switch item {
-            case .host, .port, .username, .startup:
+            case .host, .port, .username, .startup, .sudoPassword:
                 collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-            case .authentication, .copyKey, .replaceKey, .connect, .saveHost, .deleteHost:
+            case .authentication, .copyKey, .replaceKey, .connect, .saveHost, .deleteHost, .removeSudoPassword:
                 collectionView.dequeueConfiguredReusableCell(using: action, for: indexPath, item: item)
             default:
                 collectionView.dequeueConfiguredReusableCell(using: list, for: indexPath, item: item)
@@ -197,6 +200,15 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
                 self?.profile.username = $0
                 self?.reloadActionItems()
             }
+        case .sudoPassword:
+            cell.configure(
+                text: sudoPasswordText,
+                placeholder: hasSavedSudoPassword ? "Sudo Password: saved, type to replace" : "Sudo Password (optional)",
+                identifier: "sshTerminal.sudoPassword",
+                isSecure: true, textColor: UIColor(palette.fg), enabled: enabled
+            ) { [weak self] in
+                self?.sudoPasswordText = $0
+            }
         case .startup:
             cell.configure(
                 text: profile.startupCommand ?? "", placeholder: "Login shell", identifier: "sshTerminal.startupCommand",
@@ -237,6 +249,14 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
                 ])
             )
             cell.accessories = [.disclosureIndicator()]
+        case .removeSudoPassword:
+            cell.configure(
+                title: "Remove Saved Sudo Password",
+                identifier: "sshTerminal.removeSudoPassword",
+                color: UIColor(palette.red),
+                enabled: !session.connecting,
+                action: { [weak self] in self?.removeSavedSudoPassword() }
+            )
         case .copyKey:
             cell.configure(
                 title: copied ? "Copied Public Key" : "Copy Public Key",
@@ -382,6 +402,10 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         snapshot.appendSections([.host])
         var hostItems: [Item] = [.host, .port, .username, .authentication]
         if profile.authentication == .password { hostItems.append(.savePassword) }
+        if profile.authentication == .deviceKey {
+            hostItems.append(.sudoPassword)
+            if hasSavedSudoPassword { hostItems.append(.removeSudoPassword) }
+        }
         snapshot.appendItems(hostItems, toSection: .host)
 
         snapshot.appendSections([.startup])
@@ -427,7 +451,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         guard var snapshot = dataSource?.snapshot() else { return }
         let items = snapshot.itemIdentifiers.filter {
             switch $0 {
-            case .connect, .saveHost, .authentication: return true
+            case .connect, .saveHost, .authentication, .sudoPassword: return true
             default: return false
             }
         }
@@ -440,7 +464,8 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
         guard let item = dataSource?.itemIdentifier(for: indexPath) else { return false }
         switch item {
-        case .authentication, .copyKey, .replaceKey, .connect, .saveHost, .deleteHost, .trustUnknown, .trustMismatch:
+        case .authentication, .copyKey, .replaceKey, .connect, .saveHost, .deleteHost, .removeSudoPassword,
+             .trustUnknown, .trustMismatch:
             return true
         default:
             return false
@@ -465,6 +490,8 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             saveHost()
         case .deleteHost:
             confirmDelete()
+        case .removeSudoPassword:
+            removeSavedSudoPassword()
         case .trustUnknown, .trustMismatch:
             chrome?.reopenTrust()
         default:
@@ -514,7 +541,11 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         guard let section = dataSource?.snapshot().sectionIdentifiers[safe: indexPath.section] else { return nil }
         switch section {
         case .host:
-            return "Remote Login (sshd) must be enabled. When Oppi’s Tailscale node is running, *.ts.net hosts use it; other hosts use your current network."
+            var text = "Remote Login (sshd) must be enabled. When Oppi’s Tailscale node is running, *.ts.net hosts use it; other hosts use your current network."
+            if profile.authentication == .deviceKey {
+                text += "\n\nA sudo password is optional. It stays in this device’s private Keychain, and at a terminal password prompt Fill Password types it after Face ID, without pressing Return. It goes to whatever program on that terminal shows the prompt. Changing the host, port, or user removes it."
+            }
+            return text
         case .startup:
             if folderTerminal != nil {
                 return "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. Enter `herdr` to attach your Herdr session. The connection ends when the command exits (for Herdr, detach with Ctrl-B Q). The command must be on the PATH that SSH commands see.\n\nTerminal from a workspace or chat starts its own login shell in that folder and ignores this command."
@@ -558,7 +589,23 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     private func normalizedProfile() -> SSHTerminalProfile {
         var result = profile
         result.port = port ?? 22
-        return result.normalized()
+        return result.normalized().settingSudoPassword(
+            supplied: suppliedSudoPassword != nil,
+            saved: SSHTerminalProfileStore().profile(id: profile.id)
+        )
+    }
+
+    /// What the person typed for the sudo password, on a host that can keep one.
+    private var suppliedSudoPassword: String? {
+        profile.authentication == .deviceKey && !sudoPasswordText.isEmpty ? sudoPasswordText : nil
+    }
+
+    /// A sudo password in the Keychain that still belongs to the host as the
+    /// form now describes it.
+    private var hasSavedSudoPassword: Bool {
+        var current = profile
+        current.port = port ?? 22
+        return current.normalized().reusesSudoPassword(of: SSHTerminalProfileStore().profile(id: profile.id))
     }
 
     /// Edit Host in the terminal's menu acts on the terminal shown. When the
@@ -571,14 +618,35 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     private func applySaved(_ saved: SSHTerminalProfile) {
         profile = saved
         portText = String(saved.port)
+        if !sudoPasswordText.isEmpty {
+            sudoPasswordText = ""
+            view.endEditing(true)
+        }
         applySnapshot()
+    }
+
+    private func removeSavedSudoPassword() {
+        let store = SSHTerminalProfileStore()
+        guard var committed = store.profile(id: profile.id), committed.savesSudoPassword else { return }
+        committed.savesSudoPassword = false
+        do {
+            try store.save(committed)
+            SSHTerminalRegistry.shared.reconcile(saved: committed)
+            profile.savesSudoPassword = false
+            sudoPasswordText = ""
+            view.endEditing(true)
+            applySnapshot()
+        } catch {
+            session.failure = error.localizedDescription
+        }
     }
 
     private func saveHost(password: String? = nil) {
         guard canConnect else { return }
         session.saveHost(
             profile: normalizedProfile(),
-            suppliedPassword: password
+            suppliedPassword: password,
+            sudoPassword: suppliedSudoPassword
         ) { [weak self] saved in
             self?.applySaved(saved)
             // Opened for a workspace folder: the host is usable now, so carry on
@@ -597,13 +665,14 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         session.connect(
             profile: profile,
             suppliedPassword: password,
+            sudoPassword: suppliedSudoPassword,
             onSaved: applySaved
         )
     }
 
     private func confirmDelete() {
         let sheet = UIAlertController(
-            title: "Delete this host and its saved password?",
+            title: "Delete this host and its saved passwords?",
             message: nil,
             preferredStyle: .actionSheet
         )

@@ -310,7 +310,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
 
     private func confirmDelete(_ profile: SSHTerminalProfile) {
         let sheet = UIAlertController(
-            title: "Delete this host and its saved password?",
+            title: "Delete this host and its saved passwords?",
             message: nil,
             preferredStyle: .actionSheet
         )

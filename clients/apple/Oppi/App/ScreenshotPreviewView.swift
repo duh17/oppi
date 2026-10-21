@@ -94,6 +94,8 @@ struct ScreenshotPreviewView: View {
             SSHTerminalScreenshotPreview(status: .switcher)
         case "ssh-terminal-kitty":
             SSHTerminalScreenshotPreview(status: .kitty)
+        case "ssh-terminal-password-fill":
+            SSHTerminalScreenshotPreview(status: .passwordPrompt)
         case "review-comment-inline-draft":
             ReviewCommentInlineDraftScreenshotPreview()
                 .ignoresSafeArea()
