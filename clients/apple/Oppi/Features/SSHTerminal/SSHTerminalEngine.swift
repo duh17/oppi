@@ -41,6 +41,12 @@ struct SSHTerminalFrame {
     /// Kitty graphics on this screen. Nil when there is nothing stored, so a
     /// terminal that never shows an image pays nothing for the feature.
     let kitty: SSHTerminalKittySnapshot?
+    /// libghostty's kitty store for this frame, borrowed like the pixels it holds
+    /// and valid only until the terminal is mutated. It is fetched per frame and
+    /// never kept in a snapshot: a reset frees the alternate screen's storage, so
+    /// an old handle can dangle. Nil while synchronized output holds the picture,
+    /// where a miss must wait for the release instead of reading the live store.
+    let kittyGraphics: GhosttyKittyGraphics?
 
     /// Changes whenever image storage changes, so a repaint can be gated on it
     /// even when no text row moved.
@@ -392,12 +398,25 @@ final class SSHTerminalEngine {
             if old.viewport_has_value { rebuilt.insert(Int(old.viewport_y)) }
             if cursor.viewport_has_value { rebuilt.insert(Int(cursor.viewport_y)) }
         }
+        let held = heldSince != nil
+        // The store handle dies with any terminal mutation, so every frame fetches
+        // its own and hands it to the renderer alongside the snapshot. A held frame
+        // passes none: a cache miss then retries after the release rather than
+        // resolving pixels through a store that may already be freed.
+        var graphics: GhosttyKittyGraphics?
+        if !held,
+           ghostty_terminal_get(
+               terminal, GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, &graphics
+           ) != GHOSTTY_SUCCESS {
+            graphics = nil
+        }
         cachedCursor = cursor
         ghostty_render_state_clean(render)
         return .init(
             rows: cachedRows, rowsBelowViewport: cachedRows.count - Int(rowCount),
             cursor: cursor, background: background, rebuiltRows: rebuilt,
-            kitty: kittyGraphics(rowsRebuilt: !rebuilt.isEmpty)
+            kitty: held ? kittySnapshot : kittyGraphics(graphics, rowsRebuilt: !rebuilt.isEmpty),
+            kittyGraphics: held ? nil : graphics
         )
     }
 
@@ -406,15 +425,12 @@ final class SSHTerminalEngine {
     /// Placements for this viewport. Re-read only when the image store changed,
     /// the viewport moved, the geometry changed, or rows were rebuilt (text
     /// scrolling carries pinned placements with it). Synchronized output holds
-    /// the whole picture, so a held frame reuses the snapshot it already shows.
-    private func kittyGraphics(rowsRebuilt: Bool) -> SSHTerminalKittySnapshot? {
-        // While the render state is held (mode 2026), the store is not read and
-        // its generation does not advance: an image that arrives mid-frame must
-        // not draw over the text of the frame still on screen.
-        if renderHeld { return kittySnapshot }
-        var graphics: GhosttyKittyGraphics?
-        guard ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, &graphics) == GHOSTTY_SUCCESS,
-              let graphics else { return nil }
+    /// the whole picture, so a held frame reuses the snapshot it already shows
+    /// and `frame()` passes it no store handle at all.
+    private func kittyGraphics(
+        _ graphics: GhosttyKittyGraphics?, rowsRebuilt: Bool
+    ) -> SSHTerminalKittySnapshot? {
+        guard let graphics else { return nil }
         var generation: UInt64 = 0
         guard ghostty_kitty_graphics_get(
             graphics, GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION, &generation
@@ -431,7 +447,7 @@ final class SSHTerminalEngine {
             kittyStoreGeneration = 0
             kittyViewportTop = Int(scrollbar.offset)
             activeKittyImageIDs.removeAll()
-            kittySnapshot = wasReset ? emptyKittySnapshot(graphics) : nil
+            kittySnapshot = wasReset ? emptyKittySnapshot() : nil
             return kittySnapshot
         }
         kittyStoreScreenIsAlternate = screen
@@ -466,10 +482,9 @@ final class SSHTerminalEngine {
 
     /// The snapshot a reset screen reports: no placements and no stored images,
     /// which is what lets the renderer drop every texture at once.
-    private func emptyKittySnapshot(_ graphics: GhosttyKittyGraphics) -> SSHTerminalKittySnapshot {
+    private func emptyKittySnapshot() -> SSHTerminalKittySnapshot {
         SSHTerminalKittySnapshot(
             generation: 0, placements: [], images: [], imagesByID: [:], storedImageIDs: [],
-            graphics: graphics,
             cellWidth: geometry.cellWidth, cellHeight: geometry.cellHeight
         )
     }
@@ -545,7 +560,6 @@ final class SSHTerminalEngine {
             generation: generation, placements: placements, images: images,
             imagesByID: Dictionary(images.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }),
             storedImageIDs: primaryKittyImageIDs.union(alternateKittyImageIDs),
-            graphics: graphics,
             cellWidth: geometry.cellWidth, cellHeight: geometry.cellHeight
         )
     }

@@ -541,20 +541,26 @@ final class SSHTerminalKittyTextureCache {
     }
 
     /// Texture bytes held here, sized from what libghostty's store can produce
-    /// rather than from the store's own 64 MB: a gray image is 1 byte per pixel
-    /// stored and 4 bytes per pixel as an RGBA texture, so the worst case a
-    /// screen can ask for is four times the store. Sizing it any lower would evict
-    /// images this same frame draws and re-upload them on every redraw.
-    static let limitBytes = SSHTerminalKittyGraphics.imageStorageLimitBytes * 4
+    /// rather than from the store's own 64 MB. Only RGB and RGBA reach storage, so
+    /// a screen's pixels cost at most four thirds of their stored bytes as RGBA,
+    /// and the main and alternate screens together can hold the full store twice:
+    /// 64 MB x 4/3 x 2, about 171 MB. Sizing it any lower would evict images the
+    /// same frame draws and re-upload them on every redraw.
+    static let limitBytes = SSHTerminalKittyGraphics.imageStorageLimitBytes / 3 * 8
     /// Where eviction stops (three quarters of the budget), so one frame that
     /// needs room pays for one eviction pass instead of one per upload.
     private var lowWaterBytes: Int { max(1, limit / 4 * 3) }
 
     private let limit: Int
     private var entries: [UInt32: Entry] = [:]
-    /// Image generations that did not fit, so a rejected image is not rebuilt on
-    /// every frame. Retransmission brings a new generation and retries.
-    private var refused: [UInt32: UInt64] = [:]
+    /// Generations this cache knows can never fit the budget, the only refusal
+    /// that is a property of the image rather than of this frame. A retransmission
+    /// brings a new generation, and a store change clears the memo.
+    private var unfittable: [UInt32: UInt64] = [:]
+    /// Images whose upload failed transiently in a frame (the payload is not
+    /// resident yet, no store handle, or the budget is momentarily full). They are
+    /// skipped for the rest of that frame and retried on a later one.
+    private var retriedFrame: [UInt32: UInt64] = [:]
     /// Render pass this cache is serving; bumped by `beginFrame`.
     private var frameTick: UInt64 = 0
     /// Frame that already paid for an eviction pass.
@@ -579,11 +585,11 @@ final class SSHTerminalKittyTextureCache {
     }
 
     /// The texture for this image, uploading it the first time this generation is
-    /// seen. Nil when the payload is not resident yet, is too large for the
-    /// device, or does not fit the cache budget.
+    /// seen. Nil when there is no store to read this frame, the payload is not
+    /// resident yet, or the image does not fit the budget.
     func texture(
         for image: SSHTerminalKittyImage,
-        graphics: GhosttyKittyGraphics,
+        graphics: GhosttyKittyGraphics?,
         device: MTLDevice
     ) -> MTLTexture? {
         guard image.width > 0, image.height > 0,
@@ -591,8 +597,12 @@ final class SSHTerminalKittyTextureCache {
         let (pixels, overflowed) = image.width.multipliedReportingOverflow(by: image.height)
         guard !overflowed else { return nil }
         let (estimated, estimateOverflowed) = pixels.multipliedReportingOverflow(by: 4)
-        // Cheap upper bound before Metal is asked for a texture too big to keep.
-        guard !estimateOverflowed, estimated <= limit else { return nil }
+        // A picture whose texture could never fit is refused for this generation
+        // before Metal is asked for it.
+        guard !estimateOverflowed, estimated <= limit else {
+            unfittable[image.id] = image.generation
+            return nil
+        }
         if var entry = entries[image.id] {
             if entry.generation == image.generation {
                 entry.lastUsed = frameTick
@@ -602,15 +612,19 @@ final class SSHTerminalKittyTextureCache {
             entries[image.id] = nil
             totalBytes -= entry.byteCount
         }
-        if refused[image.id] == image.generation { return nil }
-        refused[image.id] = nil
-        // Pixels are read only here, on a miss, so a frame whose textures are all
-        // resident makes no per-image calls at all.
+        if unfittable[image.id] == image.generation { return nil }
+        if retriedFrame[image.id] == frameTick { return nil }
+        // A held frame has no store to read, and the payload may simply not be
+        // resident yet: both wait for a later frame instead of failing for good.
+        guard let graphics else {
+            retriedFrame[image.id] = frameTick
+            return nil
+        }
         guard let payload = image.resolvePixels(graphics),
               let texture = Self.makeTexture(
                   device: device, image: image, pixels: payload.pointer
               ) else {
-            refused[image.id] = image.generation
+            retriedFrame[image.id] = frameTick
             return nil
         }
         uploadCount += 1
@@ -618,8 +632,14 @@ final class SSHTerminalKittyTextureCache {
         // simulator does), so the pixel bytes are the floor and the budget still
         // bounds what is held.
         let allocated = max(texture.allocatedSize, estimated)
-        guard allocated <= limit, makeRoom(for: allocated) else {
-            refused[image.id] = image.generation
+        guard allocated <= limit else {
+            unfittable[image.id] = image.generation
+            return nil
+        }
+        guard makeRoom(for: allocated) else {
+            // The budget is full for now, not forever: a later frame evicts what
+            // it no longer draws and this image gets its turn.
+            retriedFrame[image.id] = frameTick
             return nil
         }
         entries[image.id] = Entry(
@@ -650,8 +670,10 @@ final class SSHTerminalKittyTextureCache {
 
     /// Drop every image libghostty no longer stores. An image whose placements
     /// scrolled out of the viewport, or whose screen is not the active one, is
-    /// still stored, so its texture stays.
+    /// still stored, so its texture stays. A store change is also what clears the
+    /// memo of images that could never fit.
     func retain(only stored: Set<UInt32>) {
+        unfittable.removeAll(keepingCapacity: true)
         var evicted = [UInt32]()
         for (id, entry) in entries where !stored.contains(id) {
             totalBytes -= entry.byteCount
@@ -661,12 +683,17 @@ final class SSHTerminalKittyTextureCache {
             entries[id] = nil
             evictionCount += 1
         }
-        for id in Array(refused.keys) where !stored.contains(id) { refused.removeValue(forKey: id) }
+        for id in Array(retriedFrame.keys) where !stored.contains(id) {
+            retriedFrame.removeValue(forKey: id)
+        }
     }
 
     private static func makeTexture(
         device: MTLDevice, image: SSHTerminalKittyImage, pixels: UnsafePointer<UInt8>
     ) -> MTLTexture? {
+        // Only RGB and RGBA reach storage: the protocol parses f=24, f=32 and PNG
+        // (f=100), which libghostty decodes to RGBA.
+        guard image.format == .rgba || image.format == .rgb else { return nil }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm, width: image.width, height: image.height, mipmapped: false
         )
@@ -680,38 +707,17 @@ final class SSHTerminalKittyTextureCache {
             )
             return texture
         }
-        // Metal has no 3-channel format, and gray/gray-alpha still need an
-        // RGBA texture; expand once, at upload time only.
+        // Metal has no 3-channel format, so RGB expands to RGBA once, at upload.
         let count = image.width * image.height
         var expanded = [UInt8](repeating: 0, count: count * 4)
-        let source = UnsafeBufferPointer(start: pixels, count: image.width * image.height * image.format.bytesPerPixel)
+        let source = UnsafeBufferPointer(start: pixels, count: count * 3)
         for index in 0..<count {
-            switch image.format {
-            case .rgba:
-                break
-            case .rgb:
-                let offset = index * 3
-                guard offset + 2 < source.count else { return nil }
-                expanded[index * 4] = source[offset]
-                expanded[index * 4 + 1] = source[offset + 1]
-                expanded[index * 4 + 2] = source[offset + 2]
-                expanded[index * 4 + 3] = 255
-            case .grayAlpha:
-                let offset = index * 2
-                guard offset + 1 < source.count else { return nil }
-                let gray = source[offset]
-                expanded[index * 4] = gray
-                expanded[index * 4 + 1] = gray
-                expanded[index * 4 + 2] = gray
-                expanded[index * 4 + 3] = source[offset + 1]
-            case .gray:
-                guard index < source.count else { return nil }
-                let gray = source[index]
-                expanded[index * 4] = gray
-                expanded[index * 4 + 1] = gray
-                expanded[index * 4 + 2] = gray
-                expanded[index * 4 + 3] = 255
-            }
+            let offset = index * 3
+            guard offset + 2 < source.count else { return nil }
+            expanded[index * 4] = source[offset]
+            expanded[index * 4 + 1] = source[offset + 1]
+            expanded[index * 4 + 2] = source[offset + 2]
+            expanded[index * 4 + 3] = 255
         }
         expanded.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return }
@@ -957,6 +963,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         let uploadsBefore = kittyTextures.uploadCount
         let images = packImages(
             frame.kitty,
+            graphics: frame.kittyGraphics,
             cellW: Float(metrics.cellSize.width * scale),
             cellH: Float(metrics.cellSize.height * scale)
         )
@@ -1251,7 +1258,10 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
     /// groups them exactly in draw order with no search per image. Textures are
     /// evicted only when libghostty dropped the image from its store.
     private func packImages(
-        _ kitty: SSHTerminalKittySnapshot?, cellW: Float, cellH: Float
+        _ kitty: SSHTerminalKittySnapshot?,
+        graphics: GhosttyKittyGraphics?,
+        cellW: Float,
+        cellH: Float
     ) -> ImagePacking {
         kittyTextures.beginFrame()
         guard let kitty else {
@@ -1292,7 +1302,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
                   drawnImages < Self.maxKittyImagesPerFrame,
                   let image = kitty.imagesByID[imageID], image.width > 0, image.height > 0,
                   let texture = kittyTextures.texture(
-                      for: image, graphics: kitty.graphics, device: device
+                      for: image, graphics: graphics, device: device
                   ) else { continue }
             let width = Float(image.width)
             let height = Float(image.height)

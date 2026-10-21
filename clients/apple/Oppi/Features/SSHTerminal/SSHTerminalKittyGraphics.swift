@@ -139,9 +139,6 @@ final class SSHTerminalKittySnapshot {
     /// images whose placements scrolled out of the viewport. Textures are evicted
     /// against this, not against what happens to be visible.
     let storedImageIDs: Set<UInt32>
-    /// libghostty's store handle for this screen, borrowed like the pixels and
-    /// valid until the next mutating terminal call (the same frame).
-    let graphics: GhosttyKittyGraphics
     /// Terminal cell size these placements were resolved with.
     let cellWidth: Int
     let cellHeight: Int
@@ -152,7 +149,6 @@ final class SSHTerminalKittySnapshot {
         images: [SSHTerminalKittyImage],
         imagesByID: [UInt32: SSHTerminalKittyImage],
         storedImageIDs: Set<UInt32>,
-        graphics: GhosttyKittyGraphics,
         cellWidth: Int,
         cellHeight: Int
     ) {
@@ -161,7 +157,6 @@ final class SSHTerminalKittySnapshot {
         self.images = images
         self.imagesByID = imagesByID
         self.storedImageIDs = storedImageIDs
-        self.graphics = graphics
         self.cellWidth = cellWidth
         self.cellHeight = cellHeight
     }

@@ -1,6 +1,7 @@
 import Compression
 import CoreGraphics
 import Foundation
+import GhosttyVt
 import ImageIO
 import Metal
 import Testing
@@ -65,7 +66,7 @@ struct SSHTerminalKittyGraphicsTests {
         #expect(image.width == 2 && image.height == 2)
         #expect(image.format == .rgba)
         #expect(image.generation > 0)
-        #expect(try pixelBytes(of: image, in: kitty) == [0xFF, 0x80, 0x00, 0xFF, 0xFF, 0x80, 0x00, 0xFF, 0xFF, 0x80, 0x00, 0xFF, 0xFF, 0x80, 0x00, 0xFF])
+        #expect(try pixelBytes(of: image, graphics: frame.kittyGraphics) == [0xFF, 0x80, 0x00, 0xFF, 0xFF, 0x80, 0x00, 0xFF, 0xFF, 0x80, 0x00, 0xFF, 0xFF, 0x80, 0x00, 0xFF])
         // The host is told the image loaded; without a reply `kitten icat` gives up.
         #expect(replies.map { String(decoding: $0, as: UTF8.self) } == ["\u{1b}_Gi=7;OK\u{1b}\\"])
     }
@@ -79,11 +80,12 @@ struct SSHTerminalKittyGraphicsTests {
         let engine = try engine { replies.append($0) }
         engine.receive(kitty("a=T,f=100,i=9,c=2,r=2", payload: pngData.base64EncodedString()))
 
-        let kitty = try #require(engine.frame().kitty)
+        let frame = engine.frame()
+        let kitty = try #require(frame.kitty)
         let image = try #require(kitty.images.first)
         #expect(image.width == 2 && image.height == 2)
         #expect(image.format == .rgba)
-        #expect(try pixelBytes(of: image, in: kitty) == [
+        #expect(try pixelBytes(of: image, graphics: frame.kittyGraphics) == [
             255, 0, 0, 255, 255, 0, 0, 255,
             0, 0, 255, 255, 0, 0, 255, 255,
         ], "PNG decodes to straight-alpha RGBA, top row first")
@@ -181,10 +183,11 @@ struct SSHTerminalKittyGraphicsTests {
         let firstGeneration = first.generation
 
         engine.receive(kitty("a=T,f=32,s=1,v=1,i=8,c=1,r=1", payload: rgbaPayload([Pixel(red: 9, green: 9, blue: 9)])))
-        let snapshot = try #require(engine.frame().kitty)
+        let frame = engine.frame()
+        let snapshot = try #require(frame.kitty)
         let second = try #require(snapshot.images.first)
         #expect(second.generation != firstGeneration)
-        #expect(try pixelBytes(of: second, in: snapshot).first == 9)
+        #expect(try pixelBytes(of: second, graphics: frame.kittyGraphics).first == 9)
         #expect(engine.frame().kitty?.placements.count == 1, "the replacement keeps one placement")
     }
 
@@ -340,9 +343,11 @@ struct SSHTerminalKittyGraphicsTests {
     /// Pictures that individually fit the budget but together do not: the frame
     /// draws what it can, keeps what it drew, and remembers the refusals so a
     /// redraw neither evicts the picture on screen nor rebuilds the rest.
-    @Test func budgetRefusesOverflowImagesOncePerGeneration() throws {
+    @Test func budgetOverflowIsRetriedButNeverEvictsWhatItDrew() throws {
         // One 256x256 RGBA picture is exactly the whole budget this renderer is
-        // given, so the first fits and the next three cannot.
+        // given, so the first fits and the next three cannot. A full budget is a
+        // property of the frame, not of the picture, so the three are tried again
+        // on later frames while the picture on screen stays put.
         let limit = 256 * 256 * 4
         let harness = try renderHarness(columns: 8, rows: 1, kittyTextureLimit: limit)
         let home = Data("\u{1b}[1;1H".utf8)
@@ -359,20 +364,22 @@ struct SSHTerminalKittyGraphicsTests {
         #expect(harness.renderer.cachedImageCount == 1)
         #expect(harness.renderer.cachedImageBytes <= limit)
         #expect(harness.renderer.imageEvictionCount == 0, "nothing drawn this frame is evicted")
-        let creations = harness.renderer.imageUploadCount
-        #expect(creations == 4, "every texture creation counts, including the refused ones")
+        let firstCreations = harness.renderer.imageUploadCount
+        #expect(firstCreations == 4, "every texture creation counts, including the refused ones")
 
-        for _ in 0..<3 {
-            let redraw = harness.encode(fullRebuild: false)
-            #expect(redraw.imagePlacementCount == 1)
-            #expect(redraw.imageUploadCount == 0)
-        }
-        #expect(harness.renderer.imageUploadCount == creations, "a refused generation is not rebuilt")
+        let second = harness.encode(fullRebuild: false)
+        #expect(second.imagePlacementCount == 1, "the picture on screen is never evicted")
         #expect(harness.renderer.cachedImageCount == 1)
+        #expect(harness.renderer.imageEvictionCount == 0)
+        #expect(
+            harness.renderer.imageUploadCount > firstCreations,
+            "a full budget is transient, so the rest are retried on a later frame"
+        )
     }
 
-    /// A picture larger than the whole budget is refused before Metal builds it,
-    /// so a redraw costs nothing instead of allocating and dropping it each time.
+    /// A picture larger than the whole budget is refused for that generation
+    /// before Metal builds it, so a redraw costs nothing instead of allocating and
+    /// dropping it each time.
     @Test func oversizeImageIsRefusedBeforeItIsBuilt() throws {
         let harness = try renderHarness(columns: 8, rows: 4, kittyTextureLimit: 256 * 1024)
         let payload = rgbaPayload(Array(repeating: Pixel(red: 9, green: 9, blue: 9), count: 512 * 512))
@@ -448,6 +455,14 @@ struct SSHTerminalKittyGraphicsTests {
         let texture: MTLTexture
 
         func encode(fullRebuild: Bool) -> SSHTerminalMetalFrameCost {
+            encode(fullRebuild: fullRebuild, with: renderer, texture: texture)
+        }
+
+        /// Encode through another renderer, the way a view rebuilt with an empty
+        /// texture cache would.
+        func encode(
+            fullRebuild: Bool, with renderer: SSHTerminalMetalRenderer, texture: MTLTexture
+        ) -> SSHTerminalMetalFrameCost {
             renderer.encodeOffscreen(
                 frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
                 texture: texture, waitUntilCompleted: true, fullRebuild: fullRebuild
@@ -610,9 +625,10 @@ struct SSHTerminalKittyGraphicsTests {
         ])
         let engine = try engine()
         engine.receive(kitty("a=T,f=100,i=41,c=2,r=2", payload: pngData.base64EncodedString()))
-        let snapshot = try #require(engine.frame().kitty)
+        let frame = engine.frame()
+        let snapshot = try #require(frame.kitty)
         let image = try #require(snapshot.images.first)
-        let bytes = try pixelBytes(of: image, in: snapshot)
+        let bytes = try pixelBytes(of: image, graphics: frame.kittyGraphics)
         #expect(bytes[3] == 128, "alpha survives the round trip")
         #expect(bytes[0] > 250, "unpremultiply restores the straight red channel")
         #expect(bytes[4] == 0 && bytes[5] == 0 && bytes[6] == 0, "a transparent pixel has no colour")
@@ -628,21 +644,81 @@ struct SSHTerminalKittyGraphicsTests {
         let engine = try engine()
         let white = rgbaPayload([Pixel(red: 255, green: 255, blue: 255)])
         engine.receive(kitty("a=T,f=32,s=1,v=1,i=61,c=1,r=1", payload: white))
-        let before = try #require(engine.frame().kitty)
-        #expect(before.placements.map(\.imageID) == [61])
+        let before = engine.frame()
+        #expect(before.kitty?.placements.map(\.imageID) == [61])
+        #expect(before.kittyGraphics != nil, "a live frame may read its store")
 
         engine.receive(Data("\u{1b}[?2026h".utf8))
         #expect(engine.renderHeld)
         engine.receive(kitty("a=d,d=i,i=61"))
         engine.receive(kitty("a=T,f=32,s=1,v=1,i=62,c=1,r=1", payload: white))
-        let held = try #require(engine.frame().kitty)
-        #expect(held.placements.map(\.imageID) == [61], "the held frame keeps the picture it drew")
-        #expect(!held.storedImageIDs.contains(62), "the new image waits for the release")
+        let held = engine.frame()
+        #expect(held.kitty?.placements.map(\.imageID) == [61], "the held frame keeps the picture it drew")
+        #expect(held.kitty?.storedImageIDs.contains(62) == false, "the new image waits for the release")
+        #expect(held.kittyGraphics == nil, "a held frame gets no store handle to read")
 
         engine.receive(Data("\u{1b}[?2026l".utf8))
         #expect(!engine.renderHeld)
-        let released = try #require(engine.frame().kitty)
-        #expect(released.placements.map(\.imageID) == [62], "the release shows the new picture")
+        let released = engine.frame()
+        #expect(released.kitty?.placements.map(\.imageID) == [62], "the release shows the new picture")
+    }
+
+    /// A reset frees the alternate screen's image storage while a host still
+    /// holds the frame (mode 2026 clears with the reset, so the host sets it
+    /// again). A view rebuilt with an empty texture cache then asks for pixels it
+    /// does not have: the held frame must hand the renderer no store handle, so
+    /// nothing dereferences the freed store, and the picture has to come back from
+    /// the live store after the release.
+    @Test func heldFrameAcrossResetResolvesNothingFromTheOldStore() throws {
+        let harness = try renderHarness(columns: 8, rows: 4)
+        let white = rgbaPayload([Pixel(red: 200, green: 100, blue: 50)])
+        harness.engine.receive(Data("\u{1b}[?1049h".utf8)) // alternate screen, then RIS frees it
+        harness.engine.receive(kitty("a=T,f=32,s=1,v=1,i=81,c=1,r=1", payload: white))
+        #expect(harness.encode(fullRebuild: true).imageUploadCount == 1)
+
+        engineHold(harness)
+        harness.engine.receive(Data("\u{1b}c".utf8)) // RIS
+        #expect(!harness.engine.renderHeld, "a reset clears mode 2026")
+        engineHold(harness)
+        #expect(harness.engine.renderHeld)
+        harness.engine.receive(kitty("a=T,f=32,s=1,v=1,i=82,c=1,r=1", payload: white))
+
+        // The held frame still shows the picture from the store that is gone, and
+        // carries no handle to it.
+        let stale = harness.engine.frame()
+        #expect(stale.kitty?.placements.map(\.imageID) == [81])
+        #expect(stale.kittyGraphics == nil)
+
+        // A renderer that was just created has no textures, so the held frame is
+        // a cache miss against a store that may already be gone.
+        let fresh = try SSHTerminalMetalRenderer(
+            pipeline: try SSHTerminalMetalPipeline.shared(),
+            metrics: SSHTerminalCellMetrics.codeFont(), scale: 2
+        )
+        let freshTexture = try #require(fresh.makeOffscreenTexture(
+            width: max(1, Int(SSHTerminalCellMetrics.codeFont().cellSize.width * 16)),
+            height: max(1, Int(SSHTerminalCellMetrics.codeFont().cellSize.height * 8))
+        ))
+        let held = harness.encode(fullRebuild: true, with: fresh, texture: freshTexture)
+        #expect(held.completed)
+        #expect(held.imageUploadCount == 0, "a held frame resolves no pixels")
+        #expect(fresh.cachedImageCount == 0)
+
+        harness.engine.receive(Data("\u{1b}[?2026l".utf8))
+        let released = harness.engine.frame()
+        #expect(!harness.engine.renderHeld)
+        #expect(released.kittyGraphics != nil, "the release hands out the live store")
+        let after = harness.encode(fullRebuild: true, with: fresh, texture: freshTexture)
+        let snapshot = try #require(released.kitty)
+        #expect(after.imageUploadCount == 1, "the picture is read from the current store")
+        #expect(after.imagePlacementCount == 1)
+        let image = try #require(snapshot.images.first)
+        #expect(image.id == 82)
+        #expect(try pixelBytes(of: image, graphics: released.kittyGraphics) == [200, 100, 50, 255])
+    }
+
+    private func engineHold(_ harness: RenderHarness) {
+        harness.engine.receive(Data("\u{1b}[?2026h".utf8))
     }
 
     // MARK: - PNG fixture
@@ -676,9 +752,10 @@ struct SSHTerminalKittyGraphicsTests {
     /// The stored pixels of one image, read through the same lazy lookup the
     /// renderer uses when it uploads.
     private func pixelBytes(
-        of image: SSHTerminalKittyImage, in snapshot: SSHTerminalKittySnapshot
+        of image: SSHTerminalKittyImage, graphics: GhosttyKittyGraphics?
     ) throws -> [UInt8] {
-        let pixels = try #require(image.resolvePixels(snapshot.graphics))
+        let handle = try #require(graphics)
+        let pixels = try #require(image.resolvePixels(handle))
         return Array(UnsafeBufferPointer(start: pixels.pointer, count: pixels.byteCount))
     }
 
