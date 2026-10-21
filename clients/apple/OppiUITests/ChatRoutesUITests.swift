@@ -20,16 +20,19 @@ final class ChatRoutesUITests: XCTestCase {
 
     // MARK: - Top bar
 
-    /// Two quick actions, the ring, and a … menu. The chosen pair is Files and
-    /// Outline by default; Terminal needs the SSH Terminal experiment.
-    func testTopBarKeepsTwoQuickActionsAndTheRestInTheMenu() {
-        launch()
+    /// The default bar: Files, Outline, and the context ring, with Terminal in
+    /// the … menu because the SSH Terminal experiment is off. Customize Top
+    /// Bar… opens the Top Bar page over the chat.
+    func testTopBarShowsTheDefaultButtonsAndTheRestInTheMenu() {
+        // The default layout is pinned in the volatile domain, so this reads
+        // the default and not whatever an earlier run saved on this simulator.
+        launchScreen("chat-top-bar-default")
         dismissMicrophonePrompt()
         let files = app.buttons["chat.toolbar.files"]
-        XCTAssertTrue(files.waitForExistence(timeout: 10), "Files is a default quick action")
-        XCTAssertTrue(app.buttons["chat.toolbar.outline"].exists, "Outline is a default quick action")
+        XCTAssertTrue(files.waitForExistence(timeout: 15), "Files is on by default")
+        XCTAssertTrue(app.buttons["chat.toolbar.outline"].exists, "Outline is on by default")
+        XCTAssertTrue(app.buttons["chat.toolbar.context"].exists, "The context ring is on by default")
         XCTAssertFalse(app.buttons["chat.toolbar.terminal"].exists, "Terminal needs the SSH Terminal experiment")
-        XCTAssertTrue(app.buttons["chat.toolbar.context"].exists, "The context ring always stays")
         attachScreenshot("chat-top-bar-default")
 
         let more = app.buttons["chat.toolbar.more"]
@@ -39,42 +42,145 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(customize.waitForExistence(timeout: 5), "The … menu must offer Customize Top Bar…")
         attachScreenshot("chat-top-bar-menu")
         customize.tap()
-        XCTAssertTrue(app.navigationBars["Chat"].waitForExistence(timeout: 5), "Customize Top Bar must open the Chat settings")
-        XCTAssertTrue(
-            app.segmentedControls["settings.chatStyle"].waitForExistence(timeout: 5),
-            "The Chat settings page must show its style picker"
-        )
-        XCTAssertTrue(
-            app.segmentedControls["settings.chatStyle"].buttons["Full"].waitForExistence(timeout: 5),
-            "The style picker keeps its three choices"
-        )
-        // The page is settled once its last row is on screen.
-        XCTAssertTrue(
-            app.buttons["settings.chat.quickComments"].waitForExistence(timeout: 5),
-            "The Chat settings page must show its Quick Comments row"
+        XCTAssertTrue(app.navigationBars["Top Bar"].waitForExistence(timeout: 5), "Customize Top Bar must open the Top Bar page")
+        for id in ["files", "outline", "context", "terminal"] {
+            XCTAssertTrue(
+                app.switches["settings.chat.topBar.\(id)"].waitForExistence(timeout: 5),
+                "The Top Bar page must show the \(id) switch"
+            )
+        }
+        XCTAssertEqual(app.switches["settings.chat.topBar.files"].value as? String, "1", "Files starts on")
+        XCTAssertEqual(app.switches["settings.chat.topBar.terminal"].value as? String, "0", "Terminal starts off")
+        XCTAssertFalse(
+            app.switches["settings.chat.topBar.terminal"].isEnabled,
+            "Terminal cannot be turned on while the experiment is off"
         )
         attachScreenshot("chat-settings-top-bar")
         assertRunning()
     }
 
-    /// The same bar with Terminal chosen: it takes a slot, Files keeps its own,
-    /// and Outline moves into the … menu.
-    func testTopBarWithTerminalAsAQuickAction() {
+    /// Terminal on and shown: it takes its place in the bar, and the buttons the
+    /// user hid — Outline and the ring — are in the … menu instead.
+    func testTopBarWithTerminalOnAndTheRestInTheMenu() {
         launchScreen("chat-top-bar-terminal")
         dismissMicrophonePrompt()
         XCTAssertTrue(
             app.buttons["chat.toolbar.terminal"].waitForExistence(timeout: 15),
-            "Terminal must take the first slot when the experiment is on"
+            "Terminal must show when it is on and the experiment is on"
         )
-        XCTAssertTrue(app.buttons["chat.toolbar.files"].exists, "Files keeps the second slot")
-        XCTAssertFalse(app.buttons["chat.toolbar.outline"].exists, "Outline moves to the … menu")
-        XCTAssertTrue(app.buttons["chat.toolbar.context"].exists, "The context ring always stays")
+        XCTAssertTrue(app.buttons["chat.toolbar.files"].exists, "Files is on")
+        XCTAssertFalse(app.buttons["chat.toolbar.outline"].exists, "A hidden Outline is not on the bar")
+        XCTAssertFalse(app.buttons["chat.toolbar.context"].exists, "A hidden ring is not on the bar")
         attachScreenshot("chat-top-bar-terminal")
 
         app.buttons["chat.toolbar.more"].tap()
-        XCTAssertTrue(app.buttons["Outline"].waitForExistence(timeout: 5), "Outline is the … menu's action")
+        XCTAssertTrue(
+            app.buttons["chat.toolbar.menu.outline"].waitForExistence(timeout: 5),
+            "Outline is the … menu's action"
+        )
+        XCTAssertTrue(app.buttons["chat.toolbar.menu.context"].exists, "The hidden ring is in the … menu")
         attachScreenshot("chat-top-bar-terminal-menu")
         assertRunning()
+    }
+
+    /// Every button on: all four are in the bar in the chosen order, and the …
+    /// menu has nothing but Customize Top Bar….
+    func testTopBarShowsEveryButtonWhenAllAreOn() {
+        launchScreen("chat-top-bar-all")
+        dismissMicrophonePrompt()
+        let order = ["chat.toolbar.files", "chat.toolbar.outline", "chat.toolbar.context", "chat.toolbar.terminal"]
+        for id in order {
+            XCTAssertTrue(app.buttons[id].waitForExistence(timeout: 15), "\(id) must be on the bar")
+        }
+        assertLeftToRight(order.map { app.buttons[$0] }, "The all-on bar")
+        attachScreenshot("chat-top-bar-all")
+
+        app.buttons["chat.toolbar.more"].tap()
+        XCTAssertTrue(app.buttons["Customize Top Bar…"].waitForExistence(timeout: 5), "The … menu stays")
+        XCTAssertFalse(
+            app.buttons["chat.toolbar.menu.files"].exists,
+            "Nothing is hidden, so the … menu holds only Customize Top Bar…"
+        )
+        assertRunning()
+    }
+
+    /// Every button off: only … is left, and the menu offers all four.
+    func testTopBarShowsOnlyTheMenuWhenEveryButtonIsOff() {
+        launchScreen("chat-top-bar-none")
+        dismissMicrophonePrompt()
+        let more = app.buttons["chat.toolbar.more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 15), "… is the only bar control left")
+        for id in ["files", "outline", "context", "terminal"] {
+            XCTAssertFalse(app.buttons["chat.toolbar.\(id)"].exists, "\(id) is hidden")
+        }
+        attachScreenshot("chat-top-bar-none")
+
+        more.tap()
+        for id in ["files", "outline", "context", "terminal"] {
+            XCTAssertTrue(
+                app.buttons["chat.toolbar.menu.\(id)"].waitForExistence(timeout: 5),
+                "\(id) must be in the … menu"
+            )
+        }
+        XCTAssertTrue(app.buttons["Customize Top Bar…"].exists, "Customize Top Bar… stays last")
+        attachScreenshot("chat-top-bar-none-menu")
+        assertRunning()
+    }
+
+    /// A stored order is what the bar reads, and the Top Bar page lists the same
+    /// order with a reorder handle on every row.
+    func testTopBarFollowsTheChosenOrder() {
+        launchScreen("chat-top-bar-reordered")
+        dismissMicrophonePrompt()
+        let order = ["chat.toolbar.outline", "chat.toolbar.files", "chat.toolbar.context", "chat.toolbar.terminal"]
+        for id in order {
+            XCTAssertTrue(app.buttons[id].waitForExistence(timeout: 15), "\(id) must be on the bar")
+        }
+        assertLeftToRight(order.map { app.buttons[$0] }, "The reordered bar")
+        attachScreenshot("chat-top-bar-reordered")
+
+        app.buttons["chat.toolbar.more"].tap()
+        let customize = app.buttons["Customize Top Bar…"]
+        XCTAssertTrue(customize.waitForExistence(timeout: 5))
+        customize.tap()
+        XCTAssertTrue(app.navigationBars["Top Bar"].waitForExistence(timeout: 5))
+        let rows = ["outline", "files", "context", "terminal"].map { "settings.chat.topBar.row.\($0)" }
+        for id in rows {
+            XCTAssertTrue(app.cells[id].waitForExistence(timeout: 5), "\(id) must be a row")
+        }
+        assertLeftToRight(rows.map { app.cells[$0] }, "The Top Bar page rows")
+        for id in rows {
+            // The handle carries the row's identifier and a "Reorder <label>"
+            // label, so the page is always in editing mode.
+            XCTAssertTrue(
+                app.cells[id].buttons[id].exists,
+                "\(id) must keep its reorder handle: the page is always in editing mode"
+            )
+        }
+        attachScreenshot("chat-settings-top-bar-reorder")
+        assertRunning()
+    }
+
+    /// Left-to-right order of the controls the caller names, which is the order
+    /// the user chose. A missing element fails rather than reading as a frame at
+    /// zero, which would sort into place and pass.
+    private func assertLeftToRight(
+        _ elements: [XCUIElement],
+        _ label: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let frames = elements.map(\.frame)
+        for (index, frame) in frames.enumerated() where frame.isEmpty {
+            XCTFail("\(label): element \(index) is missing or has no frame", file: file, line: line)
+        }
+        XCTAssertEqual(
+            frames.map(\.minX),
+            frames.map(\.minX).sorted(),
+            "\(label) must read left to right in this order",
+            file: file,
+            line: line
+        )
     }
 
     // MARK: - Side panels

@@ -22,7 +22,7 @@ After you save a host, **Terminal** appears directly below **MCP Servers** in th
 
 ## Open Terminal here
 
-A workspace's **Terminal** button (top right, beside **Config**) and a chat's **Terminal** quick action open a login shell on the saved host that serves that workspace's server, starting in a folder:
+A workspace's **Terminal** button (top right, beside **Config**) and a chat's **Terminal** button open a login shell on the saved host that serves that workspace's server, starting in a folder:
 
 - from a workspace: the workspace's root folder;
 - from a chat: the session's own worktree folder when it runs in one, else its workspace's root folder.
@@ -33,7 +33,7 @@ Which host: Oppi matches the workspace's server host against the saved SSH hosts
 
 A folder terminal is its own terminal, kept while it is connected like any other: leaving the workspace or chat keeps it, tapping Terminal there again returns to the same shell. Oppi keeps one terminal per saved host and folder, so the same host can have its own terminal plus one per folder. Editing or deleting the host, turning the experiment off, and the background grace end them all.
 
-In a chat, the top bar keeps two quick actions beside the context ring: **Files** and **Outline** by default, with the third action in the **…** menu next to **Customize Top Bar…**. Settings → **Chat** → **Top Bar Buttons** chooses which two. **Terminal** is offered there only while the experiment is on; while it is off, the two remaining actions fill the bar and nothing about the bar changes for people who do not use it.
+In a chat, the top bar shows the buttons chosen in Settings → **Chat** → **Top Bar**: **Files**, **Outline**, **Context** (the usage ring), and **Terminal**, each one on or off and in the chosen order, with **…** always last. The default is Files, Outline, and Context, with **Terminal** in the **…** menu next to **Customize Top Bar…**. **Terminal** is offered only while the experiment is on, and only in a chat whose workspace has a folder on the server; a button the chat cannot offer is not shown at all.
 
 ## Font and icons
 

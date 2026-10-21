@@ -1,137 +1,147 @@
 import Foundation
 
-/// A chat screen action that can sit in the top bar: one of the two quick
-/// action slots, or (when it is not chosen) the … menu.
-///
-/// The order here is the order a slot is refilled from when the chosen action
-/// is unavailable (Terminal while the SSH Terminal experiment is off), so it
-/// is also the reading order of the … menu.
+/// A button a chat can show in its top bar, or — when it is hidden — offer in
+/// the … menu. The cases read in the default bar order.
 enum ChatTopBarAction: String, CaseIterable, Identifiable, Hashable {
     case files
-    case terminal
     case outline
+    case context
+    case terminal
 
     var id: String { rawValue }
 
-    /// What the button and menu say. The terminal's label names the app.
+    /// What the button and the settings row say. The terminal's label names the
+    /// app; the ring's names the panel it opens.
     var label: String {
         switch self {
         case .files: String(localized: "Files")
-        case .terminal: String(localized: "Terminal")
         case .outline: String(localized: "Outline")
+        case .context: String(localized: "Context")
+        case .terminal: String(localized: "Terminal")
         }
     }
 
-    /// The spoken purpose of the bar button, which differs from the menu label:
+    /// The spoken purpose of the control, which differs from the label:
     /// "Files" is the panel it opens, and VoiceOver says what that does.
     var accessibilityLabel: String {
         switch self {
         case .files: String(localized: "Open chat files")
-        case .terminal: String(localized: "Open terminal here")
         case .outline: String(localized: "Open session outline")
+        case .context: String(localized: "Open context inspector")
+        case .terminal: String(localized: "Open terminal here")
         }
     }
 
-    /// Stable identifier on the bar button, whichever slot holds it. Existing
-    /// ids stay: `chat.toolbar.files` and `chat.toolbar.outline`.
+    /// Stable identifier on the control, whichever position holds it. Files,
+    /// Outline, Terminal, the … menu, and the context ring keep the ids they
+    /// had before the bar became reorderable.
     var accessibilityIdentifier: String {
         switch self {
         case .files: "chat.toolbar.files"
-        case .terminal: "chat.toolbar.terminal"
         case .outline: "chat.toolbar.outline"
+        case .context: "chat.toolbar.context"
+        case .terminal: "chat.toolbar.terminal"
         }
     }
+
+    /// Stable identifier on the … menu item for a hidden action.
+    var menuIdentifier: String { "chat.toolbar.menu.\(rawValue)" }
 
     var symbolName: String {
         switch self {
         case .files: "folder"
-        case .terminal: "terminal"
         case .outline: "list.bullet"
+        case .context: "chart.pie"
+        case .terminal: "terminal"
         }
     }
 
-    /// The … menu title for an action that did not get a slot.
-    var menuTitle: String { label }
-
-    /// Terminal can be chosen only while the SSH Terminal experiment is on.
-    var isAvailable: Bool {
+    /// The … menu title. Files names the state it would change; the rest name
+    /// the panel they open.
+    func menuTitle(filesOpen: Bool) -> String {
         switch self {
-        case .terminal: AppPreferences.Experiments.sshTerminalEnabled
-        case .files, .outline: true
+        case .files: filesOpen ? String(localized: "Close Files") : String(localized: "Open Files")
+        case .outline, .context, .terminal: label
         }
     }
 }
 
-/// The two chosen slot actions and the ones left in the … menu.
+/// Which top bar buttons a chat shows, and in what order.
 ///
-/// The stored choice is exactly two actions in slot order. A stored action that
-/// is unavailable (Terminal with the experiment off) is skipped, and the slots
-/// refill in `ChatTopBarAction` order from the actions that remain, so a bar
-/// keeps two quick actions and the missing one reappears when it returns.
-struct ChatTopBarSelection: Equatable {
-    /// Stored slot order. Always two entries; see `normalized`.
-    private(set) var actions: [ChatTopBarAction]
+/// Every action is in `order`; the ones in `shown` are drawn in the bar in that
+/// order, and the rest are offered in the … menu, also in that order. Showing
+/// fewer than all of them, or none, is a valid choice: the … menu always stays.
+/// The preference holds both lists, so a hidden action keeps its place for when
+/// it comes back.
+struct ChatTopBarLayout: Hashable {
+    /// Every action in the user's order.
+    private(set) var order: [ChatTopBarAction]
+    /// The actions the bar draws. The rest are in the … menu.
+    private(set) var shown: Set<ChatTopBarAction>
 
-    /// Files and Outline: the bar people who never open the setting already have.
-    private static let defaultActions: [ChatTopBarAction] = [.files, .outline]
-    static let defaultValue = ChatTopBarSelection(stored: defaultActions)
+    /// Files, Outline, and Context: the bar people already had, with Terminal
+    /// one … menu away because it needs the SSH Terminal experiment.
+    static let defaultShown: Set<ChatTopBarAction> = [.files, .outline, .context]
+    static let defaultValue = ChatTopBarLayout(order: ChatTopBarAction.allCases, shown: defaultShown)
 
-    init(actions: [ChatTopBarAction]) {
-        self.actions = Self.normalized(actions)
-    }
-
-    private init(stored: [ChatTopBarAction]) {
-        actions = stored
-    }
-
-    /// Encoded form, so the preference holds raw values and an unknown one
-    /// decodes as the default instead of failing.
-    init(rawValues: [String]) {
-        self.init(actions: rawValues.compactMap(ChatTopBarAction.init(rawValue:)))
-    }
-
-    var rawValues: [String] { actions.map(\.rawValue) }
-
-    /// Two distinct known actions, or the default pair when the input cannot
-    /// supply two (a missing, duplicated, or unrecognized store).
-    static func normalized(_ actions: [ChatTopBarAction]) -> [ChatTopBarAction] {
+    /// A stored order missing an action, or naming one twice, still covers every
+    /// action exactly once: the rest follow in `ChatTopBarAction` order.
+    init(order: [ChatTopBarAction], shown: Set<ChatTopBarAction>) {
         var seen = Set<ChatTopBarAction>()
-        var result: [ChatTopBarAction] = []
-        for action in actions where seen.insert(action).inserted {
-            result.append(action)
-            if result.count == 2 { return result }
+        var normalized: [ChatTopBarAction] = []
+        for action in order where seen.insert(action).inserted {
+            normalized.append(action)
         }
-        return defaultActions
-    }
-
-    /// The two bar slots, in stored order, with actions the screen cannot
-    /// offer right now replaced by the next available one.
-    ///
-    /// `available` is what this screen can show; the chat passes its own set
-    /// (Files and Terminal need a workspace, Outline needs a timeline).
-    func slots(available: Set<ChatTopBarAction>) -> [ChatTopBarAction] {
-        var slots = actions.filter { available.contains($0) }
-        for action in ChatTopBarAction.allCases where available.contains(action) && !slots.contains(action) {
-            if slots.count == 2 { break }
-            slots.append(action)
+        for action in ChatTopBarAction.allCases where seen.insert(action).inserted {
+            normalized.append(action)
         }
-        return Array(slots.prefix(2))
+        self.order = normalized
+        self.shown = shown
     }
 
-    /// What the bar keeps in the … menu: every available action without a slot,
-    /// in reading order.
-    func overflow(available: Set<ChatTopBarAction>) -> [ChatTopBarAction] {
-        let slots = slots(available: available)
-        return ChatTopBarAction.allCases.filter { available.contains($0) && !slots.contains($0) }
+    /// The encoded form, so the preference holds raw values and an unknown one
+    /// decodes as missing instead of failing.
+    init(storedOrder: [String], storedShown: [String]) {
+        self.init(
+            order: storedOrder.compactMap(ChatTopBarAction.init(rawValue:)),
+            shown: Set(storedShown.compactMap(ChatTopBarAction.init(rawValue:)))
+        )
     }
 
-    /// Choosing `action` for `slot`. Choosing the action already in the other
-    /// slot swaps the two, so both slots always hold a different action.
-    func choosing(_ action: ChatTopBarAction, forSlot slot: Int) -> ChatTopBarSelection {
-        guard actions.indices.contains(slot), actions[slot] != action else { return self }
-        var next = actions
-        if let other = next.firstIndex(of: action) { next[other] = next[slot] }
-        next[slot] = action
-        return ChatTopBarSelection(actions: next)
+    var storedOrder: [String] { order.map(\.rawValue) }
+    var storedShown: [String] { order.filter(shown.contains).map(\.rawValue) }
+
+    func isShown(_ action: ChatTopBarAction) -> Bool { shown.contains(action) }
+
+    /// Shows or hides one action. The order does not change, so a hidden action
+    /// returns to the place it left.
+    func setting(_ action: ChatTopBarAction, shown isShown: Bool) -> ChatTopBarLayout {
+        var next = shown
+        if isShown { next.insert(action) } else { next.remove(action) }
+        return ChatTopBarLayout(order: order, shown: next)
+    }
+
+    /// Applies a reordered run of actions, as a settings page that shows a
+    /// subset of them hands it over. Actions the run does not name keep their
+    /// positions, so a page that leaves Terminal out still reorders the rest.
+    func reordering(_ reordered: [ChatTopBarAction]) -> ChatTopBarLayout {
+        var next = reordered.makeIterator()
+        let named = Set(reordered)
+        return ChatTopBarLayout(
+            order: order.map { named.contains($0) ? next.next() ?? $0 : $0 },
+            shown: shown
+        )
+    }
+
+    /// What the bar draws, in order: the shown actions this screen can offer.
+    /// An action it cannot offer is not drawn and not offered in the menu
+    /// either, because a button that could only fail is worse than no button.
+    func bar(available: Set<ChatTopBarAction>) -> [ChatTopBarAction] {
+        order.filter { shown.contains($0) && available.contains($0) }
+    }
+
+    /// What the … menu offers, in order: the actions the bar does not draw.
+    func menu(available: Set<ChatTopBarAction>) -> [ChatTopBarAction] {
+        order.filter { !shown.contains($0) && available.contains($0) }
     }
 }

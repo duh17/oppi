@@ -511,32 +511,35 @@ enum AppPreferences {
 
     // MARK: - Chat Top Bar
 
-    /// Which two actions the chat's top bar keeps as quick actions
-    /// (Files, Terminal, Outline). The rest live in the bar's … menu. Device-local,
+    /// Which buttons the chat's top bar shows (Files, Outline, Context, Terminal)
+    /// and in what order. Hidden buttons live in the bar's … menu. Device-local,
     /// like the other chat display preferences, and the same for every session.
     enum ChatTopBar {
-        static let actionsKey = "\(AppIdentifiers.subsystem).chatDisplay.topBarActions"
+        static let orderKey = "\(AppIdentifiers.subsystem).chatDisplay.topBarOrder"
+        static let shownKey = "\(AppIdentifiers.subsystem).chatDisplay.topBarShown"
         static let didChangeNotification = Notification.Name("oppi.chatTopBar.didChange")
 
-        /// Exactly two slot actions in order. A missing or unrecognized value
-        /// falls back to Files and Outline, so nobody who never set this sees a
-        /// different bar.
-        static var selection: ChatTopBarSelection { selection(in: .standard) }
+        /// The stored order and visibility. Both keys missing (a fresh install,
+        /// or one that never opened the setting) falls back to Files, Outline,
+        /// and Context in that order, so nobody who never chose sees a different
+        /// bar. A hidden-everything choice stores an empty list, not nothing.
+        static var layout: ChatTopBarLayout { layout(in: .standard) }
 
-        static func selection(in defaults: UserDefaults) -> ChatTopBarSelection {
-            guard let raw = defaults.stringArray(forKey: actionsKey) else {
-                return .defaultValue
-            }
-            return ChatTopBarSelection(rawValues: raw)
+        static func layout(in defaults: UserDefaults) -> ChatTopBarLayout {
+            guard let order = defaults.stringArray(forKey: orderKey),
+                  let shown = defaults.stringArray(forKey: shownKey)
+            else { return .defaultValue }
+            return ChatTopBarLayout(storedOrder: order, storedShown: shown)
         }
 
-        static func setSelection(_ selection: ChatTopBarSelection) {
-            setSelection(selection, in: .standard)
+        static func setLayout(_ layout: ChatTopBarLayout) {
+            setLayout(layout, in: .standard)
         }
 
-        static func setSelection(_ selection: ChatTopBarSelection, in defaults: UserDefaults) {
-            guard selection.actions != Self.selection(in: defaults).actions else { return }
-            defaults.set(selection.rawValues, forKey: actionsKey)
+        static func setLayout(_ layout: ChatTopBarLayout, in defaults: UserDefaults) {
+            guard layout != Self.layout(in: defaults) else { return }
+            defaults.set(layout.storedOrder, forKey: orderKey)
+            defaults.set(layout.storedShown, forKey: shownKey)
             NotificationCenter.default.post(name: didChangeNotification, object: nil)
         }
     }

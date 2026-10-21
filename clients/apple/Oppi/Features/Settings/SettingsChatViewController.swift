@@ -1,7 +1,7 @@
 import UIKit
 
 /// Settings > Chat: the busy animation, the chat style and its work strip,
-/// the two top bar buttons, and Quick Comments. Values are
+/// the Top Bar page, and Quick Comments. Values are
 /// `AppPreferences.ChatDisplay` / `.ChatTopBar`, which open chats observe, so a
 /// change reaches them without reopening the chat.
 final class SettingsChatViewController: UIViewController, UICollectionViewDelegate {
@@ -15,7 +15,7 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
     private enum Item: Hashable {
         case spinnerStyle, spinnerPreview
         case chatStyle, workStripStyle, workStripPreview, conversationPreview
-        case topBarFirst, topBarSecond
+        case topBar
         case quickComments
     }
 
@@ -59,7 +59,7 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
         }
         // Read every value so any change re-runs this pass.
         _ = (AppPreferences.Appearance.spinnerStyle, AppPreferences.ChatDisplay.style)
-        _ = (AppPreferences.ChatDisplay.workStripStyle, AppPreferences.ChatTopBar.selection)
+        _ = (AppPreferences.ChatDisplay.workStripStyle, AppPreferences.ChatTopBar.layout)
         applySnapshot()
     }
 
@@ -77,14 +77,16 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
         intervalEndedAt: Date(timeIntervalSince1970: 9)
     )
 
-    /// What a slot menu may offer: the actions available on this device, plus
-    /// the stored one when it is not offered right now.
-    static func slotOptions(current: ChatTopBarAction) -> [ChatTopBarAction] {
-        ChatTopBarAction.allCases.filter { $0.isAvailable || $0 == current }
-    }
-
     private var chatStyle: AppPreferences.ChatDisplay.Style { AppPreferences.ChatDisplay.style }
-    private var topBarSelection: ChatTopBarSelection { AppPreferences.ChatTopBar.selection }
+    private var topBarLayout: ChatTopBarLayout { AppPreferences.ChatTopBar.layout }
+
+    /// Which buttons the Top Bar page has on, in the bar's order.
+    private var topBarSummary: String {
+        let labels = topBarLayout.order.filter(topBarLayout.isShown).map(\.label)
+        return labels.isEmpty
+            ? String(localized: "Only the … menu")
+            : labels.joined(separator: ", ")
+    }
 
     private func applySnapshot() {
         guard let dataSource else { return }
@@ -98,7 +100,7 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
         case .chat: style.append(.conversationPreview)
         }
         snapshot.appendItems(style, toSection: .style)
-        snapshot.appendItems([.topBarFirst, .topBarSecond], toSection: .topBar)
+        snapshot.appendItems([.topBar], toSection: .topBar)
         snapshot.appendItems([.quickComments], toSection: .comments)
         let themeID = ThemeRuntimeState.currentThemeID()
         let shown = Set(dataSource.snapshot().itemIdentifiers)
@@ -116,8 +118,7 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
         case .chatStyle: AnyHashable(chatStyle.rawValue)
         case .workStripStyle, .workStripPreview: AnyHashable(AppPreferences.ChatDisplay.workStripStyle.rawValue)
         case .conversationPreview: AnyHashable(chatStyle.rawValue)
-        case .topBarFirst: AnyHashable(topBarSelection.actions.first?.rawValue)
-        case .topBarSecond: AnyHashable(topBarSelection.actions.last?.rawValue)
+        case .topBar: AnyHashable(topBarLayout)
         case .quickComments: AnyHashable("")
         }
     }
@@ -152,7 +153,7 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
                 collectionView.dequeueConfiguredReusableCell(using: segmented, for: indexPath, item: item)
             case .spinnerPreview, .workStripPreview, .conversationPreview:
                 collectionView.dequeueConfiguredReusableCell(using: preview, for: indexPath, item: item)
-            case .quickComments:
+            case .quickComments, .topBar:
                 collectionView.dequeueConfiguredReusableCell(using: action, for: indexPath, item: item)
             default:
                 collectionView.dequeueConfiguredReusableCell(using: menu, for: indexPath, item: item)
@@ -173,7 +174,7 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
         switch section {
         case .busy: nil
         case .style: String(localized: "Style")
-        case .topBar: String(localized: "Top Bar Buttons")
+        case .topBar: String(localized: "Top Bar")
         case .comments: nil
         }
     }
@@ -185,7 +186,7 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
         case .style:
             Self.styleFooter(chatStyle)
         case .topBar:
-            String(localized: "The two buttons beside the context ring in a chat's top bar. The other action is in the … menu, with Customize Top Bar. Terminal appears here only while SSH Terminal is on in Experiments.")
+            String(localized: "The buttons a chat shows beside the session title, in this order. A button turned off there moves into the … menu.")
         case .comments:
             String(localized: "Edit the quick comments shown after selecting text and choosing Comment.")
         }
@@ -205,8 +206,8 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
 
     // MARK: - Cells
 
-    /// The spinner, the style, and the two top bar slots: a title and a pop-up
-    /// menu of the choices, like the rest of Settings.
+    /// The spinner and the style: a title and a pop-up menu of the choices,
+    /// like the rest of Settings.
     private func configureMenuRow(_ cell: UICollectionViewListCell, item: Item) {
         var content = UIListContentConfiguration.valueCell()
         cell.contentConfiguration = nil
@@ -220,23 +221,6 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
                 options: SpinnerStyle.allCases.map { style in
                     (style.displayName, style == AppPreferences.Appearance.spinnerStyle, { [weak self] in
                         AppPreferences.Appearance.setSpinnerStyle(style)
-                        self?.setNeedsUpdateProperties()
-                    })
-                }
-            )]
-        case .topBarFirst, .topBarSecond:
-            let slot = item == .topBarFirst ? 0 : 1
-            content.text = slot == 0 ? String(localized: "Button 1") : String(localized: "Button 2")
-            let current = topBarSelection.actions[slot]
-            cell.accessories = [.settingsPopUpMenu(
-                identifier: slot == 0 ? "settings.chat.topBar.slot1" : "settings.chat.topBar.slot2",
-                // Terminal is offered only while the experiment is on, but a
-                // stored choice for it still shows so the setting never lies
-                // about what is saved.
-                options: Self.slotOptions(current: current).map { action in
-                    (action.label, action == current, { [weak self] in
-                        let selection = AppPreferences.ChatTopBar.selection.choosing(action, forSlot: slot)
-                        AppPreferences.ChatTopBar.setSelection(selection)
                         self?.setNeedsUpdateProperties()
                     })
                 }
@@ -307,33 +291,37 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
     }
 
     private func configureButtonRow(_ cell: SettingsButtonRowCell, item: Item) {
-        guard item == .quickComments else { return }
         let palette = ThemeRuntimeState.currentPalette()
-        cell.configure(
-            title: String(localized: "Quick Comments"),
-            identifier: "settings.chat.quickComments",
-            color: UIColor(palette.fg)
-        ) { [weak self] in
-            guard let self, let root = HostFactory.root(near: self) else { return }
-            Router.push(
-                HostFactory.screen(root: root, bars: ScreenBars()) { QuickCommentsSettingsView() },
-                from: self
-            )
+        switch item {
+        case .topBar:
+            cell.configure(
+                title: String(localized: "Top Bar"),
+                value: topBarSummary,
+                identifier: "settings.chat.topBar",
+                color: UIColor(palette.fg)
+            ) { [weak self] in
+                guard let self else { return }
+                navigationController?.pushViewController(SettingsChatTopBarViewController(), animated: true)
+            }
+        case .quickComments:
+            cell.configure(
+                title: String(localized: "Quick Comments"),
+                identifier: "settings.chat.quickComments",
+                color: UIColor(palette.fg)
+            ) { [weak self] in
+                guard let self, let root = HostFactory.root(near: self) else { return }
+                Router.push(
+                    HostFactory.screen(root: root, bars: ScreenBars()) { QuickCommentsSettingsView() },
+                    from: self
+                )
+            }
+        default:
+            break
         }
     }
 
     func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        dataSource?.itemIdentifier(for: indexPath) == .quickComments
-    }
-
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        collectionView.deselectItem(at: indexPath, animated: true)
-        guard dataSource?.itemIdentifier(for: indexPath) == .quickComments,
-              let root = HostFactory.root(near: self) else { return }
-        Router.push(
-            HostFactory.screen(root: root, bars: ScreenBars()) { QuickCommentsSettingsView() },
-            from: self
-        )
+        false
     }
 }
 
@@ -426,13 +414,24 @@ final class SettingsButtonRowCell: UICollectionViewListCell {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func configure(title: String, identifier: String, color: UIColor, action: @escaping () -> Void) {
+    /// `value` is a second line under the title, for a row that summarizes what
+    /// its page holds.
+    func configure(
+        title: String,
+        value: String? = nil,
+        identifier: String,
+        color: UIColor,
+        action: @escaping () -> Void
+    ) {
         var configuration = UIButton.Configuration.plain()
         configuration.title = title
+        configuration.subtitle = value
+        configuration.titleAlignment = .leading
         configuration.baseForegroundColor = color
         configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0)
         button.configuration = configuration
         button.accessibilityIdentifier = identifier
+        button.accessibilityValue = value
         if let tapAction { button.removeAction(tapAction, for: .touchUpInside) }
         let tap = UIAction { _ in action() }
         tapAction = tap
@@ -446,6 +445,7 @@ final class SettingsButtonRowCell: UICollectionViewListCell {
             self.tapAction = nil
         }
         button.accessibilityIdentifier = nil
+        button.accessibilityValue = nil
     }
 }
 

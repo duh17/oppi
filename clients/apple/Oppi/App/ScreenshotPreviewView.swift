@@ -179,11 +179,39 @@ struct ScreenshotPreviewView: View {
             WorkspaceShellScreenshotPreview()
         case "chat-top-bar":
             ChatRoutesHarnessView()
+        case "chat-top-bar-default":
+            ChatTopBarScreenshotPreview(
+                order: [.files, .outline, .context, .terminal],
+                shown: ChatTopBarLayout.defaultShown,
+                terminalExperiment: false
+            )
         case "chat-top-bar-terminal":
-            ChatTopBarTerminalScreenshotPreview()
+            ChatTopBarScreenshotPreview(
+                order: [.terminal, .files, .outline, .context],
+                shown: [.terminal, .files],
+                terminalExperiment: true
+            )
+        case "chat-top-bar-all":
+            ChatTopBarScreenshotPreview(
+                order: [.files, .outline, .context, .terminal],
+                shown: [.files, .outline, .context, .terminal],
+                terminalExperiment: true
+            )
+        case "chat-top-bar-none":
+            ChatTopBarScreenshotPreview(
+                order: [.files, .outline, .context, .terminal],
+                shown: [],
+                terminalExperiment: true
+            )
+        case "chat-top-bar-reordered":
+            ChatTopBarScreenshotPreview(
+                order: [.outline, .files, .context, .terminal],
+                shown: [.outline, .files, .context, .terminal],
+                terminalExperiment: true
+            )
         case "workspace-top-bar":
             WorkspaceTopBarScreenshotPreview()
-        case "settings-chat", "settings-editor":
+        case "settings-chat", "settings-editor", "settings-chat-top-bar":
             SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
         case "workspace-file-editor", "workspace-file-editor-markdown", "workspace-file-editor-vim":
             WorkspaceFileEditorScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
@@ -672,18 +700,22 @@ private struct AudioFilePlayerScreenshotPreview: View {
     }
 }
 
-/// `SCREENSHOT_SCREEN=chat-top-bar-terminal`: the chat's bar with Terminal as a
-/// quick action, over the `chat-routes` fixtures. The experiment flag and the
-/// two chosen buttons go in the volatile argument domain, so the simulator's
-/// saved settings are untouched.
-private struct ChatTopBarTerminalScreenshotPreview: View {
-    init() {
+/// `SCREENSHOT_SCREEN=chat-top-bar-default`, `-terminal`, `-all`, `-none`, and
+/// `-reordered`: the chat's bar over the `chat-routes` fixtures with a chosen
+/// top bar. The experiment flag and the layout go in the volatile argument
+/// domain, so the simulator's saved settings are untouched and a test's bar
+/// does not depend on what an earlier run left behind.
+private struct ChatTopBarScreenshotPreview: View {
+    init(
+        order: [ChatTopBarAction],
+        shown: Set<ChatTopBarAction>,
+        terminalExperiment: Bool
+    ) {
+        let layout = ChatTopBarLayout(order: order, shown: shown)
         ScreenshotVolatileDefaults.apply([
-            AppPreferences.Experiments.sshTerminalKey: true,
-            AppPreferences.ChatTopBar.actionsKey: [
-                ChatTopBarAction.terminal.rawValue,
-                ChatTopBarAction.files.rawValue,
-            ],
+            AppPreferences.Experiments.sshTerminalKey: terminalExperiment,
+            AppPreferences.ChatTopBar.orderKey: layout.storedOrder,
+            AppPreferences.ChatTopBar.shownKey: layout.storedShown,
         ])
     }
 
@@ -770,10 +802,10 @@ private struct SettingsPageScreenshotPreview: View {
 
     var body: some View {
         RouterPreviewControllerStack(root: root) {
-            if screen == "settings-editor" {
-                SettingsEditorViewController()
-            } else {
-                SettingsChatViewController()
+            switch screen {
+            case "settings-editor": SettingsEditorViewController()
+            case "settings-chat-top-bar": SettingsChatTopBarViewController()
+            default: SettingsChatViewController()
             }
         }
         .ignoresSafeArea()

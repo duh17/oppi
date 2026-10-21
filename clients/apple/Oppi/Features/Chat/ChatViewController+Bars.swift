@@ -1,16 +1,17 @@
 import UIKit
 
 /// The chat's navigation bar: Back leading, the session title in the middle,
-/// and trailing two quick actions (Files, Terminal, or Outline), the context
-/// ring, and a … menu with the actions that did not get a slot. On a vertical
-/// toolbar rail (the iPhone Duo) the same controls join the rail one per slot
-/// and the session slot carries the title's menu.
+/// and trailing the buttons the user chose — Files, Outline, the context ring,
+/// and Terminal, in their order — with a … menu holding the ones they hid. On
+/// a vertical toolbar rail (the iPhone Duo) the same controls join the rail one
+/// per position and the session slot carries the title's menu.
 ///
-/// The two quick actions are the Settings → Chat → Top Bar Buttons choice.
-/// An action this session cannot offer (Files and Terminal without a
-/// workspace, Outline on an empty timeline, Terminal while the experiment is
-/// off) gives its slot to the next action, and a chosen action that is only
-/// unavailable right now reappears on its own.
+/// The choice is Settings → Chat → Top Bar (`ChatTopBarLayout`). A show/hide
+/// toggle is a per-chat decision and an action this session cannot offer (Files
+/// and Terminal without a workspace, Outline on an empty timeline, Terminal
+/// while the experiment is off) leaves an empty place rather than borrowing
+/// another action's: what the user chose is what the bar shows, and the … menu
+/// never offers what could only fail.
 ///
 /// Items are built once and refreshed in the chat's `updateProperties()`.
 /// Each control's touch and accessibility activation run the same action.
@@ -21,12 +22,13 @@ final class ChatBarItems {
     /// root's sidebar toggle, `ChatRouteViewController`).
     var leadingPrefix: [UIBarButtonItem] = []
 
-    /// A per-screen state change (a panel opened, a value the slot set reads)
-    /// and a menu action now build their menus and stay on the same instance.
-    /// Rail items are ordered by `ChatTopBarAction` slot order; absent actions
-    /// are hidden, so a missing action leaves a hole to be filled.
+    /// A per-screen state change (a panel opened, a value the bar reads) and a
+    /// menu action now build their menus and stay on the same instance. Rail
+    /// items follow `ChatTopBarLayout.order`; a hidden action is hidden, so it
+    /// leaves no item behind. The context ring is not one of these: it is its
+    /// own control, placed in the order like the rest.
     private struct ActionControls {
-        /// One rail item with a labeled title (the Duo rail); a hidden item leaves a hole.
+        /// One rail item (the Duo rail); a hidden item leaves a gap.
         let rail: UIBarButtonItem
         /// The horizontal bar's plain control inside the trailing glass group.
         let button: UIButton
@@ -55,20 +57,21 @@ final class ChatBarItems {
     private lazy var terminal = ActionControls(rail: makeTerminalItem(), button: makeActionButton(.terminal))
     private lazy var outline = ActionControls(rail: makeOutlineItem(), button: makeActionButton(.outline))
 
-    /// Back alone on the left; the quick actions, the ring, and … on the right.
+    /// Back alone on the left; the chosen buttons and … on the right.
     private lazy var leadingStack = Self.group([backButton], spacing: 10)
     private lazy var trailingStack = Self.group([], spacing: 2)
     private lazy var leadingGroup = UIBarButtonItem(customView: leadingStack)
     private lazy var trailingGroup = UIBarButtonItem(customView: trailingStack)
     let titleControl = ChatTitleControl()
     /// What the trailing glass group currently holds, so a pass that changes
-    /// nothing leaves an open menu attached to its owner.
-    private var appliedSlots: [ChatTopBarAction] = []
+    /// nothing leaves an open menu attached to its owner. Nil until the first
+    /// pass builds the group: nothing drawn is still a group holding only ….
+    private var appliedBar: [ChatTopBarAction]?
 
-    /// Rail order, top to bottom: Back, session, quick action 1, quick action
-    /// 2, Context, … . Overflow empties the rail from the bottom; on a short
-    /// rail (the Duo cover display in landscape) Back, the session menu, and
-    /// Context stay, and the quick actions and … go to the system overflow.
+    /// Rail order, top to bottom: Back, session, then the shown buttons in the
+    /// user's order, then … . Overflow empties the rail from the bottom; on a
+    /// short rail (the Duo cover display in landscape) Back, the session menu,
+    /// and Context stay, and the rest go to the system overflow.
     /// Set while the chat leaves its stack (`clear()`); the chat lifts it when
     /// it appears again (a cancelled back swipe).
     var isSuspended = false
@@ -91,22 +94,25 @@ final class ChatBarItems {
             terminalEnabled: AppPreferences.Experiments.sshTerminalEnabled
                 && chat.hasUsableTerminalFolder
         )
-        let selection = AppPreferences.ChatTopBar.selection
-        let slots = selection.slots(available: available)
-        let overflow = selection.overflow(available: available)
+        let layout = AppPreferences.ChatTopBar.layout
+        let drawn = layout.bar(available: available)
+        let hidden = layout.menu(available: available)
 
-        // A slot shows its own control; the other actions are in the … menu.
-        let slotSet = Set(slots)
+        // A shown action draws its own control; a hidden one is only in the …
+        // menu. Nothing refills a place another action could not fill.
+        let drawnSet = Set(drawn)
         for (action, controls) in [
             (ChatTopBarAction.files, files), (.terminal, terminal), (.outline, outline),
         ] {
-            controls.rail.isHidden = !slotSet.contains(action)
-            controls.button.isHidden = !slotSet.contains(action)
+            controls.rail.isHidden = !drawnSet.contains(action)
+            controls.button.isHidden = !drawnSet.contains(action)
         }
-        for item in [backItem, contextItem, railSessionItem, moreItem] where item.isHidden {
+        contextItem.isHidden = !drawnSet.contains(.context)
+        for item in [backItem, railSessionItem, moreItem] where item.isHidden {
             item.isHidden = false
         }
         moreButton.isHidden = false
+        ringButton.isHidden = false
         leadingStack.isHidden = false
         trailingStack.isHidden = false
         titleControl.isHidden = false
@@ -148,7 +154,7 @@ final class ChatBarItems {
             ring.apply(usage: chat.contextUsageSnapshot, colors: colors)
             ring.onTap = { [weak chat] in chat?.toggleContextPanel() }
         }
-        moreItem.menu = topBarMenu(overflow: overflow)
+        moreItem.menu = topBarMenu(hidden: hidden, filesOpen: filesOpen)
         moreButton.menu = moreItem.menu
 
         if joinsRail {
@@ -158,8 +164,13 @@ final class ChatBarItems {
             var rail: [UIBarButtonItem] = []
             if usesCustomBack { rail.append(keepsVisible(backItem)) }
             rail.append(railSessionItem)
-            for action in slots { rail.append(controls(for: action).rail) }
-            rail.append(keepsVisible(contextItem))
+            for action in drawn {
+                if action == .context {
+                    rail.append(keepsVisible(contextItem))
+                } else if let controls = controls(for: action) {
+                    rail.append(controls.rail)
+                }
+            }
             rail.append(moreItem)
             for item in rail { joinsVerticalRail(item) }
             // Trailing items run from the trailing edge in; the rail reads
@@ -167,7 +178,7 @@ final class ChatBarItems {
             setItems(left: leadingPrefix, right: rail.reversed(), on: navigationItem)
         } else {
             backButton.isHidden = !usesCustomBack
-            applyTrailingGroup(slots: slots)
+            applyTrailingGroup(drawn: drawn)
             var leading = leadingPrefix
             if usesCustomBack { leading.append(leadingGroup) }
             setItems(left: leading, right: [trailingGroup], on: navigationItem)
@@ -184,16 +195,16 @@ final class ChatBarItems {
             : "\(chat.sessionDisplayName), launched with a saved Agent"
     }
 
-    /// Which actions this chat can offer as a slot right now. Terminal needs the
-    /// experiment *and* a workspace folder a shell can start in, so a sandbox
-    /// workspace or a relative host mount gives the slot away instead of
-    /// offering a button that could only show an alert.
+    /// Which actions this chat can offer right now: the ring is always there,
+    /// Files and Terminal need a workspace, Outline needs a timeline, and
+    /// Terminal also needs a workspace folder a shell can start in, so a sandbox
+    /// workspace or a relative host mount offers no Terminal.
     static func availableActions(
         hasWorkspace: Bool,
         showsOutline: Bool,
         terminalEnabled: Bool
     ) -> Set<ChatTopBarAction> {
-        var available: Set<ChatTopBarAction> = [.outline]
+        var available: Set<ChatTopBarAction> = [.outline, .context]
         if hasWorkspace {
             available.insert(.files)
             if terminalEnabled { available.insert(.terminal) }
@@ -215,46 +226,60 @@ final class ChatBarItems {
         terminal.button.isHidden = true
         outline.button.isHidden = true
         moreButton.isHidden = true
+        ringButton.isHidden = true
         leadingStack.isHidden = true
         trailingStack.isHidden = true
         titleControl.isHidden = true
     }
 
-    private func controls(for action: ChatTopBarAction) -> ActionControls {
+    /// The action's own rail item and bar button. The ring is not one of these:
+    /// `.context` draws `contextItem` on the rail and `ringButton` in the bar,
+    /// so it answers nil here and the callers place the ring themselves.
+    private func controls(for action: ChatTopBarAction) -> ActionControls? {
         switch action {
         case .files: files
         case .terminal: terminal
         case .outline: outline
+        case .context: nil
         }
     }
 
-    /// The trailing glass group: quick action, quick action, ring, ….
-    private func applyTrailingGroup(slots: [ChatTopBarAction]) {
-        guard appliedSlots != slots else { return }
-        appliedSlots = slots
+    /// The trailing glass group: the shown buttons in the user's order, with …
+    /// last. The ring takes the place `.context` has in that order.
+    private func applyTrailingGroup(drawn: [ChatTopBarAction]) {
+        guard appliedBar != drawn else { return }
+        appliedBar = drawn
         for view in trailingStack.arrangedSubviews {
             trailingStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        for action in slots {
-            let button = controls(for: action).button
-            button.isHidden = false
-            trailingStack.addArrangedSubview(button)
+        for action in drawn {
+            if action == .context {
+                trailingStack.addArrangedSubview(ringButton)
+            } else if let controls = controls(for: action) {
+                controls.button.isHidden = false
+                trailingStack.addArrangedSubview(controls.button)
+            }
         }
-        trailingStack.addArrangedSubview(ringButton)
         trailingStack.addArrangedSubview(moreButton)
     }
 
-    /// The actions without a slot, then Customize Top Bar. Terminal while the
-    /// experiment is off is not in here either: it cannot be a slot, so it
-    /// belongs to the setting, not to a chat's menu.
-    private func topBarMenu(overflow: [ChatTopBarAction]) -> UIMenu {
-        var children: [UIMenuElement] = overflow.map { action in
+    /// The actions without a button, in the user's order, then a divider and
+    /// Customize Top Bar. Terminal while the experiment is off is not in here
+    /// either: it cannot be drawn, so it belongs to the setting, not to a
+    /// chat's menu.
+    private func topBarMenu(hidden: [ChatTopBarAction], filesOpen: Bool) -> UIMenu {
+        let hiddenItems = hidden.map { action in
             let item = UIAction(
-                title: action.menuTitle,
+                title: action.menuTitle(filesOpen: filesOpen),
                 image: UIImage(systemName: action.symbolName)
             ) { [weak self] _ in self?.chat?.runTopBarAction(action) }
-            item.accessibilityIdentifier = "chat.toolbar.menu.\(action.rawValue)"
+            item.accessibilityIdentifier = action.menuIdentifier
+            // The ring's number is the reason to open the panel; the menu keeps
+            // it visible without a bar position.
+            if action == .context {
+                item.subtitle = self.chat?.contextUsageSnapshot.percentText
+            }
             return item
         }
         let customize = UIAction(
@@ -262,7 +287,11 @@ final class ChatBarItems {
             image: UIImage(systemName: "slider.horizontal.3")
         ) { [weak self] _ in self?.chat?.customizeTopBar() }
         customize.accessibilityIdentifier = "chat.toolbar.menu.customize"
-        children.append(customize)
+        // An inline submenu is what draws the separator above Customize; with
+        // nothing hidden the menu is just that one action.
+        let children: [UIMenuElement] = hiddenItems.isEmpty
+            ? [customize]
+            : [UIMenu(options: .displayInline, children: hiddenItems), customize]
         return UIMenu(children: children)
     }
 
@@ -469,7 +498,7 @@ final class ContextUsageRingButton: UIControl {
         translatesAutoresizingMaskIntoConstraints = false
         isAccessibilityElement = true
         accessibilityTraits = .button
-        accessibilityIdentifier = "chat.toolbar.context"
+        accessibilityIdentifier = ChatTopBarAction.context.accessibilityIdentifier
         accessibilityLabel = "Open context inspector"
         for layer in [track, fill] {
             layer.fillColor = UIColor.clear.cgColor
@@ -628,21 +657,22 @@ enum ChatSidePanel: Hashable {
 }
 
 extension ChatViewController {
-    /// Runs a top bar quick action, from its slot or from the … menu. One owner
-    /// for both, so a rail item, a bar button, a menu item, and accessibility
+    /// Runs a top bar action, from its button or from the … menu. One owner for
+    /// both, so a rail item, a bar button, a menu item, and accessibility
     /// activation all do the same thing.
     func runTopBarAction(_ action: ChatTopBarAction) {
         switch action {
         case .files: toggleChatFilePanel(source: "top_trailing_pill")
         case .outline: toggleOutlinePanel()
+        case .context: toggleContextPanel()
         case .terminal: openTerminalHere()
         }
     }
 
-    /// Settings → Chat → Top Bar Buttons, pushed over the chat so the bar
-    /// being customized stays one Back away.
+    /// Settings → Chat → Top Bar, pushed over the chat so the bar being
+    /// customized stays one Back away.
     func customizeTopBar() {
-        Router.push(SettingsChatViewController(), from: self)
+        Router.push(SettingsChatTopBarViewController(), from: self)
     }
 
     /// Whether this chat has a folder a folder terminal can start in: the

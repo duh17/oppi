@@ -61,8 +61,9 @@ final class ChatScreenModel {
     var activeReviewCommentRequest: ReviewCommentSelectionRequest?
     /// Bumped when Settings → Chat → Style changes.
     var chatDisplayRefresh = 0
-    /// Bumped when the top bar's two quick actions change, or when SSH Terminal
-    /// (which decides whether Terminal can be one) turns on or off.
+    /// Bumped when Settings → Chat → Top Bar changes which buttons the bar
+    /// shows or their order, or when SSH Terminal (which decides whether
+    /// Terminal can be one) turns on or off.
     var topBarRefresh = 0
     /// The SSH Terminal flag this chat last drew its bar from.
     var observedTerminalExperiment = AppPreferences.Experiments.sshTerminalEnabled
