@@ -27,6 +27,12 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     let sourceLabel: String?
     var interactionContext: TimelineInteractionContext? = nil
     var openFullScreen: ((ChatReaderPayload) -> Void)? = nil
+    /// The turn is still running, so this trace can still grow even when the
+    /// item reports done. A durable conversation projects a live thinking block
+    /// as a completed event (`TimelineReducer` inserts projected `.thinking`
+    /// events with `isDone: true`) and then keeps replacing its text, so `isDone`
+    /// alone cannot decide whether a full-screen reader holds a live trace.
+    var isTurnActive: Bool = false
 
     init(
         isDone: Bool,
@@ -50,6 +56,13 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     var displayText: String {
         let full = (fullText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return full.isEmpty ? previewText : full
+    }
+
+    /// Whether the trace can no longer grow: its block finished and its turn
+    /// ended. Only then may a full-screen reader mount the finished body instead
+    /// of a live one; `isDone` on its own is a spinner flag.
+    var traceIsComplete: Bool {
+        isDone && !isTurnActive
     }
 
     var normalizedSourceLabel: String {
@@ -150,7 +163,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         self.currentSourceText = initialText
         self.fullScreenThinkingStream = ThinkingTraceStream(
             text: initialText,
-            isDone: configuration.isDone
+            isDone: configuration.traceIsComplete
         )
         super.init(frame: .zero)
         setupViews()
@@ -336,7 +349,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         sourceIsOmitted = renderWindow.omittedSource
         let sourceLabel = configuration.normalizedSourceLabel
         textLabel.accessibilityLabel = currentSourceText.isEmpty ? nil : "\(sourceLabel): \(currentSourceText)"
-        fullScreenThinkingStream.update(text: currentSourceText, isDone: configuration.isDone)
+        fullScreenThinkingStream.update(text: currentSourceText, isDone: configuration.traceIsComplete)
 
         let signature = Self.textSignature(
             text: text,
@@ -736,6 +749,13 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     // periphery:ignore - used by ThinkingRowContentViewTests via @testable import
     func contextMenuForTesting() -> UIMenu? {
         contextMenu()
+    }
+
+    /// Whether the stream handed to a full-screen reader is finished. A live
+    /// turn keeps it open so the reader keeps appending.
+    // periphery:ignore - used by ThinkingRowContentViewTests via @testable import
+    var fullScreenTraceIsCompleteForTesting: Bool {
+        fullScreenThinkingStream.snapshot.isDone
     }
     #endif
 

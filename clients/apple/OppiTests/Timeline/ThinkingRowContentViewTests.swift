@@ -604,6 +604,46 @@ struct ThinkingRowContentViewTests {
         #expect(!rendered.contains("AAAA"))
         #expect(rendered.contains("BBBB"))
     }
+
+    // MARK: - Full-screen trace liveness
+
+    /// A durable conversation projects a live thinking block as a completed
+    /// event and then keeps replacing its text, so the row's `isDone` is a
+    /// spinner flag. While the turn runs, the full-screen reader must keep
+    /// streaming; only a settled turn may mount the finished body.
+    @Test func liveTurnKeepsTheFullScreenTraceOpen() {
+        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: "reading the failing test",
+            fullText: nil
+        ))
+        #expect(view.fullScreenTraceIsCompleteForTesting, "A settled turn finishes the reader's trace")
+
+        var configuration = ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: "reading the failing test",
+            fullText: nil
+        )
+        configuration.isTurnActive = true
+        view.configuration = configuration
+        #expect(!view.fullScreenTraceIsCompleteForTesting, "A running turn keeps growing its trace")
+
+        var appended = ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: "reading the failing test, then the reducer",
+            fullText: nil
+        )
+        appended.isTurnActive = true
+        view.configuration = appended
+        #expect(view.fullScreenTraceIsCompleteForTesting == false)
+
+        view.configuration = ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: "reading the failing test, then the reducer",
+            fullText: nil
+        )
+        #expect(view.fullScreenTraceIsCompleteForTesting, "The turn ending completes an open reader")
+    }
 }
 
 @MainActor
@@ -781,4 +821,40 @@ private func fullScreenButton(in view: ThinkingTimelineRowContentView) -> UIButt
     timelineAllViews(in: view)
         .compactMap { $0 as? UIButton }
         .first { $0.accessibilityIdentifier == "thinking.expand-full-screen" }
+}
+
+/// The full-screen reader's body choice follows the trace, not the item's
+/// spinner flag: a live trace streams in place, a settled one reads as finished.
+@MainActor
+@Suite("FullScreenThinkingReader")
+struct FullScreenThinkingReaderTests {
+    @Test func liveTraceMountsTheStreamingBodyAndKeepsAppending() throws {
+        let stream = ThinkingTraceStream(text: "plan the fix", isDone: false)
+        let controller = try makeReader(content: .thinking(content: "plan the fix", stream: stream))
+
+        let body = try #require(controller.installedBodyViewForTesting as? NativeFullScreenThinkingBody)
+        #expect(body.debugTextViewForTesting.text == "plan the fix")
+
+        stream.update(text: "plan the fix, then the test", isDone: false)
+        controller.view.layoutIfNeeded()
+
+        #expect(controller.installedBodyViewForTesting === body, "A live trace keeps one body")
+        #expect(body.debugTextViewForTesting.text == "plan the fix, then the test")
+        #expect(body.debugFollowsTailForTesting, "A live trace follows its tail")
+    }
+
+    @Test func settledTraceReadsAsFinished() throws {
+        let stream = ThinkingTraceStream(text: "plan the fix", isDone: true)
+        let controller = try makeReader(content: .thinking(content: "plan the fix", stream: stream))
+
+        #expect(!(controller.installedBodyViewForTesting is NativeFullScreenThinkingBody))
+    }
+
+    private func makeReader(content: FullScreenCodeContent) throws -> FullScreenCodeViewController {
+        let controller = FullScreenCodeViewController(content: content)
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        controller.view.layoutIfNeeded()
+        return controller
+    }
 }

@@ -570,6 +570,11 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     var lastObservedContentOffsetY: CGFloat?
     var lastObservedContentHeight: CGFloat?
     var isTimelineBusy = false
+    /// Turn state for the rows being configured right now. `isTimelineBusy`
+    /// keeps the previous apply's value, because change detection compares
+    /// against it, so it cannot answer for the cells UIKit is about to
+    /// configure. A thinking row asks this one whether its trace can still grow.
+    var rowTurnIsActive = false
     /// Rendering/sizing must stop treating an assistant as streaming as soon
     /// as execution becomes idle, even if the reducer retains its final ID
     /// for one more render pass.
@@ -1027,6 +1032,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     }
 
     func apply(configuration: ChatTimelineConfiguration, to collectionView: UICollectionView) {
+        rowTurnIsActive = configuration.isBusy
         let sessionScopeChanged = context.didChangeSessionScope(for: configuration)
         let assistantPresentationChanged = context.didChangeAssistantPresentation(for: configuration)
         let chromeStyleChanged = context.didChangeChromeStyle(for: configuration)
@@ -1409,6 +1415,17 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             // streaming-height cache and the final markdown gets a settled
             // non-streaming layout instead of retaining a blank tail.
             forceReconfigureIDs.append(finalAssistantID)
+        }
+        if timelineBusyChanged {
+            // A turn ending is what tells an open full-screen thinking reader
+            // that its trace stopped growing (`isTurnActive`), so every
+            // thinking row has to hear about the change.
+            forceReconfigureIDs.append(contentsOf: applyPlan.nextIDs.filter { id in
+                if case .thinking = applyPlan.nextItemByID[id] {
+                    return true
+                }
+                return false
+            })
         }
         forceReconfigureIDs.append(
             contentsOf: ChatTimelineApplyPlan.workLineReconfigureIDs(
