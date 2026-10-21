@@ -51,17 +51,39 @@ enum SSHTerminalBottomBar {
 }
 
 /// The bar's container. It hands a touch in its own top inset strip to the
-/// pill below it, where the pill's 4 pt outset is: otherwise the strip would
-/// stop at the container and the button would be only 40 pt tall to touch.
+/// pill below it, where the pill's 4 pt outset lives: otherwise the strip
+/// would stop at the container and the button would be only 40 pt tall to
+/// touch. UIKit does not descend into a subview whose frame misses the point,
+/// even when that subview widens `point(inside:)`, so the strip is mapped to
+/// the pill's own control here.
 final class SSHTerminalBottomBarView: UIView {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         if let hit = super.hitTest(point, with: event), hit !== self { return hit }
-        // No subview held the point inside its frame: a pill's outset may
-        // still reach it, just above the glass.
-        for subview in subviews.reversed() where !subview.isHidden && subview.isUserInteractionEnabled {
-            if let hit = subview.hitTest(convert(point, to: subview), with: event) { return hit }
+        for pill in subviews.reversed() where !pill.isHidden && pill.isUserInteractionEnabled && pill.alpha > 0.01 {
+            let strip = pill.frame.insetBy(
+                dx: -SSHTerminalGlassPill.touchOutset,
+                dy: -SSHTerminalGlassPill.touchOutset
+            )
+            guard strip.contains(point) else { continue }
+            let controls = Self.controls(in: pill)
+            guard !controls.isEmpty else { continue }
+            // The button nearest the finger's column, as the glass pill does.
+            return controls.min {
+                abs($0.convert($0.bounds, to: self).midX - point.x)
+                    < abs($1.convert($1.bounds, to: self).midX - point.x)
+            }
         }
         return nil
+    }
+
+    /// The first row of interactive controls inside a pill.
+    private static func controls(in view: UIView) -> [UIView] {
+        for subview in view.subviews where !subview.isHidden && subview.isUserInteractionEnabled && subview.alpha > 0.01 {
+            if subview is UIControl { return [subview] }
+            let nested = controls(in: subview)
+            if !nested.isEmpty { return nested }
+        }
+        return []
     }
 }
 

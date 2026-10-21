@@ -76,6 +76,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// The Open or Browse Files Here lookup in flight, so a second choice can
     /// replace it and leaving the screen cancels it.
     private var openTask: Task<Void, Never>?
+    /// Which open task is the newest, so an older one finishing late cannot
+    /// clear the handle of the one that replaced it.
+    private var openTaskGeneration = 0
     private var copyNoticeText: String?
     private var copyNoticeTask: Task<Void, Never>?
     private var lastCopies = 0
@@ -643,14 +646,15 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// back still works.
     private func applyControlsVisibility(animation: SSHTerminalKeyboard.Animation?) {
         let visible = SSHTerminalFloatingControls.visible(keyboardUp: keyboardUp, connected: channel.connected)
+        // Geometry is idempotent and must apply even when the bar's visibility
+        // does not change: the keyboard alone moves the reserve.
+        applyBottomBarGeometry(visible: visible)
         guard visible != controlsVisible || animation == nil else { return }
         controlsVisible = visible
         for pill in [backPill, morePill] as [UIView] {
             pill.isUserInteractionEnabled = visible
             pill.accessibilityElementsHidden = !visible
         }
-        bottomBarHeight?.constant = visible ? SSHTerminalBottomBar.shownHeight : 0
-        updateBottomRows()
         let apply = {
             self.backPill.alpha = visible ? 1 : 0
             self.morePill.alpha = visible ? 1 : 0
@@ -661,6 +665,18 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             apply()
         }
         UIAccessibility.post(notification: .layoutChanged, argument: nil)
+    }
+
+    /// The bar's height and the rows the grid leaves for it. Two inputs: the
+    /// bar shows or it does not, and the keyboard is up or it is not (with a
+    /// docked keyboard up the grid never gives the bar rows; a broken
+    /// connection then floats the bar over them instead).
+    private func applyBottomBarGeometry(visible: Bool) {
+        let height = visible ? SSHTerminalBottomBar.shownHeight : 0
+        if abs((bottomBarHeight?.constant ?? 0) - height) > 0.5 {
+            bottomBarHeight?.constant = height
+        }
+        updateBottomRows()
     }
 
     private func goBack() {
@@ -704,6 +720,12 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
               )
         else { return }
         keyboardUp = SSHTerminalKeyboard.isUp(endFrameInView: end, viewBounds: view.bounds)
+        // The reserve depends on the keyboard, and the bar's visibility may not
+        // change with it (a broken connection keeps the bar), so size the grid
+        // here too: it lands in the one resize this change already sends.
+        applyBottomBarGeometry(
+            visible: SSHTerminalFloatingControls.visible(keyboardUp: keyboardUp, connected: channel.connected)
+        )
         applyControlsVisibility(animation: SSHTerminalKeyboard.animation(duration: max(duration, 0.2), curve: curve))
         guard isOnScreen, !isLeaving, let gridView else { return }
         keyboardTransition &+= 1
@@ -1394,9 +1416,11 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// does not push onto the screen below.
     private func startOpenTask(_ work: @escaping @MainActor () async -> Void) {
         openTask?.cancel()
+        openTaskGeneration &+= 1
+        let generation = openTaskGeneration
         openTask = Task { [weak self] in
             await work()
-            guard let self else { return }
+            guard let self, self.openTaskGeneration == generation else { return }
             self.openTask = nil
         }
     }

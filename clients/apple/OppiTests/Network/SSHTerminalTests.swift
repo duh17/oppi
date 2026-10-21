@@ -1734,6 +1734,15 @@ struct SSHTerminalTests {
 
         keyboard(top: window.bounds.maxY)
         #expect(try !hiddenFromVoiceOver("sshTerminal.back"), "Back is back with the keyboard down")
+        // 3 pt above the glass is the bar's inset strip, and the container
+        // hands it to the pill: the live view must answer it.
+        let backButton = try control("sshTerminal.back")
+        let aboveBack = backButton.convert(CGPoint(x: backButton.bounds.midX, y: -3), to: terminal.view)
+        let aboveHit = terminal.view.hitTest(aboveBack, with: nil)
+        #expect(
+            aboveHit === backButton,
+            "3 pt above Back reaches it, not \(String(describing: aboveHit.map { type(of: $0) }))"
+        )
         // Settle past the transition's hold.
         try await Task.sleep(for: .milliseconds(500))
         nav.view.layoutIfNeeded()
@@ -1804,6 +1813,83 @@ struct SSHTerminalTests {
         nav.view.layoutIfNeeded()
         #expect(nav.topViewController === root)
         #expect(!nav.isNavigationBarHidden, "the screen below needs its Back and title")
+    }
+
+    /// The bar's rows follow the keyboard even when the connection is already
+    /// gone: the bar's own visibility never changes in that path, so the
+    /// reserve has to follow the keyboard event itself.
+    @Test func theBarTakesItsRowsBackWhenTheKeyboardGoesDownWhileDisconnected() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let grid = try #require(mounted.controller.gridView)
+        let resizes = SSHTerminalResizeLog()
+        let collector = Task { @MainActor in
+            for await geometry in fixture.resizes { resizes.sizes.append(geometry) }
+        }
+        defer { collector.cancel() }
+        let terminal = mounted.controller
+
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        func keyboard(top: CGFloat) {
+            let frame = mounted.window.convert(
+                CGRect(x: 0, y: top, width: mounted.window.bounds.width, height: 336),
+                to: scene.screen.coordinateSpace
+            )
+            NotificationCenter.default.post(
+                name: UIResponder.keyboardWillChangeFrameNotification,
+                object: scene.screen,
+                userInfo: [
+                    UIResponder.keyboardFrameEndUserInfoKey: frame,
+                    UIResponder.keyboardAnimationDurationUserInfoKey: 0.0,
+                    UIResponder.keyboardAnimationCurveUserInfoKey: 7,
+                ]
+            )
+            mounted.host.view.layoutIfNeeded()
+        }
+        func backPillTop() throws -> CGFloat {
+            let button = try #require(mounted.find { $0.accessibilityIdentifier == "sshTerminal.back" })
+            var view: UIView? = button
+            for _ in 0..<5 { view = view?.superview }
+            let pill = try #require(view)
+            return pill.convert(CGPoint.zero, to: terminal.view).y - SSHTerminalBottomBar.topInset
+        }
+        func gridBottom() -> CGFloat {
+            grid.convert(CGPoint(x: 0, y: grid.bounds.maxY), to: terminal.view).y
+        }
+
+        try await Task.sleep(for: .milliseconds(150))
+        mounted.host.view.layoutIfNeeded()
+        #expect(try backPillTop() >= gridBottom(), "the bar starts below the grid")
+
+        // Typing, then the connection drops: the bar floats above the keyboard
+        // without taking rows.
+        keyboard(top: mounted.window.bounds.maxY - 336)
+        channel.event(.closed)
+        #expect(await waitForMainActorCondition {
+            terminal.updatePropertiesIfNeeded()
+            mounted.host.view.layoutIfNeeded()
+            return (try? backPillTop()).map { $0 < gridBottom() } == true
+        }, "with the keyboard up the bar floats over the grid")
+
+        // The keyboard goes down: the bar takes its rows back, in one resize.
+        let before = resizes.sizes.count
+        keyboard(top: mounted.window.bounds.maxY)
+        try await Task.sleep(for: .milliseconds(400))
+        mounted.host.view.layoutIfNeeded()
+        #expect(try backPillTop() >= gridBottom(), "the bar is below the grid again")
+        #expect(
+            channel.engine.geometry.rows == Int(grid.bounds.height / grid.cellSize.height),
+            "the remote terminal ends above the bar again"
+        )
+        #expect(resizes.sizes.count - before <= 1, "one keyboard change, at most one resize")
+        try await Task.sleep(for: .milliseconds(400))
+        mounted.host.view.layoutIfNeeded()
+        #expect(resizes.sizes.count - before <= 1, "no resize after it settles")
     }
 
     @Test func inputAndPasteBannersSitOnAMaterialCard() async throws {
