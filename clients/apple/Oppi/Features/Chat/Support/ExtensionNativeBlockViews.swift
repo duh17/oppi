@@ -20,6 +20,9 @@ struct ExtensionNativeBlockContext {
     var themeID: ThemeID
     var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)?
+    /// Busy sessions' live tails by session id. An activity row linking to
+    /// `oppi://session/<id>` shows its session's tail under its text.
+    var sessionLiveTails: [String: ConversationChildTail] = [:]
 
     var palette: ThemePalette { themeID.palette }
 
@@ -830,6 +833,7 @@ final class ExtensionNativeActivityRowView: UIView {
     private let titleLabel = ExtensionNativeBlockStyle.label(.caption1, weight: .semibold)
     private let subtitleLabel = ExtensionNativeBlockStyle.label(.caption2)
     private let detailLabel = ExtensionNativeBlockStyle.label(.caption2)
+    private let liveLines = ChildTailLinesView()
     private let progressBar = ExtensionNativeProgressBar()
     private let chevron = UIImageView()
     private let childContainer = UIView()
@@ -854,10 +858,12 @@ final class ExtensionNativeActivityRowView: UIView {
         chevron.setContentHuggingPriority(.required, for: .horizontal)
         chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let labels = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel, detailLabel, progressBar])
+        liveLines.isHidden = true
+        let labels = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel, detailLabel, liveLines, progressBar])
         labels.axis = .vertical
         labels.spacing = 3
         labels.setCustomSpacing(7, after: detailLabel)
+        labels.setCustomSpacing(7, after: liveLines)
         labels.isUserInteractionEnabled = false
 
         let markerColumn = UIView()
@@ -950,6 +956,13 @@ final class ExtensionNativeActivityRowView: UIView {
         titleLabel.textColor = UIColor(palette.fg)
         Self.setOptional(row.subtitle, on: subtitleLabel, color: UIColor(palette.comment))
         Self.setOptional(row.detail, on: detailLabel, color: UIColor(palette.comment))
+        let liveTail = rowLink
+            .flatMap { SessionOpen(url: $0, origin: .inAppHyperlink)?.sessionId }
+            .flatMap { context.sessionLiveTails[$0] }
+        liveLines.isHidden = liveTail == nil
+        if let liveTail {
+            liveLines.apply(liveTail.lines, reserving: liveTail.reservedLines, palette: palette)
+        }
 
         if let progress = ExtensionNativeBlockPresentation.normalizedProgress(row.progress) {
             progressBar.isHidden = false
@@ -978,7 +991,10 @@ final class ExtensionNativeActivityRowView: UIView {
         control.isAccessibilityElement = true
         control.accessibilityIdentifier = "extension.native.activity.row.\(row.id)"
         control.accessibilityLabel = ExtensionNativeBlockPresentation.activityRowAccessibilityLabel(row)
-        control.accessibilityValue = ExtensionNativeBlockPresentation.activityRowAccessibilityValue(row)
+        control.accessibilityValue = ([ExtensionNativeBlockPresentation.activityRowAccessibilityValue(row)]
+            + (liveTail?.lines.map(\.text) ?? []))
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
         control.accessibilityTraits = isInteractive ? .button : .staticText
         control.accessibilityHint = hasDetail
             ? (isExpanded ? "Hides details" : "Shows details")

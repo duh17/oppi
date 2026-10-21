@@ -12,6 +12,7 @@ final class ChatTimelineControllerContext {
     var routeScope: SessionRouteScope?
     var onFork: ((String) -> Void)?
     var onOpenCurrentFile: ((String) -> Void)?
+    var onOpenSession: ((String) -> Void)?
     var onOpenChatReader: ((ChatReaderPayload) -> Void)?
     var onShowEarlier: (() -> Void)?
     var onQuietWorkLineToggle: ((String) -> Void)?
@@ -61,6 +62,7 @@ final class ChatTimelineControllerContext {
         routeScope = configuration.routeScope
         onFork = configuration.onFork
         onOpenCurrentFile = configuration.onOpenCurrentFile
+        onOpenSession = configuration.onOpenSession
         onOpenChatReader = configuration.onOpenChatReader
         onShowEarlier = configuration.onShowEarlier
         onQuietWorkLineToggle = configuration.onQuietWorkLineToggle

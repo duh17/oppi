@@ -7,6 +7,12 @@ import UIKit
 // shows changes; their heights follow from Auto Layout in the footer stack.
 
 private extension ChatViewController {
+    /// What an expanded drawer shows under rows linking to child sessions. A closed drawer
+    /// reads nothing, so streaming children do not repaint the footer.
+    var drawerSessionLiveTails: [String: ConversationChildTail] {
+        model.extensionDrawerExpanded ? sessionManager.childTails : [:]
+    }
+
     var chromeThemeID: ThemeID {
         root?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
     }
@@ -184,7 +190,8 @@ final class ChatFooterAboveView: UIView {
                 surface: surface,
                 messageQueue: showsMessageQueue ? chat.messageQueueSurfaceConfiguration : nil,
                 themeID: themeID,
-                collapseRequestID: chat.model.extensionDrawerCollapseRequestID
+                collapseRequestID: chat.model.extensionDrawerCollapseRequestID,
+                sessionLiveTails: chat.drawerSessionLiveTails
             ))
         }
 
@@ -431,7 +438,8 @@ final class ChatFooterBelowView: UIView {
             surface: chat.extensionSurfaceState,
             messageQueue: nil,
             themeID: chat.chromeThemeID,
-            collapseRequestID: chat.model.extensionDrawerCollapseRequestID
+            collapseRequestID: chat.model.extensionDrawerCollapseRequestID,
+            sessionLiveTails: chat.drawerSessionLiveTails
         ))
     }
 }

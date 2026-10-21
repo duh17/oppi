@@ -1,28 +1,35 @@
 import Foundation
 
 /// A conversation a tool call's details name with `{ conversationId, sessionId }`, as the durable
-/// `subagent` tool's details do for the child it spawned or messaged. The parent's timeline shows
-/// that conversation's live tail under the call's row. It is read from the details' keys, never
-/// from a tool name.
+/// `subagent` tool's details do for the child it spawned or messaged. It is read from the
+/// details' keys, never from a tool name.
+///
+/// While that call still runs, the parent waits on the child (a foreground spawn), so the
+/// timeline shows the child's live tail under the call's row. Once the call has returned (a
+/// background spawn, a send), the tail belongs to whatever lists the child's session, such as
+/// an extension drawer row linking to it.
 struct ConversationChildReference: Equatable, Sendable {
     var conversationId: Int
     var sessionId: String
-    /// The newest tool call naming it: the row its tail goes under.
+    /// The newest tool call naming it: the row its tail goes under while that call runs.
     var toolCallId: String
+    /// The call is a running `pi.live.tools` slot: the parent is waiting on it.
+    var callIsRunning: Bool
 
-    init(conversationId: Int, sessionId: String, toolCallId: String) {
+    init(conversationId: Int, sessionId: String, toolCallId: String, callIsRunning: Bool = false) {
         self.conversationId = conversationId
         self.sessionId = sessionId
         self.toolCallId = toolCallId
+        self.callIsRunning = callIsRunning
     }
 
-    init?(details: JSONValue?, toolCallId: String) {
+    init?(details: JSONValue?, toolCallId: String, callIsRunning: Bool = false) {
         guard let object = details?.objectValue,
               let number = object["conversationId"]?.numberValue,
               number >= 0, number.rounded() == number, number <= Double(Int.max),
               let sessionId = object["sessionId"]?.stringValue, !sessionId.isEmpty
         else { return nil }
-        self.init(conversationId: Int(number), sessionId: sessionId, toolCallId: toolCallId)
+        self.init(conversationId: Int(number), sessionId: sessionId, toolCallId: toolCallId, callIsRunning: callIsRunning)
     }
 }
 
@@ -51,7 +58,11 @@ struct ConversationChildIndex: Equatable, Sendable {
     mutating func updateLive(_ document: JSONValue?) {
         live = (document?.objectValue?["tools"]?.arrayValue ?? []).compactMap { slot in
             guard let slot = slot.objectValue, let callId = slot["callId"]?.stringValue else { return nil }
-            return ConversationChildReference(details: slot["details"], toolCallId: callId)
+            return ConversationChildReference(
+                details: slot["details"],
+                toolCallId: callId,
+                callIsRunning: slot["status"]?.stringValue == "running"
+            )
         }
     }
 
@@ -67,8 +78,8 @@ struct ConversationChildIndex: Equatable, Sendable {
     }
 }
 
-/// One child's live tail as the parent's timeline shows it, read-only, under the tool row of
-/// `reference.toolCallId`.
+/// One busy child's live tail, read-only: under the tool row of `reference.toolCallId` while
+/// that call runs, else beside whatever lists `reference.sessionId`.
 struct ConversationChildTail: Equatable, Sendable {
     struct Line: Equatable, Sendable {
         enum Kind: Equatable, Sendable {

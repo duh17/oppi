@@ -156,8 +156,8 @@ extension ChatTimelineController {
             ownedClock.quietSettledEnds = nextSettled
         }
 
-        // Subagents' live tails go right after the row of the tool call that names each.
-        let childTails = config.sessionManager?.childTails ?? [:]
+        // A subagent the parent waits on shows its live tail right after the running call's row.
+        let childTails = config.sessionManager?.inlineChildTails ?? [:]
         visibleRows = TimelineDisplayRow.insertingChildTails(childTails, into: visibleRows)
 
         let items = visibleRows.compactMap { row -> ChatItem? in
@@ -251,7 +251,7 @@ extension ChatTimelineController {
             if let sessionManager = configuration?.sessionManager {
                 _ = sessionManager.needsInitialScroll
                 _ = sessionManager.hasOlderTracePage
-                _ = sessionManager.childTails
+                _ = sessionManager.inlineChildTails
             }
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in

@@ -128,13 +128,25 @@ final class ChatSessionManager {
 
     /// Live tails of the subagent conversations the replica's tool calls name, followed on the
     /// same socket (`capabilities.conversationStream` v2): one live driver per conversation, for
-    /// the newest `maxChildTails` children.
+    /// the newest `maxChildTails` children whose naming call still runs, and all of them while
+    /// `followsReturnedChildren`.
     @ObservationIgnored private var childStreams: [Int: ChildStream] = [:]
     /// Conversations whose live attach the server refused on this socket; not retried until
     /// the next `connected`.
     @ObservationIgnored private var refusedChildTails: Set<Int> = []
-    /// What the timeline shows under tool rows: the busy children's tails, by tool call id.
+    /// What the timeline shows under tool rows: the tails of busy children whose naming call
+    /// still runs (the parent waits on them), by tool call id.
+    private(set) var inlineChildTails: [String: ConversationChildTail] = [:]
+    /// Every followed busy child's tail, by session id, for surfaces that list child sessions.
     private(set) var childTails: [String: ConversationChildTail] = [:]
+    /// A surface listing child sessions is showing (an expanded extension drawer): also follow
+    /// the children whose call already returned. Off, they stream nothing.
+    var followsReturnedChildren = false {
+        didSet {
+            guard followsReturnedChildren != oldValue else { return }
+            followChildTails()
+        }
+    }
     static let maxChildTails = 8
     static let childTailPublishInterval: Duration = .milliseconds(250)
     @ObservationIgnored private var childTailPublishTask: Task<Void, Never>?
@@ -2043,6 +2055,7 @@ final class ChatSessionManager {
         if let own = conversationStream?.replica.conversationId { ownConversationId = own }
         guard focusedStreamPort.conversationStreamLiveTailsAvailable, let conversationStream else { return }
         let wanted = conversationStream.children.children(limit: Self.maxChildTails)
+            .filter { followsReturnedChildren || $0.callIsRunning }
         let wantedIds = Set(wanted.map(\.conversationId))
         for (conversationId, child) in childStreams where !wantedIds.contains(conversationId) {
             childStreams[conversationId] = nil
@@ -2124,21 +2137,25 @@ final class ChatSessionManager {
         }
     }
 
-    /// The busy children's tails, under the newest tool row that names each.
-    /// A busy child's row keeps the most lines it has shown, so it does not change height with
-    /// every frame; the reservation ends when the child goes idle.
+    /// The busy children's tails. A busy child's tail keeps the most lines it has shown, so its
+    /// row does not change height with every frame; the reservation ends when the child goes
+    /// idle. Each publication is assigned only when it changed, so the timeline, which observes
+    /// only the inline tails, does not rebuild for children it does not show.
     private func publishChildTails() {
         lastChildTailPublish = ContinuousClock.now
         var next: [String: ConversationChildTail] = [:]
+        var inline: [String: ConversationChildTail] = [:]
         var reserved: [Int: Int] = [:]
         for child in childStreams.values {
             guard var tail = ConversationChildTail(reference: child.reference, tail: child.driver.liveTail) else { continue }
             let id = child.reference.conversationId
             reserved[id] = max(childTailLineReservations[id] ?? 0, tail.lines.count)
             tail.reservedLines = reserved[id] ?? 0
-            next[child.reference.toolCallId] = tail
+            next[child.reference.sessionId] = tail
+            if child.reference.callIsRunning { inline[child.reference.toolCallId] = tail }
         }
         childTailLineReservations = reserved
+        if inline != inlineChildTails { inlineChildTails = inline }
         if next != childTails {
             childTails = next
             _childTailPublicationsForTesting += 1
@@ -2154,6 +2171,7 @@ final class ChatSessionManager {
         childTailPublishTask?.cancel()
         childTailPublishTask = nil
         childTailLineReservations.removeAll()
+        if !inlineChildTails.isEmpty { inlineChildTails = [:] }
         if !childTails.isEmpty { childTails = [:] }
     }
 

@@ -186,6 +186,7 @@ extension ChatViewController {
             routeScope: focusedRouteScope,
             onFork: { [weak self] in self?.forkFromMessage($0) },
             onOpenCurrentFile: { [weak self] in self?.openCurrentToolFile(path: $0) },
+            onOpenSession: { [weak self] in self?.openChildSession($0) },
             onOpenChatReader: { [weak self] in self?.openTimelineReader($0) },
             onBackSwipe: { [weak self] in self?.navigateBackFromChat() },
             onShowEarlier: {},

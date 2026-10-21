@@ -494,7 +494,10 @@ extension ChatTimelineController {
                 )
                 return
             }
-            cell.contentConfiguration = ChildTailTimelineRowConfiguration(tail: tail)
+            let sessionId = tail.reference.sessionId
+            cell.contentConfiguration = ChildTailTimelineRowConfiguration(tail: tail) { [weak self] in
+                self?.onOpenSession?(sessionId)
+            }
             cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
             cell.contentView.clipsToBounds = true
             ChatTimelinePerf.recordCellConfigure(

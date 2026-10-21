@@ -45,19 +45,25 @@ export function e2eFauxReplyText(prompt: string): string {
  * - `faux:bash <command>` calls `bash` with the command.
  * - `faux:subagent <name> <task>` spawns a background subagent with the task; a task that is
  *   itself a directive makes the child call that tool.
+ * - `faux:subagent-wait <name> <task>` spawns it in the foreground: the call waits for its answer.
  *
  * Only the last line counts, so a reply that echoes a directive (every reply ends with
  * `End of faux reply.`) never triggers another call.
  */
 export function e2eFauxToolCall(
   messages: readonly Message[],
-): { name: string; arguments: Record<string, string> } | undefined {
+): { name: string; arguments: Record<string, string | boolean> } | undefined {
   if (messages.at(-1)?.role !== "user") return undefined;
   const line = lastUserText(messages).split("\n").at(-1)?.trim() ?? "";
   const [, command] = /^faux:bash\s+(.+)$/.exec(line) ?? [];
   if (command) return { name: "bash", arguments: { command } };
-  const [, name, task] = /^faux:subagent\s+(\S+)\s+(.+)$/.exec(line) ?? [];
-  if (name && task) return { name: "subagent", arguments: { action: "spawn", name, task } };
+  const [, mode, name, task] = /^faux:subagent(-wait)?\s+(\S+)\s+(.+)$/.exec(line) ?? [];
+  if (name && task) {
+    return {
+      name: "subagent",
+      arguments: { action: "spawn", name, task, ...(mode ? { wait: true } : {}) },
+    };
+  }
   return undefined;
 }
 

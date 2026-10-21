@@ -85,6 +85,10 @@ describe("E2E faux provider", () => {
         arguments: { action: "spawn", name: "kid", task: "faux:bash echo tick" },
       },
     ]);
+    expect(e2eFauxToolCall(prompt("faux:subagent-wait kid faux:bash echo tick").messages)).toEqual({
+      name: "subagent",
+      arguments: { action: "spawn", name: "kid", task: "faux:bash echo tick", wait: true },
+    });
     const child = await models.completeSimple(
       model,
       prompt("[From parent]\n\nfaux:bash echo tick"),

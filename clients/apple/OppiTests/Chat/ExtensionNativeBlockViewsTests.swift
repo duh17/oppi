@@ -88,6 +88,26 @@ struct ExtensionNativeBlockViewsTests {
         #expect(opened == [URL(string: link)])
     }
 
+    /// Any activity row linking to `oppi://session/<id>` shows that session's live tail while it
+    /// is busy; the row's identity, not the extension or tool, decides.
+    @Test func rowLinkingToABusySessionShowsItsLiveTail() throws {
+        let block = activityList(rowID: "task-1", subtitle: nil, link: "oppi://session/child-session")
+        let tail = ConversationChildTail(
+            reference: ConversationChildReference(conversationId: 9, sessionId: "child-session", toolCallId: "call-s"),
+            lines: [.init(kind: .tool, text: "bash npm test"), .init(kind: .output, text: "42 passing")]
+        )
+        var busy = context()
+        busy.sessionLiveTails = ["child-session": tail, "other-session": tail]
+        let stack = layout(.blocks([block]), context: busy)
+        #expect(visibleLabelTexts(of: ChildTailLinesView.self, in: stack) == ["bash npm test", "42 passing"])
+        #expect(control(id: "task-1", in: stack)?.accessibilityValue?.contains("42 passing") == true)
+
+        // Idle: the session leaves the tails and the row shows only its own text.
+        stack.apply(.blocks([block]), context: context())
+        stack.layoutIfNeeded()
+        #expect(visibleLabelTexts(of: ChildTailLinesView.self, in: stack).isEmpty)
+    }
+
     @Test func disclosureRowBuildsOutputOnlyWhenOpenAndStaysOpenAcrossSnapshots() throws {
         func snapshot(_ raw: String) -> ExtensionNativeBlockContent {
             .blocks([.activityList(base: base("jobs"), rows: [
@@ -389,6 +409,22 @@ struct ExtensionNativeBlockViewsTests {
                 return true
             }
             .flatMap { subviews(of: UITextView.self, in: $0) }
+            .compactMap(\.text)
+    }
+
+    /// Text of the visible labels inside visible views of `type`.
+    private func visibleLabelTexts<T: UIView>(of type: T.Type, in root: UIView) -> [String] {
+        subviews(of: type, in: root)
+            .filter { view in
+                var current: UIView? = view
+                while let candidate = current, candidate !== root {
+                    if candidate.isHidden { return false }
+                    current = candidate.superview
+                }
+                return true
+            }
+            .flatMap { subviews(of: UILabel.self, in: $0) }
+            .filter { !$0.isHidden && $0.alpha > 0 }
             .compactMap(\.text)
     }
 

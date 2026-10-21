@@ -1,9 +1,16 @@
 import UIKit
 
-/// A child conversation's live tail under the parent's tool row that names it: what a subagent
-/// is writing or running right now, read-only. The row exists only while the child is busy.
+/// The live tail of a child conversation the parent is waiting on, under the running tool row
+/// that names it: what a subagent is writing or running right now. The row exists only while
+/// the child is busy; tapping it opens the child's session.
 struct ChildTailTimelineRowConfiguration: UIContentConfiguration {
     let tail: ConversationChildTail
+    var onOpen: (() -> Void)?
+
+    init(tail: ConversationChildTail, onOpen: (() -> Void)? = nil) {
+        self.tail = tail
+        self.onOpen = onOpen
+    }
 
     func makeContentView() -> any UIView & UIContentView {
         ChildTailTimelineRowContentView(configuration: self)
@@ -16,8 +23,7 @@ struct ChildTailTimelineRowConfiguration: UIContentConfiguration {
 
 final class ChildTailTimelineRowContentView: UIView, UIContentView {
     private let rail = UIView()
-    private let stack = UIStackView()
-    private var labels: [UILabel] = []
+    private let lines = ChildTailLinesView()
     private var currentConfiguration: ChildTailTimelineRowConfiguration
 
     init(configuration: ChildTailTimelineRowConfiguration) {
@@ -25,24 +31,22 @@ final class ChildTailTimelineRowContentView: UIView, UIContentView {
         super.init(frame: .zero)
         rail.translatesAutoresizingMaskIntoConstraints = false
         rail.layer.cornerRadius = 1
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.spacing = 2
+        lines.translatesAutoresizingMaskIntoConstraints = false
         addSubview(rail)
-        addSubview(stack)
+        addSubview(lines)
         NSLayoutConstraint.activate([
             // Indented under the tool row's icon, like a nested block.
             rail.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22),
             rail.widthAnchor.constraint(equalToConstant: 2),
-            rail.topAnchor.constraint(equalTo: stack.topAnchor),
-            rail.bottomAnchor.constraint(equalTo: stack.bottomAnchor),
-            stack.leadingAnchor.constraint(equalTo: rail.trailingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            rail.topAnchor.constraint(equalTo: lines.topAnchor),
+            rail.bottomAnchor.constraint(equalTo: lines.bottomAnchor),
+            lines.leadingAnchor.constraint(equalTo: rail.trailingAnchor, constant: 8),
+            lines.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            lines.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            lines.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
         ])
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap)))
         isAccessibilityElement = true
-        accessibilityTraits = [.staticText, .updatesFrequently]
         apply(configuration)
     }
 
@@ -61,15 +65,50 @@ final class ChildTailTimelineRowContentView: UIView, UIContentView {
         currentConfiguration = configuration
         let palette = ThemeRuntimeState.currentPalette()
         rail.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.45)
-        let lines = configuration.tail.lines
         // Reserved lines keep their height while empty, so the row does not resize per frame.
-        let shown = max(lines.count, configuration.tail.reservedLines)
+        lines.apply(configuration.tail.lines, reserving: configuration.tail.reservedLines, palette: palette)
+        accessibilityIdentifier = "chat.timeline.childTail.\(configuration.tail.reference.conversationId)"
+        accessibilityLabel = String(localized: "Subagent live")
+        accessibilityValue = configuration.tail.lines.map(\.text).joined(separator: "\n")
+        accessibilityTraits = configuration.onOpen == nil ? [.staticText, .updatesFrequently] : [.button, .updatesFrequently]
+        accessibilityHint = configuration.onOpen == nil ? nil : String(localized: "Opens the subagent's session")
+    }
+
+    @objc private func handleTap() {
+        currentConfiguration.onOpen?()
+    }
+
+    override func accessibilityActivate() -> Bool {
+        guard let onOpen = currentConfiguration.onOpen else { return false }
+        onOpen()
+        return true
+    }
+}
+
+/// A child's live tail lines, one label each: the timeline's child tail row and an extension
+/// drawer row that links to the child's session draw them the same way.
+final class ChildTailLinesView: UIStackView {
+    private var labels: [UILabel] = []
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        axis = .vertical
+        spacing = 2
+        isUserInteractionEnabled = false
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    /// `reserving` keeps room for that many lines while fewer are shown.
+    func apply(_ lines: [ConversationChildTail.Line], reserving: Int = 0, palette: ThemePalette) {
+        let shown = max(lines.count, reserving)
         while labels.count < shown {
             let label = UILabel()
             label.numberOfLines = 1
             label.lineBreakMode = .byTruncatingTail
             labels.append(label)
-            stack.addArrangedSubview(label)
+            addArrangedSubview(label)
         }
         for (index, label) in labels.enumerated() {
             guard index < shown else {
@@ -89,9 +128,6 @@ final class ChildTailTimelineRowContentView: UIView, UIContentView {
             label.font = Self.font(line.kind)
             label.textColor = UIColor(line.kind == .text || line.kind == .tool ? palette.fgDim : palette.comment)
         }
-        accessibilityIdentifier = "chat.timeline.childTail.\(configuration.tail.reference.conversationId)"
-        accessibilityLabel = String(localized: "Subagent live")
-        accessibilityValue = lines.map(\.text).joined(separator: "\n")
     }
 
     private static func font(_ kind: ConversationChildTail.Line.Kind) -> UIFont {

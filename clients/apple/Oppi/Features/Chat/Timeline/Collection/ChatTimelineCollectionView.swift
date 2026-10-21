@@ -46,6 +46,8 @@ struct ChatTimelineConfiguration {
     let routeScope: SessionRouteScope?
     let onFork: (String) -> Void
     let onOpenCurrentFile: (String) -> Void
+    /// Opens a session by id: a child tail row's subagent.
+    let onOpenSession: (String) -> Void
     let onOpenChatReader: ((ChatReaderPayload) -> Void)?
     let onBackSwipe: () -> Void
     var onQuietWorkLineToggle: (String) -> Void
@@ -109,6 +111,7 @@ struct ChatTimelineConfiguration {
         routeScope: SessionRouteScope? = nil,
         onFork: @escaping (String) -> Void,
         onOpenCurrentFile: @escaping (String) -> Void = { _ in },
+        onOpenSession: @escaping (String) -> Void = { _ in },
         onOpenChatReader: ((ChatReaderPayload) -> Void)? = nil,
         onBackSwipe: @escaping () -> Void,
         onQuietWorkLineToggle: @escaping (String) -> Void = { _ in },
@@ -162,6 +165,7 @@ struct ChatTimelineConfiguration {
             ?? workspaceId.map(SessionRouteScope.workspace)
         self.onFork = onFork
         self.onOpenCurrentFile = onOpenCurrentFile
+        self.onOpenSession = onOpenSession
         self.onOpenChatReader = onOpenChatReader
         self.onBackSwipe = onBackSwipe
         self.onQuietWorkLineToggle = onQuietWorkLineToggle
@@ -405,6 +409,10 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     var onOpenCurrentFile: ((String) -> Void)? {
         get { context.onOpenCurrentFile }
         set { context.onOpenCurrentFile = newValue }
+    }
+
+    var onOpenSession: ((String) -> Void)? {
+        context.onOpenSession
     }
 
     var onOpenChatReader: ((ChatReaderPayload) -> Void)? {
@@ -1647,8 +1655,10 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             // would steal the first tap of a fullscreen double-tap.
             return false
         }
+        // A child tail row owns its tap (it opens the child), like a full-row button.
         return itemID != ChatTimelineController.loadMoreID
             && currentWorkLineByID[itemID] == nil
+            && currentChildTailByID[itemID] == nil
     }
 
     func toggleQuietWorkLine(

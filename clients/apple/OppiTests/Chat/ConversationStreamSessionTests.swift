@@ -719,11 +719,13 @@ struct ConversationStreamSessionTests {
         await harness.finish()
     }
 
-    /// A subagent tool row's details name a child conversation; its live tail streams on the
-    /// parent's socket and shows under that row, apart from the parent's own replica.
-    @Test func followsASubagentsLiveTailUnderItsToolRowAcrossAReconnect() async throws {
+    /// A subagent tool row's details name a child conversation; while a drawer lists children,
+    /// its live tail streams on the parent's socket apart from the parent's own replica. The
+    /// call already returned, so the tail is not inline.
+    @Test func followsAReturnedChildsLiveTailWhileADrawerShowsItAcrossAReconnect() async throws {
         let harness = Harness(liveTails: true)
         await harness.connect()
+        harness.manager.followsReturnedChildren = true
         let own = try await harness.attach(1)
         harness.yield(.commandResult(command: "attach", requestId: own.requestId, success: true, data: nil, error: nil))
         harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [
@@ -739,14 +741,15 @@ struct ConversationStreamSessionTests {
             "pi.live": Wire.live(content: [Wire.text("Reading files\nfound two")]),
         ])))
         #expect(await waitForMainActorCondition {
-            harness.manager.childTails["call-s"]?.lines.map(\.text) == ["Reading files", "found two"]
+            harness.manager.childTails["child-session"]?.lines.map(\.text) == ["Reading files", "found two"]
         })
-        #expect(harness.manager.childTails["call-s"]?.reference.sessionId == "child-session")
+        #expect(harness.manager.childTails["child-session"]?.reference.toolCallId == "call-s")
+        #expect(harness.manager.inlineChildTails.isEmpty)
         harness.frame(.update(.init(conversationId: 9, docs: ["pi.live": [
             .append([.key("generation"), .key("message"), .key("content"), .index(0), .key("text")], "\nand a third"),
         ]])))
         #expect(await waitForMainActorCondition {
-            harness.manager.childTails["call-s"]?.lines.last?.text == "and a third"
+            harness.manager.childTails["child-session"]?.lines.last?.text == "and a third"
         })
         // The child's frames leave the parent's replica and rows alone.
         #expect(harness.manager.conversationStream?.replica.conversationId == 7)
@@ -762,7 +765,7 @@ struct ConversationStreamSessionTests {
             "pi.live": Wire.live(content: [Wire.text("after the reconnect")]),
         ])))
         #expect(await waitForMainActorCondition {
-            harness.manager.childTails["call-s"]?.lines.map(\.text) == ["after the reconnect"]
+            harness.manager.childTails["child-session"]?.lines.map(\.text) == ["after the reconnect"]
         })
 
         // Idle: nothing to show.
@@ -777,6 +780,7 @@ struct ConversationStreamSessionTests {
     @Test func childTailsNeverDriveTheSessionsRunStateOrQueue() async throws {
         let harness = Harness(liveTails: true)
         await harness.connect()
+        harness.manager.followsReturnedChildren = true
         let own = try await harness.attach(1)
         harness.yield(.commandResult(command: "attach", requestId: own.requestId, success: true, data: nil, error: nil))
         harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [
@@ -792,7 +796,7 @@ struct ConversationStreamSessionTests {
             "pi.live": Wire.live(content: [Wire.text("child working")]),
             "pi.inbox": Wire.queue(followUp: [("41", "child follow-up")]),
         ])))
-        #expect(await waitForMainActorCondition { harness.manager.childTails["call-s"] != nil })
+        #expect(await waitForMainActorCondition { harness.manager.childTails["child-session"] != nil })
         #expect(harness.manager.conversationStream?.isRunning == false)
         #expect(harness.connection.messageQueueStore.queue(for: harness.sessionId).followUp.isEmpty)
 
@@ -802,13 +806,14 @@ struct ConversationStreamSessionTests {
         let again = try await harness.attach(4)
         #expect(again.conversationId == 9 && again.mode == .live)
         #expect(harness.manager.conversationStream?.isRunning == nil)
-        #expect(harness.manager.childTails["call-s"] != nil)
+        #expect(harness.manager.childTails["child-session"] != nil)
         await harness.finish()
     }
 
     @Test func followsTheNewestChildrenAndKeepsTheSessionWhenATailIsRefused() async throws {
         let harness = Harness(liveTails: true)
         await harness.connect()
+        harness.manager.followsReturnedChildren = true
         _ = try await harness.attach(1)
         let max = ChatSessionManager.maxChildTails
         harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: (1 ... max + 1).map { index in
@@ -842,6 +847,7 @@ struct ConversationStreamSessionTests {
     @Test func aServerWithoutLiveTailsGetsNoChildAttach() async throws {
         let harness = Harness()
         await harness.connect()
+        harness.manager.followsReturnedChildren = true
         _ = try await harness.attach(1)
         harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [
             Wire.user(1, "Delegate"),
@@ -858,13 +864,14 @@ struct ConversationStreamSessionTests {
     @Test func aReconnectToAServerWithoutLiveTailsStopsFollowingChildren() async throws {
         let harness = Harness(liveTails: true)
         await harness.connect()
+        harness.manager.followsReturnedChildren = true
         _ = try await harness.attach(1)
         harness.frame(Self.parentWithChild)
         _ = try await harness.attach(2)
         harness.frame(.snapshot(.init(conversationId: 9, head: 0, hasOlder: false, entries: [], docs: [
             "pi.live": Wire.live(text: "busy"),
         ])))
-        #expect(await waitForMainActorCondition { harness.manager.childTails["call-s"] != nil })
+        #expect(await waitForMainActorCondition { harness.manager.childTails["child-session"] != nil })
 
         harness.connection.setSplitStreamCapabilitiesForTesting(conversationStream: true, conversationStreamVersion: 1)
         harness.yield(.connected(session: harness.session))
@@ -883,6 +890,7 @@ struct ConversationStreamSessionTests {
     @Test func aDetachedChildsLateSnapshotNeverReplacesTheSessionsReplica() async throws {
         let harness = Harness(liveTails: true)
         await harness.connect()
+        harness.manager.followsReturnedChildren = true
         _ = try await harness.attach(1)
         harness.frame(Self.parentWithChild)
         _ = try await harness.attach(2)
@@ -903,6 +911,59 @@ struct ConversationStreamSessionTests {
         #expect(await harness.waitForRows(["1", "2"]))
         #expect(harness.manager.conversationStream?.replica.conversationId == 7)
         #expect(harness.attaches.count == 3)
+        await harness.finish()
+    }
+
+    /// A child the parent waits on (its spawn call still runs) streams with no drawer open and
+    /// shows under that call's row. Once the call returns, its tail leaves the timeline and it
+    /// streams only while a drawer could list it.
+    @Test func aChildTheParentWaitsOnShowsInlineUntilItsCallReturns() async throws {
+        let harness = Harness(liveTails: true)
+        await harness.connect()
+        _ = try await harness.attach(1)
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [
+            Wire.user(1, "Delegate"),
+            Wire.assistant(2, [Wire.toolCall("call-s", "subagent", ["action": "spawn", "wait": true])]),
+        ], docs: ["pi.live": [
+            "run": ["taskId": 14, "inputs": [1]],
+            "tools": [["callId": "call-s", "name": "subagent", "status": "running", "details": Wire.child(9, "child-session")]],
+        ]])))
+        let tailAttach = try await harness.attach(2)
+        #expect(tailAttach.conversationId == 9 && tailAttach.mode == .live)
+        harness.frame(.snapshot(.init(conversationId: 9, head: 0, hasOlder: false, entries: [], docs: [
+            "pi.live": Wire.live(text: "Reading files"),
+        ])))
+        #expect(await waitForMainActorCondition {
+            harness.manager.inlineChildTails["call-s"]?.lines.map(\.text) == ["Reading files"]
+        })
+        #expect(harness.manager.childTails["child-session"] != nil)
+
+        // The call returns: no inline tail, and with no drawer open the child is detached.
+        harness.frame(.update(.init(
+            conversationId: 7,
+            entries: [Wire.toolResult(3, callId: "call-s", output: "done", details: Wire.child(9, "child-session"))],
+            docs: ["pi.live": [.delete([.key("tools")])]]
+        )))
+        #expect(await waitForMainActorCondition { harness.detaches.map(\.conversationId) == [9] })
+        #expect(harness.manager.inlineChildTails.isEmpty)
+        #expect(harness.manager.childTails.isEmpty)
+
+        // A drawer opens: the child streams again for it, still not inline.
+        harness.manager.followsReturnedChildren = true
+        let again = try await harness.attach(3)
+        #expect(again.conversationId == 9 && again.mode == .live)
+        harness.frame(.snapshot(.init(conversationId: 9, head: 0, hasOlder: false, entries: [], docs: [
+            "pi.live": Wire.live(text: "Writing the report"),
+        ])))
+        #expect(await waitForMainActorCondition {
+            harness.manager.childTails["child-session"]?.lines.map(\.text) == ["Writing the report"]
+        })
+        #expect(harness.manager.inlineChildTails.isEmpty)
+
+        // The drawer closes: the child stops streaming.
+        harness.manager.followsReturnedChildren = false
+        #expect(await waitForMainActorCondition { harness.detaches.map(\.conversationId) == [9, 9] })
+        #expect(harness.manager.childTails.isEmpty)
         await harness.finish()
     }
 
@@ -941,6 +1002,7 @@ struct ConversationChildTailPerfTests {
         let children = ChatSessionManager.maxChildTails
         let harness = Harness(liveTails: true)
         await harness.connect()
+        harness.manager.followsReturnedChildren = true
         _ = try await harness.attach(1)
         var entries: [ConversationEntryView] = []
         for index in 0..<children {

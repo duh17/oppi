@@ -66,6 +66,9 @@ extension ChatViewController {
     }
 
     func handleExtensionDrawerExpansion(_ expanded: Bool) {
+        if model.extensionDrawerExpanded != expanded { model.extensionDrawerExpanded = expanded }
+        // Children whose call returned stream only while a drawer could list them.
+        sessionManager.followsReturnedChildren = expanded
         if expanded {
             model.reviewCommentDrawerExpanded = false
             collapseNotifyChip()

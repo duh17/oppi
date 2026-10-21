@@ -58,9 +58,9 @@ final class DurableSubagentE2ETests: E2ETestCase {
         try saveLabScreenshot(name: "durable-subagent-child-streaming")
     }
 
-    /// The parent shows the busy child's live tail under the spawn row and its activity in the
-    /// pill, and picks the tail up again after a reconnect while the child still works.
-    func testChildLiveTailShowsUnderItsToolRowAndInThePillAcrossAReconnect() throws {
+    /// A background child's live tail shows in the expanded pill, not under the spawn row, and
+    /// the pill picks it up again after a reconnect while the child still works.
+    func testBackgroundChildLiveTailShowsInThePillAcrossAReconnect() throws {
         guard E2ELabServerContext.durableSessions else {
             throw XCTSkip("Needs e2e.sh --native --durable --faux-model")
         }
@@ -71,52 +71,81 @@ final class DurableSubagentE2ETests: E2ETestCase {
         waitForAckedSubscription(sessionId: parentId, level: "full")
         sendMessage("faux:subagent kid \(Self.childTask)")
 
+        expandNativeSurface(title: "1 subagent", timeout: 30)
+        let childRow = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", Self.activityRowPrefix)
+        ).firstMatch
+        XCTAssertTrue(childRow.waitForExistence(timeout: 15), "The pill did not list the child")
+        XCTAssertTrue(
+            waitForValue(of: childRow, containing: "$ for i in", timeout: 20),
+            "The pill row did not show the child's running bash call: \(elementValue(childRow))"
+        )
+        // The spawn call returned, so nothing hangs under its row.
         let timeline = app.collectionViews["chat.timeline"]
         let tail = timeline.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH %@", Self.childTailPrefix)
         ).firstMatch
-        XCTAssertTrue(waitForElementToExist(tail, timeout: 30), "No live tail under the subagent row")
-        XCTAssertTrue(
-            waitForValue(of: tail, containing: "$ for i in", timeout: 20),
-            "The tail did not show the child's running bash call: \(tailValue(tail))"
-        )
-        try saveLabScreenshot(name: "durable-subagent-tail")
-
-        expandNativeSurface(title: "1 subagent", timeout: 15)
-        let activity = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Running bash", "Running bash")
-        ).firstMatch
-        XCTAssertTrue(activity.waitForExistence(timeout: 10), "The pill row did not show the child's running tool")
+        XCTAssertFalse(tail.exists, "A background child's tail showed under its spawn row")
         try saveLabScreenshot(name: "durable-subagent-tail-pill")
 
         // The parent's own turn ends while the child still works; an idle app closes its
         // socket on background, and foreground opens a new one.
         waitForTurnToEnd(timeout: 40)
-        XCTAssertTrue(tail.exists, "The child finished before the reconnect; the scenario needs it busy")
         _ = try backgroundAndActivate(after: e2eLifecycleSnapshot(), scenario: "durable_subagent_busy", cycle: 1)
         waitForWebSocketConnected()
         XCTAssertEqual(waitForFocusedSessionId(parentId), parentId)
         waitForAckedSubscription(sessionId: parentId, level: "full")
 
-        // The child's answer streams after its bash call: the tail follows it on the new socket.
-        XCTAssertTrue(waitForElementToExist(tail, timeout: 20), "The tail did not come back after the reconnect")
+        // The child's answer streams after its bash call: the pill follows it on the new socket.
+        expandNativeSurface(title: "1 subagent", timeout: 15)
         XCTAssertTrue(
-            waitForValue(of: tail, containing: Self.replyStart, timeout: 40),
-            "The tail did not show the child's streaming answer after the reconnect: \(tailValue(tail))"
+            waitForValue(of: childRow, containing: Self.replyStart, timeout: 40),
+            "The pill row did not show the child's streaming answer after the reconnect: \(elementValue(childRow))"
         )
-        try saveLabScreenshot(name: "durable-subagent-tail-after-reconnect")
-
-        // Idle: the tail goes away.
-        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: tail)
-        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 60), .completed, "The tail stayed after the child finished")
+        try saveLabScreenshot(name: "durable-subagent-tail-pill-after-reconnect")
     }
 
-    private func tailValue(_ tail: XCUIElement) -> String {
-        tail.exists ? (tail.value as? String) ?? "" : ""
+    /// A child the parent waits on shows its live tail under the running spawn row, and tapping
+    /// the tail opens the child.
+    func testForegroundChildLiveTailShowsUnderItsToolRowAndOpensTheChild() throws {
+        guard E2ELabServerContext.durableSessions else {
+            throw XCTSkip("Needs e2e.sh --native --durable --faux-model")
+        }
+
+        createSession()
+        waitForWebSocketConnected()
+        let parentId = waitForFocusedSessionId(timeout: 20)
+        waitForAckedSubscription(sessionId: parentId, level: "full")
+        sendMessage("faux:subagent-wait kid \(Self.childTask)")
+
+        let timeline = app.collectionViews["chat.timeline"]
+        let tail = timeline.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", Self.childTailPrefix)
+        ).firstMatch
+        XCTAssertTrue(waitForElementToExist(tail, timeout: 30), "No live tail under the waiting spawn row")
+        XCTAssertTrue(
+            waitForValue(of: tail, containing: "$ for i in", timeout: 20),
+            "The tail did not show the child's running bash call: \(elementValue(tail))"
+        )
+        try saveLabScreenshot(name: "durable-subagent-tail-foreground")
+
+        tap(tail, named: "foreground child live tail")
+        let childId = waitForFocusedSessionId(excluding: parentId, timeout: 20)
+        XCTAssertNotEqual(childId, parentId, "Tapping the tail did not open the child")
+        waitForAckedSubscription(sessionId: childId, level: "full")
+        XCTAssertTrue(
+            timelineShows(timeline, "faux:bash", timeout: 15),
+            "The opened session is not the child running the task"
+        )
+        try saveLabScreenshot(name: "durable-subagent-foreground-child-opened")
+    }
+
+    private func elementValue(_ element: XCUIElement) -> String {
+        element.exists ? (element.value as? String) ?? "" : ""
     }
 
     private func waitForValue(of element: XCUIElement, containing text: String, timeout: TimeInterval) -> Bool {
-        waitForCondition(timeout: timeout) { self.tailValue(element).contains(text) }
+        waitForCondition(timeout: timeout) { self.elementValue(element).contains(text) }
     }
 
     private func waitForCondition(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {

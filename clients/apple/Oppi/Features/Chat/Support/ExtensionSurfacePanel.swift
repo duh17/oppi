@@ -689,7 +689,8 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
     func apply(
         _ entry: ExtensionSurfaceStripEntry,
         themeID: ThemeID,
-        messageQueue configuration: MessageQueueSurfaceConfiguration?
+        messageQueue configuration: MessageQueueSurfaceConfiguration?,
+        sessionLiveTails: [String: ConversationChildTail]
     ) {
         self.entry = entry
         let palette = themeID.palette
@@ -718,7 +719,8 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         let context = ExtensionNativeBlockContext(
             themeID: themeID,
             linkContext: actions.linkContext,
-            onOpenURL: actions.onOpenURL
+            onOpenURL: actions.onOpenURL,
+            sessionLiveTails: sessionLiveTails
         )
         switch entry {
         case .native(let nativeSurface, _):
@@ -805,6 +807,9 @@ final class ExtensionSurfacePanelView: UIView {
         var themeID: ThemeID
         /// A new id collapses the expanded entry.
         var collapseRequestID: Int
+        /// Busy child sessions' live tails by session id, shown under drawer rows that link
+        /// to them. Empty while no drawer is expanded.
+        var sessionLiveTails: [String: ConversationChildTail] = [:]
     }
 
     let placement: ExtensionSurfacePlacementGroup
@@ -922,7 +927,12 @@ final class ExtensionSurfacePanelView: UIView {
                 drawer = next
             }
             drawer?.actions = actions
-            drawer?.apply(active, themeID: content.themeID, messageQueue: content.messageQueue)
+            drawer?.apply(
+                active,
+                themeID: content.themeID,
+                messageQueue: content.messageQueue,
+                sessionLiveTails: content.sessionLiveTails
+            )
         } else if let drawer {
             drawer.removeFromSuperview()
             self.drawer = nil

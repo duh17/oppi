@@ -55,6 +55,9 @@ final class ChatScreenModel {
     var nowPlayingDrawerExpanded = false
     var reviewCommentDrawerExpanded = false
     var extensionDrawerCollapseRequestID = 0
+    /// An extension drawer is expanded, so drawer rows that link to child sessions show
+    /// their live tails.
+    var extensionDrawerExpanded = false
     var reviewCommentStashPresentation: ReviewCommentStripChrome.StashPresentation?
     var contextBarCollapseToken = 0
     var contextBarExpanded = false

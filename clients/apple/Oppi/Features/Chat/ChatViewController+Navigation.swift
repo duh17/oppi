@@ -45,6 +45,17 @@ extension ChatViewController {
 
     /// An extension surface's links. A session link navigates like a timeline
     /// session link: it keeps the back stack and goes through the app opener.
+    /// A child session from its live tail row: the same `oppi://session/<id>` route the
+    /// subagent pill's rows take.
+    func openChildSession(_ sessionId: String) {
+        var components = URLComponents()
+        components.scheme = "oppi"
+        components.host = "session"
+        components.path = "/\(sessionId)"
+        guard let url = components.url else { return }
+        _ = openExtensionSurfaceURL(url)
+    }
+
     func openExtensionSurfaceURL(_ url: URL) -> Bool {
         let context = extensionSurfaceLinkContext
         guard let outcome = ExtensionSurfaceLinkRouting.outcome(
