@@ -527,16 +527,140 @@ enum ThemePalettes {
 }
 // swiftlint:enable function_body_length
 
+// MARK: - UIKit Palette
+
+#if canImport(UIKit)
+/// UIKit view of the active `ThemePalette`, for view controllers.
+///
+/// `Color.theme*` and `UIColor.theme*` resolve from the same cached palette:
+/// `ThemeRuntimeState` builds this once per theme change, so a UIKit view that
+/// reads `UIColor.themeFg` in `updateProperties()` paints the token a SwiftUI
+/// view reads as `.themeFg`. Palette colors are static sRGB values, so caching
+/// the `UIColor` conversions cannot go stale against a trait collection.
+struct ThemeUIKitPalette: @unchecked Sendable {
+    let bg: UIColor
+    let bgDark: UIColor
+    let bgHighlight: UIColor
+
+    let fg: UIColor
+    let fgDim: UIColor
+    let comment: UIColor
+
+    let blue: UIColor
+    let cyan: UIColor
+    let green: UIColor
+    let orange: UIColor
+    let purple: UIColor
+    let red: UIColor
+    let yellow: UIColor
+
+    let toolSuccessBg: UIColor
+    let toolTitle: UIColor
+    let toolOutput: UIColor
+
+    let scrim: UIColor
+    let dimScrim: UIColor
+    let recessedInset: UIColor
+    let onBlue: UIColor
+    let onGreen: UIColor
+
+    let syntaxComment: UIColor
+    let syntaxKeyword: UIColor
+    let syntaxFunction: UIColor
+    let syntaxString: UIColor
+    let syntaxNumber: UIColor
+    let syntaxType: UIColor
+    let syntaxPunctuation: UIColor
+
+    let diffAdded: UIColor
+    let diffRemoved: UIColor
+    let diffContext: UIColor
+
+    private let surfaces: [ThemeSurfaceRole: ThemeUIKitSurface]
+
+    init(palette: ThemePalette) {
+        bg = UIColor(palette.bg)
+        bgDark = UIColor(palette.bgDark)
+        bgHighlight = UIColor(palette.bgHighlight)
+
+        fg = UIColor(palette.fg)
+        fgDim = UIColor(palette.fgDim)
+        comment = UIColor(palette.comment)
+
+        blue = UIColor(palette.blue)
+        cyan = UIColor(palette.cyan)
+        green = UIColor(palette.green)
+        orange = UIColor(palette.orange)
+        purple = UIColor(palette.purple)
+        red = UIColor(palette.red)
+        yellow = UIColor(palette.yellow)
+
+        toolSuccessBg = UIColor(palette.toolSuccessBg)
+        toolTitle = UIColor(palette.toolTitle)
+        toolOutput = UIColor(palette.toolOutput)
+
+        scrim = UIColor(palette.bgDark.opacity(0.82))
+        dimScrim = UIColor(palette.bg.opacity(0.5))
+        recessedInset = UIColor(palette.bg.opacity(0.30))
+        onBlue = UIColor(ThemeColorContrast.foreground(for: palette.blue))
+        onGreen = UIColor(ThemeColorContrast.foreground(for: palette.green))
+
+        syntaxComment = UIColor(palette.syntaxComment)
+        syntaxKeyword = UIColor(palette.syntaxKeyword)
+        syntaxFunction = UIColor(palette.syntaxFunction)
+        syntaxString = UIColor(palette.syntaxString)
+        syntaxNumber = UIColor(palette.syntaxNumber)
+        syntaxType = UIColor(palette.syntaxType)
+        syntaxPunctuation = UIColor(palette.syntaxPunctuation)
+
+        diffAdded = UIColor(palette.toolDiffAdded)
+        diffRemoved = UIColor(palette.toolDiffRemoved)
+        diffContext = UIColor(palette.toolDiffContext)
+
+        surfaces = ThemeSurfaceRole.allCases.reduce(into: [:]) { surfaces, role in
+            let style = ThemeSurfaceStyle.resolve(role, palette: palette)
+            surfaces[role] = ThemeUIKitSurface(
+                fill: UIColor(style.fill),
+                stroke: style.stroke.map { UIColor($0) }
+            )
+        }
+    }
+
+    /// Role fill for a themed surface, with the role's opacity math already
+    /// applied by `ThemeSurfaceStyle.resolve`.
+    func surfaceFill(_ role: ThemeSurfaceRole) -> UIColor {
+        surfaces[role]?.fill ?? bg
+    }
+
+    func surfaceStroke(_ role: ThemeSurfaceRole) -> UIColor? {
+        surfaces[role]?.stroke
+    }
+}
+
+/// One resolved themed surface, as UIKit colors.
+struct ThemeUIKitSurface: @unchecked Sendable {
+    let fill: UIColor
+    let stroke: UIColor?
+}
+#endif
+
 // MARK: - Runtime State
 
 enum ThemeRuntimeState {
     private struct State {
         var themeID: ThemeID
         var palette: ThemePalette
+        #if canImport(UIKit)
+        var uiPalette: ThemeUIKitPalette
+        #endif
 
         init(themeID: ThemeID) {
+            let palette = themeID.palette
             self.themeID = themeID
-            self.palette = themeID.palette
+            self.palette = palette
+            #if canImport(UIKit)
+            self.uiPalette = ThemeUIKitPalette(palette: palette)
+            #endif
         }
     }
 
@@ -549,16 +673,20 @@ enum ThemeRuntimeState {
     }
 
     static func setThemeID(_ themeID: ThemeID) {
-        state.withLock {
-            $0.themeID = themeID
-            $0.palette = themeID.palette
-        }
+        state.withLock { $0 = State(themeID: themeID) }
     }
 
     /// Cached palette — resolved once on theme change, not on every access.
     static func currentPalette() -> ThemePalette {
         state.withLock { $0.palette }
     }
+
+    #if canImport(UIKit)
+    /// Cached UIKit palette — resolved with `currentPalette()`, never separately.
+    static func currentUIKitPalette() -> ThemeUIKitPalette {
+        state.withLock { $0.uiPalette }
+    }
+    #endif
 
     static func currentRenderTheme() -> RenderTheme {
         currentPalette().renderTheme

@@ -88,9 +88,71 @@ extension Color {
 
     static var themeDiffAdded: Color { palette.toolDiffAdded }
     static var themeDiffRemoved: Color { palette.toolDiffRemoved }
-    // periphery:ignore - used by ToolRowTextRenderer via UIColor(Color.themeDiffContext)
     static var themeDiffContext: Color { palette.toolDiffContext }
 }
+
+// MARK: - UIKit Accessors
+
+#if canImport(UIKit)
+/// UIKit-side theme colors.
+///
+/// UIKit views read these instead of bridging `UIColor(Color.themeFg)` at the
+/// call site, which is why files that build no SwiftUI view used to import
+/// SwiftUI only for a color. Both spellings resolve from
+/// `ThemeRuntimeState`, so a theme switch repaints SwiftUI and UIKit
+/// surfaces together; read them where the view applies its theme
+/// (`updateProperties()`, trait changes), not into a one-time constant.
+extension UIColor {
+    static var themeBg: UIColor { ThemeRuntimeState.currentUIKitPalette().bg }
+    static var themeBgDark: UIColor { ThemeRuntimeState.currentUIKitPalette().bgDark }
+    static var themeBgHighlight: UIColor { ThemeRuntimeState.currentUIKitPalette().bgHighlight }
+
+    static var themeFg: UIColor { ThemeRuntimeState.currentUIKitPalette().fg }
+    static var themeFgDim: UIColor { ThemeRuntimeState.currentUIKitPalette().fgDim }
+    static var themeComment: UIColor { ThemeRuntimeState.currentUIKitPalette().comment }
+
+    static var themeBlue: UIColor { ThemeRuntimeState.currentUIKitPalette().blue }
+    static var themeCyan: UIColor { ThemeRuntimeState.currentUIKitPalette().cyan }
+    static var themeGreen: UIColor { ThemeRuntimeState.currentUIKitPalette().green }
+    static var themeOrange: UIColor { ThemeRuntimeState.currentUIKitPalette().orange }
+    static var themePurple: UIColor { ThemeRuntimeState.currentUIKitPalette().purple }
+    static var themeRed: UIColor { ThemeRuntimeState.currentUIKitPalette().red }
+    static var themeYellow: UIColor { ThemeRuntimeState.currentUIKitPalette().yellow }
+
+    static var themeToolSuccessBg: UIColor { ThemeRuntimeState.currentUIKitPalette().toolSuccessBg }
+    static var themeToolTitle: UIColor { ThemeRuntimeState.currentUIKitPalette().toolTitle }
+    static var themeToolOutput: UIColor { ThemeRuntimeState.currentUIKitPalette().toolOutput }
+
+    static var themeScrim: UIColor { ThemeRuntimeState.currentUIKitPalette().scrim }
+    static var themeDimScrim: UIColor { ThemeRuntimeState.currentUIKitPalette().dimScrim }
+    static var themeRecessedInset: UIColor { ThemeRuntimeState.currentUIKitPalette().recessedInset }
+    static var themeOnBlue: UIColor { ThemeRuntimeState.currentUIKitPalette().onBlue }
+    static var themeOnGreen: UIColor { ThemeRuntimeState.currentUIKitPalette().onGreen }
+
+    static var themeSyntaxComment: UIColor { ThemeRuntimeState.currentUIKitPalette().syntaxComment }
+    static var themeSyntaxKeyword: UIColor { ThemeRuntimeState.currentUIKitPalette().syntaxKeyword }
+    static var themeSyntaxFunction: UIColor { ThemeRuntimeState.currentUIKitPalette().syntaxFunction }
+    static var themeSyntaxString: UIColor { ThemeRuntimeState.currentUIKitPalette().syntaxString }
+    static var themeSyntaxNumber: UIColor { ThemeRuntimeState.currentUIKitPalette().syntaxNumber }
+    static var themeSyntaxType: UIColor { ThemeRuntimeState.currentUIKitPalette().syntaxType }
+    static var themeSyntaxPunctuation: UIColor { ThemeRuntimeState.currentUIKitPalette().syntaxPunctuation }
+
+    static var themeDiffAdded: UIColor { ThemeRuntimeState.currentUIKitPalette().diffAdded }
+    static var themeDiffRemoved: UIColor { ThemeRuntimeState.currentUIKitPalette().diffRemoved }
+    static var themeDiffContext: UIColor { ThemeRuntimeState.currentUIKitPalette().diffContext }
+
+    /// Role fill for a themed surface. Mirrors `Color.themeSurfaceFill(_:)`;
+    /// `ThemeSurfaceStyle.resolve` remains the only owner of surface opacity.
+    static func themeSurfaceFill(_ role: ThemeSurfaceRole) -> UIColor {
+        ThemeRuntimeState.currentUIKitPalette().surfaceFill(role)
+    }
+
+    /// The role's hairline stroke, when it has one.
+    static func themeSurfaceStroke(_ role: ThemeSurfaceRole) -> UIColor? {
+        ThemeRuntimeState.currentUIKitPalette().surfaceStroke(role)
+    }
+}
+#endif
 
 /// Environment-resolved theme style for SwiftUI foregrounds, fills, strokes,
 /// and style-based backgrounds. Unlike `Color.theme*`, this registers a real

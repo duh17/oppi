@@ -1,5 +1,7 @@
 import Foundation
+import SwiftUI
 import Testing
+import UIKit
 @testable import Oppi
 
 /// Extended tests for ThemeRuntimeState — theme switching and palette caching
@@ -205,5 +207,112 @@ struct ThemeRuntimeStateExtendedTests {
 
         let themeID = ThemeID.custom(name)
         #expect(themeID.preferredColorScheme == .dark)
+    }
+}
+
+// MARK: - UIKit accessors
+
+/// `UIColor.theme*` is the UIKit spelling of `Color.theme*`: both read the
+/// cached palette. A migration that swapped `UIColor(Color.themeX)` for
+/// `UIColor.themeX` would silently change pixels if these ever drifted, so
+/// every token is compared against the palette the SwiftUI accessors read.
+@Suite("Theme UIColor accessors")
+struct ThemeUIColorAccessorTests {
+    @Test func readsTheSamePaletteAsTheSwiftUIAccessors() {
+        let original = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(original) }
+
+        for themeID in ThemeID.builtins {
+            ThemeRuntimeState.setThemeID(themeID)
+            let palette = ThemeRuntimeState.currentPalette()
+            let mismatches = [
+                ("bg", UIColor.themeBg, UIColor(palette.bg)),
+                ("bgDark", UIColor.themeBgDark, UIColor(palette.bgDark)),
+                ("bgHighlight", UIColor.themeBgHighlight, UIColor(palette.bgHighlight)),
+                ("fg", UIColor.themeFg, UIColor(palette.fg)),
+                ("fgDim", UIColor.themeFgDim, UIColor(palette.fgDim)),
+                ("comment", UIColor.themeComment, UIColor(palette.comment)),
+                ("blue", UIColor.themeBlue, UIColor(palette.blue)),
+                ("cyan", UIColor.themeCyan, UIColor(palette.cyan)),
+                ("green", UIColor.themeGreen, UIColor(palette.green)),
+                ("orange", UIColor.themeOrange, UIColor(palette.orange)),
+                ("purple", UIColor.themePurple, UIColor(palette.purple)),
+                ("red", UIColor.themeRed, UIColor(palette.red)),
+                ("yellow", UIColor.themeYellow, UIColor(palette.yellow)),
+                ("toolSuccessBg", UIColor.themeToolSuccessBg, UIColor(palette.toolSuccessBg)),
+                ("toolTitle", UIColor.themeToolTitle, UIColor(palette.toolTitle)),
+                ("toolOutput", UIColor.themeToolOutput, UIColor(palette.toolOutput)),
+                ("scrim", UIColor.themeScrim, UIColor(palette.bgDark.opacity(0.82))),
+                ("dimScrim", UIColor.themeDimScrim, UIColor(palette.bg.opacity(0.5))),
+                ("recessedInset", UIColor.themeRecessedInset, UIColor(palette.bg.opacity(0.30))),
+                ("onBlue", UIColor.themeOnBlue, UIColor(ThemeColorContrast.foreground(for: palette.blue))),
+                ("onGreen", UIColor.themeOnGreen, UIColor(ThemeColorContrast.foreground(for: palette.green))),
+                ("syntaxComment", UIColor.themeSyntaxComment, UIColor(palette.syntaxComment)),
+                ("syntaxKeyword", UIColor.themeSyntaxKeyword, UIColor(palette.syntaxKeyword)),
+                ("syntaxFunction", UIColor.themeSyntaxFunction, UIColor(palette.syntaxFunction)),
+                ("syntaxString", UIColor.themeSyntaxString, UIColor(palette.syntaxString)),
+                ("syntaxNumber", UIColor.themeSyntaxNumber, UIColor(palette.syntaxNumber)),
+                ("syntaxType", UIColor.themeSyntaxType, UIColor(palette.syntaxType)),
+                ("syntaxPunctuation", UIColor.themeSyntaxPunctuation, UIColor(palette.syntaxPunctuation)),
+                ("diffAdded", UIColor.themeDiffAdded, UIColor(palette.toolDiffAdded)),
+                ("diffRemoved", UIColor.themeDiffRemoved, UIColor(palette.toolDiffRemoved)),
+                ("diffContext", UIColor.themeDiffContext, UIColor(palette.toolDiffContext))
+            ].filter { !Self.sameColor($0.1, $0.2) }.map(\.0)
+            #expect(mismatches.isEmpty, "\(themeID.rawValue) diverged: \(mismatches)")
+        }
+    }
+
+    @Test func surfaceRolesMatchRoleResolvedFills() {
+        let original = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(original) }
+
+        for themeID in ThemeID.builtins {
+            ThemeRuntimeState.setThemeID(themeID)
+            for role in ThemeSurfaceRole.allCases {
+                let style = ThemeSurfaceStyle.resolve(role)
+                #expect(
+                    Self.sameColor(UIColor.themeSurfaceFill(role), UIColor(style.fill)),
+                    "\(themeID.rawValue) \(role) fill diverged"
+                )
+                let stroke = UIColor.themeSurfaceStroke(role)
+                #expect((stroke == nil) == (style.stroke == nil), "\(themeID.rawValue) \(role) stroke presence diverged")
+                if let stroke, let expected = style.stroke {
+                    #expect(Self.sameColor(stroke, UIColor(expected)), "\(themeID.rawValue) \(role) stroke diverged")
+                }
+            }
+        }
+    }
+
+    @Test func refreshesWhenTheThemeChanges() {
+        let original = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(original) }
+
+        ThemeRuntimeState.setThemeID(.dark)
+        let darkBackground = UIColor.themeBg
+        let darkForeground = UIColor.themeFg
+        ThemeRuntimeState.setThemeID(.light)
+
+        #expect(!Self.sameColor(darkBackground, UIColor.themeBg))
+        #expect(!Self.sameColor(darkForeground, UIColor.themeFg))
+        #expect(Self.sameColor(UIColor.themeBg, UIColor(ThemeID.light.palette.bg)))
+    }
+
+    private static func sameColor(_ lhs: UIColor, _ rhs: UIColor) -> Bool {
+        var lhsRed: CGFloat = 0
+        var lhsGreen: CGFloat = 0
+        var lhsBlue: CGFloat = 0
+        var lhsAlpha: CGFloat = 0
+        var rhsRed: CGFloat = 0
+        var rhsGreen: CGFloat = 0
+        var rhsBlue: CGFloat = 0
+        var rhsAlpha: CGFloat = 0
+        guard lhs.getRed(&lhsRed, green: &lhsGreen, blue: &lhsBlue, alpha: &lhsAlpha),
+              rhs.getRed(&rhsRed, green: &rhsGreen, blue: &rhsBlue, alpha: &rhsAlpha)
+        else { return false }
+        let tolerance: CGFloat = 0.0005
+        return abs(lhsRed - rhsRed) < tolerance
+            && abs(lhsGreen - rhsGreen) < tolerance
+            && abs(lhsBlue - rhsBlue) < tolerance
+            && abs(lhsAlpha - rhsAlpha) < tolerance
     }
 }
