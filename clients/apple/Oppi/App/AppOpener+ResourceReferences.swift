@@ -133,7 +133,7 @@ extension AppOpener {
         let switched = await openServer(target.serverId, generation: generation)
         guard isCurrent(generation) else { return .finished }
         guard switched else {
-            toastUnreachable(target.serverId)
+            toastUnreachableIfFirstAttempt(target.serverId)
             return .unreachable
         }
         await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
@@ -450,7 +450,7 @@ extension AppOpener {
             let switched = await openServer(session.serverID, generation: generation)
             guard isCurrent(generation) else { return .finished }
             guard switched else {
-                toastUnreachable(session.serverID)
+                toastUnreachableIfFirstAttempt(session.serverID)
                 return .unreachable
             }
             // A `[[session]]` match opens like a timeline session link.
@@ -476,7 +476,7 @@ extension AppOpener {
             let switched = await openServer(file.serverID, generation: generation)
             guard isCurrent(generation) else { return .finished }
             guard switched else {
-                toastUnreachable(file.serverID)
+                toastUnreachableIfFirstAttempt(file.serverID)
                 return .unreachable
             }
 
@@ -516,7 +516,7 @@ extension AppOpener {
             let switched = await openServer(file.serverID, generation: generation)
             guard isCurrent(generation) else { return .finished }
             guard switched else {
-                toastUnreachable(file.serverID)
+                toastUnreachableIfFirstAttempt(file.serverID)
                 return .unreachable
             }
 
@@ -590,7 +590,7 @@ extension AppOpener {
         let switched = await openServer(resolution.target.serverId, generation: generation)
         guard isCurrent(generation) else { return .finished }
         guard switched else {
-            toastUnreachable(resolution.target.serverId)
+            toastUnreachableIfFirstAttempt(resolution.target.serverId)
             return .unreachable
         }
 
