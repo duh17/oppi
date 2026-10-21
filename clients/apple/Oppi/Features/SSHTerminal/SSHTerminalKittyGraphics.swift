@@ -94,20 +94,36 @@ struct SSHTerminalKittyImage {
     let width: Int
     let height: Int
     let format: SSHTerminalKittyImageFormat
-    /// Borrowed from libghostty: valid only until the terminal is mutated
-    /// (any write, resize or reset). The engine refreshes it before every
-    /// frame, and the renderer copies it into a texture during that same call.
-    var pixels: UnsafePointer<UInt8>?
-    var byteCount: Int
 
-    var hasPixels: Bool { pixels != nil && byteCount == width * height * format.bytesPerPixel }
+    /// Borrowed pixel payload for this image, resolved on demand: only a texture
+    /// upload needs the bytes, so a frame whose textures are already uploaded
+    /// makes no per-image calls at all. The pointer is valid only until the
+    /// terminal is mutated, which is why the renderer copies it immediately.
+    func resolvePixels(_ graphics: GhosttyKittyGraphics) -> SSHTerminalKittyPixels? {
+        guard let image = ghostty_kitty_graphics_image(graphics, id) else { return nil }
+        var pixels: UnsafePointer<UInt8>?
+        if ghostty_kitty_graphics_image_get(
+            image, GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR, &pixels
+        ) != GHOSTTY_SUCCESS { pixels = nil }
+        var length = 0
+        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN, &length)
+        // A payload libghostty has not finished assembling reports no pointer;
+        // the next frame retries once the store's generation moves.
+        guard let pixels, length == width * height * format.bytesPerPixel else { return nil }
+        return SSHTerminalKittyPixels(pointer: pixels, byteCount: length)
+    }
 }
 
-/// One screen's Kitty graphics for the current viewport. The engine replaces
-/// the placement array when image storage or placement geometry changes, and
-/// refreshes the borrowed image pointers in place because libghostty
-/// invalidates them on every terminal mutation. Frames carry a reference;
-/// they are only read synchronously on the main actor.
+/// Borrowed pixel bytes of one stored image.
+struct SSHTerminalKittyPixels {
+    let pointer: UnsafePointer<UInt8>
+    let byteCount: Int
+}
+
+/// One screen's Kitty graphics for the current viewport. The engine replaces the
+/// placement array when image storage or placement geometry changes; pixel
+/// payloads are not copied into it, so it costs no more than the geometry.
+/// Frames carry a reference; they are only read synchronously on the main actor.
 final class SSHTerminalKittySnapshot {
     /// libghostty's storage generation. It moves on any transmit, placement or
     /// delete, so a renderer can evict textures only when it changed.
@@ -116,10 +132,16 @@ final class SSHTerminalKittySnapshot {
     /// linear pass with one draw per image and layer.
     private(set) var placements: [SSHTerminalKittyPlacement]
     private(set) var images: [SSHTerminalKittyImage]
-    /// Every image ID still in libghostty's store, including images whose
-    /// placements scrolled out of the viewport. Textures are evicted against
-    /// this, not against what happens to be visible.
+    /// The same images by ID, built once when the snapshot is read so a frame
+    /// looks each placement's image up instead of scanning the list.
+    let imagesByID: [UInt32: SSHTerminalKittyImage]
+    /// Every image ID libghostty still stores, on either screen, including
+    /// images whose placements scrolled out of the viewport. Textures are evicted
+    /// against this, not against what happens to be visible.
     let storedImageIDs: Set<UInt32>
+    /// libghostty's store handle for this screen, borrowed like the pixels and
+    /// valid until the next mutating terminal call (the same frame).
+    let graphics: GhosttyKittyGraphics
     /// Terminal cell size these placements were resolved with.
     let cellWidth: Int
     let cellHeight: Int
@@ -128,66 +150,42 @@ final class SSHTerminalKittySnapshot {
         generation: UInt64,
         placements: [SSHTerminalKittyPlacement],
         images: [SSHTerminalKittyImage],
+        imagesByID: [UInt32: SSHTerminalKittyImage],
         storedImageIDs: Set<UInt32>,
+        graphics: GhosttyKittyGraphics,
         cellWidth: Int,
         cellHeight: Int
     ) {
         self.generation = generation
         self.placements = placements
         self.images = images
+        self.imagesByID = imagesByID
         self.storedImageIDs = storedImageIDs
+        self.graphics = graphics
         self.cellWidth = cellWidth
         self.cellHeight = cellHeight
     }
 
     var isEmpty: Bool { placements.isEmpty && images.isEmpty }
 
-    /// Refresh the borrowed pixel pointers. libghostty invalidates every handle
-    /// borrowed from the terminal on a mutating call, so the engine calls this
-    /// before handing the snapshot to a renderer.
-    func refreshImageData(_ graphics: GhosttyKittyGraphics) {
-        for index in images.indices {
-            guard let image = ghostty_kitty_graphics_image(graphics, images[index].id) else {
-                images[index].pixels = nil
-                images[index].byteCount = 0
-                continue
-            }
-            var pixels: UnsafePointer<UInt8>?
-            var length = 0
-            if ghostty_kitty_graphics_image_get(
-                image, GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR, &pixels
-            ) != GHOSTTY_SUCCESS { pixels = nil }
-            ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN, &length)
-            images[index].pixels = pixels
-            images[index].byteCount = length
-        }
-    }
-
-    /// Read one stored image's metadata and pixels. A payload libghostty has
-    /// not finished assembling reports `GHOSTTY_NO_VALUE` for the pointer; the
-    /// next snapshot retries once the store's generation moves.
+    /// Read one stored image's metadata. A payload libghostty has not finished
+    /// assembling is not read here: `SSHTerminalKittyImage.resolvePixels` asks
+    /// for it when an upload needs it.
     static func image(_ image: GhosttyKittyGraphicsImage) -> SSHTerminalKittyImage {
         var id: UInt32 = 0
         var width: UInt32 = 0
         var height: UInt32 = 0
         var format = GHOSTTY_KITTY_IMAGE_FORMAT_RGBA
         var generation: UInt64 = 0
-        var pixels: UnsafePointer<UInt8>?
-        var length = 0
         ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_ID, &id)
         ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_WIDTH, &width)
         ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_HEIGHT, &height)
         ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_FORMAT, &format)
         ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_GENERATION, &generation)
-        if ghostty_kitty_graphics_image_get(
-            image, GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR, &pixels
-        ) != GHOSTTY_SUCCESS { pixels = nil }
-        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN, &length)
         return SSHTerminalKittyImage(
             id: id, generation: generation,
             width: Int(width), height: Int(height),
-            format: SSHTerminalKittyImageFormat(format) ?? .rgba,
-            pixels: pixels, byteCount: length
+            format: SSHTerminalKittyImageFormat(format) ?? .rgba
         )
     }
 }
@@ -216,8 +214,9 @@ enum SSHTerminalKittyPNGDecoder {
         out: UnsafeMutablePointer<GhosttySysImage>?
     ) -> Bool {
         guard let data, length > 0, let out else { return false }
-        // The payload belongs to libghostty and outlives this call, so borrow it
-        // instead of copying a payload that may already be tens of megabytes.
+        // The payload belongs to libghostty and is only valid for the duration of
+        // this callback. Borrow it for that long instead of copying a payload
+        // that may already be tens of megabytes; nothing here may retain it.
         let encoded = Data(
             bytesNoCopy: UnsafeMutableRawPointer(mutating: data), count: length, deallocator: .none
         )

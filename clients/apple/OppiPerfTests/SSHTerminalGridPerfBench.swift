@@ -254,7 +254,7 @@ struct SSHTerminalGridPerfBench {
         #expect(stored == 10_000, "every picture the host sent is stored")
         #expect(placements > 0 && placements <= SSHTerminalMetalRenderer.maxKittyPlacementsPerFrame)
         #expect(renderer.cachedImageCount <= SSHTerminalMetalRenderer.maxKittyImagesPerFrame)
-        #expect(renderer.cachedImageBytes <= SSHTerminalKittyGraphics.imageStorageLimitBytes)
+        #expect(renderer.cachedImageBytes <= SSHTerminalKittyTextureCache.limitBytes)
         #expect(renderer.cachedImageBytes > 0, "the budget counts real texture bytes")
         #expect(uploads == 0, "a steady-state frame copies no image pixels")
         #expect(uploadsAfterWarmup > 0, "the warmup frame uploaded the bounded set")

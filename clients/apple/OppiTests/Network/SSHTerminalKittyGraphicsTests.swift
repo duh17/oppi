@@ -65,8 +65,7 @@ struct SSHTerminalKittyGraphicsTests {
         #expect(image.width == 2 && image.height == 2)
         #expect(image.format == .rgba)
         #expect(image.generation > 0)
-        let pixels = try #require(image.pixels)
-        #expect(Array(UnsafeBufferPointer(start: pixels, count: image.byteCount)) == [0xFF, 0x80, 0x00, 0xFF, 0xFF, 0x80, 0x00, 0xFF, 0xFF, 0x80, 0x00, 0xFF, 0xFF, 0x80, 0x00, 0xFF])
+        #expect(try pixelBytes(of: image, in: kitty) == [0xFF, 0x80, 0x00, 0xFF, 0xFF, 0x80, 0x00, 0xFF, 0xFF, 0x80, 0x00, 0xFF, 0xFF, 0x80, 0x00, 0xFF])
         // The host is told the image loaded; without a reply `kitten icat` gives up.
         #expect(replies.map { String(decoding: $0, as: UTF8.self) } == ["\u{1b}_Gi=7;OK\u{1b}\\"])
     }
@@ -84,8 +83,7 @@ struct SSHTerminalKittyGraphicsTests {
         let image = try #require(kitty.images.first)
         #expect(image.width == 2 && image.height == 2)
         #expect(image.format == .rgba)
-        let pixels = try #require(image.pixels)
-        #expect(Array(UnsafeBufferPointer(start: pixels, count: 16)) == [
+        #expect(try pixelBytes(of: image, in: kitty) == [
             255, 0, 0, 255, 255, 0, 0, 255,
             0, 0, 255, 255, 0, 0, 255, 255,
         ], "PNG decodes to straight-alpha RGBA, top row first")
@@ -168,6 +166,11 @@ struct SSHTerminalKittyGraphicsTests {
         engine.receive(kitty("a=T,f=32,s=1,v=1,i=5,c=1,r=1", payload: white))
         #expect(engine.frame().kitty?.placements.count == 1)
         engine.receive(Data("\u{1b}c".utf8)) // RIS
+        // A reset is reported once as an empty store, so the renderer drops every
+        // texture; after that there is nothing to report at all.
+        let reset = engine.frame().kitty
+        #expect(reset?.placements.isEmpty == true)
+        #expect(reset?.storedImageIDs.isEmpty == true)
         #expect(engine.frame().kitty == nil)
     }
 
@@ -178,10 +181,10 @@ struct SSHTerminalKittyGraphicsTests {
         let firstGeneration = first.generation
 
         engine.receive(kitty("a=T,f=32,s=1,v=1,i=8,c=1,r=1", payload: rgbaPayload([Pixel(red: 9, green: 9, blue: 9)])))
-        let second = try #require(engine.frame().kitty?.images.first)
+        let snapshot = try #require(engine.frame().kitty)
+        let second = try #require(snapshot.images.first)
         #expect(second.generation != firstGeneration)
-        let pixels = try #require(second.pixels)
-        #expect(pixels[0] == 9)
+        #expect(try pixelBytes(of: second, in: snapshot).first == 9)
         #expect(engine.frame().kitty?.placements.count == 1, "the replacement keeps one placement")
     }
 
@@ -294,6 +297,98 @@ struct SSHTerminalKittyGraphicsTests {
         #expect(again.imageUploadCount == 0, "the bounded set is already uploaded")
     }
 
+    /// Three RGB pictures that fit libghostty's 64 MB store but expand past it as
+    /// RGBA textures. The texture budget is sized from what the store can produce,
+    /// so they upload once and stay: the old budget evicted them the same frame it
+    /// drew them and copied them again on every redraw.
+    @Test func largeRGBImagesAreNotReuploadedAfterWarmup() throws {
+        let width = 3_000
+        let height = 2_000
+        // 18 MB each as RGB, 24 MB each as an RGBA texture: 54 MB stored, 72 MB of
+        // textures, which the store's own 64 MB could never hold.
+        let payload = Self.solidRGBZlib(width: width, height: height, value: 0x40)
+        #expect(payload.count < 200_000, "the payload stays tiny however large the picture")
+        let harness = try renderHarness(columns: 8, rows: 4)
+        let home = Data("\u{1b}[1;1H".utf8)
+        for index in 0..<3 {
+            harness.engine.receive(home + kitty(
+                "a=T,f=24,s=\(width),v=\(height),o=z,i=\(index + 1),c=4,r=2",
+                payload: payload
+            ))
+        }
+        let snapshot = try #require(harness.engine.frame().kitty)
+        #expect(snapshot.images.count == 3)
+
+        let warmup = harness.encode(fullRebuild: true)
+        #expect(warmup.completed)
+        #expect(warmup.imagePlacementCount == 3)
+        #expect(warmup.imageUploadCount == 3)
+        #expect(harness.renderer.cachedImageCount == 3)
+        #expect(
+            harness.renderer.cachedImageBytes > SSHTerminalKittyGraphics.imageStorageLimitBytes,
+            "as textures these pictures are bigger than the store holding them"
+        )
+
+        for _ in 0..<3 {
+            let redraw = harness.encode(fullRebuild: false)
+            #expect(redraw.imagePlacementCount == 3)
+            #expect(redraw.imageUploadCount == 0, "a picture inside the texture budget is never re-uploaded")
+        }
+        #expect(harness.renderer.imageEvictionCount == 0)
+    }
+
+    /// Pictures that individually fit the budget but together do not: the frame
+    /// draws what it can, keeps what it drew, and remembers the refusals so a
+    /// redraw neither evicts the picture on screen nor rebuilds the rest.
+    @Test func budgetRefusesOverflowImagesOncePerGeneration() throws {
+        // One 256x256 RGBA picture is exactly the whole budget this renderer is
+        // given, so the first fits and the next three cannot.
+        let limit = 256 * 256 * 4
+        let harness = try renderHarness(columns: 8, rows: 1, kittyTextureLimit: limit)
+        let home = Data("\u{1b}[1;1H".utf8)
+        let payload = rgbaPayload(Array(repeating: Pixel(red: 0x10, green: 0x20, blue: 0x30), count: 256 * 256))
+        for index in 0..<4 {
+            harness.engine.receive(home + kitty(
+                "a=T,f=32,s=256,v=256,i=\(index + 1),c=2,r=1", payload: payload
+            ))
+        }
+
+        let first = harness.encode(fullRebuild: true)
+        #expect(first.completed)
+        #expect(first.imagePlacementCount == 1, "only the picture that fits is drawn")
+        #expect(harness.renderer.cachedImageCount == 1)
+        #expect(harness.renderer.cachedImageBytes <= limit)
+        #expect(harness.renderer.imageEvictionCount == 0, "nothing drawn this frame is evicted")
+        let creations = harness.renderer.imageUploadCount
+        #expect(creations == 4, "every texture creation counts, including the refused ones")
+
+        for _ in 0..<3 {
+            let redraw = harness.encode(fullRebuild: false)
+            #expect(redraw.imagePlacementCount == 1)
+            #expect(redraw.imageUploadCount == 0)
+        }
+        #expect(harness.renderer.imageUploadCount == creations, "a refused generation is not rebuilt")
+        #expect(harness.renderer.cachedImageCount == 1)
+    }
+
+    /// A picture larger than the whole budget is refused before Metal builds it,
+    /// so a redraw costs nothing instead of allocating and dropping it each time.
+    @Test func oversizeImageIsRefusedBeforeItIsBuilt() throws {
+        let harness = try renderHarness(columns: 8, rows: 4, kittyTextureLimit: 256 * 1024)
+        let payload = rgbaPayload(Array(repeating: Pixel(red: 9, green: 9, blue: 9), count: 512 * 512))
+        harness.engine.receive(kitty("a=T,f=32,s=512,v=512,i=71,c=2,r=1", payload: payload))
+        let first = harness.encode(fullRebuild: true)
+        #expect(first.completed)
+        #expect(first.imagePlacementCount == 0, "a picture past the budget is not drawn")
+        #expect(harness.renderer.imageUploadCount == 0, "it is refused before a texture is made")
+        for _ in 0..<3 {
+            let redraw = harness.encode(fullRebuild: false)
+            #expect(redraw.imagePlacementCount == 0)
+        }
+        #expect(harness.renderer.imageUploadCount == 0)
+        #expect(harness.renderer.cachedImageCount == 0)
+    }
+
     @Test func imageScrolledOutOfViewKeepsItsTexture() throws {
         let harness = try renderHarness(columns: 8, rows: 4)
         harness.engine.receive(Data((0..<40).map { "line \($0)\r\n" }.joined().utf8))
@@ -360,11 +455,15 @@ struct SSHTerminalKittyGraphicsTests {
         }
     }
 
-    private func renderHarness(columns: Int, rows: Int) throws -> RenderHarness {
+    private func renderHarness(
+        columns: Int, rows: Int, kittyTextureLimit: Int = SSHTerminalKittyTextureCache.limitBytes
+    ) throws -> RenderHarness {
         let pipeline = try SSHTerminalMetalPipeline.shared()
         let metrics = SSHTerminalCellMetrics.codeFont()
         let scale: CGFloat = 2
-        let renderer = try SSHTerminalMetalRenderer(pipeline: pipeline, metrics: metrics, scale: scale)
+        let renderer = try SSHTerminalMetalRenderer(
+            pipeline: pipeline, metrics: metrics, scale: scale, kittyTextureLimit: kittyTextureLimit
+        )
         let width = max(1, Int(metrics.cellSize.width * CGFloat(columns) * scale))
         let height = max(1, Int(metrics.cellSize.height * CGFloat(rows) * scale))
         let texture = try #require(renderer.makeOffscreenTexture(width: width, height: height))
@@ -511,13 +610,39 @@ struct SSHTerminalKittyGraphicsTests {
         ])
         let engine = try engine()
         engine.receive(kitty("a=T,f=100,i=41,c=2,r=2", payload: pngData.base64EncodedString()))
-        let image = try #require(engine.frame().kitty?.images.first)
-        let pixels = try #require(image.pixels)
-        let bytes = Array(UnsafeBufferPointer(start: pixels, count: 16))
+        let snapshot = try #require(engine.frame().kitty)
+        let image = try #require(snapshot.images.first)
+        let bytes = try pixelBytes(of: image, in: snapshot)
         #expect(bytes[3] == 128, "alpha survives the round trip")
         #expect(bytes[0] > 250, "unpremultiply restores the straight red channel")
         #expect(bytes[4] == 0 && bytes[5] == 0 && bytes[6] == 0, "a transparent pixel has no colour")
         #expect(bytes[8] == 255 && bytes[9] == 255 && bytes[10] == 255)
+    }
+
+    // MARK: - Synchronized output
+
+    /// Mode 2026 holds the whole picture. An image that arrives inside a held
+    /// frame must not draw over the text that frame is still showing, so the
+    /// store's new generation waits for the release.
+    @Test func heldSynchronizedOutputKeepsThePreviousSnapshot() throws {
+        let engine = try engine()
+        let white = rgbaPayload([Pixel(red: 255, green: 255, blue: 255)])
+        engine.receive(kitty("a=T,f=32,s=1,v=1,i=61,c=1,r=1", payload: white))
+        let before = try #require(engine.frame().kitty)
+        #expect(before.placements.map(\.imageID) == [61])
+
+        engine.receive(Data("\u{1b}[?2026h".utf8))
+        #expect(engine.renderHeld)
+        engine.receive(kitty("a=d,d=i,i=61"))
+        engine.receive(kitty("a=T,f=32,s=1,v=1,i=62,c=1,r=1", payload: white))
+        let held = try #require(engine.frame().kitty)
+        #expect(held.placements.map(\.imageID) == [61], "the held frame keeps the picture it drew")
+        #expect(!held.storedImageIDs.contains(62), "the new image waits for the release")
+
+        engine.receive(Data("\u{1b}[?2026l".utf8))
+        #expect(!engine.renderHeld)
+        let released = try #require(engine.frame().kitty)
+        #expect(released.placements.map(\.imageID) == [62], "the release shows the new picture")
     }
 
     // MARK: - PNG fixture
@@ -548,6 +673,53 @@ struct SSHTerminalKittyGraphicsTests {
         return data as Data
     }
 
+    /// The stored pixels of one image, read through the same lazy lookup the
+    /// renderer uses when it uploads.
+    private func pixelBytes(
+        of image: SSHTerminalKittyImage, in snapshot: SSHTerminalKittySnapshot
+    ) throws -> [UInt8] {
+        let pixels = try #require(image.resolvePixels(snapshot.graphics))
+        return Array(UnsafeBufferPointer(start: pixels.pointer, count: pixels.byteCount))
+    }
+
+    /// A solid RGB picture as the zlib payload `o=z` takes: tiny on the wire
+    /// however many pixels it decodes to.
+    private static func solidRGBZlib(width: Int, height: Int, value: UInt8) -> String {
+        Data(zlibWrapped([UInt8](repeating: value, count: width * 3), rows: height))
+            .base64EncodedString()
+    }
+
+    /// The zlib stream PNG and kitty's `o=z` both expect. Apple's
+    /// `COMPRESSION_ZLIB` emits bare deflate blocks, so the two-byte header and
+    /// the Adler-32 checksum of the uncompressed picture are added here. The
+    /// checksum folds the row once and then applies the per-row recurrence, so a
+    /// hundred-megabyte canvas costs no more than a single row.
+    private static func zlibWrapped(_ row: [UInt8], rows: Int) -> [UInt8] {
+        var rowSum: UInt64 = 0
+        var rowPrefixSum: UInt64 = 0
+        var prefix: UInt64 = 0
+        for byte in row {
+            prefix += UInt64(byte)
+            rowSum += UInt64(byte)
+            rowPrefixSum += prefix
+        }
+        var low: UInt64 = 1
+        var high: UInt64 = 0
+        let count = UInt64(row.count)
+        for _ in 0..<rows {
+            high = (high + count * low + rowPrefixSum) % 65521
+            low = (low + rowSum) % 65521
+        }
+        let adler = UInt32((high << 16) | low)
+        var out: [UInt8] = [0x78, 0x01]
+        out += deflate(row, rows: rows)
+        out += [
+            UInt8(truncatingIfNeeded: adler >> 24), UInt8(truncatingIfNeeded: adler >> 16),
+            UInt8(truncatingIfNeeded: adler >> 8), UInt8(truncatingIfNeeded: adler),
+        ]
+        return out
+    }
+
     /// A valid PNG that declares `width`x`height` and holds one solid colour, built
     /// row by row through a real zlib stream. Whatever the canvas size, the file
     /// itself stays small: this is the shape of a decode bomb.
@@ -559,7 +731,7 @@ struct SSHTerminalKittyGraphicsTests {
         header += [8, 2, 0, 0, 0] // 8-bit truecolour, deflate, adaptive filtering, no interlace
         var row = [UInt8](repeating: value, count: width * 3)
         row[0] = 0 // filter type 0 (None) for every row
-        let compressed = deflate(row, rows: height)
+        let compressed = zlibWrapped(row, rows: height)
         var bytes: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
         bytes += pngChunk("IHDR", header)
         var offset = 0

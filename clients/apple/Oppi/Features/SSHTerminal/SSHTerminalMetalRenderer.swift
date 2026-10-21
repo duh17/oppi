@@ -526,9 +526,8 @@ private func sshTerminalFontCovers(_ font: UIFont, _ text: String) -> Bool {
 /// changes on every add or replace of an image ID (including animation frames),
 /// so a cached texture can never show stale pixels; a dimension comparison
 /// would miss a same-sized retransmission. Entries leave when the image leaves
-/// libghostty's store, and the total is kept under a byte budget by evicting the
-/// least recently drawn image, so a store full of images cannot hold unbounded
-/// GPU memory.
+/// libghostty's store, and the budget below bounds the GPU memory a store full of
+/// images can claim.
 final class SSHTerminalKittyTextureCache {
     private struct Entry {
         let generation: UInt64
@@ -536,31 +535,57 @@ final class SSHTerminalKittyTextureCache {
         /// What the GPU actually allocated. Gray and gray-alpha arrive expanded
         /// to RGBA, so this is not derivable from the stored format.
         let byteCount: Int
+        /// Frame this entry was last drawn in; an entry drawn this frame is never
+        /// evicted this frame.
         var lastUsed: UInt64
     }
 
-    /// Pixel bytes held here. An image that alone exceeds it is not drawn rather
-    /// than evicting everything on screen.
+    /// Texture bytes held here, sized from what libghostty's store can produce
+    /// rather than from the store's own 64 MB: a gray image is 1 byte per pixel
+    /// stored and 4 bytes per pixel as an RGBA texture, so the worst case a
+    /// screen can ask for is four times the store. Sizing it any lower would evict
+    /// images this same frame draws and re-upload them on every redraw.
+    static let limitBytes = SSHTerminalKittyGraphics.imageStorageLimitBytes * 4
+    /// Where eviction stops (three quarters of the budget), so one frame that
+    /// needs room pays for one eviction pass instead of one per upload.
+    private var lowWaterBytes: Int { max(1, limit / 4 * 3) }
+
     private let limit: Int
     private var entries: [UInt32: Entry] = [:]
-    private var tick: UInt64 = 0
+    /// Image generations that did not fit, so a rejected image is not rebuilt on
+    /// every frame. Retransmission brings a new generation and retries.
+    private var refused: [UInt32: UInt64] = [:]
+    /// Render pass this cache is serving; bumped by `beginFrame`.
+    private var frameTick: UInt64 = 0
+    /// Frame that already paid for an eviction pass.
+    private var evictedFrameTick: UInt64 = .max
     private(set) var totalBytes = 0
-    /// Texture creations, for tests and the perf bench: steady-state frames
-    /// must not add to this.
+    /// Texture creations, for tests and the perf bench: steady-state frames must
+    /// not add to this. A texture the budget then refuses still counts.
     private(set) var uploadCount = 0
-    /// Images dropped for budget, for tests: a frame past the budget must skip
-    /// an image, never leak one.
+    /// Images dropped for budget or deletion, for tests: a frame past the budget
+    /// must skip an image, never leak one.
     private(set) var evictionCount = 0
     var count: Int { entries.count }
 
-    init(limit: Int = SSHTerminalKittyGraphics.imageStorageLimitBytes) {
+    init(limit: Int = SSHTerminalKittyTextureCache.limitBytes) {
         self.limit = max(1, limit)
     }
 
-    /// The texture for this image, uploading it the first time this generation
-    /// is seen. Nil when the payload is not resident yet, is too large for the
+    /// Start a render pass. Entries touched after this are off limits to eviction
+    /// until the next pass.
+    func beginFrame() {
+        frameTick &+= 1
+    }
+
+    /// The texture for this image, uploading it the first time this generation is
+    /// seen. Nil when the payload is not resident yet, is too large for the
     /// device, or does not fit the cache budget.
-    func texture(for image: SSHTerminalKittyImage, device: MTLDevice) -> MTLTexture? {
+    func texture(
+        for image: SSHTerminalKittyImage,
+        graphics: GhosttyKittyGraphics,
+        device: MTLDevice
+    ) -> MTLTexture? {
         guard image.width > 0, image.height > 0,
               image.width <= 16384, image.height <= 16384 else { return nil }
         let (pixels, overflowed) = image.width.multipliedReportingOverflow(by: image.height)
@@ -568,46 +593,65 @@ final class SSHTerminalKittyTextureCache {
         let (estimated, estimateOverflowed) = pixels.multipliedReportingOverflow(by: 4)
         // Cheap upper bound before Metal is asked for a texture too big to keep.
         guard !estimateOverflowed, estimated <= limit else { return nil }
-        tick &+= 1
         if var entry = entries[image.id] {
             if entry.generation == image.generation {
-                entry.lastUsed = tick
+                entry.lastUsed = frameTick
                 entries[image.id] = entry
                 return entry.texture
             }
             entries[image.id] = nil
             totalBytes -= entry.byteCount
         }
-        guard let texture = Self.makeTexture(device: device, image: image) else { return nil }
+        if refused[image.id] == image.generation { return nil }
+        refused[image.id] = nil
+        // Pixels are read only here, on a miss, so a frame whose textures are all
+        // resident makes no per-image calls at all.
+        guard let payload = image.resolvePixels(graphics),
+              let texture = Self.makeTexture(
+                  device: device, image: image, pixels: payload.pointer
+              ) else {
+            refused[image.id] = image.generation
+            return nil
+        }
+        uploadCount += 1
         // What Metal reports can be zero where the driver does not track it (the
         // simulator does), so the pixel bytes are the floor and the budget still
         // bounds what is held.
         let allocated = max(texture.allocatedSize, estimated)
-        guard allocated <= limit else { return nil }
-        if totalBytes + allocated > limit {
-            // Oldest first: images drawn this frame were touched last, so a fit
-            // frame evicts what is off screen instead of what it just drew.
-            let ordered = entries.sorted { $0.value.lastUsed < $1.value.lastUsed }
-            for (id, entry) in ordered {
-                guard totalBytes + allocated > limit else { break }
-                entries[id] = nil
-                totalBytes -= entry.byteCount
-                evictionCount += 1
-            }
+        guard allocated <= limit, makeRoom(for: allocated) else {
+            refused[image.id] = image.generation
+            return nil
         }
-        guard totalBytes + allocated <= limit else { return nil }
         entries[image.id] = Entry(
-            generation: image.generation, texture: texture, byteCount: allocated, lastUsed: tick
+            generation: image.generation, texture: texture, byteCount: allocated,
+            lastUsed: frameTick
         )
         totalBytes += allocated
-        uploadCount += 1
         return texture
     }
 
+    /// Make room for one texture by evicting images this frame did not draw, down
+    /// to the low-water mark, at most once per frame.
+    private func makeRoom(for allocated: Int) -> Bool {
+        if totalBytes + allocated <= limit { return true }
+        guard evictedFrameTick != frameTick else { return false }
+        evictedFrameTick = frameTick
+        let stale = entries
+            .filter { $0.value.lastUsed < frameTick }
+            .sorted { $0.value.lastUsed < $1.value.lastUsed }
+        for (id, entry) in stale {
+            guard totalBytes + allocated > lowWaterBytes else { break }
+            entries[id] = nil
+            totalBytes -= entry.byteCount
+            evictionCount += 1
+        }
+        return totalBytes + allocated <= limit
+    }
+
     /// Drop every image libghostty no longer stores. An image whose placements
-    /// scrolled out of the viewport is still stored, so its texture stays.
+    /// scrolled out of the viewport, or whose screen is not the active one, is
+    /// still stored, so its texture stays.
     func retain(only stored: Set<UInt32>) {
-        guard !entries.isEmpty else { return }
         var evicted = [UInt32]()
         for (id, entry) in entries where !stored.contains(id) {
             totalBytes -= entry.byteCount
@@ -617,12 +661,12 @@ final class SSHTerminalKittyTextureCache {
             entries[id] = nil
             evictionCount += 1
         }
+        for id in Array(refused.keys) where !stored.contains(id) { refused.removeValue(forKey: id) }
     }
 
     private static func makeTexture(
-        device: MTLDevice, image: SSHTerminalKittyImage
+        device: MTLDevice, image: SSHTerminalKittyImage, pixels: UnsafePointer<UInt8>
     ) -> MTLTexture? {
-        guard image.hasPixels, let pixels = image.pixels else { return nil }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm, width: image.width, height: image.height, mipmapped: false
         )
@@ -640,7 +684,7 @@ final class SSHTerminalKittyTextureCache {
         // RGBA texture; expand once, at upload time only.
         let count = image.width * image.height
         var expanded = [UInt8](repeating: 0, count: count * 4)
-        let source = UnsafeBufferPointer(start: pixels, count: image.byteCount)
+        let source = UnsafeBufferPointer(start: pixels, count: image.width * image.height * image.format.bytesPerPixel)
         for index in 0..<count {
             switch image.format {
             case .rgba:
@@ -712,8 +756,9 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
     private let glyph: MTLRenderPipelineState
     private let imagePipeline: MTLRenderPipelineState
     private let atlas: SSHTerminalGlyphAtlas
-    /// Kitty image textures, keyed by image ID and generation.
-    private let kittyTextures = SSHTerminalKittyTextureCache()
+    /// Kitty image textures, keyed by image ID and generation. The budget is a
+    /// parameter so a test can hold the cache to a size the device would reach.
+    private let kittyTextures: SSHTerminalKittyTextureCache
     /// Store generation the texture cache was last pruned against.
     private var evictedKittyGeneration: UInt64 = .max
     private let lock = NSLock()
@@ -748,7 +793,8 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         pipeline: SSHTerminalMetalPipeline,
         metrics: SSHTerminalCellMetrics,
         scale: CGFloat,
-        atlasSide: Int = SSHTerminalGlyphAtlas.side
+        atlasSide: Int = SSHTerminalGlyphAtlas.side,
+        kittyTextureLimit: Int = SSHTerminalKittyTextureCache.limitBytes
     ) throws {
         self.device = pipeline.device
         self.queue = pipeline.queue
@@ -758,6 +804,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         self.imagePipeline = pipeline.image
         self.metrics = metrics
         self.scale = max(scale, 1)
+        self.kittyTextures = SSHTerminalKittyTextureCache(limit: kittyTextureLimit)
         guard let atlas = SSHTerminalGlyphAtlas(device: pipeline.device, side: atlasSide) else {
             throw RendererError.noAtlas
         }
@@ -1196,15 +1243,17 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
     static let maxKittyPlacementsPerFrame = 1024
 
     /// Place every visible Kitty placement as a cell-space quad, sampling its
-    /// source rectangle. Pixels only reach a texture when an image generation
-    /// changes (see `SSHTerminalKittyTextureCache`); a frame in the steady state
-    /// appends instances and nothing else. The snapshot arrives sorted by
-    /// (layer, image ID), so one pass over the placements groups them exactly in
-    /// draw order with no search per image. Textures are evicted only when
-    /// libghostty dropped the image from its store.
+    /// source rectangle. Pixels reach a texture only when an image generation
+    /// changes (see `SSHTerminalKittyTextureCache`), and they are read from
+    /// libghostty only then; a frame in the steady state appends instances and
+    /// makes no per-image calls. The snapshot arrives sorted by (layer, image ID)
+    /// with its images already indexed by ID, so one pass over the placements
+    /// groups them exactly in draw order with no search per image. Textures are
+    /// evicted only when libghostty dropped the image from its store.
     private func packImages(
         _ kitty: SSHTerminalKittySnapshot?, cellW: Float, cellH: Float
     ) -> ImagePacking {
+        kittyTextures.beginFrame()
         guard let kitty else {
             // Nothing is stored on this screen. Cached textures stay: the other
             // screen's store may still hold them (an alternate-screen toggle),
@@ -1224,8 +1273,6 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         // a fraction of a pixel different after rounding.
         let scaleX = cellW / Float(max(1, kitty.cellWidth))
         let scaleY = cellH / Float(max(1, kitty.cellHeight))
-        var imagesByID = [UInt32: SSHTerminalKittyImage](minimumCapacity: kitty.images.count)
-        for image in kitty.images where imagesByID[image.id] == nil { imagesByID[image.id] = image }
         var packing = ImagePacking()
         packing.instances.reserveCapacity(min(kitty.placements.count, Self.maxKittyPlacementsPerFrame))
         var drawnImages = 0
@@ -1243,8 +1290,10 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             defer { index = end }
             guard packing.instances.count < Self.maxKittyPlacementsPerFrame,
                   drawnImages < Self.maxKittyImagesPerFrame,
-                  let image = imagesByID[imageID], image.width > 0, image.height > 0,
-                  let texture = kittyTextures.texture(for: image, device: device) else { continue }
+                  let image = kitty.imagesByID[imageID], image.width > 0, image.height > 0,
+                  let texture = kittyTextures.texture(
+                      for: image, graphics: kitty.graphics, device: device
+                  ) else { continue }
             let width = Float(image.width)
             let height = Float(image.height)
             let start = packing.instances.count

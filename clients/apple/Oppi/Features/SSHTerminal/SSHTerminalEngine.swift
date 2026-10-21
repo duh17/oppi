@@ -129,10 +129,27 @@ final class SSHTerminalEngine {
     /// Placement reads, for the perf bench and tests: unchanged frames must not
     /// walk the placement list again.
     private(set) var kittyPlacementReadCount = 0
-    /// Image IDs this screen's store still holds in libghostty. It grows as
-    /// placements are seen and shrinks only when the store dropped an image, so
-    /// the renderer never evicts a texture just because it scrolled away.
-    private var kittyStoredImageIDs = Set<UInt32>()
+    /// Image IDs this screen's store still holds in libghostty, per screen. The
+    /// main and alternate screens keep separate stores, so a toggle must not
+    /// empty the set the other screen's textures are pruned against.
+    private var primaryKittyImageIDs = Set<UInt32>()
+    private var alternateKittyImageIDs = Set<UInt32>()
+
+    /// The active screen's stored IDs.
+    private var activeKittyImageIDs: Set<UInt32> {
+        get { alternateScreen ? alternateKittyImageIDs : primaryKittyImageIDs }
+        set {
+            if alternateScreen {
+                alternateKittyImageIDs = newValue
+            } else {
+                primaryKittyImageIDs = newValue
+            }
+        }
+    }
+
+    /// Which screen the cached store generation belongs to, so a reset can be
+    /// told apart from a switch to a screen that has never held an image.
+    private var kittyStoreScreenIsAlternate: Bool?
     /// Resize and scroll move every row; rebuild the whole grid.
     private var forceFullRebuild = true
 
@@ -388,10 +405,13 @@ final class SSHTerminalEngine {
 
     /// Placements for this viewport. Re-read only when the image store changed,
     /// the viewport moved, the geometry changed, or rows were rebuilt (text
-    /// scrolling carries pinned placements with it). Borrowed image pointers
-    /// are refreshed every frame because libghostty invalidates them on any
-    /// terminal mutation.
+    /// scrolling carries pinned placements with it). Synchronized output holds
+    /// the whole picture, so a held frame reuses the snapshot it already shows.
     private func kittyGraphics(rowsRebuilt: Bool) -> SSHTerminalKittySnapshot? {
+        // While the render state is held (mode 2026), the store is not read and
+        // its generation does not advance: an image that arrives mid-frame must
+        // not draw over the text of the frame still on screen.
+        if renderHeld { return kittySnapshot }
         var graphics: GhosttyKittyGraphics?
         guard ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, &graphics) == GHOSTTY_SUCCESS,
               let graphics else { return nil }
@@ -399,6 +419,22 @@ final class SSHTerminalEngine {
         guard ghostty_kitty_graphics_get(
             graphics, GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION, &generation
         ) == GHOSTTY_SUCCESS else { return nil }
+        let screen = alternateScreen
+        if generation == 0 {
+            // A reset (RIS) empties the active screen's store and stamps
+            // generation zero; a screen that has never carried an image reads the
+            // same. Report the reset once as an empty snapshot so the renderer
+            // prunes its textures, and leave the other screen's images alone.
+            let sameScreen = kittyStoreScreenIsAlternate == screen
+            let wasReset = sameScreen && kittyStoreGeneration != 0 && kittyStoreGeneration != .max
+            kittyStoreScreenIsAlternate = screen
+            kittyStoreGeneration = 0
+            kittyViewportTop = Int(scrollbar.offset)
+            activeKittyImageIDs.removeAll()
+            kittySnapshot = wasReset ? emptyKittySnapshot(graphics) : nil
+            return kittySnapshot
+        }
+        kittyStoreScreenIsAlternate = screen
         let viewportTop = Int(scrollbar.offset)
         let stored = kittySnapshot
         let storeChanged = generation != kittyStoreGeneration
@@ -409,11 +445,13 @@ final class SSHTerminalEngine {
         if reread {
             if storeChanged {
                 // Textures may leave only when libghostty dropped the image from
-                // its store; an image whose placements are merely off screen is
-                // still stored, so scrolling back must not re-upload its pixels.
-                kittyStoredImageIDs = Set(kittyStoredImageIDs.filter {
+                // this screen's store; an image whose placements are merely off
+                // screen, or whose screen is not the active one, is still stored.
+                var storedIDs = activeKittyImageIDs
+                storedIDs = Set(storedIDs.filter {
                     ghostty_kitty_graphics_image(graphics, $0) != nil
                 })
+                activeKittyImageIDs = storedIDs
             }
             kittyStoreGeneration = generation
             kittyViewportTop = viewportTop
@@ -422,12 +460,18 @@ final class SSHTerminalEngine {
             kittyStoreCellWidth = geometry.cellWidth
             kittyStoreCellHeight = geometry.cellHeight
             kittySnapshot = readKittyGraphics(graphics, generation: generation)
-        } else if stored?.images.isEmpty == false {
-            stored?.refreshImageData(graphics)
         }
-        guard let snapshot = kittySnapshot,
-              generation != 0 || !snapshot.placements.isEmpty || !snapshot.images.isEmpty else { return nil }
-        return snapshot
+        return kittySnapshot
+    }
+
+    /// The snapshot a reset screen reports: no placements and no stored images,
+    /// which is what lets the renderer drop every texture at once.
+    private func emptyKittySnapshot(_ graphics: GhosttyKittyGraphics) -> SSHTerminalKittySnapshot {
+        SSHTerminalKittySnapshot(
+            generation: 0, placements: [], images: [], imagesByID: [:], storedImageIDs: [],
+            graphics: graphics,
+            cellWidth: geometry.cellWidth, cellHeight: geometry.cellHeight
+        )
     }
 
     /// One walk of the image store into value types the renderer can place.
@@ -496,10 +540,12 @@ final class SSHTerminalEngine {
             }
         }
         ghostty_kitty_graphics_placement_iterator_free(iterator)
-        kittyStoredImageIDs.formUnion(seenImageIDs)
+        activeKittyImageIDs.formUnion(seenImageIDs)
         return SSHTerminalKittySnapshot(
             generation: generation, placements: placements, images: images,
-            storedImageIDs: kittyStoredImageIDs,
+            imagesByID: Dictionary(images.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }),
+            storedImageIDs: primaryKittyImageIDs.union(alternateKittyImageIDs),
+            graphics: graphics,
             cellWidth: geometry.cellWidth, cellHeight: geometry.cellHeight
         )
     }
