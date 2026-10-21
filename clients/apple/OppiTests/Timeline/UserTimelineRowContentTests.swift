@@ -201,6 +201,35 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("re-applying an unchanged agent report keeps its table; new text replaces it")
+    func reapplyingUnchangedAgentReportKeepsItsTable() throws {
+        // UIKit re-applies an unchanged configuration during layout passes. Rebuilding the
+        // table each time froze scrolling for seconds on a long subagent report.
+        let report = """
+        **Verdict: APPROVE.**
+
+        | Finding | Status |
+        |---|---|
+        | P2-1 summary goes stale after an edit on the pushed page | Fixed. The page observes the change notification. |
+        | P3-1 menu rebuilt on every pass | Fixed. |
+        """
+        let origin = MessageOrigin(kind: "session", sessionId: "child", name: "Review", intent: "report")
+        func configuration(_ text: String) -> UserTimelineRowConfiguration {
+            UserTimelineRowConfiguration(text: text, images: [], canFork: false, onFork: nil, origin: origin)
+        }
+        let view = UserTimelineRowContentView(configuration: configuration(report))
+        let table = try #require(firstSubview(ofType: NativeTableBlockView.self, in: view))
+
+        view.configuration = configuration(report)
+        #expect(firstSubview(ofType: NativeTableBlockView.self, in: view) === table)
+
+        view.configuration = configuration(report + "\n\nFollow-up line.")
+        let replaced = try #require(firstSubview(ofType: NativeTableBlockView.self, in: view))
+        #expect(replaced !== table)
+        #expect(table.superview == nil)
+    }
+
+    @MainActor
     @Test("user row keeps reloaded skill-only turns visible as /skill:name")
     func userRowKeepsReloadedSkillOnlyTurnsVisibleAsSlashCommand() throws {
         let raw = """

@@ -187,6 +187,21 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private var thumbnailViews: [UIView] = []
     private var hasAppliedConfiguration = false
     private var previousThemeID: ThemeID?
+    /// What the markdown body was last rendered from. UIKit re-applies an unchanged
+    /// configuration during layout passes; rebuilding the body each time recreated every
+    /// table cell's text view and fed the cell's sizing again, so one long agent report
+    /// with a wrapped table held the main thread for seconds while it scrolled on screen.
+    private var renderedMarkdownBody: MarkdownBodyInputs?
+
+    private struct MarkdownBodyInputs: Equatable {
+        /// A recycled row for another item rebuilds even with identical text, so a live
+        /// selection never carries over to the wrong message.
+        let itemID: String?
+        let text: String
+        let themeID: ThemeID
+        let textColor: UIColor
+        let typographyRevision: UInt64
+    }
     private var pathPillTapHandlers: [PathPillTapHandler] = []
 
     private var isReviewCommentSelectionEnabled: Bool {
@@ -357,8 +372,6 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
         let palette = ThemeRuntimeState.currentPalette()
         iconLabel.textColor = bodyTextColor(palette)
-        messageTextView.textColor = bodyTextColor(palette)
-        messageTextView.font = AppFont.messageBody
         applySpeakerChrome(palette: palette)
 
         let content = UserTimelineBubbleContent.resolve(
@@ -620,6 +633,18 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     }
 
     private func applyMarkdownBody(_ text: String, palette: ThemePalette) {
+        let inputs = MarkdownBodyInputs(
+            itemID: currentConfiguration.itemID,
+            text: text,
+            themeID: ThemeRuntimeState.currentThemeID(),
+            textColor: bodyTextColor(palette),
+            typographyRevision: AppFont.revision
+        )
+        guard inputs != renderedMarkdownBody else { return }
+        renderedMarkdownBody = inputs
+        messageTextView.textColor = inputs.textColor
+        messageTextView.font = AppFont.messageBody
+
         guard !text.isEmpty else {
             resetMarkdownBodyToSingleTextView()
             messageTextView.attributedText = nil
