@@ -459,7 +459,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             self.setNeedsUpdateProperties()
         }
         grid.useChatBar = { [weak self] in self?.showChatBar() }
-        grid.keyboardDismissed = { [weak self] in self?.manualInputChoice() }
+        grid.keyboardDismissed = { [weak self] in self?.keyboardWasHidden() }
         grid.secureInputChanged = { [weak self] in self?.secureInputChanged($0) }
         grid.pasteImage = { [weak self] in self?.pasteImage($0) }
         return grid
@@ -484,6 +484,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         rawKeyboard = false
         automaticTerminalTyping = false
         modeOverrideBeforeSecurePrompt = nil
+        refocusAfterSecurePrompt = true
         sawClosedForBackground = false
         reconnectOnReturn = false
         channel = next
@@ -1111,10 +1112,21 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// in Terminal**) wins over the automatic switch back.
     private var automaticTerminalTyping = false
     private var modeOverrideBeforeSecurePrompt: SSHTerminalInputMode?
+    /// Whether ending the automatic switch focuses the chat bar it puts back.
+    /// Hiding the keyboard during the prompt keeps the bar, not the keyboard.
+    private var refocusAfterSecurePrompt = true
 
     private func manualInputChoice() {
         automaticTerminalTyping = false
         modeOverrideBeforeSecurePrompt = nil
+    }
+
+    /// The user sent the keyboard away. During an automatic switch for a
+    /// password prompt that only keeps the keyboard down when the prompt ends;
+    /// the chat bar still comes back there. Any other hide changes nothing.
+    private func keyboardWasHidden() {
+        guard automaticTerminalTyping else { return }
+        refocusAfterSecurePrompt = false
     }
 
     /// A password prompt appeared or ended. Oppi never types a secret into the
@@ -1125,6 +1137,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             guard !automaticTerminalTyping, inputMode == .chat, !rawKeyboard else { return }
             automaticTerminalTyping = true
             modeOverrideBeforeSecurePrompt = modeOverride
+            refocusAfterSecurePrompt = true
             modeOverride = .terminal
             DispatchQueue.main.async { [weak self] in
                 _ = self?.gridView?.becomeFirstResponder()
@@ -1134,7 +1147,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             automaticTerminalTyping = false
             modeOverride = modeOverrideBeforeSecurePrompt
             modeOverrideBeforeSecurePrompt = nil
-            focusComposerAfterRaw = true
+            if refocusAfterSecurePrompt { focusComposerAfterRaw = true }
+            // The bar comes back either way; a keyboard the user hid stays down.
+            composerSession?.setSuppressKeyboard(!refocusAfterSecurePrompt)
+            refocusAfterSecurePrompt = true
             _ = gridView?.resignFirstResponder()
         }
         setNeedsUpdateProperties()

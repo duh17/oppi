@@ -107,6 +107,12 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         var text: String
     }
     private var securePrompt: SecurePrompt?
+    /// The change count of the first check that no longer saw the prompt. The
+    /// latch and the input switch back only when a check on a later picture
+    /// agrees, so one half-drawn frame (a repaint in a neighbouring Herdr pane
+    /// that moves the cursor away and back) cannot drop secure entry and pull
+    /// the chat bar up under the rest of the secret.
+    private var secureOffChanges: Int?
     /// The change count and cursor row of the last completed check, so an
     /// idle frame costs two reads and no string.
     private var secureCheckedChanges = -1
@@ -1542,13 +1548,15 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private func updateSecureEntry() {
         guard channel.connected else {
             securePrompt = nil
+            secureOffChanges = nil
             applySecureEntry(false)
             return
         }
         let changes = channel.engine.changeCount
         let row = channel.engine.cursorCell.row
         guard changes != secureCheckedChanges || row != secureCheckedRow else { return }
-        // nil is history or a picture no frame has drawn yet, not "no prompt".
+        // nil is history, a hidden cursor, or a picture no frame has drawn yet,
+        // not "no prompt".
         guard let line = channel.engine.cursorLineBeforeCursor else { return }
         secureCheckedChanges = changes
         secureCheckedRow = row
@@ -1559,9 +1567,27 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             let prompt = SSHTerminalPasswordPrompt.prompt(
                 inLineBeforeCursor: line, atShellPrompt: channel.engine.cursorAtPrompt
             )
-            securePrompt = prompt.map { SecurePrompt(row: row, text: $0) }
+            if let prompt {
+                // Turning it on is immediate: the prompt is on screen now.
+                securePrompt = SecurePrompt(row: row, text: prompt)
+                secureOffChanges = nil
+                applySecureEntry(true)
+                return
+            }
+        } else {
+            secureOffChanges = nil
+            applySecureEntry(true)
+            return
         }
-        applySecureEntry(securePrompt != nil)
+        // Off, on one frame: one more check on a later picture decides, so a
+        // single half-drawn frame changes nothing.
+        if let off = secureOffChanges, off != changes {
+            secureOffChanges = nil
+            securePrompt = nil
+            applySecureEntry(false)
+        } else {
+            secureOffChanges = changes
+        }
     }
 
     private func applySecureEntry(_ secure: Bool) {

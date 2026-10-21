@@ -404,12 +404,13 @@ final class SSHTerminalEngine {
     }
 
     /// The text left of the cursor on the cursor's row, from the live viewport
-    /// snapshot. nil when the viewport is scrolled into history, and nil until
-    /// a paint has snapshotted the newest output: the caller keeps its state
-    /// rather than reading a row the user is not looking at.
+    /// snapshot. nil when the viewport is scrolled into history, when the
+    /// cursor is hidden (a half-drawn frame, or a program that hides it), and
+    /// until a paint has snapshotted the newest output: the caller keeps its
+    /// state rather than acting on a row the user is not looking at.
     var cursorLineBeforeCursor: String? {
         guard live, following, cachedRowsChangeCount == changeCount else { return nil }
-        guard let cursor = cachedCursor, cursor.viewport_has_value else { return nil }
+        guard let cursor = cachedCursor, cursor.viewport_has_value, cursor.visible else { return nil }
         let row = Int(cursor.viewport_y)
         guard cachedRows.indices.contains(row) else { return nil }
         return cachedRows[row].prefix(Int(cursor.viewport_x)).map(\.text).joined()

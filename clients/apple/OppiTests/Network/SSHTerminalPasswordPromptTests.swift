@@ -108,7 +108,7 @@ struct SSHTerminalPasswordPromptTests {
         #expect(engine.cursorLineBeforeCursor == nil)
     }
 
-    @Test func theGridAsksForSecureEntryWhileAPromptShowsAndShowsTheCue() throws {
+    @Test func theGridAsksForSecureEntryWhileAPromptShowsAndShowsTheCue() async throws {
         let channel = try SSHTerminalChannel()
         channel.opened(PasswordPromptStubConnection())
         let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
@@ -122,29 +122,34 @@ struct SSHTerminalPasswordPromptTests {
         #expect(cue.isHidden)
 
         channel.engine.receive(Data("$ sudo ls\r\nPassword: ".utf8))
-        grid.drawFrame()
+        try await Self.draw(grid)
         #expect(grid.isSecureTextEntry)
         #expect(!cue.isHidden, "the keyboard bar says why the keyboard changed")
         #expect(reported == [true])
 
         // Return: the shell answers, the cursor moves, and the prompt is gone.
+        // One frame that no longer matches is not enough; the second picture
+        // agreeing is what changes the keyboard.
         channel.engine.receive(Data("\r\n$ ".utf8))
-        grid.drawFrame()
+        try await Self.draw(grid)
+        #expect(grid.isSecureTextEntry, "a single off frame keeps the latch")
+        channel.engine.receive(Data("\r\n".utf8))
+        try await Self.draw(grid)
         #expect(!grid.isSecureTextEntry)
         #expect(cue.isHidden)
         #expect(reported == [true, false])
 
         // A dropped connection ends it too, however the screen was left.
         channel.engine.receive(Data("Password: ".utf8))
-        grid.drawFrame()
+        try await Self.draw(grid)
         #expect(grid.isSecureTextEntry)
         channel.close(reason: "done")
-        grid.drawFrame()
+        try await Self.draw(grid)
         #expect(!grid.isSecureTextEntry)
         #expect(reported == [true, false, true, false])
     }
 
-    @Test func thePromptStaysSecureWhileTheSecretIsTypedAndHistoryDoesNotEndIt() throws {
+    @Test func oneFrameWithTheCursorElsewhereDoesNotEndThePrompt() async throws {
         let channel = try SSHTerminalChannel()
         channel.opened(PasswordPromptStubConnection())
         let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
@@ -154,31 +159,85 @@ struct SSHTerminalPasswordPromptTests {
         grid.secureInputChanged = { reported.append($0) }
 
         channel.engine.receive(Data("Password: ".utf8))
-        grid.drawFrame()
+        try await Self.draw(grid)
+        #expect(grid.isSecureTextEntry)
+
+        // A repaint in a neighbouring pane moves the cursor for one frame.
+        channel.engine.receive(Data("\u{1b}[2;1H".utf8))
+        try await Self.draw(grid)
+        #expect(grid.isSecureTextEntry, "one frame off the row changes nothing")
+        channel.engine.receive(Data("\u{1b}[1;11H".utf8))
+        try await Self.draw(grid)
+        #expect(grid.isSecureTextEntry, "back on the prompt row")
+
+        // A hidden cursor is a half-drawn frame too: no row, no decision.
+        channel.engine.receive(Data("\u{1b}[?25l".utf8))
+        try await Self.draw(grid)
+        #expect(grid.isSecureTextEntry)
+        channel.engine.receive(Data("\u{1b}[?25h".utf8))
+        try await Self.draw(grid)
+        #expect(grid.isSecureTextEntry)
+        #expect(reported == [true], "nothing flipped to the chat bar in between")
+
+        // Two consecutive off pictures on different change counts release it.
+        channel.engine.receive(Data("\u{1b}[2;1H".utf8))
+        try await Self.draw(grid)
+        #expect(grid.isSecureTextEntry)
+        channel.engine.receive(Data("\u{1b}[3;1H".utf8))
+        try await Self.draw(grid)
+        #expect(!grid.isSecureTextEntry)
+        #expect(reported == [true, false])
+    }
+
+    /// A frame with the terminal's newest output. `drawFrame` only snapshots
+    /// when it can paint, and the renderer keeps three frames in flight, so a
+    /// back-to-back burst is retried across display refreshes.
+    private static func draw(_ grid: SSHTerminalGridView) async throws {
+        for _ in 0..<3 {
+            grid.drawFrame()
+            try await Task.sleep(for: .milliseconds(40))
+        }
+    }
+
+    @Test func thePromptStaysSecureWhileTheSecretIsTypedAndHistoryDoesNotEndIt() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(PasswordPromptStubConnection())
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedPasswordPromptGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        var reported: [Bool] = []
+        grid.secureInputChanged = { reported.append($0) }
+
+        channel.engine.receive(Data("Password: ".utf8))
+        try await Self.draw(grid)
         #expect(grid.isSecureTextEntry)
 
         // pwfeedback: one `*` per key. The prompt still has to hold, or the
         // rest of the password would land on a normal keyboard.
         channel.engine.receive(Data("*".utf8))
-        grid.drawFrame()
+        try await Self.draw(grid)
         #expect(grid.isSecureTextEntry)
         channel.engine.receive(Data("*".utf8))
-        grid.drawFrame()
+        try await Self.draw(grid)
         #expect(grid.isSecureTextEntry)
         #expect(reported == [true], "the echo of the secret is not a new prompt")
 
         // Reading local history is not the live screen: it must not end it.
         channel.engine.scroll(rows: -1)
-        grid.drawFrame()
+        try await Self.draw(grid)
         #expect(grid.isSecureTextEntry)
         channel.engine.backToLive()
-        grid.drawFrame()
+        try await Self.draw(grid)
         #expect(grid.isSecureTextEntry)
         #expect(reported == [true])
 
-        // Return leaves the row: the shell's next line is no prompt.
-        channel.engine.receive(Data("\r\n$ ls\r\n$ ".utf8))
-        grid.drawFrame()
+        // Return leaves the row: the shell's next line is no prompt. Two
+        // frames have to agree before the keyboard changes back.
+        channel.engine.receive(Data("\r\n$ ls\r\n".utf8))
+        try await Self.draw(grid)
+        #expect(grid.isSecureTextEntry)
+        channel.engine.receive(Data("$ ".utf8))
+        try await Self.draw(grid)
         #expect(!grid.isSecureTextEntry)
         #expect(reported == [true, false])
     }

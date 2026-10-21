@@ -1804,11 +1804,42 @@ struct SSHTerminalTests {
             #expect(draft() == nil, "the draft stays away after \(mark)")
         }
 
+        // One half-drawn frame puts the cursor on another row and back, as a
+        // repaint in a neighbouring Herdr pane does. Nothing may switch on it.
+        let promptRow = channel.engine.cursorCell.row
+        channel.engine.receive(Data("\u{1b}[\(promptRow + 2);1H".utf8))
+        grid.drawFrame()
+        try await settle(mounted)
+        #expect(grid.isSecureTextEntry, "one off frame is not a release")
+        #expect(draft() == nil, "and the chat bar does not come back for it")
+        let prompt = "[sudo] password for duh: "
+        channel.engine.receive(Data("\u{1b}[\(promptRow + 1);\(prompt.count + 1)H".utf8))
+        grid.drawFrame()
+        try await settle(mounted)
+        #expect(grid.isSecureTextEntry)
+        #expect(draft() == nil)
+
+        // The hide key during the prompt keeps the keyboard down. Ending the
+        // prompt still puts the chat bar back, just without the keyboard.
+        let strip = try #require(grid.inputAccessoryView)
+        let hide = try #require(mounted.find(in: strip, matching: {
+            $0.accessibilityIdentifier == "sshTerminal.hideKeyboard"
+        }) as? UIButton)
+        hide.sendActions(for: .touchUpInside)
+        try await settle(mounted)
+        #expect(!grid.isFirstResponder, "the hide key sends the keyboard away")
+
+        // Two pictures have to agree before the prompt is over.
+        channel.engine.receive(Data("\r\n".utf8))
+        grid.drawFrame()
+        try await settle(mounted)
+        #expect(grid.isSecureTextEntry)
         channel.engine.receive(Data("\r\n".utf8))
         grid.drawFrame()
         try await settle(mounted)
         #expect(!grid.isSecureTextEntry)
         #expect(draft() === textView, "the chat bar comes back")
+        #expect(!textView.isFirstResponder, "without the keyboard the user hid")
         #expect(textView.text.isEmpty)
     }
 
