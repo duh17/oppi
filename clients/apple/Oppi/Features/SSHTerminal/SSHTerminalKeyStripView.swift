@@ -51,6 +51,9 @@ final class SSHTerminalKeyStripView: UIView {
     private var modifierButtons: [(button: UIButton, modifier: GhosttyMods, label: String)] = []
     private var arrowButtons: [SSHTerminalArrowButton] = []
     private var pasteControl: UIPasteControl?
+    /// Lock and "Secure Input" while the keyboard's secure entry is on.
+    private var secureCue: UIView?
+    private var showsSecureInput = false
     private var appliedSignature = ""
 
     /// Two 46pt rows; each key keeps its 44pt target.
@@ -111,6 +114,14 @@ final class SSHTerminalKeyStripView: UIView {
         guard actions != programActions else { return }
         programActions = actions
         rebuild()
+    }
+
+    /// A password prompt sets the grid's secure entry; this is its visible
+    /// counterpart on the keyboard bar.
+    func setSecureInput(_ on: Bool) {
+        guard on != showsSecureInput else { return }
+        showsSecureInput = on
+        secureCue?.isHidden = !on
     }
 
     func showModifiers() {
@@ -213,6 +224,7 @@ final class SSHTerminalKeyStripView: UIView {
         modifierButtons = []
         arrowButtons = []
         pasteControl = nil
+        secureCue = nil
         switch role {
         case .composer: rebuildComposer()
         case .accessory: rebuildAccessory()
@@ -281,6 +293,7 @@ final class SSHTerminalKeyStripView: UIView {
                 }
             }
         }
+        addSecureCue(to: programRow)
         installPasteControl(in: programRow)
         for action in programActions {
             addKey(
@@ -361,6 +374,35 @@ final class SSHTerminalKeyStripView: UIView {
         arrow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         keys.addArrangedSubview(arrow)
         arrowButtons.append(arrow)
+    }
+
+    /// First in the program row so it reads before the keys: a lock and
+    /// "Secure Input", hidden until a password prompt turns secure entry on.
+    private func addSecureCue(to row: UIStackView) {
+        let lock = UIImageView(image: UIImage(
+            systemName: "lock.fill",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        ))
+        lock.tintColor = foreground
+        lock.contentMode = .scaleAspectFit
+        lock.isAccessibilityElement = false
+        let label = UILabel()
+        label.text = "Secure Input"
+        label.font = .preferredFont(forTextStyle: .caption2)
+        label.textColor = foreground
+        let cue = UIStackView(arrangedSubviews: [lock, label])
+        cue.axis = .horizontal
+        cue.alignment = .center
+        cue.spacing = 4
+        cue.isLayoutMarginsRelativeArrangement = true
+        cue.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6)
+        cue.isAccessibilityElement = true
+        cue.accessibilityIdentifier = "sshTerminal.secureInput"
+        cue.accessibilityLabel = "Secure Input"
+        cue.accessibilityTraits = .staticText
+        cue.isHidden = !showsSecureInput
+        row.addArrangedSubview(cue)
+        secureCue = cue
     }
 
     private func installPasteControl(in row: UIStackView) {

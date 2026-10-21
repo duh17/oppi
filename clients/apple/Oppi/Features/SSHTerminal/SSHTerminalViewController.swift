@@ -453,10 +453,13 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             self.setNeedsUpdateProperties()
         }
         grid.focusComposer = { [weak self] in
-            self?.composerFocusRequest += 1
-            self?.setNeedsUpdateProperties()
+            guard let self else { return }
+            self.manualInputChoice()
+            self.composerFocusRequest += 1
+            self.setNeedsUpdateProperties()
         }
         grid.useChatBar = { [weak self] in self?.showChatBar() }
+        grid.secureInputChanged = { [weak self] in self?.secureInputChanged($0) }
         grid.pasteImage = { [weak self] in self?.pasteImage($0) }
         return grid
     }
@@ -478,6 +481,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         detached = false
         cursorShiftHeld = false
         rawKeyboard = false
+        automaticTerminalTyping = false
+        modeOverrideBeforeSecurePrompt = nil
         sawClosedForBackground = false
         reconnectOnReturn = false
         channel = next
@@ -1083,6 +1088,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     }
 
     private func showTerminalKeyboard() {
+        manualInputChoice()
         modeOverride = .terminal
         DispatchQueue.main.async { [weak self] in
             _ = self?.gridView?.becomeFirstResponder()
@@ -1091,9 +1097,45 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     }
 
     private func showChatBar() {
+        manualInputChoice()
         modeOverride = detectedMode == .chat ? nil : .chat
         focusComposerAfterRaw = true
         _ = gridView?.resignFirstResponder()
+        setNeedsUpdateProperties()
+    }
+
+    /// Typing moved off the chat bar automatically for a password prompt; the
+    /// input bar comes back when that prompt ends. Any choice the user makes
+    /// in the meantime (a tap on the bar or the grid, **Use Chat Bar**, **Type
+    /// in Terminal**) wins over the automatic switch back.
+    private var automaticTerminalTyping = false
+    private var modeOverrideBeforeSecurePrompt: SSHTerminalInputMode?
+
+    private func manualInputChoice() {
+        automaticTerminalTyping = false
+        modeOverrideBeforeSecurePrompt = nil
+    }
+
+    /// A password prompt appeared or ended. Oppi never types a secret into the
+    /// chat bar: the bar is a draft the user can read, save, and dictate into,
+    /// so the input moves to the terminal while the prompt is up.
+    private func secureInputChanged(_ secure: Bool) {
+        if secure {
+            guard !automaticTerminalTyping, inputMode == .chat, !rawKeyboard else { return }
+            automaticTerminalTyping = true
+            modeOverrideBeforeSecurePrompt = modeOverride
+            modeOverride = .terminal
+            DispatchQueue.main.async { [weak self] in
+                _ = self?.gridView?.becomeFirstResponder()
+            }
+        } else {
+            guard automaticTerminalTyping else { return }
+            automaticTerminalTyping = false
+            modeOverride = modeOverrideBeforeSecurePrompt
+            modeOverrideBeforeSecurePrompt = nil
+            focusComposerAfterRaw = true
+            _ = gridView?.resignFirstResponder()
+        }
         setNeedsUpdateProperties()
     }
 

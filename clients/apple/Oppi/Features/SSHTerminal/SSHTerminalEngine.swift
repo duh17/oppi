@@ -90,6 +90,9 @@ final class SSHTerminalEngine {
     /// Viewport rows from the last `frame()`. Dirty rows replace one entry.
     private var cachedRows: [[SSHTerminalCell]] = []
     private var cachedCursor: GhosttyRenderStateCursor?
+    /// `changeCount` the cached rows cover, so text read between paints knows
+    /// when it needs a snapshot of its own.
+    private var cachedRowsChangeCount = -1
     /// Resize and scroll move every row; rebuild the whole grid.
     private var forceFullRebuild = true
 
@@ -297,6 +300,7 @@ final class SSHTerminalEngine {
                 }
             }
         }
+        cachedRowsChangeCount = changeCount
         if let old = cachedCursor, !Self.sameCursor(old, cursor) {
             if old.viewport_has_value { rebuilt.insert(Int(old.viewport_y)) }
             if cursor.viewport_has_value { rebuilt.insert(Int(cursor.viewport_y)) }
@@ -391,6 +395,32 @@ final class SSHTerminalEngine {
         }
     }
 
+    /// True while libghostty reports the cursor in the shell's own input
+    /// (OSC 133 A/B): what is typed there is a command line, not a secret.
+    var cursorAtPrompt: Bool {
+        var value = false
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT, &value)
+        return live && value
+    }
+
+    /// The text left of the cursor on the cursor's row, as the live viewport
+    /// shows it, or nil while the viewport is scrolled into history. A
+    /// password prompt is the last thing on its line, so this is the whole
+    /// prompt. The row cache is refreshed here when output arrived after the
+    /// last paint, so detection never waits on the display link or Metal; the
+    /// next paint then rebuilds every row that snapshot cleaned.
+    var cursorLineBeforeCursor: String? {
+        guard live, following else { return nil }
+        if cachedRowsChangeCount != changeCount {
+            _ = frame()
+            forceFullRebuild = true
+        }
+        guard let cursor = cachedCursor, cursor.viewport_has_value else { return nil }
+        let row = Int(cursor.viewport_y)
+        guard cachedRows.indices.contains(row) else { return nil }
+        return cachedRows[row].prefix(Int(cursor.viewport_x)).map(\.text).joined()
+    }
+
     /// The cursor's cell in the active area.
     var cursorCell: (column: Int, row: Int) {
         var x: UInt16 = 0
@@ -411,8 +441,7 @@ final class SSHTerminalEngine {
         var ground = false
         ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_VT_GROUND, &ground)
         guard ground else { return Data() }
-        var atPrompt = false
-        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT, &atPrompt)
+        let atPrompt = cursorAtPrompt
         let row = cursorCell.row
         // ED 2 at a prompt moves the screen into history, so ED 3 runs last.
         let local = if atPrompt {

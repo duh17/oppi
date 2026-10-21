@@ -65,6 +65,8 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     var resignRequest = 0
     var tapTypesInTerminal = false
     var rawKeyboardChanged: (Bool) -> Void = { _ in }
+    /// A password prompt appeared (true) or ended (false) on the live screen.
+    var secureInputChanged: (Bool) -> Void = { _ in }
     var focusComposer: () -> Void = {}
     var useChatBar: () -> Void = {}
     /// Runs on every display-link tick, after that tick's frame is encoded:
@@ -90,6 +92,9 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private var resizeHeld = false
     private var reportGeometryOnLayout = false
     private var keyStrip: SSHTerminalKeyStripView?
+    /// The value reported for `isSecureTextEntry`, changed only by
+    /// `updateSecureEntry`.
+    private var secureEntry = false
     /// A hardware key is sent from pressesBegan only. While one is down,
     /// insertText/deleteBackward and the edit-menu paste are echoes of the
     /// same press and must not send again. Ended or cancelled presses are
@@ -225,6 +230,10 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     var smartInsertDeleteType: UITextSmartInsertDeleteType { get { .no } set { _ = newValue } }
     var spellCheckingType: UITextSpellCheckingType { get { .no } set { _ = newValue } }
     var inlinePredictionType: UITextInlinePredictionType { get { .no } set { _ = newValue } }
+    /// Secure entry is on only while the live screen's cursor sits after a
+    /// password prompt; see `updateSecureEntry`. Third-party keyboards,
+    /// dictation, and keyboard learning do not see what is typed then.
+    var isSecureTextEntry: Bool { get { secureEntry } set { _ = newValue } }
     var textContentType: UITextContentType? { get { nil } set { _ = newValue } }
     /// Writing Tools rewrites through `replace`, which would type its result.
     var writingToolsBehavior: UIWritingToolsBehavior { get { .none } set { _ = newValue } }
@@ -1497,7 +1506,25 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
                 paintedChangeCount = changes
             }
         }
+        updateSecureEntry()
         didDrawFrame()
+    }
+
+    /// Turns the keyboard's secure entry on while the live screen's cursor sits
+    /// after a password prompt (`Password:`, `[sudo] password for duh:`). The
+    /// trait is read when the keyboard is built, so a change reloads the input
+    /// views once; nothing runs per frame otherwise. The keyboard bar shows a
+    /// lock meanwhile, and the screen moves typing off the chat bar.
+    private func updateSecureEntry() {
+        let secure = channel.connected && SSHTerminalPasswordPrompt.matches(
+            lineBeforeCursor: channel.engine.cursorLineBeforeCursor ?? "",
+            atShellPrompt: channel.engine.cursorAtPrompt
+        )
+        guard secure != secureEntry else { return }
+        secureEntry = secure
+        keyStrip?.setSecureInput(secure)
+        reloadInputViews()
+        secureInputChanged(secure)
     }
 
     @MainActor private final class DisplayTarget {

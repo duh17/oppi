@@ -1778,6 +1778,46 @@ struct SSHTerminalTests {
             try image.pngData()?.write(to: folder.appendingPathComponent("input-notice-after.png"))
         }
     }
+
+    @Test func aPasswordPromptMovesTypingOffTheChatBarAndBack() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        // An agent that reports itself gets the chat bar.
+        channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
+        try await settle(mounted)
+        let grid = try #require(mounted.controller.gridView)
+        let draft = { mounted.find { $0 is PastableUITextView } as? PastableUITextView }
+        let textView = try #require(draft(), "pi gets the chat bar")
+
+        channel.engine.receive(Data("\r\n[sudo] password for duh: ".utf8))
+        grid.drawFrame()
+        try await settle(mounted)
+        #expect(grid.isSecureTextEntry)
+        #expect(grid.isFirstResponder, "the prompt is typed into the terminal")
+        #expect(draft() == nil, "and the password cannot reach the draft")
+
+        channel.engine.receive(Data("\r\n".utf8))
+        grid.drawFrame()
+        try await settle(mounted)
+        #expect(!grid.isSecureTextEntry)
+        #expect(draft() === textView, "the chat bar comes back")
+        #expect(textView.text.isEmpty)
+    }
+
+    /// The screen updates its properties on the next runloop pass.
+    private func settle(_ mounted: MountedTerminalTestController) async throws {
+        for _ in 0..<4 {
+            await Task.yield()
+            mounted.host.view.setNeedsLayout()
+            mounted.host.view.layoutIfNeeded()
+        }
+        try await Task.sleep(for: .milliseconds(250))
+        mounted.host.view.layoutIfNeeded()
+    }
 }
 
 @MainActor
