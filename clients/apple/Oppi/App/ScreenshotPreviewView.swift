@@ -92,6 +92,8 @@ struct ScreenshotPreviewView: View {
             SSHTerminalScreenshotPreview(status: .progressWithStatus)
         case "ssh-terminal-switcher":
             SSHTerminalScreenshotPreview(status: .switcher)
+        case "ssh-terminal-ghostty-theme":
+            SSHTerminalScreenshotPreview(status: .idle, ghosttyTheme: true)
         case "ssh-terminal-kitty":
             SSHTerminalScreenshotPreview(status: .kitty)
         case "ssh-terminal-password-fill":

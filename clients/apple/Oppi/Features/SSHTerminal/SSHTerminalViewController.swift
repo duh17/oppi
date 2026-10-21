@@ -120,6 +120,12 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var herdrTask: Task<Void, Never>?
     private var keymapTask: Task<Void, Never>?
     private var keymapToken: String?
+    /// The host's Ghostty colors, or the app theme where it has none.
+    private var colorLoader: SSHTerminalColorLoader
+    private var colorChoice: SSHTerminalColorChoice
+    private var colorTask: Task<Void, Never>?
+    private var colorToken: String?
+    private var lastTerminalColors: SSHTerminalColorTheme?
     /// The registry closed this terminal while this screen was showing.
     private var sawClosedForBackground = false
     private var isOnScreen = false
@@ -129,6 +135,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var presentingStatusDetail = false
     private var reduceMotion = UIAccessibility.isReduceMotionEnabled
     private var lastThemeID: ThemeID?
+    private var defaultsObserver: NSObjectProtocol?
     private var reduceMotionObserver: NSObjectProtocol?
     private var keyboardObserver: NSObjectProtocol?
 
@@ -146,6 +153,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         self.hostLabel = hostLabel
         self.session = session
         self.composerConnection = composerConnection
+        let profileID = session?.connectedProfile?.id
+        let choice = profileID.map { SSHTerminalColorStore().choice(for: $0) } ?? .host
+        colorChoice = choice
+        colorLoader = SSHTerminalColorLoader(profileID: profileID, choice: choice)
         super.init(nibName: nil, bundle: nil)
         attention.glyphFrame.rect = .zero
         statusGlyph.glyphFrame.rect = .zero
@@ -158,6 +169,13 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         super.viewDidLoad()
         shownIdentity = terminalIdentity
         buildLayout()
+        defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.colorChoiceChanged()
+        }
         reduceMotionObserver = NotificationCenter.default.addObserver(
             forName: UIAccessibility.reduceMotionStatusDidChangeNotification,
             object: nil,
@@ -254,12 +272,19 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         keymapTask?.cancel()
         keymapTask = nil
         keymapToken = nil
+        colorTask?.cancel()
+        colorTask = nil
+        colorToken = nil
         attentionFeedback.cancel()
         // Leaving the screen does not close the terminal: `SSHTerminalRegistry`
         // owns the channel, and Disconnect or the host's lifecycle ends it.
         guard leaving else { return }
         composerSession?.releaseVoice()
         session?.showsTerminal = false
+        if let defaultsObserver {
+            NotificationCenter.default.removeObserver(defaultsObserver)
+            self.defaultsObserver = nil
+        }
         if let reduceMotionObserver {
             NotificationCenter.default.removeObserver(reduceMotionObserver)
             self.reduceMotionObserver = nil
@@ -300,6 +325,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         _ = keymap.actions
         _ = keymap.profile
         _ = keymap.userFile
+        _ = colorLoader.resolution
         if let manager = composerSession?.voiceManager {
             _ = manager.transcriptPresentationRevision
             _ = manager.currentTranscript
@@ -313,9 +339,11 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         let themeID = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         _ = HostFactory.root(near: self)?.themeStore.appTheme
 
-        if lastThemeID != themeID {
+        let terminalColors = colorLoader.theme
+        if lastThemeID != themeID || lastTerminalColors != terminalColors {
             lastThemeID = themeID
-            applyTheme(themeID)
+            lastTerminalColors = terminalColors
+            applyTheme(themeID, colors: terminalColors)
         }
         if channel.copies != lastCopies {
             lastCopies = channel.copies
@@ -371,7 +399,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             gridView.tapTypesInTerminal = inputMode == .terminal
             gridView.setKeyActions(keymap.actions)
             gridView.showModifiers()
-            gridView.applyTheme(themeID)
+            gridView.applyTheme(themeID, colors: terminalColors)
             gridView.needsPaint = true
         }
         attentionFeedback.apply(
@@ -549,9 +577,12 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         channel.cancelPendingResize()
         herdrTask?.cancel()
         keymapTask?.cancel()
+        colorTask?.cancel()
         herdrTask = nil
         keymapTask = nil
         keymapToken = nil
+        colorTask = nil
+        colorToken = nil
         herdr = HerdrMonitor()
         keymap = SSHTerminalKeymapLoader()
         modeOverride = nil
@@ -591,10 +622,22 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         installGrid(makeGrid())
     }
 
-    private func applyTheme(_ themeID: ThemeID) {
+    /// The terminal's own background when the host's theme sets one, so the
+    /// screen, its bars and its pills read as one surface with the grid.
+    private func applyTheme(_ themeID: ThemeID, colors: SSHTerminalColorTheme?) {
         let theme = themeID.appTheme
-        view.backgroundColor = UIColor(theme.bg.primary)
-        overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
+        view.backgroundColor = colors?.background.map(UIColor.init) ?? UIColor(theme.bg.primary)
+        let dark = SSHTerminalColorTheme.isDark(background: colors?.background, fallback: themeID.preferredColorScheme != .light)
+        overrideUserInterfaceStyle = dark ? .dark : .light
+    }
+
+    private func colorChoiceChanged() {
+        guard let id = session?.connectedProfile?.id else { return }
+        let choice = SSHTerminalColorStore().choice(for: id)
+        guard choice != colorChoice else { return }
+        colorChoice = choice
+        colorLoader.use(choice)
+        setNeedsUpdateProperties()
     }
 
     // MARK: - Floating controls
@@ -693,10 +736,12 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             herdrAvailable: herdr.available,
             herdrWaiting: herdr.snapshot?.needsAttention,
             showsStatus: showsStatus,
-            openTerminals: session?.openTerminals().count ?? 0
+            openTerminals: session?.openTerminals().count ?? 0,
+            foreground: lastTerminalColors?.foreground.map(UIColor.init)
         )
         installSwitcherMenu()
-        backPill.apply(themeID: themeID, attentionPending: attentionPending())
+        backPill.apply(themeID: themeID, attentionPending: attentionPending(), foreground: lastTerminalColors?.foreground.map(UIColor.init))
+        let shellTitle = channel.title.trimmingCharacters(in: .whitespacesAndNewlines)
         installMenu(
             title: SSHTerminalMenuHeader.name(
                 shellTitle: channel.title, hostLabel: hostLabel,
@@ -1128,7 +1173,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             reduceMotion: reduceMotion,
             connected: channel.connected
         )
-        let colors = ComposerThemeColors(palette: themeID.palette)
+        var colors = ComposerThemeColors(palette: themeID.palette)
+        if let background = lastTerminalColors?.background { colors.bg = UIColor(background) }
+        if let foreground = lastTerminalColors?.foreground { colors.fg = UIColor(foreground) }
         composerKeyStrip?.handlers.sendStrokes = { [weak self] strokes in self?.channel.keys(strokes) }
         composerKeyStrip?.handlers.sendKey = { [weak self] key in _ = self?.channel.key(key) }
         composerKeyStrip?.handlers.sendArrow = { [weak self] key in self?.channel.key(key) ?? false }
@@ -1803,6 +1850,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             keymapTask?.cancel()
             keymapTask = nil
             keymapToken = nil
+            colorTask?.cancel()
+            colorTask = nil
+            colorToken = nil
             return
         }
         if channel.connected {
@@ -1817,6 +1867,20 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         } else {
             herdrTask?.cancel()
             herdrTask = nil
+        }
+        let dark = (lastThemeID ?? ThemeRuntimeState.currentThemeID()).preferredColorScheme != .light
+        let colorKey = channel.connected && colorChoice != .oppi ? "\(colorChoice)|\(dark)" : nil
+        if colorToken != colorKey {
+            colorToken = colorKey
+            colorTask?.cancel()
+            colorTask = nil
+            if colorKey != nil {
+                let channel = channel
+                let choice = colorChoice
+                colorTask = Task { [weak self] in
+                    await self?.colorLoader.load(choice: choice, dark: dark) { try await channel.run($0) }
+                }
+            }
         }
         let token = channel.connected ? keymapProgram : nil
         if keymapToken != token {

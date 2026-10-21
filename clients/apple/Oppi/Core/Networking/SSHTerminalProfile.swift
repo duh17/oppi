@@ -327,6 +327,7 @@ struct SSHTerminalProfileStore {
         try deletePassword(for: id)
         try keychain.delete(account: Self.sudoPasswordAccount(for: id))
         try write(profiles.filter { $0.id != id })
+        SSHTerminalColorStore(defaults: defaults).forget(id)
     }
 
     /// Drops a catalog value that does not decode. A readable catalog is left

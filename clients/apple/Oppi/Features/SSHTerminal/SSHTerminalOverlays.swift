@@ -154,8 +154,9 @@ final class SSHTerminalBackPill: UIView {
         pill.point(inside: convert(point, to: pill), with: event)
     }
 
-    func apply(themeID: ThemeID, attentionPending: Bool) {
-        button.apply(tint: UIColor(themeID.palette.fg))
+    /// `foreground` is the terminal's own text color when its theme sets one.
+    func apply(themeID: ThemeID, attentionPending: Bool, foreground: UIColor? = nil) {
+        button.apply(tint: foreground ?? UIColor(themeID.palette.fg))
         attentionDot.backgroundColor = UIColor(themeID.palette.orange)
         attentionDot.layer.borderColor = UIColor(themeID.palette.bg).cgColor
         attentionDot.isHidden = !attentionPending
@@ -193,8 +194,8 @@ final class SSHTerminalMorePill: SSHTerminalGlassPill {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func apply(themeID: ThemeID, herdrAvailable: Bool, herdrWaiting: Int?, showsStatus: Bool, openTerminals: Int = 0) {
-        let fg = UIColor(themeID.palette.fg)
+    func apply(themeID: ThemeID, herdrAvailable: Bool, herdrWaiting: Int?, showsStatus: Bool, openTerminals: Int = 0, foreground: UIColor? = nil) {
+        let fg = foreground ?? UIColor(themeID.palette.fg)
         status.isHidden = !showsStatus
         switcher.isHidden = openTerminals < 2
         switcher.accessibilityValue = "\(openTerminals) open"

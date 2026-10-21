@@ -92,6 +92,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private var paintedSize = CGSize.zero
     private var sceneActive = true
     private var appliedTheme: ThemeID?
+    private var appliedColors: SSHTerminalColorTheme?
     private var lastGeometry: SSHTerminalGeometry?
     /// A keyboard transition or leaving the screen: layout inside that motion
     /// does not resize the terminal. The screen sends the settled size itself.
@@ -212,6 +213,8 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private var keyActions: [SSHTerminalKeyAction] = []
     private var passwordFillHost: String?
     private var foreground = UIColor.label
+    /// The cursor's color: the theme's, or the foreground.
+    private var cursorColor: UIColor?
 
     private var metalLayer: CAMetalLayer? { metalHost.metalLayer }
 
@@ -458,22 +461,30 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         setNeedsLayout()
     }
 
-    /// Only a different theme changes colors.
-    /// The new default background then repaints the whole grid.
-    func applyTheme(_ themeID: ThemeID) {
-        guard themeID != appliedTheme else { return }
+    /// Only a different theme or host colors change colors.
+    /// The new default background then repaints the whole grid. `colors` are
+    /// the host's Ghostty colors: what they leave unset keeps the app theme's.
+    func applyTheme(_ themeID: ThemeID, colors: SSHTerminalColorTheme? = nil) {
+        guard themeID != appliedTheme || colors != appliedColors else { return }
         appliedTheme = themeID
+        appliedColors = colors
         let theme = themeID.appTheme
-        foreground = UIColor(theme.text.primary)
-        let background = UIColor(theme.bg.primary)
+        foreground = colors?.foreground.map(UIColor.init) ?? UIColor(theme.text.primary)
+        let background = colors?.background.map(UIColor.init) ?? UIColor(theme.bg.primary)
+        cursorColor = colors?.cursor.map(UIColor.init)
+        selectionOverlay.fill = colors?.selectionBackground.map(UIColor.init)
         backgroundColor = background
         metalHost.backgroundColor = background
         bar?.backgroundColor = .clear
         bar?.tintColor = foreground
         applyKeyStripTheme(background: background)
-        channel.engine.setColors(foreground: foreground.terminalRGB, background: background.terminalRGB,
-                                 dark: themeID.preferredColorScheme != .light)
-        historyScroll.indicatorStyle = themeID.preferredColorScheme == .light ? .black : .white
+        let dark = SSHTerminalColorTheme.isDark(background: colors?.background, fallback: themeID.preferredColorScheme != .light)
+        channel.engine.setColors(
+            foreground: foreground.terminalRGB, background: background.terminalRGB, dark: dark,
+            palette: (colors?.palette ?? [:]).mapValues { GhosttyColorRgb(r: $0.r, g: $0.g, b: $0.b) },
+            cursor: colors?.cursor.map { GhosttyColorRgb(r: $0.r, g: $0.g, b: $0.b) }
+        )
+        historyScroll.indicatorStyle = dark ? .white : .black
         needsFullPaint = true
         needsPaint = true
         requestDisplayLink()
@@ -509,7 +520,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             return false
         }
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        foreground.withAlphaComponent(0.65).getRed(&r, green: &g, blue: &b, alpha: &a)
+        (cursorColor ?? foreground).withAlphaComponent(0.65).getRed(&r, green: &g, blue: &b, alpha: &a)
         let cursor = SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
         let cost = renderer.encode(
             frame: frame, cursorColor: cursor, drawable: drawable, fullRebuild: needsFullPaint,
@@ -1887,6 +1898,10 @@ private final class SSHTerminalSelectionOverlay: UIView {
     var spans: [CGRect] = [] {
         didSet { setNeedsDisplay() }
     }
+    /// The theme's selection color; nil keeps the system blue.
+    var fill: UIColor? {
+        didSet { setNeedsDisplay() }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1899,7 +1914,9 @@ private final class SSHTerminalSelectionOverlay: UIView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func draw(_ rect: CGRect) {
-        UIColor.systemBlue.withAlphaComponent(0.28).setFill()
+        // The overlay sits over the text, so a theme's own (opaque) color is
+        // laid down translucent enough to read through.
+        (fill?.withAlphaComponent(0.55) ?? UIColor.systemBlue.withAlphaComponent(0.28)).setFill()
         for span in spans {
             UIBezierPath(rect: span).fill()
         }

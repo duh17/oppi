@@ -17,6 +17,8 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     private var deviceKey = SSHTerminalDeviceKeyState()
     private var copied = false
     private let session = SSHTerminalConnectSession()
+    /// Where the terminal's colors come from; saved with the host.
+    private var colorChoice: SSHTerminalColorChoice
     private var chrome: SSHTerminalConnectChrome?
     /// Edit Host from a terminal the switcher changed: that host's form opens
     /// once the terminal has closed over this one.
@@ -26,10 +28,10 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var lastThemeID: ThemeID?
 
-    private enum Section: Hashable { case host, startup, identity, actions, delete }
+    private enum Section: Hashable { case host, startup, colors, identity, actions, delete }
     private enum Item: Hashable {
         case host, port, username, authentication, savePassword, sudoPassword, removeSudoPassword
-        case startup
+        case startup, colors
         case publicKey, copyKey, backing, identityStatus, replaceKey
         case connecting, connect, saveHost, failure, trustUnknown, trustMismatch
         case deleteHost
@@ -46,6 +48,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         if profileID == nil, let host, !host.isEmpty { stored.host = host }
         profile = stored
         portText = String(stored.port)
+        colorChoice = SSHTerminalColorStore().choice(for: stored.id)
         var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
         config.headerMode = .supplementary
         config.footerMode = .supplementary
@@ -154,7 +157,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             switch item {
             case .host, .port, .username, .startup, .sudoPassword:
                 collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-            case .authentication, .copyKey, .replaceKey, .connect, .saveHost, .deleteHost, .removeSudoPassword:
+            case .authentication, .colors, .copyKey, .replaceKey, .connect, .saveHost, .deleteHost, .removeSudoPassword:
                 collectionView.dequeueConfiguredReusableCell(using: action, for: indexPath, item: item)
             default:
                 collectionView.dequeueConfiguredReusableCell(using: list, for: indexPath, item: item)
@@ -257,6 +260,15 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
                 enabled: !session.connecting,
                 action: { [weak self] in self?.removeSavedSudoPassword() }
             )
+        case .colors:
+            cell.configure(
+                title: "Terminal Colors",
+                identifier: "sshTerminal.colors",
+                color: UIColor(palette.fg),
+                subtitle: colorSummary,
+                action: { [weak self] in self?.presentColorPicker() }
+            )
+            cell.accessories = [.disclosureIndicator()]
         case .copyKey:
             cell.configure(
                 title: copied ? "Copied Public Key" : "Copy Public Key",
@@ -411,6 +423,9 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         snapshot.appendSections([.startup])
         snapshot.appendItems([.startup], toSection: .startup)
 
+        snapshot.appendSections([.colors])
+        snapshot.appendItems([.colors], toSection: .colors)
+
         if profile.authentication == .deviceKey {
             snapshot.appendSections([.identity])
             if deviceKey.identity != nil {
@@ -464,7 +479,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
         guard let item = dataSource?.itemIdentifier(for: indexPath) else { return false }
         switch item {
-        case .authentication, .copyKey, .replaceKey, .connect, .saveHost, .deleteHost, .removeSudoPassword,
+        case .authentication, .colors, .copyKey, .replaceKey, .connect, .saveHost, .deleteHost, .removeSudoPassword,
              .trustUnknown, .trustMismatch:
             return true
         default:
@@ -479,6 +494,8 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         case .authentication:
             guard !session.connecting else { return }
             presentAuthenticationPicker()
+        case .colors:
+            presentColorPicker()
         case .copyKey:
             copyPublicKey()
         case .replaceKey:
@@ -520,6 +537,31 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         present(sheet, animated: true)
     }
 
+    /// What the host's last read found, or what was chosen.
+    private var colorSummary: String {
+        switch colorChoice {
+        case .host:
+            SSHTerminalColorStore().cached(for: profile.id, choice: .host).map { "Host’s Ghostty theme: \($0.summary)" }
+                ?? "Host’s Ghostty theme"
+        case .oppi, .named: colorChoice.title
+        }
+    }
+
+    private func presentColorPicker() {
+        let live = SSHTerminalRegistry.shared.terminals(for: profile.id).first?.channel
+        let summary = SSHTerminalColorStore().cached(for: profile.id, choice: .host)?.summary ?? "Read when you connect"
+        let picker = SSHTerminalColorPickerViewController(selected: colorChoice, hostSummary: summary, channel: live) { [weak self] choice in
+            guard let self else { return }
+            self.colorChoice = choice
+            // A saved host's terminal follows at once; a new host's choice is kept with the host.
+            if SSHTerminalProfileStore().contains(self.profile.id) {
+                SSHTerminalColorStore().setChoice(choice, for: self.profile.id)
+            }
+            self.applySnapshot()
+        }
+        Router.push(picker, from: self)
+    }
+
     private func copyPublicKey() {
         guard let identity = deviceKey.identity else { return }
         UIPasteboard.general.string = identity.publicKeyOpenSSH
@@ -532,6 +574,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         switch section {
         case .host: return "Host"
         case .startup: return "Run on Connect"
+        case .colors: return "Colors"
         case .identity: return "This Device’s SSH Identity"
         default: return nil
         }
@@ -622,6 +665,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             sudoPasswordText = ""
             view.endEditing(true)
         }
+        SSHTerminalColorStore().setChoice(colorChoice, for: saved.id)
         applySnapshot()
     }
 

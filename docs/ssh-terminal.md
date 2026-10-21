@@ -54,6 +54,34 @@ The terminal uses **Settings → Text → Code Font** and **Code Text Size**, li
 
 Prompt icons from starship, powerlevel10k, oh-my-posh, and similar (Powerline separators, git, folder, and language icons) come from the bundled Nerd Fonts Symbols font, which works with every code font.
 
+## Colors
+
+The terminal takes its colors from the host's [Ghostty](https://ghostty.org) theme, so a shell looks the same here as in Ghostty on that machine. Each time a terminal connects, Oppi reads the host's Ghostty config over the connection's side channel (the same one that reads keybinding files) and paints with what it finds. A host without Ghostty, or without a config, keeps Oppi's own theme.
+
+What is read, and nothing else:
+
+- `theme`: a name, an absolute path, or `light:X,dark:Y` (the side that matches Oppi's current appearance; a pair that names one side serves both). A name is looked up in `$XDG_CONFIG_HOME/ghostty/themes` (default `~/.config/ghostty/themes`), then in `$GHOSTTY_RESOURCES_DIR/themes`, the macOS app (`/Applications/Ghostty.app/Contents/Resources/ghostty/themes`), and `/usr/share/ghostty/themes` and `/usr/local/share/ghostty/themes` on Linux.
+- `palette = N=#rrggbb`, `background`, `foreground`, `cursor-color`, `cursor-text`, `selection-background`, `selection-foreground`. A color is `#rrggbb` or `#rgb`, with or without the `#`; Ghostty's color names and `cell-foreground` are not read.
+- Config files: `$XDG_CONFIG_HOME/ghostty/config` and `config.ghostty`, and on macOS the same two files under `~/Library/Application Support/com.mitchellh.ghostty`. A `config-file` line is followed one level deep (relative to the file that names it); an include inside an include is not.
+
+As in Ghostty, values set in the config itself win over the theme file's, entry by entry (`palette = 1=…` replaces only color 1), and later lines win over earlier ones. Fonts, size, opacity, blur, and keybinds in the same file are ignored.
+
+The colors apply to the terminal's default foreground and background, its 16-color palette, the cursor, and the selection highlight. The grid's background, the bar at the bottom, the Back and **…** buttons, and the key strip follow the terminal background, and the screen switches to light or dark chrome by how light that background is. A program's own OSC 4, 10, and 11 color changes still apply on top. `cursor-text` and `selection-foreground` are read but not drawn: the selection is a translucent highlight over the text, so the text keeps its own color. `background-opacity` is not applied, so the terminal stays opaque.
+
+The host's files are read by one bounded command: each file is cut at 64 KB and the whole output at 256 KB, and the parser on this device caps lines and line length again. A theme name from a config reaches the host's shell only as octal-escaped bytes that the inner `sh` rebuilds, never as shell code, the same as every other value Oppi sends. Parsing happens on this device.
+
+Oppi keeps the last theme it read for each saved host, so the next connect paints right away and then refreshes. If the host changes its theme while a terminal is open, reconnect to pick it up. Switching Oppi between light and dark re-reads a `light:`/`dark:` pair.
+
+**Terminal Colors** in the host form chooses the source per host:
+
+| Choice | Result |
+|---|---|
+| Host’s Ghostty theme (default) | The theme above. The row shows the name last read, such as `tokyonight`, or `not found`. |
+| Oppi theme | Oppi's own colors; nothing is read. |
+| A named theme | One theme from the host's theme folders, instead of its config. |
+
+The named-theme list comes from the host when the picker opens, so it needs an open terminal for that host: open the host form from the terminal's **…** menu (**Edit Host**). Without one, the picker offers the first two choices and the one already chosen. The choice is saved with the host, applies to an open terminal at once, and does not end it or ask you to sign in again.
+
 ## Images
 
 The terminal draws images sent with the [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/), so `kitten icat`, chafa, timg, `viu`, Yazi previews, and an agent's image output (`pi` printing a screenshot) appear in the grid instead of as escape-code garbage. A program that asks whether images are supported (`a=q`, which `kitten icat` does first) is told yes, so it sends the picture instead of falling back to text.

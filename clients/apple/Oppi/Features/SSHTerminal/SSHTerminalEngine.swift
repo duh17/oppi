@@ -286,12 +286,42 @@ final class SSHTerminalEngine {
         flushReplies()
     }
 
-    func setColors(foreground: GhosttyColorRgb, background: GhosttyColorRgb, dark: Bool) {
+    /// The default colors. `palette` entries replace the built-in 256-color
+    /// palette's, `cursor` the cursor's default; nil keeps libghostty's own.
+    /// A program's OSC 4, 10, 11 and 12 still change colors on top of these.
+    func setColors(
+        foreground: GhosttyColorRgb,
+        background: GhosttyColorRgb,
+        dark: Bool,
+        palette: [UInt8: GhosttyColorRgb] = [:],
+        cursor: GhosttyColorRgb? = nil
+    ) {
         self.dark = dark
+        defer {
+            notePictureChange()
+            forceFullRebuild = true
+        }
         var foreground = foreground
         var background = background
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &foreground)
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &background)
+        if var cursor {
+            ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, &cursor)
+        } else {
+            ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, nil)
+        }
+        // NULL resets to the built-in palette, which is the base a theme's
+        // entries go on top of.
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, nil)
+        guard !palette.isEmpty else { return }
+        var colors = [GhosttyColorRgb](repeating: GhosttyColorRgb(), count: 256)
+        guard colors.withUnsafeMutableBufferPointer({ buffer in
+            ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT, buffer.baseAddress) == GHOSTTY_SUCCESS
+        }) else { return }
+        for (index, color) in palette { colors[Int(index)] = color }
+        colors.withUnsafeMutableBufferPointer { buffer in
+            _ = ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, buffer.baseAddress)
+        }
     }
 
     func scroll(rows: Int) {

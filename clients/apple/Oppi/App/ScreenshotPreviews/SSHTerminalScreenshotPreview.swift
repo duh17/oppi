@@ -37,6 +37,9 @@ enum SSHTerminalScreenshotStatus: String {
 struct SSHTerminalScreenshotPreview: View {
     var status: SSHTerminalScreenshotStatus = .none
     var hostLabel: String = "chen@mac-studio"
+    /// Answers the host's Ghostty config with this theme, as a host running
+    /// Ghostty with `theme = tokyonight` would, so the terminal paints with it.
+    var ghosttyTheme: Bool = false
     private let themeID: ThemeID
     @State private var channel = try? SSHTerminalChannel()
     /// The switcher variant's registry and the session standing for the terminal on screen.
@@ -49,7 +52,8 @@ struct SSHTerminalScreenshotPreview: View {
         return connection
     }()
 
-    init(status: SSHTerminalScreenshotStatus = .none, hostLabel: String = "chen@mac-studio") {
+    init(status: SSHTerminalScreenshotStatus = .none, hostLabel: String = "chen@mac-studio", ghosttyTheme: Bool = false) {
+        self.ghosttyTheme = ghosttyTheme
         self.status = status
         self.hostLabel = hostLabel
         let themeID: ThemeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light"
@@ -103,7 +107,7 @@ struct SSHTerminalScreenshotPreview: View {
         // The default preview is a Herdr client whose focused pane runs pi.
         // Status variants run a login shell, so only the root record can
         // pick the input mode.
-        channel.opened(PreviewConnection(status: status) { [weak channel] bytes in
+        channel.opened(PreviewConnection(status: status, ghosttyTheme: ghosttyTheme) { [weak channel] bytes in
             let shown = String(decoding: bytes, as: UTF8.self).unicodeScalars.map { scalar -> String in
                 switch scalar.value {
                 case 0x1b: "\\e"
@@ -119,7 +123,7 @@ struct SSHTerminalScreenshotPreview: View {
         let screen = switch status {
         case .none: herdrScreen(esc)
         case .passwordPrompt: passwordPromptScreen(esc)
-        default: statusScreen(esc)
+        default: ghosttyTheme ? ghosttyScreen(esc) : statusScreen(esc)
         }
         var bytes = Data(screen.utf8)
         bytes.append(statusReports(status))
@@ -167,6 +171,20 @@ struct SSHTerminalScreenshotPreview: View {
             "\(esc)42;30m[bash]\(esc)0m sudo make install\r\n\r\n",
             "[sudo] password for duh: ",
         ].joined()
+    }
+
+    /// A shell with the 16 palette colors, a bold and an inverse run, and text
+    /// in the default colors, so a theme's palette and defaults are all visible.
+    private func ghosttyScreen(_ esc: String) -> String {
+        var lines = ["\(esc)2J\(esc)H\(esc)1;32mchen@mac-studio\(esc)0m \(esc)34m~/workspace/oppi\(esc)0m \(esc)35m(feat/ssh-ghostty-theme)\(esc)0m\r\n"]
+        lines.append("$ ls --color\r\n\(esc)34mclients\(esc)0m  \(esc)34mdocs\(esc)0m  \(esc)32mbuild.sh\(esc)0m  README.md  \(esc)31mcore.dump\(esc)0m\r\n")
+        lines.append("$ printf palette\r\n")
+        for row in [0, 8] {
+            lines.append((row ..< row + 8).map { "\(esc)48;5;\($0)m  " }.joined() + "\(esc)0m\r\n")
+        }
+        lines.append("\(esc)30;41m error \(esc)0m \(esc)30;42m ok \(esc)0m \(esc)30;43m warn \(esc)0m \(esc)30;44m info \(esc)0m \(esc)7m inverse \(esc)0m\r\n")
+        lines.append("\r\nThe quick brown fox jumps over the lazy dog.\r\n$ \(esc)0m")
+        return lines.joined()
     }
 
     private func statusScreen(_ esc: String, step: SSHTerminalScreenshotStatus? = nil) -> String {
@@ -356,11 +374,38 @@ final class SSHTerminalSwitcherPreviewFixture {
 
 private actor PreviewConnection: SSHTerminalConnection {
     let status: SSHTerminalScreenshotStatus
+    let ghosttyTheme: Bool
     let echo: @MainActor (Data) -> Void
-    init(status: SSHTerminalScreenshotStatus = .none, echo: @escaping @MainActor (Data) -> Void) {
+    init(status: SSHTerminalScreenshotStatus = .none, ghosttyTheme: Bool = false, echo: @escaping @MainActor (Data) -> Void) {
         self.status = status
+        self.ghosttyTheme = ghosttyTheme
         self.echo = echo
     }
+    /// Ghostty's bundled `tokyonight` theme file.
+    private static let tokyonight = """
+    palette = 0=#15161e
+    palette = 1=#f7768e
+    palette = 2=#9ece6a
+    palette = 3=#e0af68
+    palette = 4=#7aa2f7
+    palette = 5=#bb9af7
+    palette = 6=#7dcfff
+    palette = 7=#a9b1d6
+    palette = 8=#414868
+    palette = 9=#f7768e
+    palette = 10=#9ece6a
+    palette = 11=#e0af68
+    palette = 12=#7aa2f7
+    palette = 13=#bb9af7
+    palette = 14=#7dcfff
+    palette = 15=#c0caf5
+    background = #1a1b26
+    foreground = #c0caf5
+    cursor-color = #c0caf5
+    cursor-text = #15161e
+    selection-background = #33467c
+    selection-foreground = #c0caf5
+    """
     func send(_ bytes: Data) async throws { await echo(bytes) }
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {}
     func checkAlive() async throws {}
@@ -368,6 +413,12 @@ private actor PreviewConnection: SSHTerminalConnection {
     func cancel() async {}
 
     func run(_ command: String, input: Data) async throws -> SSHExecResult {
+        if ghosttyTheme, command == SSHTerminalGhosttyRemote.configCommand() {
+            return SSHExecResult(output: Data("theme = tokyonight\nfont-size = 17\nbackground-opacity = 0.80\n".utf8), errorOutput: Data(), exitStatus: 0)
+        }
+        if ghosttyTheme, command == SSHTerminalGhosttyRemote.themeCommand("tokyonight") {
+            return SSHExecResult(output: Data(Self.tokyonight.utf8), errorOutput: Data(), exitStatus: 0)
+        }
         if command == "sh -s" { // a keybinding file read: none here, so defaults
             return SSHExecResult(output: Data(), errorOutput: Data("No such file".utf8), exitStatus: 1)
         }
