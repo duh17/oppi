@@ -330,6 +330,114 @@ struct WorkspaceMediaOverlayNavigationTests {
         #expect(navigation.splitDetailTarget == nil)
     }
 
+    @Test func userBackFromPushedSplitDetailDuringFullscreenEndsTheOverlayAndStands() {
+        let navigation = readyNavigation()
+        let root = WorkspaceSessionNavTarget(
+            serverId: "server-b",
+            sessionId: "chat-1",
+            workspaceId: "ws-b"
+        )
+        let pushed = WorkspaceSessionNavTarget(
+            serverId: "server-b",
+            sessionId: "chat-2",
+            workspaceId: "ws-b"
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceSession(root)
+        navigation.openReferencedSession(pushed)
+        #expect(navigation.splitDetailPathElements.count == 1)
+
+        navigation.beginMediaOverlay(activeServerId: "server-b")
+        navigation.popSplitDetail(toDepth: 0)
+
+        #expect(navigation.splitDetailPathElements.isEmpty)
+        #expect(navigation.splitDetailTarget == .session(root))
+        #expect(!navigation.isMediaOverlayActive)
+
+        #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
+        #expect(navigation.splitDetailPathElements.isEmpty)
+    }
+
+    @Test func ipadSidebarWorkspaceOpenDuringFullscreenEndsTheOverlayAndStands() {
+        let navigation = readyNavigation()
+        let workspace = WorkspaceNavTarget(
+            serverId: "server-b",
+            workspace: makeTestWorkspace(id: "ws-b")
+        )
+        let session = WorkspaceSessionNavTarget(
+            serverId: "server-b",
+            sessionId: "chat-1",
+            workspaceId: "ws-b"
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspace(workspace)
+        navigation.openWorkspaceSession(session, workspace: workspace)
+
+        navigation.beginMediaOverlay(activeServerId: "server-b")
+        // Opening a workspace from the sidebar is the person's navigation.
+        navigation.openWorkspace(workspace)
+
+        #expect(!navigation.isMediaOverlayActive)
+        #expect(navigation.splitDetailTarget == nil)
+        #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
+        #expect(navigation.splitDetailTarget == nil)
+    }
+
+    @Test func ipadAllSessionsDuringFullscreenEndsTheOverlayAndStands() {
+        let navigation = readyNavigation()
+        let workspace = WorkspaceNavTarget(
+            serverId: "server-b",
+            workspace: makeTestWorkspace(id: "ws-b")
+        )
+        let session = WorkspaceSessionNavTarget(
+            serverId: "server-b",
+            sessionId: "chat-1",
+            workspaceId: "ws-b"
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspace(workspace)
+        navigation.openWorkspaceSession(session, workspace: workspace)
+
+        navigation.beginMediaOverlay(activeServerId: "server-b")
+        // All Sessions from the drawer or the server switcher.
+        navigation.showAllWorkspaceSessions()
+
+        #expect(!navigation.isMediaOverlayActive)
+        #expect(navigation.splitDetailTarget == nil)
+        #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
+        #expect(navigation.splitDetailTarget == nil)
+    }
+
+    @Test func ipadInboxSessionOpenDuringFullscreenEndsTheOverlayAndStands() {
+        let navigation = readyNavigation()
+        let workspace = WorkspaceNavTarget(
+            serverId: "server-b",
+            workspace: makeTestWorkspace(id: "ws-b")
+        )
+        let first = WorkspaceSessionNavTarget(
+            serverId: "server-b",
+            sessionId: "chat-1",
+            workspaceId: "ws-b"
+        )
+        let second = WorkspaceSessionNavTarget(
+            serverId: "server-b",
+            sessionId: "chat-2",
+            workspaceId: "ws-b"
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspace(workspace)
+        navigation.openWorkspaceSession(first, workspace: workspace)
+
+        navigation.beginMediaOverlay(activeServerId: "server-b")
+        // Opening another session from the inbox replaces the detail target.
+        navigation.openWorkspaceSession(second, workspace: workspace)
+
+        #expect(!navigation.isMediaOverlayActive)
+        #expect(navigation.splitDetailTarget == .session(second))
+        #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
+        #expect(navigation.splitDetailTarget == .session(second))
+    }
+
     private func readyNavigation() -> AppNavigation {
         let navigation = AppNavigation()
         navigation.launchPhase = .ready

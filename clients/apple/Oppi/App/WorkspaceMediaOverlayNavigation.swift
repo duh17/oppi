@@ -53,6 +53,10 @@ enum WorkspaceMediaOverlayNavigationPolicy {
         !cancelled
     }
 
+    /// Whether a non-pop route clear lost the route the overlay snapshotted,
+    /// such as a presentation flip or a server reset. A routed-stack pop is
+    /// the person's own navigation; `AppNavigation` ends the overlay instead of
+    /// restoring the chat under it.
     static func shouldRestoreRoute(
         overlayActive: Bool,
         snapshotPathCount: Int,

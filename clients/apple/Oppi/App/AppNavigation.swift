@@ -422,7 +422,9 @@ final class AppNavigation {
     }
 
     /// Snapshot the visible workspace route and selected server before AVKit
-    /// fullscreen can pop the stack or flip compact/split shells.
+    /// fullscreen threatens to clear the stack or flip compact/split shells.
+    /// A routed-stack pop is the person's own navigation: it ends the overlay
+    /// instead of restoring this snapshot. Only non-pop clears restore.
     func beginMediaOverlay(activeServerId: String?) {
         if mediaOverlayDepth == 0 {
             mediaOverlayEndedByUserNavigation = false
@@ -478,6 +480,7 @@ final class AppNavigation {
         guard scopedLockAllows(.workspace(serverId: target.serverId, workspaceId: target.workspace.id), retry: {
             self.openWorkspace(target)
         }) else { return }
+        mediaOverlayYieldsToUserNavigation()
         selectedTab = .workspaces
         selectedWorkspaceFilter = target
         switch workspaceNavigationPresentation {
@@ -492,6 +495,7 @@ final class AppNavigation {
     }
 
     func showAllWorkspaceSessions() {
+        mediaOverlayYieldsToUserNavigation()
         selectedTab = .workspaces
         selectedWorkspaceFilter = nil
         switch workspaceNavigationPresentation {
@@ -523,6 +527,7 @@ final class AppNavigation {
         guard scopedLockAllows(Self.lockTarget(resolvedTarget), retry: {
             self.openWorkspaceSession(target, workspace: workspace)
         }) else { return }
+        mediaOverlayYieldsToUserNavigation()
         selectedTab = .workspaces
         let wasShowingWorkspaceInbox = workspace.map {
             selectedWorkspaceFilter == $0 && workspaceStackRouteElements.count == 1
