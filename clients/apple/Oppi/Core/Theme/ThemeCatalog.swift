@@ -602,8 +602,17 @@ struct ThemeUIKitPalette: @unchecked Sendable {
         scrim = UIColor(palette.bgDark.opacity(0.82))
         dimScrim = UIColor(palette.bg.opacity(0.5))
         recessedInset = UIColor(palette.bg.opacity(0.30))
-        onBlue = UIColor(ThemeColorContrast.foreground(for: palette.blue))
-        onGreen = UIColor(ThemeColorContrast.foreground(for: palette.green))
+        // Not `ThemeColorContrast.foreground(for:)`: its candidates are
+        // `Color.themeFg`/`.themeBg`, which read the runtime palette, and this
+        // init runs inside that palette's one-time initialization.
+        onBlue = UIColor(ThemeColorContrast.contrastingForeground(
+            on: palette.blue,
+            candidates: [palette.fg, palette.bg]
+        ))
+        onGreen = UIColor(ThemeColorContrast.contrastingForeground(
+            on: palette.green,
+            candidates: [palette.fg, palette.bg]
+        ))
 
         syntaxComment = UIColor(palette.syntaxComment)
         syntaxKeyword = UIColor(palette.syntaxKeyword)
