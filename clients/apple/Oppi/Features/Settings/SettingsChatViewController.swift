@@ -77,6 +77,12 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
         intervalEndedAt: Date(timeIntervalSince1970: 9)
     )
 
+    /// What a slot menu may offer: the actions available on this device, plus
+    /// the stored one when it is not offered right now.
+    static func slotOptions(current: ChatTopBarAction) -> [ChatTopBarAction] {
+        ChatTopBarAction.allCases.filter { $0.isAvailable || $0 == current }
+    }
+
     private var chatStyle: AppPreferences.ChatDisplay.Style { AppPreferences.ChatDisplay.style }
     private var topBarSelection: ChatTopBarSelection { AppPreferences.ChatTopBar.selection }
 
@@ -165,7 +171,7 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
 
     private static func header(_ section: Section) -> String? {
         switch section {
-        case .busy: String(localized: "Busy Animation")
+        case .busy: nil
         case .style: String(localized: "Style")
         case .topBar: String(localized: "Top Bar Buttons")
         case .comments: nil
@@ -224,9 +230,10 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
             let current = topBarSelection.actions[slot]
             cell.accessories = [.settingsPopUpMenu(
                 identifier: slot == 0 ? "settings.chat.topBar.slot1" : "settings.chat.topBar.slot2",
-                // All three are listed, so the setting shows what is stored.
-                // Terminal takes effect when the experiment is on.
-                options: ChatTopBarAction.allCases.map { action in
+                // Terminal is offered only while the experiment is on, but a
+                // stored choice for it still shows so the setting never lies
+                // about what is saved.
+                options: Self.slotOptions(current: current).map { action in
                     (action.label, action == current, { [weak self] in
                         let selection = AppPreferences.ChatTopBar.selection.choosing(action, forSlot: slot)
                         AppPreferences.ChatTopBar.setSelection(selection)

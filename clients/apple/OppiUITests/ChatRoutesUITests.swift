@@ -48,8 +48,11 @@ final class ChatRoutesUITests: XCTestCase {
             app.segmentedControls["settings.chatStyle"].buttons["Full"].waitForExistence(timeout: 5),
             "The style picker keeps its three choices"
         )
-        // The push animation fades the bar's title in; capture after it settles.
-        Thread.sleep(forTimeInterval: 0.6)
+        // The page is settled once its last row is on screen.
+        XCTAssertTrue(
+            app.buttons["settings.chat.quickComments"].waitForExistence(timeout: 5),
+            "The Chat settings page must show its Quick Comments row"
+        )
         attachScreenshot("chat-settings-top-bar")
         assertRunning()
     }

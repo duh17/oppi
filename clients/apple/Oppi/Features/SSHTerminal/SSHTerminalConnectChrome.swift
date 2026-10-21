@@ -218,7 +218,8 @@ final class SSHTerminalConnectChrome {
         let editHost = editHost
         var hostLabel = profile().endpointLabel
         if let folder = session.folder {
-            hostLabel += " \u{00B7} " + (folder as NSString).abbreviatingWithTildeInPath
+            // The remote folder as stored; `~` is the host's home, not this one.
+            hostLabel += " \u{00B7} " + folder
         }
         DispatchQueue.main.async {
             guard session.showsTerminal, let channel = session.channel else { return }

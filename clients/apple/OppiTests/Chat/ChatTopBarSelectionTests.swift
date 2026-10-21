@@ -90,8 +90,7 @@ struct ChatTopBarSelectionTests {
         #expect(ChatTopBarAction.terminal.accessibilityIdentifier == "chat.toolbar.terminal")
         #expect(Set(ChatTopBarAction.allCases.map(\.accessibilityIdentifier)).count == 3)
         #expect(ChatTopBarAction.files.symbolName == "folder")
-        #expect(ChatTopBarAction.files.openSymbolName == "folder.fill")
-        #expect(ChatTopBarAction.terminal.openSymbolName == nil)
+        #expect(ChatTopBarAction.terminal.symbolName == "terminal")
         // Every action says what it does, not just its name.
         for action in ChatTopBarAction.allCases {
             #expect(!action.accessibilityLabel.isEmpty)

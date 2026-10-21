@@ -50,15 +50,6 @@ enum ChatTopBarAction: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// Filled symbol while the action's panel is open. Terminal has no panel.
-    var openSymbolName: String? {
-        switch self {
-        case .files: "folder.fill"
-        case .terminal: nil
-        case .outline: "list.bullet"
-        }
-    }
-
     /// The … menu title for an action that did not get a slot.
     var menuTitle: String { label }
 

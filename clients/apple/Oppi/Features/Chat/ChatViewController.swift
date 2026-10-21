@@ -66,6 +66,9 @@ final class ChatScreenModel {
     var topBarRefresh = 0
     /// The SSH Terminal flag this chat last drew its bar from.
     var observedTerminalExperiment = AppPreferences.Experiments.sshTerminalEnabled
+    /// A folder terminal is being resolved for this chat. The bar disables its
+    /// Terminal action meanwhile, so one tap cannot push two screens.
+    var isOpeningTerminal = false
     /// The bar title's widest size (`updateTitleMaxWidth`).
     var titleMaxWidth: CGFloat = 320
 

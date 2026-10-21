@@ -163,9 +163,6 @@ final class SSHTerminalRegistry {
 
     func isLive(_ profileID: UUID) -> Bool { terminal(for: profileID) != nil }
 
-    /// Whether any terminal of this host, plain or a folder, is connected.
-    func hasLiveTerminal(_ profileID: UUID) -> Bool { !terminals(for: profileID).isEmpty }
-
     /// Whether the registry holds this channel, connected or not yet dropped.
     func holds(_ channel: SSHTerminalChannel) -> Bool {
         terminals.values.contains { $0.channel === channel }

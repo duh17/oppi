@@ -19,54 +19,21 @@ struct SSHTerminalFolderTarget: Equatable {
             && !serverHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// What the bar, the … menu header, and the host list call this terminal.
-    var folderLabel: String { (folder as NSString).abbreviatingWithTildeInPath }
+    /// What the bar, the … menu header, and the host list call this terminal:
+    /// the folder as the server stores it. It is a remote path, so this device's
+    /// home — and any `~` shortening from it — would name a different folder.
+    var folderLabel: String { folder }
 }
 
-/// The remote command for a folder terminal.
-enum SSHTerminalFolderCommand {
-    /// One POSIX shell word. An inner quote closes the quotes, escapes itself,
-    /// and reopens them (`'` becomes `'\''`), which fish, zsh, and bash all read
-    /// back as the same character.
-    static func shellWord(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
-
-    /// The `cd` argument for a host folder: an absolute path as one quoted
-    /// word, or `$HOME` plus the quoted remainder for the `~` form the server
-    /// stores workspace folders in. A relative path resolves against the
-    /// server's working directory, which this device cannot know, so it has no
-    /// terminal here.
-    static func cdArgument(_ folder: String) -> String? {
-        let path = folder.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty, !path.contains("\n"), !path.contains("\0") else { return nil }
-        if path == "~" { return "\"$HOME\"" }
-        if path.hasPrefix("~/") { return "\"$HOME\"/" + shellWord(String(path.dropFirst(2))) }
-        guard path.hasPrefix("/") else { return nil }
-        return shellWord(path)
-    }
-
-    /// Whether this is a folder a folder terminal can start in.
-    static func isUsablePath(_ path: String) -> Bool { cdArgument(path) != nil }
-
-    /// The SSH exec command (the analog of `ssh -t host 'command'`): `sh -c`
-    /// receives the script as one quoted word, so the user's login shell (fish
-    /// included) only sees `sh` and an argument and never parses the path.
-    static func command(folder: String) -> String {
-        "sh -c " + shellWord(script(folder: folder))
-    }
-
-    /// The script `sh -c` runs, before it is quoted into one word: change
-    /// directory, say so and exit non-zero when the folder is missing — never
-    /// opening a shell somewhere else — and then replace itself with the login
-    /// shell on the TTY.
-    static func script(folder: String) -> String {
-        let path = shellWord(folder)
-        guard let target = cdArgument(folder) else {
-            return "printf 'oppi: %s: not an absolute folder\\n' \(path) >&2; exit 1"
-        }
-        return "cd \(target) || { printf 'oppi: %s: no such folder\\n' \(path) >&2; exit 1; };"
-            + " exec \"${SHELL:-/bin/sh}\" -l"
+extension SSHTerminalFolderTarget {
+    /// A workspace's folder for "Open Terminal here", or nil when it has none a
+    /// shell can start in. A sandbox workspace runs inside its sandbox, so its
+    /// mount is not a folder on the host; a relative mount resolves against the
+    /// server's working directory, which this device cannot know.
+    static func workspace(_ workspace: Workspace) -> String? {
+        guard workspace.runtime != .sandbox else { return nil }
+        let mount = workspace.hostMount?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return SSHTerminalFolderCommand.isUsablePath(mount) ? mount : nil
     }
 }
 
@@ -96,32 +63,99 @@ enum SSHTerminalHostMatch {
         return value
     }
 
-    /// The saved host to open a folder terminal on. Several matches prefer a
-    /// host with no Run on Connect, since that one is the plain machine, then
-    /// the first saved one.
+    /// The saved host to open a folder terminal on, best first: an exact host
+    /// name beats a short name matched against its FQDN, and within one kind a
+    /// host with no Run on Connect beats one with a command, then the order
+    /// they were saved in.
     static func bestMatch(in profiles: [SSHTerminalProfile], serverHost: String) -> SSHTerminalProfile? {
-        let candidates = profiles.filter { $0.isConfigured && matches($0.host, serverHost) }
+        let server = normalize(serverHost)
+        guard !server.isEmpty else { return nil }
+        var exact: [SSHTerminalProfile] = []
+        var byName: [SSHTerminalProfile] = []
+        for profile in profiles where profile.isConfigured {
+            let host = normalize(profile.host)
+            guard !host.isEmpty else { continue }
+            if host == server {
+                exact.append(profile)
+            } else if matches(host, server) {
+                byName.append(profile)
+            }
+        }
+        let candidates = exact.isEmpty ? byName : exact
         guard !candidates.isEmpty else { return nil }
-        return candidates.first { $0.startupCommand == nil || $0.startupCommand?.isEmpty == true }
-            ?? candidates.first
+        return candidates.first(where: hasNoStartupCommand) ?? candidates.first
     }
+
+    private static func hasNoStartupCommand(_ profile: SSHTerminalProfile) -> Bool {
+        profile.startupCommand?.isEmpty ?? true
+    }
+}
+
+/// Where a workspace screen's Terminal opens, or why it cannot.
+enum SSHTerminalFolderResolution: Equatable {
+    case folder(String)
+    /// The workspace names no host folder this device can use.
+    case noFolder
+    /// The lookup failed for a reason worth showing instead of guessing.
+    case failure(String)
 }
 
 /// Resolves the folder a workspace screen's Terminal opens: the workspace's
 /// root, or the session's own worktree root when it has one.
 @MainActor
 enum SSHTerminalFolderResolve {
-    static func folder(workspace: Workspace, worktreeId: String?, apiClient: APIClient?) async -> String? {
+    static func folder(
+        workspace: Workspace,
+        worktreeId: String?,
+        apiClient: APIClient?
+    ) async -> SSHTerminalFolderResolution {
         let root = workspace.hostMount?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard let worktreeId, worktreeId != WorkspaceWorktree.mainId, let apiClient else {
-            return root.isEmpty ? nil : root
+            return root.isEmpty ? .noFolder : .folder(root)
         }
-        // The worktree route is best effort (older servers lack it); the
-        // workspace root is still the folder such a session runs in.
-        let worktrees = (try? await apiClient.listWorkspaceWorktrees(workspaceId: workspace.id)) ?? []
+        do {
+            let worktrees = try await apiClient.listWorkspaceWorktrees(workspaceId: workspace.id)
+            return resolution(worktreeId: worktreeId, root: root, worktrees: worktrees, lookupError: nil)
+        } catch {
+            return resolution(worktreeId: worktreeId, root: root, worktrees: [], lookupError: error)
+        }
+    }
+
+    /// The decision, apart from the request: a server without the worktree route
+    /// (404) still runs the session in the workspace root, but any other failure
+    /// is shown rather than silently opening a terminal in the wrong folder.
+    nonisolated static func resolution(
+        worktreeId: String?,
+        root: String,
+        worktrees: [WorkspaceWorktree],
+        lookupError: (any Error)?
+    ) -> SSHTerminalFolderResolution {
+        let resolvedRoot = root.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback: SSHTerminalFolderResolution = resolvedRoot.isEmpty ? .noFolder : .folder(resolvedRoot)
+        guard let worktreeId, worktreeId != WorkspaceWorktree.mainId else { return fallback }
+        if let lookupError {
+            guard isUnsupportedRoute(lookupError) else {
+                return .failure(failureMessage(lookupError))
+            }
+            return fallback
+        }
         let path = worktrees.first { $0.id == worktreeId }?.path
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return path.isEmpty ? (root.isEmpty ? nil : root) : path
+        return path.isEmpty ? fallback : .folder(path)
+    }
+
+    /// An older server (or a sandbox workspace) has no worktree route: 404 or a
+    /// "not supported" answer means the workspace root is still where sessions
+    /// of that workspace run.
+    nonisolated static func isUnsupportedRoute(_ error: any Error) -> Bool {
+        if let apiError = error as? APIError, case .server(let status, _) = apiError {
+            return status == 404
+        }
+        return false
+    }
+
+    nonisolated private static func failureMessage(_ error: any Error) -> String {
+        String(localized: "Oppi could not look up this session's worktree folder: \(error.localizedDescription)")
     }
 }
 
@@ -160,6 +194,7 @@ enum SSHTerminalFolderEntry {
     enum SSHTerminalFolderFailure {
         case noFolder
         case unknownWorkspace
+        case lookupFailed(String)
 
         var message: String {
             switch self {
@@ -167,6 +202,8 @@ enum SSHTerminalFolderEntry {
                 String(localized: "This workspace has no host folder Oppi can open a terminal in. A sandbox workspace runs inside its sandbox, and a folder relative to the server's working directory cannot be resolved here.")
             case .unknownWorkspace:
                 String(localized: "Oppi has not loaded this workspace yet. Open the workspace once, then try again.")
+            case .lookupFailed(let reason):
+                reason
             }
         }
     }

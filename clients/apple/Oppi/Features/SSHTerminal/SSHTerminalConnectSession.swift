@@ -149,6 +149,7 @@ final class SSHTerminalConnectSession {
             return
         }
         begin(value, savingHostOnly: true)
+        let attempt = runID
         task = Task {
             do {
                 // Updating a presence-protected item can wait for approval.
@@ -161,6 +162,10 @@ final class SSHTerminalConnectSession {
                 guard !Task.isCancelled, runID == self.runID else { return }
                 failure = error.localizedDescription
             }
+            // Saving may continue into a connect (Add Host for a folder
+            // terminal). That attempt owns the flags now, so the save's tail
+            // must not clear them.
+            guard runID == attempt else { return }
             connecting = false
             savingHostOnly = false
         }

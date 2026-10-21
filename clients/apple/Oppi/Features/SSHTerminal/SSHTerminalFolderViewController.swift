@@ -5,7 +5,9 @@ import UIKit
 /// `SSHTerminalRegistry` from the moment it opens, so leaving this screen keeps
 /// it and pressing Terminal again for the same folder returns to it.
 final class SSHTerminalFolderViewController: UIViewController {
-    private let profile: SSHTerminalProfile
+    /// Follows the password sheet's Save Password toggle, like the host list's
+    /// connecting profile, so the saved choice is the one used and stored.
+    private var profile: SSHTerminalProfile
     private let target: SSHTerminalFolderTarget
     private let session = SSHTerminalConnectSession()
     private var chrome: SSHTerminalConnectChrome?
@@ -13,6 +15,9 @@ final class SSHTerminalFolderViewController: UIViewController {
     private let statusLabel = UILabel()
     private let retryButton = UIButton(type: .system)
     private var lastThemeID: ThemeID?
+    /// The terminal has been reached. From then on this connecting screen's job
+    /// is done, so it leaves with the terminal instead of waiting to be popped.
+    private var hasShownTerminal = false
 
     init(profile: SSHTerminalProfile, target: SSHTerminalFolderTarget) {
         self.profile = profile.normalized()
@@ -58,8 +63,8 @@ final class SSHTerminalFolderViewController: UIViewController {
             host: self,
             session: session,
             profile: { [weak self] in self?.profile ?? SSHTerminalProfile() },
-            setProfile: { _ in },
-            editHost: { [weak self] in self?.session.showsTerminal = false },
+            setProfile: { [weak self] in self?.profile = $0 },
+            editHost: { [weak self] in self?.editHost() },
             submitPassword: { [weak self] password in self?.connect(password: password) },
             onSaved: { [weak self] _ in self?.setNeedsUpdateProperties() }
         )
@@ -67,6 +72,16 @@ final class SSHTerminalFolderViewController: UIViewController {
         session.folder = target.folder
         connect()
         setNeedsUpdateProperties()
+    }
+
+    /// Back from the terminal returns here; this screen then leaves too, so Back
+    /// keeps going to the chat or workspace that opened it. Popping from
+    /// `viewDidAppear` keeps the two transitions in order.
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if hasShownTerminal, !session.showsTerminal {
+            Router.finish(self)
+        }
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -103,7 +118,15 @@ final class SSHTerminalFolderViewController: UIViewController {
         // terminal screen, and a password or trust sheet is over this one.
         retryButton.isHidden = session.failure == nil || session.connecting
             || session.showsTerminal || session.passwordPrompt
+        if session.showsTerminal { hasShownTerminal = true }
         chrome?.sync()
+    }
+
+    /// Edit Host in the terminal's … menu opens the saved host's form over
+    /// whichever screen is on top (the terminal, once this screen has gone).
+    private func editHost() {
+        let presenter = navigationController?.topViewController ?? self
+        Router.push(SSHTerminalSetupViewController(profileID: profile.id), from: presenter)
     }
 
     private func connect(password: String? = nil) {

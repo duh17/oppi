@@ -133,7 +133,10 @@ extension WorkspaceDetailViewController {
             showsDictation: showsDictation,
             showsUnlockedBadge: detail.lockBadge == .unlocked,
             configurationLabel: Self.configurationAccessibilityLabel(detail.workspace),
-            showsTerminal: AppPreferences.Experiments.sshTerminalEnabled,
+            // Offered only where it can actually open: SSH Terminal is on and the
+            // workspace has a host folder a shell can start in.
+            showsTerminal: AppPreferences.Experiments.sshTerminalEnabled
+                && SSHTerminalFolderTarget.workspace(detail.workspace) != nil,
             title: title
         )
         if bars != barState {

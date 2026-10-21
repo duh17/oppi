@@ -181,8 +181,8 @@ struct ScreenshotPreviewView: View {
             ChatTopBarTerminalScreenshotPreview()
         case "workspace-top-bar":
             WorkspaceTopBarScreenshotPreview()
-        case "settings-chat":
-            SettingsChatScreenshotPreview()
+        case "settings-chat", "settings-editor":
+            SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
         case "workspace-file-editor", "workspace-file-editor-markdown", "workspace-file-editor-vim":
             WorkspaceFileEditorScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
                 .ignoresSafeArea()
@@ -750,9 +750,12 @@ private struct WorkspaceTopBarScreenshotPreview: View {
     }
 }
 
-/// `SCREENSHOT_SCREEN=settings-chat`: Settings → Chat as UIKit, over fixture
-/// services. Nothing here calls a server.
-private struct SettingsChatScreenshotPreview: View {
+/// `SCREENSHOT_SCREEN=settings-chat` / `settings-editor`: a UIKit settings page
+/// as the root of a router stack, over fixture services. Nothing here calls a
+/// server. Both are captured in the same harness so their bars can be compared.
+private struct SettingsPageScreenshotPreview: View {
+    let screen: String
+
     @State private var root = AppRootEnvironment(
         coordinator: ConnectionCoordinator(serverStore: ServerStore()),
         navigation: AppNavigation(),
@@ -764,9 +767,15 @@ private struct SettingsChatScreenshotPreview: View {
     )
 
     var body: some View {
-        RouterPreviewControllerStack(root: root) { SettingsChatViewController() }
-            .ignoresSafeArea()
-            .accessibilityIdentifier("screenshot.ready")
+        RouterPreviewControllerStack(root: root) {
+            if screen == "settings-editor" {
+                SettingsEditorViewController()
+            } else {
+                SettingsChatViewController()
+            }
+        }
+        .ignoresSafeArea()
+        .accessibilityIdentifier("screenshot.ready")
     }
 }
 

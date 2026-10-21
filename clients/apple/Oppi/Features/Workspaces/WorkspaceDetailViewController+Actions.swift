@@ -274,7 +274,7 @@ extension WorkspaceDetailViewController {
             "hasHostMount": String(workspace.hostMount != nil),
         ])
         SSHTerminalFolderEntry.open(
-            SSHTerminalFolderTarget(serverHost: host, folder: workspace.hostMount ?? ""),
+            SSHTerminalFolderTarget(serverHost: host, folder: SSHTerminalFolderTarget.workspace(workspace) ?? ""),
             from: self
         )
     }

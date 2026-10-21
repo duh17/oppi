@@ -686,7 +686,6 @@ extension WorkspaceDetailViewController {
         let hadImmediateContent: Bool
     }
 
-    /// What the hosted screen kept in `@State`, fresh for each mount.
     /// The bar's Terminal item follows the SSH Terminal experiment.
     private func terminalExperimentMaybeChanged() {
         let enabled = AppPreferences.Experiments.sshTerminalEnabled
@@ -695,6 +694,7 @@ extension WorkspaceDetailViewController {
         setNeedsUpdateProperties()
     }
 
+    /// What the hosted screen kept in `@State`, fresh for each mount.
     struct ContentState {
         var isCreating = false
         var expandedStoppedGroupIDs: Set<String> = []

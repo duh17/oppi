@@ -89,6 +89,7 @@ final class ChatBarItems {
             hasWorkspace: hasWorkspace,
             showsOutline: showsOutline,
             terminalEnabled: AppPreferences.Experiments.sshTerminalEnabled
+                && chat.hasUsableTerminalFolder
         )
         let selection = AppPreferences.ChatTopBar.selection
         let slots = selection.slots(available: available)
@@ -124,8 +125,15 @@ final class ChatBarItems {
         files.button.configuration?.image = UIImage(systemName: filesOpen ? "folder.fill" : "folder")
         files.button.tintColor = filesOpen ? colors.blue : colors.fg
         files.button.accessibilityLabel = filesOpen ? "Close chat files" : ChatTopBarAction.files.accessibilityLabel
-        terminal.rail.tintColor = colors.fg
-        terminal.button.tintColor = colors.fg
+        // The folder lookup can take a round trip; the control says so and takes
+        // no second tap until it finishes.
+        let openingTerminal = chat.model.isOpeningTerminal
+        terminal.rail.isEnabled = !openingTerminal
+        terminal.button.isEnabled = !openingTerminal
+        terminal.rail.tintColor = openingTerminal ? colors.comment : colors.fg
+        terminal.button.tintColor = openingTerminal ? colors.comment : colors.fg
+        terminal.rail.accessibilityValue = openingTerminal ? String(localized: "Opening…") : nil
+        terminal.button.accessibilityValue = terminal.rail.accessibilityValue
 
         // A rail button tints while its panel is open in the trailing
         // column. A compact-width sheet covers the chat, so it needs no tint.
@@ -176,7 +184,10 @@ final class ChatBarItems {
             : "\(chat.sessionDisplayName), launched with a saved Agent"
     }
 
-    /// Which actions this chat can offer as a slot right now.
+    /// Which actions this chat can offer as a slot right now. Terminal needs the
+    /// experiment *and* a workspace folder a shell can start in, so a sandbox
+    /// workspace or a relative host mount gives the slot away instead of
+    /// offering a button that could only show an alert.
     static func availableActions(
         hasWorkspace: Bool,
         showsOutline: Bool,
@@ -634,17 +645,31 @@ extension ChatViewController {
         Router.push(SettingsChatViewController(), from: self)
     }
 
+    /// Whether this chat has a folder a folder terminal can start in: the
+    /// session's worktree, else its workspace root. A sandbox workspace runs
+    /// inside its sandbox, and a relative host mount resolves on the server, so
+    /// neither offers a terminal here.
+    var hasUsableTerminalFolder: Bool {
+        guard let workspaceId = session?.workspaceId,
+              let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == workspaceId })
+        else { return false }
+        return SSHTerminalFolderTarget.workspace(workspace) != nil
+    }
+
     /// "Open Terminal here" from the chat bar: a login shell on the saved SSH
     /// host that serves this session's server, starting in the session's
     /// worktree folder when it has one, else in its workspace's root.
     func openTerminalHere() {
         guard AppPreferences.Experiments.sshTerminalEnabled,
+              !model.isOpeningTerminal,
               let workspaceId = session?.workspaceId else { return }
         let worktreeId = session?.worktreeId
         let apiClient = connection.apiClient
         let host = connection.credentials?.host ?? ""
         let workspaceStore = connection.workspaceStore
+        model.isOpeningTerminal = true
         Task { [weak self] in
+            defer { self?.model.isOpeningTerminal = false }
             guard let self else { return }
             guard let workspace = workspaceStore.workspaces.first(where: { $0.id == workspaceId }) else {
                 SSHTerminalFolderEntry.open(
@@ -654,13 +679,22 @@ extension ChatViewController {
                 )
                 return
             }
-            // A worktree's own folder is one API call away, and resolves to
-            // the workspace root when the session has no worktree (or the
-            // server does not list worktrees).
-            let folder = await SSHTerminalFolderResolve.folder(
+            // A worktree's own folder is one API call away and resolves to the
+            // workspace root only when the session has no worktree or the server
+            // does not have the route.
+            let target = SSHTerminalFolderTarget(serverHost: host, folder: workspace.hostMount ?? "")
+            switch await SSHTerminalFolderResolve.folder(
                 workspace: workspace, worktreeId: worktreeId, apiClient: apiClient
-            ) ?? ""
-            SSHTerminalFolderEntry.open(SSHTerminalFolderTarget(serverHost: host, folder: folder), from: self)
+            ) {
+            case .folder(let folder):
+                SSHTerminalFolderEntry.open(
+                    SSHTerminalFolderTarget(serverHost: host, folder: folder), from: self
+                )
+            case .noFolder:
+                SSHTerminalFolderEntry.open(target, from: self, missingReason: .noFolder)
+            case .failure(let message):
+                SSHTerminalFolderEntry.open(target, from: self, missingReason: .lookupFailed(message))
+            }
         }
     }
 }

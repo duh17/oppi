@@ -198,17 +198,24 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
         // One line per open folder terminal, so a host with both its own
         // terminal and a workspace shell says which folders are open.
         for folder in folderTerminals {
-            appendLine(
-                String(localized: "Connected in \((folder as NSString).abbreviatingWithTildeInPath)"),
-                color: UIColor(palette.green)
-            )
+            // The remote path as the server stores it: this device's home would
+            // name a different folder.
+            appendLine(String(localized: "Connected in \(folder)"), color: UIColor(palette.green))
         }
         conf.attributedSubtitle = AttributedString(subtitle)
         conf.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0)
         connectButton.configuration = conf
         connectButton.accessibilityIdentifier = "sshTerminal.host.row.\(profile.id.uuidString)"
-        connectButton.accessibilityHint = live || !folderTerminals.isEmpty ? "Open the connected terminal" : "Connect"
-        connectButton.accessibilityValue = live ? "Connected" : folderTerminals.isEmpty ? nil : "Connected in a folder"
+        // The row opens the host's own terminal either way: a folder terminal is a
+        // different terminal, so its folders are the value, not the hint.
+        connectButton.accessibilityHint = live ? "Open the connected terminal" : "Connect"
+        if live {
+            connectButton.accessibilityValue = "Connected"
+        } else if folderTerminals.isEmpty {
+            connectButton.accessibilityValue = nil
+        } else {
+            connectButton.accessibilityValue = "Connected in " + folderTerminals.joined(separator: ", ")
+        }
         connectButton.isEnabled = enabled
         if let tapAction {
             connectButton.removeAction(tapAction, for: .touchUpInside)

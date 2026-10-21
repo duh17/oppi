@@ -356,7 +356,6 @@ struct SSHTerminalRegistryTests {
         )
         #expect(plain.channel.connected && folder.channel.connected)
         #expect(harness.registry.terminals(for: plain.profile.id).count == 2)
-        #expect(harness.registry.hasLiveTerminal(plain.profile.id))
 
         // Disconnecting the folder shell leaves the host's own terminal alone.
         harness.registry.close(plain.profile.id, folder: Self.workspaceFolder, reason: "Closed by you.")
