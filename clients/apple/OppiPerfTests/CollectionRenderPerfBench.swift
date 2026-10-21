@@ -474,7 +474,6 @@ struct CollectionRenderPerfBench {
                         let view = ThinkingTimelineRowContentView(configuration: .init(
                             isDone: isDone,
                             previewText: source.text,
-                            fullText: nil
                         ))
                         _ = fittedTimelineSize(for: view, width: 393)
                         lastView = view
@@ -496,7 +495,6 @@ struct CollectionRenderPerfBench {
                     updateView = ThinkingTimelineRowContentView(configuration: .init(
                         isDone: false,
                         previewText: "seed",
-                        fullText: nil
                     ))
                     _ = fittedTimelineSize(for: updateView, width: 393)
                 },
@@ -504,7 +502,6 @@ struct CollectionRenderPerfBench {
                     updateView.configuration = ThinkingTimelineRowConfiguration(
                         isDone: false,
                         previewText: source.text,
-                        fullText: nil
                     )
                     _ = fittedTimelineSize(for: updateView, width: 393)
                 }
@@ -519,7 +516,6 @@ struct CollectionRenderPerfBench {
                     let view = ThinkingTimelineRowContentView(configuration: .init(
                         isDone: isDone,
                         previewText: source.text,
-                        fullText: nil
                     ))
                     _ = fittedTimelineSize(for: view, width: 393)
                 }
