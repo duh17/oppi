@@ -624,7 +624,7 @@ struct ToolPresentationBuilderTests {
         )
 
         #expect(config.toolNamePrefix == "file-diff")
-        #expect(config.trailing == "Requested")
+        #expect(config.trailing == nil, "Args-derived edits show counts without a provenance label")
         #expect(config.editAdded != nil)
         #expect(config.editRemoved != nil)
     }

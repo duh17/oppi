@@ -322,7 +322,7 @@ struct ToolPresentationConfigTests {
         )
     }
 
-    @Test func oldServerEditWithoutEditsKeepsUnknownCountsAndRequestedProvenance() throws {
+    @Test func oldServerEditWithoutEditsKeepsUnknownCounts() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
         let item = ChatItem.toolCall(
             id: "edit-unknown-diff",
@@ -337,7 +337,7 @@ struct ToolPresentationConfigTests {
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         #expect(config.editAdded == nil)
         #expect(config.editRemoved == nil)
-        #expect(config.trailing == "Requested", "Compatibility facts do not invent edit counts")
+        #expect(config.trailing == nil, "Compatibility facts do not invent edit counts or labels")
     }
 
     @Test func expandedSuccessfulWriteCarriesCompositionOwnedCurrentFileAction() throws {

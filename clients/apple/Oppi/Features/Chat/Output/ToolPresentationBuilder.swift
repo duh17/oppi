@@ -127,8 +127,6 @@ enum ToolPresentationBuilder {
         let trailing: String?
         if isInterrupted {
             trailing = String(localized: "Interrupted")
-        } else if let editTrailingFallback = collapsed.editTrailingFallback {
-            trailing = editTrailingFallback
         } else if let callsSummary = inspection.callsSummary {
             trailing = callsSummary
         } else {
@@ -319,7 +317,6 @@ enum ToolPresentationBuilder {
         var languageBadge: String?
         var editAdded: Int?
         var editRemoved: Int?
-        var editTrailingFallback: String?
     }
 
     private static func buildCollapsed(
@@ -354,16 +351,9 @@ enum ToolPresentationBuilder {
             result.titleLineBreakMode = .byTruncatingMiddle
             result.languageBadge = file.fileType == .markdown || file.fileType == .image
                 ? file.fileType?.displayLabel : file.fileType?.syntaxLanguage?.displayName
-            if !isError {
-                // A write's requested bytes are what it wrote, so only an args-derived
-                // edit diff (no result patch) is worth labeling.
-                if file.operation == .edits, file.provenance == .requested {
-                    result.editTrailingFallback = "Requested"
-                }
-                if file.operation == .edits, let stats = file.stats {
-                    result.editAdded = stats.added
-                    result.editRemoved = stats.removed
-                }
+            if !isError, file.operation == .edits, let stats = file.stats {
+                result.editAdded = stats.added
+                result.editRemoved = stats.removed
             }
             return result
         }
