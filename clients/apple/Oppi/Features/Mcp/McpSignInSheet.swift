@@ -22,7 +22,7 @@ struct McpSignInSheet: View {
             } else if !attempt.isSettled, let auth = attempt.flow.auth {
                 Section {
                     if let url = ProviderAuthFlowPresentation.signInURL(auth.url) {
-                        Link("Open Sign-In Page in Safari", destination: url)
+                        Link("Open Sign-In Page", destination: url)
                             .accessibilityIdentifier("mcp.auth.open")
                     }
                     TextField("Paste full callback URL", text: $attempt.input)
@@ -37,7 +37,7 @@ struct McpSignInSheet: View {
                 } header: {
                     Text("Sign In")
                 } footer: {
-                    Text("After approval, Safari may fail to load 127.0.0.1. Copy its full callback URL and paste it below. You can also complete sign-in using a browser on the host.")
+                    Text("After approval, the browser may fail to load 127.0.0.1. Copy its full callback URL and paste it below. You can also complete sign-in using a browser on the host.")
                 }
             } else if !attempt.isSettled { ProgressView("Preparing sign-in…") }
             if let error = attempt.flow.error { Text(error).foregroundStyle(.themeRed) }

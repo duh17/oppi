@@ -34,6 +34,8 @@ Supported route forms:
 
 Use lowercase parameter names. Route names are case-insensitive.
 
+If a link needs a server that is not reachable yet, Oppi says so once, keeps the request, and opens it when Oppi returns to the foreground and the server connects. A newer link replaces the kept one, and a kept link is dropped after 10 minutes or when its server is removed.
+
 On Mac, an external session link waits for the local workspace catalog. If the session is not in the recent snapshot, Oppi makes one authenticated `GET /sessions/<session-id>` request through the owner Unix socket. It does not fall back to HTTPS. A matching routable session opens directly; a not-found response or other lookup failure opens Workspaces.
 
 ## Pairing invites
