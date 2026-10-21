@@ -21,6 +21,15 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
 
     override var e2eAutoOpenWorkspaceName: String { workspaceName }
 
+    /// This class launches the app with real UIKit animations
+    /// (`OPPI_E2E_ANIMATIONS`). The app instance is shared across E2E classes,
+    /// so stop it here; a later class must not inherit animations the harness
+    /// otherwise disables for every case.
+    override func tearDownWithError() throws {
+        terminateSharedApp()
+        try super.tearDownWithError()
+    }
+
     override func configureE2ELaunch(_ application: XCUIApplication) {
         application.launchEnvironment["OPPI_E2E_AUTO_CREATE_SESSION"] = "1"
         application.launchEnvironment["OPPI_E2E_DIAGNOSTICS"] = "1"

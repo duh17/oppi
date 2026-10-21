@@ -375,6 +375,39 @@ struct MarkdownInlineVideoTests {
     }
 
     @MainActor
+    @Test("full screen keeps a user-paused inline video paused after a timeline hide")
+    func fullscreenBeginKeepsUserPausedVideoPaused() async throws {
+        let model = AuthenticatedMediaPlayerModel()
+        let player = model.debugInstallStandalonePlayerForTesting(
+            item: AVPlayerItem(url: try knownGoodH264URL())
+        )
+        let ready = await waitForTimelineCondition(timeoutMs: 4_000) { @MainActor in
+            player.currentItem?.status == .readyToPlay
+        }
+        #expect(ready)
+        player.play()
+        let playing = await waitForTimelineCondition(timeoutMs: 4_000) { @MainActor in
+            player.timeControlStatus == .playing
+        }
+        #expect(playing)
+        player.pause()
+        let paused = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            player.timeControlStatus != .playing
+        }
+        #expect(paused)
+
+        // Only a pause caused by the transient hide resumes. A person's pause
+        // must survive the fullscreen begin even if the row-hide signal comes
+        // first.
+        #expect(model.handleDisappear(source: .timelineVisibility))
+        model.setFullScreen(true)
+        let stayedPaused = await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            player.timeControlStatus != .playing
+        }
+        #expect(stayedPaused)
+    }
+
+    @MainActor
     @Test("prepareForRemoval stops a fullscreen-owned player")
     func prepareForRemovalStopsFullscreenOwnedPlayer() {
         let video = NativeMarkdownVideoView()
