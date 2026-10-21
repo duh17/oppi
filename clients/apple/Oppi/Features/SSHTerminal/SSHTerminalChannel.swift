@@ -120,7 +120,8 @@ final class SSHTerminalEventQueue: Sendable {
 }
 
 /// Composer attachments go to the host as files the agent can read by path.
-/// They land in `$TMPDIR/oppi-ssh` (or `/tmp/oppi-ssh`), owner-only.
+/// They land in `$TMPDIR/oppi-ssh`, or in `/tmp/oppi-ssh-$(id -u)` when the
+/// host sets no `TMPDIR`, owner-only.
 enum SSHTerminalUpload {
     static let maximumBytes = 32 * 1024 * 1024
 
@@ -144,8 +145,26 @@ enum SSHTerminalUpload {
     }
 
     /// `sh -c` so the user's login shell (fish included) only sees one quoted word.
+    ///
+    /// Uploads stay in the temp directory the OS cleans: `$TMPDIR`, which
+    /// macOS sshd points at the user's own private folder, or `/tmp` on hosts
+    /// that set none. A shared `/tmp` gets a per-user folder name, so no other
+    /// local user can pre-create the folder they would then own. Either folder
+    /// is refused unless it is a real directory owned by this user: a symlink,
+    /// or a folder another user owns, could be swapped between this check and
+    /// the agent reading the file. The folder is owner-only (700) either way.
     static func command(fileName: String) -> String {
-        "sh -c 'umask 077; d=\"${TMPDIR:-/tmp}\"; d=\"${d%/}/oppi-ssh\"; mkdir -p \"$d\" && cat > \"$d/\(fileName)\" && printf %s \"$d/\(fileName)\"'"
+        let script = "umask 077; "
+            + "if [ -n \"${TMPDIR:-}\" ]; then d=\"${TMPDIR%/}/oppi-ssh\"; else d=\"/tmp/oppi-ssh-$(id -u)\"; fi; "
+            + "if [ -L \"$d\" ]; then echo \"refusing a symlinked upload folder: $d\" >&2; exit 1; fi; "
+            + "if [ -e \"$d\" ] && [ ! -d \"$d\" ]; then echo \"refusing an upload folder that is not a directory: $d\" >&2; exit 1; fi; "
+            + "mkdir -p \"$d\" || exit 1; "
+            + "set -- $(ls -lnd \"$d\") && [ \"$3\" = \"$(id -u)\" ] "
+            + "|| { echo \"refusing an upload folder owned by another user: $d\" >&2; exit 1; }; "
+            + "chmod 700 \"$d\" || { echo \"cannot secure the upload folder: $d\" >&2; exit 1; }; "
+            + "cat > \"$d/\(fileName)\" || exit 1; "
+            + "printf %s \"$d/\(fileName)\""
+        return "sh -c '\(script)'"
     }
 
     static func path(from result: SSHExecResult, fileName: String) throws -> String {

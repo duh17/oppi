@@ -1503,7 +1503,18 @@ struct SSHTerminalTests {
         let runs = await fixture.runs
         #expect(runs.count == 1) // the oversized file never reached the host
         #expect(runs[0].input == Data([1, 2, 3]))
-        #expect(runs[0].command.hasPrefix("sh -c 'umask 077;"))
+        // One shell word for a fish login shell, and an upload folder that no
+        // other local user can pre-create, own, or symlink around.
+        let command = runs[0].command
+        #expect(command.hasPrefix("sh -c 'umask 077; "))
+        #expect(command.hasSuffix("'"))
+        #expect(command.filter { $0 == "'" }.count == 2)
+        #expect(command.contains("d=\"${TMPDIR%/}/oppi-ssh\""))
+        #expect(command.contains("d=\"/tmp/oppi-ssh-$(id -u)\""))
+        #expect(command.contains("if [ -L \"$d\" ]"))
+        #expect(command.contains("if [ -e \"$d\" ] && [ ! -d \"$d\" ]"))
+        #expect(command.contains("[ \"$3\" = \"$(id -u)\" ]"))
+        #expect(command.contains("chmod 700 \"$d\""))
 
         #expect(SSHTerminalComposerHost.prompt("  what is this?\n", paths: ["/tmp/a.png", "/tmp/b.png"]) == "what is this?\n\n/tmp/a.png\n/tmp/b.png")
         #expect(SSHTerminalComposerHost.prompt("", paths: ["/tmp/a.png"]) == "/tmp/a.png")
