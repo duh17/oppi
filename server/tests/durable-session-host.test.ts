@@ -22,6 +22,9 @@ import { Storage } from "../src/storage.js";
 import { DURABLE_STORE_MISSING } from "../src/session-runtime-capabilities.js";
 import type { ServerMessage, Session } from "../src/types.js";
 
+const USER_IMAGE_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
 const managers: SessionManager[] = [];
 const runtimes: DurableHarness[] = [];
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -362,6 +365,46 @@ describe("durable SessionHost stores", () => {
     const page = await f.manager.getServerDurableTracePage(session.id, {});
     expect(page).not.toBeNull();
     expect(page?.trace).toEqual([]);
+  });
+
+  it("sends a durable user image as a stored reference in trace pages", async () => {
+    const f = await fixture([fauxAssistantMessage("Seen it.")]);
+    const session = enroll(f.storage, f.workspace.id, "Image prompt");
+    await f.manager.startSession(session.id, f.workspace);
+    const conversationId = f.storage.getSession(session.id)!.serverDurable!
+      .conversationId as ConversationId;
+    const runtime = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    const host = runtime.host(session.id)!;
+    await host.use(async (harness) => {
+      const conversation = (await harness.conversation(conversationId, context))!;
+      const submission = await conversation.submit(
+        {
+          type: "input",
+          content: [
+            { type: "text", text: "look at this" },
+            { type: "image", data: USER_IMAGE_PNG, mimeType: "image/png" },
+          ],
+        },
+        context,
+      );
+      await submission.wait(context);
+      await conversation.waitForIdle(context);
+    });
+
+    // The page route stores the image and sends its reference, never the bytes.
+    const page = await f.manager.getServerDurableTracePage(session.id, {});
+    expect(page).not.toBeNull();
+    const user = page?.trace.find((event) => event.type === "user");
+    expect(user?.text).toBe("look at this");
+    expect(user?.media).toHaveLength(1);
+    expect(user?.media?.[0]).toMatchObject({
+      kind: "image",
+      mimeType: "image/png",
+      sessionId: session.id,
+    });
+    expect(JSON.stringify(page?.trace)).not.toContain("data:image/");
+    expect(existsSync(join(f.dir, "session-attachments", session.id, "manifest.json"))).toBe(true);
   });
 
   it.each(["graceful", "crash"] as const)(

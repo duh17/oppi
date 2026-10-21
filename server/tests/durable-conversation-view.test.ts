@@ -68,6 +68,7 @@ describe("conversation entry view: user message images", () => {
     expect(blocks[1]?.attachment).toMatchObject({
       kind: "image",
       mimeType: "image/png",
+      sessionId: "s-view",
       fileName: "user-image.png",
       width: 1,
       height: 1,
@@ -89,6 +90,21 @@ describe("conversation entry view: user message images", () => {
     );
 
     expect(blocks[0]).toEqual({ type: "image", data: "not base64!", mimeType: "image/png" });
+  });
+
+  it("keeps block order when a message mixes a stored image and an inline fallback", () => {
+    const blocks = projectedBlocks(
+      userEntry([
+        { type: "image", data: "not base64!", mimeType: "image/jpeg" },
+        { type: "image", data: PNG_1X1, mimeType: "image/png" },
+      ]),
+      dataDir,
+    );
+
+    // The unstorable block keeps its bytes and its place; the stored one is a reference.
+    expect(blocks[0]).toEqual({ type: "image", data: "not base64!", mimeType: "image/jpeg" });
+    expect(blocks[1]).not.toHaveProperty("data");
+    expect(String((blocks[1]?.attachment as { id: string }).id)).toMatch(/^att_user_/);
   });
 
   it("leaves images inline when projection has no attachment scope", () => {

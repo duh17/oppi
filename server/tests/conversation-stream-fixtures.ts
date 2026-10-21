@@ -47,6 +47,7 @@ const userEntry: ConversationEntryView = {
             kind: "image",
             id: "att_user_AbCdEfGhIjKl",
             mimeType: "image/png",
+            sessionId: "test-session-1",
             fileName: "user-image.png",
             sizeBytes: 68,
             storageKey: "test-session-1/att_user_AbCdEfGhIjKl.png",

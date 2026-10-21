@@ -47,6 +47,7 @@ import {
   sessionAttachmentDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolResult,
   storeUserMessageImages,
+  type StoredUserMessageImage,
 } from "./session-attachments.js";
 import { projectAssistantContentRuns, projectAssistantTimelineBlocks } from "./session-protocol.js";
 
@@ -937,6 +938,35 @@ function textFromPresentation(presentation: TraceEventPresentation): string {
 }
 
 /**
+ * A user message's images in content order: a stored reference, or a placeholder for an image
+ * that stays inline, so a message that mixes both keeps its order on the client. Placeholders
+ * appear only when the message stores something; a message left wholly inline needs none.
+ */
+function userMessageMedia(
+  content: unknown,
+  stored: StoredUserMessageImage[],
+): Record<string, unknown>[] {
+  if (stored.length === 0 || !Array.isArray(content)) return stored.map((image) => image.details);
+  const byIndex = new Map(stored.map((image) => [image.blockIndex, image.details]));
+  const media: Record<string, unknown>[] = [];
+  for (const [index, value] of content.entries()) {
+    const block = asRecord(value);
+    if (!block || block.type !== "image") continue;
+    const details = byIndex.get(index);
+    if (details) {
+      media.push(details);
+      continue;
+    }
+    media.push({
+      kind: "image",
+      mimeType: typeof block.mimeType === "string" && block.mimeType ? block.mimeType : "image/png",
+      inline: true,
+    });
+  }
+  return media;
+}
+
+/**
  * Emit TraceEvents for a single message entry.
  * Handles user, assistant (with text/thinking/toolCall blocks), and toolResult.
  */
@@ -969,7 +999,7 @@ function emitMessageEvents(
         ? { skipMediaBlockIndexes: new Set(storedImages.map((image) => image.blockIndex)) }
         : {},
     );
-    const media = storedImages.map((image) => image.details);
+    const media = userMessageMedia(content, storedImages);
     if (text || media.length > 0) {
       // Durable agent messages keep their kind and data on the projected entry.
       const agentMessage = agentMessageOrigin(entry.customType, entry.data);

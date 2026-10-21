@@ -598,12 +598,19 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     options: TracePageOptions,
   ): Promise<TracePageResult | null> {
     return this.withDurableConversation(sessionId, (harness, conversationId) =>
-      import("./durable-history.js").then(({ readDurableTracePage }) =>
-        readDurableTracePage(harness, conversationId, {
+      import("./durable-history.js").then(({ readDurableTracePage }) => {
+        // Same user-image scope the full trace and the stream use: the session bound to the
+        // conversation, which is where the bytes are stored.
+        const session = this.storage.getSession(sessionId);
+        const images = session ? this.userImageScope(session, conversationId) : undefined;
+        return readDurableTracePage(harness, conversationId, {
           ...options,
+          ...(images
+            ? { attachmentDataDir: images.dataDir, attachmentSessionId: images.sessionId }
+            : {}),
           entryRenderers: this.getEntryRenderers(sessionId),
-        }),
-      ),
+        });
+      }),
     );
   }
 

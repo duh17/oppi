@@ -8,7 +8,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 
 import {
   addSessionAttachmentFile,
@@ -921,6 +921,29 @@ describe("user message images", () => {
     expect(stored[0]?.details.id).toBe(stored[2]?.details.id);
     expect(stored[1]?.details.id).not.toBe(stored[0]?.details.id);
     expect(readManifestRecords("s-dedupe").attachments).toHaveLength(2);
+  });
+
+  it("leaves no temp files behind when it writes bytes and the manifest", () => {
+    storeUserMessageImages({
+      dataDir: root,
+      sessionId: "s-atomic",
+      content: [imageBlock(png), imageBlock(Buffer.from("second"))],
+    });
+    storeUserMessageImages({
+      dataDir: root,
+      sessionId: "s-atomic",
+      content: [imageBlock(png)],
+    });
+    storeUserMessageImages({
+      dataDir: root,
+      sessionId: "s-atomic",
+      content: [imageBlock(Buffer.from("third"))],
+    });
+
+    const dir = join(root, "session-attachments", "s-atomic");
+    expect(readdirSync(dir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    // The manifest a later projection reads is complete JSON.
+    expect(readManifestRecords("s-atomic").attachments).toHaveLength(3);
   });
 
   it("skips images it cannot store, leaving them for the inline fallback", () => {

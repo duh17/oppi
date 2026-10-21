@@ -1236,6 +1236,7 @@ describe("user message images", () => {
     expect(events[0]?.media?.[0]).toMatchObject({
       kind: "image",
       mimeType: "image/png",
+      sessionId: "s-trace",
       fileName: "user-image.png",
       sizeBytes: png.length,
       width: 1,
@@ -1273,6 +1274,28 @@ describe("user message images", () => {
 
     expect(events[0]?.media).toBeUndefined();
     expect(events[0]?.text).toBe(`data:image/png;base64,${png.toString("base64")}`);
+  });
+
+  it("keeps image order when a message mixes a stored image and an inline fallback", () => {
+    const events = parseJsonl(
+      jsonlFor([
+        { type: "image", data: "not base64!", mimeType: "image/jpeg" },
+        imageBlock,
+        { type: "text", text: "caption" },
+      ]),
+      { attachmentDataDir: dataDir, attachmentSessionId: "s-trace" },
+    );
+
+    expect(events[0]?.text).toBe("data:image/jpeg;base64,not base64!\ncaption");
+    expect(events[0]?.media).toHaveLength(2);
+    // The unstorable image stays inline; its placeholder keeps the block order.
+    expect(events[0]?.media?.[0]).toEqual({
+      kind: "image",
+      mimeType: "image/jpeg",
+      inline: true,
+    });
+    expect(String(events[0]?.media?.[1]?.id)).toMatch(/^att_user_/);
+    expect(events[0]?.media?.[1]?.sessionId).toBe("s-trace");
   });
 
   it("is idempotent across projections", () => {

@@ -132,15 +132,29 @@ function readManifest(dataDir: string, sessionId: string): SessionAttachmentMani
   };
 }
 
+/**
+ * Write the manifest through a temp file and a rename. A projection reads it on every history
+ * delivery, so a torn write would make one bad write fail every later read.
+ */
 function writeManifest(
   dataDir: string,
   sessionId: string,
   manifest: SessionAttachmentManifest,
 ): void {
-  mkdirSync(sessionDir(dataDir, sessionId), { recursive: true, mode: 0o700 });
-  writeFileSync(manifestPath(dataDir, sessionId), JSON.stringify(manifest, null, 2), {
-    mode: 0o600,
-  });
+  const dir = sessionDir(dataDir, sessionId);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const tmpPath = join(dir, `.manifest-${generateId(16)}.tmp`);
+  try {
+    writeFileSync(tmpPath, JSON.stringify(manifest, null, 2), { mode: 0o600 });
+    renameSync(tmpPath, manifestPath(dataDir, sessionId));
+  } catch (error) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // temp may already be renamed or removed
+    }
+    throw error;
+  }
 }
 
 function mimeExtension(mimeType: string, fallbackFileName?: string): string {
@@ -751,7 +765,24 @@ function storeAttachment(options: {
 
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   if (!existsSync(filePath)) {
-    writeFileSync(filePath, bytes, { mode: 0o600 });
+    // Content-addressed: the final name only ever appears complete, renamed into place, so a
+    // later reader trusts an existing file and an interrupted write leaves a temp file only.
+    const tmpPath = join(dir, `.store-${generateId(16)}.tmp`);
+    try {
+      writeFileSync(tmpPath, bytes, { mode: 0o600 });
+      if (existsSync(filePath)) {
+        unlinkSync(tmpPath);
+      } else {
+        renameSync(tmpPath, filePath);
+      }
+    } catch (error) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // temp may already be renamed or removed
+      }
+      throw error;
+    }
   }
 
   const detectedDimensions = kind === "image" ? imageDimensions(bytes, mimeType) : undefined;
@@ -888,7 +919,12 @@ export function storeUserMessageImages(options: {
       }
       byId.set(id, record);
     }
-    stored.push({ blockIndex: candidate.blockIndex, details: attachmentDetails(record) });
+    // The owning session travels with the reference: a conversation can be bound to more
+    // than one session, and only this one holds the bytes.
+    stored.push({
+      blockIndex: candidate.blockIndex,
+      details: { ...attachmentDetails(record), sessionId: options.sessionId },
+    });
   }
   return stored;
 }
