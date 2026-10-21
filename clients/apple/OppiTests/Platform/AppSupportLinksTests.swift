@@ -34,26 +34,4 @@ struct AppSupportLinksTests {
         #expect(support.path.hasPrefix("/duh17/oppi/blob/main/docs/"))
         #expect(setup.path.hasPrefix("/duh17/oppi/blob/main/docs/"))
     }
-
-    @Test func bothPagesRouteToTheAppWebLinkHandler() async {
-        for url in [
-            AppSupportLinks.privacyPolicyURL,
-            AppSupportLinks.supportURL,
-            AppSupportLinks.setupURL,
-        ] {
-            await confirmation("web link notification for \(url.lastPathComponent)") { confirm in
-                let observer = NotificationCenter.default.addObserver(
-                    forName: .webLinkTapped,
-                    object: nil,
-                    queue: nil
-                ) { notification in
-                    #expect(notification.object as? URL == url)
-                    confirm()
-                }
-                defer { NotificationCenter.default.removeObserver(observer) }
-
-                AppSupportLinks.open(url)
-            }
-        }
-    }
 }

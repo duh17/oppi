@@ -215,6 +215,13 @@ private struct AppRootEnvironmentModifier: ViewModifier {
             .environment(\.themeID, root.themeStore.activeThemeID)
             .environment(\.scenePhase, AppScenePhase.shared.phase)
             .environment(\.appRootEnvironment, root)
+            // Every SwiftUI `Link` and `openURL` — Settings and onboarding
+            // included — follows the app's browser preference through the
+            // owner, never Safari directly.
+            .environment(\.openURL, OpenURLAction { url in
+                root.opener.open(AppOpenRequest(url: url, origin: .inAppHyperlink))
+                return .handled
+            })
             .tint(.themeBlue)
     }
 }

@@ -434,19 +434,19 @@ final class WikiLineAnchorHarnessViewController: UIViewController, UIAdaptivePre
     private let markdownUpperThirdLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.markdownUpperThird")
     private let noticeLabel = makeDiagnosticLabel(id: "diag.wikiAnchor.notice")
 
-    private var resourceObserver: NSObjectProtocol?
     private var presentedViewer: FullScreenCodeViewController?
     private var diagnosticsConstraints: [NSLayoutConstraint] = []
+    private var installedResourceHandler = false
 
-    private func installResourceObserver() {
-        guard resourceObserver == nil else { return }
-        resourceObserver = NotificationCenter.default.addObserver(
-            forName: .resourceReferenceTapped,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let reference = notification.object as? ResourceReference else { return }
+    /// The harness answers the fixture's `[[links]]` itself instead of asking
+    /// a server for them.
+    private func installResourceHandler() {
+        guard !installedResourceHandler,
+              let opener = HostFactory.root(near: view)?.opener else { return }
+        installedResourceHandler = true
+        opener._resourceReferenceHandlerForTesting = { [weak self] reference in
             self?.open(reference: reference)
+            return true
         }
     }
 
@@ -456,13 +456,13 @@ final class WikiLineAnchorHarnessViewController: UIViewController, UIAdaptivePre
         view.backgroundColor = UIColor(ThemeID.dark.palette.bgDark)
         installLinkSurface()
         installDiagnostics()
-        installResourceObserver()
+        installResourceHandler()
         updateDiagnostics()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        installResourceObserver()
+        installResourceHandler()
         if let presentedViewer, presentedViewer.presentingViewController == nil {
             moveDiagnostics(to: view)
             self.presentedViewer = nil
@@ -472,10 +472,8 @@ final class WikiLineAnchorHarnessViewController: UIViewController, UIAdaptivePre
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        if let resourceObserver {
-            NotificationCenter.default.removeObserver(resourceObserver)
-            self.resourceObserver = nil
-        }
+        HostFactory.root(near: view)?.opener._resourceReferenceHandlerForTesting = nil
+        installedResourceHandler = false
     }
 
     func updateDiagnostics() {

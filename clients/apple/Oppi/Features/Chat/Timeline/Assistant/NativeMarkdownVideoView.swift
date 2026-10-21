@@ -664,7 +664,7 @@ final class NativeMarkdownVideoView: UIView {
 
     @objc private func openReference() {
         guard let reference = currentEmbed?.reference else { return }
-        NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
+        HostFactory.root(near: self)?.opener.open(.resourceReference(reference))
     }
 }
 

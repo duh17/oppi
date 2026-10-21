@@ -51,20 +51,12 @@ struct SettingsPrivacyPage: View {
                 Link(destination: AppSupportLinks.privacyPolicyURL) {
                     Label("Privacy Policy", systemImage: "hand.raised")
                 }
-                .environment(\.openURL, OpenURLAction { _ in
-                    AppSupportLinks.open(AppSupportLinks.privacyPolicyURL)
-                    return .handled
-                })
                 .accessibilityIdentifier("settings.privacyPolicy")
                 .accessibilityHint("Opens Oppi's public Privacy Policy")
 
                 Link(destination: AppSupportLinks.supportURL) {
                     Label("Support & Contact", systemImage: "questionmark.circle")
                 }
-                .environment(\.openURL, OpenURLAction { _ in
-                    AppSupportLinks.open(AppSupportLinks.supportURL)
-                    return .handled
-                })
                 .accessibilityIdentifier("settings.supportContact")
                 .accessibilityHint("Opens Oppi's public support and contact page")
             } footer: {

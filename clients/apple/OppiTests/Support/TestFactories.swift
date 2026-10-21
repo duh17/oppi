@@ -1,3 +1,4 @@
+import UIKit
 import Foundation
 import Testing
 @testable import Oppi
@@ -146,4 +147,58 @@ func makeTestWorkspace(
         createdAt: createdAt,
         updatedAt: updatedAt
     )
+}
+
+/// Records every open a producer delivers. Its opener absorbs the request, so
+/// a test can prove delivery without a server, a browser, or the system.
+@MainActor
+final class TestOpenRequestRecorder {
+    private(set) var requests: [AppOpenRequest] = []
+
+    func record(_ request: AppOpenRequest) -> Bool {
+        requests.append(request)
+        return true
+    }
+}
+
+/// An app root whose opener records every request instead of opening it.
+@MainActor
+func makeRecordingAppRoot() -> (root: AppRootEnvironment, recorder: TestOpenRequestRecorder) {
+    let recorder = TestOpenRequestRecorder()
+    let coordinator = ConnectionCoordinator(serverStore: ServerStore())
+    let navigation = AppNavigation()
+    let drafts = ComposerDraftStore(
+        fileURL: FileManager.default.temporaryDirectory
+            .appending(path: "test-recording-drafts-\(UUID().uuidString).json", directoryHint: .notDirectory),
+        saveDelay: .seconds(60)
+    )
+    let opener = AppOpener(
+        coordinator: coordinator,
+        navigation: navigation,
+        composerDraftStore: drafts,
+        browserPresent: { _ = recorder.record(.webLink($0)) },
+        systemOpen: { _ = recorder.record(.system($0)) }
+    )
+    opener._openRequestObserverForTesting = { recorder.record($0) }
+    let root = AppRootEnvironment(
+        coordinator: coordinator,
+        navigation: navigation,
+        themeStore: ThemeStore(),
+        quickCommentTemplateStore: QuickCommentTemplateStore(templates: []),
+        composerDraftStore: drafts,
+        chatReaderPayloadStore: ChatReaderPayloadStore(),
+        sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay()),
+        opener: opener
+    )
+    return (root, recorder)
+}
+
+/// A window that publishes `root`, the same trait `HostFactory.root(near:)`
+/// reads in the app, so a producer's tap can find the opener.
+@MainActor
+func makeAppRootWindow(_ root: AppRootEnvironment) -> UIWindow {
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    window.traitOverrides.appRootEnvironment = root
+    window.isHidden = false
+    return window
 }

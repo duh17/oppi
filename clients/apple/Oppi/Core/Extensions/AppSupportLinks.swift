@@ -9,10 +9,6 @@ enum AppSupportLinks {
     static let supportURL = publicURL("https://github.com/duh17/oppi/blob/main/docs/support.md")
     static let setupURL = publicURL("https://github.com/duh17/oppi/blob/main/docs/onboarding.md")
 
-    static func open(_ url: URL) {
-        NotificationCenter.default.post(name: .webLinkTapped, object: url)
-    }
-
     private static func publicURL(_ value: String) -> URL {
         guard let url = URL(string: value) else {
             preconditionFailure("Invalid public documentation URL")

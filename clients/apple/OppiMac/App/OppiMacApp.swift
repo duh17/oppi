@@ -142,7 +142,7 @@ struct OppiMacApp: App {
     }
 }
 
-/// Host-route `oppi://session/<id>` only. Same contract as iOS `InAppSessionLink`.
+/// Host-route `oppi://session/<id>` only. Same contract as iOS `AppOpenRequest.session`.
 enum MacSessionDeepLink {
     static func sessionId(from url: URL) -> String? {
         guard url.scheme?.lowercased() == "oppi",

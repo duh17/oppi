@@ -7,20 +7,19 @@ import WebKit
 @Suite("HTML preview browser routing")
 struct HTMLPreviewBrowserRoutingTests {
     @Test(arguments: ["http://example.com/html", "https://example.com/html"])
-    func activatedWebLinkPostsBrowserNotificationAndCancelsEmbeddedNavigation(urlString: String) throws {
+    func activatedWebLinkDeliversAWebLinkAndCancelsEmbeddedNavigation(urlString: String) throws {
         let url = testUnwrap(URL(string: urlString))
         let view = HTMLRenderView(htmlString: "<p>Preview</p>")
-        var received: [URL] = []
-        let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {
-            if $0.object as? URL == url { received.append(url) }
-        }
-        defer { NotificationCenter.default.removeObserver(observer) }
+        let (root, recorder) = makeRecordingAppRoot()
+        let window = makeAppRootWindow(root)
+        defer { window.isHidden = true }
+        window.addSubview(view)
         var policy: WKNavigationActionPolicy?
         view.webView(view.webViewForTesting, decidePolicyFor: PreviewNavigationAction(url: url, type: .linkActivated)) {
             policy = $0
         }
         #expect(policy == .cancel)
-        #expect(received == [url])
+        #expect(recorder.requests == [.webLink(url)])
 
         // New-window links use the same browser route without creating a web view.
         let popup = view.webView(
@@ -28,7 +27,7 @@ struct HTMLPreviewBrowserRoutingTests {
             for: PreviewNavigationAction(url: url, type: .linkActivated), windowFeatures: WKWindowFeatures()
         )
         #expect(popup == nil)
-        #expect(received == [url, url])
+        #expect(recorder.requests == [.webLink(url), .webLink(url)])
     }
 
     @Test(arguments: [
@@ -40,16 +39,15 @@ struct HTMLPreviewBrowserRoutingTests {
     func automaticOrProtectedNavigationDoesNotOpenBrowser(urlString: String) throws {
         let url = testUnwrap(URL(string: urlString))
         let view = HTMLRenderView(htmlString: "<p>Preview</p>")
-        var posted = false
-        let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {
-            if $0.object as? URL == url { posted = true }
-        }
-        defer { NotificationCenter.default.removeObserver(observer) }
+        let (root, recorder) = makeRecordingAppRoot()
+        let window = makeAppRootWindow(root)
+        defer { window.isHidden = true }
+        window.addSubview(view)
         var policy: WKNavigationActionPolicy?
         let type: WKNavigationType = url.path == "/automatic" ? .other : .linkActivated
         view.webView(view.webViewForTesting, decidePolicyFor: PreviewNavigationAction(url: url, type: type)) { policy = $0 }
         #expect(policy == .cancel)
-        #expect(!posted)
+        #expect(recorder.requests.isEmpty)
     }
 }
 

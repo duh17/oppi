@@ -15,22 +15,18 @@ struct ExtensionNativeBlockViewsTests {
     )
 
     @Test(arguments: ["missing", "unhandled", "handled"])
-    func webLinkFallbackUsesBrowserRoutingOnlyWhenHostDoesNotHandle(host: String) throws {
+    func webLinksBelongToTheHostThatMountedTheSurface(host: String) throws {
         let url = testUnwrap(URL(string: "https://example.com/extension-native-\(host)"))
-        var posted: [URL] = []
-        let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {
-            if $0.object as? URL == url { posted.append(url) }
-        }
-        defer { NotificationCenter.default.removeObserver(observer) }
         var hostCalled = false
         let onOpenURL: ((URL) -> Bool)? = host == "missing" ? nil : { opened in
             #expect(opened == url)
             hostCalled = true
             return host == "handled"
         }
+        // A surface with no host has no window to open into: it does nothing
+        // rather than system-opening the URL outside the browser preference.
         context(onOpenURL: onOpenURL).open(url)
         #expect(hostCalled == (host != "missing"))
-        #expect(posted == (host == "handled" ? [] : [url]))
     }
 
     @Test func markdownWikiLinkBecomesWorkspaceFileReference() throws {

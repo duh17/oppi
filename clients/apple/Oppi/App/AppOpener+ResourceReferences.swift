@@ -11,6 +11,13 @@ struct PendingResourceReferenceChoice {
     let matches: [ResourceReferenceMatch]
 }
 
+/// A `file://` link inside a workspace, resolved when it opens.
+struct FileLinkPayload: Equatable, Sendable {
+    let workspaceID: String
+    let filePath: String
+    let originalURL: URL
+}
+
 /// Resolves a `file://` payload to the workspace (and server) that owns it.
 enum FileLinkOpenPolicy {
     enum Kind: Equatable {

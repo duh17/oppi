@@ -5496,7 +5496,7 @@ extension NativeFullScreenMarkdownBody {
 #endif
 
 extension NativeFullScreenMarkdownBody: UITextViewDelegate {
-    func linkAction(for url: URL) -> LinkAction {
+    func linkRequest(for url: URL) -> AppOpenRequest? {
         let identity = resourceAccess.identity
         return MarkdownLinkInteractionSupport.classify(
             url,
@@ -5517,9 +5517,9 @@ extension NativeFullScreenMarkdownBody: UITextViewDelegate {
             return UITextItem.MenuConfiguration(menu: defaultMenu)
         }
 
-        let action = linkAction(for: url)
+        let request = linkRequest(for: url)
         return MarkdownLinkInteractionSupport.menuConfiguration(
-            for: action,
+            for: request,
             defaultMenu: defaultMenu,
             textView: textView
         ) { normalizedURL, sourceView in
@@ -5555,17 +5555,23 @@ extension NativeFullScreenMarkdownBody: UITextViewDelegate {
     }
 
     func primaryAction(for url: URL, from textView: UITextView, defaultAction: UIAction) -> UIAction? {
-        let action = linkAction(for: url)
-        let fallback = MarkdownLinkInteractionSupport.primaryAction(for: action, defaultAction: defaultAction)
+        let request = linkRequest(for: url)
         if ChatReaderLinkIntercept.canHandle(from: textView) {
             return UIAction { [weak textView] _ in
                 guard let textView else { return }
-                if !ChatReaderLinkIntercept.handle(action, from: textView) {
-                    fallback?.performWithSender(nil, target: nil)
+                guard !ChatReaderLinkIntercept.handle(request, from: textView) else { return }
+                guard let request else {
+                    defaultAction.performWithSender(nil, target: nil)
+                    return
                 }
+                HostFactory.root(near: textView)?.opener.open(request)
             }
         }
-        return fallback
+        return MarkdownLinkInteractionSupport.primaryAction(
+            for: request,
+            from: textView,
+            defaultAction: defaultAction
+        )
     }
 }
 

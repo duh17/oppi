@@ -1488,9 +1488,9 @@ struct AssistantTimelineRowContentViewTests {
         let markdownView = makeMarkdownView()
         let url = testUnwrap(URL(string: "oppi://connect?v=3&invite=test-payload%60"))
 
-        let action = markdownView.classifyLink(url)
-        guard case .deepLink(let routed) = action else {
-            Issue.record("Expected .deepLink, got \(action)")
+        let request = markdownView.classifyLink(url)
+        guard case .invite(let routed)? = request else {
+            Issue.record("Expected .invite, got \(String(describing: request))")
             return
         }
         #expect(routed.absoluteString == "oppi://connect?v=3&invite=test-payload")
@@ -1501,9 +1501,9 @@ struct AssistantTimelineRowContentViewTests {
         let markdownView = makeMarkdownView()
         let url = testUnwrap(URL(string: "oppi://connect?v=3&invite=test-payload"))
 
-        let action = markdownView.classifyLink(url)
-        guard case .deepLink(let routed) = action else {
-            Issue.record("Expected .deepLink, got \(action)")
+        let request = markdownView.classifyLink(url)
+        guard case .invite(let routed)? = request else {
+            Issue.record("Expected .invite, got \(String(describing: request))")
             return
         }
         #expect(routed == url)
@@ -1625,8 +1625,7 @@ struct AssistantTimelineRowContentViewTests {
             sourceSessionID: "session-source",
             fileCandidatePath: "notes/sessions/oppi-jZhDRKeV.md"
         )))
-        let action = markdownView.classifyLink(url)
-        #expect(action == .systemDefault)
+        #expect(markdownView.classifyLink(url) == nil)
     }
 
     @MainActor
@@ -1652,7 +1651,7 @@ struct AssistantTimelineRowContentViewTests {
             fileCandidatePath: "RV97TbYj.md"
         )))
 
-        #expect(markdownView.classifyLink(url) == .systemDefault)
+        #expect(markdownView.classifyLink(url) == nil)
     }
 
     @MainActor
@@ -1660,9 +1659,9 @@ struct AssistantTimelineRowContentViewTests {
         let markdownView = makeMarkdownView()
         let url = testUnwrap(URL(string: "oppi://session/RV97TbYj"))
 
-        #expect(markdownView.classifyLink(url) == .inAppSessionLink(InAppDeepLinkIntent(
-            url: url,
-            sourceServerID: nil
+        #expect(markdownView.classifyLink(url) == .session(SessionOpen(
+            sessionId: "RV97TbYj",
+            origin: .inAppHyperlink
         )))
     }
 
@@ -1681,28 +1680,24 @@ struct AssistantTimelineRowContentViewTests {
             )
         ))
         let url = testUnwrap(URL(string: "oppi://session/RV97TbYj"))
-        var receivedURL: URL?
-        var receivedSourceServerID: String?
-        let observer = NotificationCenter.default.addObserver(
-            forName: .inAppDeepLinkTapped,
-            object: nil,
-            queue: .main
-        ) { notification in
-            receivedURL = notification.object as? URL
-            receivedSourceServerID = notification.userInfo?[
-                Notification.Name.inAppDeepLinkSourceServerIDKey
-            ] as? String
-        }
-        defer { NotificationCenter.default.removeObserver(observer) }
+        let (root, recorder) = makeRecordingAppRoot()
+        let window = makeAppRootWindow(root)
+        defer { window.isHidden = true }
+        window.addSubview(markdownView)
+        let textView = try #require(timelineAllTextViews(in: markdownView).first)
 
-        let action = try #require(MarkdownLinkInteractionSupport.primaryAction(
-            for: markdownView.classifyLink(url),
+        let action = try #require(markdownView.primaryAction(
+            for: url,
+            from: textView,
             defaultAction: UIAction { _ in }
         ))
         action.performWithSender(nil, target: nil)
 
-        #expect(receivedURL == url)
-        #expect(receivedSourceServerID == "server-source")
+        #expect(recorder.requests == [.session(SessionOpen(
+            serverId: "server-source",
+            sessionId: "RV97TbYj",
+            origin: .inAppHyperlink
+        ))])
     }
 
     @MainActor
@@ -1736,8 +1731,7 @@ struct AssistantTimelineRowContentViewTests {
         let markdownView = makeMarkdownView()
         let url = testUnwrap(URL(string: "file:///Users/example/workspace/oppi/server/src/server.ts"))
 
-        let action = markdownView.classifyLink(url)
-        #expect(action == .systemDefault)
+        #expect(markdownView.classifyLink(url) == nil)
     }
 
     @MainActor
@@ -1745,8 +1739,7 @@ struct AssistantTimelineRowContentViewTests {
         let markdownView = makeMarkdownView()
         let url = testUnwrap(URL(string: "mailto:support@example.com"))
 
-        let action = markdownView.classifyLink(url)
-        #expect(action == .systemDefault)
+        #expect(markdownView.classifyLink(url) == nil)
     }
 
     @MainActor
@@ -1913,81 +1906,51 @@ struct NativeTableMarkdownLinkRoutingTests {
         #expect(wrapCells.allSatisfy { $0.delegate === wrapTable })
     }
 
-    @Test func httpsClipModeCellTapPostsWebLinkTapped() throws {
+    @Test func httpsClipModeCellDeliversAWebLink() throws {
         let url = testUnwrap(URL(string: "https://example.com/docs"))
-        try expectTableTap(
+        try expectTableRequest(
             on: makeClipTable(linkURL: url.absoluteString),
             url: url,
-            posts: .webLinkTapped,
-            object: url
+            expected: .webLink(url)
         )
     }
 
-    @Test func httpsWrapModeCellTapPostsWebLinkTapped() throws {
+    @Test func httpsWrapModeCellDeliversAWebLink() throws {
         let url = testUnwrap(URL(string: "https://example.com/docs"))
-        try expectTableTap(
+        try expectTableRequest(
             on: makeWrapTable(linkURL: url.absoluteString),
             url: url,
-            posts: .webLinkTapped,
-            object: url
+            expected: .webLink(url)
         )
     }
 
-    @Test func sessionCellTapPostsInAppDeepLinkWithSourceServer() throws {
+    @Test func sessionCellDeliversTheSourceServerScopedSession() throws {
         let url = testUnwrap(URL(string: "oppi://session/RV97TbYj"))
-        var receivedURL: URL?
-        var receivedSourceServerID: String?
-        let observer = NotificationCenter.default.addObserver(
-            forName: .inAppDeepLinkTapped,
-            object: nil,
-            queue: .main
-        ) { notification in
-            receivedURL = notification.object as? URL
-            receivedSourceServerID = notification.userInfo?[
-                Notification.Name.inAppDeepLinkSourceServerIDKey
-            ] as? String
-        }
-        defer { NotificationCenter.default.removeObserver(observer) }
-
-        let tableView = makeClipTable(linkURL: url.absoluteString)
-        var defaultUsed = false
-        let defaultAction = UIAction { _ in defaultUsed = true }
-        let action = try #require(tableView.primaryAction(for: url, defaultAction: defaultAction))
-        #expect(action !== defaultAction)
-        action.performWithSender(nil, target: nil)
-
-        #expect(receivedURL == url)
-        #expect(receivedSourceServerID == "server-1")
-        #expect(!defaultUsed)
+        try expectTableRequest(
+            on: makeClipTable(linkURL: url.absoluteString),
+            url: url,
+            expected: .session(SessionOpen(
+                serverId: "server-1",
+                sessionId: "RV97TbYj",
+                origin: .inAppHyperlink
+            ))
+        )
     }
 
-    @Test func fileCellTapPostsFileLinkTapped() throws {
+    @Test func fileCellDeliversAFileLink() throws {
         let url = testUnwrap(URL(string: "file:///Users/example/workspace/oppi/server/src/server.ts"))
-        let tableView = makeClipTable(linkURL: url.absoluteString)
-        var received: FileLinkPayload?
-        let observer = NotificationCenter.default.addObserver(
-            forName: .fileLinkTapped,
-            object: nil,
-            queue: .main
-        ) { notification in
-            received = notification.object as? FileLinkPayload
-        }
-        defer { NotificationCenter.default.removeObserver(observer) }
-
-        var defaultUsed = false
-        let defaultAction = UIAction { _ in defaultUsed = true }
-        let action = try #require(tableView.primaryAction(for: url, defaultAction: defaultAction))
-        #expect(action !== defaultAction)
-        action.performWithSender(nil, target: nil)
-
-        let payload = try #require(received)
-        #expect(payload.workspaceID == "workspace-1")
-        #expect(payload.filePath == "/Users/example/workspace/oppi/server/src/server.ts")
-        #expect(payload.originalURL == url)
-        #expect(!defaultUsed)
+        try expectTableRequest(
+            on: makeClipTable(linkURL: url.absoluteString),
+            url: url,
+            expected: .fileLink(FileLinkPayload(
+                workspaceID: "workspace-1",
+                filePath: "/Users/example/workspace/oppi/server/src/server.ts",
+                originalURL: url
+            ))
+        )
     }
 
-    @Test func wikiCellTapStillPostsResourceReferenceTapped() throws {
+    @Test func wikiCellDeliversTheResourceReference() throws {
         let reference = ResourceReference(
             target: "RV97TbYj",
             sourceServerID: "server-1",
@@ -1996,41 +1959,43 @@ struct NativeTableMarkdownLinkRoutingTests {
             fileCandidatePath: "RV97TbYj.md"
         )
         let url = try #require(ResourceReferenceURL.make(reference))
-        try expectTableTap(
+        try expectTableRequest(
             on: makeClipTable(linkURL: url.absoluteString),
             url: url,
-            posts: .resourceReferenceTapped,
-            object: reference
+            expected: .resourceReference(reference)
         )
     }
 
-    @Test func inviteCellTapPostsInviteDeepLinkTapped() throws {
+    @Test func inviteCellDeliversTheInviteURL() throws {
         let url = testUnwrap(URL(string: "oppi://connect?v=3&invite=test-payload"))
-        try expectTableTap(
+        try expectTableRequest(
             on: makeClipTable(linkURL: url.absoluteString),
             url: url,
-            posts: .inviteDeepLinkTapped,
-            object: url
+            expected: .invite(url)
         )
     }
 
     @Test func trailingEncodedBacktickIsNormalizedBeforeRouting() throws {
         let rawURL = testUnwrap(URL(string: "https://example.com/docs%60"))
         let normalizedURL = testUnwrap(URL(string: "https://example.com/docs"))
-        try expectTableTap(
+        try expectTableRequest(
             on: makeClipTable(linkURL: rawURL.absoluteString),
             url: rawURL,
-            posts: .webLinkTapped,
-            object: normalizedURL
+            expected: .webLink(normalizedURL)
         )
     }
 
     @Test func mailtoCellTapUsesSystemDefault() throws {
         let url = testUnwrap(URL(string: "mailto:support@example.com"))
         let tableView = makeClipTable(linkURL: url.absoluteString)
+        let textView = try #require(visibleTableTextViews(in: tableView).first)
         var defaultUsed = false
         let defaultAction = UIAction { _ in defaultUsed = true }
-        let action = try #require(tableView.primaryAction(for: url, defaultAction: defaultAction))
+        let action = try #require(tableView.primaryAction(
+            for: url,
+            from: textView,
+            defaultAction: defaultAction
+        ))
         #expect(action === defaultAction)
         action.performWithSender(nil, target: nil)
         #expect(defaultUsed)
@@ -2119,36 +2084,29 @@ private func visibleTableTextViews(in tableView: NativeTableBlockView) -> [UITex
 }
 
 @MainActor
-private func expectTableTap(
+private func expectTableRequest(
     on tableView: NativeTableBlockView,
     url: URL,
-    posts name: Notification.Name,
-    object expected: Any
+    expected: AppOpenRequest
 ) throws {
-    var received: Any?
-    let observer = NotificationCenter.default.addObserver(
-        forName: name,
-        object: nil,
-        queue: .main
-    ) { notification in
-        received = notification.object
-    }
-    defer { NotificationCenter.default.removeObserver(observer) }
+    let textView = try #require(visibleTableTextViews(in: tableView).first)
+    let (root, recorder) = makeRecordingAppRoot()
+    let window = makeAppRootWindow(root)
+    defer { window.isHidden = true }
+    window.addSubview(tableView)
 
     var defaultUsed = false
     let defaultAction = UIAction { _ in defaultUsed = true }
-    let action = try #require(tableView.primaryAction(for: url, defaultAction: defaultAction))
+    let action = try #require(tableView.primaryAction(
+        for: url,
+        from: textView,
+        defaultAction: defaultAction
+    ))
     #expect(action !== defaultAction)
     action.performWithSender(nil, target: nil)
 
     #expect(!defaultUsed)
-    if let expectedURL = expected as? URL {
-        #expect(received as? URL == expectedURL)
-    } else if let expectedReference = expected as? ResourceReference {
-        #expect(received as? ResourceReference == expectedReference)
-    } else {
-        Issue.record("Unsupported expected notification object \(expected)")
-    }
+    #expect(recorder.requests == [expected])
 }
 
 @MainActor

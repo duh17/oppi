@@ -119,18 +119,6 @@ struct AppNavigationShellRoutingTests {
         ))
     }
 
-    @Test func inAppSessionLinkParserAcceptsOnlyCanonicalSessionRoute() throws {
-        let canonical = testUnwrap(URL(string: "oppi://session/child%2D1?workspaceId=ignored"))
-        let extraPath = testUnwrap(URL(string: "oppi://session/child/extra"))
-        let workspace = testUnwrap(URL(string: "oppi://workspace?path=/tmp/project"))
-        let web = testUnwrap(URL(string: "https://example.com/session/child-1"))
-
-        #expect(InAppSessionLink.parse(canonical)?.sessionId == "child-1")
-        #expect(InAppSessionLink.parse(extraPath) == nil)
-        #expect(InAppSessionLink.parse(workspace) == nil)
-        #expect(InAppSessionLink.parse(web) == nil)
-    }
-
     @Test func inviteClaimPredicateClaimsOnlyConnectAndPairRoutes() throws {
         let claimed = [
             "oppi://connect?v=3&invite=x",

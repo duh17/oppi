@@ -1,14 +1,10 @@
 import Foundation
 
 extension Notification.Name {
-    static let inviteDeepLinkTapped = Notification.Name("\(AppIdentifiers.subsystem).inviteDeepLinkTapped")
-    static let inAppDeepLinkTapped = Notification.Name("\(AppIdentifiers.subsystem).inAppDeepLinkTapped")
-    static let inAppDeepLinkSourceServerIDKey = "sourceServerID"
-    static let webLinkTapped = Notification.Name("\(AppIdentifiers.subsystem).webLinkTapped")
-    static let resourceReferenceTapped = Notification.Name("\(AppIdentifiers.subsystem).resourceReferenceTapped")
-    static let sessionFileReferenceTapped = Notification.Name("\(AppIdentifiers.subsystem).sessionFileReferenceTapped")
+    /// Owner → source-chat pre-navigation signal: a linked file is about to
+    /// replace the visible route, so the chat freezes its scroll anchor first.
+    /// This is not an entry point; every open is an `AppOpenRequest`.
     static let workspaceLinkedFileWillOpen = Notification.Name("\(AppIdentifiers.subsystem).workspaceLinkedFileWillOpen")
     static let workspaceLinkedFileSourceServerIDKey = "sourceServerID"
-    static let fileLinkTapped = Notification.Name("\(AppIdentifiers.subsystem).fileLinkTapped")
     static let pairingApprovalsDidChange = Notification.Name("\(AppIdentifiers.subsystem).pairingApprovalsDidChange")
 }

@@ -17,18 +17,18 @@ function write(path: string, content: string): void {
 }
 
 describe("architecture layer rule helpers", () => {
-  it("restricts system URL opens to the iOS preference owner and non-HTTP fallbacks", () => {
+  it("restricts system URL opens to the iOS open owner", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-browser-open-"));
     try {
       const forbidden = [
+        "clients/apple/Oppi/App/OppiApp.swift",
         "clients/apple/Oppi/Features/FileBrowser/HTMLPreviewView.swift",
-        "clients/apple/Oppi/App/ContentView.swift",
+        "clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift",
+        "clients/apple/Oppi/Features/Chat/Timeline/Assistant/AssistantMarkdownContentView.swift",
         "clients/apple/Oppi/Features/Chat/Timeline/Rows/ThinkingTimelineRowContent.swift",
       ];
       const allowed = [
-        "clients/apple/Oppi/App/OppiApp.swift",
-        "clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift",
-        "clients/apple/Oppi/Features/Chat/Timeline/Assistant/AssistantMarkdownContentView.swift",
+        "clients/apple/Oppi/App/AppOpener.swift",
         "clients/apple/OppiTests/BrowserTests.swift",
         "clients/apple/OppiMac/Browser.swift",
       ];
@@ -56,16 +56,16 @@ describe("architecture layer rule helpers", () => {
     }
   });
 
-  it("allows direct in-app browser presentation only at the preference owner and Tailnet auth", () => {
+  it("allows direct in-app browser presentation only at the open owner and Tailnet auth", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-browser-present-"));
     try {
       const forbidden = [
-        "clients/apple/Oppi/App/ContentView.swift",
+        "clients/apple/Oppi/App/OppiApp.swift",
         "clients/apple/Oppi/Features/FileBrowser/HTMLPreviewView.swift",
       ];
       for (const file of [
         ...forbidden,
-        "clients/apple/Oppi/App/OppiApp.swift",
+        "clients/apple/Oppi/App/AppOpener.swift",
         "clients/apple/Oppi/Features/Settings/TailnetSettingsView.swift",
       ]) {
         write(
@@ -964,4 +964,40 @@ describe("Mac architecture layer rules", () => {
     expect(mac.status).toBe(0);
     expect(mac.stdout).toContain("scope: mac");
   });
+  it("defers opens to App Lock only in the open owner", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-open-unlock-"));
+    try {
+      const forbidden = [
+        "clients/apple/Oppi/App/OppiApp.swift",
+        "clients/apple/Oppi/Core/Intents/StartQuickSessionIntent.swift",
+        "clients/apple/Oppi/Features/QuickSession/QuickSessionTrigger.swift",
+      ];
+      const allowed = [
+        "clients/apple/Oppi/App/AppOpener.swift",
+        "clients/apple/Oppi/Core/Services/AppLockService.swift",
+      ];
+      for (const file of [...forbidden, ...allowed]) {
+        write(
+          join(repoRoot, file),
+          "func open(_ url: URL) { AppLockService.shared.performWhenUnlocked { } }\n",
+        );
+      }
+      write(
+        join(repoRoot, "clients/apple/Oppi/CommentOnly.swift"),
+        [
+          "// AppLockService.shared.performWhenUnlocked { }",
+          'let note = "performWhenUnlocked ("',
+          "/* performWhenUnlocked( */",
+        ].join("\n"),
+      );
+      const violations = findIosLayerViolations(repoRoot).filter(
+        (v) => v.rule === "ios-open-unlock-owner",
+      );
+      expect(violations.map((v) => v.file).sort()).toEqual(forbidden.sort());
+      expect(violations.every((v) => v.line === 1)).toBe(true);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
 });

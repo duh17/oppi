@@ -29,7 +29,7 @@ struct ThinkingRowContentViewTests {
     }
 
     @Test(arguments: ["http://example.com/thinking", "https://example.com/thinking"])
-    func doneWebLinkActionPostsNotification(urlString: String) throws {
+    func doneWebLinkActionDeliversToTheOpener(urlString: String) throws {
         let url = testUnwrap(URL(string: urlString))
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: true, previewText: "See [details](\(urlString))", fullText: nil
@@ -38,8 +38,12 @@ struct ThinkingRowContentViewTests {
         #expect(textView.delegate === view)
         #expect(view.responds(to: NSSelectorFromString("textView:primaryActionForTextItem:defaultAction:")))
         #expect(view.responds(to: NSSelectorFromString("textView:menuConfigurationForTextItem:defaultMenu:")))
-        try expectContentWebLink(url) { defaultAction in
-            view.primaryAction(for: url, defaultAction: defaultAction)
+        let (root, recorder) = makeRecordingAppRoot()
+        let window = makeAppRootWindow(root)
+        defer { window.isHidden = true }
+        window.addSubview(view)
+        try expectContentWebLink(url, recorder: recorder) { defaultAction in
+            view.primaryAction(for: url, from: textView, defaultAction: defaultAction)
         }
     }
 
@@ -49,8 +53,9 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: true, previewText: "[Contact](\(urlString))", fullText: nil
         ))
+        let textView = try #require(privateTextLabel(in: view))
         let defaultAction = UIAction { _ in }
-        #expect(view.primaryAction(for: url, defaultAction: defaultAction) === defaultAction)
+        #expect(view.primaryAction(for: url, from: textView, defaultAction: defaultAction) === defaultAction)
     }
 
     @Test func streamingOverflowKeepsInnerScrollDisabledAndAutoFollowsTail() throws {
@@ -617,11 +622,20 @@ struct UserContentBrowserLinkRoutingTests {
         let textView = try #require(timelineAllTextViews(in: view).first)
         #expect(textView.delegate === view)
         #expect(textView.isSelectable)
+        let (root, recorder) = makeRecordingAppRoot()
+        let window = makeAppRootWindow(root)
+        defer { window.isHidden = true }
+        window.addSubview(view)
         if url.scheme == "mailto" {
             let defaultAction = UIAction { _ in }
-            #expect(view.primaryAction(for: url, defaultAction: defaultAction) === defaultAction)
+            #expect(
+                view.primaryAction(for: url, from: textView, defaultAction: defaultAction)
+                    === defaultAction
+            )
         } else {
-            try expectContentWebLink(url) { view.primaryAction(for: url, defaultAction: $0) }
+            try expectContentWebLink(url, recorder: recorder) {
+                view.primaryAction(for: url, from: textView, defaultAction: $0)
+            }
         }
     }
 
@@ -633,13 +647,17 @@ struct UserContentBrowserLinkRoutingTests {
         body.addSubview(textView)
         var intercepted = false
         if installed {
-            ChatReaderLinkIntercept.install({ action in
-                #expect(action == .webLink(url))
+            ChatReaderLinkIntercept.install({ request in
+                #expect(request == .webLink(url))
                 intercepted = true
                 return false
             }, on: body)
         }
-        try expectContentWebLink(url) {
+        let (root, recorder) = makeRecordingAppRoot()
+        let window = makeAppRootWindow(root)
+        defer { window.isHidden = true }
+        window.addSubview(body)
+        try expectContentWebLink(url, recorder: recorder) {
             body.primaryAction(for: url, from: textView, defaultAction: $0)
         }
         #expect(intercepted == installed)
@@ -652,18 +670,17 @@ struct UserContentBrowserLinkRoutingTests {
         body.addSubview(textView)
         var intercepted = false
         ChatReaderLinkIntercept.install({ _ in intercepted = true; return true }, on: body)
-        var posted = false
-        let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {
-            if $0.object as? URL == url { posted = true }
-        }
-        defer { NotificationCenter.default.removeObserver(observer) }
+        let (root, recorder) = makeRecordingAppRoot()
+        let window = makeAppRootWindow(root)
+        defer { window.isHidden = true }
+        window.addSubview(body)
         var defaultUsed = false
         let action = try #require(body.primaryAction(
             for: url, from: textView, defaultAction: UIAction { _ in defaultUsed = true }
         ))
         action.performWithSender(nil, target: nil)
         #expect(intercepted)
-        #expect(!posted)
+        #expect(recorder.requests.isEmpty)
         #expect(!defaultUsed)
     }
 
@@ -681,12 +698,24 @@ struct UserContentBrowserLinkRoutingTests {
         #expect(defaultUsed)
     }
 
-    @Test func assistantUnhandledExtensionWebLinkUsesBrowserRouting() throws {
+    @Test func assistantUnhandledExtensionWebLinkFallsBackToTheOpener() throws {
         let url = testUnwrap(URL(string: "https://example.com/extension-markdown"))
         let view = AssistantMarkdownContentView()
+        view.apply(configuration: .make(
+            content: "[Link](\(url.absoluteString))",
+            isStreaming: false,
+            themeID: .light
+        ))
+        let textView = try #require(timelineAllTextViews(in: view).first)
         var hostCalled = false
         view.linkOpenHandler = { _ in hostCalled = true; return false }
-        try expectContentWebLink(url) { view.primaryAction(for: url, defaultAction: $0) }
+        let (root, recorder) = makeRecordingAppRoot()
+        let window = makeAppRootWindow(root)
+        defer { window.isHidden = true }
+        window.addSubview(view)
+        try expectContentWebLink(url, recorder: recorder) {
+            view.primaryAction(for: url, from: textView, defaultAction: $0)
+        }
         #expect(hostCalled)
     }
 
@@ -699,16 +728,15 @@ struct UserContentBrowserLinkRoutingTests {
 }
 
 @MainActor
-private func expectContentWebLink(_ url: URL, action: (UIAction) -> UIAction?) throws {
-    var received: [URL] = []
-    let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {
-        if $0.object as? URL == url { received.append(url) }
-    }
-    defer { NotificationCenter.default.removeObserver(observer) }
+private func expectContentWebLink(
+    _ url: URL,
+    recorder: TestOpenRequestRecorder,
+    action: (UIAction) -> UIAction?
+) throws {
     var defaultUsed = false
     let routed = try #require(action(UIAction { _ in defaultUsed = true }))
     routed.performWithSender(nil, target: nil)
-    #expect(received == [url])
+    #expect(recorder.requests.last == .webLink(url))
     #expect(!defaultUsed)
 }
 

@@ -197,10 +197,6 @@ struct OnboardingView: View {
             Link(destination: AppSupportLinks.setupURL) {
                 Text("How to set up the server")
             }
-            .environment(\.openURL, OpenURLAction { _ in
-                AppSupportLinks.open(AppSupportLinks.setupURL)
-                return .handled
-            })
             .font(.footnote)
             .accessibilityIdentifier("onboarding.setupHelp")
             .accessibilityHint("Opens the public server setup and pairing guide")

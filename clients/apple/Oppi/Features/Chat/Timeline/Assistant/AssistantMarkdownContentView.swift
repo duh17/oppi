@@ -200,9 +200,9 @@ final class AssistantMarkdownContentView: UIView {
 
     private var currentConfig: Configuration?
     /// Host-owned link routing. Extension surfaces route classified taps through
-    /// their session-aware handler; nil keeps the chat-wide notification routing.
-    /// Unclassified links keep the system default either way, and links the
-    /// handler declines open with the system.
+    /// their session-aware handler; nil sends every classified tap to the app
+    /// opener. Unclassified links keep UIKit's default action either way, and
+    /// links the handler declines still reach the opener.
     var linkOpenHandler: ((URL) -> Bool)?
     var preparedBlocks: [MarkdownBlock]?
     var imagePreparationContext: TimelineImagePreparationContext? {
@@ -382,25 +382,10 @@ final class AssistantMarkdownContentView: UIView {
 
 // MARK: - Link Classification
 
-struct FileLinkPayload: Equatable {
-    let workspaceID: String
-    let filePath: String
-    let originalURL: URL
-}
-
-enum LinkAction: Equatable {
-    case deepLink(URL)
-    case inAppSessionLink(InAppDeepLinkIntent)
-    case webLink(URL)
-    case resourceReference(ResourceReference)
-    case sessionFileReference(ResourceReference)
-    case fileLink(FileLinkPayload)
-    case systemDefault
-}
-
 @MainActor
-// Apple: replace UITextView's external default action here; OppiApp owns modal Safari presentation (https://developer.apple.com/documentation/uikit/uitextviewdelegate/textview(_:primaryactionfor:defaultaction:), https://developer.apple.com/documentation/safariservices/sfsafariviewcontroller).
+// Apple: replace UITextView's external default action here; AppOpener owns modal Safari presentation (https://developer.apple.com/documentation/uikit/uitextviewdelegate/textview(_:primaryactionfor:defaultaction:), https://developer.apple.com/documentation/safariservices/sfsafariviewcontroller).
 enum MarkdownLinkInteractionSupport {
+    /// The request a tapped link makes, or nil for UIKit's default action.
     static func classify(
         _ url: URL,
         serverID: String? = nil,
@@ -408,19 +393,19 @@ enum MarkdownLinkInteractionSupport {
         sessionID: String? = nil,
         routesFileReferencesThroughSession: Bool = false,
         workspaceRuntime: WorkspaceRuntime? = nil
-    ) -> LinkAction {
+    ) -> AppOpenRequest? {
         let normalizedURL = AssistantMarkdownContentView.normalizedInteractionURL(url)
         guard let scheme = normalizedURL.scheme?.lowercased() else {
-            return .systemDefault
+            return nil
         }
         if scheme == "oppi" {
-            if InAppSessionLink.parse(normalizedURL) != nil {
-                return .inAppSessionLink(InAppDeepLinkIntent(
-                    url: normalizedURL,
-                    sourceServerID: serverID
-                ))
-            }
-            return .deepLink(normalizedURL)
+            // A session link keeps the back stack; any other oppi:// route
+            // (workspace, invite) is the same request the system delivers.
+            return AppOpenRequest(
+                url: normalizedURL,
+                origin: .inAppHyperlink,
+                sourceServerID: serverID
+            )
         }
         if scheme == "http" || scheme == "https" {
             return .webLink(normalizedURL)
@@ -446,7 +431,7 @@ enum MarkdownLinkInteractionSupport {
                     workspaceRuntime: workspaceRuntime,
                     routesFileReferencesThroughSession: true
                 ) {
-                    return .sessionFileReference(pinned)
+                    return .sessionFile(pinned)
                 }
                 return .resourceReference(pinned)
             }
@@ -457,67 +442,37 @@ enum MarkdownLinkInteractionSupport {
            let workspaceID,
            !workspaceID.isEmpty {
             let filePath = normalizedURL.path.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !filePath.isEmpty else { return .systemDefault }
+            guard !filePath.isEmpty else { return nil }
             return .fileLink(FileLinkPayload(
                 workspaceID: workspaceID,
                 filePath: filePath,
                 originalURL: normalizedURL
             ))
         }
-        return .systemDefault
+        return nil
     }
 
-    static func primaryAction(for action: LinkAction, defaultAction: UIAction) -> UIAction? {
-        switch action {
-        case .deepLink(let normalizedURL):
-            return UIAction { _ in
-                NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: normalizedURL)
-            }
-        case .inAppSessionLink(let intent):
-            return UIAction { _ in
-                let post = { @MainActor in
-                    NotificationCenter.default.post(
-                        name: .inAppDeepLinkTapped,
-                        object: intent.url,
-                        userInfo: intent.sourceServerID.map {
-                            [Notification.Name.inAppDeepLinkSourceServerIDKey: $0]
-                        }
-                    )
-                }
-                if Thread.isMainThread {
-                    post()
-                } else {
-                    DispatchQueue.main.async(execute: post)
-                }
-            }
-        case .webLink(let normalizedURL):
-            return UIAction { _ in
-                NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
-            }
-        case .resourceReference(let reference):
-            return UIAction { _ in
-                NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
-            }
-        case .sessionFileReference(let reference):
-            return UIAction { _ in
-                NotificationCenter.default.post(name: .sessionFileReferenceTapped, object: reference)
-            }
-        case .fileLink(let payload):
-            return UIAction { _ in
-                NotificationCenter.default.post(name: .fileLinkTapped, object: payload)
-            }
-        case .systemDefault:
-            return defaultAction
+    /// The tap action: deliver the request to the window's opener, which waits
+    /// for App Lock, launch, and the target server.
+    static func primaryAction(
+        for request: AppOpenRequest?,
+        from view: UIView,
+        defaultAction: UIAction
+    ) -> UIAction? {
+        guard let request else { return defaultAction }
+        return UIAction { [weak view] _ in
+            guard let view else { return }
+            HostFactory.root(near: view)?.opener.open(request)
         }
     }
 
     static func menuConfiguration(
-        for action: LinkAction,
+        for request: AppOpenRequest?,
         defaultMenu: UIMenu,
         textView: UITextView,
         shareWebLink: @escaping (_ url: URL, _ sourceView: UITextView?) -> Void
     ) -> UITextItem.MenuConfiguration? {
-        guard case .webLink(let normalizedURL) = action else {
+        guard let request, case .webLink(let normalizedURL) = request else {
             return UITextItem.MenuConfiguration(menu: defaultMenu)
         }
 
@@ -531,8 +486,9 @@ enum MarkdownLinkInteractionSupport {
         let openAction = UIAction(
             title: AppPreferences.Browser.linkOpeningMode.openActionTitle,
             image: UIImage(systemName: "safari")
-        ) { _ in
-            NotificationCenter.default.post(name: .webLinkTapped, object: normalizedURL)
+        ) { [weak textView] _ in
+            guard let textView else { return }
+            HostFactory.root(near: textView)?.opener.open(.webLink(normalizedURL))
         }
 
         let shareAction = UIAction(
@@ -552,7 +508,7 @@ enum MarkdownLinkInteractionSupport {
 
 extension AssistantMarkdownContentView: UITextViewDelegate {
     /// Classify a URL for tap/long-press behavior. Exposed for testing.
-    func classifyLink(_ url: URL) -> LinkAction {
+    func classifyLink(_ url: URL) -> AppOpenRequest? {
         let identity = currentConfig?.resourceAccess.identity
         return MarkdownLinkInteractionSupport.classify(
             url,
@@ -589,24 +545,22 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
             return defaultAction
         }
 
-        return primaryAction(for: url, defaultAction: defaultAction)
+        return primaryAction(for: url, from: textView, defaultAction: defaultAction)
     }
 
-    func primaryAction(for url: URL, defaultAction: UIAction) -> UIAction? {
-        let action = classifyLink(url)
-        if let linkOpenHandler, action != .systemDefault {
+    func primaryAction(for url: URL, from textView: UITextView, defaultAction: UIAction) -> UIAction? {
+        let request = classifyLink(url)
+        if let linkOpenHandler, let request {
+            // An extension surface's host opens its own links; anything it
+            // declines still goes to the app's opener.
             return UIAction { _ in
-                if !linkOpenHandler(url) {
-                    if case .webLink(let normalizedURL) = action {
-                        AppSupportLinks.open(normalizedURL)
-                    } else {
-                        UIApplication.shared.open(url)
-                    }
-                }
+                guard !linkOpenHandler(url) else { return }
+                HostFactory.root(near: textView)?.opener.open(request)
             }
         }
         return MarkdownLinkInteractionSupport.primaryAction(
-            for: action,
+            for: request,
+            from: textView,
             defaultAction: defaultAction
         )
     }

@@ -524,6 +524,7 @@ private struct ExtensionToastSheet: View {
 
     let message: String
     @Environment(\.screenNavigator) private var navigator
+    @Environment(\.appRootEnvironment) private var appRoot
 
     var body: some View {
         ScrollView {
@@ -535,7 +536,7 @@ private struct ExtensionToastSheet: View {
                                 .font(.subheadline)
                                 .foregroundStyle(.themeComment)
                             HStack(spacing: 12) {
-                                Button(action: { AppSupportLinks.open(url) }, label: {
+                                Button(action: { appRoot?.opener.open(.webLink(url)) }, label: {
                                     Text(url.absoluteString)
                                         .font(.body)
                                         .lineLimit(1)

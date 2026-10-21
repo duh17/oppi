@@ -531,7 +531,7 @@ struct SessionContentAccessTests {
         let link = try #require(
             textView.attributedText?.attribute(.link, at: 0, effectiveRange: nil) as? URL
         )
-        let action = body.linkAction(for: link)
+        let action = body.linkRequest(for: link)
 
         // The pushed reader routes with the payload's identity (`ChatReaderDestinationView`).
         let target = ChatReaderLinkedFileRouting.target(

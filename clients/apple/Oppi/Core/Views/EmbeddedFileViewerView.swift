@@ -243,13 +243,13 @@ enum ChatReaderLinkIntercept {
     private static var key: UInt8 = 0
 
     private final class Box: NSObject {
-        let handle: (LinkAction) -> Bool
-        init(_ handle: @escaping (LinkAction) -> Bool) {
+        let handle: (AppOpenRequest?) -> Bool
+        init(_ handle: @escaping (AppOpenRequest?) -> Bool) {
             self.handle = handle
         }
     }
 
-    static func install(_ handle: ((LinkAction) -> Bool)?, on view: UIView) {
+    static func install(_ handle: ((AppOpenRequest?) -> Bool)?, on view: UIView) {
         objc_setAssociatedObject(
             view,
             &key,
@@ -263,12 +263,12 @@ enum ChatReaderLinkIntercept {
     }
 
     @discardableResult
-    static func handle(_ action: LinkAction, from view: UIView) -> Bool {
+    static func handle(_ request: AppOpenRequest?, from view: UIView) -> Bool {
         guard let handle = resolve(from: view) else { return false }
-        return handle(action)
+        return handle(request)
     }
 
-    private static func resolve(from view: UIView) -> ((LinkAction) -> Bool)? {
+    private static func resolve(from view: UIView) -> ((AppOpenRequest?) -> Bool)? {
         var current: UIView? = view
         while let node = current {
             if let box = objc_getAssociatedObject(node, &key) as? Box {
@@ -282,16 +282,16 @@ enum ChatReaderLinkIntercept {
 
 enum ChatReaderLinkedFileRouting {
     static func target(
-        for action: LinkAction,
+        for request: AppOpenRequest?,
         serverID: String?,
         workspaceID: String?,
         sessionID: String?,
         workspaceRuntime: WorkspaceRuntime? = nil
     ) -> WorkspaceLinkedFileNavTarget? {
-        switch action {
-        case .sessionFileReference(let reference):
+        switch request {
+        case .sessionFile(let reference)?:
             return sessionFileTarget(for: reference)
-        case .fileLink(let payload):
+        case .fileLink(let payload)?:
             guard let serverID, !serverID.isEmpty else { return nil }
             return .workspaceFile(
                 serverId: serverID,
@@ -307,7 +307,7 @@ enum ChatReaderLinkedFileRouting {
                 sessionID: sessionID,
                 workspaceRuntime: workspaceRuntime
             )
-        case .deepLink, .inAppSessionLink, .webLink, .systemDefault:
+        default:
             return nil
         }
     }
@@ -498,15 +498,15 @@ struct ChatReaderDestinationView: View {
             onOpenNestedReader: { payload in
                 navigation.openChatReader(store.store(payload, retaining: navigation.containsChatReader))
             },
-            onOpenLinkedFile: { action in
-                openLinkedFile(action)
+            onOpenLinkedFile: { request in
+                openLinkedFile(request)
             }
         )
     }
 
-    private func openLinkedFile(_ action: LinkAction) -> Bool {
+    private func openLinkedFile(_ request: AppOpenRequest?) -> Bool {
         guard let payload = payloadHolder.resolve(from: store, target: target),
-              let file = linkedFileTarget(for: action, payload: payload) else {
+              let file = linkedFileTarget(for: request, payload: payload) else {
             return false
         }
         navigation.openWorkspaceLinkedFile(file)
@@ -514,12 +514,12 @@ struct ChatReaderDestinationView: View {
     }
 
     private func linkedFileTarget(
-        for action: LinkAction,
+        for request: AppOpenRequest?,
         payload: ChatReaderPayload
     ) -> WorkspaceLinkedFileNavTarget? {
         let identity = documentIdentity(payload)
         return ChatReaderLinkedFileRouting.target(
-            for: action,
+            for: request,
             serverID: identity.serverID,
             workspaceID: identity.workspaceID,
             sessionID: identity.sessionID,
@@ -561,7 +561,7 @@ private struct ChatReaderPageView: View {
     let store: ChatReaderPayloadStore
     let payload: ChatReaderPayload?
     let onOpenNestedReader: (ChatReaderPayload) -> Void
-    let onOpenLinkedFile: (LinkAction) -> Bool
+    let onOpenLinkedFile: (AppOpenRequest?) -> Bool
 
     var body: some View {
         Group {
@@ -755,7 +755,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
     var leadingFloatingAccessoryCount: Int = 0
     var trailingFloatingAccessoryCount: Int = 0
     var onOpenNestedReader: ((ChatReaderPayload) -> Void)? = nil
-    var onOpenLinkedFile: ((LinkAction) -> Bool)? = nil
+    var onOpenLinkedFile: ((AppOpenRequest?) -> Bool)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
@@ -840,7 +840,7 @@ struct EmbeddedImageViewerView: UIViewControllerRepresentable {
     let image: UIImage
     var addToChatDestination: ComposerCanvasDestination?
     var onOpenNestedReader: ((ChatReaderPayload) -> Void)? = nil
-    var onOpenLinkedFile: ((LinkAction) -> Bool)? = nil
+    var onOpenLinkedFile: ((AppOpenRequest?) -> Bool)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -885,7 +885,7 @@ struct EmbeddedImageDataViewerView: UIViewControllerRepresentable {
     let mimeType: String?
     var addToChatDestination: ComposerCanvasDestination?
     var onOpenNestedReader: ((ChatReaderPayload) -> Void)? = nil
-    var onOpenLinkedFile: ((LinkAction) -> Bool)? = nil
+    var onOpenLinkedFile: ((AppOpenRequest?) -> Bool)? = nil
 
     @Environment(\.dismiss) private var dismiss
 

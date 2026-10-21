@@ -2504,10 +2504,18 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 }
 
 extension ToolTimelineRowContentView: UITextViewDelegate {
-    func primaryAction(for url: URL, defaultAction: UIAction) -> UIAction? {
-        let action = MarkdownLinkInteractionSupport.classify(url, workspaceID: nil)
-        guard case .webLink = action else { return defaultAction }
-        return MarkdownLinkInteractionSupport.primaryAction(for: action, defaultAction: defaultAction)
+    func primaryAction(
+        for url: URL,
+        from textView: UITextView,
+        defaultAction: UIAction
+    ) -> UIAction? {
+        let request = MarkdownLinkInteractionSupport.classify(url, workspaceID: nil)
+        guard case .webLink = request else { return defaultAction }
+        return MarkdownLinkInteractionSupport.primaryAction(
+            for: request,
+            from: textView,
+            defaultAction: defaultAction
+        )
     }
 
     func textView(
@@ -2516,7 +2524,7 @@ extension ToolTimelineRowContentView: UITextViewDelegate {
         defaultAction: UIAction
     ) -> UIAction? {
         guard case let .link(url) = textItem.content else { return defaultAction }
-        return primaryAction(for: url, defaultAction: defaultAction)
+        return primaryAction(for: url, from: textView, defaultAction: defaultAction)
     }
 
     func textView(

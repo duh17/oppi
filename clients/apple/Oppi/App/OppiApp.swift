@@ -234,49 +234,7 @@ final class OppiApp {
         observeAppEvent(UIContentSizeCategory.didChangeNotification) { _, _ in
             AppFont.rebuild()
         }
-        // Link taps are pre-existing producers until the in-app step; each
-        // already belongs to the one owner.
-        observeAppEvent(.inviteDeepLinkTapped) { app, notification in
-            guard let url = notification.object as? URL else { return }
-            app.opener.open(AppOpenRequest(url: url, origin: .inAppHyperlink))
-        }
-        observeAppEvent(.inAppDeepLinkTapped) { app, notification in
-            guard let url = notification.object as? URL else { return }
-            let sourceServerID = notification.userInfo?[
-                Notification.Name.inAppDeepLinkSourceServerIDKey
-            ] as? String
-            app.opener.open(AppOpenRequest(
-                url: url,
-                origin: .inAppHyperlink,
-                sourceServerID: sourceServerID
-            ))
-        }
-        observeAppEvent(.webLinkTapped) { _, notification in
-            guard let url = notification.object as? URL else { return }
-            guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
-                return
-            }
-            switch AppPreferences.Browser.linkOpeningMode {
-            case .inApp:
-                InAppBrowserPresenter.present(url: url)
-            case .external:
-                UIApplication.shared.open(url)
-            }
-        }
-        observeAppEvent(.resourceReferenceTapped) { app, notification in
-            guard let reference = notification.object as? ResourceReference else { return }
-            app.opener.open(.resourceReference(reference))
-        }
-        observeAppEvent(.sessionFileReferenceTapped) { app, notification in
-            guard let reference = notification.object as? ResourceReference else { return }
-            app.opener.open(.sessionFile(reference))
-        }
-        observeAppEvent(.fileLinkTapped) { app, notification in
-            guard let payload = notification.object as? FileLinkPayload else { return }
-            app.opener.open(.fileLink(payload))
-        }
     }
-
 
     private func observeAppEvent(
         _ name: Notification.Name,
@@ -408,7 +366,7 @@ final class OppiApp {
         await setupNotifications()
         AppIconBadgeService.shared.start(coordinator: coordinator)
 #if DEBUG
-        scheduleE2EInAppBrowserIfRequested()
+        opener.scheduleE2EInAppBrowserIfRequested()
 
         // E2E test support: process invite URL from launch environment.
         // Must run BEFORE reconnectOnLaunch to prevent stale simulator
@@ -768,36 +726,6 @@ final class OppiApp {
             coordinator.connection(for: serverId)?.isFocusedSession(sessionId) ?? false
         }
     }
-
-#if DEBUG
-    @MainActor
-    private func scheduleE2EInAppBrowserIfRequested() {
-        guard let url = Self.e2eInAppBrowserURL() else {
-            return
-        }
-
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
-            InAppBrowserPresenter.present(url: url)
-        }
-    }
-
-    private static func e2eInAppBrowserURL() -> URL? {
-        let rawURL = ProcessInfo.processInfo.environment["OPPI_E2E_OPEN_IN_APP_BROWSER_URL"]
-            ?? ProcessInfo.processInfo.arguments
-                .first(where: { $0.hasPrefix("--e2e-open-in-app-browser=") })?
-                .dropFirst("--e2e-open-in-app-browser=".count)
-                .description
-
-        guard let rawURL,
-              let url = URL(string: rawURL),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else {
-            return nil
-        }
-        return url
-    }
-#endif
 
     private func reconnectOnLaunch() async {
         let startedAt = Date()

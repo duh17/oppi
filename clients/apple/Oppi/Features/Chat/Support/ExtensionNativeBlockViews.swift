@@ -23,16 +23,23 @@ struct ExtensionNativeBlockContext {
 
     var palette: ThemePalette { themeID.palette }
 
-    /// Extension links route through the host first, then the browser preference
-    /// for web links or the system for other unhandled schemes.
+    /// Extension links belong to the host that mounted the surface (the chat
+    /// routes them through `AppOpener`). Without a host there is no window to
+    /// open into, so nothing happens.
     @MainActor
     func open(_ url: URL) {
-        guard onOpenURL?(url) != true else { return }
-        if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
-            AppSupportLinks.open(url)
-        } else {
-            UIApplication.shared.open(url)
-        }
+        _ = onOpenURL?(url)
+    }
+
+    /// What a tap on `url` would do, for an accessibility hint.
+    @MainActor
+    func linkOutcome(for url: URL) -> ExtensionSurfaceLinkOutcome? {
+        ExtensionSurfaceLinkRouting.outcome(
+            for: url,
+            serverID: linkContext.serverID,
+            workspaceID: linkContext.workspaceID,
+            currentSessionId: linkContext.sessionID ?? ""
+        )
     }
 
     /// Markdown blocks bind the session/workspace identity so wiki links become
@@ -976,14 +983,9 @@ final class ExtensionNativeActivityRowView: UIView {
         control.accessibilityHint = hasDetail
             ? (isExpanded ? "Hides details" : "Shows details")
             : linkURL.flatMap { url in
-            ExtensionSurfaceLinkRouting.accessibilityHint(
-                for: ExtensionSurfaceLinkRouting.action(
-                    for: url,
-                    serverID: context.linkContext.serverID,
-                    workspaceID: context.linkContext.workspaceID,
-                    currentSessionId: context.linkContext.sessionID ?? ""
-                )
-            )
+            context.linkOutcome(for: url).flatMap {
+                ExtensionSurfaceLinkRouting.accessibilityHint(for: $0)
+            }
             }
 
         let separateLink = hasDetail ? rowLink : nil
@@ -997,14 +999,9 @@ final class ExtensionNativeActivityRowView: UIView {
         linkButton.accessibilityIdentifier = "extension.native.activity.row.\(row.id).link"
         linkButton.accessibilityLabel = "Open \(row.title)"
         linkButton.accessibilityHint = separateLink.flatMap { url in
-            ExtensionSurfaceLinkRouting.accessibilityHint(
-                for: ExtensionSurfaceLinkRouting.action(
-                    for: url,
-                    serverID: context.linkContext.serverID,
-                    workspaceID: context.linkContext.workspaceID,
-                    currentSessionId: context.linkContext.sessionID ?? ""
-                )
-            )
+            context.linkOutcome(for: url).flatMap {
+                ExtensionSurfaceLinkRouting.accessibilityHint(for: $0)
+            }
         }
 
         if hasDetail, isExpanded {

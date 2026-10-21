@@ -30,7 +30,7 @@ extension ChatViewController {
     }
 
     /// Opens another session above this chat, on this chat's server and
-    /// navigation (a fork, or a session link from an extension surface).
+    /// navigation (a fork's chat).
     func pushChat(sessionId: String, workspaceId: String?) {
         let chat = ChatViewController(
             sessionId: sessionId,
@@ -43,34 +43,21 @@ extension ChatViewController {
         Router.push(chat, from: screen)
     }
 
+    /// An extension surface's links. A session link navigates like a timeline
+    /// session link: it keeps the back stack and goes through the app opener.
     func openExtensionSurfaceURL(_ url: URL) -> Bool {
         let context = extensionSurfaceLinkContext
-        switch ExtensionSurfaceLinkRouting.action(
+        guard let outcome = ExtensionSurfaceLinkRouting.outcome(
             for: url,
             serverID: context.serverID,
             workspaceID: context.workspaceID,
             currentSessionId: sessionId
-        ) {
-        case .pushSession(let link):
-            connection.prepareForSessionReentry(link.sessionId, workspaceIdHint: link.workspaceId)
-            pushChat(sessionId: link.sessionId, workspaceId: link.workspaceId)
-            return true
-        case .ignore:
-            return true
-        case .resourceReference(let reference):
-            NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
-            return true
-        case .webLink(let destination):
-            NotificationCenter.default.post(name: .webLinkTapped, object: destination)
-            return true
-        case .fileLink(let payload):
-            NotificationCenter.default.post(name: .fileLinkTapped, object: payload)
-            return true
-        case .inviteDeepLink(let destination):
-            NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: destination)
-            return true
-        case .unhandled:
+        ) else {
             return false
         }
+        if let request = outcome.request {
+            root?.opener.open(request)
+        }
+        return true
     }
 }

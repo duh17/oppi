@@ -1648,7 +1648,7 @@ final class NativeTableBlockView: UIView {
 
 extension NativeTableBlockView: UITextViewDelegate {
     /// Classify a table-cell URL for tap/long-press behavior. Exposed for testing.
-    func classifyLink(_ url: URL) -> LinkAction {
+    func classifyLink(_ url: URL) -> AppOpenRequest? {
         MarkdownLinkInteractionSupport.classify(
             url,
             serverID: resourceReferenceServerID,
@@ -1657,9 +1657,10 @@ extension NativeTableBlockView: UITextViewDelegate {
     }
 
     /// Clip-mode and wrap-mode cells share this helper via the table delegate.
-    func primaryAction(for url: URL, defaultAction: UIAction) -> UIAction? {
+    func primaryAction(for url: URL, from textView: UITextView, defaultAction: UIAction) -> UIAction? {
         MarkdownLinkInteractionSupport.primaryAction(
             for: classifyLink(url),
+            from: textView,
             defaultAction: defaultAction
         )
     }
@@ -1672,7 +1673,7 @@ extension NativeTableBlockView: UITextViewDelegate {
         guard case let .link(url) = textItem.content else {
             return defaultAction
         }
-        return primaryAction(for: url, defaultAction: defaultAction)
+        return primaryAction(for: url, from: textView, defaultAction: defaultAction)
     }
 
     func textView(

@@ -16,6 +16,7 @@ struct ServerNotificationsSection: View {
     let serverId: String
     let connection: ServerConnection?
 
+    @Environment(\.appRootEnvironment) private var appRoot
     @State private var pushEnabled = false
     @State private var liveActivityEnabled = false
     @State private var consent: Consent?
@@ -153,7 +154,9 @@ struct ServerNotificationsSection: View {
             Button("Cancel", role: .cancel) {}
             // An alert cannot hold a link. This button closes it without turning anything on;
             // the user reads the policy, then turns the setting on again.
-            Button("Privacy Policy") { AppSupportLinks.open(AppSupportLinks.privacyPolicyURL) }
+            Button("Privacy Policy") {
+                appRoot?.opener.open(.webLink(AppSupportLinks.privacyPolicyURL))
+            }
         } message: { pending in
             Text(Self.message(for: pending))
         }

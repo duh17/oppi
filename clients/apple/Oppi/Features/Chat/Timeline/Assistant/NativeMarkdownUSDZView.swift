@@ -356,7 +356,7 @@ final class NativeMarkdownUSDZView: UIView {
 
     private func openFile() {
         guard let reference = currentEmbed?.reference else { return }
-        NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
+        HostFactory.root(near: self)?.opener.open(.resourceReference(reference))
     }
 
     private func expand() {
@@ -441,6 +441,7 @@ struct FullScreenUSDZView: View {
     let initialHandle: USDZLocalFileStore.Handle?
     let fileProvider: MarkdownUSDZFileProvider?
     @Environment(\.screenNavigator) private var navigator
+    @Environment(\.openURL) private var openURL
     @State private var handle: USDZLocalFileStore.Handle?
     @State private var didFail = false
     @State private var isLoading = false
@@ -459,10 +460,11 @@ struct FullScreenUSDZView: View {
                 } actions: {
                     Button("Retry") { Task { await load() } }
                     Button("Open file") {
-                        NotificationCenter.default.post(
-                            name: .resourceReferenceTapped,
-                            object: embed.reference
-                        )
+                        // The root's openURL action delivers the reference to
+                        // the app opener.
+                        if let url = ResourceReferenceURL.make(embed.reference) {
+                            openURL(url)
+                        }
                     }
                 }
             } else {

@@ -68,7 +68,7 @@ struct SessionTouchedFileRoutingTests {
             sessionID: "session-origin",
             routesFileReferencesThroughSession: true
         )
-        guard case .sessionFileReference(let reference) = action else {
+        guard case .sessionFile(let reference) = action else {
             Issue.record("Expected immutable session-file origin, got \(action)")
             return
         }
@@ -139,7 +139,7 @@ struct SessionTouchedFileRoutingTests {
             routesFileReferencesThroughSession: true,
             workspaceRuntime: .sandbox
         )
-        guard case .sessionFileReference(let reference) = action else {
+        guard case .sessionFile(let reference) = action else {
             Issue.record("Sandbox guest children must stay on session-raw, got \(action)")
             return
         }
@@ -188,7 +188,7 @@ struct SessionTouchedFileRoutingTests {
             routesFileReferencesThroughSession: true,
             workspaceRuntime: nil
         )
-        guard case .sessionFileReference(let reference) = action else {
+        guard case .sessionFile(let reference) = action else {
             Issue.record("Unknown runtime must keep guest children on session-raw, got \(action)")
             return
         }
@@ -352,7 +352,7 @@ struct SessionTouchedFileRoutingTests {
         let textView = try #require(timelineAllTextViews(in: body).first { timelineRenderedText(of: $0).contains("Child") })
         let attributed = try #require(textView.attributedText)
         let link = try #require(attributed.attribute(.link, at: 0, effectiveRange: nil) as? URL)
-        guard case .sessionFileReference(let child) = body.linkAction(for: link) else {
+        guard case .sessionFile(let child) = body.linkRequest(for: link) else {
             Issue.record("Completed reader lost exact-session routing before its link delegate")
             return
         }
@@ -388,8 +388,8 @@ struct SessionTouchedFileRoutingTests {
         let textView = try #require(timelineAllTextViews(in: body).first { timelineRenderedText(of: $0).contains("Child") })
         let attributed = try #require(textView.attributedText)
         let link = try #require(attributed.attribute(.link, at: 0, effectiveRange: nil) as? URL)
-        guard case .sessionFileReference(let child) = body.linkAction(for: link) else {
-            Issue.record("Sandbox guest children must stay on session-raw, got \(String(describing: body.linkAction(for: link)))")
+        guard case .sessionFile(let child) = body.linkRequest(for: link) else {
+            Issue.record("Sandbox guest children must stay on session-raw, got \(String(describing: body.linkRequest(for: link)))")
             return
         }
         #expect(child.sourceSessionID == "session-origin")
@@ -424,8 +424,8 @@ struct SessionTouchedFileRoutingTests {
         let textView = try #require(timelineAllTextViews(in: body).first { timelineRenderedText(of: $0).contains("Child") })
         let attributed = try #require(textView.attributedText)
         let link = try #require(attributed.attribute(.link, at: 0, effectiveRange: nil) as? URL)
-        guard case .resourceReference(let child) = body.linkAction(for: link) else {
-            Issue.record("Host-file children must be host-file references, got \(String(describing: body.linkAction(for: link)))")
+        guard case .resourceReference(let child) = body.linkRequest(for: link) else {
+            Issue.record("Host-file children must be host-file references, got \(String(describing: body.linkRequest(for: link)))")
             return
         }
         #expect(child.kind == .hostFile)

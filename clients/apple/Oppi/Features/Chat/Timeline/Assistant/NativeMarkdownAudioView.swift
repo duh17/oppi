@@ -269,7 +269,7 @@ final class NativeMarkdownAudioView: UIView {
     private func expand() {
         guard let embed = currentEmbed else { return }
         if isUnavailable {
-            NotificationCenter.default.post(name: .resourceReferenceTapped, object: embed.reference)
+            openResourceReference(embed.reference)
             return
         }
         let title = (embed.filePath as NSString).lastPathComponent
@@ -304,14 +304,18 @@ final class NativeMarkdownAudioView: UIView {
                 self?.ensurePlaying(timedText: timedText)
             },
             openFile: { [weak self] in
-                guard let reference = self?.currentEmbed?.reference else { return }
-                NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
+                guard let self, let reference = self.currentEmbed?.reference else { return }
+                self.openResourceReference(reference)
             },
             shareFileData: shareFileData,
             autoplayOnAppear: false,
             timedText: presentedTimedText,
             sidecarLoader: presentedTimedText == nil ? loader : nil
         )
+    }
+
+    private func openResourceReference(_ reference: ResourceReference) {
+        HostFactory.root(near: self)?.opener.open(.resourceReference(reference))
     }
 
     private func ensurePlaying(timedText: TimedText.LoadResult?) {

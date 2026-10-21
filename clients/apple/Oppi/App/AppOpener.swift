@@ -117,24 +117,6 @@ struct SessionOpen: Equatable, Sendable {
     }
 }
 
-/// The in-app session link the timeline classifies until the in-app step
-/// delivers an `AppOpenRequest` directly.
-struct InAppDeepLinkIntent: Equatable, Sendable {
-    let url: URL
-    let sourceServerID: String?
-}
-
-enum InAppSessionLink {
-    struct Match: Equatable, Sendable {
-        let sessionId: String
-    }
-
-    static func parse(_ url: URL) -> Match? {
-        guard let open = SessionOpen(url: url, origin: .inAppHyperlink) else { return nil }
-        return Match(sessionId: open.sessionId)
-    }
-}
-
 /// In-app session links resolve through the source server when it has the
 /// session, otherwise only through a unique match. An external `oppi://`
 /// session URL carries no server and takes the same unique-match fallback.

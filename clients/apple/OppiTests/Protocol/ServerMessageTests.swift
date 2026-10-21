@@ -697,22 +697,6 @@ struct ServerMessageTests {
         #expect(line.first { $0.text == "child" }?.link == "oppi://session/child-1")
     }
 
-    @Test func extensionSurfaceSessionLinkParsesWorkspaceQuery() throws {
-        let url = testUnwrap(URL(string: "oppi://session/child-1?workspaceId=ws-1"))
-        let link = try #require(ExtensionSurfaceSessionLink.parse(url, defaultWorkspaceId: nil))
-
-        #expect(link.sessionId == "child-1")
-        #expect(link.workspaceId == "ws-1")
-    }
-
-    @Test func extensionSurfaceSessionLinkFallsBackToCurrentWorkspace() throws {
-        let url = testUnwrap(URL(string: "oppi://session/child-1"))
-        let link = try #require(ExtensionSurfaceSessionLink.parse(url, defaultWorkspaceId: " ws-parent "))
-
-        #expect(link.sessionId == "child-1")
-        #expect(link.workspaceId == "ws-parent")
-    }
-
     @Test func unsupportedExtensionUINativeBlocksDoNotFailMessageDecode() throws {
         let json = """
         {

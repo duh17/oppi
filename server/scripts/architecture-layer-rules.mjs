@@ -91,17 +91,18 @@ const IOS_VIEW_LAYER_PATH_PREFIXES = [
 
 const IOS_FORBIDDEN_VIEW_NETWORK_TYPES = ["APIClient", "WebSocketClient"];
 
-// Only the preference owner and fallbacks for unhandled non-HTTP schemes may system-open URLs.
+// Only the open owner system-opens URLs (browser preference, non-HTTP schemes).
 const IOS_SYSTEM_URL_OPEN_ALLOWED_FILES = new Set([
-  "clients/apple/Oppi/App/OppiApp.swift",
   "clients/apple/Oppi/App/AppOpener.swift",
-  "clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift",
-  "clients/apple/Oppi/Features/Chat/Timeline/Assistant/AssistantMarkdownContentView.swift",
 ]);
 const IOS_IN_APP_BROWSER_ALLOWED_FILES = new Set([
-  "clients/apple/Oppi/App/OppiApp.swift",
   "clients/apple/Oppi/App/AppOpener.swift",
   "clients/apple/Oppi/Features/Settings/TailnetSettingsView.swift", // Authentication always stays in-app.
+]);
+// App Lock parking has one caller, so every open waits the same way.
+const IOS_UNLOCK_DEFERRAL_ALLOWED_FILES = new Set([
+  "clients/apple/Oppi/App/AppOpener.swift",
+  "clients/apple/Oppi/Core/Services/AppLockService.swift", // definition
 ]);
 const IOS_TIMELINE_ROOT = "clients/apple/Oppi/Features/Chat/Timeline/";
 
@@ -1077,7 +1078,7 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
         reason:
           "User-content web links must not bypass the browser preference with UIApplication.shared.open.",
         remediation:
-          "Route HTTP(S) through MarkdownLinkInteractionSupport or AppSupportLinks.open (.webLinkTapped); reserve system-open for allowlisted owners and non-HTTP fallbacks.",
+          "Deliver an AppOpenRequest (.webLink or .system) to AppOpener through HostFactory.root(near:)?.opener or the root's openURL action; only AppOpener system-opens.",
       },
       {
         rule: "ios-browser-presentation-owner",
@@ -1086,7 +1087,15 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
         reason:
           "Only the browser preference owner and Tailnet authentication may present the in-app browser directly.",
         remediation:
-          "Post .webLinkTapped or call AppSupportLinks.open so OppiApp applies the browser preference.",
+          "Deliver AppOpenRequest.webLink to AppOpener so it applies the browser preference.",
+      },
+      {
+        rule: "ios-open-unlock-owner",
+        pattern: /\bperformWhenUnlocked\b/,
+        allowed: IOS_UNLOCK_DEFERRAL_ALLOWED_FILES.has(file),
+        reason: "Opens must wait for App Lock in one place.",
+        remediation:
+          "Call AppOpener.open; it waits for unlock, launch, and the target server.",
       },
       {
         rule: "timeline-text-link-interception",
@@ -1100,7 +1109,7 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
         reason:
           "Timeline UITextViewDelegate conformances must replace UIKit's default external link action.",
         remediation:
-          "Implement textView(_:primaryActionFor:defaultAction:) in this file and route HTTP(S) through MarkdownLinkInteractionSupport.",
+          "Implement textView(_:primaryActionFor:defaultAction:) in this file and deliver its AppOpenRequest with MarkdownLinkInteractionSupport.primaryAction(for:from:defaultAction:).",
       },
     ];
     for (const check of checks) {

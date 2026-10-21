@@ -13,13 +13,13 @@ struct ExtensionSurfaceURLTests {
     @Test func routesClassifiedDestinations() throws {
         for testCase in Self.routingCases {
             let url = try #require(testCase.url(), "URL for \(testCase.name)")
-            let action = ExtensionSurfaceLinkRouting.action(
+            let outcome = ExtensionSurfaceLinkRouting.outcome(
                 for: url,
                 serverID: serverID,
                 workspaceID: workspaceID,
                 currentSessionId: testCase.currentSessionId
             )
-            testCase.expected.match(action, name: testCase.name)
+            testCase.expected.match(outcome, name: testCase.name)
         }
     }
 
@@ -31,13 +31,13 @@ struct ExtensionSurfaceURLTests {
 
         for (rawURL, sessionId) in destinations {
             let url = testUnwrap(URL(string: rawURL))
-            let action = ExtensionSurfaceLinkRouting.action(
+            let outcome = ExtensionSurfaceLinkRouting.outcome(
                 for: url,
                 serverID: serverID,
                 workspaceID: workspaceID,
                 currentSessionId: sessionId
             )
-            let hint = ExtensionSurfaceLinkRouting.accessibilityHint(for: action)
+            let hint = ExtensionSurfaceLinkRouting.accessibilityHint(for: outcome)
             #expect(hint != hardcodedSessionHint, "hint for \(rawURL) should follow the classified destination")
             #expect(hint != nil)
         }
@@ -48,7 +48,7 @@ struct ExtensionSurfaceURLTests {
             name: "child session pushes",
             rawURL: "oppi://session/child-1",
             currentSessionId: "session-parent",
-            expected: .pushSession(id: "child-1")
+            expected: .session(id: "child-1", workspaceID: "ws-1")
         ),
         RoutingCase(
             name: "same session is ignored",
@@ -84,26 +84,28 @@ struct ExtensionSurfaceURLTests {
 
     struct RoutingCase: Sendable {
         enum Expected: Sendable {
-            case pushSession(id: String)
+            case session(id: String, workspaceID: String?)
             case ignore
             case webLink
             case resourceReference
             case unhandled
 
-            func match(_ action: ExtensionSurfaceOpenAction, name: String) {
-                switch (self, action) {
-                case (.pushSession(let expectedID), .pushSession(let link)):
-                    #expect(link.sessionId == expectedID, "\(name)")
-                case (.ignore, .ignore):
+            func match(_ outcome: ExtensionSurfaceLinkOutcome?, name: String) {
+                switch (self, outcome) {
+                case (.session(let expectedID, let workspaceID), .open(.session(let open))?):
+                    #expect(open.sessionId == expectedID, "\(name)")
+                    #expect(open.workspaceId == workspaceID, "\(name)")
+                    #expect(open.origin == .inAppHyperlink, "\(name)")
+                case (.ignore, .ignore?):
                     break
-                case (.webLink, .webLink):
+                case (.webLink, .open(.webLink)?):
                     break
-                case (.resourceReference, .resourceReference):
+                case (.resourceReference, .open(.resourceReference)?):
                     break
-                case (.unhandled, .unhandled):
+                case (.unhandled, nil):
                     break
                 default:
-                    Issue.record("\(name): expected \(self), got \(action)")
+                    Issue.record("\(name): expected \(self), got \(String(describing: outcome))")
                 }
             }
         }

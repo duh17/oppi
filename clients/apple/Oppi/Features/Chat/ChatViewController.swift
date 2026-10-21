@@ -18,38 +18,6 @@ struct TreeNavigationViewUpdate: Equatable {
     }
 }
 
-struct ExtensionSurfaceSessionLink: Equatable {
-    let sessionId: String
-    let workspaceId: String?
-
-    static func parse(_ url: URL, defaultWorkspaceId: String? = nil) -> Self? {
-        guard url.scheme?.lowercased() == "oppi",
-              url.host?.lowercased() == "session",
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return nil
-        }
-
-        let pathParts = components.percentEncodedPath
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-        guard let rawId = pathParts.first, !rawId.isEmpty else {
-            return nil
-        }
-
-        let sessionId = rawId.removingPercentEncoding ?? rawId
-        guard !sessionId.isEmpty else { return nil }
-
-        let queryWorkspaceId = components.queryItems?.first { $0.name == "workspaceId" }?.value
-        let workspaceId = normalized(queryWorkspaceId) ?? normalized(defaultWorkspaceId)
-        return Self(sessionId: sessionId, workspaceId: workspaceId)
-    }
-
-    private static func normalized(_ value: String?) -> String? {
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed?.isEmpty == false ? trimmed : nil
-    }
-}
-
 enum ChatSessionWarningChrome {
     static func messages(from warnings: [String]?) -> [String] {
         var seen = Set<String>()

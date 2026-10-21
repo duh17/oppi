@@ -322,7 +322,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         if HTMLContentSecurity.isHTTPURL(navigationAction.request.url),
            navigationAction.navigationType != .other,
            let url = navigationAction.request.url {
-            AppSupportLinks.open(url)
+            HostFactory.root(near: webView)?.opener.open(.webLink(url))
         }
         decisionHandler(.cancel)
     }
@@ -338,7 +338,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         }
         if HTMLContentSecurity.isHTTPURL(navigationAction.request.url),
            let url = navigationAction.request.url {
-            AppSupportLinks.open(url)
+            HostFactory.root(near: webView)?.opener.open(.webLink(url))
         }
         return nil
     }
