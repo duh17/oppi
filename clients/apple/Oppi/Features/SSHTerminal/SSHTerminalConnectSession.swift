@@ -25,6 +25,14 @@ final class SSHTerminalConnectSession {
     /// The folder this session's shell starts in, or nil for the host's own
     /// terminal. Set before `connect`; it is part of the terminal's identity.
     var folder: String?
+    /// What a folder terminal runs instead of the plain login shell, when the
+    /// host's multiplexer needs a terminal of its own (tmux). Nil keeps the
+    /// plain folder shell.
+    var folderTerminalCommand: String?
+    /// A folder to open inside the multiplexer running in the host's own
+    /// terminal (Herdr), once that terminal is up. The terminal screen runs it,
+    /// so a refusal shows over the terminal it leaves the person in.
+    var multiplexerFolder: SSHTerminalFolderTarget?
     var devicePasscodeChanged = false
     private var task: Task<Void, Never>?
     private var runID = UUID()
@@ -77,10 +85,17 @@ final class SSHTerminalConnectSession {
                 channel = owner
                 let queue = SSHTerminalEventQueue()
                 let session: SSHPTYSession
-                // A folder terminal always runs the login shell in that folder:
-                // the host's Run on Connect command belongs to its own terminal.
+                // A folder terminal runs the login shell in that folder, or the
+                // multiplexer's own attach command there: the host's Run on
+                // Connect command belongs to its own terminal.
                 let folder = self.folder
-                let command = folder.map(SSHTerminalFolderCommand.command) ?? value.startupCommand
+                let folderCommand = self.folderTerminalCommand
+                let command: String?
+                if let folder {
+                    command = folderCommand ?? SSHTerminalFolderCommand.command(folder: folder)
+                } else {
+                    command = value.startupCommand
+                }
                 do {
                     session = try await SSHPTYSession.connect(
                         username: value.username, savedHostKey: savedKey, inboundFlow: queue.flow,

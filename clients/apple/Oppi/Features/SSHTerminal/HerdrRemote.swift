@@ -34,15 +34,23 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
     struct Pane: Decodable, Equatable, Sendable {
         let paneID: String
         let programStatus: [ProgramRecord]
+        /// The workspace this pane belongs to, and the folder its shell is in.
+        /// "Open Terminal here" matches a Herdr workspace by this folder, so an
+        /// older Herdr that omits them leaves the folder to be created instead.
+        let workspaceID: String?
+        let cwd: String?
 
         enum CodingKeys: String, CodingKey {
             case paneID = "pane_id", programStatus = "program_status"
+            case workspaceID = "workspace_id", cwd
         }
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             paneID = try container.decode(String.self, forKey: .paneID)
             programStatus = try container.decodeIfPresent([ProgramRecord].self, forKey: .programStatus) ?? []
+            workspaceID = try container.decodeIfPresent(String.self, forKey: .workspaceID)
+            cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
         }
     }
 
@@ -134,18 +142,35 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
 
     func agents(in workspace: Workspace) -> [Agent] { agents.filter { $0.workspaceID == workspace.workspaceID } }
     func tabLabel(_ id: String) -> String? { tabs.first { $0.tabID == id }?.label }
+
+    /// The workspace that already has a pane in `folder`.
+    ///
+    /// The comparison is exact: a Herdr workspace is a place someone works, not
+    /// a subtree, and a subfolder is a different place. The focused workspace
+    /// wins when several match, so opening a folder that is already in front
+    /// changes nothing.
+    func workspace(withPaneIn folder: String) -> Workspace? {
+        guard !folder.isEmpty else { return nil }
+        let matches = workspaces.filter { workspace in
+            panes.contains { $0.workspaceID == workspace.workspaceID && $0.cwd == folder }
+        }
+        return matches.first(where: \.focused) ?? matches.first
+    }
 }
 
 enum HerdrRemoteError: Error, Equatable, LocalizedError {
     case notInstalled
     case rejected(String)
     case unreadable
+    /// An ID Herdr reported that Oppi will not send back to the host.
+    case unusableID
 
     var errorDescription: String? {
         switch self {
         case .notInstalled: "herdr is not on this host’s PATH for SSH commands."
         case .rejected(let message): message
         case .unreadable: "Herdr returned a response Oppi cannot read."
+        case .unusableID: "Herdr returned an ID Oppi will not send back."
         }
     }
 }

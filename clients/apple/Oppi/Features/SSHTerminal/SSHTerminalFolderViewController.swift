@@ -1,9 +1,15 @@
 import UIKit
 
 /// Opens the folder terminal for one saved host: the connecting, password, and
-/// host-trust states, then the live terminal. The shell belongs to
+/// host-trust states, then the live terminal. The terminal belongs to
 /// `SSHTerminalRegistry` from the moment it opens, so leaving this screen keeps
 /// it and pressing Terminal again for the same folder returns to it.
+///
+/// Which terminal that is depends on the host's Run on Connect command
+/// (`SSHTerminalFolderEntry.prepare`): a multiplexer that opens folders inside
+/// its own terminal (Herdr) shows the host's terminal and hands it the folder, a
+/// multiplexer that wants a terminal of its own (tmux) gets one running its
+/// attach command, and a plain host gets the login shell in the folder.
 final class SSHTerminalFolderViewController: UIViewController {
     /// Follows the password sheet's Save Password toggle, like the host list's
     /// connecting profile, so the saved choice is the one used and stored.
@@ -69,7 +75,6 @@ final class SSHTerminalFolderViewController: UIViewController {
             onSaved: { [weak self] _ in self?.setNeedsUpdateProperties() }
         )
         chrome?.start()
-        session.folder = target.folder
         connect()
         setNeedsUpdateProperties()
     }
@@ -110,7 +115,7 @@ final class SSHTerminalFolderViewController: UIViewController {
             statusLabel.text = String(localized: "Could not open \(folder) on \(profile.endpointLabel).\n\n\(failure)")
             statusLabel.accessibilityIdentifier = "sshTerminal.folder.failure"
         } else {
-            statusLabel.text = String(localized: "Connecting to \(profile.endpointLabel)…")
+            statusLabel.text = multiplexerLabel(folder)
             statusLabel.accessibilityIdentifier = "sshTerminal.folder.connecting"
         }
         statusLabel.accessibilityValue = folder
@@ -131,11 +136,23 @@ final class SSHTerminalFolderViewController: UIViewController {
 
     private func connect(password: String? = nil) {
         guard AppPreferences.Experiments.sshTerminalEnabled else { return }
-        session.folder = target.folder
+        // What this folder opens in, decided again on every attempt: the host's
+        // own multiplexer terminal, a folder terminal running its command, or
+        // the plain login shell.
+        SSHTerminalFolderEntry.prepare(session: session, profile: profile, target: target)
         session.connect(
             profile: profile,
             suppliedPassword: password,
             experimentEnabled: true
         )
+    }
+
+    /// The connecting line, naming the multiplexer when the folder opens inside
+    /// one, so the wait says where the folder will land.
+    private func multiplexerLabel(_ folder: String) -> String {
+        guard let kind = SSHTerminalMultiplexerKind.detected(in: profile.startupCommand) else {
+            return String(localized: "Connecting to \(profile.endpointLabel)…")
+        }
+        return String(localized: "Opening \(folder) in \(kind.name) on \(profile.endpointLabel)…")
     }
 }

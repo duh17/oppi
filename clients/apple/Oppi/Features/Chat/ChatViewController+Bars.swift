@@ -699,9 +699,10 @@ extension ChatViewController {
         return SSHTerminalFolderTarget.workspace(workspace) != nil
     }
 
-    /// "Open Terminal here" from the chat bar: a login shell on the saved SSH
-    /// host that serves this session's server, starting in the session's
-    /// worktree folder when it has one, else in its workspace's root.
+    /// "Open Terminal here" from the chat bar: the session's worktree folder,
+    /// else its workspace's root, opened on the saved SSH host that serves this
+    /// session's server — inside the host's multiplexer when its Run on Connect
+    /// command starts one.
     func openTerminalHere() {
         guard AppPreferences.Experiments.sshTerminalEnabled,
               !model.isOpeningTerminal,
@@ -725,13 +726,17 @@ extension ChatViewController {
             // A worktree's own folder is one API call away and resolves to the
             // workspace root only when the session has no worktree or the server
             // does not have the route.
-            let target = SSHTerminalFolderTarget(serverHost: host, folder: workspace.hostMount ?? "")
+            let target = SSHTerminalFolderTarget(
+                serverHost: host, folder: workspace.hostMount ?? "", label: workspace.name
+            )
             switch await SSHTerminalFolderResolve.folder(
                 workspace: workspace, worktreeId: worktreeId, apiClient: apiClient
             ) {
-            case .folder(let folder):
+            case .folder(path: let folder, label: let label, isWorktree: let isWorktree):
                 SSHTerminalFolderEntry.open(
-                    SSHTerminalFolderTarget(serverHost: host, folder: folder), from: self
+                    SSHTerminalFolderTarget(
+                        serverHost: host, folder: folder, label: label, isWorktree: isWorktree
+                    ), from: self
                 )
             case .noFolder:
                 SSHTerminalFolderEntry.open(target, from: self, missingReason: .noFolder)

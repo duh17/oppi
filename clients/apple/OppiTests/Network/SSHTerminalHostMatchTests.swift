@@ -83,16 +83,22 @@ struct SSHTerminalFolderResolveTests {
         )
     }
 
+    /// The resolution for a workspace root: the folder, named after the workspace.
+    private func root(_ path: String) -> SSHTerminalFolderResolution {
+        .folder(path: path, label: "oppi", isWorktree: false)
+    }
+
     @Test func aSessionWithoutAWorktreeUsesTheWorkspaceRoot() {
         #expect(
             SSHTerminalFolderResolve.resolution(
-                worktreeId: nil, root: "~/workspace/oppi", worktrees: [], lookupError: nil
-            ) == .folder("~/workspace/oppi")
+                worktreeId: nil, root: "~/workspace/oppi", workspaceName: "oppi", worktrees: [], lookupError: nil
+            ) == root("~/workspace/oppi")
         )
         #expect(
             SSHTerminalFolderResolve.resolution(
-                worktreeId: WorkspaceWorktree.mainId, root: "/Users/chen/oppi", worktrees: [], lookupError: nil
-            ) == .folder("/Users/chen/oppi")
+                worktreeId: WorkspaceWorktree.mainId, root: "/Users/chen/oppi",
+                workspaceName: "oppi", worktrees: [], lookupError: nil
+            ) == root("/Users/chen/oppi")
         )
     }
 
@@ -103,13 +109,14 @@ struct SSHTerminalFolderResolveTests {
         ]
         #expect(
             SSHTerminalFolderResolve.resolution(
-                worktreeId: "fix-x", root: "/Users/chen/oppi", worktrees: worktrees, lookupError: nil
-            ) == .folder("/Users/chen/oppi-fix-x")
+                worktreeId: "fix-x", root: "/Users/chen/oppi",
+                workspaceName: "oppi", worktrees: worktrees, lookupError: nil
+            ) == .folder(path: "/Users/chen/oppi-fix-x", label: "oppi · fix-x", isWorktree: true)
         )
         // A worktree the server no longer lists is a failure: the workspace root
         // is a folder the session never ran in.
         guard case .failure(let missing) = SSHTerminalFolderResolve.resolution(
-            worktreeId: "gone", root: "/Users/chen/oppi", worktrees: worktrees, lookupError: nil
+            worktreeId: "gone", root: "/Users/chen/oppi", workspaceName: "oppi", worktrees: worktrees, lookupError: nil
         ) else {
             Issue.record("a deleted worktree must not fall back to the workspace root")
             return
@@ -118,8 +125,8 @@ struct SSHTerminalFolderResolveTests {
         // An empty list from a server that answered is the same answer.
         #expect(
             SSHTerminalFolderResolve.resolution(
-                worktreeId: "fix-x", root: "/Users/chen/oppi", worktrees: [], lookupError: nil
-            ) != .folder("/Users/chen/oppi")
+                worktreeId: "fix-x", root: "/Users/chen/oppi", workspaceName: "oppi", worktrees: [], lookupError: nil
+            ) != root("/Users/chen/oppi")
         )
     }
 
@@ -130,15 +137,16 @@ struct SSHTerminalFolderResolveTests {
         #expect(SSHTerminalFolderResolve.isUnsupportedRoute(notFound))
         #expect(
             SSHTerminalFolderResolve.resolution(
-                worktreeId: "fix-x", root: "/Users/chen/oppi", worktrees: [], lookupError: notFound
-            ) == .folder("/Users/chen/oppi")
+                worktreeId: "fix-x", root: "/Users/chen/oppi",
+                workspaceName: "oppi", worktrees: [], lookupError: notFound
+            ) == root("/Users/chen/oppi")
         )
         // Any other failure is shown: a shell in the wrong folder is worse than
         // no terminal.
         let failed = APIError.server(status: 500, message: "Server exploded")
         #expect(!SSHTerminalFolderResolve.isUnsupportedRoute(failed))
         guard case .failure(let message) = SSHTerminalFolderResolve.resolution(
-            worktreeId: "fix-x", root: "/Users/chen/oppi", worktrees: [], lookupError: failed
+            worktreeId: "fix-x", root: "/Users/chen/oppi", workspaceName: "oppi", worktrees: [], lookupError: failed
         ) else {
             Issue.record("a failed worktree lookup must not fall back to the workspace root")
             return
@@ -146,20 +154,22 @@ struct SSHTerminalFolderResolveTests {
         #expect(message.contains("Server exploded"))
         #expect(
             SSHTerminalFolderResolve.resolution(
-                worktreeId: "fix-x", root: "/Users/chen/oppi", worktrees: [], lookupError: URLError(.timedOut)
-            ) != .folder("/Users/chen/oppi")
+                worktreeId: "fix-x", root: "/Users/chen/oppi",
+                workspaceName: "oppi", worktrees: [], lookupError: URLError(.timedOut)
+            ) != root("/Users/chen/oppi")
         )
     }
 
     @Test func aWorkspaceWithoutAFolderReportsThat() {
         #expect(
             SSHTerminalFolderResolve.resolution(
-                worktreeId: nil, root: "", worktrees: [], lookupError: nil
+                worktreeId: nil, root: "", workspaceName: "oppi", worktrees: [], lookupError: nil
             ) == .noFolder
         )
         #expect(
             SSHTerminalFolderResolve.resolution(
-                worktreeId: "fix-x", root: "  ", worktrees: [], lookupError: APIError.server(status: 404, message: "nope")
+                worktreeId: "fix-x", root: "  ",
+                workspaceName: "oppi", worktrees: [], lookupError: APIError.server(status: 404, message: "nope")
             ) == .noFolder
         )
     }

@@ -1573,6 +1573,34 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     // MARK: - Lifecycle
 
+    /// "Open Terminal here" on a host whose Run on Connect command starts a
+    /// multiplexer that opens folders inside its own terminal (Herdr): the
+    /// folder is focused, or created, on this already-connected terminal, over
+    /// its side exec channel. Nothing is typed into the program.
+    ///
+    /// One attempt per connection. A refusal — Herdr not running yet, a command
+    /// error — shows over the terminal, which is where the person stays either
+    /// way, so the Herdr session is still there to use by hand.
+    private func openMultiplexerFolderIfNeeded() {
+        guard let session, let target = session.multiplexerFolder, channel.connected else { return }
+        session.multiplexerFolder = nil
+        guard let kind = SSHTerminalMultiplexerKind.detected(in: session.connectedProfile?.startupCommand),
+              kind.placement == .hostTerminal else { return }
+        let multiplexer = kind.multiplexer
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await multiplexer.openInHostTerminal(target, on: channel)
+                showOpenNotice("Opened \(target.folderLabel) in \(kind.name).")
+                await herdr.refresh(on: channel)
+            } catch {
+                showOpenNotice(
+                    "Could not open \(target.folderLabel) in \(kind.name): \(error.localizedDescription)"
+                )
+            }
+        }
+    }
+
     private func updatePolling() {
         // Herdr and keymaps load again when you return; they do not run off screen.
         guard isOnScreen else {
@@ -1584,6 +1612,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             return
         }
         if channel.connected {
+            openMultiplexerFolderIfNeeded()
             if herdrTask == nil {
                 herdr.attached = herdrAttached
                 herdrTask = Task { [weak self] in

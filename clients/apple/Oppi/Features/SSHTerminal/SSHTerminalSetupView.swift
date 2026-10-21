@@ -580,9 +580,13 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
 
     private func connect(password: String? = nil) {
         guard canConnect else { return }
-        session.folder = folderTerminal?.folder
+        // The same decision a saved host's folder screen makes: the host's own
+        // multiplexer terminal, a folder terminal running its attach command, or
+        // the plain login shell in the folder.
+        let profile = normalizedProfile()
+        SSHTerminalFolderEntry.prepare(session: session, profile: profile, target: folderTerminal)
         session.connect(
-            profile: normalizedProfile(),
+            profile: profile,
             suppliedPassword: password,
             experimentEnabled: AppPreferences.Experiments.sshTerminalEnabled,
             onSaved: applySaved

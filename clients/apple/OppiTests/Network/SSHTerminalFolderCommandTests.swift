@@ -56,12 +56,12 @@ struct SSHTerminalFolderCommandTests {
     @Test func everyByteOfTheFolderBecomesAnOctalEscape() {
         // `/A` is 057 101, then the sentinel 170 that keeps command substitution
         // from eating a trailing newline.
-        #expect(SSHTerminalFolderCommand.octalEncoded("/A") == "\\057\\101\\170")
-        #expect(SSHTerminalFolderCommand.octalEncoded("") == "\\170")
+        #expect(SSHTerminalRemoteShell.octalEncoded("/A") == "\\057\\101\\170")
+        #expect(SSHTerminalRemoteShell.octalEncoded("") == "\\170")
         // Non-ASCII travels as UTF-8 bytes, not as characters a shell must decode.
-        #expect(SSHTerminalFolderCommand.octalEncoded("日") == "\\346\\227\\245\\170")
+        #expect(SSHTerminalRemoteShell.octalEncoded("日") == "\\346\\227\\245\\170")
         // Exactly three digits per byte: a fourth would be read as text.
-        #expect(SSHTerminalFolderCommand.octalEncoded("x").hasSuffix("\\170"))
+        #expect(SSHTerminalRemoteShell.octalEncoded("x").hasSuffix("\\170"))
         for value in ["'", "\\", "$", "`", "\n", " ", "-", "日"] {
             assertSafeWord(word("/tmp/\(value)"))
         }

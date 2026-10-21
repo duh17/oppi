@@ -3,16 +3,29 @@ import UIKit
 
 /// A login shell on a saved host, started in one folder.
 ///
-/// This is the "Open Terminal here" terminal. It is not the host's own
-/// terminal: the host may run a Run on Connect command (Herdr, tmux), and that
-/// terminal keeps running. A folder terminal always starts the person's login
-/// shell in the folder, so nothing is typed into a program that is already
-/// running there.
+/// This is the "Open Terminal here" terminal. When the host's Run on Connect
+/// command starts a multiplexer (Herdr, tmux), the folder opens inside that
+/// multiplexer instead — see `SSHTerminalMultiplexerKind` — so the work there
+/// survives a disconnect. Otherwise it is a login shell in the folder, and
+/// nothing is typed into a program the host already runs.
 struct SSHTerminalFolderTarget: Equatable {
     /// The paired server's host, which is matched against the saved SSH hosts.
     let serverHost: String
     /// Absolute host folder. A relative or empty path never starts a shell.
     let folder: String
+    /// What a multiplexer calls this folder: the Oppi workspace, and the
+    /// session's worktree when the folder is one. Empty for a caller that has no
+    /// name, which then leaves the multiplexer to name it from the folder.
+    let label: String
+    /// The folder is a session's git worktree, so Herdr opens it as one.
+    let isWorktree: Bool
+
+    init(serverHost: String, folder: String, label: String = "", isWorktree: Bool = false) {
+        self.serverHost = serverHost
+        self.folder = folder
+        self.label = label
+        self.isWorktree = isWorktree
+    }
 
     var isUsable: Bool {
         SSHTerminalFolderCommand.isUsablePath(folder)
@@ -93,7 +106,9 @@ enum SSHTerminalHostMatch {
 
 /// Where a workspace screen's Terminal opens, or why it cannot.
 enum SSHTerminalFolderResolution: Equatable {
-    case folder(String)
+    /// The folder a terminal starts in, the Oppi workspace (and worktree) it
+    /// belongs to, and whether it is a worktree checkout.
+    case folder(path: String, label: String, isWorktree: Bool)
     /// The workspace names no host folder this device can use.
     case noFolder
     /// The lookup failed for a reason worth showing instead of guessing.
@@ -111,13 +126,19 @@ enum SSHTerminalFolderResolve {
     ) async -> SSHTerminalFolderResolution {
         let root = workspace.hostMount?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard let worktreeId, worktreeId != WorkspaceWorktree.mainId, let apiClient else {
-            return root.isEmpty ? .noFolder : .folder(root)
+            return root.isEmpty ? .noFolder : .folder(path: root, label: workspace.name, isWorktree: false)
         }
         do {
             let worktrees = try await apiClient.listWorkspaceWorktrees(workspaceId: workspace.id)
-            return resolution(worktreeId: worktreeId, root: root, worktrees: worktrees, lookupError: nil)
+            return resolution(
+                worktreeId: worktreeId, root: root, workspaceName: workspace.name,
+                worktrees: worktrees, lookupError: nil
+            )
         } catch {
-            return resolution(worktreeId: worktreeId, root: root, worktrees: [], lookupError: error)
+            return resolution(
+                worktreeId: worktreeId, root: root, workspaceName: workspace.name,
+                worktrees: [], lookupError: error
+            )
         }
     }
 
@@ -127,11 +148,14 @@ enum SSHTerminalFolderResolve {
     nonisolated static func resolution(
         worktreeId: String?,
         root: String,
+        workspaceName: String,
         worktrees: [WorkspaceWorktree],
         lookupError: (any Error)?
     ) -> SSHTerminalFolderResolution {
         let resolvedRoot = root.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallback: SSHTerminalFolderResolution = resolvedRoot.isEmpty ? .noFolder : .folder(resolvedRoot)
+        let fallback: SSHTerminalFolderResolution = resolvedRoot.isEmpty
+            ? .noFolder
+            : .folder(path: resolvedRoot, label: workspaceName, isWorktree: false)
         guard let worktreeId, worktreeId != WorkspaceWorktree.mainId else { return fallback }
         if let lookupError {
             guard isUnsupportedRoute(lookupError) else {
@@ -142,13 +166,28 @@ enum SSHTerminalFolderResolve {
         // The lookup answered: this list is the whole truth, so a worktree that
         // is not in it is gone. Opening the workspace root instead would start a
         // shell in a folder the session never ran in.
-        guard let path = worktrees.first(where: { $0.id == worktreeId })?.path
-            .trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty else {
+        guard let worktree = worktrees.first(where: { $0.id == worktreeId }),
+              !worktree.path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .failure(
                 String(localized: "This session's worktree is no longer on the server, so there is no folder to open. Open the workspace to check its checkouts.")
             )
         }
-        return .folder(path)
+        return .folder(
+            path: worktree.path.trimmingCharacters(in: .whitespacesAndNewlines),
+            label: Self.label(workspace: workspaceName, worktree: worktree),
+            isWorktree: true
+        )
+    }
+
+    /// What a multiplexer calls the folder: the workspace, and the worktree's
+    /// own name beside it so Herdr's workspace list and `tmux ls` tell two
+    /// checkouts of one workspace apart.
+    nonisolated static func label(workspace: String, worktree: WorkspaceWorktree) -> String {
+        let name = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
+        let branch = worktree.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty { return branch }
+        if branch.isEmpty { return name }
+        return "\(name) · \(branch)"
     }
 
     /// An older server (or a sandbox workspace) has no worktree route: 404 or a
@@ -185,6 +224,9 @@ enum SSHTerminalFolderEntry {
         }
         let profiles = SSHTerminalProfileStore().load()
         if let profile = SSHTerminalHostMatch.bestMatch(in: profiles, serverHost: target.serverHost) {
+            // The folder screen decides from this host's Run on Connect command
+            // whether the folder opens in its multiplexer or in a terminal of
+            // its own.
             Router.push(SSHTerminalFolderViewController(profile: profile, target: target), from: presenter)
         } else {
             // Add Host, with the server's host filled in and nothing invented
@@ -195,6 +237,40 @@ enum SSHTerminalFolderEntry {
             )
         }
         return true
+    }
+
+    /// Configures `session` to open `target` on `profile`.
+    ///
+    /// Three outcomes, one per multiplexer placement:
+    /// - the host starts a multiplexer whose folders open inside its own terminal
+    ///   (Herdr): that terminal opens, and the folder is handed to it;
+    /// - the host starts one that needs a terminal of its own (tmux): a folder
+    ///   terminal runs the command that attaches the folder's session;
+    /// - otherwise the folder terminal is the plain login shell.
+    ///
+    /// The folder screen and the Add Host form both come through here, so a host
+    /// added for a folder behaves like a saved one.
+    static func prepare(
+        session: SSHTerminalConnectSession,
+        profile: SSHTerminalProfile,
+        target: SSHTerminalFolderTarget?
+    ) {
+        session.folder = nil
+        session.folderTerminalCommand = nil
+        session.multiplexerFolder = nil
+        guard let target else { return }
+        let running = SSHTerminalMultiplexerKind.detected(in: profile.startupCommand)?.multiplexer
+        switch running?.placement {
+        case .hostTerminal:
+            // The host's own terminal is the multiplexer; the folder follows.
+            session.multiplexerFolder = target
+        case .folderTerminal:
+            session.folder = target.folder
+            session.folderTerminalCommand = running?.folderCommand(for: target)
+        case nil:
+            // No multiplexer: the plain login shell in the folder.
+            session.folder = target.folder
+        }
     }
 
     /// Failure copy for an entry point that cannot name a folder or a host.
