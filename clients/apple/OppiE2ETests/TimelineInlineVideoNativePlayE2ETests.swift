@@ -24,6 +24,9 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
     override func configureE2ELaunch(_ application: XCUIApplication) {
         application.launchEnvironment["OPPI_E2E_AUTO_CREATE_SESSION"] = "1"
         application.launchEnvironment["OPPI_E2E_DIAGNOSTICS"] = "1"
+        // The fullscreen handoff is a UIKit transition; E2E normally turns
+        // animations off, which hides the ordering this class proves.
+        application.launchEnvironment["OPPI_E2E_ANIMATIONS"] = "1"
     }
 
     override func seedE2EFixtures() throws {
@@ -38,33 +41,7 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
     }
 
     func testNativePlayOnInlineWikiVideoAdvancesCurrentTime() throws {
-        waitForRequiredSplitStreamCapabilities()
-        waitForWebSocketConnected()
-        let sessionId = waitForFocusedSessionId(timeout: 20)
-        try clearE2EHarnessResponses(sessionId: sessionId)
-
-        let wiki = Self.wikiMessage()
-        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_start"])
-        try sendE2EHarnessMessage(sessionId: sessionId, [
-            "type": "text_delta",
-            "delta": wiki,
-        ])
-        try sendE2EHarnessMessage(sessionId: sessionId, [
-            "type": "message_end",
-            "role": "assistant",
-            "content": wiki,
-            "persist": true,
-        ])
-        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_end"])
-        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_settled"])
-        XCTAssertTrue(
-            waitUntilGone(app.buttons["chat.stop"], timeout: 10),
-            "Session stayed busy after agent_settled"
-        )
-        XCTAssertTrue(
-            waitForElementToExist(app.textViews["chat.input"], timeout: 15),
-            "Composer did not return after the wiki video turn"
-        )
+        try publishWikiVideoTurn()
 
         let nativePlayer = revealNativePlayer()
         XCTAssertTrue(
@@ -100,6 +77,184 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
         try assertFullscreenNativePlayAdvances()
         try assertPlayAdvancesAfterFullscreenDismiss()
         try hideAndRevealNativePlay()
+    }
+
+    /// Chen's device report: expanding a playing inline timeline video paused
+    /// it in full screen, and Back afterwards kept landing on the chat again
+    /// instead of the session list. The existing test above pauses before
+    /// expanding, so it never sees the handoff.
+    func testFullscreenKeepsInlinePlaybackAndBackReturnsToSessionList() throws {
+        try runFullscreenJourney(dismissal: .doneButton)
+    }
+
+    /// The same journey when full screen is left with the system swipe down
+    /// instead of Done; an interactive dismissal is a different AVKit path.
+    func testSwipeDismissFullscreenKeepsInlinePlaybackAndBackReturnsToSessionList() throws {
+        try runFullscreenJourney(dismissal: .swipeDown)
+    }
+
+    private enum FullscreenDismissal {
+        case doneButton
+        case swipeDown
+    }
+
+    private func runFullscreenJourney(dismissal: FullscreenDismissal) throws {
+        try publishWikiVideoTurn()
+
+        let nativePlayer = revealNativePlayer()
+        XCTAssertTrue(
+            nativePlayer.waitForExistence(timeout: 8),
+            "Inline wiki video player did not appear. probe=\(currentPlaybackProbe())"
+        )
+        let readyProbe = waitForPlaybackProbe(timeout: 15) { probe in
+            probe.contains("item=ready") && probe.contains("vis=1")
+        }
+        XCTAssertTrue(
+            readyProbe.contains("item=ready"),
+            "Inline video was not ready. probe=\(readyProbe)"
+        )
+        expectedMid = Self.probeToken(readyProbe, key: "mid")
+        expectedPid = Self.probeToken(readyProbe, key: "pid")
+        XCTAssertNotNil(expectedPid, "Player-local playback probe did not appear. probe=\(readyProbe)")
+
+        // The row's play control is the playback intent; the player autoplays.
+        _ = startInlinePlaybackIfShown()
+        let playingProbe = waitForPlaybackProbe(timeout: 10) { probe in
+            probe.contains("vis=1")
+                && probe.contains("fs=0")
+                && Self.probeRate(probe) > 0.01
+                && matchesIdentity(probe)
+        }
+        XCTAssertTrue(
+            Self.probeRate(playingProbe) > 0.01,
+            "Inline video did not start playing before full screen. probe=\(playingProbe)"
+        )
+
+        // Expand while it plays, with no Pause first: the reported stop happened
+        // in this handoff. AVKit hides the chrome of a playing video within a
+        // few seconds, so reveal it and tap the expand control in that window
+        // from one snapshot; a query-based tap re-resolves the vanished button.
+        let player = presentedNativePlayer()
+        var expanded = false
+        for _ in 0..<12 {
+            if let control = fullscreenControl(in: player),
+               control.isHittable,
+               tapNativeControlIfPresent(control) {
+                expanded = true
+                break
+            }
+            showNativePlaybackChrome(on: player)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        }
+        guard expanded else {
+            let tree = nativeControlSummary(in: player)
+            XCTFail("Fullscreen control was not in the AX tree. tree=\(tree) probe=\(currentPlaybackProbe())")
+            return
+        }
+        try saveLabScreenshot(name: "timeline-inline-video-fullscreen-playing-tapped")
+
+        let fullscreenProbe = waitForPlaybackProbe(timeout: 10) { probe in
+            probe.contains("fs=1") && matchesIdentity(probe)
+        }
+        XCTAssertTrue(
+            fullscreenProbe.contains("fs=1"),
+            "Fullscreen probe did not appear after the expand tap. last=\(fullscreenProbe) tree=\(nativeControlSummary(in: presentedNativePlayer()))"
+        )
+        assertIdentity(fullscreenProbe, reason: "fullscreen presented")
+        let fullscreenStarted = Self.probeTime(fullscreenProbe)
+        let stillPlaying = waitForPlaybackProbe(timeout: 8) { probe in
+            probe.contains("fs=1")
+                && Self.probeRate(probe) > 0.01
+                && Self.probeTime(probe) > fullscreenStarted + 0.4
+                && matchesIdentity(probe)
+        }
+        XCTAssertTrue(
+            Self.probeTime(stillPlaying) > fullscreenStarted + 0.4,
+            "Video stopped when it entered full screen. at-entry=\(fullscreenProbe) last=\(stillPlaying)"
+        )
+        try saveLabScreenshot(name: "timeline-inline-video-fullscreen-still-playing")
+
+        // Leave full screen; the inline row must keep the same player playing.
+        let expandedPlayer = presentedNativePlayer()
+        switch dismissal {
+        case .doneButton:
+            showNativePlaybackChrome(on: expandedPlayer)
+            let done = app.buttons.matching(
+                NSPredicate(format: "label ==[c] %@ OR label ==[c] %@", "Done", "Close")
+            ).firstMatch
+            XCTAssertTrue(
+                done.waitForExistence(timeout: 5),
+                "Fullscreen dismiss control did not appear. tree=\(nativeControlSummary(in: expandedPlayer)) probe=\(currentPlaybackProbe())"
+            )
+            done.tap()
+        case .swipeDown:
+            swipeFullscreenDown(expandedPlayer)
+        }
+        let inlineAgain = waitForPlaybackProbe(timeout: 10) { probe in
+            probe.contains("fs=0")
+                && probe.contains("vis=1")
+                && Self.probeTime(probe) > Self.probeTime(stillPlaying)
+                && matchesIdentity(probe)
+        }
+        if !inlineAgain.contains("fs=0"), dismissal == .swipeDown {
+            // AVKit can swallow the first downward swipe while the chrome is
+            // up; one more attempt is still the user's gesture, not a repair.
+            swipeFullscreenDown(presentedNativePlayer())
+        }
+        let restoredInline = waitForPlaybackProbe(timeout: 10) { probe in
+            probe.contains("fs=0")
+                && probe.contains("vis=1")
+                && Self.probeTime(probe) > Self.probeTime(stillPlaying)
+                && matchesIdentity(probe)
+        }
+        XCTAssertTrue(
+            restoredInline.contains("fs=0") && Self.probeTime(restoredInline) > Self.probeTime(stillPlaying),
+            "Inline video did not keep playing after full screen (\(dismissal)). last=\(restoredInline)"
+        )
+
+        // One Back must reach the session list; a restored media-overlay route
+        // used to push the chat back under the tap.
+        let back = app.buttons["chat.toolbar.back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 8), "Chat Back did not appear after full screen")
+        back.tap()
+        XCTAssertTrue(
+            waitForElementToExist(app.collectionViews["workspace.sessionList"], timeout: 15),
+            "Back did not reach the session list. chatBack=\(app.buttons["chat.toolbar.back"].exists) backlog=\(app.collectionViews["workspace.sessionList"].exists ? "sessionList" : "none") probe=\(currentPlaybackProbe())"
+        )
+        XCTAssertTrue(
+            waitUntilGone(app.textViews["chat.input"], timeout: 5),
+            "Chat stayed on screen after Back to the session list"
+        )
+    }
+
+    private func publishWikiVideoTurn() throws {
+        waitForRequiredSplitStreamCapabilities()
+        waitForWebSocketConnected()
+        let sessionId = waitForFocusedSessionId(timeout: 20)
+        try clearE2EHarnessResponses(sessionId: sessionId)
+
+        let wiki = Self.wikiMessage()
+        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_start"])
+        try sendE2EHarnessMessage(sessionId: sessionId, [
+            "type": "text_delta",
+            "delta": wiki,
+        ])
+        try sendE2EHarnessMessage(sessionId: sessionId, [
+            "type": "message_end",
+            "role": "assistant",
+            "content": wiki,
+            "persist": true,
+        ])
+        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_end"])
+        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_settled"])
+        XCTAssertTrue(
+            waitUntilGone(app.buttons["chat.stop"], timeout: 10),
+            "Session stayed busy after agent_settled"
+        )
+        XCTAssertTrue(
+            waitForElementToExist(app.textViews["chat.input"], timeout: 15),
+            "Composer did not return after the wiki video turn"
+        )
     }
 
     private func assertFullscreenNativePlayAdvances() throws {
@@ -285,6 +440,16 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
         }
     }
 
+    /// AVKit's interactive fullscreen dismissal: a slow downward drag on the
+    /// video, not a chrome tap.
+    private func swipeFullscreenDown(_ player: XCUIElement) {
+        guard player.exists, player.frame.height > 100 else { return }
+        let start = player.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.30))
+        let end = player.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+    }
+
     private func showNativePlaybackChrome(on nativePlayer: XCUIElement) {
         if hittableNativeControl(nativePlayPauseButton()) {
             return
@@ -399,9 +564,8 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
         )
         var best: XCUIElement?
         var bestX = CGFloat.greatestFiniteMagnitude
-        let buttons = player.buttons.allElementsBoundByIndex
-        for button in buttons {
-            guard button.exists, button.isHittable else { continue }
+        for button in buttonsOverlapping(player) {
+            guard button.isHittable else { continue }
             let label = button.label
             if Self.isPlayPauseLabel(label) { continue }
             if Self.isTransportOrRoutingLabel(label) { continue }
@@ -414,8 +578,20 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
         return best
     }
 
+    /// AVKit buttons that sit over `player`'s frame. Enumerating a player's own
+    /// descendants throws when its chrome is hidden (`No matches found for
+    /// Descendants matching type Button`), so read the app-wide query and keep
+    /// the controls the player visibly owns.
+    private func buttonsOverlapping(_ player: XCUIElement) -> [XCUIElement] {
+        let frame = player.frame
+        guard frame.width > 8, frame.height > 8 else { return [] }
+        return app.buttons.allElementsBoundByIndex.filter {
+            $0.exists && frame.intersects($0.frame)
+        }
+    }
+
     private func nativeControlSummary(in player: XCUIElement) -> String {
-        let buttons = player.buttons.allElementsBoundByIndex
+        let buttons = buttonsOverlapping(player)
         let limit = min(buttons.count, 16)
         var parts: [String] = []
         for index in 0..<limit {

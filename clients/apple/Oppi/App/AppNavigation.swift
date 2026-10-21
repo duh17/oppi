@@ -244,6 +244,9 @@ final class AppNavigation {
     private var mediaOverlayDepth = 0
     private var mediaOverlaySnapshot: MediaOverlaySnapshot?
     private var isRestoringMediaOverlay = false
+    /// A person's Back ended the overlay's route authority. A late AVKit end
+    /// may still restore the active server, never the chat route it replaced.
+    private var mediaOverlayEndedByUserNavigation = false
 
     /// Screens pushed on the compact workspace stack above the all-sessions
     /// inbox, bottom to top. The shell's stack shows exactly these.
@@ -422,6 +425,7 @@ final class AppNavigation {
     /// fullscreen can pop the stack or flip compact/split shells.
     func beginMediaOverlay(activeServerId: String?) {
         if mediaOverlayDepth == 0 {
+            mediaOverlayEndedByUserNavigation = false
             mediaOverlaySnapshot = MediaOverlaySnapshot(
                 presentation: workspaceNavigationPresentation,
                 selectedWorkspaceFilter: selectedWorkspaceFilter,
@@ -457,7 +461,10 @@ final class AppNavigation {
             return nil
         }
         mediaOverlaySnapshot = nil
-        restoreMediaOverlaySnapshot(snapshot)
+        if !mediaOverlayEndedByUserNavigation {
+            restoreMediaOverlaySnapshot(snapshot)
+        }
+        mediaOverlayEndedByUserNavigation = false
         if WorkspaceMediaOverlayNavigationPolicy.shouldRestoreServer(
             snapshotServerId: snapshot.activeServerId,
             currentServerId: currentServerId
@@ -1108,6 +1115,7 @@ final class AppNavigation {
 
     func showSessionInboxInSplit() {
         guard workspaceNavigationPresentation == .split else { return }
+        mediaOverlayYieldsToUserNavigation()
         selectedTab = .workspaces
         splitDetailTarget = nil
         resetSplitDetailPath()
@@ -1234,15 +1242,30 @@ final class AppNavigation {
         splitDetailPathElements.append(.fileBrowser(target))
     }
 
+    /// The person's own Back while the media overlay is active proves it is
+    /// over even when AVKit never calls its end. End it here and let the pop
+    /// stand; the route snapshot otherwise pushes the chat back under every
+    /// Back, which looks like a stuck back stack. A non-navigation clear (a
+    /// server or lock reset) still restores through
+    /// `restoreMediaOverlayRouteIfNeeded`.
+    private func mediaOverlayYieldsToUserNavigation() {
+        guard isMediaOverlayActive else { return }
+        mediaOverlayDepth = 0
+        isMediaOverlayActive = false
+        mediaOverlayEndedByUserNavigation = true
+    }
+
     /// The user popped the compact stack back to `depth` pushed screens.
     func popWorkspaceStack(toDepth depth: Int) {
         guard workspaceStackRouteElements.count > depth else { return }
+        mediaOverlayYieldsToUserNavigation()
         workspaceStackRouteElements.removeLast(workspaceStackRouteElements.count - depth)
     }
 
     /// The user popped the split detail column back to `depth` pushed screens.
     func popSplitDetail(toDepth depth: Int) {
         guard splitDetailPathElements.count > depth else { return }
+        mediaOverlayYieldsToUserNavigation()
         splitDetailPathElements.removeLast(splitDetailPathElements.count - depth)
     }
 

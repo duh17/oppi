@@ -440,7 +440,11 @@ final class OppiApp {
 
     init() {
 #if DEBUG
-        if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil {
+        // E2E runs with real transitions off so taps are not racing animation.
+        // A case that proves a transition handoff opts back in: see
+        // `OPPI_E2E_ANIMATIONS` in TimelineInlineVideoNativePlayE2ETests.
+        if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil,
+           ProcessInfo.processInfo.environment["OPPI_E2E_ANIMATIONS"] != "1" {
             UIView.setAnimationsEnabled(false)
         }
 #endif

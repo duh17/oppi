@@ -338,6 +338,43 @@ struct MarkdownInlineVideoTests {
     }
 
     @MainActor
+    @Test("a timeline hide before AVKit's fullscreen begin resumes the same player")
+    func timelineHideBeforeFullscreenBeginResumesPlayback() async throws {
+        let model = AuthenticatedMediaPlayerModel()
+        let player = model.debugInstallStandalonePlayerForTesting(
+            item: AVPlayerItem(url: try knownGoodH264URL())
+        )
+        let ready = await waitForTimelineCondition(timeoutMs: 4_000) { @MainActor in
+            player.currentItem?.status == .readyToPlay
+        }
+        #expect(ready)
+        player.play()
+        let playing = await waitForTimelineCondition(timeoutMs: 4_000) { @MainActor in
+            player.timeControlStatus == .playing
+        }
+        #expect(playing)
+
+        // UICollectionView can report the row offscreen before AVKit's
+        // fullscreen begin marks the native presentation as owning playback.
+        // That hide pauses; the begin must resume the same player, not leave
+        // the full screen showing a stopped video.
+        #expect(model.handleDisappear(source: .timelineVisibility))
+        #expect(!model.debugIsVisibleForTesting)
+        let paused = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            player.timeControlStatus != .playing
+        }
+        #expect(paused)
+        let position = player.currentTime().seconds
+
+        model.setFullScreen(true)
+        let resumed = await waitForTimelineCondition(timeoutMs: 4_000) { @MainActor in
+            player.timeControlStatus == .playing && player.currentTime().seconds >= position
+        }
+        #expect(resumed)
+        #expect(model.player === player)
+    }
+
+    @MainActor
     @Test("prepareForRemoval stops a fullscreen-owned player")
     func prepareForRemovalStopsFullscreenOwnedPlayer() {
         let video = NativeMarkdownVideoView()

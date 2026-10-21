@@ -1408,6 +1408,11 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
     private var recordedErrorIdentity: String?
     private var ownership = MediaPlaybackTeardownPolicy.Ownership()
     private var suppressNextReturnedSurfaceDisappear = false
+    /// UICollectionView can report the row offscreen before AVKit's full-screen
+    /// begin callback marks native presentation as owning the player. The hide
+    /// pauses transport, and the begin must resume it or full screen opens on a
+    /// stopped video.
+    private var resumesWhenFullScreenBegins = false
 #if DEBUG
     var debugDidTeardownForTesting = false
     var debugIsVisibleForTesting: Bool { ownership.isVisible }
@@ -1577,8 +1582,16 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
     func setFullScreen(_ fullScreen: Bool) {
         if fullScreen {
             suppressNextReturnedSurfaceDisappear = false
+            let resumesHiddenPlayback = resumesWhenFullScreenBegins
+            resumesWhenFullScreenBegins = false
+            applyOwnership(.willBeginFullScreen)
+            if resumesHiddenPlayback, !ownership.isVisible {
+                player?.play()
+            }
+            return
         }
-        applyOwnership(fullScreen ? .willBeginFullScreen : .didEndFullScreen)
+        resumesWhenFullScreenBegins = false
+        applyOwnership(.didEndFullScreen)
     }
 
     func setPictureInPicture(_ pictureInPicture: Bool) {
@@ -1589,6 +1602,9 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
     }
 
     func setVisible(_ visible: Bool) {
+        if visible {
+            resumesWhenFullScreenBegins = false
+        }
         applyOwnership(.setVisible(visible))
     }
 
@@ -1611,6 +1627,9 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
             suppressNextReturnedSurfaceDisappear = false
             return false
         }
+        if source == .timelineVisibility {
+            resumesWhenFullScreenBegins = hasPlaybackIntent
+        }
         setVisible(false)
         return true
     }
@@ -1620,6 +1639,7 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
     }
 
     func handleDidEndFullScreen(hostIsAttached _: Bool = true) {
+        resumesWhenFullScreenBegins = false
         let returnsToVisibleSurface = ownership.isVisible && player != nil
         applyOwnership(.didEndFullScreen)
         suppressNextReturnedSurfaceDisappear = returnsToVisibleSurface
@@ -1638,6 +1658,15 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
     private func applyOwnership(_ event: MediaPlaybackTeardownPolicy.Event) {
         MediaPlaybackTeardownPolicy.apply(event, to: &ownership)
         teardownIfHiddenAndUnowned()
+    }
+
+    /// Playback intent as the transport sees it. A buffering player still means
+    /// the person pressed play, so full screen should resume it too.
+    private var hasPlaybackIntent: Bool {
+        guard let player else { return false }
+        return player.timeControlStatus == .playing
+            || player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+            || player.rate > 0
     }
 
     private func teardownIfHiddenAndUnowned() {
@@ -1664,6 +1693,7 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
         ownership.isPictureInPicture = false
         ownership.isFullScreenTransitioning = false
         suppressNextReturnedSurfaceDisappear = false
+        resumesWhenFullScreenBegins = false
 #if DEBUG
         debugDidTeardownForTesting = true
 #endif

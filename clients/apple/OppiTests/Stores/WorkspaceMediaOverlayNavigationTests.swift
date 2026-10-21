@@ -118,7 +118,7 @@ struct WorkspaceMediaOverlayNavigationTests {
         #expect(navigation.workspaceStackRouteElements.count == 1)
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
-        navigation.popWorkspaceStack(toDepth: 0)
+        navigation.clearWorkspaceSelections()
 
         #expect(navigation.isMediaOverlayActive)
         #expect(navigation.workspaceStackRouteElements.count == 1)
@@ -148,7 +148,7 @@ struct WorkspaceMediaOverlayNavigationTests {
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         navigation.selectedWorkspaceFilter = workspace
-        navigation.popWorkspaceStack(toDepth: 0)
+        navigation.clearWorkspaceSelections()
 
         #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.selectedWorkspaceFilter == nil)
@@ -207,7 +207,7 @@ struct WorkspaceMediaOverlayNavigationTests {
         #expect(navigation.selectedWorkspaceFilter == workspace)
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
-        navigation.popWorkspaceStack(toDepth: 0)
+        navigation.clearWorkspaceSelections()
 
         #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.selectedWorkspaceFilter == workspace)
@@ -251,13 +251,13 @@ struct WorkspaceMediaOverlayNavigationTests {
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         navigation.beginMediaOverlay(activeServerId: "server-b")
-        navigation.popWorkspaceStack(toDepth: 0)
+        navigation.clearWorkspaceSelections()
         #expect(navigation.workspaceStackRouteElements.count == 1)
 
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
         #expect(navigation.isMediaOverlayActive)
 
-        navigation.popWorkspaceStack(toDepth: 0)
+        navigation.clearWorkspaceSelections()
         #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
         #expect(!navigation.isMediaOverlayActive)
@@ -277,6 +277,57 @@ struct WorkspaceMediaOverlayNavigationTests {
         navigation.popWorkspaceStack(toDepth: 0)
         #expect(navigation.workspaceStackRouteElements.isEmpty)
         #expect(navigation.workspaceStackDiagnosticContext == .inboxAll)
+    }
+
+    @Test func userBackDuringFullscreenEndsTheOverlayAndStands() {
+        let navigation = readyNavigation()
+        let workspace = WorkspaceNavTarget(
+            serverId: "server-b",
+            workspace: makeTestWorkspace(id: "ws-b")
+        )
+        let session = WorkspaceSessionNavTarget(
+            serverId: "server-b",
+            sessionId: "chat-1",
+            workspaceId: "ws-b"
+        )
+        navigation.openWorkspace(workspace)
+        navigation.openWorkspaceSession(session, workspace: workspace)
+        #expect(navigation.workspaceStackRouteElements.count == 2)
+
+        navigation.beginMediaOverlay(activeServerId: "server-b")
+        // Back pops the chat before AVKit's end callback arrives.
+        navigation.popWorkspaceStack(toDepth: 1)
+
+        #expect(navigation.workspaceStackRouteElements.count == 1)
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "workspace_inbox_filtered")
+        #expect(!navigation.isMediaOverlayActive)
+
+        // A late end must not push the chat back under the workspace list.
+        #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
+        #expect(navigation.workspaceStackRouteElements.count == 1)
+        #expect(navigation.workspaceStackDiagnosticContext.sessionId == nil)
+    }
+
+    @Test func userBackFromSplitChatDuringFullscreenEndsTheOverlayAndStands() {
+        let navigation = readyNavigation()
+        let session = WorkspaceSessionNavTarget(
+            serverId: "server-b",
+            sessionId: "chat-1",
+            workspaceId: "ws-b"
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceSession(session)
+        #expect(navigation.splitDetailTarget == .session(session))
+
+        navigation.beginMediaOverlay(activeServerId: "server-b")
+        // The split detail root's Back closes the chat column; it is a root
+        // close, not a pushed path pop.
+        navigation.showSessionInboxInSplit()
+        #expect(navigation.splitDetailTarget == nil)
+        #expect(!navigation.isMediaOverlayActive)
+
+        #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
+        #expect(navigation.splitDetailTarget == nil)
     }
 
     private func readyNavigation() -> AppNavigation {
