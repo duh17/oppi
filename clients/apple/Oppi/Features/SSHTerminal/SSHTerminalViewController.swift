@@ -3,7 +3,8 @@ import UIKit
 /// Live SSH terminal: UIKit owns the screen, floating controls, grid,
 /// notices, lists, and chat bar (`ComposerBarController` in a terminal
 /// configuration). The navigation bar stays hidden while this screen is on
-/// top; Back, status, Herdr, and the … menu float over the grid.
+/// top; Back, status, Herdr, and the … menu sit in a glass bar at the bottom
+/// edge, below the grid, so they never cover a terminal row.
 @MainActor
 final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBar {
     private(set) var channel: SSHTerminalChannel
@@ -19,6 +20,12 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     private(set) var gridView: SSHTerminalGridView?
     private let overlay = SSHTerminalPassthroughView()
+    /// The bottom bar's container: Back at the leading edge, status, Herdr,
+    /// and … at the trailing one. It ends at the keyboard layout guide, so
+    /// with a docked keyboard up (and a broken connection, the one case that
+    /// keeps the bar) it floats just above the keyboard.
+    private let bottomBar = UIView()
+    private var bottomBarHeight: NSLayoutConstraint?
     private let topStack = UIStackView()
     private let backPill = SSHTerminalBackPill()
     private let connectionBanner = SSHTerminalConnectionBannerView()
@@ -47,6 +54,12 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// only with focus (the keyboard), width, or text size; never as the
     /// draft grows.
     private var composerReservedHeight: CGFloat = 0
+    /// The bottom bar's height while it shows. Folded into the one resize a
+    /// keyboard change already sends, so showing the bar never resizes the
+    /// remote shell on its own.
+    private var bottomBarReserve: CGFloat {
+        controlsVisible ? SSHTerminalBottomBar.reserve : 0
+    }
     /// How much of the grid's bottom the chat bar covers right now.
     private var composerCoveredHeight: CGFloat = 0
 
@@ -371,14 +384,12 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         overlay.addSubview(topStack)
         overlay.addSubview(copyNotice)
         overlay.addSubview(backToLive)
-        overlay.addSubview(backPill)
-        overlay.addSubview(morePill)
         copyNotice.translatesAutoresizingMaskIntoConstraints = false
         backToLive.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            backPill.topAnchor.constraint(equalTo: overlay.topAnchor, constant: 4),
-            morePill.topAnchor.constraint(equalTo: backPill.topAnchor),
-            topStack.topAnchor.constraint(equalTo: backPill.bottomAnchor, constant: 8),
+            // Notices float at the grid's top edge and keep the bar's place
+            // out of the way: they never change the grid's size.
+            topStack.topAnchor.constraint(equalTo: overlay.topAnchor, constant: 8),
             topStack.leadingAnchor.constraint(equalTo: overlay.leadingAnchor),
             topStack.trailingAnchor.constraint(equalTo: overlay.trailingAnchor),
             copyNotice.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
@@ -387,16 +398,30 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             backToLive.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -8),
         ])
 
+        bottomBar.translatesAutoresizingMaskIntoConstraints = false
+        bottomBar.addSubview(backPill)
+        bottomBar.addSubview(morePill)
+
         gridClip.translatesAutoresizingMaskIntoConstraints = false
         gridClip.clipsToBounds = true
         view.addSubview(gridClip)
         view.addSubview(overlay)
+        view.addSubview(bottomBar)
         let controlsInset: CGFloat = 12
+        let barHeight = bottomBar.heightAnchor.constraint(equalToConstant: SSHTerminalBottomBar.shownHeight)
+        bottomBarHeight = barHeight
         NSLayoutConstraint.activate([
             // Clear of a landscape notch: the grid runs edge to edge, the
             // controls stay inside the safe area.
             backPill.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: controlsInset),
+            backPill.topAnchor.constraint(equalTo: bottomBar.topAnchor),
             morePill.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -controlsInset),
+            morePill.topAnchor.constraint(equalTo: bottomBar.topAnchor),
+            bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            // The guide rests on the bottom safe area and rides the keyboard.
+            bottomBar.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+            barHeight,
             gridClip.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             gridClip.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             gridClip.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -405,15 +430,15 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         installGrid(makeGrid())
     }
 
-    /// The grid ends the chat bar's resting height above the keyboard guide
-    /// (none without the chat bar); a taller chat bar overlaps it. The clip
-    /// hides rows the cursor shift moves above the grid's top.
+    /// The grid ends above the bottom bar and the chat bar's resting height;
+    /// a taller chat bar overlaps it. The clip hides rows the cursor shift
+    /// moves above the grid's top.
     private func installGrid(_ grid: SSHTerminalGridView) {
         gridView = grid
         gridClip.addSubview(grid)
         let bottom = grid.bottomAnchor.constraint(
             equalTo: view.keyboardLayoutGuide.topAnchor,
-            constant: composerContainer?.superview == nil ? 0 : -composerReservedHeight
+            constant: -(composerReservedHeight + bottomBarReserve)
         )
         gridBottom = bottom
         let overlayBottom = overlay.bottomAnchor.constraint(equalTo: grid.bottomAnchor)
@@ -569,8 +594,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         applyControlsVisibility(animation: .init(duration: 0.2, options: [.curveEaseInOut, .beginFromCurrentState]))
     }
 
-    /// Fades the pills with the keyboard. Hidden pills take no touches and
-    /// leave the accessibility tree; edge-swipe back still works.
+    /// Fades the bar with the keyboard. A hidden bar takes no touches, leaves
+    /// the accessibility tree, and gives its rows back to the grid; edge-swipe
+    /// back still works.
     private func applyControlsVisibility(animation: SSHTerminalKeyboard.Animation?) {
         let visible = SSHTerminalFloatingControls.visible(keyboardUp: keyboardUp, connected: channel.connected)
         guard visible != controlsVisible || animation == nil else { return }
@@ -579,6 +605,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             pill.isUserInteractionEnabled = visible
             pill.accessibilityElementsHidden = !visible
         }
+        bottomBarHeight?.constant = visible ? SSHTerminalBottomBar.shownHeight : 0
+        updateBottomRows()
         let apply = {
             self.backPill.alpha = visible ? 1 : 0
             self.morePill.alpha = visible ? 1 : 0
@@ -616,10 +644,11 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// One resize per keyboard transition. Layout-driven resizes are held,
     /// the chat bar's end state is laid out inside the keyboard's animation,
     /// and the grid size the keyboard settles at is sent once. Layout passes
-    /// in between (the chat bar and the keyboard guide move in separate
-    /// passes) are ignored until the transition ends; the release sends the
-    /// real size only if the prediction missed. The floating controls fade in
-    /// the same motion and never change the grid.
+    /// in between (the chat bar, the bottom bar, and the keyboard guide move in
+    /// separate passes) are ignored until the transition ends; the release
+    /// sends the real size only if the prediction missed. The bottom bar and
+    /// the floating controls change the grid's free rows, but inside that same
+    /// transition, so they never add a resize of their own.
     private func keyboardWillChange(endFrame: CGRect, screen: UIScreen?, duration: TimeInterval, curve: UInt) {
         guard let viewScreen = view.window?.windowScene?.screen,
               let end = SSHTerminalKeyboard.endFrame(
@@ -877,7 +906,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         NSLayoutConstraint.activate([
             container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            container.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+            // Above the bottom bar, so the two never stack on each other and
+            // the bar stays on the screen's bottom edge as the chat bar does
+            // while the keyboard is up (the bar is gone then).
+            container.bottomAnchor.constraint(equalTo: bottomBar.topAnchor),
             height,
             overlayAbove,
         ])
@@ -906,8 +938,17 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         bar.removeFromParent()
         composerReservedHeight = 0
         composerCoveredHeight = 0
-        gridBottom?.constant = 0
+        updateBottomRows()
         updateCursorShift()
+    }
+
+    /// The bottom rows the grid leaves free: the chat bar's resting height
+    /// above the bottom bar's own. Keeping this in one place is what makes a
+    /// keyboard change one resize: both terms settle before the size is sent.
+    private func updateBottomRows() {
+        let constant = -(composerReservedHeight + bottomBarReserve)
+        guard abs((gridBottom?.constant ?? 0) - constant) > 0.5 else { return }
+        gridBottom?.constant = constant
     }
 
     private func destroyComposer() {
@@ -1002,9 +1043,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         let reserved = min(bar.restingHeight(fittedHeight: barHeight, width: width), height)
         composerReservedHeight = reserved
         composerCoveredHeight = height - reserved
-        if abs((gridBottom?.constant ?? 0) + reserved) > 0.5 {
-            gridBottom?.constant = -reserved
-        }
+        updateBottomRows()
     }
 
     private func cursorMayHaveMoved() {

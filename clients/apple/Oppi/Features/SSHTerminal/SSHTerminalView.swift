@@ -1,13 +1,13 @@
 import CoreGraphics
 import UIKit
 
-/// The terminal has no navigation bar. Back sits in a glass pill at the top
-/// leading corner; status, Herdr, and the … menu share one at the trailing
-/// corner. They float over the grid, so showing or hiding them never resizes
-/// the remote terminal.
+/// The terminal has no navigation bar. Back sits in a glass pill at the bottom
+/// leading corner; status, Herdr, and the … menu share one at the bottom
+/// trailing corner. The bar ends at the keyboard layout guide, and the grid
+/// ends above it, so it never covers a terminal row.
 enum SSHTerminalFloatingControls {
-    /// The pills step aside while a docked keyboard is up (typing) and come
-    /// back when it goes down. A broken connection keeps them: Back and
+    /// The bar steps aside while a docked keyboard is up (typing) and comes
+    /// back when it goes down. A broken connection keeps it: Back and
     /// Reconnect must stay in reach.
     static func visible(keyboardUp: Bool, connected: Bool) -> Bool {
         !keyboardUp || !connected
@@ -19,6 +19,21 @@ enum SSHTerminalFloatingControls {
     static func attentionPending(herdrWaiting: Int, blockedProgram: Bool) -> Bool {
         herdrWaiting > 0 || blockedProgram
     }
+}
+
+/// Bottom bar geometry. The glass is 36 pt tall and rests 4 pt above the
+/// keyboard layout guide (the bottom safe area without a keyboard), and the
+/// grid keeps 8 pt more free so no row touches the glass. Hiding the bar gives
+/// all of it back to the grid, inside the one resize a keyboard change sends.
+@MainActor
+enum SSHTerminalBottomBar {
+    static let pillHeight = SSHTerminalGlassPill.height
+    static let bottomInset: CGFloat = 4
+    static let gridGap: CGFloat = 8
+    /// The container's height while the bar shows.
+    static let shownHeight = pillHeight + bottomInset
+    /// Rows the grid leaves free while the bar shows.
+    static let reserve = shownHeight + gridGap
 }
 
 /// The chat bar grows over the grid instead of shrinking it: the grid keeps

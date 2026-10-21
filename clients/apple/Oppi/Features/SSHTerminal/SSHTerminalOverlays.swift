@@ -8,11 +8,11 @@ final class SSHTerminalPassthroughView: UIView {
     }
 }
 
-/// Glass capsule for the terminal's floating controls. The glass is 36 pt
-/// tall so it covers as little of the grid as it can; a touch up to 4 pt
-/// outside it still reaches the nearest button. Items are 44 pt wide, and
-/// the 36 pt Back circle gets the same 4 pt at its sides, so every button
-/// answers a 44 × 44 pt touch.
+/// Glass capsule for the terminal's bottom bar. The glass is 36 pt tall and
+/// ends 4 pt above the keyboard layout guide, so with a keyboard down it sits
+/// just above the home indicator. A touch up to 4 pt outside it still reaches
+/// the nearest button. Items are 44 pt wide, and the 36 pt Back circle gets
+/// the same 4 pt at its sides, so every button answers a 44 × 44 pt touch.
 class SSHTerminalGlassPill: UIView {
     static let height: CGFloat = 36
     static let itemWidth: CGFloat = 44
@@ -105,7 +105,7 @@ final class SSHTerminalPillButton: UIButton {
     }
 }
 
-/// Back, top leading. It carries the attention dot while Herdr or a blocked
+/// Back, bottom leading. It carries the attention dot while Herdr or a blocked
 /// program wants you.
 final class SSHTerminalBackPill: UIView {
     let pill = SSHTerminalGlassPill()
@@ -157,7 +157,7 @@ final class SSHTerminalBackPill: UIView {
     }
 }
 
-/// Top trailing: the program-status symbol (while a program has reported),
+/// Bottom trailing: the program-status symbol (while a program has reported),
 /// Herdr (when the host has it), and the … menu. Leading to trailing in
 /// that order, as the bar items were.
 final class SSHTerminalMorePill: SSHTerminalGlassPill {

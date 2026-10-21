@@ -5,6 +5,14 @@ import UIKit
 
 @Suite("SSH terminal floating controls")
 struct SSHTerminalFloatingControlsTests {
+    @Test @MainActor func theBottomBarKeepsItsRowsFreeAboveTheHomeIndicator() {
+        // 36 pt of glass, 4 pt above the keyboard guide, and 8 pt of clearance
+        // so no terminal row sits under the glass.
+        #expect(SSHTerminalBottomBar.shownHeight == SSHTerminalGlassPill.height + 4)
+        #expect(SSHTerminalBottomBar.reserve == SSHTerminalBottomBar.shownHeight + 8)
+        #expect(SSHTerminalBottomBar.reserve > SSHTerminalGlassPill.height)
+    }
+
     @Test func dockedKeyboardIsUpAndFloatingKeyboardIsNot() {
         let bounds = CGRect(x: 0, y: 0, width: 390, height: 844)
         #expect(!SSHTerminalKeyboard.isUp(endFrameInView: .zero, viewBounds: bounds))
@@ -162,5 +170,62 @@ struct SSHTerminalFloatingPillTests {
             "only \u{2026} without status or Herdr: status \(pill.status.frame.width), herdr \(pill.herdr.frame.width)"
         )
         expect44PointTouch(pill.more, "sshTerminal.more")
+    }
+
+    /// The terminal puts the pills in a plain container pinned to the bottom
+    /// edge, and the grid ends above that container. The container must not
+    /// swallow a finger that lands on a pill.
+    @Test func theBottomBarContainerPassesTouchesThroughToItsPills() throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let root = UIViewController()
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        let host = root.view!
+        let bar = UIView()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        let back = SSHTerminalBackPill()
+        let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())
+        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), herdrAvailable: true, herdrWaiting: 0, showsStatus: true)
+        bar.addSubview(back)
+        bar.addSubview(pill)
+        // A grid above the bar, ending its own rows short of it.
+        let grid = UIView()
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(grid)
+        host.addSubview(bar)
+        NSLayoutConstraint.activate([
+            grid.topAnchor.constraint(equalTo: host.topAnchor),
+            grid.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            grid.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            grid.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -SSHTerminalBottomBar.gridGap),
+            bar.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            bar.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            bar.heightAnchor.constraint(equalToConstant: SSHTerminalBottomBar.shownHeight),
+            back.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 12),
+            back.topAnchor.constraint(equalTo: bar.topAnchor),
+            pill.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -12),
+            pill.topAnchor.constraint(equalTo: bar.topAnchor),
+        ])
+        host.layoutIfNeeded()
+
+        #expect(back.convert(back.bounds, to: host).minY >= grid.frame.maxY, "the bar is below the grid")
+        for (button, id) in [
+            (back.button as UIView, "sshTerminal.back"),
+            (pill.status as UIView, "sshTerminal.programStatus"),
+            (pill.herdr, "sshTerminal.herdr"),
+            (pill.more, "sshTerminal.more"),
+        ] {
+            let center = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: host)
+            #expect(host.hitTest(center, with: nil) === button, "\(id) answers a touch through the bar")
+        }
+        // The grid keeps every row above the bar: a touch just above it is the grid.
+        #expect(host.hitTest(CGPoint(x: 195, y: grid.frame.maxY - 1), with: nil) === grid)
     }
 }

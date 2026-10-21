@@ -1642,7 +1642,8 @@ struct SSHTerminalTests {
 
     @Test func floatingControlsReplaceTheBarAndStepAsideForTheKeyboard() async throws {
         let channel = try SSHTerminalChannel()
-        channel.opened(TerminalConnectionFixture())
+        let fixture = TerminalConnectionFixture()
+        channel.opened(fixture)
         let terminal = SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
         let root = UIViewController()
         // The router's stack gives every incoming screen its bar back.
@@ -1662,6 +1663,11 @@ struct SSHTerminalTests {
         #expect(nav.isNavigationBarHidden, "the terminal never shows the navigation bar")
         let grid = try #require(terminal.gridView)
         let gridBefore = grid.bounds.size
+        let resizes = SSHTerminalResizeLog()
+        let collector = Task { @MainActor in
+            for await geometry in fixture.resizes { resizes.sizes.append(geometry) }
+        }
+        defer { collector.cancel() }
 
         func find(_ id: String, in view: UIView) -> UIView? {
             if view.accessibilityIdentifier == id { return view }
@@ -1701,19 +1707,56 @@ struct SSHTerminalTests {
                     UIResponder.keyboardAnimationCurveUserInfoKey: 7,
                 ]
             )
+            // The bar's height and the grid's reserve change inside the
+            // notification; the frames a finger sees are laid out here.
+            nav.view.layoutIfNeeded()
         }
+        /// Where a control's center is, in the terminal's coordinates.
+        func spot(_ id: String) throws -> CGPoint {
+            let target = try control(id)
+            return target.convert(CGPoint(x: target.bounds.midX, y: target.bounds.midY), to: terminal.view)
+        }
+        let backSpot = try spot("sshTerminal.back")
+        let moreSpot = try spot("sshTerminal.more")
         keyboard(top: window.bounds.maxY - 336)
-        #expect(try touched("sshTerminal.back")?.isDescendant(of: grid) == true, "a faded Back lets the touch reach the grid")
-        #expect(try touched("sshTerminal.more")?.isDescendant(of: grid) == true)
+        #expect(
+            terminal.view.hitTest(backSpot, with: nil)?.isDescendant(of: grid) == true,
+            "the rows the bar gave back belong to the grid, not a faded button"
+        )
+        #expect(terminal.view.hitTest(moreSpot, with: nil)?.isDescendant(of: grid) == true)
         #expect(try hiddenFromVoiceOver("sshTerminal.back"))
+        try await Task.sleep(for: .milliseconds(100))
+        nav.view.layoutIfNeeded()
+        #expect(
+            grid.bounds.height == gridBefore.height + SSHTerminalBottomBar.reserve,
+            "the bar's rows go to the grid while the keyboard is up, in the same resize"
+        )
 
         keyboard(top: window.bounds.maxY)
-        #expect(try touched("sshTerminal.back") === control("sshTerminal.back"), "Back returns with the keyboard down")
-        #expect(try !hiddenFromVoiceOver("sshTerminal.back"))
-        // Settle past the transition's hold: the pills never took rows.
+        #expect(try !hiddenFromVoiceOver("sshTerminal.back"), "Back is back with the keyboard down")
+        // Settle past the transition's hold.
         try await Task.sleep(for: .milliseconds(500))
         nav.view.layoutIfNeeded()
         #expect(grid.bounds.size == gridBefore)
+        /// The glass pill around a button: stack, effect content, effect view,
+        /// glass, then the pill the bar holds.
+        func pill(_ button: UIView) throws -> UIView {
+            var view: UIView? = button
+            for _ in 0..<5 { view = view?.superview }
+            return try #require(view)
+        }
+        let barTop = try pill(control("sshTerminal.back")).convert(CGPoint.zero, to: terminal.view).y
+        let gridBottom = grid.convert(CGPoint(x: 0, y: grid.bounds.maxY), to: terminal.view).y
+        #expect(abs((barTop - gridBottom) - SSHTerminalBottomBar.gridGap) < 0.5)
+        #expect(
+            channel.engine.geometry.rows == Int(grid.bounds.height / grid.cellSize.height),
+            "the remote terminal is the grid above the bar"
+        )
+        let settledResizes = resizes.sizes.count
+        #expect(settledResizes > 0, "the first layout sized the remote terminal")
+        try await Task.sleep(for: .milliseconds(300))
+        nav.view.layoutIfNeeded()
+        #expect(resizes.sizes.count == settledResizes, "settled: the bar adds no resize of its own")
         #expect(nav.isNavigationBarHidden)
 
         // Back's dot means a blocked program (or Herdr) wants you; a notification does not.
@@ -1731,10 +1774,11 @@ struct SSHTerminalTests {
 
         // A broken connection keeps Back and Reconnect in reach with the keyboard up.
         keyboard(top: window.bounds.maxY - 336)
-        #expect(try touched("sshTerminal.back")?.isDescendant(of: grid) == true)
+        #expect(try hiddenFromVoiceOver("sshTerminal.back"), "the bar is gone with the keyboard up")
         channel.event(.closed)
         #expect(await waitForMainActorCondition {
             terminal.updatePropertiesIfNeeded()
+            nav.view.layoutIfNeeded()
             return (try? touched("sshTerminal.back")) === back
         }, "Back stays with the keyboard up once the connection is gone")
 
