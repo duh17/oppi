@@ -12,6 +12,7 @@ struct AgentQuickSessionSubmitKey: Equatable {
     let attachmentIds: [String]
     let modelId: String?
     let thinkingLevel: ThinkingLevel?
+    let engine: SessionEngine
 }
 
 /// One Agent launch's stable launch and turn ids, kept across retries until
@@ -179,7 +180,8 @@ extension QuickSessionModel {
                         prompt: plan.prompt,
                         attachmentIds: attachments.map(\.id),
                         modelId: modelId,
-                        thinkingLevel: agentThinking
+                        thinkingLevel: agentThinking,
+                        engine: launchEngine
                     )
                     var attempt: AgentQuickSessionSubmitAttempt
                     if let pending = agentSubmitAttempt, pending.key == submitKey {
@@ -207,6 +209,7 @@ extension QuickSessionModel {
                                 model: modelId,
                                 thinkingLevel: agentThinking,
                                 parentSessionId: parentSessionId,
+                                engine: launchEngine,
                                 idempotencyKey: attempt.launchIdempotencyKey
                             )
                             // Create-only launch: prompt is sent after attachment upload.

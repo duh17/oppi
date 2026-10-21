@@ -178,7 +178,6 @@ final class QuickSessionModel {
             experimentEnabled: durableExperimentEnabled,
             serverOffersDurable: selectedServerConnection()?.durableSessionsAvailable == true,
             durableByDefault: durableByDefault,
-            savedAgentSelected: selectedAgentId != nil,
             incognito: launchesIncognito,
             chosenEngine: chosenEngine,
             agentResolution: agentResolution

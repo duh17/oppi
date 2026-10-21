@@ -8,7 +8,6 @@ struct DurableSessionsTests {
         experiment: Bool,
         offered: Bool,
         durableDefault: Bool = false,
-        savedAgent: Bool = false,
         incognito: Bool = false,
         chose engine: SessionEngine? = nil,
         agent resolution: DurableSessions.AgentResolution = .resolved
@@ -17,7 +16,6 @@ struct DurableSessionsTests {
             experimentEnabled: experiment,
             serverOffersDurable: offered,
             durableByDefault: durableDefault,
-            savedAgentSelected: savedAgent,
             incognito: incognito,
             chosenEngine: engine,
             agentResolution: resolution
@@ -57,16 +55,6 @@ struct DurableSessionsTests {
         #expect(classic.classicReason == nil)
     }
 
-    @Test func savedAgentLaunchRunsClassicWithAReasonAndCannotBeToggled() {
-        for chose in [nil, SessionEngine.durable] {
-            let agent = decide(experiment: true, offered: true, durableDefault: true, savedAgent: true, chose: chose)
-            #expect(agent.engine == .classic)
-            #expect(agent.showsPill)
-            #expect(!agent.canToggle)
-            #expect(agent.classicReason == DurableSessions.savedAgentClassicReason)
-        }
-    }
-
     @Test func incognitoLaunchRunsClassicWithoutAnEnginePillEvenWhenDurableWasChosen() {
         for chose in [nil, SessionEngine.durable] {
             let incognito = decide(experiment: true, offered: true, durableDefault: true, incognito: true, chose: chose)
@@ -87,14 +75,13 @@ struct DurableSessionsTests {
             }
         }
         #expect(!decide(experiment: true, offered: true, agent: .resolved).blocksLaunch)
-        #expect(!decide(experiment: true, offered: true, savedAgent: true).blocksLaunch)
         // Without durable there is nothing to protect, so the hold does not apply.
         #expect(!decide(experiment: false, offered: true, agent: .pending).blocksLaunch)
         #expect(!decide(experiment: true, offered: false, agent: .failed).blocksLaunch)
     }
 
-    @Test func aChoiceOrAgentChangesNothingWhenDurableIsUnavailable() {
-        let off = decide(experiment: false, offered: true, savedAgent: true, chose: .classic)
+    @Test func aChoiceChangesNothingWhenDurableIsUnavailable() {
+        let off = decide(experiment: false, offered: true, chose: .durable)
         #expect(off.engine == .classic)
         #expect(!off.showsPill)
         #expect(off.classicReason == nil)
