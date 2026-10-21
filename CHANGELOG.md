@@ -101,6 +101,7 @@ Example:
 
 ### Fixed
 
+- **Client:** Opening a chat that holds large screenshots no longer freezes the app for several seconds or briefly uses over a gigabyte of memory, and the chat no longer stalls when a new message arrives in it.
 - **Client:** When iOS starts Oppi in the background while the phone is locked, for example to start a Live Activity, opening Oppi later no longer shows onboarding to a paired user or clears the cached session lists and chats. Siri, Shortcuts, and the share sheet ask you to unlock the phone instead of saying no server is paired. If Oppi still can't read its saved servers, it says so and offers Retry instead of showing onboarding.
 - **Client:** Markdown headings and inline code scale with **Message Text Size**, so headings stay larger than body text at every size, and numbered list items are the same size as other text. Changing Dynamic Type updates open chats without relaunching the app.
 - **Client:** In full-screen readers, raising **Text Size** at accessibility text sizes no longer makes text smaller, and **Standard** spacing looks the same at every text size. See [Text size](docs/document-viewers.md#text-size).

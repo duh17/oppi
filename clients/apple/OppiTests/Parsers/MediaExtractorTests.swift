@@ -41,6 +41,13 @@ struct ImageExtractorTests {
         #expect(images.count == 1)
         #expect(!images[0].base64.contains("\n"))
     }
+
+    @Test func userTextDropsEveryLineOfAWrappedDataURI() {
+        let text = "Look\ndata:image/gif;base64,R0lGODlh\nAQABAIAAAP///wAAA\nCH5BAEAAA==\n- after"
+        let (cleanText, images) = UserMessageImageExtractor.extractImagesFromText(text)
+        #expect(images.map(\.data) == ["R0lGODlhAQABAIAAAP///wAAACH5BAEAAA=="])
+        #expect(cleanText == "Look\n- after")
+    }
 }
 
 @Suite("AudioExtractor")
