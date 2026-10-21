@@ -124,7 +124,10 @@
     "source-map-js": "1.2.2",
     "smol-toml": "1.9.0",
     "@earendil-works/gondolin": {
-      "undici": "6.29.0"
+      "undici": "6.29.1"
+    },
+    "@earendil-works/pi-coding-agent": {
+      "undici": "8.12.2"
     },
     "@earendil-works/pi-agent-core": "file:../.pi/pi-main-tarballs/73f8de8/earendil-works-pi-agent-core-1.3.0.tgz",
     "@earendil-works/pi-mcp": "file:../.pi/pi-main-tarballs/73f8de8/earendil-works-pi-mcp-1.3.0.tgz",
