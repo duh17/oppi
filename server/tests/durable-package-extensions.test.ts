@@ -594,7 +594,7 @@ describe("durable extensions from Pi packages", () => {
       "        wrapped,",
       "        control: host.control(api.env) !== undefined,",
       "        activate: await attempt(() => sessions.activate(target)),",
-      "        pendingWakers: await attempt(() => sessions.pendingWakers(target)),",
+      "        pendingWakers: await attempt(() => sessions.pendingWakers(Number(process.env.OPPI_TEST_TARGET_CONVERSATION))),",
       "        waitForIdle: await attempt(() => sessions.waitForIdle(target)),",
       "      };",
       '      return { output: [{ type: "text", text: JSON.stringify(seen) }] };',
@@ -612,11 +612,17 @@ describe("durable extensions from Pi packages", () => {
     const conversation = f.storage.getSession(f.session.id)!.serverDurable!
       .conversationId as ConversationId;
 
+    // Conversation ids are per store: the other session's id names a conversation of this store
+    // that the caller does not own.
+    const otherConversation = f.storage.getSession(other.id)!.serverDurable!.conversationId;
+    expect(otherConversation).toBeDefined();
     process.env.OPPI_TEST_TARGET_SESSION = other.id;
+    process.env.OPPI_TEST_TARGET_CONVERSATION = String(otherConversation);
     try {
       await prompt(f.manager, f.session.id, "Probe");
     } finally {
       delete process.env.OPPI_TEST_TARGET_SESSION;
+      delete process.env.OPPI_TEST_TARGET_CONVERSATION;
     }
     const [result] = await toolResults(await f.harness(), conversation);
     const refused = `Session ${other.id} is not a child of this session.`;
@@ -625,7 +631,7 @@ describe("durable extensions from Pi packages", () => {
       wrapped: "refused",
       control: false,
       activate: `threw: ${refused}`,
-      pendingWakers: `threw: ${refused}`,
+      pendingWakers: `threw: Conversation ${otherConversation} is not a child of this session`,
       waitForIdle: refused,
     });
   });

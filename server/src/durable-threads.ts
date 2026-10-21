@@ -6,7 +6,6 @@ import {
   type ConversationId,
   type Harness,
   type ModelRef,
-  type TaskId,
 } from "@earendil-works/pi-durable";
 import { homedir } from "node:os";
 import type {
@@ -96,10 +95,10 @@ export class DurableThreads {
           throw new Error(`Conversation ${child.conversationId} is not a child of this session`);
         return this.materialize(child, host.storeId);
       },
-      pendingWakers: async (sessionId) => {
-        const refused = await refuse(sessionId);
-        if (refused !== undefined) throw new Error(refused);
-        return this.pendingWakers(sessionId);
+      pendingWakers: async (child) => {
+        if ((await ownerOf(host, child)) !== caller)
+          throw new Error(`Conversation ${child} is not a child of this session`);
+        return host.pendingWakers(child);
       },
       waitForIdle: async (sessionId) => (await refuse(sessionId)) ?? this.waitForIdle(sessionId),
       activate: async (sessionId, submit) => {
@@ -285,17 +284,6 @@ export class DurableThreads {
     );
     this.materializing.set(key, created);
     return created;
-  }
-
-  /** `SessionHost.pendingWakers` of a bound session's conversation, in its own store. */
-  private async pendingWakers(sessionId: string): Promise<TaskId[]> {
-    const session = this.deps.storage.getSession(sessionId);
-    const conversationId = session?.serverDurable?.conversationId as ConversationId | undefined;
-    if (!session || conversationId === undefined)
-      throw new Error(`Session ${sessionId} has no conversation.`);
-    return this.deps.runtime.withSession(session, (_harness, host) =>
-      host.pendingWakers(conversationId),
-    );
   }
 
   async waitForIdle(sessionId: string): Promise<string | undefined> {

@@ -159,11 +159,13 @@ export interface DurableSessionsHost {
   /** The calling conversation's own Oppi session: who sent an agent message. */
   sender(): SessionSender | undefined;
   /**
-   * Live tasks of a child's conversation that wake it when they end: its background jobs not
-   * yet delivered and its own subagent reporters. Tickers that never end (pills, working words)
-   * are not among them. The same set holds the child's idle timeout (`hasPendingWake`).
+   * Live tasks of a child conversation the caller owns that wake it when they end: its
+   * background jobs not yet delivered and its own subagent reporters. Tickers that never end
+   * (pills, working words) are not among them. The same set holds the child's idle timeout
+   * (`hasPendingWake`). By conversation, not Session: the wakers belong to the conversation,
+   * which outlives a deleted Session. Rejects for a conversation the caller does not own.
    */
-  pendingWakers(sessionId: string): Promise<TaskId[]>;
+  pendingWakers(child: ConversationId): Promise<TaskId[]>;
   /** Wait until a child's conversation is idle. Undefined on success, otherwise an error message. */
   waitForIdle(sessionId: string): Promise<string | undefined>;
   /**

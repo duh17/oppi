@@ -25,7 +25,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { createDurableSessions } from "../extensions/durable/sessions/durable.js";
 import { Subagents } from "../extensions/durable/sessions/contract.js";
-import { ACTIVITY_INTERVAL_MS } from "../extensions/durable/sessions/widget.js";
+import { ACTIVITY_INTERVAL_MS, WAITING_ACTIVITY } from "../extensions/durable/sessions/widget.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import { OppiAgentDoc } from "../src/durable-agent.js";
 import {
@@ -753,6 +753,66 @@ describe("durable-native threads", () => {
 
     await f.manager.sendAbort(child.id);
     await until(async () => (await state()) === "success", "a done row");
+  });
+
+  it("keeps a child whose Session was deleted in a reattached pill, in list, and in wait", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
+        if (text.includes("Spawn gone"))
+          return spawnCall({ task: "CHILD_TASK gone", name: "Gone" });
+        if (text.includes("Spawn kept"))
+          return spawnCall({ task: "CHILD_TASK kept", name: "Kept" });
+        if (text.includes("List them")) return subagentCall("list");
+        if (text.includes("Wait for Gone")) return subagentCall("wait", { names: ["Gone"] });
+        return fauxAssistantMessage(`ANSWER ${text}`);
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    const ask = async (prompt: string, results: number) => {
+      await f.manager.sendPrompt(f.parent.id, prompt);
+      await until(
+        async () => (await toolResults(harness, parentConversation)).length === results,
+        prompt,
+      );
+      await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+      return (await toolResults(harness, parentConversation))[results - 1]!;
+    };
+    const rows = async () =>
+      (
+        (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
+          "widget:subagents"
+        ]?.nativeSurface as { blocks: Array<{ rows: Array<{ title: string }> }> } | undefined
+      )?.blocks[0]?.rows.map((row) => row.title);
+    await ask("Spawn gone", 1);
+    await until(async () => (await reports(harness, parentConversation)).length === 1, "report");
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    const gone = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    await until(() => f.storage.getSession(gone.id)?.status === "stopped", "the child stopping");
+    f.storage.deleteSession(gone.id);
+
+    // A new watcher sees the child for the first time, with no Session behind it.
+    const widgetTask = async () =>
+      (await harness.snapshot(Subagents, parentConversation, context))?.widget;
+    const retired = await widgetTask();
+    await harness.abortTask(retired!, context);
+    await f.manager.stopSession(f.parent.id);
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await until(async () => (await widgetTask()) !== retired, "a new watcher");
+    await ask("Spawn kept", 2);
+    await until(async () => (await rows())?.length === 2, "both rows");
+    expect(await rows()).toEqual(["Gone", "Kept"]);
+
+    const list = await ask("List them", 3);
+    expect(list.isError).toBeFalsy();
+    expect(list.text).toContain("Gone | idle |");
+    expect(list.text).toContain(`session: ${gone.id}`);
+    // wait reports the missing Session in Gone's own line instead of failing the call.
+    const waited = await ask("Wait for Gone", 4);
+    expect(waited.text).toMatch(new RegExp(`^Gone: Session ${gone.id}`));
   });
 
   it("resumes a running child after a restart because its Session keeps it in resumeIds", async () => {
@@ -1554,25 +1614,33 @@ describe("durable-native threads", () => {
   });
 
   describe("a child that answers while its background job runs", () => {
-    /** The child starts a job that waits for `gate`, answers, and answers again on its receipt. */
+    /** Builder's model: on its task it starts `command()` as a job, then answers on its receipt. */
+    const jobModel = (command: () => string) =>
+      model(async ({ last, text }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult" && last.toolName === "background_job")
+          return fauxAssistantMessage("WAITING_ON_JOB");
+        if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
+        if (text.includes("Delegate")) return spawnCall({ name: "Builder", task: "BUILD_TASK" });
+        if (text.includes("Build in the foreground"))
+          return spawnCall({ name: "Builder", task: "BUILD_TASK", wait: true });
+        if (text.includes("Wait for Builder")) return subagentCall("wait", { names: ["Builder"] });
+        if (text.includes("List them")) return subagentCall("list");
+        if (text.includes("BUILD_TASK"))
+          return toolCall("background_job", { action: "start", command: command() });
+        // The job's receipt, finished or interrupted.
+        if (text.includes("Background job bash-1")) return fauxAssistantMessage("BUILD_DONE");
+        return fauxAssistantMessage("OTHER");
+      });
+    /** A job command that runs until the gate file exists. */
+    const gated = (gatePath: string) =>
+      `for i in $(seq 1 400); do [ -f '${gatePath}' ] && break; sleep 0.05; done; echo JOB_OUTPUT`;
+
     async function jobFixture() {
       let command = "";
-      const f = await fixture(
-        model(async ({ last, text }) => {
-          if (text.includes("[session")) return fauxAssistantMessage("NOTED");
-          if (last.role === "toolResult" && last.toolName === "background_job")
-            return fauxAssistantMessage("WAITING_ON_JOB");
-          if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
-          if (text.includes("Delegate")) return spawnCall({ name: "Builder", task: "BUILD_TASK" });
-          if (text.includes("BUILD_TASK"))
-            return toolCall("background_job", { action: "start", command });
-          // The job's receipt, finished or interrupted.
-          if (text.includes("Background job bash-1")) return fauxAssistantMessage("BUILD_DONE");
-          return fauxAssistantMessage("OTHER");
-        }),
-      );
+      const f = await fixture(jobModel(() => command));
       const gatePath = join(f.dir, "job-gate");
-      command = `for i in $(seq 1 400); do [ -f '${gatePath}' ] && break; sleep 0.05; done; echo JOB_OUTPUT`;
+      command = gated(gatePath);
       await f.manager.startSession(f.parent.id, f.workspace);
       await f.manager.sendPrompt(f.parent.id, "Delegate the build");
       const parentConversation = conversationOf(f.storage, f.parent);
@@ -1641,6 +1709,138 @@ describe("durable-native threads", () => {
         "the child stopping after its receipt turn",
       );
       expect(f.manager.isActive(child.id)).toBe(false);
+    });
+
+    /**
+     * The child ended its turn with its job still running while the parent's `subagent` call
+     * still runs: a call that returned at idle would have ended by now.
+     */
+    const heldOnJob = async (f: Fixture, child: Session, parentConversation: ConversationId) => {
+      const harness = await f.harness();
+      const childConversation = conversationOf(f.storage, child);
+      const slot = (await harness.snapshot(LiveDoc, parentConversation, context))?.tools?.find(
+        (candidate) => candidate.name === "subagent",
+      );
+      return (
+        slot?.status === "running" &&
+        (await harness.snapshot(LiveDoc, childConversation, context))?.run === undefined &&
+        (await (await f.owner()).pendingWakers(childConversation)).length > 0
+      );
+    };
+
+    it("returns the answer after the job's receipt from wait, not the answer it gave while waiting on the job", async () => {
+      const { f, child, parentConversation, open } = await jobFixture();
+      const harness = await f.harness();
+      await f.manager.sendPrompt(f.parent.id, "Wait for Builder");
+      await until(() => heldOnJob(f, child, parentConversation), "wait held on the job");
+      expect(await toolResults(harness, parentConversation)).toHaveLength(1);
+
+      open();
+      await until(
+        async () => (await toolResults(harness, parentConversation)).length === 2,
+        "the wait result",
+      );
+      expect((await toolResults(harness, parentConversation))[1]).toMatchObject({
+        toolName: "subagent",
+        text: "Builder: BUILD_DONE",
+      });
+      expect(await (await f.owner()).pendingWakers(conversationOf(f.storage, child))).toEqual([]);
+      // The parent read the final answer once, as the wait result: no report of it followed.
+      await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+      await until(
+        async () => !(await (await f.owner()).hasPendingWake(parentConversation)),
+        "the parent's reporter to end",
+      );
+      await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+      expect(await reports(harness, parentConversation)).toEqual([
+        `[session Builder (${child.id}) finished, no reply needed] WAITING_ON_JOB`,
+      ]);
+    });
+
+    it("ends a wait blocked on the child's job when the user stops the parent's run", async () => {
+      const { f, child, parentConversation, open } = await jobFixture();
+      const harness = await f.harness();
+      await f.manager.sendPrompt(f.parent.id, "Wait for Builder");
+      await until(() => heldOnJob(f, child, parentConversation), "wait held on the job");
+
+      await f.manager.sendAbort(f.parent.id);
+      await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+      // The parent is idle while the child's job still runs.
+      expect(await (await f.owner()).pendingWakers(conversationOf(f.storage, child))).not.toEqual(
+        [],
+      );
+      expect(
+        (await toolResults(harness, parentConversation)).filter((result) =>
+          result.text.includes("BUILD_DONE"),
+        ),
+      ).toEqual([]);
+
+      // The aborted wait returned nothing and took no answer (it would withdraw its report), so
+      // the final answer arrives as a report.
+      open();
+      await expectTwoReports(f, child, parentConversation);
+    });
+
+    it("returns the answer after the job's receipt from spawn with wait, not the answer it gave while waiting on the job", async () => {
+      let command = "";
+      const f = await fixture(jobModel(() => command));
+      const gatePath = join(f.dir, "job-gate");
+      command = gated(gatePath);
+      await f.manager.startSession(f.parent.id, f.workspace);
+      await f.manager.sendPrompt(f.parent.id, "Build in the foreground");
+      const harness = await f.harness();
+      const parentConversation = conversationOf(f.storage, f.parent);
+      await until(() => f.storage.listSessions().length === 2, "the child session");
+      const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+      await until(() => heldOnJob(f, child, parentConversation), "spawn held on the job");
+      expect(await toolResults(harness, parentConversation)).toEqual([]);
+
+      writeFileSync(gatePath, "");
+      await until(
+        async () => (await toolResults(harness, parentConversation)).length === 1,
+        "the spawn result",
+      );
+      expect((await toolResults(harness, parentConversation))[0]).toMatchObject({
+        toolName: "subagent",
+        text: "BUILD_DONE",
+      });
+    });
+
+    it("shows the child as working in its pill and list while its job runs, and done after", async () => {
+      const { f, child, parentConversation, open } = await jobFixture();
+      const harness = await f.harness();
+      const pill = async () =>
+        (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
+          "widget:subagents"
+        ]?.nativeSurface as
+          | {
+              presentation: { title: string; subtitle?: string };
+              blocks: Array<{ rows: Array<Record<string, unknown>> }>;
+            }
+          | undefined;
+      const row = async () => (await pill())?.blocks[0]?.rows[0];
+
+      await until(
+        async () => String((await row())?.detail).includes(WAITING_ACTIVITY),
+        "the waiting row",
+      );
+      expect(await row()).toMatchObject({ state: "running", subtitle: "Working · faux-1" });
+      expect((await pill())?.presentation).toMatchObject({ subtitle: "Working" });
+      await f.manager.sendPrompt(f.parent.id, "List them");
+      await until(
+        async () => (await toolResults(harness, parentConversation)).length === 2,
+        "the list result",
+      );
+      expect((await toolResults(harness, parentConversation))[1]?.text).toContain(
+        "Builder | waiting on background work |",
+      );
+      await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+
+      open();
+      await until(async () => (await row())?.state === "success", "a done row");
+      expect((await pill())?.presentation).toMatchObject({ subtitle: "Done" });
+      expect(String((await row())?.detail)).not.toContain(WAITING_ACTIVITY);
+      await expectTwoReports(f, child, parentConversation);
     });
 
     it("reports its answer once when a restart interrupts the job", async () => {
