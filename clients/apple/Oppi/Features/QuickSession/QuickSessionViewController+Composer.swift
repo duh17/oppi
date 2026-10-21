@@ -51,6 +51,7 @@ extension QuickSessionViewController: ChatComposerSource {
 
     private func composerActionRow(colors: ComposerThemeColors) -> ComposerActionRow {
         let presentation = model.modelPresentation
+        composerIcons.prepare(agents: model.availableAgents, themeID: root.themeStore.activeThemeID)
         let toolbar = ComposerActionRow.sessionToolbar(
             modelTitle: shortModelName(model.effectiveModelId ?? presentation.pillText),
             modelProvider: presentation.pillProvider,
@@ -65,7 +66,7 @@ extension QuickSessionViewController: ChatComposerSource {
         let agent = model.selectedAgent
         let agentAction = ComposerAction.agent(
             title: agent?.name ?? "Pi",
-            icon: agent.map { AgentIconRenderer.render(value: $0.icon, size: 12) } ?? PiAvatarRenderer.render(size: 16),
+            icon: agent.map { composerIcons.icon(for: $0, size: 12) } ?? composerIcons.piAvatar(size: 16),
             colors: colors,
             rows: agentPickerRows,
             isLoading: model.isLoadingAgents,
@@ -81,7 +82,7 @@ extension QuickSessionViewController: ChatComposerSource {
                 id: Self.piRowID,
                 title: "Pi",
                 subtitle: nil,
-                icon: PiAvatarRenderer.render(size: 22),
+                icon: composerIcons.piAvatar(size: 22),
                 isSelected: model.selectedAgentId == nil,
                 accessibilityIdentifier: "quickSession.agent.pi",
                 accessibilityLabel: "Pi"
@@ -93,7 +94,7 @@ extension QuickSessionViewController: ChatComposerSource {
                     id: agent.id,
                     title: agent.name,
                     subtitle: agent.description,
-                    icon: AgentIconRenderer.render(value: agent.icon, size: 16),
+                    icon: composerIcons.icon(for: agent, size: 16),
                     isSelected: model.selectedAgentId == agent.id,
                     accessibilityIdentifier: "quickSession.agent.\(agent.id)",
                     accessibilityLabel: agent.name
@@ -175,5 +176,54 @@ extension QuickSessionViewController: ChatComposerSource {
             colors: colors,
             thinkingTint: thinkingTint
         )
+    }
+}
+
+/// Rendered Agent and Pi icons for Quick Session's composer, keyed by Agent,
+/// icon, and size. The composer rebuilds its action row and Agent list on every
+/// update, and each Genmoji or emoji icon is a raster: reuse the pixels until
+/// the server's Agent list or the theme changes.
+@MainActor
+final class QuickSessionComposerIconCache {
+    private struct AgentIconKey: Hashable {
+        let agentID: String
+        let icon: IconChoice
+        let size: CGFloat
+    }
+
+    private var agents: [AgentDefinitionSummary] = []
+    private var themeID: ThemeID?
+    private var agentIcons: [AgentIconKey: UIImage] = [:]
+    private var piAvatars: [CGFloat: UIImage] = [:]
+
+    /// Drops rasters the new Agent list or theme invalidates. `AgentIconRenderer`
+    /// tints with the palette blue and `PiAvatarRenderer` with the palette
+    /// foreground, so a theme change repaints both.
+    func prepare(agents: [AgentDefinitionSummary], themeID: ThemeID) {
+        if agents != self.agents {
+            self.agents = agents
+            agentIcons.removeAll()
+        }
+        if themeID != self.themeID {
+            self.themeID = themeID
+            agentIcons.removeAll()
+            piAvatars.removeAll()
+        }
+    }
+
+    func icon(for agent: AgentDefinitionSummary, size: CGFloat) -> UIImage {
+        let key = AgentIconKey(agentID: agent.id, icon: agent.icon, size: size)
+        if let cached = agentIcons[key] { return cached }
+        let image = AgentIconRenderer.render(value: agent.icon, size: size)
+        agentIcons[key] = image
+        return image
+    }
+
+    /// The one Pi mark, at each size it is shown.
+    func piAvatar(size: CGFloat) -> UIImage {
+        if let cached = piAvatars[size] { return cached }
+        let image = PiAvatarRenderer.render(size: size)
+        piAvatars[size] = image
+        return image
     }
 }

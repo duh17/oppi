@@ -27,6 +27,8 @@ final class QuickSessionViewController: UIViewController {
     let close: () -> Void
 
     let composer = ChatComposerOwner()
+    /// Rendered Agent and Pi icons the composer reuses between updates.
+    let composerIcons = QuickSessionComposerIconCache()
     /// The dimmed backdrop; a tap on it closes Quick Session. The viewport and
     /// stacked panel sit over it and take their own touches, so a touch that
     /// content passes on never reaches the scrim.
