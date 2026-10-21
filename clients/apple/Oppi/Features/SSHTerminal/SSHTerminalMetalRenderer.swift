@@ -762,9 +762,6 @@ final class SSHTerminalKittyTextureCache {
         // Only RGB and RGBA reach storage: the protocol parses f=24, f=32 and PNG
         // (f=100), which libghostty decodes to RGBA.
         guard image.format == .rgba || image.format == .rgb else { return nil }
-        let (pixels, pixelsOverflowed) = image.width.multipliedReportingOverflow(by: image.height)
-        guard !pixelsOverflowed,
-              payload.byteCount >= pixels * image.format.bytesPerPixel else { return nil }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm, width: image.width, height: image.height, mipmapped: false
         )
@@ -780,26 +777,34 @@ final class SSHTerminalKittyTextureCache {
             )
             return texture
         }
-        // Metal has no 3-channel format, so RGB expands to RGBA at upload. One row
-        // is expanded at a time into a reused buffer: a full-size expansion is up
-        // to 85 MB of temporary that can itself fail (and trap) under the memory
-        // pressure this path runs in. Same total copy, O(width) bytes.
+        // Metal has no 3-channel format, so RGB expands to RGBA at upload. A chunk
+        // of rows is expanded into one reused buffer and uploaded with one
+        // `replace`: a full-size expansion is up to 85 MB of temporary that can
+        // itself fail (and trap) under the memory pressure this path runs in, and
+        // one call per row costs a copy call per row for nothing.
+        let rowsPerChunk = min(image.height, 32)
         let sourceBytesPerRow = image.width * 3
-        // Alpha never changes across rows, so it is filled once here.
-        var row = [UInt8](repeating: 0xFF, count: bytesPerRow)
-        return row.withUnsafeMutableBufferPointer { buffer -> MTLTexture? in
+        // Alpha never changes, so it is filled once here.
+        var chunk = [UInt8](repeating: 0xFF, count: rowsPerChunk * bytesPerRow)
+        return chunk.withUnsafeMutableBufferPointer { buffer -> MTLTexture? in
             guard let expanded = buffer.baseAddress else { return nil }
-            for y in 0..<image.height {
-                let rowStart = source + y * sourceBytesPerRow
-                for x in 0..<image.width {
-                    expanded[x * 4] = rowStart[x * 3]
-                    expanded[x * 4 + 1] = rowStart[x * 3 + 1]
-                    expanded[x * 4 + 2] = rowStart[x * 3 + 2]
+            var y = 0
+            while y < image.height {
+                let rows = min(rowsPerChunk, image.height - y)
+                for row in 0..<rows {
+                    let rowStart = source + (y + row) * sourceBytesPerRow
+                    let dest = expanded + row * bytesPerRow
+                    for x in 0..<image.width {
+                        dest[x * 4] = rowStart[x * 3]
+                        dest[x * 4 + 1] = rowStart[x * 3 + 1]
+                        dest[x * 4 + 2] = rowStart[x * 3 + 2]
+                    }
                 }
                 texture.replace(
-                    region: MTLRegionMake2D(0, y, image.width, 1), mipmapLevel: 0,
+                    region: MTLRegionMake2D(0, y, image.width, rows), mipmapLevel: 0,
                     withBytes: expanded, bytesPerRow: bytesPerRow
                 )
+                y += rows
             }
             return texture
         }
@@ -877,10 +882,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         metrics: SSHTerminalCellMetrics,
         scale: CGFloat,
         atlasSide: Int = SSHTerminalGlyphAtlas.side,
-        kittyTextureLimit: Int = SSHTerminalKittyTextureCache.limitBytes,
-        kittyTextureAllocate: @escaping (MTLDevice, MTLTextureDescriptor) -> MTLTexture? = {
-            $0.makeTexture(descriptor: $1)
-        }
+        kittyTextureLimit: Int = SSHTerminalKittyTextureCache.limitBytes
     ) throws {
         self.device = pipeline.device
         self.queue = pipeline.queue
@@ -890,9 +892,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         self.imagePipeline = pipeline.image
         self.metrics = metrics
         self.scale = max(scale, 1)
-        self.kittyTextures = SSHTerminalKittyTextureCache(
-            limit: kittyTextureLimit, allocate: kittyTextureAllocate
-        )
+        self.kittyTextures = SSHTerminalKittyTextureCache(limit: kittyTextureLimit)
         guard let atlas = SSHTerminalGlyphAtlas(device: pipeline.device, side: atlasSide) else {
             throw RendererError.noAtlas
         }

@@ -417,117 +417,61 @@ struct SSHTerminalKittyGraphicsTests {
         #expect(SSHTerminalKittyTextureBackoff.skipFrames(afterFailures: 0) == 0)
     }
 
-    /// The same schedule measured through real frames: one allocation attempt per
-    /// wait, doubling to the cap, and nothing drawn while it fails.
-    @Test func failedTextureAllocationIsRetriedOnADoublingWait() throws {
+    /// The retry policy seen through the cache that owns it, driven by a real
+    /// engine frame: a failed allocation is retried on a wait, not on every frame;
+    /// nothing draws while it fails; a retransmission is tried straight away; and
+    /// a successful upload leaves no wait pending.
+    @Test func failedAllocationBacksOffWithoutRetryingEveryFrame() throws {
+        let engine = try engine()
+        let device = try SSHTerminalMetalPipeline.shared().device
         let probe = KittyTextureAllocationProbe()
-        probe.fails = true
-        let metrics = SSHTerminalCellMetrics.codeFont()
-        let scale: CGFloat = 1
-        let cellWidth = Int(metrics.cellSize.width * scale)
-        let cellHeight = Int(metrics.cellSize.height * scale)
-        let renderer = try SSHTerminalMetalRenderer(
-            pipeline: try SSHTerminalMetalPipeline.shared(), metrics: metrics, scale: scale,
-            kittyTextureAllocate: probe.allocate
-        )
-        let texture = try #require(renderer.makeOffscreenTexture(
-            width: max(1, cellWidth * 8), height: max(1, cellHeight)
-        ))
-        let engine = try SSHTerminalEngine(geometry: .init(
-            columns: 8, rows: 1, cellWidth: cellWidth, cellHeight: cellHeight
-        )) { _ in }
-        engine.receive(kitty(
-            "a=T,f=32,s=8,v=8,i=31,c=2,r=1",
-            payload: rgbaPayload(Array(repeating: Pixel(red: 0x30, green: 0x60, blue: 0x90), count: 64))
-        ))
+        let cache = SSHTerminalKittyTextureCache(allocate: probe.allocate)
 
-        var attemptFrames: [Int] = []
-        for frame in 1...210 {
-            probe.frame = frame
-            let before = probe.attempts
-            let cost = renderer.encodeOffscreen(
-                frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
-                texture: texture, waitUntilCompleted: true, fullRebuild: false
-            )
-            #expect(cost.completed)
-            #expect(cost.imagePlacementCount == 0, "a picture with no texture does not draw")
-            #expect(probe.attempts - before <= 1, "one frame makes at most one attempt")
-            if probe.attempts > before { attemptFrames.append(frame) }
-        }
-
-        // Attempt, then skip 1 frame, 2, 4 ... 64, and 64 again at the cap.
-        #expect(attemptFrames.prefix(9) == [1, 3, 6, 11, 20, 37, 70, 135, 200])
-        let gaps = zip(attemptFrames, attemptFrames.dropFirst()).map { $1 - $0 - 1 }
-        #expect(gaps.prefix(8) == [1, 2, 4, 8, 16, 32, 64, 64])
-        #expect(probe.attempts == attemptFrames.count, "no attempt escapes the schedule")
-        #expect(renderer.imageUploadCount == 0)
-        #expect(renderer.cachedImageCount == 0, "a refused allocation caches nothing")
-    }
-
-    /// The wait belongs to one image generation: a retransmission is tried on the
-    /// next frame instead of waiting out the old schedule, and the first failure
-    /// after a successful upload starts again at one skipped frame.
-    @Test func textureBackoffResetsWhenTheImageIsRetransmittedOrUploads() throws {
-        let probe = KittyTextureAllocationProbe()
-        probe.fails = true
-        let metrics = SSHTerminalCellMetrics.codeFont()
-        let scale: CGFloat = 1
-        let cellWidth = Int(metrics.cellSize.width * scale)
-        let cellHeight = Int(metrics.cellSize.height * scale)
-        let renderer = try SSHTerminalMetalRenderer(
-            pipeline: try SSHTerminalMetalPipeline.shared(), metrics: metrics, scale: scale,
-            kittyTextureAllocate: probe.allocate
-        )
-        let texture = try #require(renderer.makeOffscreenTexture(
-            width: max(1, cellWidth * 8), height: max(1, cellHeight)
-        ))
-        let engine = try SSHTerminalEngine(geometry: .init(
-            columns: 8, rows: 1, cellWidth: cellWidth, cellHeight: cellHeight
-        )) { _ in }
         func transmit(_ red: UInt8) {
             engine.receive(kitty(
                 "a=T,f=32,s=8,v=8,i=9,c=2,r=1",
                 payload: rgbaPayload(Array(repeating: Pixel(red: red, green: 0x20, blue: 0x40), count: 64))
             ))
         }
-        var frame = 0
-        func encode() -> SSHTerminalMetalFrameCost {
-            frame += 1
-            probe.frame = frame
-            return renderer.encodeOffscreen(
-                frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
-                texture: texture, waitUntilCompleted: true, fullRebuild: false
-            )
+        /// One drawing frame, the way the renderer asks the cache for a texture.
+        func draw() throws -> MTLTexture? {
+            let frame = engine.frame()
+            let image = try #require(frame.kitty?.images.first)
+            cache.beginFrame()
+            return cache.texture(for: image, graphics: frame.kittyGraphics, device: device)
         }
 
-        transmit(0x80)
-        #expect(encode().imagePlacementCount == 0) // frame 1: attempt 1, fails
-        #expect(encode().imagePlacementCount == 0) // frame 2: skipped
-        #expect(encode().imagePlacementCount == 0) // frame 3: attempt 2, fails
-        #expect(probe.attempts == 2, "two failures wait two frames") // next attempt is frame 6
-        probe.fails = false
-        #expect(encode().imagePlacementCount == 0) // frame 4: skipped
-        #expect(encode().imagePlacementCount == 0) // frame 5: skipped
-        #expect(encode().imagePlacementCount == 1) // frame 6: attempt 3 uploads
-        #expect(renderer.imageUploadCount == 1)
-
-        // A retransmission is a new generation: no inherited wait, and with the
-        // allocator failing again it starts over at one skipped frame. The cached
-        // texture of the old generation is gone, so nothing draws until an upload
-        // succeeds.
         probe.fails = true
+        transmit(0x80)
+        for _ in 0..<40 {
+            #expect(try draw() == nil, "a picture with no texture draws nothing")
+        }
+        #expect(probe.attempts > 0, "the allocation is retried")
+        #expect(probe.attempts <= 6, "the wait grows, so 40 frames make a handful of attempts")
+        #expect(cache.uploadCount == 0)
+        #expect(cache.count == 0, "a refused allocation caches nothing")
+
+        // A retransmission is a new generation, so the wait starts over at once.
+        let beforeRetransmit = probe.attempts
         transmit(0x81)
-        #expect(encode().imagePlacementCount == 0) // frame 7: attempt 4, fails
-        #expect(probe.attempts == 4, "a new generation is tried on the next frame")
-        #expect(encode().imagePlacementCount == 0) // frame 8: skipped
-        #expect(encode().imagePlacementCount == 0) // frame 9: attempt 5, fails
-        #expect(probe.attempts == 5, "a new schedule starts at one skipped frame")
-        #expect(probe.attemptFrames == [1, 3, 6, 7, 9])
+        #expect(try draw() == nil)
+        #expect(probe.attempts == beforeRetransmit + 1, "a new generation is tried on the next frame")
+
+        // A successful upload caches the picture and clears the failure count.
+        probe.fails = false
+        var texture: MTLTexture?
+        for _ in 0..<5 where texture == nil { texture = try draw() }
+        #expect(texture != nil, "the upload lands once the allocator works")
+        #expect(cache.uploadCount == 1)
+        #expect(cache.count == 1)
+        let afterSuccess = probe.attempts
+        #expect(try draw() != nil, "the cached texture is reused")
+        #expect(probe.attempts == afterSuccess, "nothing is pending after a success")
     }
 
-    /// RGB expands to RGBA one row at a time into a reused buffer instead of
-    /// allocating and writing a full-size copy. The rows still have to land in the
-    /// right place: each band of the picture keeps its own colour.
+    /// RGB expands to RGBA into a reused chunk of rows instead of allocating and
+    /// writing a full-size copy. The rows still have to land in the right place:
+    /// each band of the picture keeps its own colour.
     @Test func rgbRowsExpandIntoTheRightTextureRows() throws {
         let metrics = SSHTerminalCellMetrics.codeFont()
         let scale: CGFloat = 1
@@ -1077,17 +1021,13 @@ struct SSHTerminalKittyGraphicsTests {
 
 /// Stands in for Metal's texture allocator. A simulator never fails
 /// `makeTexture`, so this is the only way to drive the memory-pressure path: it
-/// records the frame of every attempt and can refuse them.
+/// can refuse allocations and counts the attempts.
 private final class KittyTextureAllocationProbe {
     var fails = false
     private(set) var attempts = 0
-    private(set) var attemptFrames: [Int] = []
-    /// Drawing frame the caller is encoding, recorded per attempt.
-    var frame = 0
 
     func allocate(_ device: MTLDevice, _ descriptor: MTLTextureDescriptor) -> MTLTexture? {
         attempts += 1
-        attemptFrames.append(frame)
         return fails ? nil : device.makeTexture(descriptor: descriptor)
     }
 }
