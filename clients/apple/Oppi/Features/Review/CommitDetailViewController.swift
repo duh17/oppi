@@ -300,50 +300,38 @@ final class CommitDetailViewController: UIViewController {
     /// The commit viewer opened from a chat keeps an `AppNavigation` of its own
     /// (`ChatTimelineDestinationPresenter`), so its chat leaves the app's alone.
     func openQuickActionSession(_ destination: QuickActionSessionNavDestination) {
-        let chat = ChatViewController(
-            sessionId: destination.id,
+        quickActionLauncher.showChat(destination)
+    }
+
+    private var quickActionLauncher: WorkspaceQuickActionLauncher {
+        WorkspaceQuickActionLauncher(
             connection: connection,
-            navigation: appNavigation,
             apiClient: apiClient,
-            workspaceIdHint: configuration.workspaceId,
-            initialInputText: destination.inputText,
-            initialPendingFiles: destination.pendingFileReferences
+            navigation: appNavigation,
+            workspaceId: configuration.workspaceId,
+            presenter: self,
+            isLaunching: { [weak self] in self?.launchActionInFlightTitle != nil },
+            setProgress: { [weak self] in self?.launchActionInFlightTitle = $0 }
         )
-        if let root = HostFactory.root(near: self), chat.traitOverrides.appRootEnvironment == nil {
-            chat.traitOverrides.appRootEnvironment = root
-        }
-        Router.push(chat, from: self)
     }
 
     private func startEmptySession() async {
-        guard launchActionInFlightTitle == nil else { return }
         guard !configuration.workspaceId.isEmpty else {
             WorkspaceQuickActionMenu.presentLaunchError("Workspace is unavailable.", from: self)
             return
         }
-        guard let api = apiClient else {
-            WorkspaceQuickActionMenu.presentLaunchError("Server is offline.", from: self)
-            return
-        }
-
-        launchActionInFlightTitle = String(localized: "Starting new session…")
-        defer { launchActionInFlightTitle = nil }
-
-        do {
-            let response = try await api.createWorkspaceSession(workspaceId: configuration.workspaceId)
-            connection.sessionStore.upsert(response.session)
-            openQuickActionSession(QuickActionSessionNavDestination.attachingCommit(
-                sessionId: response.session.id,
+        let configuration = configuration
+        await quickActionLauncher.startEmptySession { [weak self] session in
+            let detail = self?.detail
+            return .attachingCommit(
+                sessionId: session.id,
                 sha: detail?.sha ?? configuration.commit.sha,
                 message: detail?.message ?? configuration.commit.message
-            ))
-        } catch {
-            WorkspaceQuickActionMenu.presentLaunchError(error.localizedDescription, from: self)
+            )
         }
     }
 
     private func createQuickActionSession(option: WorkspaceQuickActionOption) async {
-        guard launchActionInFlightTitle == nil else { return }
         guard !configuration.workspaceId.isEmpty else {
             WorkspaceQuickActionMenu.presentLaunchError("Workspace is unavailable.", from: self)
             return
@@ -354,31 +342,7 @@ final class CommitDetailViewController: UIViewController {
             WorkspaceQuickActionMenu.presentLaunchError("Commit has no changed files.", from: self)
             return
         }
-        guard let api = apiClient else {
-            WorkspaceQuickActionMenu.presentLaunchError("Server is offline.", from: self)
-            return
-        }
-
-        launchActionInFlightTitle = option.progressTitle
-        defer { launchActionInFlightTitle = nil }
-
-        do {
-            let response = try await api.createWorkspaceQuickActionSession(
-                workspaceId: configuration.workspaceId,
-                paths: paths,
-                commitSha: detail.sha,
-                promptTemplateName: option.promptTemplateName
-            )
-            connection.sessionStore.upsert(response.session)
-            openQuickActionSession(QuickActionSessionNavDestination(
-                id: response.session.id,
-                inputText: response.visiblePrompt,
-                filePaths: response.filePaths,
-                fileDisplayPrefix: option.title
-            ))
-        } catch {
-            WorkspaceQuickActionMenu.presentLaunchError(error.localizedDescription, from: self)
-        }
+        await quickActionLauncher.createSession(option: option, paths: paths, commitSha: detail.sha)
     }
 
     // MARK: Loading

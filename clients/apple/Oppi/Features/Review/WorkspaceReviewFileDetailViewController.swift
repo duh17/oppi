@@ -760,81 +760,36 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
 
     // MARK: Sessions
 
+    private var quickActionLauncher: WorkspaceQuickActionLauncher {
+        WorkspaceQuickActionLauncher(
+            connection: connection,
+            apiClient: apiClient,
+            navigation: appNavigation,
+            workspaceId: configuration.workspaceId,
+            worktreeId: configuration.worktreeId,
+            selectedSessionId: configuration.selectedSessionId,
+            presenter: self,
+            isLaunching: { [weak self] in self?.launchActionInFlightTitle != nil },
+            setProgress: { [weak self] in self?.launchActionInFlightTitle = $0 },
+            push: { [weak self] chat in
+                if let navigator = self?.navigator {
+                    navigator.push(chat)
+                } else if let self {
+                    Router.push(chat, from: self)
+                }
+            }
+        )
+    }
+
     private func startEmptySession() async {
-        guard launchActionInFlightTitle == nil else { return }
-        guard let api = apiClient else {
-            presentLaunchError("Server is offline.")
-            return
-        }
-
-        launchActionInFlightTitle = String(localized: "Starting new session…")
-        defer { launchActionInFlightTitle = nil }
-
-        do {
-            let response = try await api.createWorkspaceSession(
-                workspaceId: configuration.workspaceId,
-                worktreeId: configuration.worktreeId
-            )
-            connection.sessionStore.upsert(response.session)
-            openQuickActionSession(QuickActionSessionNavDestination.attaching(
-                sessionId: response.session.id,
-                filePath: currentFile.path
-            ))
-        } catch {
-            presentLaunchError(error.localizedDescription)
+        let filePath = currentFile.path
+        await quickActionLauncher.startEmptySession { session in
+            .attaching(sessionId: session.id, filePath: filePath)
         }
     }
 
     private func createQuickActionSession(option: WorkspaceQuickActionOption) async {
-        guard launchActionInFlightTitle == nil else { return }
-        guard let api = apiClient else {
-            presentLaunchError("Server is offline.")
-            return
-        }
-
-        launchActionInFlightTitle = option.progressTitle
-        defer { launchActionInFlightTitle = nil }
-
-        do {
-            let response = try await api.createWorkspaceQuickActionSession(
-                workspaceId: configuration.workspaceId,
-                paths: [currentFile.path],
-                selectedSessionId: configuration.selectedSessionId,
-                worktreeId: configuration.worktreeId,
-                promptTemplateName: option.promptTemplateName
-            )
-            connection.sessionStore.upsert(response.session)
-            openQuickActionSession(QuickActionSessionNavDestination(
-                id: response.session.id,
-                inputText: response.visiblePrompt,
-                filePaths: response.filePaths,
-                fileDisplayPrefix: option.title
-            ))
-        } catch {
-            presentLaunchError(error.localizedDescription)
-        }
-    }
-
-    /// Pushes the new session's chat with this review's server and navigation.
-    private func openQuickActionSession(_ destination: QuickActionSessionNavDestination) {
-        let chat = ChatViewController(
-            sessionId: destination.id,
-            connection: connection,
-            navigation: appNavigation,
-            apiClient: apiClient,
-            workspaceIdHint: configuration.workspaceId,
-            initialInputText: destination.inputText,
-            initialPendingFiles: destination.pendingFileReferences
-        )
-        if let navigator {
-            navigator.push(chat)
-        } else {
-            Router.push(chat, from: self)
-        }
-    }
-
-    private func presentLaunchError(_ message: String) {
-        WorkspaceQuickActionMenu.presentLaunchError(message, from: self)
+        await quickActionLauncher.createSession(option: option, paths: [currentFile.path])
     }
 
     private func loadQuickActionsIfNeeded() async {

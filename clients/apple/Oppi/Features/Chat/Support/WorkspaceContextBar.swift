@@ -1343,23 +1343,21 @@ final class WorkspaceContextBarView: UIView {
         }
     }
 
-    /// Pushes the new session's chat above the screen that shows this bar,
-    /// with this bar's server and navigation.
-    private func openQuickActionSession(_ destination: QuickActionSessionNavDestination) {
-        guard let presenter else { return }
-        let chat = ChatViewController(
-            sessionId: destination.id,
+    /// Starts a session from a quick action and pushes its chat above the
+    /// screen that shows this bar, with this bar's server and navigation.
+    private var quickActionLauncher: WorkspaceQuickActionLauncher? {
+        guard let presenter, let workspaceId = context.workspaceId else { return nil }
+        return WorkspaceQuickActionLauncher(
             connection: connection,
-            navigation: navigation,
             apiClient: apiClient,
-            workspaceIdHint: context.workspaceId,
-            initialInputText: destination.inputText,
-            initialPendingFiles: destination.pendingFileReferences
+            navigation: navigation,
+            workspaceId: workspaceId,
+            worktreeId: context.worktreeId,
+            selectedSessionId: context.sessionId,
+            presenter: presenter,
+            isLaunching: { [weak self] in self?.launchActionInFlightTitle != nil },
+            setProgress: { [weak self] in self?.launchActionInFlightTitle = $0 }
         )
-        if let root = HostFactory.root(near: self), chat.traitOverrides.appRootEnvironment == nil {
-            chat.traitOverrides.appRootEnvironment = root
-        }
-        Router.push(chat, from: presenter)
     }
 
     // MARK: Quick actions
@@ -1444,69 +1442,23 @@ final class WorkspaceContextBarView: UIView {
     }
 
     private func launchEmptySession() async {
-        guard let workspaceId = context.workspaceId else { return }
-        guard let api = apiClient else {
-            WorkspaceQuickActionMenu.presentLaunchError("Server is offline.", from: presenter)
-            return
-        }
-        guard launchActionInFlightTitle == nil else { return }
-
-        launchActionInFlightTitle = String(localized: "Starting new session…")
-        defer { launchActionInFlightTitle = nil }
-
-        do {
-            let paths = selectedPathsInListOrder
-            let response = try await api.createWorkspaceSession(
-                workspaceId: workspaceId,
-                worktreeId: context.worktreeId
-            )
-            connection.sessionStore.upsert(response.session)
-            selectedPaths.removeAll()
-            isSelecting = false
-            openQuickActionSession(QuickActionSessionNavDestination.attaching(
-                sessionId: response.session.id,
-                filePaths: paths
-            ))
-        } catch {
-            WorkspaceQuickActionMenu.presentLaunchError(error.localizedDescription, from: presenter)
-        }
+        guard let quickActionLauncher else { return }
+        let paths = selectedPathsInListOrder
+        guard await quickActionLauncher.startEmptySession({ session in
+            .attaching(sessionId: session.id, filePaths: paths)
+        }) else { return }
+        selectedPaths.removeAll()
+        isSelecting = false
     }
 
     private func launchSelection(option: WorkspaceQuickActionOption) async {
-        guard let workspaceId = context.workspaceId, !selectedPaths.isEmpty else { return }
-        guard let api = apiClient else {
-            WorkspaceQuickActionMenu.presentLaunchError("Server is offline.", from: presenter)
-            return
-        }
-        guard launchActionInFlightTitle == nil else { return }
-
+        guard let quickActionLauncher, !selectedPaths.isEmpty else { return }
         // Preserve file order from the list
         let paths = selectedPathsInListOrder
         guard !paths.isEmpty else { return }
-
-        launchActionInFlightTitle = option.progressTitle
-        defer { launchActionInFlightTitle = nil }
-
-        do {
-            let response = try await api.createWorkspaceQuickActionSession(
-                workspaceId: workspaceId,
-                paths: paths,
-                selectedSessionId: context.sessionId,
-                worktreeId: context.worktreeId,
-                promptTemplateName: option.promptTemplateName
-            )
-            connection.sessionStore.upsert(response.session)
-            selectedPaths.removeAll()
-            isSelecting = false
-            openQuickActionSession(QuickActionSessionNavDestination(
-                id: response.session.id,
-                inputText: response.visiblePrompt,
-                filePaths: response.filePaths,
-                fileDisplayPrefix: option.title
-            ))
-        } catch {
-            WorkspaceQuickActionMenu.presentLaunchError(error.localizedDescription, from: presenter)
-        }
+        guard await quickActionLauncher.createSession(option: option, paths: paths) else { return }
+        selectedPaths.removeAll()
+        isSelecting = false
     }
 
     // MARK: Load more commits
