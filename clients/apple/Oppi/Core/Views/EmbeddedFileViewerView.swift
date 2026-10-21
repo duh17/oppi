@@ -315,7 +315,7 @@ enum ChatReaderLinkedFileRouting {
     private static func sessionFileTarget(
         for reference: ResourceReference
     ) -> WorkspaceLinkedFileNavTarget? {
-        OppiApp.sessionFileTarget(for: reference)
+        AppOpener.sessionFileTarget(for: reference)
     }
 
     private static func resourceFileTarget(

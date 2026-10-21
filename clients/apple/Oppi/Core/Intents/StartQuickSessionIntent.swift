@@ -86,7 +86,8 @@ struct StartQuickSessionIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         let start = try await start()
-        await QuickSessionTrigger.shared.requestPresentation(start)
+        // The opener waits for App Lock, launch, and the shell, then presents.
+        await AppDelegate.opener?.open(.quickSession(start))
         return .result()
     }
 

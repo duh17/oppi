@@ -9,8 +9,6 @@ private let lifecycleSignposter = OSSignposter(
     category: "AppLifecyclePerf"
 )
 #if DEBUG
-nonisolated(unsafe) private var e2eInviteProcessedThisProcess = false
-
 /// Bounded scene-transition state for the DEBUG/E2E accessibility probe.
 /// It deliberately excludes user, server, workspace, and session values.
 @MainActor
@@ -78,252 +76,9 @@ struct ForegroundReconnectGate {
     }
 }
 
-struct InAppDeepLinkIntent: Equatable, Sendable {
-    let url: URL
-    let sourceServerID: String?
-}
 
-enum InAppSessionServerResolution {
-    static func resolve(
-        sourceServerID: String?,
-        sourceServerHasMatch: Bool,
-        matchingServerIDs: [String]
-    ) -> String? {
-        if let sourceServerID {
-            return sourceServerHasMatch ? sourceServerID : nil
-        }
-        let uniqueMatches = Set(matchingServerIDs)
-        return uniqueMatches.count == 1 ? uniqueMatches.first : nil
-    }
-}
-
-struct InAppSessionLink: Equatable, Sendable {
-    let sessionId: String
-
-    static func parse(_ url: URL) -> Self? {
-        guard url.scheme?.lowercased() == "oppi",
-              url.host?.lowercased() == "session" else {
-            return nil
-        }
-        let pathParts = url.path
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-        guard pathParts.count == 1,
-              let rawId = pathParts.first,
-              !rawId.isEmpty else {
-            return nil
-        }
-        let sessionId = rawId.removingPercentEncoding ?? rawId
-        guard !sessionId.isEmpty else { return nil }
-        return Self(sessionId: sessionId)
-    }
-}
-
-enum InAppInviteLink {
-    /// True only for invite-shaped connect/pair routes (host or path form).
-    /// Failed leftover `oppi://` URLs must not use the invite-format toast.
-    static func claims(_ url: URL) -> Bool {
-        guard url.scheme?.lowercased() == "oppi" else { return false }
-        let route = url.host?.lowercased()
-            ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
-        return route == "connect" || route == "pair"
-    }
-}
-
-/// Generation is the lock for invite overlay pairing. A new invite cancels the
-/// previous task and must run even if the previous attempt's in-flight flag is
-/// still set.
-struct InvitePairingGate {
-    private(set) var generation: UInt64 = 0
-    private(set) var inFlight = false
-
-    mutating func beginIncoming() -> UInt64 {
-        generation &+= 1
-        return generation
-    }
-
-    mutating func cancel() {
-        generation &+= 1
-        inFlight = false
-    }
-
-    func shouldRun(_ attempt: UInt64) -> Bool {
-        attempt == generation
-    }
-
-    mutating func markStarted(_ attempt: UInt64) {
-        guard shouldRun(attempt) else { return }
-        inFlight = true
-    }
-
-    mutating func markFinished(_ attempt: UInt64) {
-        guard shouldRun(attempt) else { return }
-        inFlight = false
-    }
-}
-
-enum MissingSessionDeepLinkNavigationPolicy {
-    @MainActor
-    static func showWorkspaceRoot(in navigation: AppNavigation) {
-        navigation.selectedTab = .workspaces
-        navigation.clearWorkspaceSelections()
-    }
-}
-
-enum SessionDeepLinkNavigationDisposition: Equatable {
-    case open
-    case park
-    case showWorkspaceRoot
-}
-
-enum SessionDeepLinkNavigationPolicy {
-    static func disposition(
-        sessionIsAvailable: Bool,
-        launchPhase: AppLaunchPhase,
-        startupComplete: Bool,
-        inviteBootstrapInFlight: Bool,
-        parkingAllowed: Bool
-    ) -> SessionDeepLinkNavigationDisposition {
-        if sessionIsAvailable {
-            return .open
-        }
-        let startupIsResolving = launchPhase == .resolving || !startupComplete
-        if parkingAllowed && (startupIsResolving || inviteBootstrapInFlight) {
-            return .park
-        }
-        return .showWorkspaceRoot
-    }
-}
-
-enum SessionDeepLinkSessionResolution {
-    /// Servers to try for `GET /sessions/:id` when the row is not cached.
-    /// Active server first, then any server that already has this ask in memory.
-    /// Do not probe the rest of the pairing list on the tap path.
-    static func fetchServerIds(
-        activeServerId: String?,
-        serverIdsWithPendingAsk: [String]
-    ) -> [String] {
-        var ids: [String] = []
-        if let activeServerId, !activeServerId.isEmpty {
-            ids.append(activeServerId)
-        }
-        for serverId in serverIdsWithPendingAsk where !ids.contains(serverId) {
-            ids.append(serverId)
-        }
-        return ids
-    }
-}
-
-/// Production sequence after a session-targeted notification or `oppi://session` tap.
-@MainActor
-enum SessionNotificationOpen {
-    static func openResolved(
-        sessionId: String,
-        serverId: String,
-        connection: ServerConnection,
-        navigation: AppNavigation,
-        source: SessionNavigationSource,
-        workspaceIdHint: String? = nil
-    ) async {
-        await connection.prepareExternalSessionOpen(sessionId: sessionId)
-        let workspaceId = connection.sessionReentryWorkspaceId(
-            for: sessionId,
-            workspaceIdHint: workspaceIdHint
-        )
-        navigation.selectedTab = .workspaces
-        navigation.openSession(
-            WorkspaceSessionNavTarget(
-                serverId: serverId,
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                routeScope: connection.sessionStore.routeScope(for: sessionId)
-            ),
-            source: source
-        )
-    }
-}
-
-@MainActor
-enum AppStartupSequence {
-    static func run(
-        startupWork: () async -> Void,
-        markComplete: () -> Void
-    ) async {
-        await startupWork()
-        markComplete()
-    }
-}
-
-enum WorkspaceDeepLink {
-    struct Payload: Equatable, Sendable {
-        let path: String
-        let name: String?
-        let serverFingerprint: String?
-    }
-
-    static func fingerprintsMatch(_ lhs: String, _ rhs: String) -> Bool {
-        normalizedFingerprint(lhs) == normalizedFingerprint(rhs)
-    }
-
-    static func payload(from url: URL) -> Payload? {
-        guard url.scheme?.lowercased() == "oppi" else {
-            return nil
-        }
-        guard routeName(from: url) == "workspace" else {
-            return nil
-        }
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let queryItems = components.queryItems else {
-            return nil
-        }
-        guard let path = trimmedQueryValue("path", in: queryItems), !path.isEmpty else {
-            return nil
-        }
-
-        let name = nonEmptyTrimmedQueryValue("name", in: queryItems)
-        let serverFingerprint = nonEmptyTrimmedQueryValue("server", in: queryItems)
-        return Payload(path: path, name: name, serverFingerprint: serverFingerprint)
-    }
-
-    private static func routeName(from url: URL) -> String? {
-        if let host = url.host?.trimmingCharacters(in: .whitespacesAndNewlines), !host.isEmpty {
-            return host.lowercased()
-        }
-        return url.path
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .first?
-            .lowercased()
-    }
-
-    private static func trimmedQueryValue(_ name: String, in queryItems: [URLQueryItem]) -> String? {
-        queryItems
-            .first { $0.name.lowercased() == name }
-            .flatMap(\.value)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private static func nonEmptyTrimmedQueryValue(_ name: String, in queryItems: [URLQueryItem]) -> String? {
-        guard let value = trimmedQueryValue(name, in: queryItems), !value.isEmpty else {
-            return nil
-        }
-        return value
-    }
-
-    private static func normalizedFingerprint(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.lowercased().hasPrefix("sha256:") {
-            return String(trimmed.dropFirst("sha256:".count))
-        }
-        return trimmed
-    }
-}
 
 /// A `[[link]]` that matched more than one resource; the user picks one.
-struct PendingResourceReferenceChoice {
-    let reference: ResourceReference
-    let matches: [ResourceReferenceMatch]
-}
-
 struct LaunchRefreshTelemetryOutcome: Equatable, Sendable {
     let overall: String
     let workspace: String
@@ -357,81 +112,25 @@ struct LaunchRefreshTelemetryOutcome: Equatable, Sendable {
     }
 }
 
-enum FileLinkOpenPolicy {
-    enum Kind: Equatable {
-        case workspaceFile
-        case hostFile
-    }
-
-    struct ResolvedLink: Equatable {
-        let serverId: String
-        let workspace: Workspace
-        let kind: Kind
-        let path: String
-
-        var relativePath: String { path }
-
-        var fileName: String {
-            (path as NSString).lastPathComponent
-        }
-    }
-
-    static func resolve(
-        payload: FileLinkPayload,
-        workspacesByServer: [String: [Workspace]]
-    ) -> ResolvedLink? {
-        for (serverId, workspaces) in workspacesByServer {
-            guard let workspace = workspaces.first(where: { $0.id == payload.workspaceID }) else {
-                continue
-            }
-            if let relativePath = payload.filePath.workspaceRelativePath(hostMount: workspace.hostMount) {
-                return ResolvedLink(
-                    serverId: serverId,
-                    workspace: workspace,
-                    kind: .workspaceFile,
-                    path: relativePath
-                )
-            }
-            return ResolvedLink(
-                serverId: serverId,
-                workspace: workspace,
-                kind: .hostFile,
-                path: payload.filePath
-            )
-        }
-        return nil
-    }
-}
-
-/// The app: its scoped services and the handlers that span every screen (deep
-/// links, notifications, resource links, scene phases, launch). The UIKit
-/// scene (`SceneDelegate`) owns the window and forwards URLs and phases;
-/// `AppRootViewController` owns what the window shows.
+/// The app: its scoped services, launch, scene phases, diagnostics, and
+/// memory. Every open (URLs, notification taps, Siri, controls, links) goes to
+/// the window's `AppOpener`; the UIKit scene (`SceneDelegate`) owns the window
+/// and forwards URLs and phases, and `AppRootViewController` owns what the
+/// window shows.
 @MainActor @Observable
 final class OppiApp {
     let root: AppRootEnvironment
     private var coordinator: ConnectionCoordinator { root.coordinator }
     private var navigation: AppNavigation { root.navigation }
     private var composerDraftStore: ComposerDraftStore { root.composerDraftStore }
+    private var opener: AppOpener { root.opener }
 
     /// Convenience accessor — most lifecycle code targets the active connection.
     private var connection: ServerConnection { coordinator.activeConnection }
     private var serverStore: ServerStore { coordinator.serverStore }
 
-    /// An invite waiting for approval on the user's other device. The root
-    /// covers the app until it resolves or the user cancels.
-    private(set) var invitePairingWaitExpiresAt: Int64?
-    /// A `[[link]]` that matched more than one resource. The root asks which.
-    private(set) var pendingResourceReferenceChoice: PendingResourceReferenceChoice?
-
     @ObservationIgnored private let navigationRouteTelemetry = NavigationRouteTelemetryCoalescer()
     @ObservationIgnored private let mainThreadLagWatchdog = MainThreadLagWatchdog()
-    @ObservationIgnored private var invitePairingGate = InvitePairingGate()
-    @ObservationIgnored private var invitePairingTask: Task<Void, Never>?
-    @ObservationIgnored private var appStartupComplete = false
-    @ObservationIgnored private let intentSessionOpenTrigger = IntentSessionOpenTrigger.shared
-    @ObservationIgnored private var pendingSessionDeepLinkId: String?
-    @ObservationIgnored private let resourceReferenceRequestCoordinator = ResourceReferenceRequestCoordinator()
     @ObservationIgnored private var foregroundReconnectGate = ForegroundReconnectGate()
     @ObservationIgnored private let backgroundKeepAlive = BackgroundKeepAlive()
     @ObservationIgnored private var scenePhase: ScenePhase = .inactive
@@ -450,17 +149,28 @@ final class OppiApp {
 #endif
         FeatureEducationTips.configure()
         LocalHTTPCache.disableDiskCacheAndPurgeLeftovers()
+        let coordinator = ConnectionCoordinator(
+            serverStore: ServerStore(),
+            seenStorage: SessionSeenLedgerStorage(defaults: .standard)
+        )
+        let navigation = AppNavigation()
+        let composerDraftStore = ComposerDraftStore()
+        // The opener exists before any scene connects, so a notification
+        // response or scene URL delivered during launch has its owner.
+        let opener = AppOpener(
+            coordinator: coordinator,
+            navigation: navigation,
+            composerDraftStore: composerDraftStore
+        )
         root = AppRootEnvironment(
-            coordinator: ConnectionCoordinator(
-                serverStore: ServerStore(),
-                seenStorage: SessionSeenLedgerStorage(defaults: .standard)
-            ),
-            navigation: AppNavigation(),
+            coordinator: coordinator,
+            navigation: navigation,
             themeStore: ThemeStore(),
             quickCommentTemplateStore: QuickCommentTemplateStore(),
-            composerDraftStore: ComposerDraftStore(),
+            composerDraftStore: composerDraftStore,
             chatReaderPayloadStore: ChatReaderPayloadStore(),
-            sessionRows: SessionRowDisplayStore()
+            sessionRows: SessionRowDisplayStore(),
+            opener: opener
         )
     }
 
@@ -492,22 +202,15 @@ final class OppiApp {
         Task {
             await startApp()
             OppiShortcutsProvider.updateAppShortcutParameters()
-            await consumePendingSessionDeepLinkIfNeeded()
-            await consumeIntentSessionOpenIfNeeded()
-        }
-    }
-
-    /// An `oppi://` URL from outside the app. App Lock: links (pairing,
-    /// sessions, workspaces) wait for unlock so nothing pairs or navigates
-    /// behind the cover.
-    func open(_ url: URL) {
-        AppLockService.shared.performWhenUnlocked { [self] in
-            Task { await handleIncomingURL(url) }
         }
     }
 
     func sceneWillEnterForeground() { changeScenePhase(to: .inactive) }
-    func sceneDidBecomeActive() { changeScenePhase(to: .active) }
+    func sceneDidBecomeActive() {
+        changeScenePhase(to: .active)
+        // A request whose server was unreachable retries here.
+        opener.sceneDidBecomeActive()
+    }
     func sceneWillResignActive() { changeScenePhase(to: .inactive) }
     func sceneDidEnterBackground() { changeScenePhase(to: .background) }
 
@@ -515,28 +218,6 @@ final class OppiApp {
         guard phase != scenePhase else { return }
         scenePhase = phase
         handleScenePhase(phase)
-    }
-
-    // MARK: - Root prompts
-
-    func cancelInvitePairing() {
-        invitePairingGate.cancel()
-        invitePairingTask?.cancel()
-        invitePairingTask = nil
-        invitePairingWaitExpiresAt = nil
-    }
-
-    func startOpeningResourceReferenceMatch(_ match: ResourceReferenceMatch) {
-        guard let reference = pendingResourceReferenceChoice?.reference else { return }
-        pendingResourceReferenceChoice = nil
-        resourceReferenceRequestCoordinator.perform { [self] token in
-            await openResourceReferenceMatch(match, reference: reference, token: token)
-        }
-    }
-
-    func cancelResourceReferenceRequest() {
-        pendingResourceReferenceChoice = nil
-        resourceReferenceRequestCoordinator.cancel()
     }
 
     // MARK: - App-wide events
@@ -553,23 +234,22 @@ final class OppiApp {
         observeAppEvent(UIContentSizeCategory.didChangeNotification) { _, _ in
             AppFont.rebuild()
         }
+        // Link taps are pre-existing producers until the in-app step; each
+        // already belongs to the one owner.
         observeAppEvent(.inviteDeepLinkTapped) { app, notification in
             guard let url = notification.object as? URL else { return }
-            app.open(url)
+            app.opener.open(AppOpenRequest(url: url, origin: .inAppHyperlink))
         }
         observeAppEvent(.inAppDeepLinkTapped) { app, notification in
             guard let url = notification.object as? URL else { return }
             let sourceServerID = notification.userInfo?[
                 Notification.Name.inAppDeepLinkSourceServerIDKey
             ] as? String
-            AppLockService.shared.performWhenUnlocked {
-                Task {
-                    await app.handleInAppURL(InAppDeepLinkIntent(
-                        url: url,
-                        sourceServerID: sourceServerID
-                    ))
-                }
-            }
+            app.opener.open(AppOpenRequest(
+                url: url,
+                origin: .inAppHyperlink,
+                sourceServerID: sourceServerID
+            ))
         }
         observeAppEvent(.webLinkTapped) { _, notification in
             guard let url = notification.object as? URL else { return }
@@ -585,17 +265,18 @@ final class OppiApp {
         }
         observeAppEvent(.resourceReferenceTapped) { app, notification in
             guard let reference = notification.object as? ResourceReference else { return }
-            app.startResourceReferenceRequest(reference)
+            app.opener.open(.resourceReference(reference))
         }
         observeAppEvent(.sessionFileReferenceTapped) { app, notification in
             guard let reference = notification.object as? ResourceReference else { return }
-            Task { await app.openSessionFileReference(reference) }
+            app.opener.open(.sessionFile(reference))
         }
         observeAppEvent(.fileLinkTapped) { app, notification in
             guard let payload = notification.object as? FileLinkPayload else { return }
-            Task { _ = await app.handleIncomingFileLink(payload) }
+            app.opener.open(.fileLink(payload))
         }
     }
+
 
     private func observeAppEvent(
         _ name: Notification.Name,
@@ -615,8 +296,7 @@ final class OppiApp {
         })
     }
 
-    /// Navigation changes feed the crash context and route telemetry, and a
-    /// Siri session open waits for launch.
+    /// Navigation changes feed the crash context and route telemetry.
     private func observeNavigation() {
         let navigation = navigation
         recordNavigationChanges("launch_phase") { navigation.launchPhase }
@@ -627,10 +307,6 @@ final class OppiApp {
         recordNavigationChanges("stack_destination") { navigation.workspaceStackDiagnosticContext }
         recordNavigationChanges("split_destination") { navigation.visibleSplitDiagnosticContext }
         recordNavigationChanges("split_detail_depth") { navigation.splitDetailPathElements.count }
-        let trigger = intentSessionOpenTrigger
-        onChange(of: { trigger.requestID }) { app in
-            Task { await app.consumeIntentSessionOpenIfNeeded() }
-        }
     }
 
     private func recordNavigationChanges<Value: Equatable & Sendable>(
@@ -701,10 +377,10 @@ final class OppiApp {
 
     @MainActor
     private func startApp() async {
-        await AppStartupSequence.run(
-            startupWork: { await performAppStartupWork() },
-            markComplete: { appStartupComplete = true }
-        )
+        await performAppStartupWork()
+        // Launch is over: the opener can now run what waited for it (a
+        // cold-launch URL or notification tap included).
+        opener.launchDidFinish()
     }
 
     @MainActor
@@ -744,7 +420,7 @@ final class OppiApp {
         let e2eInvite = e2eOverride == "skip" ? nil :
             (e2eOverride ?? ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"])
         if let e2eInvite, let e2eURL = URL(string: e2eInvite) {
-            if e2eInviteProcessedThisProcess {
+            if AppOpener.e2eLaunchInviteAlreadyProcessed {
                 os_log(.error, "[E2E] Invite already processed this process; skipping duplicate bootstrap")
                 navigation.launchPhase = .ready
                 navigation.showOnboarding = false
@@ -766,7 +442,8 @@ final class OppiApp {
                 os_log(.error, "[E2E] Cleared %{public}d stale servers", removed)
 
                 os_log(.error, "[E2E] Processing invite URL: %{public}@", e2eInvite.prefix(80).description)
-                await handleIncomingURL(e2eURL)
+                // The launch invite is launch: run its bootstrap in place.
+                await opener.runInviteForLaunch(e2eURL)
                 navigation.launchPhase = .ready
                 os_log(.error, "[E2E] Invite processing complete. showOnboarding=%{public}d workspaces=%{public}d",
                        navigation.showOnboarding ? 1 : 0,
@@ -780,890 +457,6 @@ final class OppiApp {
 #endif
     }
 
-#if DEBUG
-    @MainActor
-    private func scheduleE2EInAppBrowserIfRequested() {
-        guard let url = Self.e2eInAppBrowserURL() else {
-            return
-        }
-
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
-            InAppBrowserPresenter.present(url: url)
-        }
-    }
-
-    private static func e2eInAppBrowserURL() -> URL? {
-        let rawURL = ProcessInfo.processInfo.environment["OPPI_E2E_OPEN_IN_APP_BROWSER_URL"]
-            ?? ProcessInfo.processInfo.arguments
-                .first(where: { $0.hasPrefix("--e2e-open-in-app-browser=") })?
-                .dropFirst("--e2e-open-in-app-browser=".count)
-                .description
-
-        guard let rawURL,
-              let url = URL(string: rawURL),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else {
-            return nil
-        }
-        return url
-    }
-#endif
-
-    @MainActor
-    private func handleInAppURL(_ intent: InAppDeepLinkIntent) async {
-        guard let link = InAppSessionLink.parse(intent.url) else {
-            await handleIncomingURL(intent.url)
-            return
-        }
-        let matches = coordinator.connections.compactMap { serverID, connection in
-            connection.sessionStore.sessions.contains(where: { $0.id == link.sessionId })
-                ? serverID
-                : nil
-        }
-        guard let serverID = InAppSessionServerResolution.resolve(
-            sourceServerID: intent.sourceServerID,
-            sourceServerHasMatch: intent.sourceServerID.map(matches.contains) ?? false,
-            matchingServerIDs: matches
-        ), let connection = coordinator.connection(for: serverID) else {
-            return
-        }
-        await openWorkspaceSession(
-            serverId: serverID,
-            sessionId: link.sessionId,
-            connection: connection,
-            source: .inAppHyperlink
-        )
-    }
-
-    @MainActor
-    private func handleIncomingURL(_ url: URL) async {
-#if DEBUG
-        if let e2eInvite = ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"],
-           url.absoluteString == e2eInvite {
-            guard !e2eInviteProcessedThisProcess else { return }
-            e2eInviteProcessedThisProcess = true
-        }
-#endif
-        if await handleIncomingSessionURL(url) {
-            return
-        }
-        if await handleIncomingWorkspaceURL(url) {
-            return
-        }
-        await handleIncomingInviteURL(url)
-    }
-
-    nonisolated static func sessionFileTarget(
-        for reference: ResourceReference
-    ) -> WorkspaceLinkedFileNavTarget? {
-        guard let serverID = reference.sourceServerID,
-              let workspaceID = reference.workspaceID,
-              let sessionID = reference.sourceSessionID,
-              let path = reference.fileCandidatePath,
-              !serverID.isEmpty,
-              !workspaceID.isEmpty,
-              !sessionID.isEmpty,
-              !path.isEmpty else {
-            return nil
-        }
-        return .sessionFile(
-            serverId: serverID,
-            workspaceId: workspaceID,
-            sessionId: sessionID,
-            path: path,
-            lineAnchor: reference.lineAnchor,
-            sourceSessionId: sessionID
-        )
-    }
-
-    @MainActor
-    private func openSessionFileReference(_ reference: ResourceReference) async {
-        guard let target = Self.sessionFileTarget(for: reference) else {
-            connection.extensionToast = "Could not open this session file"
-            return
-        }
-        guard await ScopedLockService.shared.authorize(WorkspaceLinkedFileViewController.lockTarget(for: target)) else {
-            return
-        }
-        guard await coordinator.switchToServerReady(target.serverId) else {
-            connection.extensionToast = "Could not open the server for this session file"
-            return
-        }
-        await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate {
-            NotificationCenter.default.post(
-                name: .workspaceLinkedFileWillOpen,
-                object: target.sourceSessionId,
-                userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: target.serverId]
-            )
-            navigation.openReferencedWorkspaceLinkedFile(
-                target,
-                sourceSession: target.sourceSessionId.map {
-                    WorkspaceSessionNavTarget(
-                        serverId: target.serverId,
-                        sessionId: $0,
-                        workspaceId: target.workspaceId
-                    )
-                }
-            )
-        }
-    }
-
-    private func startResourceReferenceRequest(_ reference: ResourceReference) {
-        pendingResourceReferenceChoice = nil
-        resourceReferenceRequestCoordinator.perform { [self] token in
-            await handleResourceReference(reference, token: token)
-        }
-    }
-
-    @MainActor
-    private func handleResourceReference(
-        _ reference: ResourceReference,
-        token: ResourceReferenceRequestCoordinator.Token
-    ) async {
-        guard !ResourceReferenceSelfLinkPolicy.isCurrentSession(reference) else {
-            return
-        }
-        let sessionMatches = reference.lineAnchor == nil
-            ? knownSessionMatches(for: reference.target)
-            : []
-        let fileLookup: ResourceReferenceFileLookup
-        do {
-            fileLookup = try await currentFileMatches(for: reference)
-        } catch is CancellationError {
-            // A superseded tap is dropped rather than surfaced as "right now".
-            return
-        } catch {
-            // Host-file lookup never throws; unexpected workspace throws stay
-            // "right now" instead of looking like a true unresolved file.
-            fileLookup = .unavailable
-        }
-        guard resourceReferenceRequestCoordinator.isCurrent(token) else { return }
-
-        switch ResourceReferenceCandidateCollector.resolve(
-            reference,
-            sessionMatches: sessionMatches,
-            fileLookup: fileLookup
-        ) {
-        case .unavailable:
-            connection.extensionToast = "Could not resolve [[\(reference.target)]] right now"
-        case .authorizationFailed:
-            connection.extensionToast = "Could not authorize host file [[\(reference.target)]]"
-        case .resolution(.unresolved(let target)):
-            connection.extensionToast = "Could not resolve [[\(target)]]"
-        case .resolution(.resolved(let match)):
-            await openResourceReferenceMatch(match, reference: reference, token: token)
-        case .resolution(.ambiguous(let matches)):
-            guard resourceReferenceRequestCoordinator.isCurrent(token) else { return }
-            pendingResourceReferenceChoice = PendingResourceReferenceChoice(
-                reference: reference,
-                matches: matches
-            )
-        }
-    }
-
-    @MainActor
-    private func knownSessionMatches(for target: String) -> [ResourceReferenceMatch] {
-        coordinator.connections.flatMap { serverID, connection in
-            connection.sessionStore.sessions.compactMap { session in
-                guard session.id == target else { return nil }
-                let workspaceName = session.workspaceId.flatMap { workspaceID in
-                    connection.workspaceStore.workspaces.first { $0.id == workspaceID }?.name
-                }
-                return .session(SessionResourceReference(
-                    serverID: serverID,
-                    sessionID: session.id,
-                    workspaceID: session.workspaceId,
-                    displayName: session.displayTitle,
-                    workspaceName: workspaceName,
-                    serverName: resourceReferenceServerName(serverID)
-                ))
-            }
-        }
-    }
-
-    @MainActor
-    private func currentFileMatches(
-        for reference: ResourceReference
-    ) async throws -> ResourceReferenceFileLookup {
-        switch ResourceReferenceFileLookupPolicy.kind(for: reference) {
-        case .hostFile:
-            return await currentHostFileMatches(for: reference)
-        case .workspaceFile:
-            return try await currentWorkspaceFileMatches(for: reference)
-        }
-    }
-
-    @MainActor
-    private func currentHostFileMatches(
-        for reference: ResourceReference
-    ) async -> ResourceReferenceFileLookup {
-        guard let fileCandidatePath = reference.fileCandidatePath else {
-            return .notApplicable
-        }
-
-        let scopes: [(serverID: String, connection: ServerConnection)]
-        if let sourceServerID = reference.sourceServerID {
-            guard let connection = coordinator.connection(for: sourceServerID) else {
-                return .unavailable
-            }
-            scopes = [(sourceServerID, connection)]
-        } else {
-            scopes = coordinator.connections.map { ($0.key, $0.value) }
-            guard !scopes.isEmpty else { return .unavailable }
-        }
-
-        var matches: [ResourceReferenceMatch] = []
-        for scope in scopes {
-            guard let apiClient = scope.connection.apiClient else { return .unavailable }
-            do {
-                let resolvedPath = try await apiClient.resolveHostFile(path: fileCandidatePath)
-                try Task.checkCancellation()
-                if let resolvedPath {
-                    matches.append(.hostFile(HostFileResourceReference(
-                        serverID: scope.serverID,
-                        path: resolvedPath,
-                        serverName: resourceReferenceServerName(scope.serverID)
-                    )))
-                }
-            } catch let APIError.server(status, _) where status == 404 {
-                continue
-            } catch let APIError.server(status, _) where status == 401 || status == 403 {
-                return .authorizationFailed
-            } catch let APIError.codedServer(status, _, _) where status == 401 || status == 403 {
-                return .authorizationFailed
-            } catch {
-                return .unavailable
-            }
-        }
-        return .complete(matches)
-    }
-
-    @MainActor
-    private func currentWorkspaceFileMatches(
-        for reference: ResourceReference
-    ) async throws -> ResourceReferenceFileLookup {
-        guard reference.kind == .workspaceFile,
-              let workspaceID = reference.workspaceID,
-              let fileCandidatePath = reference.fileCandidatePath else {
-            return .notApplicable
-        }
-
-        let scopes: [(serverID: String, connection: ServerConnection, workspace: Workspace)]
-        if let sourceServerID = reference.sourceServerID {
-            guard let connection = coordinator.connection(for: sourceServerID),
-                  let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == workspaceID }) else {
-                return .unavailable
-            }
-            scopes = [(sourceServerID, connection, workspace)]
-        } else {
-            scopes = coordinator.connections.compactMap { serverID, connection in
-                guard let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == workspaceID }) else {
-                    return nil
-                }
-                return (serverID, connection, workspace)
-            }
-            guard !scopes.isEmpty else { return .unavailable }
-        }
-
-        var matches: [ResourceReferenceMatch] = []
-        for scope in scopes {
-            guard let apiClient = scope.connection.apiClient else { return .unavailable }
-
-            // Resolve the source session's checkout. A missing or foreign
-            // source session means the checkout is unknown: list the main
-            // checkout (nil) instead of failing closed, because a gitignored
-            // workspace file (for example `.pi/skills/...`) may exist only on
-            // the main checkout.
-            let sourceSessionResolved: Bool
-            let sourceSessionWorktreeID: String?
-            if let sourceSessionID = reference.sourceSessionID,
-               let sourceSession = scope.connection.sessionStore.session(id: sourceSessionID),
-               sourceSession.workspaceId == workspaceID {
-                sourceSessionResolved = true
-                sourceSessionWorktreeID = sourceSession.worktreeId
-            } else {
-                sourceSessionResolved = false
-                sourceSessionWorktreeID = nil
-            }
-            let firstWorktreeID = WorkspaceWikiLinkFileLookupPolicy.firstCheckout(
-                sourceSessionResolved: sourceSessionResolved,
-                sourceSessionWorktreeID: sourceSessionWorktreeID
-            )
-
-            var outcome = try await exactFileListingResult(
-                fileCandidatePath,
-                workspaceID: workspaceID,
-                worktreeID: firstWorktreeID,
-                apiClient: apiClient
-            )
-            let effectiveWorktreeID = WorkspaceWikiLinkFileLookupPolicy.resolvedCheckout(
-                sourceSessionResolved: sourceSessionResolved,
-                sourceSessionWorktreeID: sourceSessionWorktreeID,
-                firstOutcome: outcome
-            )
-
-            // A git-ignored workspace file (for example `.pi/skills/...`) is
-            // not checked out into a fresh worktree. If the worktree lookup is
-            // a deterministic absence, retry the same workspace-relative path
-            // against the main checkout before declaring the link unresolvable.
-            // The server's realpath sandbox still bounds both lookups.
-            if effectiveWorktreeID != firstWorktreeID {
-                outcome = try await exactFileListingResult(
-                    fileCandidatePath,
-                    workspaceID: workspaceID,
-                    worktreeID: effectiveWorktreeID,
-                    apiClient: apiClient
-                )
-            }
-
-            switch outcome {
-            case .present:
-                matches.append(.workspaceFile(WorkspaceFileResourceReference(
-                    serverID: scope.serverID,
-                    workspaceID: workspaceID,
-                    worktreeID: effectiveWorktreeID,
-                    path: fileCandidatePath,
-                    workspaceName: scope.workspace.name,
-                    serverName: resourceReferenceServerName(scope.serverID)
-                )))
-            case .absent:
-                break
-            case .truncated, .unavailable:
-                return .unavailable
-            }
-        }
-
-        return .complete(matches)
-    }
-
-    @MainActor
-    private func exactFileListingResult(
-        _ filePath: String,
-        workspaceID: String,
-        worktreeID: String?,
-        apiClient: APIClient
-    ) async throws -> ExactFileListingOutcome {
-        let fileName = (filePath as NSString).lastPathComponent
-        let parent = (filePath as NSString).deletingLastPathComponent
-        let directoryPath = parent.isEmpty || parent == "." ? "" : parent + "/"
-
-        let listing: DirectoryListingResponse
-        do {
-            listing = try await apiClient.listWorkspaceDirectory(
-                workspaceId: workspaceID,
-                path: directoryPath,
-                worktreeId: worktreeID
-            )
-        } catch {
-            // A superseded tap must stay silent: propagate cancellation instead
-            // of turning it into a transient "right now" failure.
-            try Task.checkCancellation()
-            return WorkspaceWikiLinkFileLookupPolicy.isDeterministicAbsence(error)
-                ? .absent
-                : .unavailable
-        }
-
-        try Task.checkCancellation()
-        switch ResourceFileCandidatePolicy.directoryResult(
-            fileName: fileName,
-            entries: listing.entries,
-            truncated: listing.truncated
-        ) {
-        case .some(true):
-            return .present
-        case .some(false):
-            return .absent
-        case .none:
-            return .truncated
-        }
-    }
-
-    @MainActor
-    private func openResourceReferenceMatch(
-        _ match: ResourceReferenceMatch,
-        reference: ResourceReference,
-        token: ResourceReferenceRequestCoordinator.Token
-    ) async {
-        switch match {
-        case .session(let session):
-            guard !ResourceReferenceSelfLinkPolicy.isCurrentSession(reference) else {
-                return
-            }
-            guard let connection = coordinator.connection(for: session.serverID) else {
-                guard resourceReferenceRequestCoordinator.isCurrent(token) else { return }
-                self.connection.extensionToast = "Could not open session \(session.sessionID)"
-                return
-            }
-            guard await ScopedLockService.shared.authorize(
-                ScopedLockService.shared.sessionTarget(serverId: session.serverID, sessionId: session.sessionID)
-            ), resourceReferenceRequestCoordinator.isCurrent(token) else { return }
-            guard await coordinator.switchToServerReady(session.serverID, shouldActivate: { [self] in
-                resourceReferenceRequestCoordinator.isCurrent(token)
-            }), resourceReferenceRequestCoordinator.isCurrent(token) else {
-                return
-            }
-            let workspaceID = connection.sessionReentryWorkspaceId(for: session.sessionID)
-            let routeScope = connection.sessionStore.routeScope(for: session.sessionID)
-            await dismissCoveringDocumentOverlayThenNavigateIfCurrent(token: token) {
-                connection.sessionStore.activeSessionId = session.sessionID
-                connection.prepareForSessionReentry(session.sessionID, workspaceIdHint: workspaceID)
-                navigation.openReferencedSession(WorkspaceSessionNavTarget(
-                    serverId: session.serverID,
-                    sessionId: session.sessionID,
-                    workspaceId: workspaceID,
-                    routeScope: routeScope
-                ))
-            }
-
-        case .workspaceFile(let file):
-            guard let connection = coordinator.connection(for: file.serverID),
-                  let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == file.workspaceID }) else {
-                guard resourceReferenceRequestCoordinator.isCurrent(token) else { return }
-                self.connection.extensionToast = "Could not open file \(file.path)"
-                return
-            }
-            guard await ScopedLockService.shared.authorize(
-                .workspace(serverId: file.serverID, workspaceId: file.workspaceID)
-            ), resourceReferenceRequestCoordinator.isCurrent(token) else { return }
-            guard await coordinator.switchToServerReady(file.serverID, shouldActivate: { [self] in
-                resourceReferenceRequestCoordinator.isCurrent(token)
-            }), resourceReferenceRequestCoordinator.isCurrent(token) else {
-                return
-            }
-
-            await dismissCoveringDocumentOverlayThenNavigateIfCurrent(token: token) {
-                if let sourceSessionID = reference.sourceSessionID,
-                   let sourceServerID = reference.sourceServerID {
-                    // Session IDs are only unique within one server. Keep this
-                    // pre-navigation capture scoped so another server's chat cannot
-                    // freeze its viewport when IDs happen to collide.
-                    NotificationCenter.default.post(
-                        name: .workspaceLinkedFileWillOpen,
-                        object: sourceSessionID,
-                        userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: sourceServerID]
-                    )
-                }
-                navigation.openReferencedWorkspaceLinkedFile(
-                    .workspaceFile(
-                        serverId: file.serverID,
-                        workspaceId: file.workspaceID,
-                        worktreeId: file.worktreeID,
-                        path: file.path,
-                        lineAnchor: reference.lineAnchor,
-                        sourceSessionId: reference.sourceSessionID
-                    ),
-                    workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace),
-                    sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
-                        reference.sourceServerID.map { sourceServerID in
-                            WorkspaceSessionNavTarget(
-                                serverId: sourceServerID,
-                                sessionId: sourceSessionID
-                            )
-                        }
-                    }
-                )
-            }
-
-        case .hostFile(let file):
-            guard let connection = coordinator.connection(for: file.serverID) else {
-                guard resourceReferenceRequestCoordinator.isCurrent(token) else { return }
-                self.connection.extensionToast = "Could not open file \(file.path)"
-                return
-            }
-            guard await ScopedLockService.shared.authorize(.server(file.serverID)),
-                  resourceReferenceRequestCoordinator.isCurrent(token) else { return }
-            guard await coordinator.switchToServerReady(file.serverID, shouldActivate: { [self] in
-                resourceReferenceRequestCoordinator.isCurrent(token)
-            }), resourceReferenceRequestCoordinator.isCurrent(token) else {
-                return
-            }
-
-            await dismissCoveringDocumentOverlayThenNavigateIfCurrent(token: token) {
-                if let sourceSessionID = reference.sourceSessionID,
-                   let sourceServerID = reference.sourceServerID {
-                    NotificationCenter.default.post(
-                        name: .workspaceLinkedFileWillOpen,
-                        object: sourceSessionID,
-                        userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: sourceServerID]
-                    )
-                }
-                // Host files stay on the current stack. Do not select another
-                // workspace or pretend the file lives in this checkout.
-                navigation.openReferencedWorkspaceLinkedFile(
-                    .hostFile(
-                        serverId: file.serverID,
-                        workspaceId: reference.workspaceID ?? "",
-                        path: file.path,
-                        lineAnchor: reference.lineAnchor,
-                        sourceSessionId: reference.sourceSessionID
-                    ),
-                    sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
-                        reference.sourceServerID.map { sourceServerID in
-                            WorkspaceSessionNavTarget(
-                                serverId: sourceServerID,
-                                sessionId: sourceSessionID
-                            )
-                        }
-                    }
-                )
-            }
-        }
-    }
-
-    @MainActor
-    private func dismissCoveringDocumentOverlayThenNavigateIfCurrent(
-        token: ResourceReferenceRequestCoordinator.Token,
-        navigate: () -> Void
-    ) async {
-        await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
-            shouldNavigate: { resourceReferenceRequestCoordinator.isCurrent(token) },
-            navigate: navigate
-        )
-    }
-
-    private func resourceReferenceServerName(_ serverID: String) -> String {
-        serverStore.server(for: serverID)?.name ?? "Server \(serverID.prefix(8))"
-    }
-
-    @MainActor
-    private func handleIncomingFileLink(_ payload: FileLinkPayload) async -> Bool {
-        guard let resolution = resolveFileLink(payload) else {
-            connection.extensionToast = "Could not open this file link"
-            return false
-        }
-        guard await ScopedLockService.shared.authorize(
-            WorkspaceLinkedFileViewController.lockTarget(for: resolution.target)
-        ) else { return true }
-        guard await coordinator.switchToServerReady(resolution.target.serverId) else {
-            connection.extensionToast = "Could not open the server for this file link"
-            return false
-        }
-
-        let workspace: WorkspaceNavTarget?
-        if case .workspaceFile = resolution.target.kind {
-            workspace = WorkspaceNavTarget(serverId: resolution.target.serverId, workspace: resolution.workspace)
-        } else {
-            workspace = nil
-        }
-        await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate {
-            navigation.openWorkspaceLinkedFile(resolution.target, workspace: workspace)
-        }
-        return true
-    }
-
-    private func resolveFileLink(_ payload: FileLinkPayload) -> (target: WorkspaceLinkedFileNavTarget, workspace: Workspace)? {
-        let workspacesByServer = Dictionary(
-            uniqueKeysWithValues: coordinator.connections.map { serverId, connection in
-                (serverId, connection.workspaceStore.workspaces)
-            }
-        )
-        guard let resolution = FileLinkOpenPolicy.resolve(
-            payload: payload,
-            workspacesByServer: workspacesByServer
-        ) else {
-            return nil
-        }
-        let kind: WorkspaceLinkedFileKind
-        switch resolution.kind {
-        case .workspaceFile:
-            kind = .workspaceFile(path: resolution.path, fileName: resolution.fileName)
-        case .hostFile:
-            kind = .hostFile(path: resolution.path, fileName: resolution.fileName)
-        }
-        return (
-            target: WorkspaceLinkedFileNavTarget(
-                serverId: resolution.serverId,
-                workspaceId: payload.workspaceID,
-                kind: kind
-            ),
-            workspace: resolution.workspace
-        )
-    }
-
-    /// Handle external `oppi://session/<sessionId>` URLs, including Live Activity taps.
-    @MainActor
-    private func handleIncomingSessionURL(_ url: URL) async -> Bool {
-        guard url.scheme?.lowercased() == "oppi" else {
-            return false
-        }
-        guard url.host?.lowercased() == "session" else {
-            return false
-        }
-        guard let link = InAppSessionLink.parse(url) else {
-            return false
-        }
-        await navigateToSessionFromDeepLink(
-            link.sessionId,
-            source: .externalURL,
-            parkingAllowed: true
-        )
-        return true
-    }
-
-    @MainActor
-    private func consumePendingSessionDeepLinkIfNeeded() async {
-        guard let sessionId = pendingSessionDeepLinkId else { return }
-        pendingSessionDeepLinkId = nil
-        await navigateToSessionFromDeepLink(
-            sessionId,
-            source: .externalURL,
-            parkingAllowed: false
-        )
-    }
-
-    @MainActor
-    private func consumeIntentSessionOpenIfNeeded() async {
-        guard let receipt = intentSessionOpenTrigger.consume(startupComplete: appStartupComplete) else {
-            return
-        }
-        // Siri / Shortcuts: a locked target asks first; cancel drops the open.
-        guard await ScopedLockService.shared.authorize(
-            ScopedLockService.shared.sessionTarget(
-                serverId: receipt.serverId,
-                sessionId: receipt.sessionId,
-                workspaceId: receipt.workspaceId
-            )
-        ) else { return }
-        guard await coordinator.switchToServerReady(receipt.serverId),
-              let connection = coordinator.connection(for: receipt.serverId) else {
-            intentSessionOpenTrigger.enqueue(receipt)
-            return
-        }
-        if let session = receipt.session {
-            connection.sessionStore.upsert(session)
-        }
-        if let prompt = receipt.unsentPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !prompt.isEmpty,
-           let workspaceId = receipt.workspaceId,
-           let key = ComposerDraftKey(
-               serverID: receipt.serverId,
-               workspaceID: workspaceId,
-               sessionID: receipt.sessionId
-           ) {
-            composerDraftStore.setDraft(
-                ComposerDraftPayload(text: prompt, repoPointers: [], attachments: []),
-                for: key
-            )
-        }
-        await SessionNotificationOpen.openResolved(
-            sessionId: receipt.sessionId,
-            serverId: receipt.serverId,
-            connection: connection,
-            navigation: navigation,
-            source: .externalURL,
-            workspaceIdHint: receipt.workspaceId
-        )
-    }
-
-    @MainActor
-    private func navigateToSessionFromDeepLink(
-        _ sessionId: String,
-        source: SessionNavigationSource,
-        parkingAllowed: Bool
-    ) async {
-        let foundSession = await coordinator.findOrFetchSession(id: sessionId)
-        switch SessionDeepLinkNavigationPolicy.disposition(
-            sessionIsAvailable: foundSession != nil,
-            launchPhase: navigation.launchPhase,
-            startupComplete: appStartupComplete,
-            inviteBootstrapInFlight: invitePairingGate.inFlight,
-            parkingAllowed: parkingAllowed
-        ) {
-        case .open:
-            guard let foundSession else { return }
-            await openWorkspaceSession(
-                serverId: foundSession.serverId,
-                sessionId: sessionId,
-                connection: foundSession.connection,
-                source: source
-            )
-        case .park:
-            // URL and notification routes share this one-shot launch parking slot.
-            pendingSessionDeepLinkId = sessionId
-        case .showWorkspaceRoot:
-            showWorkspaceRootForMissingSessionDeepLink()
-        }
-    }
-
-    @MainActor
-    private func showWorkspaceRootForMissingSessionDeepLink() {
-        MissingSessionDeepLinkNavigationPolicy.showWorkspaceRoot(in: navigation)
-    }
-
-    /// Handle `oppi://workspace?path=<path>&name=<name>[&server=<fingerprint>]` deep links.
-    @MainActor
-    private func handleIncomingWorkspaceURL(_ url: URL) async -> Bool {
-        guard let payload = WorkspaceDeepLink.payload(from: url) else { return false }
-        guard let server = workspaceDeepLinkTargetServer(for: payload) else { return true }
-        guard await ScopedLockService.shared.authorize(.server(server.id)) else { return true }
-        guard await coordinator.switchToServerReady(server) else {
-            connection.extensionToast = "Could not open the server for this workspace link"
-            return true
-        }
-
-        navigation.pendingWorkspaceDeepLink = payload
-        navigation.showAllWorkspaceSessions()
-        return true
-    }
-
-    @MainActor
-    private func workspaceDeepLinkTargetServer(for payload: WorkspaceDeepLink.Payload) -> PairedServer? {
-        if let fingerprint = payload.serverFingerprint {
-            if let server = serverStore.servers.first(where: { WorkspaceDeepLink.fingerprintsMatch($0.id, fingerprint) }) {
-                return server
-            }
-            connection.extensionToast = "Server not found for this workspace link"
-            return nil
-        }
-
-        if serverStore.servers.count == 1, let server = serverStore.servers.first {
-            return server
-        }
-
-        if serverStore.servers.isEmpty {
-            connection.extensionToast = "Pair a server before opening workspace links"
-        } else {
-            connection.extensionToast = "Workspace link needs a server fingerprint"
-        }
-        return nil
-    }
-
-    @MainActor
-    private func openWorkspaceSession(
-        serverId: String,
-        sessionId: String,
-        connection: ServerConnection,
-        source: SessionNavigationSource = .externalURL
-    ) async {
-        // A locked session (or its workspace or server) asks before Oppi
-        // switches servers, so cancel leaves everything where it was.
-        guard await ScopedLockService.shared.authorize(
-            ScopedLockService.shared.sessionTarget(serverId: serverId, sessionId: sessionId)
-        ) else { return }
-        guard await coordinator.switchToServerReady(serverId) else { return }
-        await SessionNotificationOpen.openResolved(
-            sessionId: sessionId,
-            serverId: serverId,
-            connection: connection,
-            navigation: navigation,
-            source: source
-        )
-    }
-
-    @MainActor
-    private func handleIncomingInviteURL(_ url: URL) async {
-        invitePairingTask?.cancel()
-        let generation = invitePairingGate.beginIncoming()
-        let task = Task { @MainActor in
-            await runInviteBootstrap(url, generation: generation)
-        }
-        invitePairingTask = task
-        await task.value
-    }
-
-    @MainActor
-    private func runInviteBootstrap(_ url: URL, generation: UInt64) async {
-        guard invitePairingGate.shouldRun(generation) else { return }
-        guard let credentials = ServerCredentials.decodeInviteURL(url) else {
-            if InAppInviteLink.claims(url) {
-                connection.extensionToast = "Unsupported invite link format"
-            }
-            return
-        }
-        invitePairingGate.markStarted(generation)
-        defer {
-            invitePairingGate.markFinished(generation)
-            if invitePairingGate.shouldRun(generation) {
-                invitePairingWaitExpiresAt = nil
-            }
-        }
-#if DEBUG
-        let isE2EInviteLaunch = ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil
-            || ProcessInfo.processInfo.environment["OPPI_E2E_LAUNCH_INVITE"] != nil
-#endif
-        do {
-            let enrollment: InviteEnrollment
-#if DEBUG
-            if isE2EInviteLaunch {
-                enrollment = try await E2EAppAuthBootstrap.enroll(
-                    credentials: credentials,
-                    serverStore: serverStore,
-                    coordinator: coordinator
-                )
-            } else {
-                enrollment = try await enrollInvite(credentials, generation: generation)
-            }
-#else
-            enrollment = try await enrollInvite(credentials, generation: generation)
-#endif
-            // A newer invite only takes over the UI; this pairing is saved.
-            guard invitePairingGate.shouldRun(generation), !Task.isCancelled else { return }
-            // A newer selection owns the active connection; pairing still succeeded.
-            guard enrollment.selected else { return }
-
-            // Reset the newly selected connection. The environment connection
-            // can still point at the previous server during deep-link handling.
-            let selectedConnection = coordinator.activeConnection
-            selectedConnection.disconnectSession()
-            selectedConnection.sessionStore.sessions.removeAll()
-            selectedConnection.sessionStore.activeSessionId = nil
-
-            selectedConnection.sessionStore.markSyncStarted()
-            selectedConnection.sessionStore.applyServerSnapshot(enrollment.sessions, preserveRecentWindow: 0)
-            selectedConnection.sessionStore.markSyncSucceeded()
-            selectedConnection.syncLiveActivityState()
-            navigation.showOnboarding = false
-            // The reset clears focus under any on-screen chat; landing on the inbox dismisses it, so its claim release is a no-op and the re-synced list shows.
-            navigation.showAllWorkspaceSessions()
-            if let api = selectedConnection.apiClient {
-                MetricKitService.shared.setUploadClient(api)
-                await selectedConnection.refreshWorkspaceCatalog(force: true)
-            }
-#if DEBUG
-            if !isE2EInviteLaunch {
-                selectedConnection.extensionToast = "Connected to \(enrollment.name)"
-            }
-#else
-            selectedConnection.extensionToast = "Connected to \(enrollment.name)"
-#endif
-        } catch is CancellationError {
-            guard invitePairingGate.shouldRun(generation) else { return }
-            connection.sessionStore.markSyncFailed()
-        } catch {
-            guard invitePairingGate.shouldRun(generation) else { return }
-            connection.sessionStore.markSyncFailed()
-#if DEBUG
-            if isE2EInviteLaunch, !serverStore.servers.isEmpty {
-                navigation.showOnboarding = false
-                navigation.launchPhase = .ready
-                return
-            }
-#endif
-            if AppLaunchPairingPolicy.shouldShowOnboardingAfterInviteFailure(
-                pairedServerCount: serverStore.servers.count
-            ) {
-                navigation.showOnboarding = true
-            }
-            connection.extensionToast = "Invite link failed: \(error.localizedDescription)"
-        }
-    }
-
-    @MainActor
-    private func enrollInvite(_ credentials: ServerCredentials, generation: UInt64) async throws -> InviteEnrollment {
-        try await InviteBootstrapService.enroll(
-            credentials: credentials,
-            serverStore: serverStore,
-            coordinator: coordinator,
-            onWaitingForApproval: { [self] expiresAt in
-                guard invitePairingGate.shouldRun(generation) else { return }
-                invitePairingWaitExpiresAt = expiresAt
-            },
-            confirmTrust: { reason in
-                await BiometricService.shared.authenticate(reason: reason)
-            }
-        )
-    }
 
     @MainActor
     private func recordDiagnosticContext(
@@ -1967,43 +760,44 @@ final class OppiApp {
     private func setupNotifications() async {
         let notificationService = AttentionNotificationService.shared
         notificationService.configureForLaunch()
-
-        // Navigate to session when user taps an attention notification body.
-        // The service may deliver a tap latched before this handler was wired.
-        notificationService.onNavigateToSession = { [self] sessionId in
-            guard !sessionId.isEmpty else { return }
-            AppLockService.shared.performWhenUnlocked { [self] in
-                Task { @MainActor in
-                    await navigateToSessionFromDeepLink(
-                        sessionId,
-                        source: .externalURL,
-                        parkingAllowed: true
-                    )
-                }
-            }
-        }
+        // The service delivers its responses to the owner. AppDelegate also
+        // wires this synchronously, before any response can arrive; setting it
+        // again here keeps the launch path independent of that ordering.
+        notificationService.opener = opener
         notificationService.isSessionOnScreen = { [coordinator] serverId, sessionId in
             coordinator.connection(for: serverId)?.isFocusedSession(sessionId) ?? false
         }
-        notificationService.onPairingDeny = { [coordinator] payload in
-            guard let approvalId = payload.approvalId else { return }
-            await PairingApprovalController.shared.performNotificationDeny(
-                serverId: payload.serverId,
-                approvalId: approvalId,
-                coordinator: coordinator
-            )
+    }
+
+#if DEBUG
+    @MainActor
+    private func scheduleE2EInAppBrowserIfRequested() {
+        guard let url = Self.e2eInAppBrowserURL() else {
+            return
         }
-        notificationService.onPairingNotification = { [coordinator] payload in
-            AppLockService.shared.performWhenUnlocked {
-                PairingApprovalController.shared.handleNotification(
-                    serverId: payload.serverId,
-                    approvalId: payload.approvalId,
-                    action: payload.action,
-                    coordinator: coordinator
-                )
-            }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            InAppBrowserPresenter.present(url: url)
         }
     }
+
+    private static func e2eInAppBrowserURL() -> URL? {
+        let rawURL = ProcessInfo.processInfo.environment["OPPI_E2E_OPEN_IN_APP_BROWSER_URL"]
+            ?? ProcessInfo.processInfo.arguments
+                .first(where: { $0.hasPrefix("--e2e-open-in-app-browser=") })?
+                .dropFirst("--e2e-open-in-app-browser=".count)
+                .description
+
+        guard let rawURL,
+              let url = URL(string: rawURL),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+        return url
+    }
+#endif
 
     private func reconnectOnLaunch() async {
         let startedAt = Date()

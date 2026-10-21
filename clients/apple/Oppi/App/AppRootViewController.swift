@@ -66,10 +66,10 @@ final class AppRootViewController: UIViewController {
         content?.view.isUserInteractionEnabled = !showsQuickSession
         content?.view.accessibilityElementsHidden = showsQuickSession
 
-        showPairingWait(expiresAt: app.invitePairingWaitExpiresAt)
+        showPairingWait(expiresAt: root.opener.invitePairingWaitExpiresAt)
         // The App Lock cover sits in its own window above this one.
         view.accessibilityElementsHidden = AppLockService.shared.isLocked
-        showResourceChoice(app.pendingResourceReferenceChoice)
+        showResourceChoice(root.opener.pendingResourceReferenceChoice)
     }
 
     private static func content(for navigation: AppNavigation) -> Content {
@@ -119,7 +119,7 @@ final class AppRootViewController: UIViewController {
         }
         guard let expiresAt else { return }
         let cover = HostFactory.content(
-            AppRootLayer.pairingWaitCover(expiresAt: expiresAt) { [weak app] in app?.cancelInvitePairing() },
+            AppRootLayer.pairingWaitCover(expiresAt: expiresAt) { [weak opener = app.root.opener] in opener?.cancelInvitePairing() },
             root: root
         )
         embed(cover, at: view.subviews.count)
@@ -162,14 +162,14 @@ final class AppRootViewController: UIViewController {
             preferredStyle: .actionSheet
         )
         for match in choice.matches {
-            let action = UIAlertAction(title: match.choiceLabel, style: .default) { [weak app] _ in
-                app?.startOpeningResourceReferenceMatch(match)
+            let action = UIAlertAction(title: match.choiceLabel, style: .default) { [weak opener = app.root.opener] _ in
+                opener?.startOpeningResourceReferenceMatch(match)
             }
             action.accessibilityLabel = match.accessibilityLabel
             alert.addAction(action)
         }
-        alert.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel) { [weak app] _ in
-            app?.cancelResourceReferenceRequest()
+        alert.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel) { [weak opener = app.root.opener] _ in
+            opener?.cancelResourceReferenceRequest()
         })
         if let popover = alert.popoverPresentationController {
             popover.sourceView = view

@@ -267,18 +267,19 @@ struct IntentSessionDisambiguationTests {
 @Suite("IntentSessionOpenTrigger")
 @MainActor
 struct IntentSessionOpenTriggerTests {
-    @Test func consumeOnce() {
+    @Test func takeOnce() {
         let fixture = Fixture()
         defer { fixture.remove() }
         let trigger = fixture.makeTrigger()
         let requestID = trigger.issueRequestID()
         trigger.enqueue(fixture.receipt(requestID: requestID, sessionId: "session-1"))
 
-        let first = trigger.consume(startupComplete: true)
-        let second = trigger.consume(startupComplete: true)
+        let first = trigger.take(requestID: requestID)
+        let second = trigger.take(requestID: requestID)
 
         #expect(first?.sessionId == "session-1")
         #expect(second == nil)
+        #expect(trigger.peek() == nil)
     }
 
     @Test func newerWins() {
@@ -290,7 +291,8 @@ struct IntentSessionOpenTriggerTests {
         trigger.enqueue(fixture.receipt(requestID: firstID, sessionId: "older"))
         trigger.enqueue(fixture.receipt(requestID: secondID, sessionId: "newer"))
 
-        #expect(trigger.consume(startupComplete: true)?.sessionId == "newer")
+        #expect(trigger.take(requestID: secondID)?.sessionId == "newer")
+        #expect(trigger.take(requestID: firstID) == nil)
     }
 
     @Test func olderAsyncDoesNotOverrideNewer() {
@@ -302,18 +304,21 @@ struct IntentSessionOpenTriggerTests {
         trigger.enqueue(fixture.receipt(requestID: secondID, sessionId: "newer"))
         trigger.enqueue(fixture.receipt(requestID: firstID, sessionId: "older"))
 
-        #expect(trigger.consume(startupComplete: true)?.sessionId == "newer")
+        #expect(trigger.take(requestID: secondID)?.sessionId == "newer")
+        #expect(trigger.take(requestID: firstID) == nil)
     }
 
-    @Test func consumeWaitsForStartupGate() {
+    @Test func takeIgnoresAnotherRequestsReceipt() {
         let fixture = Fixture()
         defer { fixture.remove() }
         let trigger = fixture.makeTrigger()
         let requestID = trigger.issueRequestID()
         trigger.enqueue(fixture.receipt(requestID: requestID, sessionId: "session-1"))
 
-        #expect(trigger.consume(startupComplete: false) == nil)
-        #expect(trigger.consume(startupComplete: true)?.sessionId == "session-1")
+        // A superseded Siri open must not consume the newer receipt.
+        #expect(trigger.take(requestID: requestID - 1) == nil)
+        #expect(trigger.peek()?.sessionId == "session-1")
+        #expect(trigger.take(requestID: requestID)?.sessionId == "session-1")
     }
 
     @Test func olderEnqueueAfterConsumeIsIgnored() {
@@ -324,9 +329,10 @@ struct IntentSessionOpenTriggerTests {
         let secondID = trigger.issueRequestID()
         trigger.enqueue(fixture.receipt(requestID: secondID, sessionId: "newer"))
 
-        #expect(trigger.consume(startupComplete: true)?.sessionId == "newer")
+        #expect(trigger.take(requestID: secondID)?.sessionId == "newer")
         trigger.enqueue(fixture.receipt(requestID: firstID, sessionId: "older"))
-        #expect(trigger.consume(startupComplete: true) == nil)
+        #expect(trigger.take(requestID: firstID) == nil)
+        #expect(trigger.peek() == nil)
     }
 
     @Test func persistedReceiptSurvivesNewInstance() {
@@ -355,12 +361,12 @@ struct IntentSessionOpenTriggerTests {
         }
 
         let second = fixture.makeTrigger()
-        let consumed = second.consume(startupComplete: true)
+        let consumed = second.take(requestID: requestID)
         #expect(consumed?.serverId == "server-a")
         #expect(consumed?.workspaceId == "ws-1")
         #expect(consumed?.sessionId == "session-1")
         #expect(consumed?.unsentPrompt == "Ship it")
-        #expect(second.consume(startupComplete: true) == nil)
+        #expect(second.take(requestID: requestID) == nil)
     }
 
     @Test func legacyPendingPromptMovesOutOfPreferencesBeforeConsume() throws {
@@ -380,7 +386,7 @@ struct IntentSessionOpenTriggerTests {
         let stored = try #require(fixture.defaults.data(forKey: key))
         #expect(!String(decoding: stored, as: UTF8.self).contains("Legacy unsent text"))
         #expect(!String(decoding: stored, as: UTF8.self).contains("unsentPrompt"))
-        let consumed = trigger.consume(startupComplete: true)
+        let consumed = trigger.take(requestID: 7)
         #expect(consumed?.serverId == "server-a")
         #expect(consumed?.sessionId == "session-1")
         #expect(consumed?.unsentPrompt == "Legacy unsent text")
@@ -407,9 +413,9 @@ struct IntentSessionOpenTriggerTests {
             promptFileURL: blocker.appending(path: "prompt.json")
         )
         #expect(fixture.defaults.data(forKey: key) == legacyData)
-        #expect(trigger.consume(startupComplete: false) == nil)
-        // The in-memory receipt still carries the only copy of the prompt.
-        #expect(trigger.consume(startupComplete: true)?.unsentPrompt == "Keep on failure")
+        // The in-memory receipt carries the only copy of the prompt.
+        #expect(trigger.peek()?.unsentPrompt == "Keep on failure")
+        #expect(trigger.take(requestID: 8)?.unsentPrompt == "Keep on failure")
     }
 
     @Test func unreadablePromptFileIsRetriedAtConsumeAndNeverDeleted() throws {
@@ -424,11 +430,11 @@ struct IntentSessionOpenTriggerTests {
 
         let trigger = fixture.makeTrigger()
         // Still unreadable: the handoff stays pending and the file is kept.
-        #expect(trigger.consume(startupComplete: true) == nil)
+        #expect(trigger.take(requestID: 9) == nil)
         #expect(FileManager.default.fileExists(atPath: promptURL.path))
 
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: promptURL.path)
-        let consumed = trigger.consume(startupComplete: true)
+        let consumed = trigger.take(requestID: 9)
         #expect(consumed?.sessionId == "session-1")
         #expect(consumed?.unsentPrompt == "Survive lock")
         #expect(!FileManager.default.fileExists(atPath: promptURL.path))

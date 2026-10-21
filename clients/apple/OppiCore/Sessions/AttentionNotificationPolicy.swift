@@ -59,9 +59,15 @@ enum AttentionNotificationPolicy: Sendable {
             : String(localized: "Open Oppi to answer questions.")
     }
 
+    /// - Parameter serverId: the server that owns the ask, so a tap opens the
+    ///   session on that server even when another one is active.
     /// - Parameter revealsQuestionText: false while iOS App Lock is on, so the
     ///   banner, Lock Screen, and Notification Center never show the question.
-    static func askPayload(for ask: AskRequest, revealsQuestionText: Bool = true) -> AttentionNotificationPayload {
+    static func askPayload(
+        for ask: AskRequest,
+        serverId: String? = nil,
+        revealsQuestionText: Bool = true
+    ) -> AttentionNotificationPayload {
         let questionCount = ask.questions.count
         let firstQuestion = ask.questions.first?.question.trimmingCharacters(in: .whitespacesAndNewlines)
         let body: String
@@ -81,7 +87,7 @@ enum AttentionNotificationPolicy: Sendable {
                 "kind": "ask",
                 "askId": ask.id,
                 "sessionId": ask.sessionId,
-            ],
+            ].merging(serverId.map { ["serverId": $0] } ?? [:]) { current, _ in current },
             threadIdentifier: ask.sessionId,
             targetContentIdentifier: ask.sessionId
         )

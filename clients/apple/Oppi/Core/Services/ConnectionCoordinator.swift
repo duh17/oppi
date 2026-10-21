@@ -1303,6 +1303,9 @@ final class ConnectionCoordinator {
     var _getSessionRecordForTesting: ((_ serverId: String, _ sessionId: String) async throws -> Session)?
 
     /// Resolve a deep-linked session from cache, then from hinted-server HTTP.
+    /// Servers to try for `GET /sessions/:id` when the row is not cached.
+    /// Active server first, then any server that already has this ask in memory.
+    /// Do not probe the rest of the pairing list on the tap path.
     func findOrFetchSession(id: String) async -> SessionLookupResult? {
         if let found = findSession(id: id) {
             return found
@@ -1348,4 +1351,23 @@ final class ConnectionCoordinator {
         activeServerId = serverId
     }
     #endif
+}
+
+/// Servers to try for an `oppi://session/<id>` URL that names no server.
+/// Active server first, then any server that already has this ask in memory.
+/// Do not probe the rest of the pairing list on the tap path.
+enum SessionDeepLinkSessionResolution {
+    static func fetchServerIds(
+        activeServerId: String?,
+        serverIdsWithPendingAsk: [String]
+    ) -> [String] {
+        var ids: [String] = []
+        if let activeServerId, !activeServerId.isEmpty {
+            ids.append(activeServerId)
+        }
+        for serverId in serverIdsWithPendingAsk where !ids.contains(serverId) {
+            ids.append(serverId)
+        }
+        return ids
+    }
 }

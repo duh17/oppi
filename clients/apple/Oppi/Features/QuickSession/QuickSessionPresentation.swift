@@ -1,21 +1,18 @@
 import UIKit
 
 /// Shows Quick Session over the app root: `AppRootViewController` calls
-/// `update()` from its `updateProperties()`, so the reads here (external
-/// requests, the launch phase, onboarding, `showQuickSession`) re-run it.
+/// `update()` from its `updateProperties()`, so `showQuickSession` re-runs it.
 ///
-/// It presents a request from the Control widget, App Intents, or Shortcuts
-/// (`QuickSessionTrigger`) once the shell is up, mounts Quick Session's
-/// controller above the root's content while `showQuickSession` is set, and on
-/// dismissal saves the draft, opens the session a launch created, and gives
-/// VoiceOver focus back to the control that opened it.
+/// The request itself (Control widget, App Intents, Shortcuts) reaches
+/// `AppNavigation.showQuickSession` through `AppOpener`; this mounts Quick
+/// Session's controller above the root's content while `showQuickSession` is
+/// set, and on dismissal saves the draft, opens the session a launch created,
+/// and gives VoiceOver focus back to the control that opened it.
 @MainActor
 final class QuickSessionPresentation {
     private let root: AppRootEnvironment
     /// The controller Quick Session is a child of; its view holds Quick Session's.
     private weak var host: UIViewController?
-    /// Last external Quick Session request presented or dropped; each is handled at most once.
-    private var handledRequestID = 0
     private var launchAccessibilityElement: AnyObject?
     /// The launch control VoiceOver returns to once Quick Session is gone.
     private var accessibilityElementToRestore: AnyObject?
@@ -29,29 +26,11 @@ final class QuickSessionPresentation {
     private var navigation: AppNavigation { root.navigation }
 
     func update() {
-        presentRequestIfPossible(QuickSessionTrigger.shared.presentationRequestID)
         if navigation.showQuickSession {
             mount()
         } else {
             unmount()
         }
-    }
-
-    private func presentRequestIfPossible(_ requestID: Int) {
-        guard requestID > handledRequestID else { return }
-        guard navigation.launchPhase == .ready, !navigation.showOnboarding else { return }
-        handledRequestID = requestID
-        // A Quick Session the user already opened wins. Drop the request, so a start
-        // (possibly a Live Voice call) never opens later on its own.
-        guard !navigation.showQuickSession else {
-            _ = QuickSessionTrigger.shared.consumePendingStart()
-            return
-        }
-        QuickSessionTrigger.shared.isPresented = true
-        navigation.presentQuickSession(
-            QuickSessionTrigger.shared.consumePendingStart() ?? QuickSessionStart(),
-            from: .intent
-        )
     }
 
     private func mount() {
@@ -98,7 +77,6 @@ final class QuickSessionPresentation {
         root.composerDraftStore.saveQuickSessionLifecycleFallback()
         navigation.pendingQuickSessionStart = nil
         navigation.showQuickSession = false
-        QuickSessionTrigger.shared.isPresented = false
         Task { @MainActor in
             await completePendingNavigation()
         }

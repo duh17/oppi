@@ -28,6 +28,33 @@ struct AppRootEnvironment {
     let composerDraftStore: ComposerDraftStore
     let chatReaderPayloadStore: ChatReaderPayloadStore
     let sessionRows: SessionRowDisplayStore
+    /// The one owner of every open. UIKit reaches it here; SwiftUI through
+    /// the root's `openURL` action.
+    let opener: AppOpener
+
+    init(
+        coordinator: ConnectionCoordinator,
+        navigation: AppNavigation,
+        themeStore: ThemeStore,
+        quickCommentTemplateStore: QuickCommentTemplateStore,
+        composerDraftStore: ComposerDraftStore,
+        chatReaderPayloadStore: ChatReaderPayloadStore,
+        sessionRows: SessionRowDisplayStore,
+        opener: AppOpener? = nil
+    ) {
+        self.coordinator = coordinator
+        self.navigation = navigation
+        self.themeStore = themeStore
+        self.quickCommentTemplateStore = quickCommentTemplateStore
+        self.composerDraftStore = composerDraftStore
+        self.chatReaderPayloadStore = chatReaderPayloadStore
+        self.sessionRows = sessionRows
+        self.opener = opener ?? AppOpener(
+            coordinator: coordinator,
+            navigation: navigation,
+            composerDraftStore: composerDraftStore
+        )
+    }
 }
 
 /// The same services. Lets UIKit skip trait updates for an unchanged set.
@@ -40,6 +67,7 @@ extension AppRootEnvironment: Equatable {
             && lhs.composerDraftStore === rhs.composerDraftStore
             && lhs.chatReaderPayloadStore === rhs.chatReaderPayloadStore
             && lhs.sessionRows === rhs.sessionRows
+            && lhs.opener === rhs.opener
     }
 }
 

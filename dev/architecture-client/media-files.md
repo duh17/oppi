@@ -28,4 +28,4 @@ Quick Session intake has two paths:
 - `StartQuickSessionIntent` runs in the main app and can preload optional text plus one image from Shortcuts. The image must have an image representation and fit the composer's upload limit.
 - The iOS share extension collects text, URLs, images, and files into an app-group staging directory, presents `ShareQuickSessionComposerViewController`, loads paired-server workspaces through `ShareQuickSessionSender`, and starts the selected session directly from the extension. Uploads are file-backed, and staged files are deleted on success or cancellation.
 
-`QuickSessionTrigger` owns the latest accepted main-app payload from Shortcuts and the Control widget presentation signal. A request received while the sheet is already open is ignored. Share-extension drafts do not enter the main app or merge with these requests.
+`AppOpener` owns the latest accepted main-app payload from Shortcuts, Siri, and the Control widget, and presents it once App Lock, launch, and the shell are ready. A request received while the sheet is already open is dropped, never queued. Share-extension drafts do not enter the main app or merge with these requests.

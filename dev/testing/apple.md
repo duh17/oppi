@@ -315,7 +315,7 @@ cd clients/apple
   xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test \
   -only-testing:OppiTests/AppNavigationShellRoutingTests \
   -only-testing:OppiTests/WorkspaceDeepLinkTests \
-  -only-testing:OppiTests/QuickSessionTriggerTests \
+  -only-testing:OppiTests/AppOpenerTests \
   -only-testing:OppiTests/StartQuickSessionIntentTests \
   -only-testing:OppiTests/ShareQuickSessionSenderTests \
   -only-testing:OppiTests/KeychainServiceTests \

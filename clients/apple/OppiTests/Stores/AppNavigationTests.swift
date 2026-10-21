@@ -125,7 +125,7 @@ struct AppNavigationShellRoutingTests {
         let workspace = testUnwrap(URL(string: "oppi://workspace?path=/tmp/project"))
         let web = testUnwrap(URL(string: "https://example.com/session/child-1"))
 
-        #expect(InAppSessionLink.parse(canonical) == InAppSessionLink(sessionId: "child-1"))
+        #expect(InAppSessionLink.parse(canonical)?.sessionId == "child-1")
         #expect(InAppSessionLink.parse(extraPath) == nil)
         #expect(InAppSessionLink.parse(workspace) == nil)
         #expect(InAppSessionLink.parse(web) == nil)
@@ -244,7 +244,8 @@ struct AppNavigationShellRoutingTests {
                 ))
             }
 
-            MissingSessionDeepLinkNavigationPolicy.showWorkspaceRoot(in: missingTargetNavigation)
+            missingTargetNavigation.selectedTab = .workspaces
+            missingTargetNavigation.clearWorkspaceSelections()
 
             #expect(missingTargetNavigation.selectedTab == .workspaces)
             #expect(missingTargetNavigation.workspaceStackRouteElements.isEmpty)

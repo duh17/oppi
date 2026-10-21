@@ -94,11 +94,13 @@ const IOS_FORBIDDEN_VIEW_NETWORK_TYPES = ["APIClient", "WebSocketClient"];
 // Only the preference owner and fallbacks for unhandled non-HTTP schemes may system-open URLs.
 const IOS_SYSTEM_URL_OPEN_ALLOWED_FILES = new Set([
   "clients/apple/Oppi/App/OppiApp.swift",
+  "clients/apple/Oppi/App/AppOpener.swift",
   "clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift",
   "clients/apple/Oppi/Features/Chat/Timeline/Assistant/AssistantMarkdownContentView.swift",
 ]);
 const IOS_IN_APP_BROWSER_ALLOWED_FILES = new Set([
   "clients/apple/Oppi/App/OppiApp.swift",
+  "clients/apple/Oppi/App/AppOpener.swift",
   "clients/apple/Oppi/Features/Settings/TailnetSettingsView.swift", // Authentication always stays in-app.
 ]);
 const IOS_TIMELINE_ROOT = "clients/apple/Oppi/Features/Chat/Timeline/";

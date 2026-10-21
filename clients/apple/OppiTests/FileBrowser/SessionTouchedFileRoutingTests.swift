@@ -74,7 +74,7 @@ struct SessionTouchedFileRoutingTests {
         }
         #expect(reference.kind == .workspaceFile)
         #expect(reference.fileCandidatePath == "docs/child.md")
-        #expect(OppiApp.sessionFileTarget(for: reference)?.kind == .sessionFile(
+        #expect(AppOpener.sessionFileTarget(for: reference)?.kind == .sessionFile(
             path: "docs/child.md",
             fileName: "child.md",
             sessionId: "session-origin"
@@ -145,7 +145,7 @@ struct SessionTouchedFileRoutingTests {
         }
         #expect(reference.kind == .hostFile)
         #expect(reference.fileCandidatePath == expectedPath)
-        #expect(OppiApp.sessionFileTarget(for: reference)?.kind == .sessionFile(
+        #expect(AppOpener.sessionFileTarget(for: reference)?.kind == .sessionFile(
             path: expectedPath,
             fileName: "child.md",
             sessionId: "session-origin"
@@ -194,7 +194,7 @@ struct SessionTouchedFileRoutingTests {
         }
         #expect(reference.kind == .hostFile)
         #expect(reference.fileCandidatePath == expectedPath)
-        #expect(OppiApp.sessionFileTarget(for: reference)?.kind == .sessionFile(
+        #expect(AppOpener.sessionFileTarget(for: reference)?.kind == .sessionFile(
             path: expectedPath,
             fileName: "child.md",
             sessionId: "session-origin"
@@ -357,7 +357,7 @@ struct SessionTouchedFileRoutingTests {
             return
         }
         #expect(child.sourceSessionID == "session-origin")
-        #expect(OppiApp.sessionFileTarget(for: child)?.kind == .sessionFile(
+        #expect(AppOpener.sessionFileTarget(for: child)?.kind == .sessionFile(
             path: "docs/child.md",
             fileName: "child.md", sessionId: "session-origin"
         ))
@@ -393,7 +393,7 @@ struct SessionTouchedFileRoutingTests {
             return
         }
         #expect(child.sourceSessionID == "session-origin")
-        #expect(OppiApp.sessionFileTarget(for: child)?.kind == .sessionFile(
+        #expect(AppOpener.sessionFileTarget(for: child)?.kind == .sessionFile(
             path: "/workspace/project/docs/child.md",
             fileName: "child.md", sessionId: "session-origin"
         ))
@@ -480,7 +480,7 @@ struct SessionTouchedFileRoutingTests {
                 sourceSessionID: "session-origin", fileCandidatePath: hostPath,
                 kind: .hostFile
             )
-            #expect(OppiApp.sessionFileTarget(for: child) == nil)
+            #expect(AppOpener.sessionFileTarget(for: child) == nil)
         }
     }
 

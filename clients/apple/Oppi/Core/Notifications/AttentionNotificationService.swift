@@ -116,37 +116,15 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         let action: PairingNotificationAction
     }
 
-    /// Called when the user taps an ask notification body.
-    /// Navigate to the session containing this ask request.
-    var onNavigateToSession: ((String) -> Void)? {
-        didSet {
-            deliverPendingNavigationTapsIfPossible()
-        }
-    }
+    /// The app's one open owner. `AppDelegate` sets it before
+    /// `didFinishLaunching` returns, which is when Apple requires this
+    /// delegate to be ready, so a tap during launch has its destination.
+    weak var opener: AppOpener?
 
     /// Whether that session's chat on that server is the one the user is in (its focused
     /// stream; a sheet over the chat still counts). A failed run or an agent's message arriving
     /// while Oppi is in front shows unless it is.
     var isSessionOnScreen: ((_ serverId: String, _ sessionId: String) -> Bool)?
-
-    var onPairingNotification: ((PairingNotificationPayload) -> Void)? {
-        didSet {
-            deliverPendingPairingNotificationsIfPossible()
-        }
-    }
-
-    /// Deny from a notification action. Must not wait for App Lock; the system
-    /// action already required device authentication.
-    var onPairingDeny: ((PairingNotificationPayload) async -> Void)? {
-        didSet {
-            deliverPendingPairingNotificationsIfPossible()
-        }
-    }
-
-    // Taps can arrive before OppiApp finishes wiring its navigation handler on
-    // cold launch. Keep them app-layer agnostic here and deliver them once wired.
-    private var pendingNavigationSessionIds: [String] = []
-    private var pendingPairingNotifications: [PairingNotificationPayload] = []
 
     // Test seams
     var _applicationStateForTesting: UIApplication.State?
@@ -216,6 +194,7 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     ///   no caller can forget the scoped lock.
     func notifyAskIfNeeded(
         _ ask: AskRequest,
+        serverId: String?,
         activeSessionId: String?,
         hidesQuestionText: @escaping @MainActor () -> Bool
     ) {
@@ -236,6 +215,7 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         schedule(identifier: AttentionNotificationPolicy.askRequestIdentifier(sessionId: ask.sessionId)) { [self] in
             let payload = AttentionNotificationPolicy.askPayload(
                 for: ask,
+                serverId: serverId,
                 revealsQuestionText: !(_appLockEnabledForTesting ?? AppLockService.shared.isEnabled)
                     && !hidesQuestionText()
             )
@@ -465,32 +445,6 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
 
     // MARK: - UNUserNotificationCenterDelegate
 
-    func handleAskNotificationTap(sessionId: String) {
-        guard !sessionId.isEmpty else { return }
-        guard let onNavigateToSession else {
-            pendingNavigationSessionIds.append(sessionId)
-            return
-        }
-        onNavigateToSession(sessionId)
-    }
-
-    func handlePairingNotification(_ payload: PairingNotificationPayload) {
-        guard !payload.serverId.isEmpty else { return }
-        if payload.action == .deny {
-            if let onPairingDeny {
-                Task { await onPairingDeny(payload) }
-            } else {
-                pendingPairingNotifications.append(payload)
-            }
-            return
-        }
-        guard let onPairingNotification else {
-            pendingPairingNotifications.append(payload)
-            return
-        }
-        onPairingNotification(payload)
-    }
-
     private func completePairingDeny(
         _ payload: PairingNotificationPayload,
         completion: NotificationCompletion
@@ -514,50 +468,16 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             try? await Task.sleep(for: PairingApprovalController.denyLifetime)
             budget.finish()
         }
-        defer { lifetime.cancel() }
-
-        let deadline = ContinuousClock.now + PairingApprovalController.denyLifetime
-        while onPairingDeny == nil {
-            if budget.isExpired || ContinuousClock.now >= deadline {
-                budget.finish()
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(20))
+        defer {
+            lifetime.cancel()
+            budget.finish()
         }
-        if let handler = onPairingDeny, !budget.isExpired {
-            await handler(payload)
+        guard let approvalId = payload.approvalId, !budget.isExpired else { return }
+        guard let opener else {
+            notificationLogger.error("Pairing deny has no opener; approval fails closed when the server TTL elapses")
+            return
         }
-        budget.finish()
-    }
-
-    private func deliverPendingNavigationTapsIfPossible() {
-        guard let onNavigateToSession, !pendingNavigationSessionIds.isEmpty else { return }
-        let pendingSessionIds = pendingNavigationSessionIds
-        pendingNavigationSessionIds.removeAll()
-        for sessionId in pendingSessionIds {
-            onNavigateToSession(sessionId)
-        }
-    }
-
-    private func deliverPendingPairingNotificationsIfPossible() {
-        guard !pendingPairingNotifications.isEmpty else { return }
-        let pending = pendingPairingNotifications
-        pendingPairingNotifications.removeAll()
-        var leftover: [PairingNotificationPayload] = []
-        for payload in pending {
-            if payload.action == .deny {
-                if let onPairingDeny {
-                    Task { await onPairingDeny(payload) }
-                } else {
-                    leftover.append(payload)
-                }
-            } else if let onPairingNotification {
-                onPairingNotification(payload)
-            } else {
-                leftover.append(payload)
-            }
-        }
-        pendingPairingNotifications = leftover + pendingPairingNotifications
+        await opener.denyPairingAndWait(serverId: payload.serverId, approvalId: approvalId)
     }
 
     nonisolated static func pairingNotificationPayload(
@@ -587,6 +507,54 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         )
     }
 
+    /// The one open a notification response asks for, or nil when it opens
+    /// nothing. Pure, so every payload shape is testable.
+    nonisolated static func openRequest(
+        categoryIdentifier: String,
+        actionIdentifier: String,
+        userInfo: [String: String]
+    ) -> AppOpenRequest? {
+        if let pairing = pairingNotificationPayload(
+            categoryIdentifier: categoryIdentifier,
+            actionIdentifier: actionIdentifier,
+            userInfo: userInfo as [AnyHashable: Any]
+        ) {
+            return .pairing(
+                serverId: pairing.serverId,
+                approvalId: pairing.approvalId,
+                action: pairing.action
+            )
+        }
+        guard let sessionId = navigationSessionId(
+            categoryIdentifier: categoryIdentifier,
+            userInfo: userInfo as [AnyHashable: Any]
+        ) else {
+            return nil
+        }
+        return .session(SessionOpen(
+            serverId: nonEmptyValue(userInfo["serverId"]),
+            sessionId: sessionId,
+            workspaceId: nonEmptyValue(userInfo["workspaceId"]),
+            origin: .externalURL
+        ))
+    }
+
+    /// Notification payloads are string property lists; anything else is not
+    /// an Oppi open.
+    nonisolated static func stringUserInfo(_ userInfo: [AnyHashable: Any]) -> [String: String] {
+        var values: [String: String] = [:]
+        for (key, value) in userInfo {
+            guard let key = key as? String, let value = value as? String else { continue }
+            values[key] = value
+        }
+        return values
+    }
+
+    nonisolated private static func nonEmptyValue(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
     /// Handle taps on local attention notifications.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
@@ -594,33 +562,32 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let content = response.notification.request.content
-        if let pairing = Self.pairingNotificationPayload(
+        let request = Self.openRequest(
             categoryIdentifier: content.categoryIdentifier,
             actionIdentifier: response.actionIdentifier,
-            userInfo: content.userInfo
-        ) {
-            if pairing.action == .deny {
-                let completion = NotificationCompletion(completionHandler)
-                Task { @MainActor in
-                    await self.completePairingDeny(pairing, completion: completion)
-                }
-                return
-            }
-            Task { @MainActor in
-                handlePairingNotification(pairing)
-            }
+            userInfo: Self.stringUserInfo(content.userInfo)
+        )
+        guard let request else {
             completionHandler()
             return
         }
-        if let sessionId = Self.navigationSessionId(
-            categoryIdentifier: content.categoryIdentifier,
-            userInfo: content.userInfo
-        ) {
+        if case .pairing(let serverId, let approvalId, .deny) = request {
+            let completion = NotificationCompletion(completionHandler)
             Task { @MainActor in
-                handleAskNotificationTap(sessionId: sessionId)
+                await self.completePairingDeny(
+                    PairingNotificationPayload(
+                        serverId: serverId,
+                        approvalId: approvalId,
+                        action: .deny
+                    ),
+                    completion: completion
+                )
             }
+            return
         }
-
+        Task { @MainActor in
+            self.opener?.open(request)
+        }
         completionHandler()
     }
 

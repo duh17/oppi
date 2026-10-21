@@ -2,8 +2,8 @@ import AppIntents
 import UIKit
 
 /// The app's entry point. UIKit owns the app and its scene: `SceneDelegate`
-/// builds the window, and `OppiApp` holds the app's services and app-wide
-/// handlers.
+/// builds the window, and `OppiApp` holds the app's services. Every open goes
+/// to the window's `AppOpener`.
 ///
 /// @MainActor keeps the delegate on the main thread, where UIKit calls it.
 @main
@@ -30,8 +30,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Before any scene connects, so it sees every phase change.
         _ = AppScenePhase.shared
         app = OppiApp()
+        // Before `didFinishLaunching` returns: a notification response
+        // delivered during launch must already have its destination.
+        AttentionNotificationService.shared.opener = app?.root.opener
         adoptScenesSavedBySwiftUI()
         return true
+    }
+
+    /// The window's opener, for entry points that run before a scene lookup
+    /// (App Intents). The notification delegate holds it directly.
+    static var opener: AppOpener? {
+        (UIApplication.shared.delegate as? AppDelegate)?.app?.root.opener
     }
 
     /// A scene session saved by a build whose scene SwiftUI ran keeps that
@@ -113,13 +122,14 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate, @preconcurrency AppI
         default: break
         }
         for context in urlContexts {
-            app.open(context.url)
+            app.root.opener.open(AppOpenRequest(url: context.url, origin: .externalURL))
         }
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        guard let app else { return }
         for context in URLContexts {
-            app?.open(context.url)
+            app.root.opener.open(AppOpenRequest(url: context.url, origin: .externalURL))
         }
     }
 
@@ -146,6 +156,6 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate, @preconcurrency AppI
     /// A system control's Open intent routes here: show Quick Session in its mode.
     private func perform(_ intent: any UISceneAppIntent) {
         guard let intent = intent as? QuickSessionOpenIntent else { return }
-        QuickSessionTrigger.shared.requestPresentation(for: intent)
+        AppDelegate.opener?.open(.quickSession(QuickSessionStart(mode: intent.target)))
     }
 }

@@ -3,11 +3,13 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "IntentSessionOpenTrigger")
 
-/// Handoff from Siri start-session into the live chat after `appStartupComplete`.
+/// Durable mailbox from a Siri start-session into the live chat.
 ///
-/// Latest issued receipt wins. Older async completions must not override a newer
-/// request. Consume once; do not suppress a newer request because a sheet is up.
-@MainActor @Observable
+/// The intent creates the session over HTTP and leaves a receipt here, then
+/// asks `AppOpener` to open it. The opener takes the receipt only once the
+/// target server is up, so a locked device or an unreachable server never
+/// loses the created row or the unsent prompt. Latest issued receipt wins.
+@MainActor
 final class IntentSessionOpenTrigger {
     static let shared = IntentSessionOpenTrigger()
 
@@ -31,8 +33,6 @@ final class IntentSessionOpenTrigger {
         var unsentPrompt: String?
     }
 
-    private(set) var requestID: Int = 0
-
     private let defaults: UserDefaults
     private let issuedRequestIDKey: String
     private let lastAcceptedRequestIDKey: String
@@ -40,7 +40,7 @@ final class IntentSessionOpenTrigger {
     private let promptFileURL: URL
     private var pending: Receipt?
     /// The protected prompt file existed but could not be read at init (device locked).
-    /// `consume` retries the read and keeps the file until it succeeds.
+    /// Taking the receipt retries the read and keeps the file until it succeeds.
     private var pendingPromptUnreadable = false
     private var lastAcceptedRequestID: Int
 
@@ -95,7 +95,6 @@ final class IntentSessionOpenTrigger {
                 unsentPrompt: prompt,
                 session: nil
             )
-            requestID = persisted.requestID
             lastAcceptedRequestID = max(lastAcceptedRequestID, persisted.requestID)
             if persisted.requestID > defaults.integer(forKey: issuedRequestIDKey) {
                 defaults.set(persisted.requestID, forKey: issuedRequestIDKey)
@@ -136,7 +135,6 @@ final class IntentSessionOpenTrigger {
         }
         pending = receipt
         pendingPromptUnreadable = false
-        requestID = receipt.requestID
         rememberAccepted(receipt.requestID)
         persist(receipt)
         logger.notice(
@@ -144,8 +142,18 @@ final class IntentSessionOpenTrigger {
         )
     }
 
-    func consume(startupComplete: Bool) -> Receipt? {
-        guard startupComplete else { return nil }
+    /// The receipt for `requestID`, or nil when it was already taken or a
+    /// newer Siri start replaced it.
+    func take(requestID: Int) -> Receipt? {
+        guard let pending, pending.requestID == requestID else { return nil }
+        return takePending()
+    }
+
+    /// The receipt waiting to be opened, without consuming it. A launch reads
+    /// it to build the open request; the opener takes it once the server is up.
+    func peek() -> Receipt? { pending }
+
+    private func takePending() -> Receipt? {
         guard var receipt = pending else { return nil }
         if pendingPromptUnreadable {
             // Retry now that the app is in the foreground. Never delete the only
@@ -166,7 +174,7 @@ final class IntentSessionOpenTrigger {
         persist(nil)
         ComposerDraftStore.clearIntentSessionPrompt(at: promptFileURL)
         logger.notice(
-            "Start-session handoff consumed request=\(receipt.requestID, privacy: .public) session=\(receipt.sessionId, privacy: .public)"
+            "Start-session handoff taken request=\(receipt.requestID, privacy: .public) session=\(receipt.sessionId, privacy: .public)"
         )
         return receipt
     }
@@ -206,5 +214,4 @@ final class IntentSessionOpenTrigger {
               ) else { return nil }
         return try ComposerDraftStore.intentSessionPrompt(requestID: receipt.requestID, for: key, at: url)
     }
-
 }

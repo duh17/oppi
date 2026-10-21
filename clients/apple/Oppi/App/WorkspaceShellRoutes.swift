@@ -435,19 +435,11 @@ struct WorkspaceCreationIntakeModifier: ViewModifier {
         navigation.pendingWorkspaceDeepLink = nil
         navigation.shouldGuideWorkspaceCreation = false
 
-        let server: PairedServer?
-        if let fingerprint = payload.serverFingerprint {
-            server = servers.first { WorkspaceDeepLink.fingerprintsMatch($0.id, fingerprint) }
-        } else {
-            server = selectedServer ?? servers.first
-        }
-
-        guard let server else {
+        // AppOpener resolved the server and switched to it before parking this
+        // payload. Do not resolve or switch again with different rules.
+        guard let serverId = payload.resolvedServerId,
+              let server = servers.first(where: { $0.id == serverId }) else {
             coordinator.activeConnection.extensionToast = "Server not found for this workspace link"
-            return true
-        }
-        guard await coordinator.switchToServerReady(server) else {
-            coordinator.activeConnection.extensionToast = "Could not open the server for this workspace link"
             return true
         }
 
