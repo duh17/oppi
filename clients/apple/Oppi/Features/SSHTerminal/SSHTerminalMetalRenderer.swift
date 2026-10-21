@@ -522,6 +522,41 @@ private func sshTerminalFontCovers(_ font: UIFont, _ text: String) -> Bool {
     return CTFontGetGlyphsForCharacters(font as CTFont, units, &glyphs, units.count)
 }
 
+/// Capped exponential back-off for a texture allocation Metal refused. Under
+/// memory pressure a retry is another full-size allocation that fails again, so
+/// an image that cannot be built waits 1, 2, 4 ... 64 frames instead of asking
+/// every drawing frame.
+struct SSHTerminalKittyTextureBackoff {
+    /// Longest wait between attempts, about a second at frame rate.
+    static let maxSkipFrames = 64
+
+    /// Image generation this back-off belongs to. A retransmission of the same ID
+    /// brings a new generation, which starts over.
+    var generation: UInt64
+    /// Consecutive failed allocations.
+    private(set) var failures = 0
+    /// First frame this generation may be tried again on.
+    private(set) var retryTick: UInt64 = 0
+
+    init(generation: UInt64) {
+        self.generation = generation
+    }
+
+    /// Frames skipped after this many consecutive failures.
+    static func skipFrames(afterFailures failures: Int) -> Int {
+        guard failures > 0 else { return 0 }
+        return min(maxSkipFrames, 1 << min(failures - 1, 6))
+    }
+
+    /// Record a failure on `frameTick` and schedule the next attempt.
+    mutating func recordFailure(frameTick: UInt64) {
+        failures += 1
+        // Waiting N frames means N frames go by before the next attempt, so the
+        // attempt itself lands on frameTick + N + 1.
+        retryTick = frameTick &+ UInt64(Self.skipFrames(afterFailures: failures)) &+ 1
+    }
+}
+
 /// Kitty image pixels, uploaded once per image generation. The generation stamp
 /// changes on every add or replace of an image ID (including animation frames),
 /// so a cached texture can never show stale pixels; a dimension comparison
@@ -561,6 +596,11 @@ final class SSHTerminalKittyTextureCache {
     /// resident yet, no store handle, or the budget is momentarily full). They are
     /// skipped for the rest of that frame and retried on a later one.
     private var retriedFrame: [UInt32: UInt64] = [:]
+    /// Images Metal refused to allocate a texture for, per ID and generation.
+    private var backoff: [UInt32: SSHTerminalKittyTextureBackoff] = [:]
+    /// Metal allocation for one texture. A test substitutes an allocator that
+    /// fails: the only way to reach the memory-pressure path on a simulator.
+    private let allocate: (MTLDevice, MTLTextureDescriptor) -> MTLTexture?
     /// Render pass this cache is serving; bumped by `beginFrame`.
     private var frameTick: UInt64 = 0
     /// Frame that already paid for an eviction pass.
@@ -574,8 +614,14 @@ final class SSHTerminalKittyTextureCache {
     private(set) var evictionCount = 0
     var count: Int { entries.count }
 
-    init(limit: Int = SSHTerminalKittyTextureCache.limitBytes) {
+    init(
+        limit: Int = SSHTerminalKittyTextureCache.limitBytes,
+        allocate: @escaping (MTLDevice, MTLTextureDescriptor) -> MTLTexture? = {
+            $0.makeTexture(descriptor: $1)
+        }
+    ) {
         self.limit = max(1, limit)
+        self.allocate = allocate
     }
 
     /// Start a render pass. Entries touched after this are off limits to eviction
@@ -586,7 +632,8 @@ final class SSHTerminalKittyTextureCache {
 
     /// The texture for this image, uploading it the first time this generation is
     /// seen. Nil when there is no store to read this frame, the payload is not
-    /// resident yet, or the image does not fit the budget.
+    /// resident yet, the image does not fit the budget, or Metal refused the
+    /// allocation (then retried on a doubling back-off, not every frame).
     func texture(
         for image: SSHTerminalKittyImage,
         graphics: GhosttyKittyGraphics?,
@@ -614,20 +661,32 @@ final class SSHTerminalKittyTextureCache {
         }
         if unfittable[image.id] == image.generation { return nil }
         if retriedFrame[image.id] == frameTick { return nil }
+        if let wait = backoff[image.id], wait.generation == image.generation,
+           frameTick < wait.retryTick { return nil }
         // A held frame has no store to read, and the payload may simply not be
         // resident yet: both wait for a later frame instead of failing for good.
-        guard let graphics else {
+        guard let graphics, let payload = image.resolvePixels(graphics) else {
             retriedFrame[image.id] = frameTick
             return nil
         }
-        guard let payload = image.resolvePixels(graphics),
-              let texture = Self.makeTexture(
-                  device: device, image: image, pixels: payload.pointer
-              ) else {
+        // Room first, allocation second: a texture the budget then refused was a
+        // full-size allocation spent and thrown away. The budget is full for now,
+        // not forever: a later frame evicts what it no longer draws.
+        guard makeRoom(for: estimated) else {
             retriedFrame[image.id] = frameTick
+            return nil
+        }
+        guard let texture = makeTexture(device: device, image: image, payload: payload) else {
+            retriedFrame[image.id] = frameTick
+            var wait = backoff[image.id].flatMap {
+                $0.generation == image.generation ? $0 : nil
+            } ?? SSHTerminalKittyTextureBackoff(generation: image.generation)
+            wait.recordFailure(frameTick: frameTick)
+            backoff[image.id] = wait
             return nil
         }
         uploadCount += 1
+        backoff[image.id] = nil
         // What Metal reports can be zero where the driver does not track it (the
         // simulator does), so the pixel bytes are the floor and the budget still
         // bounds what is held.
@@ -636,9 +695,10 @@ final class SSHTerminalKittyTextureCache {
             unfittable[image.id] = image.generation
             return nil
         }
+        // A driver may pad the allocation past the pixel estimate; the earlier
+        // `makeRoom` already covers an exact match, so this only evicts for the
+        // difference.
         guard makeRoom(for: allocated) else {
-            // The budget is full for now, not forever: a later frame evicts what
-            // it no longer draws and this image gets its turn.
             retriedFrame[image.id] = frameTick
             return nil
         }
@@ -686,46 +746,63 @@ final class SSHTerminalKittyTextureCache {
         for id in Array(retriedFrame.keys) where !stored.contains(id) {
             retriedFrame.removeValue(forKey: id)
         }
+        // Only the images that left the store. A host that keeps transmitting
+        // moves the store generation on every picture, so clearing every back-off
+        // here would put a refused image back on the every-frame retry; an image
+        // retransmitted under the same ID moves its own generation instead, which
+        // resets its wait.
+        for id in Array(backoff.keys) where !stored.contains(id) {
+            backoff.removeValue(forKey: id)
+        }
     }
 
-    private static func makeTexture(
-        device: MTLDevice, image: SSHTerminalKittyImage, pixels: UnsafePointer<UInt8>
+    private func makeTexture(
+        device: MTLDevice, image: SSHTerminalKittyImage, payload: SSHTerminalKittyPixels
     ) -> MTLTexture? {
         // Only RGB and RGBA reach storage: the protocol parses f=24, f=32 and PNG
         // (f=100), which libghostty decodes to RGBA.
         guard image.format == .rgba || image.format == .rgb else { return nil }
+        let (pixels, pixelsOverflowed) = image.width.multipliedReportingOverflow(by: image.height)
+        guard !pixelsOverflowed,
+              payload.byteCount >= pixels * image.format.bytesPerPixel else { return nil }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm, width: image.width, height: image.height, mipmapped: false
         )
         descriptor.usage = [.shaderRead]
         descriptor.storageMode = .shared
-        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
-        let region = MTLRegionMake2D(0, 0, image.width, image.height)
+        guard let texture = allocate(device, descriptor) else { return nil }
+        let source = payload.pointer
+        let bytesPerRow = image.width * 4
         if image.format == .rgba {
             texture.replace(
-                region: region, mipmapLevel: 0, withBytes: pixels, bytesPerRow: image.width * 4
+                region: MTLRegionMake2D(0, 0, image.width, image.height), mipmapLevel: 0,
+                withBytes: source, bytesPerRow: bytesPerRow
             )
             return texture
         }
-        // Metal has no 3-channel format, so RGB expands to RGBA once, at upload.
-        let count = image.width * image.height
-        var expanded = [UInt8](repeating: 0, count: count * 4)
-        let source = UnsafeBufferPointer(start: pixels, count: count * 3)
-        for index in 0..<count {
-            let offset = index * 3
-            guard offset + 2 < source.count else { return nil }
-            expanded[index * 4] = source[offset]
-            expanded[index * 4 + 1] = source[offset + 1]
-            expanded[index * 4 + 2] = source[offset + 2]
-            expanded[index * 4 + 3] = 255
+        // Metal has no 3-channel format, so RGB expands to RGBA at upload. One row
+        // is expanded at a time into a reused buffer: a full-size expansion is up
+        // to 85 MB of temporary that can itself fail (and trap) under the memory
+        // pressure this path runs in. Same total copy, O(width) bytes.
+        let sourceBytesPerRow = image.width * 3
+        // Alpha never changes across rows, so it is filled once here.
+        var row = [UInt8](repeating: 0xFF, count: bytesPerRow)
+        return row.withUnsafeMutableBufferPointer { buffer -> MTLTexture? in
+            guard let expanded = buffer.baseAddress else { return nil }
+            for y in 0..<image.height {
+                let rowStart = source + y * sourceBytesPerRow
+                for x in 0..<image.width {
+                    expanded[x * 4] = rowStart[x * 3]
+                    expanded[x * 4 + 1] = rowStart[x * 3 + 1]
+                    expanded[x * 4 + 2] = rowStart[x * 3 + 2]
+                }
+                texture.replace(
+                    region: MTLRegionMake2D(0, y, image.width, 1), mipmapLevel: 0,
+                    withBytes: expanded, bytesPerRow: bytesPerRow
+                )
+            }
+            return texture
         }
-        expanded.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return }
-            texture.replace(
-                region: region, mipmapLevel: 0, withBytes: base, bytesPerRow: image.width * 4
-            )
-        }
-        return texture
     }
 }
 
@@ -800,7 +877,10 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         metrics: SSHTerminalCellMetrics,
         scale: CGFloat,
         atlasSide: Int = SSHTerminalGlyphAtlas.side,
-        kittyTextureLimit: Int = SSHTerminalKittyTextureCache.limitBytes
+        kittyTextureLimit: Int = SSHTerminalKittyTextureCache.limitBytes,
+        kittyTextureAllocate: @escaping (MTLDevice, MTLTextureDescriptor) -> MTLTexture? = {
+            $0.makeTexture(descriptor: $1)
+        }
     ) throws {
         self.device = pipeline.device
         self.queue = pipeline.queue
@@ -810,7 +890,9 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         self.imagePipeline = pipeline.image
         self.metrics = metrics
         self.scale = max(scale, 1)
-        self.kittyTextures = SSHTerminalKittyTextureCache(limit: kittyTextureLimit)
+        self.kittyTextures = SSHTerminalKittyTextureCache(
+            limit: kittyTextureLimit, allocate: kittyTextureAllocate
+        )
         guard let atlas = SSHTerminalGlyphAtlas(device: pipeline.device, side: atlasSide) else {
             throw RendererError.noAtlas
         }
