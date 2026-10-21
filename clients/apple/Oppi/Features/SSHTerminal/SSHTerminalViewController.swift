@@ -31,6 +31,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private let connectionBanner = SSHTerminalConnectionBannerView()
     private let inputBanner = SSHTerminalTextBannerView(identifier: "sshTerminal.inputNotice")
     private let pasteBanner = SSHTerminalTextBannerView(identifier: "sshTerminal.pasteNotice")
+    private let openBanner = SSHTerminalTextBannerView(identifier: "sshTerminal.openNotice")
     private let noticeCard = SSHTerminalNoticeCardView()
     private let copyNotice = SSHTerminalCopyNoticeView()
     private let backToLive = SSHTerminalBackToLiveButton()
@@ -66,6 +67,12 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var pendingPaste: String?
     private var pasteNotice: String?
     private var pasteNoticeTask: Task<Void, Never>?
+    private var openNotice: String?
+    private var openNoticeTask: Task<Void, Never>?
+    /// The paired server's home folder, once known: the root every owner-host
+    /// file path opens inside.
+    private var pairedHome: String?
+    private var pairedHomeTask: Task<Void, Never>?
     private var copyNoticeText: String?
     private var copyNoticeTask: Task<Void, Never>?
     private var lastCopies = 0
@@ -222,6 +229,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         channel.isViewed = false
         pasteNoticeTask?.cancel()
         copyNoticeTask?.cancel()
+        openNoticeTask?.cancel()
+        pairedHomeTask?.cancel()
+        pairedHomeTask = nil
         herdrTask?.cancel()
         herdrTask = nil
         keymapTask?.cancel()
@@ -264,6 +274,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         _ = channel.closedForBackground
         _ = channel.programStatus.records
         _ = channel.programStatus.root
+        _ = channel.workingDirectory
         _ = channel.alerts.notification
         _ = channel.alerts.bell
         _ = herdr.snapshot
@@ -317,6 +328,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
         navigationItem.title = channel.title.isEmpty ? "SSH Terminal" : channel.title
         updatePolling()
+        refreshPairedHome()
         updateFloatingControls(themeID: themeID)
         updateBanners(connecting: connecting, connected: connected, networkChanged: networkChanged, themeID: themeID)
         updateNotice(themeID: themeID)
@@ -363,21 +375,25 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         connectionBanner.isHidden = true
         inputBanner.isHidden = true
         pasteBanner.isHidden = true
+        openBanner.isHidden = true
         noticeCard.isHidden = true
         copyNotice.isHidden = true
         backToLive.isHidden = true
         topStack.addArrangedSubview(connectionBanner)
         topStack.addArrangedSubview(inputBanner)
         topStack.addArrangedSubview(pasteBanner)
+        topStack.addArrangedSubview(openBanner)
         topStack.addArrangedSubview(noticeCard)
         connectionBanner.translatesAutoresizingMaskIntoConstraints = false
         noticeCard.translatesAutoresizingMaskIntoConstraints = false
         inputBanner.translatesAutoresizingMaskIntoConstraints = false
         pasteBanner.translatesAutoresizingMaskIntoConstraints = false
+        openBanner.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             connectionBanner.widthAnchor.constraint(equalTo: topStack.widthAnchor),
             inputBanner.widthAnchor.constraint(equalTo: topStack.widthAnchor),
             pasteBanner.widthAnchor.constraint(equalTo: topStack.widthAnchor),
+            openBanner.widthAnchor.constraint(equalTo: topStack.widthAnchor),
             noticeCard.widthAnchor.constraint(equalTo: topStack.widthAnchor),
         ])
 
@@ -487,6 +503,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         grid.keyboardDismissed = { [weak self] in self?.keyboardWasHidden() }
         grid.secureInputChanged = { [weak self] in self?.secureInputChanged($0) }
         grid.pasteImage = { [weak self] in self?.pasteImage($0) }
+        grid.openTargetForHeldCell = { [weak self] held in self?.heldOpenTarget(held) }
+        grid.open = { [weak self] target in self?.open(target) }
         return grid
     }
 
@@ -504,6 +522,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         shownNoticeKey = nil
         pasteNotice = nil
         copyNoticeText = nil
+        openNotice = nil
+        pairedHome = nil
+        pairedHomeTask?.cancel()
+        pairedHomeTask = nil
         detached = false
         cursorShiftHeld = false
         rawKeyboard = false
@@ -528,12 +550,14 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     // MARK: - Floating controls
 
     /// The … menu's header names the screen: the shell's title when it
-    /// set one, else the host. The navigation bar that showed it is hidden.
-    private func installMenu(title: String) {
-        guard title != menuTitle else { return }
-        menuTitle = title
+    /// set one, else the host, followed by the shell's folder when it reported
+    /// one (OSC 7). The navigation bar that showed it is hidden.
+    private func installMenu(title: String, folder: String) {
+        let header = SSHTerminalMenuHeader.text(title: title, folder: folder)
+        guard header != menuTitle else { return }
+        menuTitle = header
         morePill.more.menu = UIMenu(
-            title: title,
+            title: header,
             children: [UIDeferredMenuElement.uncached { [weak self] completion in
                 completion(self?.overflowElements() ?? [])
             }]
@@ -549,6 +573,16 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         } else {
             items.append(UIAction(title: "Use Chat Bar", image: UIImage(systemName: "text.bubble")) { [weak self] _ in
                 self?.showChatBar()
+            })
+        }
+        // The Files browser over this terminal's folder, when the host reports
+        // one and is also a paired Oppi server.
+        if !channel.workingDirectory.isEmpty, pairedServer != nil {
+            items.append(UIAction(
+                title: "Browse Files Here",
+                image: UIImage(systemName: "folder")
+            ) { [weak self] _ in
+                self?.browseFilesHere()
             })
         }
         items.append(UIAction(title: "Edit Host", image: UIImage(systemName: "pencil")) { [weak self] _ in
@@ -590,7 +624,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         )
         backPill.apply(themeID: themeID, attentionPending: attentionPending())
         let shellTitle = channel.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        installMenu(title: shellTitle.isEmpty ? (hostLabel.isEmpty ? "SSH Terminal" : hostLabel) : shellTitle)
+        installMenu(
+            title: shellTitle.isEmpty ? (hostLabel.isEmpty ? "SSH Terminal" : hostLabel) : shellTitle,
+            folder: channel.workingDirectory
+        )
         applyControlsVisibility(animation: .init(duration: 0.2, options: [.curveEaseInOut, .beginFromCurrentState]))
     }
 
@@ -723,6 +760,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         pasteBanner.isHidden = pasteNotice == nil
         if let pasteNotice {
             pasteBanner.apply(text: pasteNotice, color: UIColor(themeID.palette.orange))
+        }
+        openBanner.isHidden = openNotice == nil
+        if let openNotice {
+            openBanner.apply(text: openNotice, color: UIColor(themeID.palette.fg))
         }
     }
 
@@ -1226,6 +1267,169 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             sourceView: statusGlyph,
             onDismiss: { [weak self] in self?.presentingStatusDetail = false }
         )
+    }
+
+    // MARK: - Opening links and paths
+
+    /// The SSH host, as the saved profile names it. Nothing opens paths on a
+    /// host this terminal was not told about.
+    private var sshHost: String {
+        (session?.connectedProfile?.host ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The paired Oppi server that is this same machine, if any. Only then can
+    /// a path open in Oppi's own file routes.
+    private var pairedServer: PairedServer? {
+        guard let root = HostFactory.root(near: self), !sshHost.isEmpty else { return nil }
+        let servers = root.coordinator.serverStore.servers
+        let paired = servers.map { (id: $0.id, host: $0.host) }
+        guard let id = SSHTerminalServerMatch.serverId(forHost: sshHost, paired: paired) else { return nil }
+        return servers.first { $0.id == id }
+    }
+
+    /// Open and Copy for a held link, URL, or path. A path needs a paired
+    /// server, and a path outside that server's home is not offered at all:
+    /// owner-host files are rooted at the user's home there.
+    private func heldOpenTarget(_ held: SSHTerminalHeldCell) -> SSHTerminalOpenTarget? {
+        let folder = channel.workingDirectory.isEmpty ? nil : channel.workingDirectory
+        guard let target = SSHTerminalOpenResolution.target(
+            text: held.text, hyperlink: held.hyperlink, folder: folder
+        ) else { return nil }
+        guard target.path != nil else { return target }
+        guard pairedServer != nil else { return nil }
+        if let home = pairedHome, let path = absoluteHostPath(target.path ?? ""), !SSHTerminalHostPathPolicy.isInside(home: home, path: path) {
+            return nil
+        }
+        return target
+    }
+
+    private func open(_ target: SSHTerminalOpenTarget) {
+        switch target {
+        case .web(let url, _):
+            // The app's one open owner applies the link browser preference.
+            HostFactory.root(near: self)?.opener.open(.webLink(url))
+        case .path(let path):
+            openHostPath(path)
+        }
+    }
+
+    /// `~/…` needs the server's home; an absolute path is already resolved.
+    private func absoluteHostPath(_ path: String) -> String? {
+        guard path.hasPrefix("~/") else { return path.hasPrefix("/") ? path : nil }
+        guard let home = pairedHome else { return nil }
+        let rest = String(path.dropFirst(2))
+        return SSHTerminalPathResolution.absolute(rest, relativeTo: home)
+    }
+
+    private func openHostPath(_ path: String) {
+        guard let server = pairedServer, let root = HostFactory.root(near: self),
+              let api = root.coordinator.apiClient(for: server.id) else {
+            showOpenNotice("This host is not a paired Oppi server, so its files can only be copied.")
+            return
+        }
+        showOpenNotice("Opening \(path.split(separator: "/").last.map(String.init) ?? path)…")
+        Task { [weak self] in
+            do {
+                let home = try await Self.hostHome(api: api)
+                guard let self else { return }
+                self.pairedHome = home
+                guard let target = self.absoluteHostPath(path) ?? (path.hasPrefix("/") ? path : nil) else {
+                    self.showOpenNotice("That path cannot be resolved on the host.")
+                    return
+                }
+                let status = try await api.getHostPathStatus(path: target)
+                switch SSHTerminalHostPathPolicy.plan(status: status, home: home) {
+                case .file(let file):
+                    self.pushHostFile(serverId: server.id, path: file, root: root)
+                case .folder(let folder):
+                    self.pushHostFolder(serverId: server.id, folder: folder, home: home, root: root)
+                case .refused(let reason):
+                    self.showOpenNotice(reason)
+                }
+            } catch {
+                self?.showOpenNotice("That path could not be opened on the host.")
+            }
+        }
+    }
+
+    /// The folder the shell reported: the Files browser at it, on its server.
+    private func browseFilesHere() {
+        guard let server = pairedServer, let root = HostFactory.root(near: self),
+              let api = root.coordinator.apiClient(for: server.id) else { return }
+        let folder = channel.workingDirectory
+        Task { [weak self] in
+            do {
+                let home = try await Self.hostHome(api: api)
+                guard let self else { return }
+                self.pairedHome = home
+                guard SSHTerminalHostPathPolicy.isInside(home: home, path: folder) else {
+                    self.showOpenNotice("Files open inside the server's home folder.")
+                    return
+                }
+                self.pushHostFolder(serverId: server.id, folder: folder, home: home, root: root)
+            } catch {
+                self?.showOpenNotice("The server's home folder could not be read.")
+            }
+        }
+    }
+
+    private static func hostHome(api: APIClient) async throws -> String {
+        let status = try await api.getHostPathStatus(path: "~")
+        guard status.resolvedPath.hasPrefix("/") else { throw SSHTerminalError.engineUnavailable }
+        return status.resolvedPath
+    }
+
+    /// The viewer opens a file through its own server, above this terminal.
+    private func pushHostFile(serverId: String, path: String, root: AppRootEnvironment) {
+        let target = WorkspaceLinkedFileNavTarget.hostFile(serverId: serverId, workspaceId: "", path: path)
+        Router.push(
+            WorkspaceLinkedFileViewController(target: target, placement: .pushed, root: root),
+            from: self
+        )
+    }
+
+    /// The Files browser lists host folders home-relative, so the folder is
+    /// passed the way its own navigation builds it: no home prefix, a trailing
+    /// slash, and empty for the home folder itself.
+    private func pushHostFolder(serverId: String, folder: String, home: String, root: AppRootEnvironment) {
+        let trimmedHome = home.hasSuffix("/") && home.count > 1 ? String(home.dropLast()) : home
+        var relative = folder == trimmedHome ? "" : String(folder.dropFirst(trimmedHome.count + 1))
+        if !relative.isEmpty, !relative.hasSuffix("/") { relative += "/" }
+        Router.push(
+            FileBrowserViewController(
+                root: root,
+                target: .hostHome(serverId: serverId, path: relative),
+                showsSidebarToggle: false
+            ),
+            from: self
+        )
+    }
+
+    /// The server's home folder, fetched once per terminal so the hold menu
+    /// can tell an owner-host path from one the file routes cannot reach.
+    private func refreshPairedHome() {
+        guard pairedHome == nil, pairedHomeTask == nil, let server = pairedServer,
+              let api = HostFactory.root(near: self)?.coordinator.apiClient(for: server.id) else { return }
+        pairedHomeTask = Task { [weak self] in
+            let home = try? await Self.hostHome(api: api)
+            guard let self else { return }
+            self.pairedHomeTask = nil
+            guard let home else { return }
+            self.pairedHome = home
+            self.setNeedsUpdateProperties()
+        }
+    }
+
+    private func showOpenNotice(_ text: String) {
+        openNotice = text
+        openNoticeTask?.cancel()
+        openNoticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            self?.openNotice = nil
+            self?.setNeedsUpdateProperties()
+        }
+        setNeedsUpdateProperties()
     }
 
     // MARK: - Paste

@@ -198,6 +198,9 @@ final class SSHTerminalChannel {
     private(set) var inputNotice = ""
     /// Display-only; published only when the remote sets a different title.
     private(set) var title = ""
+    /// The shell's working directory from OSC 7, as a local path.
+    /// Empty when the shell has not reported one we can use.
+    private(set) var workingDirectory = ""
     /// True while a network path change is being checked.
     private(set) var networkChanged = false
     /// Bumped each time a remote program put text on this device's clipboard.
@@ -382,6 +385,7 @@ final class SSHTerminalChannel {
         guard connected, !bytes.isEmpty else { return }
         engine.receive(bytes)
         if engine.title != title { title = engine.title }
+        if engine.workingDirectory != workingDirectory { workingDirectory = engine.workingDirectory }
     }
 
     private func closeInput() {

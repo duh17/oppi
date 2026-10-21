@@ -56,7 +56,8 @@ struct SSHTerminalDisplayLinkPolicy: Equatable {
 /// libghostty owns history/reflow/alternate screen; UIKit paints copied cells
 /// at fixed positions and supplies UITextInput and physical-key events.
 /// Software ⌫ auto-repeats only for UITextInput; UIKeyInput fires once.
-final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGestureRecognizerDelegate,
+    UIEditMenuInteractionDelegate {
     let channel: SSHTerminalChannel
     let requestPaste: (String?) -> Void
     let followChanged: (Bool) -> Void
@@ -166,11 +167,20 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private var dragTarget: SSHTerminalDragTarget?
     private var dragSnapshot: SSHTerminalSelectionSnapshot?
     /// Where a recognized hold started. It becomes a selection or mouse drag
-    /// only once the finger moves; a hold lifted in place opens the Paste menu.
+    /// only once the finger moves; a hold lifted in place opens the edit menu.
     private var holdStart: CGPoint?
-    private let editMenu = UIEditMenuInteraction(delegate: nil)
+    /// What the held cell offers: Open and Copy join Paste when it is a link,
+    /// a URL, or a path. Cleared when the menu closes.
+    private var heldCell: SSHTerminalHeldCell?
+    private var heldOpenTarget: SSHTerminalOpenTarget?
+    private lazy var editMenu = UIEditMenuInteraction(delegate: self)
     /// An image from Paste or the paste control, for the host to save.
     var pasteImage: (SSHTerminalPastedImage) -> Void = { _ in }
+    /// The Open choice for a held cell, if this terminal can open one. The
+    /// owner knows the host's folder and whether it is a paired server.
+    var openTargetForHeldCell: (SSHTerminalHeldCell) -> SSHTerminalOpenTarget? = { _ in nil }
+    /// Runs the Open choice picked from the hold menu.
+    var open: (SSHTerminalOpenTarget) -> Void = { _ in }
     private var highlightClear: Task<Void, Never>?
     private var highlightGeneration = 0
     private var isSyncingHistoryScroll = false
@@ -218,7 +228,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         // Allow Paste alert and blocks the main thread until it is answered.
         pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [UTType.plainText.identifier, UTType.image.identifier])
         accessibilityIdentifier = "sshTerminal.grid"
-        accessibilityLabel = "SSH terminal. Tap to type or hide the keyboard. Double-tap a word to copy it. Drag to scroll. Touch and hold to paste, or hold then drag to select."
+        accessibilityLabel = "SSH terminal. Tap to type or hide the keyboard. Double-tap a word to copy it. Drag to scroll. Touch and hold for Open, Copy, and Paste, or hold then drag to select."
         addInteraction(editMenu)
         installGestures()
         bar = makeAccessoryBar()
@@ -766,6 +776,60 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         return super.canPerformAction(action, withSender: sender)
     }
 
+    /// The hold menu. A held link, URL, or path gets Open beside Copy and
+    /// Paste; anything else keeps the system's Paste-only menu (`nil` leaves
+    /// `defaultMenu` in place).
+    func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        menuFor configuration: UIEditMenuConfiguration,
+        defaultMenu: UIMenu
+    ) -> UIMenu? {
+        Self.holdMenu(
+            held: heldCell,
+            target: heldOpenTarget,
+            canPaste: canPerformAction(#selector(paste(_:)), withSender: nil),
+            open: { [weak self] target in self?.open(target) },
+            copy: { [weak self] in self?.copyHeldWord() },
+            paste: { [weak self] in self?.paste(nil) }
+        )
+    }
+
+    /// The items a hold menu shows, in order: Open, Copy, Paste. Nothing
+    /// openable means no menu of our own.
+    static func holdMenu(
+        held: SSHTerminalHeldCell?,
+        target: SSHTerminalOpenTarget?,
+        canPaste: Bool,
+        open: @escaping (SSHTerminalOpenTarget) -> Void,
+        copy: @escaping () -> Void,
+        paste: @escaping () -> Void
+    ) -> UIMenu? {
+        guard let target else { return nil }
+        var items: [UIMenuElement] = [
+            UIAction(title: openTitle(for: target), image: UIImage(systemName: "arrow.up.forward.app")) { _ in
+                open(target)
+            },
+        ]
+        if held?.text.isEmpty == false {
+            items.append(UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in copy() })
+        }
+        if canPaste {
+            items.append(UIAction(title: "Paste", image: UIImage(systemName: "doc.on.clipboard")) { _ in paste() })
+        }
+        return UIMenu(children: items)
+    }
+
+    /// The item names where Open goes: the site for a page, the file for a
+    /// path, so the destination is visible before the tap.
+    static func openTitle(for target: SSHTerminalOpenTarget) -> String {
+        switch target {
+        case .web(_, let host): return host.isEmpty ? "Open Link" : "Open \(host)"
+        case .path(let path):
+            let name = path.split(separator: "/").last.map(String.init) ?? ""
+            return name.isEmpty ? "Open" : "Open \(name)"
+        }
+    }
+
     /// The accessory bar's UIPasteControl. Its tap is the consent, so there is
     /// no alert, and the text or image loads off the main thread.
     override func paste(itemProviders: [NSItemProvider]) {
@@ -930,7 +994,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
                 }
             case nil:
                 if gesture.state == .ended, let start = holdStart {
-                    editMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: start))
+                    presentHoldMenu(at: start)
                 }
             }
             holdStart = nil
@@ -945,8 +1009,29 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 
     /// Finger travel after the hold before it counts as a drag rather than
-    /// a hold for the Paste menu.
+    /// a hold for the menu.
     private static let holdDragThreshold: CGFloat = 6
+
+    /// A hold that lifts in place opens the edit menu at the finger. When the
+    /// held cell is an OSC 8 link, a URL, or a path, the menu offers Open and
+    /// Copy beside Paste; otherwise it is the usual Paste menu. Opening never
+    /// writes to the host, and a tap keeps its own behaviour.
+    private func presentHoldMenu(at point: CGPoint) {
+        let cell = self.cell(at: point)
+        let held = channel.engine.heldCell(column: cell.column, row: cell.row)
+        heldCell = held
+        heldOpenTarget = held.flatMap(openTargetForHeldCell)
+        editMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))
+    }
+    /// Copy in the hold menu: the same local copy the double tap makes, never
+    /// a remote clipboard write.
+    private func copyHeldWord() {
+        guard let held = heldCell, !held.text.isEmpty else { return }
+        let snapshot = SSHTerminalSelectionSnapshot(text: held.text, spans: held.spans)
+        channel.copyLocalSelection(held.text)
+        showHighlight(snapshot, lingering: true)
+        needsPaint = true
+    }
 
     /// Starts the selection, or the mouse press in an app that asked for
     /// mouse input, at the cell where the hold began.

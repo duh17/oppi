@@ -69,9 +69,15 @@ final class SSHTerminalEngine {
     private var replies = [Data]()
     private var live = true
     private var titleChanged = false
+    private var pwdChanged = false
     private var heldSince: ContinuousClock.Instant?
     private let sink: (Data) -> Void
     private(set) var title = ""
+    /// The shell's working directory as a local path, from OSC 7. Only a
+    /// `file:` URL becomes a path: the raw OSC value is whatever bytes the
+    /// shell emitted, and a bare path or another scheme leaves this empty so
+    /// relative paths stay unopenable rather than guessed.
+    private(set) var workingDirectory = ""
     /// OSC 7501 records for this terminal. Outlives `close()` so unseen
     /// `done`/`error` records can still be shown after the program exits.
     let programStatus = SSHTerminalProgramStatusStore()
@@ -169,6 +175,15 @@ final class SSHTerminalEngine {
                 }
             }
             titleChanged = false
+        }
+        if pwdChanged {
+            var value = GhosttyString()
+            if ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_PWD, &value) == GHOSTTY_SUCCESS {
+                workingDirectory = SSHTerminalWorkingDirectory.path(from: Self.copy(value)) ?? ""
+            } else {
+                workingDirectory = ""
+            }
+            pwdChanged = false
         }
         // Callbacks copy only. No channel write, await, blocking or vt reentry
         // occurs until the triggering vt_write has returned.
@@ -546,6 +561,30 @@ final class SSHTerminalEngine {
         }
     }
 
+    /// The cell under a hold, with the same word the double tap would copy and
+    /// the OSC 8 hyperlink it carries, if any.
+    func heldCell(column: Int, row: Int) -> SSHTerminalHeldCell? {
+        let word = selectWord(column: column, row: row)
+        let link = hyperlink(column: column, row: row)
+        guard word != nil || link != nil else { return nil }
+        return SSHTerminalHeldCell(
+            text: word?.text ?? "", spans: word?.spans ?? [], hyperlink: link
+        )
+    }
+
+    /// The OSC 8 URI of a viewport cell. Empty when the cell has no link.
+    func hyperlink(column: Int, row: Int) -> String? {
+        guard var ref = viewportRef(column: column, row: row) else { return nil }
+        var length = 0
+        _ = ghostty_grid_ref_hyperlink_uri(&ref, nil, 0, &length)
+        guard length > 0, length <= 4096 else { return nil }
+        var buffer = [UInt8](repeating: 0, count: length)
+        var written = 0
+        guard ghostty_grid_ref_hyperlink_uri(&ref, &buffer, length, &written) == GHOSTTY_SUCCESS,
+              written > 0 else { return nil }
+        return String(decoding: buffer[..<written], as: UTF8.self)
+    }
+
     func beginSelection(column: Int, row: Int, surfacePoint: CGPoint) {
         guard let selectionGesture, let selectionPress else { return }
         ghostty_selection_gesture_reset(selectionGesture, terminal)
@@ -838,6 +877,12 @@ final class SSHTerminalEngine {
                 Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue().titleChanged = true
             }
         }
+        let pwd: GhosttyTerminalPwdChangedFn = { _, context in
+            MainActor.assumeIsolated {
+                guard let context else { return }
+                Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue().pwdChanged = true
+            }
+        }
         let hold: GhosttyTerminalRenderHoldFn = { terminal, context, held in
             MainActor.assumeIsolated {
                 guard let context else { return }
@@ -921,6 +966,8 @@ final class SSHTerminalEngine {
                 owner.programStatus.removeAll()
                 owner.title = ""
                 owner.titleChanged = false
+                owner.workingDirectory = ""
+                owner.pwdChanged = false
             }
         }
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS, unsafeBitCast(status, to: UnsafeRawPointer.self))
@@ -934,6 +981,7 @@ final class SSHTerminalEngine {
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_XTVERSION, unsafeBitCast(version, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, unsafeBitCast(scheme, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, unsafeBitCast(title, to: UnsafeRawPointer.self))
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_PWD_CHANGED, unsafeBitCast(pwd, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_RENDER_HOLD, unsafeBitCast(hold, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE, unsafeBitCast(clipboard, to: UnsafeRawPointer.self))
         // The write callback enables Kitty clipboard (OSC 5522) writes, which
