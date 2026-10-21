@@ -129,6 +129,10 @@ final class SSHTerminalEngine {
     /// Placement reads, for the perf bench and tests: unchanged frames must not
     /// walk the placement list again.
     private(set) var kittyPlacementReadCount = 0
+    /// Image IDs this screen's store still holds in libghostty. It grows as
+    /// placements are seen and shrinks only when the store dropped an image, so
+    /// the renderer never evicts a texture just because it scrolled away.
+    private var kittyStoredImageIDs = Set<UInt32>()
     /// Resize and scroll move every row; rebuild the whole grid.
     private var forceFullRebuild = true
 
@@ -397,11 +401,20 @@ final class SSHTerminalEngine {
         ) == GHOSTTY_SUCCESS else { return nil }
         let viewportTop = Int(scrollbar.offset)
         let stored = kittySnapshot
-        let reread = generation != kittyStoreGeneration || viewportTop != kittyViewportTop
+        let storeChanged = generation != kittyStoreGeneration
+        let reread = storeChanged || viewportTop != kittyViewportTop
             || geometry.columns != kittyStoreColumns || geometry.rows != kittyStoreRows
             || geometry.cellWidth != kittyStoreCellWidth || geometry.cellHeight != kittyStoreCellHeight
             || (rowsRebuilt && !(stored?.placements.isEmpty ?? true))
         if reread {
+            if storeChanged {
+                // Textures may leave only when libghostty dropped the image from
+                // its store; an image whose placements are merely off screen is
+                // still stored, so scrolling back must not re-upload its pixels.
+                kittyStoredImageIDs = Set(kittyStoredImageIDs.filter {
+                    ghostty_kitty_graphics_image(graphics, $0) != nil
+                })
+            }
             kittyStoreGeneration = generation
             kittyViewportTop = viewportTop
             kittyStoreColumns = geometry.columns
@@ -420,70 +433,75 @@ final class SSHTerminalEngine {
     /// One walk of the image store into value types the renderer can place.
     /// Only real placements carry geometry; Unicode-placeholder (virtual)
     /// placements are skipped because libghostty reports no position for them.
+    ///
+    /// Placements come back grouped by libghostty's own z-layer classification
+    /// (the iterator's layer filter, so the thresholds live in libghostty only)
+    /// and sorted by image ID inside a layer, which lets the renderer pack them
+    /// in one linear pass with one draw call per image and layer.
     private func readKittyGraphics(
         _ graphics: GhosttyKittyGraphics, generation: UInt64
     ) -> SSHTerminalKittySnapshot {
         kittyPlacementReadCount &+= 1
         var placements = [SSHTerminalKittyPlacement]()
         var images = [SSHTerminalKittyImage]()
+        var seenImageIDs = Set<UInt32>()
         var iterator: GhosttyKittyGraphicsPlacementIterator?
-        if ghostty_kitty_graphics_placement_iterator_new(nil, &iterator) == GHOSTTY_SUCCESS,
-           ghostty_kitty_graphics_get(
-               graphics, GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR, &iterator
-           ) == GHOSTTY_SUCCESS {
-            while ghostty_kitty_graphics_placement_next(iterator) {
-                var imageID: UInt32 = 0
-                var virtual = false
-                var xOffset: UInt32 = 0
-                var yOffset: UInt32 = 0
-                var z: Int32 = 0
-                ghostty_kitty_graphics_placement_get(
-                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID, &imageID
-                )
-                ghostty_kitty_graphics_placement_get(
-                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL, &virtual
-                )
-                guard !virtual, let image = ghostty_kitty_graphics_image(graphics, imageID) else { continue }
-                var info = GhosttyKittyGraphicsPlacementRenderInfo()
-                info.size = MemoryLayout<GhosttyKittyGraphicsPlacementRenderInfo>.size
-                guard ghostty_kitty_graphics_placement_render_info(
-                    iterator, image, terminal, &info
-                ) == GHOSTTY_SUCCESS, info.viewport_visible else { continue }
-                ghostty_kitty_graphics_placement_get(
-                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET, &xOffset
-                )
-                ghostty_kitty_graphics_placement_get(
-                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET, &yOffset
-                )
-                ghostty_kitty_graphics_placement_get(
-                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z, &z
-                )
-                placements.append(.init(
-                    imageID: imageID, layer: Self.kittyLayer(z),
-                    xOffset: Int(xOffset), yOffset: Int(yOffset),
-                    pixelWidth: Int(info.pixel_width), pixelHeight: Int(info.pixel_height),
-                    viewportColumn: Int(info.viewport_col), viewportRow: Int(info.viewport_row),
-                    sourceX: Int(info.source_x), sourceY: Int(info.source_y),
-                    sourceWidth: Int(info.source_width), sourceHeight: Int(info.source_height)
-                ))
-                if !images.contains(where: { $0.id == imageID }) {
-                    images.append(SSHTerminalKittySnapshot.image(image))
+        if ghostty_kitty_graphics_placement_iterator_new(nil, &iterator) == GHOSTTY_SUCCESS {
+            for layer in SSHTerminalKittyLayer.allCases {
+                var filter = layer.ghosttyLayer
+                guard ghostty_kitty_graphics_placement_iterator_set(
+                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER, &filter
+                ) == GHOSTTY_SUCCESS,
+                    ghostty_kitty_graphics_get(
+                        graphics, GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR, &iterator
+                    ) == GHOSTTY_SUCCESS else { continue }
+                var inLayer = [SSHTerminalKittyPlacement]()
+                while ghostty_kitty_graphics_placement_next(iterator) {
+                    var imageID: UInt32 = 0
+                    var virtual = false
+                    var xOffset: UInt32 = 0
+                    var yOffset: UInt32 = 0
+                    ghostty_kitty_graphics_placement_get(
+                        iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID, &imageID
+                    )
+                    ghostty_kitty_graphics_placement_get(
+                        iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL, &virtual
+                    )
+                    guard !virtual, let image = ghostty_kitty_graphics_image(graphics, imageID) else { continue }
+                    var info = GhosttyKittyGraphicsPlacementRenderInfo()
+                    info.size = MemoryLayout<GhosttyKittyGraphicsPlacementRenderInfo>.size
+                    guard ghostty_kitty_graphics_placement_render_info(
+                        iterator, image, terminal, &info
+                    ) == GHOSTTY_SUCCESS, info.viewport_visible else { continue }
+                    ghostty_kitty_graphics_placement_get(
+                        iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET, &xOffset
+                    )
+                    ghostty_kitty_graphics_placement_get(
+                        iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET, &yOffset
+                    )
+                    inLayer.append(.init(
+                        imageID: imageID, layer: layer,
+                        xOffset: Int(xOffset), yOffset: Int(yOffset),
+                        pixelWidth: Int(info.pixel_width), pixelHeight: Int(info.pixel_height),
+                        viewportColumn: Int(info.viewport_col), viewportRow: Int(info.viewport_row),
+                        sourceX: Int(info.source_x), sourceY: Int(info.source_y),
+                        sourceWidth: Int(info.source_width), sourceHeight: Int(info.source_height)
+                    ))
+                    if seenImageIDs.insert(imageID).inserted {
+                        images.append(SSHTerminalKittySnapshot.image(image))
+                    }
                 }
+                inLayer.sort { $0.imageID < $1.imageID }
+                placements.append(contentsOf: inLayer)
             }
         }
         ghostty_kitty_graphics_placement_iterator_free(iterator)
+        kittyStoredImageIDs.formUnion(seenImageIDs)
         return SSHTerminalKittySnapshot(
             generation: generation, placements: placements, images: images,
+            storedImageIDs: kittyStoredImageIDs,
             cellWidth: geometry.cellWidth, cellHeight: geometry.cellHeight
         )
-    }
-
-    /// libghostty's own z classification: the same thresholds the placement
-    /// layer filter uses, so a draw order can never disagree with it.
-    private static func kittyLayer(_ z: Int32) -> SSHTerminalKittyLayer {
-        if z < Int32.min / 2 { return .belowBackground }
-        if z < 0 { return .belowText }
-        return .aboveText
     }
 
     /// One row of cells. A single scalar is stored as `UInt32`; only combining

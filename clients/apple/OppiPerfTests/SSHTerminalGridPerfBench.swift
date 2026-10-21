@@ -190,6 +190,76 @@ struct SSHTerminalGridPerfBench {
         #expect(renderer.imageUploadCount - uploadsAfterWarmup == 0, "no image is uploaded twice")
     }
 
+    /// Thousands of 1x1 pictures, the shape of a program that prints a mosaic or
+    /// a listing of tiny previews. Packing used to be image x placement per layer
+    /// (quadratic), so this scenario is the one that has to stay flat: one bounded
+    /// set of draws, no texture per placement, and no re-upload in the steady state.
+    @Test func manySmallKittyImages() throws {
+        let pipeline = try SSHTerminalMetalPipeline.shared()
+        let metrics = SSHTerminalCellMetrics.codeFont()
+        let scale: CGFloat = 2
+        let cellWidth = max(1, Int(metrics.cellSize.width * scale))
+        let cellHeight = max(1, Int(metrics.cellSize.height * scale))
+        let width = max(1, Int(metrics.cellSize.width * CGFloat(Self.columns) * scale))
+        let height = max(1, Int(metrics.cellSize.height * CGFloat(Self.rows) * scale))
+        let renderer = try SSHTerminalMetalRenderer(pipeline: pipeline, metrics: metrics, scale: scale)
+        let engine = try SSHTerminalEngine(geometry: .init(
+            columns: Self.columns, rows: Self.rows, cellWidth: cellWidth, cellHeight: cellHeight
+        )) { _ in }
+        guard let texture = renderer.makeOffscreenTexture(width: width, height: height) else {
+            Issue.record("no offscreen texture")
+            return
+        }
+        engine.receive(Data(Self.plainScreen(fill: ".").utf8))
+        let white = Data([0xFF, 0xFF, 0xFF, 0xFF]).base64EncodedString()
+        // Every picture is pinned to the top-left cell, so all 10,000 placements
+        // are on screen and the packer has to bound them.
+        for index in 0..<10_000 {
+            engine.receive(Data(
+                "\u{1b}[1;1H\u{1b}_Ga=T,f=32,s=1,v=1,i=\(index + 1),c=1,r=1;\(white)\u{1b}\\".utf8
+            ))
+        }
+        _ = renderer.encodeOffscreen(
+            frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
+            texture: texture, waitUntilCompleted: true, fullRebuild: true
+        )
+        let uploadsAfterWarmup = renderer.imageUploadCount
+
+        var frames: [UInt64] = []
+        var encodes: [UInt64] = []
+        var placements = 0
+        var uploads = 0
+        for _ in 0..<9 {
+            let frameStart = DispatchTime.now().uptimeNanoseconds
+            let frame = engine.frame()
+            let cost = renderer.encodeOffscreen(
+                frame: frame, cursorColor: SIMD4(1, 1, 1, 0.65),
+                texture: texture, waitUntilCompleted: true, fullRebuild: false
+            )
+            frames.append(DispatchTime.now().uptimeNanoseconds &- frameStart &- cost.encodeNanos)
+            encodes.append(cost.encodeNanos)
+            placements = cost.imagePlacementCount
+            uploads += cost.imageUploadCount
+            #expect(cost.completed)
+        }
+        let stored = engine.frame().kitty?.images.count ?? 0
+        print("SSH_TERMINAL_AFTER kitty_many_images=10000 kitty_many_image_size=1x1 warmup=1 iterations=9 configuration=Debug")
+        print("SSH_TERMINAL_AFTER kitty_many_frame_ms=\(Self.ms(Self.percentiles(frames).median)) kitty_many_encode_ms=\(Self.ms(Self.percentiles(encodes).median)) kitty_many_encode_p95_ms=\(Self.ms(Self.percentiles(encodes).p95)) kitty_many_drawn_placements=\(placements) kitty_many_cached_images=\(renderer.cachedImageCount)")
+        print("METRIC ssh_terminal_kitty_many_images_frame_us=\(String(format: "%.1f", Double(Self.percentiles(frames).median) / 1_000))")
+        print("METRIC ssh_terminal_kitty_many_images_encode_us=\(String(format: "%.1f", Double(Self.percentiles(encodes).median) / 1_000))")
+        print("METRIC ssh_terminal_kitty_many_images_drawn_placements=\(placements)")
+        print("METRIC ssh_terminal_kitty_many_images_cached=\(renderer.cachedImageCount)")
+        print("METRIC ssh_terminal_kitty_many_images_stored=\(stored)")
+        print("METRIC ssh_terminal_kitty_many_images_cached_bytes=\(renderer.cachedImageBytes)")
+        #expect(stored == 10_000, "every picture the host sent is stored")
+        #expect(placements > 0 && placements <= SSHTerminalMetalRenderer.maxKittyPlacementsPerFrame)
+        #expect(renderer.cachedImageCount <= SSHTerminalMetalRenderer.maxKittyImagesPerFrame)
+        #expect(renderer.cachedImageBytes <= SSHTerminalKittyGraphics.imageStorageLimitBytes)
+        #expect(renderer.cachedImageBytes > 0, "the budget counts real texture bytes")
+        #expect(uploads == 0, "a steady-state frame copies no image pixels")
+        #expect(uploadsAfterWarmup > 0, "the warmup frame uploaded the bounded set")
+    }
+
     private struct Percentiles {
         var median: UInt64
         var p95: UInt64

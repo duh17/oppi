@@ -526,22 +526,31 @@ private func sshTerminalFontCovers(_ font: UIFont, _ text: String) -> Bool {
 /// changes on every add or replace of an image ID (including animation frames),
 /// so a cached texture can never show stale pixels; a dimension comparison
 /// would miss a same-sized retransmission. Entries leave when the image leaves
-/// libghostty's store, which the engine reports by omitting it from a snapshot.
+/// libghostty's store, and the total is kept under a byte budget by evicting the
+/// least recently drawn image, so a store full of images cannot hold unbounded
+/// GPU memory.
 final class SSHTerminalKittyTextureCache {
     private struct Entry {
         let generation: UInt64
         let texture: MTLTexture
+        /// What the GPU actually allocated. Gray and gray-alpha arrive expanded
+        /// to RGBA, so this is not derivable from the stored format.
         let byteCount: Int
+        var lastUsed: UInt64
     }
 
-    /// Pixel bytes held here. A single image larger than this is not drawn
-    /// rather than evicting one that is on screen.
+    /// Pixel bytes held here. An image that alone exceeds it is not drawn rather
+    /// than evicting everything on screen.
     private let limit: Int
     private var entries: [UInt32: Entry] = [:]
+    private var tick: UInt64 = 0
     private(set) var totalBytes = 0
     /// Texture creations, for tests and the perf bench: steady-state frames
     /// must not add to this.
     private(set) var uploadCount = 0
+    /// Images dropped for budget, for tests: a frame past the budget must skip
+    /// an image, never leak one.
+    private(set) var evictionCount = 0
     var count: Int { entries.count }
 
     init(limit: Int = SSHTerminalKittyGraphics.imageStorageLimitBytes) {
@@ -554,36 +563,60 @@ final class SSHTerminalKittyTextureCache {
     func texture(for image: SSHTerminalKittyImage, device: MTLDevice) -> MTLTexture? {
         guard image.width > 0, image.height > 0,
               image.width <= 16384, image.height <= 16384 else { return nil }
-        let byteCount = image.width * image.height * 4
-        guard byteCount <= limit else { return nil }
-        if let entry = entries[image.id] {
-            if entry.generation == image.generation { return entry.texture }
+        let (pixels, overflowed) = image.width.multipliedReportingOverflow(by: image.height)
+        guard !overflowed else { return nil }
+        let (estimated, estimateOverflowed) = pixels.multipliedReportingOverflow(by: 4)
+        // Cheap upper bound before Metal is asked for a texture too big to keep.
+        guard !estimateOverflowed, estimated <= limit else { return nil }
+        tick &+= 1
+        if var entry = entries[image.id] {
+            if entry.generation == image.generation {
+                entry.lastUsed = tick
+                entries[image.id] = entry
+                return entry.texture
+            }
             entries[image.id] = nil
             totalBytes -= entry.byteCount
         }
         guard let texture = Self.makeTexture(device: device, image: image) else { return nil }
-        entries[image.id] = Entry(generation: image.generation, texture: texture, byteCount: byteCount)
-        totalBytes += byteCount
+        // What Metal reports can be zero where the driver does not track it (the
+        // simulator does), so the pixel bytes are the floor and the budget still
+        // bounds what is held.
+        let allocated = max(texture.allocatedSize, estimated)
+        guard allocated <= limit else { return nil }
+        if totalBytes + allocated > limit {
+            // Oldest first: images drawn this frame were touched last, so a fit
+            // frame evicts what is off screen instead of what it just drew.
+            let ordered = entries.sorted { $0.value.lastUsed < $1.value.lastUsed }
+            for (id, entry) in ordered {
+                guard totalBytes + allocated > limit else { break }
+                entries[id] = nil
+                totalBytes -= entry.byteCount
+                evictionCount += 1
+            }
+        }
+        guard totalBytes + allocated <= limit else { return nil }
+        entries[image.id] = Entry(
+            generation: image.generation, texture: texture, byteCount: allocated, lastUsed: tick
+        )
+        totalBytes += allocated
         uploadCount += 1
         return texture
     }
 
-    /// Drop every image the screen no longer stores.
-    func retain(only live: [UInt32]) {
+    /// Drop every image libghostty no longer stores. An image whose placements
+    /// scrolled out of the viewport is still stored, so its texture stays.
+    func retain(only stored: Set<UInt32>) {
         guard !entries.isEmpty else { return }
-        let keep = Set(live)
         var evicted = [UInt32]()
-        for (id, entry) in entries where !keep.contains(id) {
+        for (id, entry) in entries where !stored.contains(id) {
             totalBytes -= entry.byteCount
             evicted.append(id)
         }
-        for id in evicted { entries[id] = nil }
-    }
-
-    func removeAll() {
-        guard !entries.isEmpty else { return }
-        entries.removeAll(keepingCapacity: true)
-        totalBytes = 0
+        for id in evicted {
+            entries[id] = nil
+            evictionCount += 1
+        }
     }
 
     private static func makeTexture(
@@ -681,6 +714,8 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
     private let atlas: SSHTerminalGlyphAtlas
     /// Kitty image textures, keyed by image ID and generation.
     private let kittyTextures = SSHTerminalKittyTextureCache()
+    /// Store generation the texture cache was last pruned against.
+    private var evictedKittyGeneration: UInt64 = .max
     private let lock = NSLock()
     private var slots: [Slot]
     private var faces = [UInt8: UIFont]()
@@ -755,11 +790,14 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         return slots.filter { !$0.inFlight }.count
     }
 
-    /// Images currently holding a texture, and how many texture uploads have
-    /// happened in total. The bench and tests use these to prove that a frame
-    /// in the steady state copies no pixels.
+    /// Images currently holding a texture, how many texture uploads have
+    /// happened in total, and how many were dropped for budget or deletion. The
+    /// bench and tests use these to prove that a frame in the steady state
+    /// copies no pixels.
     var cachedImageCount: Int { kittyTextures.count }
     var imageUploadCount: Int { kittyTextures.uploadCount }
+    var imageEvictionCount: Int { kittyTextures.evictionCount }
+    var cachedImageBytes: Int { kittyTextures.totalBytes }
 
     func setMetrics(_ metrics: SSHTerminalCellMetrics, scale: CGFloat) {
         let scale = max(scale, 1)
@@ -1150,56 +1188,90 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         var groups: [ImageGroup] = []
     }
 
+    /// Distinct images one frame draws. Past this the frame draws nothing more: a
+    /// host that sprays thousands of tiny images cannot turn one frame into
+    /// thousands of draw calls and texture uploads.
+    static let maxKittyImagesPerFrame = 256
+    /// Placement quads one frame draws, which bounds the instance data too.
+    static let maxKittyPlacementsPerFrame = 1024
+
     /// Place every visible Kitty placement as a cell-space quad, sampling its
     /// source rectangle. Pixels only reach a texture when an image generation
     /// changes (see `SSHTerminalKittyTextureCache`); a frame in the steady state
-    /// appends instances and nothing else. Texture-eviction runs here too, so an
-    /// image that libghostty dropped stops holding GPU memory.
+    /// appends instances and nothing else. The snapshot arrives sorted by
+    /// (layer, image ID), so one pass over the placements groups them exactly in
+    /// draw order with no search per image. Textures are evicted only when
+    /// libghostty dropped the image from its store.
     private func packImages(
         _ kitty: SSHTerminalKittySnapshot?, cellW: Float, cellH: Float
     ) -> ImagePacking {
-        guard let kitty, !kitty.placements.isEmpty else {
-            kittyTextures.removeAll()
+        guard let kitty else {
+            // Nothing is stored on this screen. Cached textures stay: the other
+            // screen's store may still hold them (an alternate-screen toggle),
+            // and the byte budget bounds what is kept. A later generation stamp
+            // that differs still evicts whatever really left the store.
             return ImagePacking()
         }
-        kittyTextures.retain(only: kitty.images.map(\.id))
+        // The store generation moves on any transmit, placement or delete. An
+        // image that only scrolled out of view is still stored, so it keeps its
+        // texture and scrolling back copies no pixels.
+        if kitty.generation != evictedKittyGeneration {
+            kittyTextures.retain(only: kitty.storedImageIDs)
+            evictedKittyGeneration = kitty.generation
+        }
+        guard !kitty.placements.isEmpty, !kitty.images.isEmpty else { return ImagePacking() }
         // Placement geometry is in terminal pixels; the drawable's cells may be
         // a fraction of a pixel different after rounding.
         let scaleX = cellW / Float(max(1, kitty.cellWidth))
         let scaleY = cellH / Float(max(1, kitty.cellHeight))
+        var imagesByID = [UInt32: SSHTerminalKittyImage](minimumCapacity: kitty.images.count)
+        for image in kitty.images where imagesByID[image.id] == nil { imagesByID[image.id] = image }
         var packing = ImagePacking()
-        packing.instances.reserveCapacity(kitty.placements.count)
-        for layer in SSHTerminalKittyLayer.allCases {
-            for image in kitty.images {
-                guard image.width > 0, image.height > 0,
-                      let texture = kittyTextures.texture(for: image, device: device) else { continue }
-                let width = Float(image.width)
-                let height = Float(image.height)
-                let start = packing.instances.count
-                for placement in kitty.placements
-                where placement.imageID == image.id && placement.layer == layer {
-                    let size = SIMD2<Float>(
-                        Float(placement.pixelWidth) * scaleX, Float(placement.pixelHeight) * scaleY
-                    )
-                    guard size.x > 0, size.y > 0 else { continue }
-                    let origin = SIMD2<Float>(
-                        Float(placement.viewportColumn) * cellW + Float(placement.xOffset) * scaleX,
-                        Float(placement.viewportRow) * cellH + Float(placement.yOffset) * scaleY
-                    )
-                    let uv = SIMD4<Float>(
-                        Float(placement.sourceX) / width, Float(placement.sourceY) / height,
-                        Float(placement.sourceX + placement.sourceWidth) / width,
-                        Float(placement.sourceY + placement.sourceHeight) / height
-                    )
-                    packing.instances.append(CellInstance(
-                        origin: origin, size: size, color: SIMD4(1, 1, 1, 1), uv: uv, flags: 0
-                    ))
-                }
-                if packing.instances.count > start {
-                    packing.groups.append(ImageGroup(
-                        layer: layer, instances: start..<packing.instances.count, texture: texture
-                    ))
-                }
+        packing.instances.reserveCapacity(min(kitty.placements.count, Self.maxKittyPlacementsPerFrame))
+        var drawnImages = 0
+        var index = 0
+        while index < kitty.placements.count {
+            let layer = kitty.placements[index].layer
+            let imageID = kitty.placements[index].imageID
+            var end = index + 1
+            while end < kitty.placements.count,
+                  kitty.placements[end].layer == layer,
+                  kitty.placements[end].imageID == imageID {
+                end += 1
+            }
+            // Every `continue` below still moves past this image's placements.
+            defer { index = end }
+            guard packing.instances.count < Self.maxKittyPlacementsPerFrame,
+                  drawnImages < Self.maxKittyImagesPerFrame,
+                  let image = imagesByID[imageID], image.width > 0, image.height > 0,
+                  let texture = kittyTextures.texture(for: image, device: device) else { continue }
+            let width = Float(image.width)
+            let height = Float(image.height)
+            let start = packing.instances.count
+            for placement in kitty.placements[index..<end] {
+                guard packing.instances.count < Self.maxKittyPlacementsPerFrame else { break }
+                let size = SIMD2<Float>(
+                    Float(placement.pixelWidth) * scaleX, Float(placement.pixelHeight) * scaleY
+                )
+                guard size.x > 0, size.y > 0 else { continue }
+                let origin = SIMD2<Float>(
+                    Float(placement.viewportColumn) * cellW + Float(placement.xOffset) * scaleX,
+                    Float(placement.viewportRow) * cellH + Float(placement.yOffset) * scaleY
+                )
+                let uv = SIMD4<Float>(
+                    Float(placement.sourceX) / width, Float(placement.sourceY) / height,
+                    Float(placement.sourceX + placement.sourceWidth) / width,
+                    Float(placement.sourceY + placement.sourceHeight) / height
+                )
+                packing.instances.append(CellInstance(
+                    origin: origin, size: size, color: SIMD4(1, 1, 1, 1), uv: uv, flags: 0
+                ))
+            }
+            if packing.instances.count > start {
+                packing.groups.append(ImageGroup(
+                    layer: layer, instances: start..<packing.instances.count, texture: texture
+                ))
+                drawnImages += 1
             }
         }
         return packing

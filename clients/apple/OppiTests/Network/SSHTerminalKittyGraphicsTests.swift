@@ -1,3 +1,4 @@
+import Compression
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -250,6 +251,131 @@ struct SSHTerminalKittyGraphicsTests {
         #expect(engine.kittyPlacementReadCount > reads, "a viewport move re-resolves geometry")
     }
 
+    // MARK: - Frame budget
+
+    /// A host printing thousands of 1x1 pictures. Packing used to walk every
+    /// image for every layer against every placement (quadratic) and give each
+    /// image its own texture and draw call; the caps keep one frame bounded.
+    /// Every picture is pinned to the top-left cell, so all 10,000 placements are
+    /// on screen at once and the packer really sees them.
+    @Test func manyTinyImagesStayWithinTheFrameBudget() throws {
+        let harness = try renderHarness(columns: 24, rows: 4)
+        let home = Data("\u{1b}[1;1H".utf8)
+        for index in 0..<10_000 {
+            harness.engine.receive(home + kitty(
+                "a=T,f=32,s=1,v=1,i=\(index + 1),c=1,r=1",
+                payload: rgbaPayload([Pixel(red: 0x20, green: 0x80, blue: 0xE0)])
+            ))
+        }
+        let snapshot = try #require(harness.engine.frame().kitty)
+        #expect(snapshot.placements.count == 10_000, "every picture is on screen")
+        #expect(snapshot.images.count == 10_000)
+
+        let cost = harness.encode(fullRebuild: true)
+        #expect(cost.completed)
+        #expect(cost.imagePlacementCount > 0)
+        #expect(
+            cost.imagePlacementCount <= SSHTerminalMetalRenderer.maxKittyPlacementsPerFrame,
+            "the placement cap bounds one frame's draw calls"
+        )
+        #expect(
+            harness.renderer.cachedImageCount <= SSHTerminalMetalRenderer.maxKittyImagesPerFrame,
+            "the image cap bounds the textures one frame uploads"
+        )
+        #expect(
+            harness.renderer.cachedImageBytes <= SSHTerminalKittyGraphics.imageStorageLimitBytes,
+            "textures stay inside the store budget"
+        )
+        #expect(harness.renderer.cachedImageBytes > 0, "the budget counts real texture bytes")
+
+        // The caps are stable: a second frame re-draws the same bounded set.
+        let again = harness.encode(fullRebuild: false)
+        #expect(again.imagePlacementCount == cost.imagePlacementCount)
+        #expect(again.imageUploadCount == 0, "the bounded set is already uploaded")
+    }
+
+    @Test func imageScrolledOutOfViewKeepsItsTexture() throws {
+        let harness = try renderHarness(columns: 8, rows: 4)
+        harness.engine.receive(Data((0..<40).map { "line \($0)\r\n" }.joined().utf8))
+        harness.engine.receive(Data("\u{1b}[2;1H".utf8))
+        harness.engine.receive(kitty(
+            "a=T,f=32,s=2,v=2,i=6,c=2,r=1",
+            payload: rgbaPayload(Array(repeating: Pixel(red: 1, green: 2, blue: 3), count: 4))
+        ))
+        #expect(harness.encode(fullRebuild: true).imageUploadCount == 1)
+        let uploads = harness.renderer.imageUploadCount
+
+        // Far enough into history that the pinned picture is off the viewport.
+        harness.engine.scroll(rows: -20)
+        let away = harness.encode(fullRebuild: true)
+        #expect(away.imagePlacementCount == 0)
+        #expect(harness.renderer.cachedImageCount == 1, "the image is stored, not deleted")
+        #expect(harness.renderer.imageEvictionCount == 0, "a viewport move evicts nothing")
+        #expect(harness.renderer.imageUploadCount == uploads)
+
+        harness.engine.scroll(rows: 20)
+        let back = harness.encode(fullRebuild: true)
+        #expect(back.imagePlacementCount == 1, "scrolling back draws it again")
+        #expect(harness.renderer.imageUploadCount == uploads, "coming back copies no pixels")
+
+        // A real delete is what evicts the texture.
+        harness.engine.receive(kitty("a=d,d=A"))
+        let deleted = harness.encode(fullRebuild: true)
+        #expect(deleted.imagePlacementCount == 0)
+        #expect(harness.renderer.cachedImageCount == 0)
+    }
+
+    /// The alternate screen has its own image store. Leaving the picture behind
+    /// on the main screen and coming back is not a deletion either.
+    @Test func altScreenToggleKeepsTheMainScreenTexture() throws {
+        let harness = try renderHarness(columns: 8, rows: 4)
+        harness.engine.receive(kitty(
+            "a=T,f=32,s=2,v=2,i=7,c=2,r=1",
+            payload: rgbaPayload(Array(repeating: Pixel(red: 4, green: 5, blue: 6), count: 4))
+        ))
+        #expect(harness.encode(fullRebuild: true).imageUploadCount == 1)
+        let uploads = harness.renderer.imageUploadCount
+
+        harness.engine.receive(Data("\u{1b}[?1049h".utf8))
+        let alt = harness.encode(fullRebuild: true)
+        #expect(alt.imagePlacementCount == 0)
+
+        harness.engine.receive(Data("\u{1b}[?1049l".utf8))
+        let main = harness.encode(fullRebuild: true)
+        #expect(main.imagePlacementCount == 1, "the picture is back")
+        #expect(harness.renderer.imageUploadCount == uploads, "the same texture is reused")
+    }
+
+    @MainActor
+    private struct RenderHarness {
+        let engine: SSHTerminalEngine
+        let renderer: SSHTerminalMetalRenderer
+        let texture: MTLTexture
+
+        func encode(fullRebuild: Bool) -> SSHTerminalMetalFrameCost {
+            renderer.encodeOffscreen(
+                frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
+                texture: texture, waitUntilCompleted: true, fullRebuild: fullRebuild
+            )
+        }
+    }
+
+    private func renderHarness(columns: Int, rows: Int) throws -> RenderHarness {
+        let pipeline = try SSHTerminalMetalPipeline.shared()
+        let metrics = SSHTerminalCellMetrics.codeFont()
+        let scale: CGFloat = 2
+        let renderer = try SSHTerminalMetalRenderer(pipeline: pipeline, metrics: metrics, scale: scale)
+        let width = max(1, Int(metrics.cellSize.width * CGFloat(columns) * scale))
+        let height = max(1, Int(metrics.cellSize.height * CGFloat(rows) * scale))
+        let texture = try #require(renderer.makeOffscreenTexture(width: width, height: height))
+        let engine = try SSHTerminalEngine(geometry: .init(
+            columns: columns, rows: rows,
+            cellWidth: Int(metrics.cellSize.width * scale),
+            cellHeight: Int(metrics.cellSize.height * scale)
+        )) { _ in }
+        return RenderHarness(engine: engine, renderer: renderer, texture: texture)
+    }
+
     // MARK: - Drawn pixels
 
     @Test func imagePixelsReachTheGridInTheirLayer() throws {
@@ -333,6 +459,67 @@ struct SSHTerminalKittyGraphicsTests {
         #expect(below, "a below-text image leaves the glyph on top")
     }
 
+    // MARK: - PNG decode limits
+
+    /// Decoding is bounded from the header, before ImageIO copies a pixel: an
+    /// 84 KB PNG that declares a 5000x5000 picture is 100 MB of RGBA, and the old
+    /// path allocated that (plus ImageIO's own copy, plus libghostty's) first and
+    /// only then discovered it did not fit the 64 MB store.
+    @Test func pngDeclaringAHugeCanvasIsRefusedBeforeDecoding() throws {
+        let bomb = Self.solidPNG(width: 5_000, height: 5_000)
+        #expect(bomb.count < 200_000, "the payload itself is tiny")
+        let source = try #require(CGImageSourceCreateWithData(bomb as CFData, nil))
+        let properties = try #require(
+            CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        )
+        #expect(
+            (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue == 5_000,
+            "ImageIO accepts the declared canvas, so only the guard can refuse it"
+        )
+
+        #expect(
+            SSHTerminalKittyPNGDecoder.allowedByteCount(width: 5_000, height: 5_000) == nil,
+            "100 MB of RGBA does not fit the 64 MB budget"
+        )
+        #expect(SSHTerminalKittyPNGDecoder.allowedByteCount(width: 4_000, height: 4_000) == 64_000_000)
+        #expect(
+            SSHTerminalKittyPNGDecoder.allowedByteCount(width: 10_001, height: 1) == nil,
+            "a side past the dimension cap is refused even though it would fit"
+        )
+        #expect(
+            SSHTerminalKittyPNGDecoder.allowedByteCount(width: Int.max, height: Int.max) == nil,
+            "huge sides are refused, not wrapped or trapped on"
+        )
+        #expect(SSHTerminalKittyPNGDecoder.allowedByteCount(width: 0, height: 10) == nil)
+
+        var replies = [Data]()
+        let engine = try engine { replies.append($0) }
+        engine.receive(kitty("a=T,f=100,i=12,c=2,r=2", payload: bomb.base64EncodedString()))
+        #expect(engine.frame().kitty == nil, "nothing is stored")
+        #expect(
+            replies.map { String(decoding: $0, as: UTF8.self) }
+                == ["\u{1b}_Gi=12;EINVAL: invalid data\u{1b}\\"]
+        )
+    }
+
+    /// CGContext writes premultiplied pixels; the protocol's RGBA is straight, so
+    /// the renderer's blending needs the alpha divided back out.
+    @Test func semiTransparentPNGDecodesToStraightAlpha() throws {
+        let pngData = try png(width: 2, height: 2, rows: [
+            [Pixel(red: 255, green: 0, blue: 0, alpha: 128), Pixel(red: 0, green: 0, blue: 0, alpha: 0)],
+            [Pixel(red: 255, green: 255, blue: 255), Pixel(red: 10, green: 20, blue: 30)],
+        ])
+        let engine = try engine()
+        engine.receive(kitty("a=T,f=100,i=41,c=2,r=2", payload: pngData.base64EncodedString()))
+        let image = try #require(engine.frame().kitty?.images.first)
+        let pixels = try #require(image.pixels)
+        let bytes = Array(UnsafeBufferPointer(start: pixels, count: 16))
+        #expect(bytes[3] == 128, "alpha survives the round trip")
+        #expect(bytes[0] > 250, "unpremultiply restores the straight red channel")
+        #expect(bytes[4] == 0 && bytes[5] == 0 && bytes[6] == 0, "a transparent pixel has no colour")
+        #expect(bytes[8] == 255 && bytes[9] == 255 && bytes[10] == 255)
+    }
+
     // MARK: - PNG fixture
 
     /// A PNG built the way a program on the host would: any row count, real
@@ -359,5 +546,92 @@ struct SSHTerminalKittyGraphicsTests {
         CGImageDestinationAddImage(destination, image, nil)
         #expect(CGImageDestinationFinalize(destination))
         return data as Data
+    }
+
+    /// A valid PNG that declares `width`x`height` and holds one solid colour, built
+    /// row by row through a real zlib stream. Whatever the canvas size, the file
+    /// itself stays small: this is the shape of a decode bomb.
+    private static func solidPNG(width: Int, height: Int, value: UInt8 = 0x40) -> Data {
+        var header = [UInt8]()
+        for field in [UInt32(width).bigEndian, UInt32(height).bigEndian] {
+            withUnsafeBytes(of: field) { header += Array($0) }
+        }
+        header += [8, 2, 0, 0, 0] // 8-bit truecolour, deflate, adaptive filtering, no interlace
+        var row = [UInt8](repeating: value, count: width * 3)
+        row[0] = 0 // filter type 0 (None) for every row
+        let compressed = deflate(row, rows: height)
+        var bytes: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        bytes += pngChunk("IHDR", header)
+        var offset = 0
+        while offset < compressed.count {
+            let end = min(offset + 32 * 1024, compressed.count)
+            bytes += pngChunk("IDAT", Array(compressed[offset..<end]))
+            offset = end
+        }
+        bytes += pngChunk("IEND", [])
+        return Data(bytes)
+    }
+
+    /// Deflate one row repeated `rows` times, feeding the same buffer so the
+    /// fixture never holds the uncompressed picture in memory.
+    private static func deflate(_ row: [UInt8], rows: Int) -> [UInt8] {
+        var stream = compression_stream(
+            dst_ptr: UnsafeMutablePointer<UInt8>(bitPattern: 1)!, dst_size: 0,
+            src_ptr: UnsafePointer<UInt8>(bitPattern: 1)!, src_size: 0, state: nil
+        )
+        guard compression_stream_init(&stream, COMPRESSION_STREAM_ENCODE, COMPRESSION_ZLIB)
+            == COMPRESSION_STATUS_OK else { return [] }
+        defer { compression_stream_destroy(&stream) }
+        var output = [UInt8]()
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        var status = COMPRESSION_STATUS_OK
+        row.withUnsafeBufferPointer { source in
+            for _ in 0..<rows {
+                stream.src_ptr = source.baseAddress!
+                stream.src_size = source.count
+                while true {
+                    let produced = buffer.withUnsafeMutableBufferPointer { destination -> Int in
+                        stream.dst_ptr = destination.baseAddress!
+                        stream.dst_size = destination.count
+                        status = compression_stream_process(&stream, 0)
+                        return destination.count - stream.dst_size
+                    }
+                    output += buffer[0..<produced]
+                    if stream.src_size == 0 && produced < buffer.count { break }
+                }
+            }
+        }
+        status = COMPRESSION_STATUS_OK
+        while status == COMPRESSION_STATUS_OK {
+            let produced = buffer.withUnsafeMutableBufferPointer { destination -> Int in
+                stream.dst_ptr = destination.baseAddress!
+                stream.dst_size = destination.count
+                status = compression_stream_process(
+                    &stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue)
+                )
+                return destination.count - stream.dst_size
+            }
+            output += buffer[0..<produced]
+        }
+        return output
+    }
+
+    private static func pngChunk(_ type: String, _ data: [UInt8]) -> [UInt8] {
+        var out = [UInt8]()
+        withUnsafeBytes(of: UInt32(data.count).bigEndian) { out += Array($0) }
+        let typeBytes = Array(type.utf8)
+        out += typeBytes
+        out += data
+        withUnsafeBytes(of: crc32(typeBytes + data).bigEndian) { out += Array($0) }
+        return out
+    }
+
+    private static func crc32(_ bytes: [UInt8]) -> UInt32 {
+        var crc: UInt32 = 0xFFFF_FFFF
+        for byte in bytes {
+            crc ^= UInt32(byte)
+            for _ in 0..<8 { crc = (crc & 1) != 0 ? (0xEDB8_8320 ^ (crc >> 1)) : (crc >> 1) }
+        }
+        return crc ^ 0xFFFF_FFFF
     }
 }

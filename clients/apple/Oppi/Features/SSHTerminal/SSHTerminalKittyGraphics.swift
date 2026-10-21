@@ -1,3 +1,4 @@
+import Accelerate
 import CoreGraphics
 import Foundation
 import GhosttyVt
@@ -7,6 +8,9 @@ enum SSHTerminalKittyGraphics {
     /// Decoded image bytes kept per screen, shared by the terminal's store and
     /// the renderer's texture cache so neither outgrows the other.
     static let imageStorageLimitBytes = 64 * 1024 * 1024
+    /// Largest accepted width or height. A store-size check alone would still
+    /// let a PNG bomb name a huge canvas, so the shape is bounded first.
+    static let maximumImageDimension = 10_000
 }
 
 /// Z classification of a placement, from the kitty protocol's z-index.
@@ -17,14 +21,15 @@ enum SSHTerminalKittyLayer: Int, CaseIterable {
     case belowText
     case aboveText
 
-    /// libghostty's own classification, so the embedder never re-derives it:
-    /// z < INT32_MIN/2 is below the background, negative is below text.
-    init?(_ layer: GhosttyKittyPlacementLayer) {
-        switch layer {
-        case GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG: self = .belowBackground
-        case GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT: self = .belowText
-        case GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT: self = .aboveText
-        default: return nil
+    /// libghostty's own classification, used as the placement iterator's layer
+    /// filter: z < INT32_MIN/2 is below the background, negative is below text,
+    /// zero or more above it. Keeping the thresholds library-side means the
+    /// embedder never re-derives them and a draw order cannot disagree.
+    var ghosttyLayer: GhosttyKittyPlacementLayer {
+        switch self {
+        case .belowBackground: GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG
+        case .belowText: GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT
+        case .aboveText: GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT
         }
     }
 }
@@ -32,7 +37,7 @@ enum SSHTerminalKittyLayer: Int, CaseIterable {
 /// One Kitty graphics placement resolved into this viewport. Only real
 /// placements appear here: libghostty reports no geometry for Unicode
 /// placeholder (virtual) placements, so those are skipped (see
-/// docs/ssh-terminal.md).
+/// docs/ssh-terminal.md). The layer comes from the iterator's own z filter.
 struct SSHTerminalKittyPlacement: Equatable {
     let imageID: UInt32
     let layer: SSHTerminalKittyLayer
@@ -104,9 +109,17 @@ struct SSHTerminalKittyImage {
 /// invalidates them on every terminal mutation. Frames carry a reference;
 /// they are only read synchronously on the main actor.
 final class SSHTerminalKittySnapshot {
+    /// libghostty's storage generation. It moves on any transmit, placement or
+    /// delete, so a renderer can evict textures only when it changed.
     private(set) var generation: UInt64
+    /// Sorted by layer, then image ID, so a renderer places every image in one
+    /// linear pass with one draw per image and layer.
     private(set) var placements: [SSHTerminalKittyPlacement]
     private(set) var images: [SSHTerminalKittyImage]
+    /// Every image ID still in libghostty's store, including images whose
+    /// placements scrolled out of the viewport. Textures are evicted against
+    /// this, not against what happens to be visible.
+    let storedImageIDs: Set<UInt32>
     /// Terminal cell size these placements were resolved with.
     let cellWidth: Int
     let cellHeight: Int
@@ -115,12 +128,14 @@ final class SSHTerminalKittySnapshot {
         generation: UInt64,
         placements: [SSHTerminalKittyPlacement],
         images: [SSHTerminalKittyImage],
+        storedImageIDs: Set<UInt32>,
         cellWidth: Int,
         cellHeight: Int
     ) {
         self.generation = generation
         self.placements = placements
         self.images = images
+        self.storedImageIDs = storedImageIDs
         self.cellWidth = cellWidth
         self.cellHeight = cellHeight
     }
@@ -201,14 +216,25 @@ enum SSHTerminalKittyPNGDecoder {
         out: UnsafeMutablePointer<GhosttySysImage>?
     ) -> Bool {
         guard let data, length > 0, let out else { return false }
-        guard let source = CGImageSourceCreateWithData(
-            Data(bytes: data, count: length) as CFData, nil
-        ), let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return false }
+        // The payload belongs to libghostty and outlives this call, so borrow it
+        // instead of copying a payload that may already be tens of megabytes.
+        let encoded = Data(
+            bytesNoCopy: UnsafeMutableRawPointer(mutating: data), count: length, deallocator: .none
+        )
+        guard let source = CGImageSourceCreateWithData(encoded as CFData, nil),
+              let declared = declaredPixelSize(source),
+              Self.allowedByteCount(width: declared.width, height: declared.height) != nil else {
+            // Refused from the header alone: ImageIO has decoded nothing, so a
+            // PNG that merely declares a huge canvas costs no memory.
+            return false
+        }
+        guard let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return false }
         let width = image.width
         let height = image.height
-        guard width > 0, height > 0 else { return false }
-        let byteCount = width * height * 4
-        guard let buffer = ghostty_alloc(allocator, byteCount) else { return false }
+        // A decoder may report a size other than the header claimed, so the same
+        // overflow-checked guard runs again before anything is allocated.
+        guard let byteCount = Self.allowedByteCount(width: width, height: height),
+              let buffer = ghostty_alloc(allocator, byteCount) else { return false }
         let space = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
             data: buffer, width: width, height: height, bitsPerComponent: 8,
@@ -220,7 +246,10 @@ enum SSHTerminalKittyPNGDecoder {
         }
         context.interpolationQuality = .none
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        Self.unpremultiply(buffer, pixelCount: width * height)
+        guard Self.unpremultiply(buffer, width: width, height: height) else {
+            ghostty_free(allocator, buffer, byteCount)
+            return false
+        }
         out.pointee.width = UInt32(width)
         out.pointee.height = UInt32(height)
         out.pointee.data = buffer
@@ -228,20 +257,47 @@ enum SSHTerminalKittyPNGDecoder {
         return true
     }
 
-    /// CGContext only writes premultiplied RGBA; the protocol, and therefore
-    /// the renderer's blending, expects straight alpha.
-    private static func unpremultiply(_ buffer: UnsafeMutablePointer<UInt8>, pixelCount: Int) {
-        for pixel in 0..<pixelCount {
-            let offset = pixel * 4
-            let alpha = Int(buffer[offset + 3])
-            switch alpha {
-            case 255: continue
-            case 0: buffer[offset] = 0; buffer[offset + 1] = 0; buffer[offset + 2] = 0
-            default:
-                buffer[offset] = UInt8((Int(buffer[offset]) * 255 + alpha / 2) / alpha)
-                buffer[offset + 1] = UInt8((Int(buffer[offset + 1]) * 255 + alpha / 2) / alpha)
-                buffer[offset + 2] = UInt8((Int(buffer[offset + 2]) * 255 + alpha / 2) / alpha)
-            }
+    /// Decoded RGBA byte count for this canvas, or nil when it must be refused.
+    /// Every multiplication is overflow-checked, and the two dimension caps keep
+    /// a width or height from ever reaching a `UInt32` conversion it cannot hold.
+    static func allowedByteCount(
+        width: Int,
+        height: Int,
+        limit: Int = SSHTerminalKittyGraphics.imageStorageLimitBytes
+    ) -> Int? {
+        guard width > 0, height > 0,
+              width <= SSHTerminalKittyGraphics.maximumImageDimension,
+              height <= SSHTerminalKittyGraphics.maximumImageDimension else { return nil }
+        let (pixels, pixelsOverflowed) = width.multipliedReportingOverflow(by: height)
+        guard !pixelsOverflowed else { return nil }
+        let (bytes, bytesOverflowed) = pixels.multipliedReportingOverflow(by: 4)
+        guard !bytesOverflowed, bytes <= limit else { return nil }
+        return bytes
+    }
+
+    /// Pixel size from the image header, before any pixel is decoded.
+    private static func declaredPixelSize(_ source: CGImageSource) -> (width: Int, height: Int)? {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+            as? [CFString: Any],
+            let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+            let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+            width > 0, height > 0 else { return nil }
+        return (width, height)
+    }
+
+    /// CGContext only writes premultiplied RGBA; the protocol, and therefore the
+    /// renderer's blending, expects straight alpha. vImage does it with SIMD and
+    /// clamps every channel to 255, so no byte division can trap or wrap.
+    private static func unpremultiply(
+        _ buffer: UnsafeMutablePointer<UInt8>, width: Int, height: Int
+    ) -> Bool {
+        var image = vImage_Buffer(
+            data: buffer, height: vImagePixelCount(height), width: vImagePixelCount(width),
+            rowBytes: width * 4
+        )
+        let error = withUnsafePointer(to: &image) { pointer in
+            vImageUnpremultiplyData_RGBA8888(pointer, pointer, vImage_Flags(kvImageNoFlags))
         }
+        return error == kvImageNoError
     }
 }
