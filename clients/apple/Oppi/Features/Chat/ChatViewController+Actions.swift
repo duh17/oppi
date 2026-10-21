@@ -100,7 +100,6 @@ extension ChatViewController {
             return
         }
 
-        let sessionManagerRef = sessionManager
         let policy = AppPreferences.Share.redactionPolicy
         let submission: ChatComposerDraftController.SubmissionSnapshot?
         if clearComposer {
@@ -112,26 +111,7 @@ extension ChatViewController {
             submission = nil
         }
 
-        actionHandler.shareSession(
-            connection: connection,
-            reducer: reducer,
-            sessionId: sessionId,
-            redactionPolicy: policy,
-            onSendSucceeded: { [weak self] in
-                if let submission {
-                    self?.composerDraftController.completeSubmission(submission)
-                    self?.dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
-                }
-            },
-            onAsyncFailure: { [weak self] in
-                if let submission {
-                    self?.composerDraftController.failSubmission(submission)
-                }
-            },
-            onNeedsReconnect: {
-                sessionManagerRef.reconnect()
-            }
-        )
+        shareSession(redactionPolicy: policy, submission: submission)
     }
 
     func scheduleSharePreflight() {
@@ -146,18 +126,36 @@ extension ChatViewController {
     }
 
     func publishSessionWithCurrentRedactionPolicy() {
-        let sessionManagerRef = sessionManager
         let policy = shareReview.policy.normalized
 
         AppPreferences.Share.setRedactionPolicy(policy)
         cancelSharePreflight()
         model.showShareRedactionSheet = false
 
+        shareSession(redactionPolicy: policy, submission: nil)
+    }
+
+    /// Shares through the title menu's sheet or the `/share` command. Only the
+    /// command has a composer submission to settle.
+    private func shareSession(
+        redactionPolicy: ShareSessionRedactionPolicy,
+        submission: ChatComposerDraftController.SubmissionSnapshot?
+    ) {
+        let sessionManagerRef = sessionManager
         actionHandler.shareSession(
             connection: connection,
             reducer: reducer,
             sessionId: sessionId,
-            redactionPolicy: policy,
+            redactionPolicy: redactionPolicy,
+            onSendSucceeded: { [weak self] in
+                guard let submission else { return }
+                self?.composerDraftController.completeSubmission(submission)
+                self?.dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
+            },
+            onAsyncFailure: { [weak self] in
+                guard let submission else { return }
+                self?.composerDraftController.failSubmission(submission)
+            },
             onNeedsReconnect: {
                 sessionManagerRef.reconnect()
             }

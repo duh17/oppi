@@ -280,15 +280,17 @@ extension ChatViewController {
             }
         }
 
-        if isStopped {
-            model.showComposer = true
-        } else if !model.showComposer {
-            composer.requestFocus()
-        }
+        revealComposer()
     }
 
     func applyExtensionEditorText(_ text: String) {
         composerDraftController.replaceMessage(text: text)
+        revealComposer()
+    }
+
+    /// Shows the expanded composer for a stopped session, else focuses the
+    /// inline one.
+    private func revealComposer() {
         if isStopped {
             model.showComposer = true
         } else if !model.showComposer {

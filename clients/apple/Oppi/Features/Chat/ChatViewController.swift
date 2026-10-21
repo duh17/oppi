@@ -378,12 +378,8 @@ final class ChatViewController: UIViewController {
     }
 
     lazy var canvasDestination = ComposerCanvasDestination(sessionId: sessionId) { [weak self] attachment, recognizedText in
-        self?.deliverCanvasToComposer(attachment: attachment, recognizedText: recognizedText) ?? false
-    }
-
-    @discardableResult
-    private func deliverCanvasToComposer(attachment: PendingAttachment, recognizedText: String) -> Bool {
-        Self.deliverCanvasToComposer(
+        guard let self else { return false }
+        return Self.deliverCanvasToComposer(
             attachment: attachment,
             recognizedText: recognizedText,
             draftController: composerDraftController

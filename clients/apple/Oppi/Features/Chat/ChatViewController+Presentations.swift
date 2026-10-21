@@ -184,18 +184,23 @@ extension ChatViewController {
         }
     }
 
-    private func outlineScreen() -> RouterScreen {
+    /// A panel screen built on demand; it presents only while its chat is up.
+    private func panelScreen(
+        _ missingMessage: String,
+        _ make: @escaping (ChatViewController) -> UIViewController
+    ) -> RouterScreen {
         .controller({ [weak self] in
-            guard let self else { preconditionFailure("The outline presents only while its chat is alive") }
-            return self.makeOutlineController()
+            guard let self else { preconditionFailure(missingMessage) }
+            return make(self)
         })
     }
 
+    private func outlineScreen() -> RouterScreen {
+        panelScreen("The outline presents only while its chat is alive") { $0.makeOutlineController() }
+    }
+
     private func contextScreen() -> RouterScreen {
-        .controller({ [weak self] in
-            guard let self else { preconditionFailure("The context panel presents only while its chat is alive") }
-            return self.makeContextController()
-        })
+        panelScreen("The context panel presents only while its chat is alive") { $0.makeContextController() }
     }
 
     func closeChatFilePanel() {
