@@ -46,7 +46,6 @@ enum AppPreferences {
     /// Opt-in features, saved on this device. Every flag defaults to off.
     enum Experiments {
         static let sessionThreadsKey = "\(AppIdentifiers.subsystem).experiments.sessionThreads"
-        static let sshTerminalKey = "\(AppIdentifiers.subsystem).experiments.sshTerminal"
         static let durableSessionsKey = "\(AppIdentifiers.subsystem).experiments.durableSessions"
         static let durableSessionsDefaultKey = "\(AppIdentifiers.subsystem).experiments.durableSessionsDefault"
         static let liveVoiceKey = "\(AppIdentifiers.subsystem).experiments.liveVoice"
@@ -62,10 +61,6 @@ enum AppPreferences {
         /// `durableSessionsDefaultKey` is also on.
         static var durableSessionsEnabled: Bool {
             UserDefaults.standard.bool(forKey: durableSessionsKey)
-        }
-
-        static var sshTerminalEnabled: Bool {
-            UserDefaults.standard.bool(forKey: sshTerminalKey)
         }
 
         /// Session Threads: launch-tree grouping, Thread strips, Thread detail, and

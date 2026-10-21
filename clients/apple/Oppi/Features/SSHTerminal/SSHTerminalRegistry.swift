@@ -10,8 +10,7 @@ import UIKit
 ///   (Back, another tab, another session) does not touch it; showing that host's
 ///   terminal again attaches to the same channel and grid.
 /// - It ends on Disconnect, when the remote shell or connection ends, when the
-///   saved host is edited or deleted, when SSH Terminal is turned off, and when
-///   the background grace ends.
+///   saved host is edited or deleted, and when the background grace ends.
 ///
 /// Bound: one terminal per saved host profile and folder. A host's plain
 /// terminal (the login shell or Run on Connect command) is its own terminal,
@@ -32,9 +31,6 @@ import UIKit
 /// (`track`), and a connect that finishes while Oppi is in the background with
 /// no grace running is discarded (`adopt`): a live SSH session must never be
 /// left for iOS to suspend.
-///
-/// The registry watches the SSH Terminal experiment flag itself, so turning it
-/// off ends every terminal and connect even when no SSH screen is mounted.
 
 /// Which terminal a saved host holds: its plain one, or one that started in a
 /// folder ("Open Terminal here"). Nil `folder` is the host's own terminal.
@@ -58,7 +54,7 @@ final class SSHTerminalRegistry {
     }
 
     /// Why a tracked connect was cancelled from outside its screen.
-    enum AttemptEnd { case background, experimentDisabled }
+    enum AttemptEnd { case background }
 
     private struct Attempt {
         let task: Task<Void, Never>
@@ -83,53 +79,18 @@ final class SSHTerminalRegistry {
     /// Keeps live terminals running for the grace period.
     @ObservationIgnored private let backgroundTasks: any AppBackgroundTasks
     @ObservationIgnored private let sleep: @Sendable (Duration) async throws -> Void
-    @ObservationIgnored private let experimentEnabled: @MainActor () -> Bool
-    @ObservationIgnored private var flagObserver: FlagObserver?
-
-    /// Removes its notification observer when the registry goes away.
-    private final class FlagObserver: @unchecked Sendable {
-        let token: any NSObjectProtocol
-        init(_ token: any NSObjectProtocol) { self.token = token }
-        deinit { NotificationCenter.default.removeObserver(token) }
-    }
 
     init(
         backgroundTasks: any AppBackgroundTasks = UIApplicationBackgroundTasks(name: "oppi.ssh.terminal.grace"),
-        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
-        defaults: UserDefaults = .standard,
-        experimentEnabled: @escaping @MainActor () -> Bool = { AppPreferences.Experiments.sshTerminalEnabled }
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.backgroundTasks = backgroundTasks
         self.sleep = sleep
-        self.experimentEnabled = experimentEnabled
-        // The Settings toggle writes this flag; no SSH screen needs to be mounted to hear it.
-        flagObserver = FlagObserver(NotificationCenter.default.addObserver(
-            forName: UserDefaults.didChangeNotification, object: defaults, queue: nil
-        ) { [weak self] _ in
-            Task { @MainActor in self?.experimentMayHaveChanged() }
-        })
-    }
-
-    private func experimentMayHaveChanged() {
-        guard !experimentEnabled() else { return }
-        endEverything()
-    }
-
-    /// SSH Terminal is off: no terminal, no connect in flight, no kept approval.
-    private func endEverything() {
-        let pending = attempts
-        attempts.removeAll()
-        for attempt in pending.values {
-            attempt.task.cancel()
-            attempt.ended(.experimentDisabled)
-        }
-        closeAll(reason: "SSH Terminal was turned off.")
-        SSHApprovalCache.shared.invalidateAll()
     }
 
     /// Registers a connect in flight under `id`. Oppi entering the background
-    /// or SSH Terminal turning off cancels it and calls `ended`. The connect
-    /// calls `untrack` when it finishes.
+    /// cancels it and calls `ended`. The connect calls `untrack` when it
+    /// finishes.
     func track(attempt id: UUID, task: Task<Void, Never>, ended: @escaping @MainActor (AttemptEnd) -> Void) {
         attempts[id] = Attempt(task: task, ended: ended)
     }
@@ -172,8 +133,8 @@ final class SSHTerminalRegistry {
     /// from now on, whichever screen is showing.
     ///
     /// Refused (the channel is closed, its reason says why) while Oppi is in the
-    /// background with no grace running, and while SSH Terminal is off: nothing
-    /// would close that session before iOS suspends the process.
+    /// background with no grace running: nothing would close that session before
+    /// iOS suspends the process.
     @discardableResult
     func adopt(
         _ channel: SSHTerminalChannel,
@@ -181,11 +142,6 @@ final class SSHTerminalRegistry {
         folder: String? = nil,
         queue: SSHTerminalEventQueue
     ) -> Bool {
-        guard experimentEnabled() else {
-            queue.finish()
-            channel.close(reason: "SSH Terminal was turned off.")
-            return false
-        }
         guard !inBackground || grace != nil else {
             queue.finish()
             channel.closeForBackground()
@@ -219,10 +175,6 @@ final class SSHTerminalRegistry {
         for identity in terminals.keys where identity.profileID == profileID {
             close(identity, reason: reason)
         }
-    }
-
-    func closeAll(reason: String) {
-        for identity in Array(terminals.keys) { close(identity, reason: reason) }
     }
 
     /// A save of `saved`. Terminals opened with different settings (host,

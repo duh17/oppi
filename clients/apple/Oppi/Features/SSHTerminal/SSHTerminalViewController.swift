@@ -116,7 +116,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var presentingStatusDetail = false
     private var reduceMotion = UIAccessibility.isReduceMotionEnabled
     private var lastThemeID: ThemeID?
-    private var defaultsObserver: NSObjectProtocol?
     private var reduceMotionObserver: NSObjectProtocol?
     private var keyboardObserver: NSObjectProtocol?
 
@@ -145,13 +144,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     override func viewDidLoad() {
         super.viewDidLoad()
         buildLayout()
-        defaultsObserver = NotificationCenter.default.addObserver(
-            forName: UserDefaults.didChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.experimentChanged()
-        }
         reduceMotionObserver = NotificationCenter.default.addObserver(
             forName: UIAccessibility.reduceMotionStatusDidChangeNotification,
             object: nil,
@@ -253,10 +245,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         guard leaving else { return }
         composerSession?.releaseVoice()
         session?.showsTerminal = false
-        if let defaultsObserver {
-            NotificationCenter.default.removeObserver(defaultsObserver)
-            self.defaultsObserver = nil
-        }
         if let reduceMotionObserver {
             NotificationCenter.default.removeObserver(reduceMotionObserver)
             self.reduceMotionObserver = nil
@@ -1703,11 +1691,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         guard reconnectOnReturn, AppScenePhase.shared.phase == .active, !AppLockService.shared.requiresUnlock() else { return }
         reconnectOnReturn = false
         reconnect()
-    }
-
-    private func experimentChanged() {
-        guard let session, !AppPreferences.Experiments.sshTerminalEnabled else { return }
-        session.handleExperimentDisabled()
     }
 
     private func reduceMotionChanged() {

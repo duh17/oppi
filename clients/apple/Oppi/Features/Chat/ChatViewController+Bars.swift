@@ -220,7 +220,7 @@ final class ChatBarItems {
             hasWorkspace: chat.session?.workspaceId != nil,
             gitAvailable: chat.mayHaveGit,
             showsOutline: chat.outlineAvailability.isAvailable,
-            terminalEnabled: AppPreferences.Experiments.sshTerminalEnabled && chat.hasUsableTerminalFolder
+            hasTerminalFolder: chat.hasUsableTerminalFolder
         )
     }
 
@@ -246,19 +246,19 @@ final class ChatBarItems {
     /// Which actions this chat can offer right now: the ring is always there,
     /// Files, Git, and Terminal need a workspace, Outline needs a timeline, Git
     /// needs a workspace that may be a Git repository (`gitAvailable`), and
-    /// Terminal also needs a workspace folder a shell can start in, so a sandbox
+    /// Terminal needs a workspace folder a shell can start in, so a sandbox
     /// workspace or a relative host mount offers no Terminal.
     static func availableActions(
         hasWorkspace: Bool,
         gitAvailable: Bool,
         showsOutline: Bool,
-        terminalEnabled: Bool
+        hasTerminalFolder: Bool
     ) -> Set<ChatTopBarAction> {
         var available: Set<ChatTopBarAction> = [.outline, .context]
         if hasWorkspace {
             available.insert(.files)
             if gitAvailable { available.insert(.git) }
-            if terminalEnabled { available.insert(.terminal) }
+            if hasTerminalFolder { available.insert(.terminal) }
         }
         if !showsOutline { available.remove(.outline) }
         return available
@@ -774,8 +774,7 @@ extension ChatViewController {
     /// session's server — inside the host's multiplexer when its Run on Connect
     /// command starts one.
     func openTerminalHere() {
-        guard AppPreferences.Experiments.sshTerminalEnabled,
-              !model.isOpeningTerminal,
+        guard !model.isOpeningTerminal,
               let workspaceId = session?.workspaceId else { return }
         let worktreeId = session?.worktreeId
         let apiClient = connection.apiClient

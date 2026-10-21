@@ -225,14 +225,13 @@ enum SSHTerminalFolderResolve {
 enum SSHTerminalFolderEntry {
     /// Opens the folder terminal for `target`, or the Add Host form prefilled
     /// with the server's host when no saved host serves it. Returns false when
-    /// SSH Terminal is off, so its entry points stay hidden.
+    /// the target has no folder to open.
     @discardableResult
     static func open(
         _ target: SSHTerminalFolderTarget,
         from presenter: UIViewController,
         missingReason: SSHTerminalFolderFailure = .noFolder
     ) -> Bool {
-        guard AppPreferences.Experiments.sshTerminalEnabled else { return false }
         guard target.isUsable else {
             present(target, failure: missingReason, from: presenter)
             return true

@@ -285,22 +285,6 @@ extension ChatViewController {
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.model.topBarRefresh += 1 }
             },
-            // SSH Terminal turning on or off changes whether Terminal can be a
-            // bar button, and the flag writes no notification of its own.
-            // Every defaults write posts this, so it passes only on a change.
-            center.addObserver(
-                forName: UserDefaults.didChangeNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    let enabled = AppPreferences.Experiments.sshTerminalEnabled
-                    guard enabled != self.model.observedTerminalExperiment else { return }
-                    self.model.observedTerminalExperiment = enabled
-                    self.model.topBarRefresh += 1
-                }
-            },
             center.addObserver(
                 forName: AudioPlayerService.stateDidChangeNotification,
                 object: nil,

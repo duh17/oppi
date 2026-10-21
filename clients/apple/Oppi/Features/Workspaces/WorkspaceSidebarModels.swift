@@ -1,5 +1,3 @@
-import UIKit
-
 // Pure value types the workspace sidebar presents. The sidebar itself is
 // `WorkspaceSidebarViewController`; its SwiftUI workspace row is in
 // `WorkspaceComponents.swift`.
@@ -87,9 +85,17 @@ enum WorkspaceSidebarPrimaryUtilities {
             accessibilityIdentifier: "workspace.mcpServers.open",
             accessibilityHint: nil
         ),
+        .init(
+            target: .sshTerminal,
+            title: "Terminal",
+            systemImage: "terminal",
+            accessibilityLabel: "Open SSH Terminal",
+            accessibilityIdentifier: "workspace.terminal.open",
+            accessibilityHint: "Opens your saved SSH hosts"
+        ),
     ]
 
-    /// Pinned below New Workspace; not part of `items(for:…)`.
+    /// Pinned below New Workspace; not part of `items`.
     static let appSettings = WorkspaceSidebarPrimaryUtilityItem(
         target: .appSettings,
         title: "App Settings",
@@ -98,24 +104,6 @@ enum WorkspaceSidebarPrimaryUtilities {
         accessibilityIdentifier: "workspace.settings.open",
         accessibilityHint: nil
     )
-
-    /// The SSH inputs have no defaults: reading saved preferences here made tests depend on
-    /// whatever a simulator's app container last persisted.
-    static func items(
-        for idiom: UIUserInterfaceIdiom,
-        sshTerminalEnabled: Bool,
-        hasSSHProfile: Bool
-    ) -> [WorkspaceSidebarPrimaryUtilityItem] {
-        var result = items
-        if sshTerminalEnabled && hasSSHProfile {
-            result.append(.init(
-                target: .sshTerminal, title: "Terminal", systemImage: "terminal",
-                accessibilityLabel: "Open SSH Terminal", accessibilityIdentifier: "workspace.terminal.open",
-                accessibilityHint: "Opens your saved SSH hosts"
-            ))
-        }
-        return result
-    }
 }
 
 /// Compact workspace aggregate using the same attention and status semantics as session rows.

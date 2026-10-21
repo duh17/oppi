@@ -385,9 +385,6 @@
     "clients/apple/Oppi/Features/Settings/SettingsTextPage.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Settings/SettingsView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Settings/SettingsVoicePage.swift": {
       "import SwiftUI": 1
     },

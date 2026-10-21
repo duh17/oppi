@@ -26,7 +26,6 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         case failure(String)
         case trustUnknown
         case trustMismatch
-        case empty
         case addHost
         case host(UUID)
         case reset
@@ -73,7 +72,6 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             submitPassword: { [weak self] in self?.connect(password: $0) },
             onSaved: { [weak self] _ in self?.reload() }
         )
-        chrome?.start()
         reload()
         setNeedsUpdateProperties()
     }
@@ -86,9 +84,6 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         chrome?.hostDidDisappear()
-        if isMovingFromParent || isBeingDismissed {
-            chrome?.stopObserving()
-        }
     }
 
     override func updateProperties() {
@@ -186,12 +181,13 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             content.text = "Host key changed — connection blocked."
             content.textProperties.color = UIColor(palette.red)
             content.secondaryText = "Forget the trusted key only after you verify why it changed."
-        case .empty:
-            content.text = "No saved hosts."
-            content.textProperties.color = UIColor(palette.comment)
         case .addHost:
+            // With no saved host this row is the whole screen: it leads with
+            // the action and says what saving one gives you.
             content.text = "Add Host"
             content.textProperties.color = UIColor(palette.blue)
+            content.secondaryText = "No saved hosts yet. Enter a host, port, and user, then connect."
+            content.secondaryTextProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "sshTerminal.host.add"
         case .host:
             break
@@ -240,7 +236,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         }
         if profiles.isEmpty && !metadataIsCorrupt {
             snapshot.appendSections([.empty])
-            snapshot.appendItems([.empty, .addHost], toSection: .empty)
+            snapshot.appendItems([.addHost], toSection: .empty)
         } else if !profiles.isEmpty {
             snapshot.appendSections([.hosts])
             snapshot.appendItems(profiles.map { .host($0.id) }, toSection: .hosts)
@@ -297,8 +293,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         connectingProfile = profile.normalized()
         session.connect(
             profile: connectingProfile,
-            suppliedPassword: password,
-            experimentEnabled: AppPreferences.Experiments.sshTerminalEnabled
+            suppliedPassword: password
         ) { [weak self] _ in
             self?.reload()
         }

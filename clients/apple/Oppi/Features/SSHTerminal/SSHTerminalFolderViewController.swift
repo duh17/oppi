@@ -74,7 +74,6 @@ final class SSHTerminalFolderViewController: UIViewController {
             submitPassword: { [weak self] password in self?.connect(password: password) },
             onSaved: { [weak self] _ in self?.setNeedsUpdateProperties() }
         )
-        chrome?.start()
         connect()
         setNeedsUpdateProperties()
     }
@@ -92,9 +91,6 @@ final class SSHTerminalFolderViewController: UIViewController {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         chrome?.hostDidDisappear()
-        if isMovingFromParent || isBeingDismissed {
-            chrome?.stopObserving()
-        }
     }
 
     override func updateProperties() {
@@ -135,15 +131,13 @@ final class SSHTerminalFolderViewController: UIViewController {
     }
 
     private func connect(password: String? = nil) {
-        guard AppPreferences.Experiments.sshTerminalEnabled else { return }
         // What this folder opens in, decided again on every attempt: the host's
         // own multiplexer terminal, a folder terminal running its command, or
         // the plain login shell.
         SSHTerminalFolderEntry.prepare(session: session, profile: profile, target: target)
         session.connect(
             profile: profile,
-            suppliedPassword: password,
-            experimentEnabled: true
+            suppliedPassword: password
         )
     }
 

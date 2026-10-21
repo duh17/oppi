@@ -12,17 +12,11 @@ struct SSHTerminalRegistryTests {
         let registry: SSHTerminalRegistry
         let tasks = FakeBackgroundTasks()
         let gate = SleepGate()
-        /// Stands in for the app's preferences; the registry watches its flag.
-        let defaults = UserDefaults(suiteName: "SSHTerminalRegistryTests.\(UUID().uuidString)")!
-        static let flag = "sshTerminalEnabled"
 
         init(denyBackgroundTask: Bool = false) {
             tasks.denies = denyBackgroundTask
-            defaults.set(true, forKey: Self.flag)
-            let defaults = defaults
             registry = SSHTerminalRegistry(
-                backgroundTasks: tasks, sleep: { [gate] _ in try await gate.wait() },
-                defaults: defaults, experimentEnabled: { defaults.bool(forKey: Self.flag) }
+                backgroundTasks: tasks, sleep: { [gate] _ in try await gate.wait() }
             )
         }
 
@@ -78,7 +72,8 @@ struct SSHTerminalRegistryTests {
         #expect(first.channel.reason == "Replaced by a new connection.")
         #expect(harness.registry.terminal(for: first.profile.id)?.channel === replacement)
         #expect(other.channel.connected)
-        harness.registry.closeAll(reason: "done")
+        harness.registry.closeAllTerminals(of: first.profile.id, reason: "done")
+        harness.registry.closeAllTerminals(of: other.profile.id, reason: "done")
         #expect(!replacement.connected && !other.channel.connected)
     }
 
@@ -102,7 +97,7 @@ struct SSHTerminalRegistryTests {
         let harness = Harness()
         let live = try harness.open()
         let session = SSHTerminalConnectSession(registry: harness.registry)
-        session.connect(profile: live.profile, experimentEnabled: true)
+        session.connect(profile: live.profile)
         #expect(session.showsTerminal)
         #expect(session.channel === live.channel)
         #expect(!session.connecting)
@@ -110,38 +105,6 @@ struct SSHTerminalRegistryTests {
         // The session going away does not take the terminal with it.
         session.cancel()
         session.showsTerminal = false
-        #expect(live.channel.connected)
-        live.channel.close(reason: "done")
-    }
-
-    /// The Settings toggle only writes the flag; no SSH screen is mounted to react.
-    @Test func turningTheExperimentOffEndsTerminalsAndConnectsWithNoViewMounted() async throws {
-        let harness = Harness()
-        let live = try harness.open()
-        let attempt = Task<Void, Never> { try? await Task.sleep(for: .seconds(30)) }
-        let recorder = AttemptRecorder()
-        harness.registry.track(attempt: UUID(), task: attempt) { recorder.ends.append($0) }
-
-        harness.defaults.set(false, forKey: Harness.flag)
-        try await waitUntil { !live.channel.connected }
-        #expect(live.channel.reason == "SSH Terminal was turned off.")
-        #expect(harness.registry.terminal(for: live.profile.id) == nil)
-        #expect(attempt.isCancelled)
-        #expect(recorder.ends == [.experimentDisabled])
-
-        // A connect that was already past its last check is refused too.
-        let late = try SSHTerminalChannel()
-        let lateConnection = FakeConnection()
-        late.opened(lateConnection)
-        #expect(!harness.registry.adopt(late, profile: live.profile, queue: SSHTerminalEventQueue()))
-        #expect(!late.connected && lateConnection.closed.withLock { $0 })
-    }
-
-    @Test func otherPreferenceChangesLeaveTerminalsAlone() async throws {
-        let harness = Harness()
-        let live = try harness.open()
-        harness.defaults.set("x", forKey: "unrelated")
-        for _ in 0..<20 { await Task.yield() }
         #expect(live.channel.connected)
         live.channel.close(reason: "done")
     }
@@ -379,7 +342,7 @@ struct SSHTerminalRegistryTests {
         #expect(second.channel.connected)
         #expect(harness.registry.terminal(for: profile.id, folder: "/a")?.channel === replacement.channel)
         #expect(harness.registry.terminals(for: profile.id).map(\.folder) == ["/a", "/a/b"])
-        harness.registry.closeAll(reason: "done")
+        harness.registry.closeAllTerminals(of: profile.id, reason: "done")
     }
 
     @Test func editingOrDeletingTheHostEndsItsFolderTerminalsToo() async throws {
@@ -405,7 +368,7 @@ struct SSHTerminalRegistryTests {
         let live = try openFolder(harness, profile: profile, folder: Self.workspaceFolder)
         let session = SSHTerminalConnectSession(registry: harness.registry)
         session.folder = Self.workspaceFolder
-        session.connect(profile: profile, experimentEnabled: true)
+        session.connect(profile: profile)
         // The same folder attaches; the host's own terminal is a different one.
         #expect(session.showsTerminal)
         #expect(session.channel === live.channel)

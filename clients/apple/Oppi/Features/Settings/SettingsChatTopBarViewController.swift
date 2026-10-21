@@ -6,9 +6,8 @@ import UIKit
 /// with their handles, so editing stays on and there is no Edit button.
 ///
 /// The order holds every action, hidden ones included, so a hidden button
-/// returns to the place it left. Terminal keeps its row while the SSH Terminal
-/// experiment is off — its switch is disabled and says why, so a saved Terminal
-/// choice is visible rather than silently dropped.
+/// returns to the place it left. Terminal keeps its row in every chat: a chat
+/// without a workspace folder only leaves it out of that chat's bar.
 final class SettingsChatTopBarViewController: UIViewController, UICollectionViewDelegate {
     private let defaults: UserDefaults
     private let collectionView: UICollectionView
@@ -59,7 +58,6 @@ final class SettingsChatTopBarViewController: UIViewController, UICollectionView
     }
 
     private var layout: ChatTopBarLayout { AppPreferences.ChatTopBar.layout(in: defaults) }
-    private var terminalEnabled: Bool { AppPreferences.Experiments.sshTerminalEnabled }
 
     private func applySnapshot() {
         guard let dataSource else { return }
@@ -67,9 +65,7 @@ final class SettingsChatTopBarViewController: UIViewController, UICollectionView
         snapshot.appendSections([.buttons])
         snapshot.appendItems(layout.order, toSection: .buttons)
         let shown = Set(dataSource.snapshot().itemIdentifiers)
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { [layout, terminalEnabled] action in
-            AnyHashable([AnyHashable(layout.isShown(action)), AnyHashable(terminalEnabled)])
-        }
+        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { AnyHashable(layout.isShown($0)) }
         snapshot.reconfigureItems(changed.filter(shown.contains))
         dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
     }
@@ -109,20 +105,12 @@ final class SettingsChatTopBarViewController: UIViewController, UICollectionView
         // The symbol column's width for every row, so a label beside the Git
         // logo (an image, not a symbol) lines up with the others.
         content.imageProperties.reservedLayoutSize.width = UIListContentConfiguration.ImageProperties.standardDimension
-        // Terminal keeps its row while the experiment is off: a saved choice
-        // stays visible and explains itself instead of leaving a stale button
-        // nobody can account for.
-        let terminalOff = action == .terminal && !terminalEnabled
-        if terminalOff {
-            content.secondaryText = String(localized: "Turn on SSH Terminal in Experiments")
-        }
         cell.contentConfiguration = content
         cell.accessibilityIdentifier = "settings.chat.topBar.row.\(action.rawValue)"
         cell.accessories = [
             .settingsToggle(
                 layout.isShown(action),
-                identifier: "settings.chat.topBar.\(action.rawValue)",
-                isEnabled: !terminalOff
+                identifier: "settings.chat.topBar.\(action.rawValue)"
             ) { [weak self] isOn in
                 guard let self else { return }
                 AppPreferences.ChatTopBar.setLayout(layout.setting(action, shown: isOn), in: defaults)

@@ -1,16 +1,15 @@
-# SSH Terminal experiment
+# SSH Terminal
 
-SSH Terminal opens an interactive shell on a host saved on this iPhone or iPad. It is an opt-in experiment, off by default. It does not run through the Oppi server and does not change Pi session ownership.
+SSH Terminal opens an interactive shell on a host saved on this iPhone or iPad. It does not run through the Oppi server and does not change Pi session ownership.
 
 ## Set up a host
 
-1. Turn on **Settings → Experiments → SSH Terminal**.
-2. Open **Settings → SSH Hosts**. That opens the host list. Opening the list does not dial and does not read the Keychain, so it does not ask for Face ID.
-3. Tap **Add**. Enter a host, port (default 22), and username. The host has no default. Enable Remote Login or `sshd` on that host. **Edit** opens the same form for a saved host.
-4. Choose **Password** or **This Device’s Key**.
+1. Open **Settings → SSH Hosts**, or **Terminal** below **MCP Servers** in the workspace sidebar. Both open the host list. Opening the list does not dial and does not read the Keychain, so it does not ask for Face ID.
+2. Tap **Add**. Enter a host, port (default 22), and username. The host has no default. Enable Remote Login or `sshd` on that host. **Edit** opens the same form for a saved host.
+3. Choose **Password** or **This Device’s Key**.
    - **Password:** enter the password at connect. **Save Password** is optional.
    - **This Device’s Key:** copy the public key and add it as one line to `~/.ssh/authorized_keys` on the host. Oppi does not install it for you.
-5. Tap **Connect**. Compare the displayed host-key fingerprint with the host’s fingerprint through an independent, trusted channel. Trust it only after they match. Oppi sends no credentials before host-key validation succeeds. You can also tap **Save Host** and connect later from the list.
+4. Tap **Connect**. Compare the displayed host-key fingerprint with the host’s fingerprint through an independent, trusted channel. Trust it only after they match. Oppi sends no credentials before host-key validation succeeds. You can also tap **Save Host** and connect later from the list.
 
 For example, on a Mac with an Ed25519 host key:
 
@@ -18,7 +17,7 @@ For example, on a Mac with an Ed25519 host key:
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-After you save a host, **Terminal** appears directly below **MCP Servers** in the workspace sidebar. Tap it to open the same list. Tap a row to connect and open the shell. The password sheet and host-key prompt appear on the list or the form, whichever you tapped Connect from. A row shows `user@host`, the port when it is not 22, and the Run on Connect command, or **Login shell**. Two rows can use the same machine with different Run on Connect commands. A row also lists each folder a terminal is open in (`Connected in ~/workspace/oppi`). Swipe **Delete Host** removes that saved host and its password only. **Edit Host** in the live terminal opens the form for the connected host. Turning the experiment off hides both entry points and does not create a key. **Tailscale → Check a Machine for Oppi** remains available independently.
+**Terminal** sits directly below **MCP Servers** in the workspace sidebar, whether or not a host is saved. With none saved, the list leads with **Add Host**. Tap a row to connect and open the shell. The password sheet and host-key prompt appear on the list or the form, whichever you tapped Connect from. A row shows `user@host`, the port when it is not 22, and the Run on Connect command, or **Login shell**. Two rows can use the same machine with different Run on Connect commands. A row also lists each folder a terminal is open in (`Connected in ~/workspace/oppi`). Swipe **Delete Host** removes that saved host and its password only. **Edit Host** in the live terminal opens the form for the connected host. **Tailscale → Check a Machine for Oppi** is a separate check.
 
 ## Open Terminal here
 
@@ -45,9 +44,9 @@ Every value that comes from the server — the folder, the workspace name, the w
 
 Which host: Oppi matches the workspace's server host against the saved SSH hosts, ignoring case and a trailing dot, and treating a tailnet short name (`mac-studio`) and its full name (`mac-studio.tail1234.ts.net`) as the same machine. A saved host whose address is exactly the server's comes first, then one reached by that short-name match. Within either kind it takes a host whose Run on Connect command starts a multiplexer (`herdr` or `tmux`) before a host with no command, then a host running anything else, then the first saved one, so saving a machine twice — once with `herdr`, once plain — still opens the folder inside Herdr. With no match, **Add Host** opens with the server's host filled in and the username empty; saving it then continues into that folder's terminal.
 
-A folder terminal is its own terminal, kept while it is connected like any other: leaving the workspace or chat keeps it, tapping Terminal there again returns to the same shell. Oppi keeps one terminal per saved host and folder, so the same host can have its own terminal plus one per folder. In Herdr the folder opens in the host's own terminal rather than a second one, so there is one Herdr client per host and it shows whichever folder you last asked for. Editing or deleting the host, turning the experiment off, and the background grace end them all.
+A folder terminal is its own terminal, kept while it is connected like any other: leaving the workspace or chat keeps it, tapping Terminal there again returns to the same shell. Oppi keeps one terminal per saved host and folder, so the same host can have its own terminal plus one per folder. In Herdr the folder opens in the host's own terminal rather than a second one, so there is one Herdr client per host and it shows whichever folder you last asked for. Editing or deleting the host ends them, and so does the background grace.
 
-In a chat, the top bar shows the buttons chosen in Settings → **Chat** → **Top Bar**: **Files**, **Git**, **Outline**, **Context** (the usage ring), and **Terminal**, each one on or off and in the chosen order, with **…** always last. The default is Files, Git, Outline, and Context, with **Terminal** in the **…** menu next to **Customize Top Bar…**. **Terminal** is offered only while the experiment is on, and only in a chat whose workspace has a folder on the server; a button the chat cannot offer is not shown at all.
+In a chat, the top bar shows the buttons chosen in Settings → **Chat** → **Top Bar**: **Files**, **Git**, **Outline**, **Context** (the usage ring), and **Terminal**, each one on or off and in the chosen order, with **…** always last; **Customize Top Bar…** in that menu opens the same page. **Terminal** is one of the buttons you choose there, and it is offered in a chat whose workspace has a folder on the server; a button the chat cannot offer is not shown at all.
 
 ## Font and icons
 
@@ -184,7 +183,7 @@ The terminal hears these while its connection is open, including after you leave
 
 While Oppi is in the foreground, a connected terminal stays connected when you leave its screen: Back, another tab, another session. Tap that host in the list again (it reads **Connected**) and you get the same live channel and grid, with no reconnect and no sign-in. Oppi keeps one terminal per saved host and folder, so at most as many as you have saved hosts plus folders you opened. Connecting an identity that already has one shows that terminal; **Reconnect** and a connect after the shell ended open a new one.
 
-A terminal ends when you tap **Disconnect**, when the remote shell or command exits or the connection drops, when you save changes to the host or delete it, when you turn SSH Terminal off (from Settings → Experiments; no SSH screen has to be open), or when the [background grace](#network-and-reconnect) ends. Saving the host without changing anything keeps it.
+A terminal ends when you tap **Disconnect**, when the remote shell or command exits or the connection drops, when you save changes to the host or delete it, or when the [background grace](#network-and-reconnect) ends. Saving the host without changing anything keeps it.
 
 While a terminal is off screen Oppi still reads its output and answers its terminal queries, and checks the connection after a network change. The Herdr list and program shortcuts load again when you return.
 

@@ -12,7 +12,7 @@ struct ChatTopBarLayoutTests {
         let layout = ChatTopBarLayout.defaultValue
         #expect(layout.order == [.files, .git, .outline, .context, .terminal])
         #expect(layout.bar(available: everything) == [.files, .git, .outline, .context])
-        // Terminal is the one … menu item: it needs the SSH Terminal experiment.
+        // Terminal is the one … menu item: it is offered, just not shown.
         #expect(layout.menu(available: everything) == [.terminal])
         #expect(layout.storedOrder == ["files", "git", "outline", "context", "terminal"])
         #expect(layout.storedShown == ["files", "git", "outline", "context"])
@@ -77,7 +77,7 @@ struct ChatTopBarLayoutTests {
             shown: Set(ChatTopBarAction.allCases)
         )
         let available = ChatBarItems.availableActions(
-            hasWorkspace: false, gitAvailable: true, showsOutline: true, terminalEnabled: true
+            hasWorkspace: false, gitAvailable: true, showsOutline: true, hasTerminalFolder: true
         )
         #expect(available == [.outline, .context])
         #expect(allShown.bar(available: available) == [.outline, .context])
@@ -108,19 +108,19 @@ struct ChatTopBarLayoutTests {
         #expect(!ChatBarItems.mayOfferGit(gitStatusEnabled: false, loadedStatus: repo))
 
         let withGit = ChatBarItems.availableActions(
-            hasWorkspace: true, gitAvailable: true, showsOutline: false, terminalEnabled: false
+            hasWorkspace: true, gitAvailable: true, showsOutline: false, hasTerminalFolder: false
         )
         #expect(withGit == [.files, .git, .context])
         let withoutGit = ChatBarItems.availableActions(
-            hasWorkspace: true, gitAvailable: false, showsOutline: false, terminalEnabled: false
+            hasWorkspace: true, gitAvailable: false, showsOutline: false, hasTerminalFolder: false
         )
         #expect(withoutGit == [.files, .context])
     }
 
     @Test func aHiddenActionStaysOutOfTheMenuWhileItCannotBeOffered() {
-        // Terminal hidden and the experiment off: not in the bar, not in the
-        // menu, and back in the menu at its own place when the experiment
-        // returns.
+        // Terminal hidden and no folder a shell can start in: not in the bar,
+        // not in the menu, and back in the menu at its own place when the chat
+        // has a usable folder again.
         let layout = ChatTopBarLayout.defaultValue
         let withoutTerminal: Set<ChatTopBarAction> = [.files, .git, .outline, .context]
         #expect(layout.menu(available: withoutTerminal) == [])

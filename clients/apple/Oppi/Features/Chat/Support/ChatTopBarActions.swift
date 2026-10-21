@@ -132,10 +132,10 @@ struct ChatTopBarLayout: Hashable {
     /// The actions the bar draws. The rest are in the … menu.
     private(set) var shown: Set<ChatTopBarAction>
 
-    /// Files, Git, Outline, and Context, with Terminal one … menu away because
-    /// it needs the SSH Terminal experiment. A layout saved before Git existed
-    /// keeps the bar it shows: `init` appends Git to its order, and because Git
-    /// is not in the saved `shown`, it is offered in the … menu.
+    /// Files, Git, Outline, and Context, with Terminal one … menu away. A layout
+    /// saved before Git existed keeps the bar it shows: `init` appends Git to
+    /// its order, and because Git is not in the saved `shown`, it is offered in
+    /// the … menu.
     static let defaultShown: Set<ChatTopBarAction> = [.files, .git, .outline, .context]
     static let defaultValue = ChatTopBarLayout(order: ChatTopBarAction.allCases, shown: defaultShown)
 

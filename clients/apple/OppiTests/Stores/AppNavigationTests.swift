@@ -1538,9 +1538,7 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func sidebarPrimaryUtilitiesHaveDistinctIdentifiers() {
-        let items = WorkspaceSidebarPrimaryUtilities.items(
-            for: .phone, sshTerminalEnabled: true, hasSSHProfile: true
-        )
+        let items = WorkspaceSidebarPrimaryUtilities.items
 
         #expect(Set(items.map(\.accessibilityIdentifier)).count == items.count)
     }

@@ -1582,6 +1582,7 @@
 		B8325C6009FB061F8AC5494F /* SessionBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = F17D26E561A679A0CA5CE519 /* SessionBadge.swift */; };
 		B8B458AE06B4182E8A2F3388 /* ConversationTraceProjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B4EF38BC420D97372D8B8D0 /* ConversationTraceProjector.swift */; };
 		B8CB5A96FE9DA60D5639D52A /* MainWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3CDFE03CCDA0189D60646F5 /* MainWindowView.swift */; };
+		B8E55E00A4C9F02AE61B2C3B /* SettingsRootViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 007BCD1FDE3E8C264DD58A7F /* SettingsRootViewController.swift */; };
 		B8F15C8E01E87724E0921295 /* ReviewCommentStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1BDBA047D273D32E5223BC4 /* ReviewCommentStoreTests.swift */; };
 		B90485A671EB70215415C1D3 /* MermaidGanttRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F18A5EDD0D5360E79FEC7967 /* MermaidGanttRenderer.swift */; };
 		B904AC780251405F4C84F445 /* MacWorkspaceFileBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFB51C9B31EDB9813506AD28 /* MacWorkspaceFileBrowserView.swift */; };
@@ -2033,7 +2034,6 @@
 		EA7A10EAA806955FD8EF74D0 /* ToolTimelineRowInteractionPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE3B21CF3150DE358E45EFB1 /* ToolTimelineRowInteractionPolicy.swift */; };
 		EA90D33A5A209A78982A96A5 /* ReviewCommentInlineDraftPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F37B0DEA8B8331AA8E7A45A /* ReviewCommentInlineDraftPresenter.swift */; };
 		EA950995B1325D961F992058 /* ToolRowRenderCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = C052695B50C1BDBD0DBD9677 /* ToolRowRenderCache.swift */; };
-		EAC7BA79BEE84BE88ACED1BA /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F594E8B55F2381B02251C568 /* SettingsView.swift */; };
 		EADFE00392530D896CEDECB9 /* USDZLocalFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D47F98CBBB2A00B8928A9C82 /* USDZLocalFileStore.swift */; };
 		EB04F096C18A866CD7C9C110 /* MathSymbolTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEF14619D93642F1C82BC9D9 /* MathSymbolTable.swift */; };
 		EB25754205201DED83CB15AE /* TimedTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F803DDFA51B18E1AE25AB4 /* TimedTextTests.swift */; };
@@ -2339,6 +2339,7 @@
 		0030872E17F5A3AB36FC58DE /* QuickCommentTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickCommentTemplate.swift; sourceTree = "<group>"; };
 		00624C1F0E3C40935B64BF71 /* MacSessionOutlineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionOutlineView.swift; sourceTree = "<group>"; };
 		0067E7B6EEFC7F5172C71D2B /* PhotoLibraryPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibraryPicker.swift; sourceTree = "<group>"; };
+		007BCD1FDE3E8C264DD58A7F /* SettingsRootViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsRootViewController.swift; sourceTree = "<group>"; };
 		009E54D13C906CCB2E5CCB63 /* FileShareServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileShareServiceTests.swift; sourceTree = "<group>"; };
 		00B3533483080107B480CD97 /* FullScreenCodeHighlighter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenCodeHighlighter.swift; sourceTree = "<group>"; };
 		00B4120ADDB509CD492E8369 /* ComposerSuggestionPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerSuggestionPanelView.swift; sourceTree = "<group>"; };
@@ -4077,7 +4078,6 @@
 		F4DC08E1289A614CB4C81937 /* ReviewFileSummaryBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewFileSummaryBarView.swift; sourceTree = "<group>"; };
 		F4FC352387FBA40CACB7E522 /* VoiceInputSystemAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputSystemAccess.swift; sourceTree = "<group>"; };
 		F5922FB5923BE3BFAAEE9E4A /* mermaid-rendering-gallery.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "mermaid-rendering-gallery.md"; sourceTree = "<group>"; };
-		F594E8B55F2381B02251C568 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		F5ADACAB6BD406DA001130B7 /* VoiceInputError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputError.swift; sourceTree = "<group>"; };
 		F5AE987B86AB5A69209E1A4C /* PiAgentDetailViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiAgentDetailViewController.swift; sourceTree = "<group>"; };
 		F5B8BDAD418D144A0F1FA51F /* AppFontConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFontConstants.swift; sourceTree = "<group>"; };
@@ -5591,10 +5591,10 @@
 				167D8C8CDCDFF8C85F12BDCE /* SettingsExperimentsPage.swift */,
 				1F1D9C8E95E2A29ABB4286A2 /* SettingsGeneralPage.swift */,
 				07E5AFF3D3CB7105F738C5F9 /* SettingsPrivacyPage.swift */,
+				007BCD1FDE3E8C264DD58A7F /* SettingsRootViewController.swift */,
 				52ED519BD33AFC9FA534BC18 /* SettingsSessionsPage.swift */,
 				D2DED64ADCDC243DFB8EC89D /* SettingsStoragePage.swift */,
 				B2A29AFAB8E368D0E865B8EB /* SettingsTextPage.swift */,
-				F594E8B55F2381B02251C568 /* SettingsView.swift */,
 				C160315CC69677CDC58DC88B /* SettingsVoicePage.swift */,
 				FA7FC0F677E98C5B17034848 /* SSHPreflightView.swift */,
 				4A9F302BC45071E95EDCE25C /* TailnetSettingsView.swift */,
@@ -9808,11 +9808,11 @@
 				55A81500DB2F33987494AA41 /* SettingsGeneralPage.swift in Sources */,
 				AA118CF311F7D0EC8F3D3104 /* SettingsKit.swift in Sources */,
 				A9F35E3987DEAA4B95EB9B1E /* SettingsPrivacyPage.swift in Sources */,
+				B8E55E00A4C9F02AE61B2C3B /* SettingsRootViewController.swift in Sources */,
 				8AC1234C0A2A7F0911414387 /* SettingsSessionsPage.swift in Sources */,
 				BA6FAD55D9FA78F6572EC922 /* SettingsStoragePage.swift in Sources */,
 				D30FE4A78EE14B267F9E87D2 /* SettingsSweepScreenshotPreview.swift in Sources */,
 				BD1F2A2210BF71A76651472E /* SettingsTextPage.swift in Sources */,
-				EAC7BA79BEE84BE88ACED1BA /* SettingsView.swift in Sources */,
 				6A59F6DC625BE4709FA0BA75 /* SettingsVoicePage.swift in Sources */,
 				2008F81F571FCB6EA5D782A6 /* ShareQuickSessionPayload.swift in Sources */,
 				52480FDF8C66D024C64AB886 /* ShareQuickSessionSender.swift in Sources */,

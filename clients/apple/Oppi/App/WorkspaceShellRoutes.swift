@@ -6,8 +6,8 @@ import SwiftUI
 // sidebar, a workspace's sessions, a session's chat
 // (`ChatRouteViewController`), Files (`FileBrowserViewController`), a linked
 // file (`WorkspaceLinkedFileViewController`), a Skill file
-// (`ServerSkillFileViewController`), SSH Terminal's host list, Schedules, and
-// Agents are UIKit screens.
+// (`ServerSkillFileViewController`), SSH Terminal's host list, Schedules,
+// Agents, and App Settings (`SettingsRootViewController`) are UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -35,6 +35,9 @@ enum ShellRouteScreens {
         }
         if case .utility(.agents) = route {
             return AgentListViewController(root: root, showsSidebarToggle: placement == .splitDetailRoot)
+        }
+        if case .utility(.appSettings) = route {
+            return SettingsRootViewController(root: root)
         }
         if case .sidebar = route {
             return WorkspaceSidebarViewController(root: root)
@@ -345,13 +348,13 @@ private struct WorkspaceUtilityDestinationView: View {
                 McpServersView(scopeId: McpScopeSnapshot.globalId)
             case .sshTerminal:
                 // The shell hosts this route as SSHTerminalHostListViewController.
-                EmptyView()
-            case .manageServers:
+                EmptyView()            case .manageServers:
                 ServerView()
             case .serverMetrics:
                 ServerMetricsScreen()
             case .appSettings:
-                SettingsView()
+                // The shell hosts this route as SettingsRootViewController.
+                EmptyView()
             }
         } else {
             WorkspaceSplitPlaceholder(

@@ -230,9 +230,8 @@ enum WorkspaceUtilityNavTarget: Hashable {
 
     var isReleaseEnabled: Bool {
         switch self {
-        case .sshTerminal:
-            AppPreferences.Experiments.sshTerminalEnabled && SSHTerminalProfileStore().hasConfiguredHost
-        case .schedules, .agents, .skills, .extensions, .mcpServers, .manageServers, .serverMetrics, .appSettings:
+        case .agents, .schedules, .skills, .extensions, .mcpServers, .sshTerminal,
+             .manageServers, .serverMetrics, .appSettings:
             true
         }
     }

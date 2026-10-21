@@ -45,10 +45,8 @@ final class SSHTerminalConnectSession {
     func connect(
         profile: SSHTerminalProfile,
         suppliedPassword: String? = nil,
-        experimentEnabled: Bool,
         onSaved: ((SSHTerminalProfile) -> Void)? = nil
     ) {
-        guard experimentEnabled else { return }
         let value = profile.normalized()
         guard value.isConfigured else { return }
         // Same host, same folder, same settings, shell still open: show it. No dial, no sign-in.
@@ -135,13 +133,11 @@ final class SSHTerminalConnectSession {
             }
         }
         if let task {
-            // Backgrounding or turning the experiment off ends this attempt even
-            // when no view of this session is mounted (a reconnect from the
-            // terminal screen, for one).
+            // Backgrounding ends this attempt even when no view of this session
+            // is mounted (a reconnect from the terminal screen, for one).
             registry.track(attempt: attempt, task: task) { [weak self] end in
                 switch end {
                 case .background: self?.handleBackground()
-                case .experimentDisabled: self?.handleExperimentDisabled()
                 }
             }
         }
@@ -150,10 +146,8 @@ final class SSHTerminalConnectSession {
     func saveHost(
         profile: SSHTerminalProfile,
         suppliedPassword: String? = nil,
-        experimentEnabled: Bool,
         onSaved: ((SSHTerminalProfile) -> Void)? = nil
     ) {
-        guard experimentEnabled else { return }
         let value = profile.normalized()
         guard value.isConfigured else { return }
         let old = SSHTerminalProfileStore().profile(id: value.id)
@@ -186,14 +180,13 @@ final class SSHTerminalConnectSession {
         }
     }
 
-    func reconnect(experimentEnabled: Bool, onSaved: ((SSHTerminalProfile) -> Void)? = nil) {
+    func reconnect(onSaved: ((SSHTerminalProfile) -> Void)? = nil) {
         guard let connectedProfile else { return }
-        connect(profile: connectedProfile, experimentEnabled: experimentEnabled, onSaved: onSaved)
+        connect(profile: connectedProfile, onSaved: onSaved)
     }
 
     func trustAndConnect(
         profile: SSHTerminalProfile,
-        experimentEnabled: Bool,
         onSaved: ((SSHTerminalProfile) -> Void)? = nil
     ) {
         let value = profile.normalized()
@@ -201,7 +194,7 @@ final class SSHTerminalConnectSession {
               case .unknownHostKey(let key) = hostFailure else { return }
         do {
             try SSHKnownHosts().trust(key, host: attemptedHost, port: attemptedPort)
-            connect(profile: value, experimentEnabled: experimentEnabled, onSaved: onSaved)
+            connect(profile: value, onSaved: onSaved)
         } catch {
             failure = error.localizedDescription
         }
@@ -235,13 +228,6 @@ final class SSHTerminalConnectSession {
         stopAttempt()
         if let channel, !registry.holds(channel) { channel.closeForBackground() }
         failure = Self.backgroundFailure
-    }
-
-    /// The registry ends the terminals itself when the flag turns off. This
-    /// ends what belongs to this session: its attempt and its screen.
-    func handleExperimentDisabled() {
-        cancel()
-        showsTerminal = false
     }
 
     private func stopAttempt() {

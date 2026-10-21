@@ -2,7 +2,6 @@ import Foundation
 import LocalAuthentication
 import Security
 import Testing
-import UIKit
 @testable import Oppi
 
 @Suite("SSH terminal profile and private Keychain", .serialized)
@@ -194,18 +193,17 @@ struct SSHTerminalProfileTests {
         #expect(shell.startupLabel == "Login shell")
     }
 
-    @Test @MainActor func experimentGateHidesTerminalForPhoneAndPadUnlessAHostExists() throws {
-        for idiom in [UIUserInterfaceIdiom.phone, .pad] {
-            #expect(!WorkspaceSidebarPrimaryUtilities.items(for: idiom, sshTerminalEnabled: false, hasSSHProfile: true).contains { $0.target == .sshTerminal })
-            #expect(!WorkspaceSidebarPrimaryUtilities.items(for: idiom, sshTerminalEnabled: true, hasSSHProfile: false).contains { $0.target == .sshTerminal })
-            let visible = WorkspaceSidebarPrimaryUtilities.items(for: idiom, sshTerminalEnabled: true, hasSSHProfile: true)
-            let mcp = visible.firstIndex { $0.target == .mcpServers }
-            #expect(mcp != nil)
-            if let mcp { #expect(visible[mcp + 1].target == .sshTerminal) }
-        }
-        let configured = SSHTerminalCatalog(profiles: [SSHTerminalProfile(host: "example.ts.net", username: "alice")])
-        #expect(SSHTerminalProfileStore.hasConfiguredHost(catalogData: try JSONEncoder().encode(configured)))
-        #expect(!SSHTerminalProfileStore.hasConfiguredHost(catalogData: Data()))
+    /// Terminal is a regular destination: the sidebar offers it below MCP
+    /// Servers with no saved host, and the host list it opens leads with Add Host.
+    @Test @MainActor func theSidebarAlwaysOffersTerminalBelowMCPServers() {
+        let items = WorkspaceSidebarPrimaryUtilities.items
+        let mcp = items.firstIndex { $0.target == .mcpServers }
+        #expect(mcp != nil)
+        if let mcp { #expect(items[mcp + 1].target == .sshTerminal) }
+        let terminal = items.first { $0.target == .sshTerminal }
+        #expect(terminal?.accessibilityIdentifier == "workspace.terminal.open")
+        #expect(terminal?.accessibilityHint == "Opens your saved SSH hosts")
+        #expect(WorkspaceUtilityNavTarget.sshTerminal.isReleaseEnabled)
     }
 }
 

@@ -286,6 +286,10 @@ final class RouterRoutesUITests: XCTestCase {
         app.buttons["App Settings"].tap()
         let settings = app.navigationBars["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5), "Settings did not open")
+        XCTAssertTrue(
+            app.buttons["settings.addServer"].waitForExistence(timeout: 5),
+            "The Servers section must offer Add Server"
+        )
         attachScreenshot("shell-settings")
         assertRunning()
 
@@ -315,6 +319,7 @@ final class RouterRoutesUITests: XCTestCase {
             ("settings.row.sessions", "Sessions", [("Auto-Name", "Auto-Name"), ("settings.sessionRows", "Session Rows")]),
             ("settings.row.voice", "Voice & Dictation", [("settings.dictationDictionary", "Dictionary")]),
             ("settings.tailscale", "Tailscale", []),
+            ("settings.sshTerminal", "SSH Terminal", []),
             ("settings.row.privacy", "Privacy & Security", []),
             ("settings.row.experiments", "Experiments", []),
             ("settings.row.storage", "Storage & About", []),

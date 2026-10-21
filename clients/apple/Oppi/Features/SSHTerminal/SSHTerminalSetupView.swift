@@ -76,7 +76,6 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             },
             onSaved: { [weak self] in self?.applySaved($0) }
         )
-        chrome?.start()
         loadIdentityIfSelected()
         updateConnectBarItem()
         setNeedsUpdateProperties()
@@ -85,9 +84,6 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         chrome?.hostDidDisappear()
-        if isMovingFromParent || isBeingDismissed {
-            chrome?.stopObserving()
-        }
     }
 
     override func updateProperties() {
@@ -531,7 +527,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     }
 
     private func loadIdentityIfSelected(createReplacement: Bool = false) {
-        guard AppPreferences.Experiments.sshTerminalEnabled, profile.authentication == .deviceKey else {
+        guard profile.authentication == .deviceKey else {
             deviceKey.applyLoadResult(identity: nil, needsReplacement: false, failure: nil)
             applySnapshot()
             return
@@ -568,8 +564,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         guard canConnect else { return }
         session.saveHost(
             profile: normalizedProfile(),
-            suppliedPassword: password,
-            experimentEnabled: AppPreferences.Experiments.sshTerminalEnabled
+            suppliedPassword: password
         ) { [weak self] saved in
             self?.applySaved(saved)
             // Opened for a workspace folder: the host is usable now, so carry on
@@ -588,7 +583,6 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         session.connect(
             profile: profile,
             suppliedPassword: password,
-            experimentEnabled: AppPreferences.Experiments.sshTerminalEnabled,
             onSaved: applySaved
         )
     }

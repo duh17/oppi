@@ -5,7 +5,8 @@ import SwiftUI
 /// real views over one fixture server, with API pages answered by
 /// `SettingsSweepFixtureURLProtocol`. `SCREENSHOT_SWEEP_PAGE` picks the page:
 /// `tailscale`, `ssh-preflight`, `ssh-preflight-result`, `ssh-preflight-mismatch`,
-/// `ssh-hosts`, `ssh-setup`, `mcp`, `mcp-workspace`,
+/// `ssh-hosts`, `ssh-hosts-empty` (the list with no saved host), `ssh-setup`,
+/// `mcp`, `mcp-workspace`,
 /// `mcp-detail`, `mcp-add`, `quick-comments`, `quick-comment-editor`,
 /// `auto-title`, `theme-import`, `dictionary`, `dictionary-workspace`,
 /// `skills`, `skill-detail`, `extensions`, `extension-detail`,
@@ -154,10 +155,14 @@ struct SettingsSweepScreenshotPreview: View {
         case "ssh-hosts":
             // Live SSH drive writes real catalog entries; a volatile fixture
             // catalog would shadow them so the new host never appears.
-            if ProcessInfo.processInfo.environment["OPPI_LIVE_SSH"] == "1" {
-                ScreenshotVolatileDefaults.apply([AppPreferences.Experiments.sshTerminalKey: true])
-            } else {
+            if ProcessInfo.processInfo.environment["OPPI_LIVE_SSH"] != "1" {
                 Self.seedSSHHosts()
+            }
+        case "ssh-hosts-empty":
+            // An empty catalog in the argument domain, so a host saved on this
+            // simulator earlier cannot fill the page.
+            if let empty = try? JSONEncoder().encode(SSHTerminalCatalog(profiles: [])) {
+                ScreenshotVolatileDefaults.apply([SSHTerminalProfileStore.catalogKey: empty])
             }
         case "agents":
             // Enables Schedule Recurring Run on the agent detail.
@@ -210,7 +215,7 @@ struct SettingsSweepScreenshotPreview: View {
         case "extensions":
             RouterPreviewStack(root: root) { ServerExtensionsView() }
                 .ignoresSafeArea()
-        case "ssh-hosts":
+        case "ssh-hosts", "ssh-hosts-empty":
             RouterPreviewControllerStack(root: root) { SSHTerminalHostListViewController() }
                 .ignoresSafeArea()
         case "ssh-setup":
@@ -332,7 +337,7 @@ struct SettingsSweepScreenshotPreview: View {
             SSHTerminalProfile(host: "mac-studio.tail1234.ts.net", username: "chenda", startupCommand: "herdr"),
             SSHTerminalProfile(host: "devbox.local", port: 2222, username: "dev", authentication: .deviceKey),
         ])
-        var values: [String: Any] = [AppPreferences.Experiments.sshTerminalKey: true]
+        var values: [String: Any] = [:]
         values[SSHTerminalProfileStore.catalogKey] = try? JSONEncoder().encode(catalog)
         ScreenshotVolatileDefaults.apply(values)
     }

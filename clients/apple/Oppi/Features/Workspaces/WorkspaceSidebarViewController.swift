@@ -52,15 +52,11 @@ final class WorkspaceSidebarViewController: UIViewController {
 
     /// What `AppStorage` read before: the same defaults keys.
     private struct Defaults: Equatable {
-        var sshTerminalEnabled: Bool
-        var sshCatalogData: Data
         var workspacesExpanded: Bool
 
         static func read() -> Self {
             let defaults = UserDefaults.standard
             return Self(
-                sshTerminalEnabled: defaults.bool(forKey: AppPreferences.Experiments.sshTerminalKey),
-                sshCatalogData: defaults.data(forKey: SSHTerminalProfileStore.catalogKey) ?? Data(),
                 workspacesExpanded: defaults.object(forKey: AppIdentifiers.workspaceSidebarExpandedKey) as? Bool
                     ?? WorkspaceSidebarDisclosurePolicy.defaultExpanded
             )
@@ -225,12 +221,8 @@ final class WorkspaceSidebarViewController: UIViewController {
                 && navigation.splitDetailTarget == .utility(target)
         }
 
-        let utilities = WorkspaceSidebarPrimaryUtilities.items(
-            for: UIDevice.current.userInterfaceIdiom,
-            sshTerminalEnabled: defaults.sshTerminalEnabled,
-            hasSSHProfile: SSHTerminalProfileStore.hasConfiguredHost(catalogData: defaults.sshCatalogData)
-        )
-        .filter { $0.target.isReleaseEnabled }
+        let utilities = WorkspaceSidebarPrimaryUtilities.items
+            .filter { $0.target.isReleaseEnabled }
         for item in utilities {
             model.utilities[item.target] = UtilityRow(item: item, isSelected: isUtilitySelected(item.target))
             model.mainItems.append(.utility(item.target))

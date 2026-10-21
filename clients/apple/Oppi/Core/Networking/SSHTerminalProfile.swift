@@ -107,14 +107,6 @@ struct SSHTerminalProfileStore {
         "terminal.password.\(id.uuidString)"
     }
 
-    /// Sidebar visibility from the catalog defaults value. This does not write
-    /// and does not touch the Keychain.
-    static func hasConfiguredHost(catalogData: Data) -> Bool {
-        guard !catalogData.isEmpty,
-              let catalog = try? JSONDecoder().decode(SSHTerminalCatalog.self, from: catalogData) else { return false }
-        return catalog.profiles.contains(where: \.isConfigured)
-    }
-
     private struct BoundPassword: Codable {
         let profileID: UUID
         let profile: SSHTerminalProfile
@@ -127,10 +119,6 @@ struct SSHTerminalProfileStore {
     init(defaults: UserDefaults = .standard, keychain: any SSHCredentialStoring = SSHKeychain()) {
         self.defaults = defaults
         self.keychain = keychain
-    }
-
-    var hasConfiguredHost: Bool {
-        Self.hasConfiguredHost(catalogData: defaults.data(forKey: Self.catalogKey) ?? Data())
     }
 
     /// True when the catalog value is present but does not decode. Opening the

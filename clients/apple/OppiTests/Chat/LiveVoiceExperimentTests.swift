@@ -147,7 +147,7 @@ struct SettingsExperimentsPageTests {
         }
 
         // Everything starts off, and the default row is hidden until Durable Sessions is on.
-        for id in ["sessionThreads", "experiments.sshTerminal", "experiments.liveVoice", "experiments.durableSessions"] {
+        for id in ["sessionThreads", "experiments.liveVoice", "experiments.durableSessions"] {
             let found = await toggle("settings.\(id)")
             #expect(found?.isOn == false, "\(id) should start off")
         }
@@ -155,10 +155,6 @@ struct SettingsExperimentsPageTests {
 
         flip(try #require(await toggle("settings.experiments.liveVoice")))
         #expect(defaults.bool(forKey: AppPreferences.Experiments.liveVoiceKey))
-        #expect(!defaults.bool(forKey: AppPreferences.Experiments.sshTerminalKey))
-
-        flip(try #require(await toggle("settings.experiments.sshTerminal")))
-        #expect(defaults.bool(forKey: AppPreferences.Experiments.sshTerminalKey))
 
         flip(try #require(await toggle("settings.sessionThreads")))
         #expect(navigation.sessionThreadsEnabled)

@@ -11,9 +11,9 @@ final class SettingsExperimentsViewController: UIViewController {
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var appliedThemeID: ThemeID?
 
-    private enum Section: Hashable { case sessionThreads, sshTerminal, liveVoice, durableSessions }
+    private enum Section: Hashable { case sessionThreads, liveVoice, durableSessions }
     private enum Item: Hashable {
-        case sessionThreads, sshTerminal, liveVoice, durableSessions, durableSessionsDefault
+        case sessionThreads, liveVoice, durableSessions, durableSessionsDefault
     }
 
     init(navigation: AppNavigation, defaults: UserDefaults = .standard) {
@@ -35,7 +35,6 @@ final class SettingsExperimentsViewController: UIViewController {
     static func enabledCount(sessionThreadsEnabled: Bool) -> Int {
         [
             sessionThreadsEnabled,
-            AppPreferences.Experiments.sshTerminalEnabled,
             AppPreferences.Experiments.liveVoiceEnabled,
             AppPreferences.Experiments.durableSessionsEnabled,
         ].filter { $0 }.count
@@ -70,9 +69,8 @@ final class SettingsExperimentsViewController: UIViewController {
     private func applySnapshot(sessionThreads: Bool) {
         guard let dataSource else { return }
         var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.sessionThreads, .sshTerminal, .liveVoice, .durableSessions])
+        snapshot.appendSections([.sessionThreads, .liveVoice, .durableSessions])
         snapshot.appendItems([.sessionThreads], toSection: .sessionThreads)
-        snapshot.appendItems([.sshTerminal], toSection: .sshTerminal)
         snapshot.appendItems([.liveVoice], toSection: .liveVoice)
         snapshot.appendItems(
             [.durableSessions] + (isOn(AppPreferences.Experiments.durableSessionsKey) ? [.durableSessionsDefault] : []),
@@ -104,8 +102,6 @@ final class SettingsExperimentsViewController: UIViewController {
         switch section {
         case .sessionThreads:
             String(localized: "Groups sessions under the session that launched them, with Thread strips and a Thread view.")
-        case .sshTerminal:
-            String(localized: "Adds SSH Hosts to Settings.")
         case .liveVoice:
             String(localized: "Adds Live Voice to the composer's mic menu and Quick Session, to talk to a session hands-free. Needs a server with a voice backend.")
         case .durableSessions:
@@ -131,11 +127,6 @@ final class SettingsExperimentsViewController: UIViewController {
             content.text = String(localized: "Session Threads")
             cell.accessories = [.settingsToggle(navigation.sessionThreadsEnabled, identifier: "settings.sessionThreads") { [weak self] in
                 self?.navigation.sessionThreadsEnabled = $0
-            }]
-        case .sshTerminal:
-            content.text = String(localized: "SSH Terminal")
-            cell.accessories = [.settingsToggle(isOn(AppPreferences.Experiments.sshTerminalKey), identifier: "settings.experiments.sshTerminal") { [weak self] in
-                self?.set(AppPreferences.Experiments.sshTerminalKey, $0)
             }]
         case .liveVoice:
             content.text = String(localized: "Live Voice")

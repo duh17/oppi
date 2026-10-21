@@ -20,9 +20,8 @@ final class ChatRoutesUITests: XCTestCase {
 
     // MARK: - Top bar
 
-    /// The default bar: Files, Git, Outline, and the context ring, with Terminal in
-    /// the … menu because the SSH Terminal experiment is off. Customize Top
-    /// Bar… opens the Top Bar page over the chat.
+    /// The default bar: Files, Git, Outline, and the context ring, with Terminal
+    /// in the … menu. Customize Top Bar… opens the Top Bar page over the chat.
     func testTopBarShowsTheDefaultButtonsAndTheRestInTheMenu() {
         // The default layout is pinned in the volatile domain, so this reads
         // the default and not whatever an earlier run saved on this simulator.
@@ -33,7 +32,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["chat.toolbar.git"].exists, "Git is on by default")
         XCTAssertTrue(app.buttons["chat.toolbar.outline"].exists, "Outline is on by default")
         XCTAssertTrue(app.buttons["chat.toolbar.context"].exists, "The context ring is on by default")
-        XCTAssertFalse(app.buttons["chat.toolbar.terminal"].exists, "Terminal needs the SSH Terminal experiment")
+        XCTAssertFalse(app.buttons["chat.toolbar.terminal"].exists, "Terminal is in the … menu by default")
         attachScreenshot("chat-top-bar-default")
 
         let more = app.buttons["chat.toolbar.more"]
@@ -52,9 +51,9 @@ final class ChatRoutesUITests: XCTestCase {
         }
         XCTAssertEqual(app.switches["settings.chat.topBar.files"].value as? String, "1", "Files starts on")
         XCTAssertEqual(app.switches["settings.chat.topBar.terminal"].value as? String, "0", "Terminal starts off")
-        XCTAssertFalse(
+        XCTAssertTrue(
             app.switches["settings.chat.topBar.terminal"].isEnabled,
-            "Terminal cannot be turned on while the experiment is off"
+            "Terminal's switch works like the others"
         )
         attachScreenshot("chat-settings-top-bar")
         assertRunning()
@@ -67,7 +66,7 @@ final class ChatRoutesUITests: XCTestCase {
         dismissMicrophonePrompt()
         XCTAssertTrue(
             app.buttons["chat.toolbar.terminal"].waitForExistence(timeout: 15),
-            "Terminal must show when it is on and the experiment is on"
+            "Terminal must show when it is on"
         )
         XCTAssertTrue(app.buttons["chat.toolbar.files"].exists, "Files is on")
         XCTAssertFalse(app.buttons["chat.toolbar.git"].exists, "A hidden Git is not on the bar")

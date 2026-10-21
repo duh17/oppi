@@ -195,36 +195,31 @@ struct ScreenshotPreviewView: View {
         case "chat-top-bar-default":
             ChatTopBarScreenshotPreview(
                 order: ChatTopBarAction.allCases,
-                shown: ChatTopBarLayout.defaultShown,
-                terminalExperiment: false
+                shown: ChatTopBarLayout.defaultShown
             )
         case "chat-top-bar-terminal":
             ChatTopBarScreenshotPreview(
                 order: [.terminal, .files, .git, .outline, .context],
-                shown: [.terminal, .files],
-                terminalExperiment: true
+                shown: [.terminal, .files]
             )
         case "chat-top-bar-all":
             ChatTopBarScreenshotPreview(
                 order: ChatTopBarAction.allCases,
-                shown: Set(ChatTopBarAction.allCases),
-                terminalExperiment: true
+                shown: Set(ChatTopBarAction.allCases)
             )
         case "chat-top-bar-none":
             ChatTopBarScreenshotPreview(
                 order: ChatTopBarAction.allCases,
-                shown: [],
-                terminalExperiment: true
+                shown: []
             )
         case "chat-top-bar-reordered":
             ChatTopBarScreenshotPreview(
                 order: [.outline, .files, .context, .git, .terminal],
-                shown: Set(ChatTopBarAction.allCases),
-                terminalExperiment: true
+                shown: Set(ChatTopBarAction.allCases)
             )
         case "workspace-top-bar":
             WorkspaceTopBarScreenshotPreview()
-        case "settings-chat", "settings-editor", "settings-chat-top-bar":
+        case "settings-root", "settings-chat", "settings-editor", "settings-chat-top-bar":
             SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
         case "workspace-file-editor", "workspace-file-editor-markdown", "workspace-file-editor-vim":
             WorkspaceFileEditorScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
@@ -730,18 +725,16 @@ private struct ChatRoutesHarnessPreview: View {
 
 /// `SCREENSHOT_SCREEN=chat-top-bar-default`, `-terminal`, `-all`, `-none`, and
 /// `-reordered`: the chat's bar over the `chat-routes` fixtures with a chosen
-/// top bar. The experiment flag and the layout go in the volatile argument
-/// domain, so the simulator's saved settings are untouched and a test's bar
-/// does not depend on what an earlier run left behind.
+/// top bar. The layout goes in the volatile argument domain, so the simulator's
+/// saved settings are untouched and a test's bar does not depend on what an
+/// earlier run left behind.
 private struct ChatTopBarScreenshotPreview: View {
     init(
         order: [ChatTopBarAction],
-        shown: Set<ChatTopBarAction>,
-        terminalExperiment: Bool
+        shown: Set<ChatTopBarAction>
     ) {
         let layout = ChatTopBarLayout(order: order, shown: shown)
         ScreenshotVolatileDefaults.apply([
-            AppPreferences.Experiments.sshTerminalKey: terminalExperiment,
             AppPreferences.ChatTopBar.orderKey: layout.storedOrder,
             AppPreferences.ChatTopBar.shownKey: layout.storedShown,
         ])
@@ -750,13 +743,12 @@ private struct ChatTopBarScreenshotPreview: View {
     var body: some View { ChatRoutesHarnessView() }
 }
 
-/// `SCREENSHOT_SCREEN=workspace-top-bar`: a workspace's bars with the SSH
-/// Terminal experiment on, so its Terminal button shows beside Config.
+/// `SCREENSHOT_SCREEN=workspace-top-bar`: a workspace's bars, with its Terminal
+/// button beside Config when the folder can open in one.
 private struct WorkspaceTopBarScreenshotPreview: View {
     @State private var root: AppRootEnvironment
 
     init() {
-        ScreenshotVolatileDefaults.apply([AppPreferences.Experiments.sshTerminalKey: true])
         let coordinator = RouterModalSitesFixtures.makeCoordinator(playing: false)
         if let connection = coordinator.connection(for: RouterModalSitesFixtures.serverId) {
             // Visible rows: the screen only raises its workspace load error
@@ -812,25 +804,37 @@ private struct WorkspaceTopBarScreenshotPreview: View {
     }
 }
 
-/// `SCREENSHOT_SCREEN=settings-chat` / `settings-editor`: a UIKit settings page
-/// as the root of a router stack, over fixture services. Nothing here calls a
-/// server. Both are captured in the same harness so their bars can be compared.
+/// `SCREENSHOT_SCREEN=settings-root` / `settings-chat` / `settings-editor`: a
+/// UIKit settings page as the root of a router stack, over fixture services.
+/// Nothing here calls a server. They are captured in the same harness so their
+/// bars can be compared.
 private struct SettingsPageScreenshotPreview: View {
     let screen: String
 
-    @State private var root = AppRootEnvironment(
-        coordinator: ConnectionCoordinator(serverStore: ServerStore()),
-        navigation: AppNavigation(),
-        themeStore: ThemeStore(),
-        quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
-        composerDraftStore: ComposerDraftStore(),
-        chatReaderPayloadStore: ChatReaderPayloadStore(),
-        sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
-    )
+    @State private var root: AppRootEnvironment
+
+    init(screen: String) {
+        self.screen = screen
+        // The App Settings index shows one paired server, so its Servers
+        // section reads like a paired app's.
+        let coordinator = screen == "settings-root"
+            ? RouterModalSitesFixtures.makeCoordinator(playing: false)
+            : ConnectionCoordinator(serverStore: ServerStore())
+        _root = State(initialValue: AppRootEnvironment(
+            coordinator: coordinator,
+            navigation: AppNavigation(),
+            themeStore: ThemeStore(),
+            quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
+            composerDraftStore: ComposerDraftStore(),
+            chatReaderPayloadStore: ChatReaderPayloadStore(),
+            sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
+        ))
+    }
 
     var body: some View {
         RouterPreviewControllerStack(root: root) {
             switch screen {
+            case "settings-root": SettingsRootViewController(root: root)
             case "settings-editor": SettingsEditorViewController()
             case "settings-chat-top-bar": SettingsChatTopBarViewController()
             default: SettingsChatViewController()

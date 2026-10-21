@@ -19,7 +19,6 @@ final class SSHTerminalConnectChrome {
     private var lastWasBackground = false
     private var pushingTerminal = false
     private var showsTerminalEdge = SSHTerminalShowsTerminalEdge()
-    private var defaultsObserver: NSObjectProtocol?
 
     init(
         host: UIViewController,
@@ -39,28 +38,11 @@ final class SSHTerminalConnectChrome {
         self.onSaved = onSaved
     }
 
-    func start() {
-        defaultsObserver = NotificationCenter.default.addObserver(
-            forName: UserDefaults.didChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.experimentChanged()
-        }
-    }
-
     /// Covered or popped. In-flight connect ends unless the terminal is showing
     /// or a connect prompt (password, trust) is up over this screen.
     func hostDidDisappear() {
         if host?.presentedViewController != nil { return }
         if !session.showsTerminal { session.cancel() }
-    }
-
-    func stopObserving() {
-        if let defaultsObserver {
-            NotificationCenter.default.removeObserver(defaultsObserver)
-            self.defaultsObserver = nil
-        }
     }
 
     func sync() {
@@ -104,11 +86,6 @@ final class SSHTerminalConnectChrome {
         session.forgetConfirmation = true
         if let host { presentForgetConfirmation(from: host) }
         session.forgetConfirmation = false
-    }
-
-    private func experimentChanged() {
-        guard !AppPreferences.Experiments.sshTerminalEnabled else { return }
-        session.handleExperimentDisabled()
     }
 
     private func presentPassword(from host: UIViewController) {
@@ -168,7 +145,6 @@ final class SSHTerminalConnectChrome {
                 guard let self else { return }
                 self.session.trustAndConnect(
                     profile: self.profile(),
-                    experimentEnabled: AppPreferences.Experiments.sshTerminalEnabled,
                     onSaved: self.onSaved
                 )
             },
@@ -225,7 +201,7 @@ final class SSHTerminalConnectChrome {
             guard session.showsTerminal, let channel = session.channel else { return }
             Router.push(SSHTerminalViewController(
                 channel: channel,
-                reconnect: { session.reconnect(experimentEnabled: AppPreferences.Experiments.sshTerminalEnabled) },
+                reconnect: { session.reconnect() },
                 editHost: editHost,
                 hostLabel: hostLabel,
                 session: session
