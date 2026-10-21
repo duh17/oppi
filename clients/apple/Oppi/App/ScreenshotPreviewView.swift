@@ -78,6 +78,16 @@ struct ScreenshotPreviewView: View {
             SSHTerminalScreenshotPreview()
         case "ssh-terminal-status-blocked":
             SSHTerminalScreenshotPreview(status: .blocked)
+        case "ssh-terminal-progress-set":
+            SSHTerminalScreenshotPreview(status: .progressSet)
+        case "ssh-terminal-progress-indeterminate":
+            SSHTerminalScreenshotPreview(status: .progressIndeterminate)
+        case "ssh-terminal-progress-error":
+            SSHTerminalScreenshotPreview(status: .progressError)
+        case "ssh-terminal-progress-pause":
+            SSHTerminalScreenshotPreview(status: .progressPause)
+        case "ssh-terminal-progress-with-status":
+            SSHTerminalScreenshotPreview(status: .progressWithStatus)
         case "ssh-terminal-kitty":
             SSHTerminalScreenshotPreview(status: .kitty)
         case "review-comment-inline-draft":

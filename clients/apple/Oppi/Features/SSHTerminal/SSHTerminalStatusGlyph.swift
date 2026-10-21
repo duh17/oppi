@@ -21,10 +21,13 @@ final class SSHTerminalStatusMarkView: UIView {
 
     let style: Style
     private let imageView = UIImageView()
+    /// The OSC 9;4 ring around the symbol; only the floating controls draw it.
+    private let ring = SSHTerminalProgressRingView()
+    private var progress: SSHTerminalProgressReport?
     private var hold: SSHTerminalStatusHold?
     private var holdTask: Task<Void, Never>?
     private var checkTask: Task<Void, Never>?
-    private var headline: SessionStatusKind = .idle
+    private var headline: SessionStatusKind?
     private var shown: SessionStatusKind = .idle
     private var checkDrawn = false
     private var reduceMotion = false
@@ -36,7 +39,17 @@ final class SSHTerminalStatusMarkView: UIView {
         super.init(frame: .zero)
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.contentMode = .scaleAspectFit
+        ring.translatesAutoresizingMaskIntoConstraints = false
+        if style == .toolbar { addSubview(ring) }
         addSubview(imageView)
+        if style == .toolbar {
+            NSLayoutConstraint.activate([
+                ring.centerXAnchor.constraint(equalTo: centerXAnchor),
+                ring.centerYAnchor.constraint(equalTo: centerYAnchor),
+                ring.widthAnchor.constraint(equalToConstant: SSHTerminalProgressRingView.diameter),
+                ring.heightAnchor.constraint(equalToConstant: SSHTerminalProgressRingView.diameter),
+            ])
+        }
         NSLayoutConstraint.activate([
             imageView.centerXAnchor.constraint(equalTo: centerXAnchor),
             imageView.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -49,17 +62,21 @@ final class SSHTerminalStatusMarkView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// `status` is nil while no program has reported OSC 7501 but one has
+    /// reported progress: the ring then shows alone.
     func apply(
-        status: SessionStatusKind,
+        status: SessionStatusKind?,
         themeID: ThemeID,
         reduceMotion: Bool,
-        root: SSHTerminalStatusHold.Root? = nil
+        root: SSHTerminalStatusHold.Root? = nil,
+        progress: SSHTerminalProgressReport? = nil
     ) {
         self.reduceMotion = reduceMotion
         self.themeID = themeID
+        self.progress = progress
         headline = status
         let nextHold = SSHTerminalStatusHold.next(
-            hold, from: lastRoot, to: root, headline: status
+            hold, from: lastRoot, to: root, headline: status ?? .idle
         )
         lastRoot = root
         if nextHold != hold {
@@ -79,7 +96,17 @@ final class SSHTerminalStatusMarkView: UIView {
 
     private func render() {
         guard let themeID else { return }
-        let next = hold?.kind ?? headline
+        let palette = themeID.palette
+        ring.apply(progress, color: Self.ringColor(for: progress?.state ?? .set, palette: palette), reduceMotion: reduceMotion)
+        guard let next = hold?.kind ?? headline else {
+            // Progress alone: the ring is the whole glyph.
+            shown = .idle
+            checkDrawn = false
+            checkTask?.cancel()
+            imageView.removeAllSymbolEffects()
+            imageView.image = nil
+            return
+        }
         let previous = shown
         shown = next
         if previous != next { noteEntry(of: next) }
@@ -112,6 +139,14 @@ final class SSHTerminalStatusMarkView: UIView {
             if style == .banner && !reduceMotion {
                 imageView.addSymbolEffect(.wiggle, options: .repeat(.periodic(delay: 3)), animated: true)
             }
+        }
+    }
+
+    private static func ringColor(for state: SSHTerminalProgressReport.State, palette: ThemePalette) -> UIColor {
+        switch state {
+        case .set, .indeterminate: UIColor(palette.blue)
+        case .error: UIColor(palette.red)
+        case .paused: UIColor(palette.orange)
         }
     }
 
@@ -165,16 +200,23 @@ final class SSHTerminalStatusGlyphButton: UIButton {
         glyphFrame.rect = convert(bounds, to: nil)
     }
 
+    /// `status` is nil when only OSC 9;4 progress is showing. The glyph then
+    /// has no list to open, so it reads as a static value, not a button.
     func apply(
-        status: SessionStatusKind,
+        status: SessionStatusKind?,
         summary: String,
         themeID: ThemeID,
         reduceMotion: Bool,
-        root: SSHTerminalStatusHold.Root?
+        root: SSHTerminalStatusHold.Root?,
+        progress: SSHTerminalProgressReport?
     ) {
-        mark.apply(status: status, themeID: themeID, reduceMotion: reduceMotion, root: root)
-        largeContentImage = UIImage(systemName: status.terminalSymbol)
-        accessibilityValue = summary.isEmpty ? status.label : "\(status.label), \(summary)"
+        mark.apply(status: status, themeID: themeID, reduceMotion: reduceMotion, root: root, progress: progress)
+        largeContentImage = UIImage(systemName: status?.terminalSymbol ?? "progress.indicator")
+        let statusText = status.map { summary.isEmpty ? $0.label : "\($0.label), \(summary)" }
+        accessibilityValue = [statusText, progress?.spokenValue].compactMap { $0 }.joined(separator: ", ")
+        isUserInteractionEnabled = status != nil
+        accessibilityTraits = status == nil ? [.staticText, .updatesFrequently] : (progress == nil ? .button : [.button, .updatesFrequently])
+        accessibilityHint = status == nil ? nil : "Shows each program's status"
     }
 }
 

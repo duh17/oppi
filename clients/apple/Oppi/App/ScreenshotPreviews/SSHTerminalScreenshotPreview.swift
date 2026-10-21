@@ -9,6 +9,18 @@ enum SSHTerminalScreenshotStatus: String {
     /// Real Kitty graphics escape sequences: a direct RGBA picture and a PNG,
     /// sent the way `kitten icat` or an agent's image output sends them.
     case kitty
+    /// Real OSC 9;4 progress reports, with and without an OSC 7501 status.
+    case progressSet, progressIndeterminate, progressError, progressPause, progressWithStatus
+
+    var progressReport: String? {
+        switch self {
+        case .progressSet, .progressWithStatus: "1;40"
+        case .progressIndeterminate: "3"
+        case .progressError: "2;70"
+        case .progressPause: "4;60"
+        default: nil
+        }
+    }
 }
 
 /// The real terminal surface over an in-memory connection: a Herdr-like
@@ -94,6 +106,21 @@ struct SSHTerminalScreenshotPreview: View {
         bytes.append(statusReports(status))
         if status == .kitty { bytes.append(kittyPictures()) }
         channel.event(.data(bytes))
+        keepProgressAlive(on: channel)
+    }
+
+    /// A program that shows progress keeps reporting it; a report not renewed
+    /// goes stale after 15 seconds, as in Ghostty.
+    private func keepProgressAlive(on channel: SSHTerminalChannel) {
+        guard let report = status.progressReport else { return }
+        let bytes = Data("\u{1b}]9;4;\(report)\u{1b}\\".utf8)
+        channel.event(.data(bytes))
+        Task { [weak channel] in
+            while let channel, channel.connected {
+                try? await Task.sleep(for: .seconds(5))
+                channel.event(.data(bytes))
+            }
+        }
     }
 
     private func herdrScreen(_ esc: String) -> String {
@@ -114,6 +141,8 @@ struct SSHTerminalScreenshotPreview: View {
     private func statusScreen(_ esc: String, step: SSHTerminalScreenshotStatus? = nil) -> String {
         let line: String = switch step ?? status {
         case .none, .sequence: ""
+        case .progressSet, .progressIndeterminate, .progressError, .progressPause, .progressWithStatus:
+            "$ cargo build --release"
         case .kitty: "$ kitten icat gradient.png"
         case .notification: "$ cargo test"
         case .working: "pi: installing updates"
@@ -143,8 +172,10 @@ struct SSHTerminalScreenshotPreview: View {
         case .tree, .detail:
             return osc("state=working:app=deploy:msg=\(b64("Deploying v2.4.1"))")
                 + osc("state=blocked:kind=permission:id=eu-west:title=\(b64("EU West")):msg=\(b64("Approve deploy to eu-west?"))")
-        case .sequence, .kitty:
+        case .sequence, .kitty, .progressSet, .progressIndeterminate, .progressError, .progressPause:
             return Data()
+        case .progressWithStatus:
+            return osc("state=working:app=pi:msg=\(b64("Building"))")
         case .notification:
             return Data("\u{1b}]777;notify;cargo;All 214 tests passed\u{1b}\\".utf8)
         }

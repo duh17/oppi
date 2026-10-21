@@ -107,6 +107,8 @@ final class SSHTerminalEngine {
     /// OSC 7501 records for this terminal. Outlives `close()` so unseen
     /// `done`/`error` records can still be shown after the program exits.
     let programStatus = SSHTerminalProgramStatusStore()
+    /// The program's OSC 9;4 progress. Cleared by RIS and when the process ends.
+    let progress = SSHTerminalProgressStore()
     /// OSC 9 / OSC 777 notifications and BEL from this terminal.
     let alerts = SSHTerminalAlertFeed()
     private(set) var geometry: SSHTerminalGeometry
@@ -227,6 +229,7 @@ final class SSHTerminalEngine {
         replies.removeAll()
         pendingCopy = nil
         programStatus.processEnded()
+        progress.reset()
     }
 
     private func notePictureChange() {
@@ -1149,6 +1152,24 @@ final class SSHTerminalEngine {
                     title: SSHTerminalEngine.copy(value.title), message: SSHTerminalEngine.copy(value.message)))
             }
         }
+        // OSC 9;4. REMOVE clears; the store owns the stale timeout.
+        let progress: GhosttyTerminalProgressReportFn = { _, context, report in
+            MainActor.assumeIsolated {
+                guard let context, let report else { return }
+                let value = report.pointee
+                let store = Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue().progress
+                // A percentage is -1 when the program sent none; a plain "set" then means 0.
+                let percent = value.progress >= 0 ? Int(value.progress) : nil
+                switch value.state {
+                case GHOSTTY_TERMINAL_PROGRESS_STATE_REMOVE: store.reset()
+                case GHOSTTY_TERMINAL_PROGRESS_STATE_SET: store.apply(.init(state: .set, percent: percent ?? 0))
+                case GHOSTTY_TERMINAL_PROGRESS_STATE_ERROR: store.apply(.init(state: .error, percent: percent))
+                case GHOSTTY_TERMINAL_PROGRESS_STATE_INDETERMINATE: store.apply(.init(state: .indeterminate, percent: nil))
+                case GHOSTTY_TERMINAL_PROGRESS_STATE_PAUSE: store.apply(.init(state: .paused, percent: percent))
+                default: break // A state this build does not know is ignored.
+                }
+            }
+        }
         // Copy into the alert feed only; the screen decides what to show.
         let notification: GhosttyTerminalDesktopNotificationFn = { _, context, request in
             MainActor.assumeIsolated {
@@ -1209,6 +1230,7 @@ final class SSHTerminalEngine {
                 guard let context else { return }
                 let owner = Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue()
                 owner.programStatus.removeAll()
+                owner.progress.reset()
                 owner.title = ""
                 owner.titleChanged = false
                 owner.workingDirectory = ""
@@ -1217,6 +1239,7 @@ final class SSHTerminalEngine {
             }
         }
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS, unsafeBitCast(status, to: UnsafeRawPointer.self))
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT, unsafeBitCast(progress, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION, unsafeBitCast(notification, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_BELL, unsafeBitCast(bell, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SEMANTIC_PROMPT, unsafeBitCast(prompt, to: UnsafeRawPointer.self))

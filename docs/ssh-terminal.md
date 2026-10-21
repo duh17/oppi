@@ -164,9 +164,25 @@ While a program has reported, the top-right controls show a status symbol, not a
 
 When any record is blocked, a card floats over the top of the terminal. It names the kind, the saved host, and the program's message. It does not change the terminal's size, and it is not a dialog: you answer in the terminal or the chat bar. If it covers the program's own prompt, tap it or swipe it up (VoiceOver: the Dismiss action); it folds into the status symbol, which stays orange and still lists the message. It stays away while the program repeats the same report, and comes back for a different kind of wait, the next time the program blocks, or a new message once the program's reports pause for a second (a message rewritten in a loop updates the card's text without bringing it back).
 
+## Progress (OSC 9;4)
+
+A program can report progress with OSC 9;4 (`ESC ] 9 ; 4 ; state ; percent ST`, ConEmu and Windows Terminal; cargo, `brew`, `winget`, and `systemd` tools send it). The status glyph in the bottom bar draws it as a ring around its symbol:
+
+| Report | Ring |
+|---|---|
+| `1;N` set | Blue, filled clockwise from the top to N%. |
+| `3` indeterminate | Blue, a short arc that spins. |
+| `2` or `2;N` error | Red, filled to N%; with no number, a spinning arc. |
+| `4` or `4;N` pause | Orange and dashed, filled to N%; with no number, a full ring. |
+| `0` remove | No ring. |
+
+The ring composes with [program status](#program-status-osc-7501): when a program has also reported OSC 7501, its status symbol stays in the middle and the ring goes around it. With progress alone, the ring is the whole glyph. It is then not a button, since there is no program list to open; tapping does nothing. VoiceOver reads the value as **Progress 40%** (also **Progress paused at 60%**, **Progress failed**, **Progress, in progress**), after the status when there is one. With **Reduce Motion** on, nothing spins: an indeterminate report is a dotted full ring.
+
+Each report replaces the one before it. A report that is not renewed for 15 seconds goes away, as it does in Ghostty, since a program that was killed never sends the remove. Every new report, even an identical one, restarts those 15 seconds. A reset (RIS) and the end of the connection clear it too. Progress is not a notification: no card and no haptic.
+
 ## Notifications and the bell
 
-A program can notify the terminal with OSC 9 (`ESC ] 9 ; text ST`, iTerm2) or OSC 777 (`ESC ] 777 ; notify ; title ; body ST`, rxvt and Ghostty). The same card shows it, headed **Notification**, with the program's title and text on their own line, and leaves after six seconds or when you tap it. Notifications less than a second apart are one notification whose text updates, so a program printing them in a loop cannot hold the card up or bring it back. A blocked program comes first: while its card shows, a notification waits behind it, and folding one card away never brings back the other. A new card of either kind gives a warning haptic, at most once a second. OSC 9;4 progress reports are not notifications. A bell (BEL) gives a light haptic and no card, since shells ring it for ordinary things such as a failed completion; bells within one second count once.
+A program can notify the terminal with OSC 9 (`ESC ] 9 ; text ST`, iTerm2) or OSC 777 (`ESC ] 777 ; notify ; title ; body ST`, rxvt and Ghostty). The same card shows it, headed **Notification**, with the program's title and text on their own line, and leaves after six seconds or when you tap it. Notifications less than a second apart are one notification whose text updates, so a program printing them in a loop cannot hold the card up or bring it back. A blocked program comes first: while its card shows, a notification waits behind it, and folding one card away never brings back the other. A new card of either kind gives a warning haptic, at most once a second. OSC 9;4 progress reports are not notifications; they draw [a ring](#progress-osc-94). A bell (BEL) gives a light haptic and no card, since shells ring it for ordinary things such as a failed completion; bells within one second count once.
 
 The terminal hears these while its connection is open, including after you leave its screen ([Keeping a terminal open](#keeping-a-terminal-open)); it hears nothing once the connection has closed. Programs inside Herdr usually notify Herdr, not this terminal, and Herdr's own notifications use Kitty's OSC 99, which the terminal does not read yet.
 

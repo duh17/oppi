@@ -272,6 +272,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         _ = channel.closedForBackground
         _ = channel.programStatus.records
         _ = channel.programStatus.root
+        _ = channel.progress.report
         _ = channel.workingDirectory
         _ = channel.alerts.notification
         _ = channel.alerts.bell
@@ -615,13 +616,17 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     private func updateFloatingControls(themeID: ThemeID) {
         let rollup = programRollup
-        if let rollup, let headline = rollup.headline {
+        let headline = rollup?.headline
+        let progress = channel.progress.report
+        let showsStatus = headline != nil || progress != nil
+        if showsStatus {
             statusGlyph.apply(
                 status: headline,
-                summary: rollup.summaryText,
+                summary: rollup?.summaryText ?? "",
                 themeID: themeID,
                 reduceMotion: reduceMotion,
-                root: channel.programStatus.root.map { .init(state: $0.state, revision: $0.revision) }
+                root: channel.programStatus.root.map { .init(state: $0.state, revision: $0.revision) },
+                progress: progress
             )
             attention.glyphFrame.rect = statusGlyph.glyphFrame.rect
         }
@@ -629,7 +634,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             themeID: themeID,
             herdrAvailable: herdr.available,
             herdrWaiting: herdr.snapshot?.needsAttention,
-            showsStatus: rollup?.headline != nil
+            showsStatus: showsStatus
         )
         backPill.apply(themeID: themeID, attentionPending: attentionPending())
         let shellTitle = channel.title.trimmingCharacters(in: .whitespacesAndNewlines)
