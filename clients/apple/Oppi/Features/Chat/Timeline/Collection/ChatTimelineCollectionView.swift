@@ -570,11 +570,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     var lastObservedContentOffsetY: CGFloat?
     var lastObservedContentHeight: CGFloat?
     var isTimelineBusy = false
-    /// Turn state for the rows being configured right now. `isTimelineBusy`
-    /// keeps the previous apply's value, because change detection compares
-    /// against it, so it cannot answer for the cells UIKit is about to
-    /// configure. A thinking row asks this one whether its trace can still grow.
-    var rowTurnIsActive = false
     /// Rendering/sizing must stop treating an assistant as streaming as soon
     /// as execution becomes idle, even if the reducer retains its final ID
     /// for one more render pass.
@@ -1032,7 +1027,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     }
 
     func apply(configuration: ChatTimelineConfiguration, to collectionView: UICollectionView) {
-        rowTurnIsActive = configuration.isBusy
         let sessionScopeChanged = context.didChangeSessionScope(for: configuration)
         let assistantPresentationChanged = context.didChangeAssistantPresentation(for: configuration)
         let chromeStyleChanged = context.didChangeChromeStyle(for: configuration)

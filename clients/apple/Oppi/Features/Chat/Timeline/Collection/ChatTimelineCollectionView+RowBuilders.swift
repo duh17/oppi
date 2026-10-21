@@ -237,9 +237,9 @@ extension ChatTimelineController {
         configuration.openFullScreen = onOpenChatReader
         // A durable live tail keeps replacing a thinking block's text after the
         // block itself reports done, so the reader's liveness is the turn's.
-        // Read the turn state of the apply that is configuring this row, not
-        // the previous apply's.
-        configuration.isTurnActive = rowTurnIsActive
+        // This is the apply's own busy value; `isTimelineBusy` still holds the
+        // previous one because change detection compares against it.
+        configuration.isTurnActive = isAssistantStreamingPresentationActive
         return configuration
     }
 
