@@ -164,7 +164,14 @@ class E2ETestCase: XCTestCase {
         let inviteURL = invite.url
 
         let application = XCUIApplication()
-        application.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        // A stale preference from an earlier run must not decide which browser
+        // a link opens; the web-link case asserts the in-app one.
+        application.launchArguments = [
+            "-ApplePersistenceIgnoreState",
+            "YES",
+            "-dev.chenda.Oppi.browser.linkOpeningMode",
+            "inApp",
+        ]
         application.launchEnvironment["PI_E2E_INVITE_URL"] = inviteURL
         // Beat a leftover runner/SIMCTL invite. Offline two-server tests already
         // documented that the UI runner does not inherit the host env.
@@ -904,6 +911,25 @@ class E2ETestCase: XCTestCase {
             }
         }
         return element.exists
+    }
+
+    func waitForNonExistence(
+        _ element: XCUIElement,
+        timeout: TimeInterval,
+        pollInterval: TimeInterval = 0.1
+    ) -> Bool {
+        if !element.exists {
+            return true
+        }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(pollInterval))
+            if !element.exists {
+                return true
+            }
+        }
+        return !element.exists
     }
 
     // MARK: - E2E Diagnostics

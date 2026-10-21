@@ -215,6 +215,15 @@ final class ReleaseGateE2ETests: E2ETestCase {
             timeout: 5
         )
         XCTAssertEqual(waitForFocusedSessionId(targetSessionID, timeout: 20), targetSessionID)
+        // The focused session flips before the route pushes; wait for the
+        // source chat to leave the screen so the next tap sees one bar.
+        XCTAssertTrue(
+            waitForNonExistence(
+                app.links.matching(NSPredicate(format: "label == %@", "Open target session")).firstMatch,
+                timeout: 20
+            ),
+            "The originating chat stayed on screen after the linked session opened"
+        )
 
         // The chat back swipe is a leading-edge pan. XCUITest's swipeRight
         // starts too far in to claim it, so it never pops the pushed session.
@@ -227,12 +236,86 @@ final class ReleaseGateE2ETests: E2ETestCase {
 
         tap(linkAfterReturning(label: "Open target session"), named: "markdown session hyperlink after swipe back", timeout: 5)
         XCTAssertEqual(waitForFocusedSessionId(targetSessionID, timeout: 20), targetSessionID)
-        tap(app.buttons["chat.toolbar.back"], named: "linked session back button", timeout: 5)
+        XCTAssertTrue(
+            waitForNonExistence(
+                app.links.matching(NSPredicate(format: "label == %@", "Open target session")).firstMatch,
+                timeout: 20
+            ),
+            "The originating chat stayed on screen after the linked session opened"
+        )
+        XCTAssertTrue(
+            waitForSingleChatBackButton(timeout: 5),
+            "The chat bar did not settle after the linked session opened"
+        )
+        // Tapping the query re-resolves it, and UIKit's bar snapshot can expose
+        // the outgoing and incoming Back buttons together for a frame. Tap the
+        // settled control's own frame instead.
+        let backButton = app.buttons.matching(identifier: "chat.toolbar.back").firstMatch
+        let backFrame = backButton.frame
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: backFrame.midX, dy: backFrame.midY))
+            .tap()
         XCTAssertEqual(
             waitForFocusedSessionId(sourceSessionID, timeout: 20),
             sourceSessionID,
             "Back from the linked session must return to the originating chat"
         )
+    }
+
+    /// UIKit's bar crossfade can expose the outgoing and incoming Back buttons
+    /// in one snapshot while a push settles. Wait for the single stable one.
+    @MainActor
+    private func waitForSingleChatBackButton(timeout: TimeInterval) -> Bool {
+        let query = app.buttons.matching(identifier: "chat.toolbar.back")
+        let deadline = Date().addingTimeInterval(timeout)
+        var consecutiveSingle = 0
+        while Date() < deadline {
+            consecutiveSingle = query.count == 1 ? consecutiveSingle + 1 : 0
+            if consecutiveSingle >= 2 { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return query.count == 1
+    }
+
+    @MainActor
+    func testMarkdownWebLinkOpensInAppBrowser() throws {
+        createSession()
+        waitForRequiredSplitStreamCapabilities()
+        waitForWebSocketConnected()
+        let sessionID = waitForFocusedSessionId(timeout: 20)
+
+        try clearE2EHarnessResponses(sessionId: sessionID)
+        try sendE2EHarnessMessage(sessionId: sessionID, ["type": "agent_start"])
+        let markdown = "[Open docs](https://example.com/)"
+        try sendE2EHarnessMessage(sessionId: sessionID, [
+            "type": "text_delta",
+            "delta": markdown,
+        ])
+        try sendE2EHarnessMessage(sessionId: sessionID, [
+            "type": "message_end",
+            "role": "assistant",
+            "content": markdown,
+            "persist": true,
+        ])
+        try sendE2EHarnessMessage(sessionId: sessionID, ["type": "agent_end"])
+
+        XCTAssertTrue(
+            waitForTimelineTextContaining("Open docs", timeout: 20),
+            "Assistant markdown web-link text did not render"
+        )
+        tap(renderedLink(label: "Open docs"), named: "markdown web link", timeout: 5)
+
+        // The in-app browser preference is forced at launch: a timeline web
+        // link must open SFSafariViewController inside Oppi, not Safari.
+        let browser = app.descendants(matching: .any)["inAppBrowser.view"]
+        XCTAssertTrue(
+            browser.waitForExistence(timeout: 20),
+            "A timeline web link did not open the in-app browser"
+        )
+        // SFSafariViewController's dismiss chrome lives in SafariViewService
+        // and is not stable to query across OS versions. The case proves the
+        // open; the next case relaunches the shared app.
+        app.terminate()
     }
 
     @MainActor
