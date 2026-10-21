@@ -96,6 +96,100 @@ struct SSHTerminalGridPerfBench {
         #expect(!idle.running)
     }
 
+    /// Kitty graphics on screen: the steady state (no new pixels, same grid),
+    /// a history scroll with the images pinned to their rows, and a sub-row
+    /// shift. Uploads are counted so a frame that re-copies image pixels would
+    /// show up here as a failure, not just as a slower number.
+    @Test func kittyImagesOnScreen() throws {
+        let pipeline = try SSHTerminalMetalPipeline.shared()
+        let metrics = SSHTerminalCellMetrics.codeFont()
+        let scale: CGFloat = 2
+        let cellWidth = max(1, Int(metrics.cellSize.width * scale))
+        let cellHeight = max(1, Int(metrics.cellSize.height * scale))
+        let width = max(1, Int(metrics.cellSize.width * CGFloat(Self.columns) * scale))
+        let height = max(1, Int(metrics.cellSize.height * CGFloat(Self.rows) * scale))
+        let renderer = try SSHTerminalMetalRenderer(pipeline: pipeline, metrics: metrics, scale: scale)
+        let engine = try SSHTerminalEngine(geometry: .init(
+            columns: Self.columns, rows: Self.rows, cellWidth: cellWidth, cellHeight: cellHeight
+        )) { _ in }
+        guard let texture = renderer.makeOffscreenTexture(width: width, height: height) else {
+            Issue.record("no offscreen texture")
+            return
+        }
+        let line = String(repeating: "image ", count: Self.columns / 6)
+        engine.receive(Data((0..<260).map { "\u{1b}[3\($0 % 7 + 1)m\(line)\u{1b}[0m" }.joined(separator: "\r\n").utf8))
+        // Three 320x160 pictures, the shape of a listing preview or `kitten icat`.
+        for i in 0..<3 {
+            let pixels = (0..<(320 * 160)).map { _ in
+                (UInt8((i * 60) % 256), UInt8(0x40), UInt8(0x80), UInt8(0xFF))
+            }
+            var bytes = [UInt8]()
+            bytes.reserveCapacity(pixels.count * 4)
+            for pixel in pixels { bytes += [pixel.0, pixel.1, pixel.2, pixel.3] }
+            engine.receive(Data("\u{1b}[\(4 + i * 8);3H\u{1b}_Ga=T,f=32,s=320,v=160,i=\(i + 1),c=20,r=6;\(Data(bytes).base64EncodedString())\u{1b}\\".utf8))
+        }
+        _ = renderer.encodeOffscreen(
+            frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
+            texture: texture, waitUntilCompleted: true, fullRebuild: true
+        )
+        let uploadsAfterWarmup = renderer.imageUploadCount
+
+        var steadyFrames: [UInt64] = []
+        var steadyEncodes: [UInt64] = []
+        var placements = 0
+        var steadyUploads = 0
+        for _ in 0..<9 {
+            let frameStart = DispatchTime.now().uptimeNanoseconds
+            let frame = engine.frame()
+            let cost = renderer.encodeOffscreen(
+                frame: frame, cursorColor: SIMD4(1, 1, 1, 0.65),
+                texture: texture, waitUntilCompleted: true, fullRebuild: false
+            )
+            steadyFrames.append(DispatchTime.now().uptimeNanoseconds &- frameStart &- cost.encodeNanos)
+            steadyEncodes.append(cost.encodeNanos)
+            placements = cost.imagePlacementCount
+            steadyUploads += cost.imageUploadCount
+            #expect(cost.completed)
+        }
+        #expect(placements == 3, "all three images draw")
+        #expect(steadyUploads == 0, "a steady-state frame copies no image pixels")
+
+        engine.scrollToRow(Int(engine.scrollbar.offset) - 20)
+        _ = renderer.encodeOffscreen(
+            frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
+            texture: texture, waitUntilCompleted: true, fullRebuild: true
+        )
+        var scrollFrames: [UInt64] = []
+        var scrollEncodes: [UInt64] = []
+        var scrollUploads = 0
+        for i in 0..<9 {
+            engine.scrollToRow(Int(engine.scrollbar.offset) - 1)
+            let frameStart = DispatchTime.now().uptimeNanoseconds
+            let frame = engine.frame()
+            let cost = renderer.encodeOffscreen(
+                frame: frame, cursorColor: SIMD4(1, 1, 1, 0.65),
+                texture: texture, waitUntilCompleted: true, fullRebuild: false,
+                shiftPixels: i % 12
+            )
+            scrollFrames.append(DispatchTime.now().uptimeNanoseconds &- frameStart &- cost.encodeNanos)
+            scrollEncodes.append(cost.encodeNanos)
+            scrollUploads += cost.imageUploadCount
+            #expect(cost.completed)
+        }
+        #expect(scrollUploads == 0, "scrolling reuses the uploaded textures")
+
+        print("SSH_TERMINAL_AFTER kitty_images=3 kitty_placement_cells=20x6 warmup=1 iterations=9 configuration=Debug")
+        print("SSH_TERMINAL_AFTER kitty_steady_frame_ms=\(Self.ms(Self.percentiles(steadyFrames).median)) kitty_steady_encode_ms=\(Self.ms(Self.percentiles(steadyEncodes).median)) kitty_steady_encode_p95_ms=\(Self.ms(Self.percentiles(steadyEncodes).p95)) kitty_steady_placements=\(placements)")
+        print("SSH_TERMINAL_AFTER kitty_scroll_frame_ms=\(Self.ms(Self.percentiles(scrollFrames).median)) kitty_scroll_encode_ms=\(Self.ms(Self.percentiles(scrollEncodes).median)) kitty_scroll_encode_p95_ms=\(Self.ms(Self.percentiles(scrollEncodes).p95)) kitty_uploads_total=\(renderer.imageUploadCount)")
+        print("METRIC ssh_terminal_kitty_steady_frame_us=\(String(format: "%.1f", Double(Self.percentiles(steadyFrames).median) / 1_000))")
+        print("METRIC ssh_terminal_kitty_steady_encode_us=\(String(format: "%.1f", Double(Self.percentiles(steadyEncodes).median) / 1_000))")
+        print("METRIC ssh_terminal_kitty_scroll_frame_us=\(String(format: "%.1f", Double(Self.percentiles(scrollFrames).median) / 1_000))")
+        print("METRIC ssh_terminal_kitty_scroll_encode_us=\(String(format: "%.1f", Double(Self.percentiles(scrollEncodes).median) / 1_000))")
+        print("METRIC ssh_terminal_kitty_uploads_total=\(renderer.imageUploadCount)")
+        print("METRIC ssh_terminal_kitty_uploads_after_warmup=\(renderer.imageUploadCount - uploadsAfterWarmup)")
+        #expect(renderer.imageUploadCount - uploadsAfterWarmup == 0, "no image is uploaded twice")
+    }
+
     private struct Percentiles {
         var median: UInt64
         var p95: UInt64

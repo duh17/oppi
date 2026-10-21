@@ -41,6 +41,11 @@ struct SSHTerminalMetalFrameCost: Sendable {
     var miss: SSHTerminalMetalEncodeMiss? = nil
     var rebuiltRowCount: Int = 0
     var reusedRowCount: Int = 0
+    /// Kitty graphics drawn this frame (one instance per visible placement).
+    var imagePlacementCount: Int = 0
+    /// Images whose pixels were copied into a texture this frame. Zero in the
+    /// steady state; one per image generation when it changes.
+    var imageUploadCount: Int = 0
 }
 
 /// Process-wide pipeline from the precompiled metallib. Built off the main
@@ -51,6 +56,7 @@ final class SSHTerminalMetalPipeline: @unchecked Sendable {
     let solid: MTLRenderPipelineState
     let overlay: MTLRenderPipelineState
     let glyph: MTLRenderPipelineState
+    let image: MTLRenderPipelineState
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var cached: SSHTerminalMetalPipeline?
@@ -119,18 +125,25 @@ final class SSHTerminalMetalPipeline: @unchecked Sendable {
         guard let glyphFn = library.makeFunction(name: "ssh_terminal_glyph") else {
             throw PipelineError.missingFunction("ssh_terminal_glyph")
         }
-        func pipeline(_ fragment: MTLFunction, blending: Bool) throws -> MTLRenderPipelineState {
+        guard let imageFn = library.makeFunction(name: "ssh_terminal_image") else {
+            throw PipelineError.missingFunction("ssh_terminal_image")
+        }
+        /// Cell instances are premultiplied; kitty image pixels are straight
+        /// alpha, so they need the source-alpha blend factors.
+        enum Blend {
+            case none, premultiplied, straightAlpha
+        }
+        func pipeline(_ fragment: MTLFunction, blend: Blend) throws -> MTLRenderPipelineState {
             let descriptor = MTLRenderPipelineDescriptor()
             descriptor.vertexFunction = vertex
             descriptor.fragmentFunction = fragment
             descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
-            if blending {
-                let color = descriptor.colorAttachments[0]
-                color?.isBlendingEnabled = true
-                color?.sourceRGBBlendFactor = .one
-                color?.destinationRGBBlendFactor = .oneMinusSourceAlpha
-                color?.sourceAlphaBlendFactor = .one
-                color?.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            if blend != .none, let color = descriptor.colorAttachments[0] {
+                color.isBlendingEnabled = true
+                color.sourceRGBBlendFactor = blend == .straightAlpha ? .sourceAlpha : .one
+                color.destinationRGBBlendFactor = .oneMinusSourceAlpha
+                color.sourceAlphaBlendFactor = .one
+                color.destinationAlphaBlendFactor = .oneMinusSourceAlpha
             }
             do {
                 return try device.makeRenderPipelineState(descriptor: descriptor)
@@ -140,9 +153,10 @@ final class SSHTerminalMetalPipeline: @unchecked Sendable {
         }
         self.device = device
         self.queue = queue
-        self.solid = try pipeline(solidFn, blending: false)
-        self.overlay = try pipeline(solidFn, blending: true)
-        self.glyph = try pipeline(glyphFn, blending: true)
+        self.solid = try pipeline(solidFn, blend: .none)
+        self.overlay = try pipeline(solidFn, blend: .premultiplied)
+        self.glyph = try pipeline(glyphFn, blend: .premultiplied)
+        self.image = try pipeline(imageFn, blend: .straightAlpha)
     }
 }
 
@@ -508,6 +522,130 @@ private func sshTerminalFontCovers(_ font: UIFont, _ text: String) -> Bool {
     return CTFontGetGlyphsForCharacters(font as CTFont, units, &glyphs, units.count)
 }
 
+/// Kitty image pixels, uploaded once per image generation. The generation stamp
+/// changes on every add or replace of an image ID (including animation frames),
+/// so a cached texture can never show stale pixels; a dimension comparison
+/// would miss a same-sized retransmission. Entries leave when the image leaves
+/// libghostty's store, which the engine reports by omitting it from a snapshot.
+final class SSHTerminalKittyTextureCache {
+    private struct Entry {
+        let generation: UInt64
+        let texture: MTLTexture
+        let byteCount: Int
+    }
+
+    /// Pixel bytes held here. A single image larger than this is not drawn
+    /// rather than evicting one that is on screen.
+    private let limit: Int
+    private var entries: [UInt32: Entry] = [:]
+    private(set) var totalBytes = 0
+    /// Texture creations, for tests and the perf bench: steady-state frames
+    /// must not add to this.
+    private(set) var uploadCount = 0
+    var count: Int { entries.count }
+
+    init(limit: Int = SSHTerminalKittyGraphics.imageStorageLimitBytes) {
+        self.limit = max(1, limit)
+    }
+
+    /// The texture for this image, uploading it the first time this generation
+    /// is seen. Nil when the payload is not resident yet, is too large for the
+    /// device, or does not fit the cache budget.
+    func texture(for image: SSHTerminalKittyImage, device: MTLDevice) -> MTLTexture? {
+        guard image.width > 0, image.height > 0,
+              image.width <= 16384, image.height <= 16384 else { return nil }
+        let byteCount = image.width * image.height * 4
+        guard byteCount <= limit else { return nil }
+        if let entry = entries[image.id] {
+            if entry.generation == image.generation { return entry.texture }
+            entries[image.id] = nil
+            totalBytes -= entry.byteCount
+        }
+        guard let texture = Self.makeTexture(device: device, image: image) else { return nil }
+        entries[image.id] = Entry(generation: image.generation, texture: texture, byteCount: byteCount)
+        totalBytes += byteCount
+        uploadCount += 1
+        return texture
+    }
+
+    /// Drop every image the screen no longer stores.
+    func retain(only live: [UInt32]) {
+        guard !entries.isEmpty else { return }
+        let keep = Set(live)
+        var evicted = [UInt32]()
+        for (id, entry) in entries where !keep.contains(id) {
+            totalBytes -= entry.byteCount
+            evicted.append(id)
+        }
+        for id in evicted { entries[id] = nil }
+    }
+
+    func removeAll() {
+        guard !entries.isEmpty else { return }
+        entries.removeAll(keepingCapacity: true)
+        totalBytes = 0
+    }
+
+    private static func makeTexture(
+        device: MTLDevice, image: SSHTerminalKittyImage
+    ) -> MTLTexture? {
+        guard image.hasPixels, let pixels = image.pixels else { return nil }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Unorm, width: image.width, height: image.height, mipmapped: false
+        )
+        descriptor.usage = [.shaderRead]
+        descriptor.storageMode = .shared
+        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+        let region = MTLRegionMake2D(0, 0, image.width, image.height)
+        if image.format == .rgba {
+            texture.replace(
+                region: region, mipmapLevel: 0, withBytes: pixels, bytesPerRow: image.width * 4
+            )
+            return texture
+        }
+        // Metal has no 3-channel format, and gray/gray-alpha still need an
+        // RGBA texture; expand once, at upload time only.
+        let count = image.width * image.height
+        var expanded = [UInt8](repeating: 0, count: count * 4)
+        let source = UnsafeBufferPointer(start: pixels, count: image.byteCount)
+        for index in 0..<count {
+            switch image.format {
+            case .rgba:
+                break
+            case .rgb:
+                let offset = index * 3
+                guard offset + 2 < source.count else { return nil }
+                expanded[index * 4] = source[offset]
+                expanded[index * 4 + 1] = source[offset + 1]
+                expanded[index * 4 + 2] = source[offset + 2]
+                expanded[index * 4 + 3] = 255
+            case .grayAlpha:
+                let offset = index * 2
+                guard offset + 1 < source.count else { return nil }
+                let gray = source[offset]
+                expanded[index * 4] = gray
+                expanded[index * 4 + 1] = gray
+                expanded[index * 4 + 2] = gray
+                expanded[index * 4 + 3] = source[offset + 1]
+            case .gray:
+                guard index < source.count else { return nil }
+                let gray = source[index]
+                expanded[index * 4] = gray
+                expanded[index * 4 + 1] = gray
+                expanded[index * 4 + 2] = gray
+                expanded[index * 4 + 3] = 255
+            }
+        }
+        expanded.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            texture.replace(
+                region: region, mipmapLevel: 0, withBytes: base, bytesPerRow: image.width * 4
+            )
+        }
+        return texture
+    }
+}
+
 /// Instanced cell quads. Three instance-buffer slots; a slot is not rewritten
 /// until its command buffer completion handler runs.
 final class SSHTerminalMetalRenderer: @unchecked Sendable {
@@ -539,7 +677,10 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
     private let solid: MTLRenderPipelineState
     private let overlay: MTLRenderPipelineState
     private let glyph: MTLRenderPipelineState
+    private let imagePipeline: MTLRenderPipelineState
     private let atlas: SSHTerminalGlyphAtlas
+    /// Kitty image textures, keyed by image ID and generation.
+    private let kittyTextures = SSHTerminalKittyTextureCache()
     private let lock = NSLock()
     private var slots: [Slot]
     private var faces = [UInt8: UIFont]()
@@ -579,6 +720,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         self.solid = pipeline.solid
         self.overlay = pipeline.overlay
         self.glyph = pipeline.glyph
+        self.imagePipeline = pipeline.image
         self.metrics = metrics
         self.scale = max(scale, 1)
         guard let atlas = SSHTerminalGlyphAtlas(device: pipeline.device, side: atlasSide) else {
@@ -612,6 +754,12 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         defer { lock.unlock() }
         return slots.filter { !$0.inFlight }.count
     }
+
+    /// Images currently holding a texture, and how many texture uploads have
+    /// happened in total. The bench and tests use these to prove that a frame
+    /// in the steady state copies no pixels.
+    var cachedImageCount: Int { kittyTextures.count }
+    var imageUploadCount: Int { kittyTextures.uploadCount }
 
     func setMetrics(_ metrics: SSHTerminalCellMetrics, scale: CGFloat) {
         let scale = max(scale, 1)
@@ -721,7 +869,18 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         guard let packed = pack(frame: frame, cursorColor: cursorColor, fullRebuild: fullRebuild) else {
             return abort(miss: .deterministic, reason: "glyph atlas cannot fit this frame")
         }
-        guard let slotIndex = bind(packed.all) else {
+        let uploadsBefore = kittyTextures.uploadCount
+        let images = packImages(
+            frame.kitty,
+            cellW: Float(metrics.cellSize.width * scale),
+            cellH: Float(metrics.cellSize.height * scale)
+        )
+        let imageUploads = kittyTextures.uploadCount - uploadsBefore
+        var instances = packed.all
+        if !images.instances.isEmpty {
+            instances.append(contentsOf: images.instances)
+        }
+        guard let slotIndex = bind(instances) else {
             return abort(
                 uploads: packed.uploads, miss: .transient, reason: "no free Metal instance slot"
             )
@@ -788,18 +947,48 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
                 miss: .transient, reason: "makeRenderCommandEncoder returned nil"
             )
         }
-        var uniforms = Uniforms(
+        let uniforms = Uniforms(
             viewportX: Float(target.width), viewportY: Float(target.height), shiftY: Float(shiftPixels)
         )
         let backgrounds = packed.backgrounds
         let glyphs = packed.glyphs
         let overlays = packed.overlays
         let stride = MemoryLayout<CellInstance>.stride
-        if !backgrounds.isEmpty {
-            encoder.setRenderPipelineState(solid)
-            encoder.setVertexBuffer(slots[slotIndex].buffer, offset: 0, index: 0)
-            encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: backgrounds.count)
+        let imageBase = backgrounds.count + glyphs.count + overlays.count
+        // One pipeline for every image; one draw per image per layer, so the
+        // layer order below is the whole z-index implementation.
+        func draw(
+            _ state: MTLRenderPipelineState,
+            instanceOffset: Int,
+            count: Int,
+            texture: MTLTexture? = nil
+        ) {
+            guard count > 0 else { return }
+            encoder.setRenderPipelineState(state)
+            encoder.setVertexBuffer(
+                slots[slotIndex].buffer, offset: instanceOffset * stride, index: 0
+            )
+            withUnsafeBytes(of: uniforms) { bytes in
+                guard let base = bytes.baseAddress else { return }
+                encoder.setVertexBytes(base, length: bytes.count, index: 1)
+            }
+            if let texture { encoder.setFragmentTexture(texture, index: 0) }
+            encoder.drawPrimitives(
+                type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: count
+            )
+        }
+        for group in images.groups where group.layer == .belowBackground {
+            draw(
+                imagePipeline, instanceOffset: imageBase + group.instances.lowerBound,
+                count: group.instances.count, texture: group.texture
+            )
+        }
+        draw(solid, instanceOffset: 0, count: backgrounds.count)
+        for group in images.groups where group.layer == .belowText {
+            draw(
+                imagePipeline, instanceOffset: imageBase + group.instances.lowerBound,
+                count: group.instances.count, texture: group.texture
+            )
         }
         if !glyphs.isEmpty {
             encoder.setRenderPipelineState(glyph)
@@ -808,20 +997,22 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
                 offset: backgrounds.count * stride,
                 index: 0
             )
-            encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+            withUnsafeBytes(of: uniforms) { bytes in
+                guard let base = bytes.baseAddress else { return }
+                encoder.setVertexBytes(base, length: bytes.count, index: 1)
+            }
             encoder.setFragmentTexture(atlas.textTexture, index: 0)
             encoder.setFragmentTexture(atlas.colorTexture, index: 1)
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: glyphs.count)
         }
-        if !overlays.isEmpty {
-            encoder.setRenderPipelineState(overlay)
-            encoder.setVertexBuffer(
-                slots[slotIndex].buffer,
-                offset: (backgrounds.count + glyphs.count) * stride,
-                index: 0
+        draw(
+            overlay, instanceOffset: backgrounds.count + glyphs.count, count: overlays.count
+        )
+        for group in images.groups where group.layer == .aboveText {
+            draw(
+                imagePipeline, instanceOffset: imageBase + group.instances.lowerBound,
+                count: group.instances.count, texture: group.texture
             )
-            encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: overlays.count)
         }
         encoder.endEncoding()
         let encodeNanos = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - encodeStart
@@ -842,7 +1033,9 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
                 status: commandBuffer.status,
                 errorDescription: commandBuffer.error.map(String.init(describing:)),
                 rebuiltRowCount: packed.rebuiltRowCount,
-                reusedRowCount: packed.reusedRowCount
+                reusedRowCount: packed.reusedRowCount,
+                imagePlacementCount: images.instances.count,
+                imageUploadCount: imageUploads
             )
         }
         return SSHTerminalMetalFrameCost(
@@ -852,7 +1045,9 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             status: commandBuffer.status,
             errorDescription: nil,
             rebuiltRowCount: packed.rebuiltRowCount,
-            reusedRowCount: packed.reusedRowCount
+            reusedRowCount: packed.reusedRowCount,
+            imagePlacementCount: images.instances.count,
+            imageUploadCount: imageUploads
         )
     }
 
@@ -941,6 +1136,73 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             backgrounds: backgrounds, glyphs: glyphs, overlays: overlays, uploads: uploads,
             rebuiltRowCount: dirty.count, reusedRowCount: max(0, rowCount - dirty.count)
         )
+    }
+
+    private struct ImageGroup {
+        var layer: SSHTerminalKittyLayer
+        /// Range in the image instance list, which follows the cell instances.
+        var instances: Range<Int>
+        var texture: MTLTexture
+    }
+
+    private struct ImagePacking {
+        var instances: [CellInstance] = []
+        var groups: [ImageGroup] = []
+    }
+
+    /// Place every visible Kitty placement as a cell-space quad, sampling its
+    /// source rectangle. Pixels only reach a texture when an image generation
+    /// changes (see `SSHTerminalKittyTextureCache`); a frame in the steady state
+    /// appends instances and nothing else. Texture-eviction runs here too, so an
+    /// image that libghostty dropped stops holding GPU memory.
+    private func packImages(
+        _ kitty: SSHTerminalKittySnapshot?, cellW: Float, cellH: Float
+    ) -> ImagePacking {
+        guard let kitty, !kitty.placements.isEmpty else {
+            kittyTextures.removeAll()
+            return ImagePacking()
+        }
+        kittyTextures.retain(only: kitty.images.map(\.id))
+        // Placement geometry is in terminal pixels; the drawable's cells may be
+        // a fraction of a pixel different after rounding.
+        let scaleX = cellW / Float(max(1, kitty.cellWidth))
+        let scaleY = cellH / Float(max(1, kitty.cellHeight))
+        var packing = ImagePacking()
+        packing.instances.reserveCapacity(kitty.placements.count)
+        for layer in SSHTerminalKittyLayer.allCases {
+            for image in kitty.images {
+                guard image.width > 0, image.height > 0,
+                      let texture = kittyTextures.texture(for: image, device: device) else { continue }
+                let width = Float(image.width)
+                let height = Float(image.height)
+                let start = packing.instances.count
+                for placement in kitty.placements
+                where placement.imageID == image.id && placement.layer == layer {
+                    let size = SIMD2<Float>(
+                        Float(placement.pixelWidth) * scaleX, Float(placement.pixelHeight) * scaleY
+                    )
+                    guard size.x > 0, size.y > 0 else { continue }
+                    let origin = SIMD2<Float>(
+                        Float(placement.viewportColumn) * cellW + Float(placement.xOffset) * scaleX,
+                        Float(placement.viewportRow) * cellH + Float(placement.yOffset) * scaleY
+                    )
+                    let uv = SIMD4<Float>(
+                        Float(placement.sourceX) / width, Float(placement.sourceY) / height,
+                        Float(placement.sourceX + placement.sourceWidth) / width,
+                        Float(placement.sourceY + placement.sourceHeight) / height
+                    )
+                    packing.instances.append(CellInstance(
+                        origin: origin, size: size, color: SIMD4(1, 1, 1, 1), uv: uv, flags: 0
+                    ))
+                }
+                if packing.instances.count > start {
+                    packing.groups.append(ImageGroup(
+                        layer: layer, instances: start..<packing.instances.count, texture: texture
+                    ))
+                }
+            }
+        }
+        return packing
     }
 
     private func packRow(

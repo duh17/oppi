@@ -6,6 +6,9 @@ import UIKit
 /// feeds through the real terminal engine.
 enum SSHTerminalScreenshotStatus: String {
     case none, working, blocked, done, error, idle, tree, sequence, detail, notification
+    /// Real Kitty graphics escape sequences: a direct RGBA picture and a PNG,
+    /// sent the way `kitten icat` or an agent's image output sends them.
+    case kitty
 }
 
 /// The real terminal surface over an in-memory connection: a Herdr-like
@@ -89,6 +92,7 @@ struct SSHTerminalScreenshotPreview: View {
         let screen = status == .none ? herdrScreen(esc) : statusScreen(esc)
         var bytes = Data(screen.utf8)
         bytes.append(statusReports(status))
+        if status == .kitty { bytes.append(kittyPictures()) }
         channel.event(.data(bytes))
     }
 
@@ -110,6 +114,7 @@ struct SSHTerminalScreenshotPreview: View {
     private func statusScreen(_ esc: String, step: SSHTerminalScreenshotStatus? = nil) -> String {
         let line: String = switch step ?? status {
         case .none, .sequence: ""
+        case .kitty: "$ kitten icat gradient.png"
         case .notification: "$ cargo test"
         case .working: "pi: installing updates"
         case .blocked: "Allow running rg?  Yes  No  Always"
@@ -138,7 +143,7 @@ struct SSHTerminalScreenshotPreview: View {
         case .tree, .detail:
             return osc("state=working:app=deploy:msg=\(b64("Deploying v2.4.1"))")
                 + osc("state=blocked:kind=permission:id=eu-west:title=\(b64("EU West")):msg=\(b64("Approve deploy to eu-west?"))")
-        case .sequence:
+        case .sequence, .kitty:
             return Data()
         case .notification:
             return Data("\u{1b}]777;notify;cargo;All 214 tests passed\u{1b}\\".utf8)
@@ -157,6 +162,58 @@ struct SSHTerminalScreenshotPreview: View {
             bytes.append(statusReports(step))
             channel.event(.data(bytes))
         }
+    }
+
+    /// A 320x180 RGBA gradient placed over a 30x9 cell box, then the same
+    /// picture as PNG over a smaller box, then a line of text under both.
+    private func kittyPictures() -> Data {
+        var output = Data()
+        func place(imageID: Int, row: Int, columns: Int, rows: Int, png: Bool) {
+            var control = "a=T,i=\(imageID),c=\(columns),r=\(rows)"
+            var payload = [UInt8]()
+            if png {
+                control += ",f=100"
+                payload = Self.pngBytes(width: 320, height: 180)
+            } else {
+                control += ",f=32,s=320,v=180"
+                payload.reserveCapacity(320 * 180 * 4)
+                for y in 0..<180 {
+                    for x in 0..<320 {
+                        payload += [UInt8(x * 255 / 320), UInt8(y * 255 / 180), 0xE0, 0xFF]
+                    }
+                }
+            }
+            let sequence = "\u{1b}[\(row);2H\u{1b}_G\(control);\(Data(payload).base64EncodedString())\u{1b}\\"
+            output.append(Data(sequence.utf8))
+        }
+        place(imageID: 11, row: 2, columns: 30, rows: 9, png: false)
+        place(imageID: 12, row: 13, columns: 20, rows: 6, png: true)
+        output.append(Data("\u{1b}[20;2H\u{1b}[38;5;10mimages: direct RGBA above, PNG below\u{1b}[0m".utf8))
+        return output
+    }
+
+    private static func pngBytes(width: Int, height: Int) -> [UInt8] {
+        var pixels = [UInt8]()
+        pixels.reserveCapacity(width * height * 4)
+        for y in 0..<height {
+            for x in 0..<width {
+                pixels += [0xE0, UInt8(x * 255 / width), UInt8(y * 255 / height), 0xFF]
+            }
+        }
+        let space = CGColorSpaceCreateDeviceRGB()
+        let image = pixels.withUnsafeMutableBytes { raw -> CGImage? in
+            CGContext(
+                data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                bytesPerRow: width * 4, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )?.makeImage()
+        }
+        guard let image, let data = CFDataCreateMutable(nil, 0),
+              let destination = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil)
+        else { return [] }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { return [] }
+        return Array(data as Data)
     }
 
     private func osc(_ body: String) -> Data { Data("\u{1b}]7501;\(body)\u{1b}\\".utf8) }

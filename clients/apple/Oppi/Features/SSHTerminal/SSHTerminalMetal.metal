@@ -31,7 +31,6 @@ constant float2 kCorners[4] = {
     float2(0, 1),
     float2(1, 1),
 };
-
 vertex VertexOut ssh_terminal_vertex(
     uint vid [[vertex_id]],
     uint iid [[instance_id]],
@@ -69,4 +68,15 @@ fragment float4 ssh_terminal_glyph(
     }
     float coverage = textAtlas.sample(nearest, in.uv).r;
     return float4(in.color.rgb * coverage, in.color.a * coverage);
+}
+
+/// Kitty graphics placement: one quad per placement, its own source rectangle
+/// in `uv`, sampled with linear filtering so a big image shrinks cleanly. The
+/// stored pixels are straight alpha, so the pipeline blends source-alpha.
+fragment float4 ssh_terminal_image(
+    VertexOut in [[stage_in]],
+    texture2d<float> image [[texture(0)]]
+) {
+    constexpr sampler scaled(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+    return image.sample(scaled, in.uv);
 }

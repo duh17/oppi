@@ -38,6 +38,13 @@ struct SSHTerminalFrame {
     let background: GhosttyColorRgb
     /// Rows rebuilt on this snapshot. Empty when the picture did not change.
     let rebuiltRows: IndexSet
+    /// Kitty graphics on this screen. Nil when there is nothing stored, so a
+    /// terminal that never shows an image pays nothing for the feature.
+    let kitty: SSHTerminalKittySnapshot?
+
+    /// Changes whenever image storage changes, so a repaint can be gated on it
+    /// even when no text row moved.
+    var kittyGeneration: UInt64 { kitty?.generation ?? 0 }
 }
 
 /// Separate from the passive log owner. All C access (including callbacks and
@@ -52,6 +59,12 @@ struct SSHTerminalFrame {
 final class SSHTerminalEngine {
     static let maximumPasteBytes = 64 * 1024
     static let maximumCopyBytes = 1024 * 1024
+    /// Bytes of decoded Kitty images kept per screen. Enough for a handful of
+    /// full-window pictures (`kitten icat`, chafa, Pi image output) while a
+    /// remote host cannot exhaust memory: libghostty evicts the oldest images
+    /// past this and rejects anything larger. Only the direct transmission
+    /// medium is enabled, so this is never backed by a local file.
+    static let kittyImageStorageLimit = SSHTerminalKittyGraphics.imageStorageLimitBytes
     /// Receives a remote copy after the triggering write has been interpreted.
     var copied: (String) -> Void = { _ in }
     /// The last copy of the current write; only the newest one matters.
@@ -104,6 +117,18 @@ final class SSHTerminalEngine {
     /// `changeCount` the cached rows cover, so text read between paints knows
     /// when it needs a snapshot of its own.
     private var cachedRowsChangeCount = -1
+    /// Kitty graphics cache: the snapshot is replaced when its store or the
+    /// viewport geometry changed, never re-read per frame otherwise.
+    private var kittySnapshot: SSHTerminalKittySnapshot?
+    private var kittyStoreGeneration: UInt64 = .max
+    private var kittyViewportTop = -1
+    private var kittyStoreColumns = 0
+    private var kittyStoreRows = 0
+    private var kittyStoreCellWidth = 0
+    private var kittyStoreCellHeight = 0
+    /// Placement reads, for the perf bench and tests: unchanged frames must not
+    /// walk the placement list again.
+    private(set) var kittyPlacementReadCount = 0
     /// Resize and scroll move every row; rebuild the whole grid.
     private var forceFullRebuild = true
 
@@ -124,6 +149,11 @@ final class SSHTerminalEngine {
         }
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, Unmanaged.passUnretained(self).toOpaque())
         installEffects()
+        // Apply the cell pixel size now, not only on the first remote resize:
+        // Kitty placement geometry is computed in terminal pixels, so a zero
+        // cell size would collapse every image until the first resize.
+        ghostty_terminal_resize(terminal, UInt16(geometry.columns), UInt16(geometry.rows),
+                                UInt32(geometry.cellWidth), UInt32(geometry.cellHeight))
         var historyLimit: Int = 8 * 1024 * 1024
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, &historyLimit)
         // Ghostty default: DEC 1007 on. Set both the live value and the RIS
@@ -131,6 +161,18 @@ final class SSHTerminalEngine {
         var altScroll = GhosttyTerminalModeConfig(mode: ghostty_mode_new(1007, false), value: true)
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_MODE_DEFAULT, &altScroll)
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_MODE, &altScroll)
+        // Kitty graphics: PNG decoding through ImageIO, a bounded image store,
+        // and only the direct (t=d) medium. The file, temporary-file and
+        // shared-memory mediums would let a remote host make this device read
+        // local files, so they stay off; libghostty answers such a transmission
+        // with `EINVAL: unsupported medium`.
+        SSHTerminalKittyPNGDecoder.install()
+        var imageStorage = UInt64(Self.kittyImageStorageLimit)
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &imageStorage)
+        var localMediums = false
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE, &localMediums)
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM, &localMediums)
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE, nil)
         // Two rows under the viewport cover a grid shifted up by up to one row
         // plus the part-row strip under the last whole row. libghostty only
         // captures rows that exist, so the live screen reads none.
@@ -333,8 +375,115 @@ final class SSHTerminalEngine {
         ghostty_render_state_clean(render)
         return .init(
             rows: cachedRows, rowsBelowViewport: cachedRows.count - Int(rowCount),
-            cursor: cursor, background: background, rebuiltRows: rebuilt
+            cursor: cursor, background: background, rebuiltRows: rebuilt,
+            kitty: kittyGraphics(rowsRebuilt: !rebuilt.isEmpty)
         )
+    }
+
+    // MARK: - Kitty graphics
+
+    /// Placements for this viewport. Re-read only when the image store changed,
+    /// the viewport moved, the geometry changed, or rows were rebuilt (text
+    /// scrolling carries pinned placements with it). Borrowed image pointers
+    /// are refreshed every frame because libghostty invalidates them on any
+    /// terminal mutation.
+    private func kittyGraphics(rowsRebuilt: Bool) -> SSHTerminalKittySnapshot? {
+        var graphics: GhosttyKittyGraphics?
+        guard ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, &graphics) == GHOSTTY_SUCCESS,
+              let graphics else { return nil }
+        var generation: UInt64 = 0
+        guard ghostty_kitty_graphics_get(
+            graphics, GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION, &generation
+        ) == GHOSTTY_SUCCESS else { return nil }
+        let viewportTop = Int(scrollbar.offset)
+        let stored = kittySnapshot
+        let reread = generation != kittyStoreGeneration || viewportTop != kittyViewportTop
+            || geometry.columns != kittyStoreColumns || geometry.rows != kittyStoreRows
+            || geometry.cellWidth != kittyStoreCellWidth || geometry.cellHeight != kittyStoreCellHeight
+            || (rowsRebuilt && !(stored?.placements.isEmpty ?? true))
+        if reread {
+            kittyStoreGeneration = generation
+            kittyViewportTop = viewportTop
+            kittyStoreColumns = geometry.columns
+            kittyStoreRows = geometry.rows
+            kittyStoreCellWidth = geometry.cellWidth
+            kittyStoreCellHeight = geometry.cellHeight
+            kittySnapshot = readKittyGraphics(graphics, generation: generation)
+        } else if stored?.images.isEmpty == false {
+            stored?.refreshImageData(graphics)
+        }
+        guard let snapshot = kittySnapshot,
+              generation != 0 || !snapshot.placements.isEmpty || !snapshot.images.isEmpty else { return nil }
+        return snapshot
+    }
+
+    /// One walk of the image store into value types the renderer can place.
+    /// Only real placements carry geometry; Unicode-placeholder (virtual)
+    /// placements are skipped because libghostty reports no position for them.
+    private func readKittyGraphics(
+        _ graphics: GhosttyKittyGraphics, generation: UInt64
+    ) -> SSHTerminalKittySnapshot {
+        kittyPlacementReadCount &+= 1
+        var placements = [SSHTerminalKittyPlacement]()
+        var images = [SSHTerminalKittyImage]()
+        var iterator: GhosttyKittyGraphicsPlacementIterator?
+        if ghostty_kitty_graphics_placement_iterator_new(nil, &iterator) == GHOSTTY_SUCCESS,
+           ghostty_kitty_graphics_get(
+               graphics, GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR, &iterator
+           ) == GHOSTTY_SUCCESS {
+            while ghostty_kitty_graphics_placement_next(iterator) {
+                var imageID: UInt32 = 0
+                var virtual = false
+                var xOffset: UInt32 = 0
+                var yOffset: UInt32 = 0
+                var z: Int32 = 0
+                ghostty_kitty_graphics_placement_get(
+                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID, &imageID
+                )
+                ghostty_kitty_graphics_placement_get(
+                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL, &virtual
+                )
+                guard !virtual, let image = ghostty_kitty_graphics_image(graphics, imageID) else { continue }
+                var info = GhosttyKittyGraphicsPlacementRenderInfo()
+                info.size = MemoryLayout<GhosttyKittyGraphicsPlacementRenderInfo>.size
+                guard ghostty_kitty_graphics_placement_render_info(
+                    iterator, image, terminal, &info
+                ) == GHOSTTY_SUCCESS, info.viewport_visible else { continue }
+                ghostty_kitty_graphics_placement_get(
+                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET, &xOffset
+                )
+                ghostty_kitty_graphics_placement_get(
+                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET, &yOffset
+                )
+                ghostty_kitty_graphics_placement_get(
+                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z, &z
+                )
+                placements.append(.init(
+                    imageID: imageID, layer: Self.kittyLayer(z),
+                    xOffset: Int(xOffset), yOffset: Int(yOffset),
+                    pixelWidth: Int(info.pixel_width), pixelHeight: Int(info.pixel_height),
+                    viewportColumn: Int(info.viewport_col), viewportRow: Int(info.viewport_row),
+                    sourceX: Int(info.source_x), sourceY: Int(info.source_y),
+                    sourceWidth: Int(info.source_width), sourceHeight: Int(info.source_height)
+                ))
+                if !images.contains(where: { $0.id == imageID }) {
+                    images.append(SSHTerminalKittySnapshot.image(image))
+                }
+            }
+        }
+        ghostty_kitty_graphics_placement_iterator_free(iterator)
+        return SSHTerminalKittySnapshot(
+            generation: generation, placements: placements, images: images,
+            cellWidth: geometry.cellWidth, cellHeight: geometry.cellHeight
+        )
+    }
+
+    /// libghostty's own z classification: the same thresholds the placement
+    /// layer filter uses, so a draw order can never disagree with it.
+    private static func kittyLayer(_ z: Int32) -> SSHTerminalKittyLayer {
+        if z < Int32.min / 2 { return .belowBackground }
+        if z < 0 { return .belowText }
+        return .aboveText
     }
 
     /// One row of cells. A single scalar is stored as `UInt32`; only combining
@@ -785,7 +934,9 @@ final class SSHTerminalEngine {
     /// The only bytes that may reach the PTY from the terminal's own replies.
     /// The NULL clipboard read callback can still generate an empty OSC 52 or
     /// denied Kitty reply upstream, so the families are fixed: CSI status/size/mode
-    /// reports, DCS DA/version reports, and the OSC 7501 support reply
+    /// reports, DCS DA/version reports, Kitty graphics APC replies (the `OK` or
+    /// `EINVAL` a program waits for after a transmission or `a=q` query), and
+    /// the OSC 7501 support reply
     /// `ESC ] 7501 ; ? (: key=value)* ST` (ST = `ESC \` or BEL). Revision 0.4
     /// lets the reply list what the terminal accepts, such as
     /// `?:states=idle,working,done,blocked,error:kinds=permission,question,auth`;
@@ -795,6 +946,11 @@ final class SSHTerminalEngine {
     nonisolated static func isApprovedReply(_ bytes: UnsafeBufferPointer<UInt8>) -> Bool {
         guard bytes.count >= 2, bytes[0] == 0x1b else { return false }
         if bytes[1] == 0x5b || bytes[1] == 0x50 { return true }
+        // Kitty graphics reply: APC `ESC _ G ... ESC \`.
+        if bytes[1] == 0x5f {
+            guard bytes.count >= 4, bytes[2] == 0x47 else { return false }
+            return bytes[bytes.count - 2] == 0x1b && bytes[bytes.count - 1] == 0x5c
+        }
         let query: [UInt8] = [0x1b, 0x5d, 0x37, 0x35, 0x30, 0x31, 0x3b, 0x3f] // ESC ] 7501 ; ?
         guard bytes.count <= 512, bytes.starts(with: query) else { return false }
         var body = bytes.dropFirst(query.count)

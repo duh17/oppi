@@ -41,6 +41,19 @@ The terminal uses **Settings → Text → Code Font** and **Code Text Size**, li
 
 Prompt icons from starship, powerlevel10k, oh-my-posh, and similar (Powerline separators, git, folder, and language icons) come from the bundled Nerd Fonts Symbols font, which works with every code font.
 
+## Images
+
+The terminal draws images sent with the [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/), so `kitten icat`, chafa, timg, `viu`, Yazi previews, and an agent's image output (`pi` printing a screenshot) appear in the grid instead of as escape-code garbage. A program that asks whether images are supported (`a=q`, which `kitten icat` does first) is told yes, so it sends the picture instead of falling back to text.
+
+- Images are sent inside the escape code (the direct `t=d` medium), as RGBA, RGB, zlib-compressed, or PNG data. PNG is decoded on this device with ImageIO. The file, temporary-file, and shared-memory mediums are refused with `EINVAL: unsupported medium` and nothing is read: a host reached over SSH must never be able to make this app open a local file.
+- Each screen (the main screen and the alternate screen) keeps up to 64 MB of decoded images. Past that, libghostty drops the oldest image to make room, and an image larger than the limit is rejected. This covers a handful of full-window pictures from a photo-heavy listing.
+- Placements are drawn at their cell, honoring the protocol's source rectangle, cell or pixel size, aspect ratio, and z-index: a negative z draws under the text, a z below −2147483648 draws under the cell background too, and zero or positive draws over the text. Everything is clipped by the terminal's grid.
+- Images are pinned to their rows, so they scroll with the history like text and shift with the cursor row when the chat bar covers it.
+- A delete (`a=d`), a retransmission of the same image id, and a full reset (RIS) all take effect: the picture is replaced or removed.
+- Pixels reach the GPU once per image, and only again when that image is retransmitted. Frames that do not change an image copy no pixels.
+
+The Unicode-placeholder form of the protocol (the `U=1` virtual placement a program uses to show images through tmux) does not draw yet. libghostty reports no position for a virtual placement: its render info says the placement is not visible and the viewport, rect, and grid-size calls return no value, so an embedder has to find the `U+10EEEE` placeholder cells itself, decode the row and column from their combining diacritics and the image id from their foreground color (including the rules for omitted diacritics), and size each tile from the virtual placement. Until then those cells stay blank. Real placements are unaffected, so `kitten icat` inside tmux still shows nothing, while the same command outside tmux works.
+
 ## Run on Connect
 
 **Run on Connect** runs one command in the terminal instead of a login shell. This is the same exec-with-TTY request as `ssh -t host 'command'` or OpenSSH `RemoteCommand` with `RequestTTY yes`. Enter `herdr` to attach your Herdr session, or `tmux new -A -s main` for tmux. The connection ends when the command exits and the status names the command; **Reconnect** runs it again. The command must be on the `PATH` that non-interactive SSH commands see. Leave it empty for a normal login shell. A [folder terminal](#open-terminal-here) ignores it and starts a login shell in that folder instead.
@@ -175,6 +188,7 @@ Entering the background keeps the shell running for about 25 seconds, still read
 ## Limits
 
 - Hosts are saved on this device only. No private-key import, keyboard-interactive, or forwarding.
+- Images use the direct transmission medium only, and Unicode-placeholder (tmux) images do not draw yet; see [Images](#images).
 - The SSH library supports Ed25519/ECDSA host and user keys, Curve25519/ECDH key exchange, and AES-GCM encryption. RSA-only and legacy-only servers fail with an unsupported-algorithm error. A server that offers only keyboard-interactive cannot accept password sign-in here.
 - Connection, authentication, and terminal-opening waits are bounded. A rejected credential, changed host key, unreachable host, or unsupported algorithm produces a visible error.
 - Secure Enclave and biometric approval need physical-device testing. A simulator software key is not evidence of hardware protection.

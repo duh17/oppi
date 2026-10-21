@@ -190,6 +190,9 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// unchanged, so `onPictureChange` does not fire for it.
     private var historyShiftPixels = 0
     private var paintedShiftPixels = 0
+    /// Kitty graphics generation last drawn: an image arriving, being replaced,
+    /// or being deleted repaints even when no text row moved.
+    private var paintedKittyGeneration: UInt64 = 0
     /// Finger travel shown before UIScrollView's pan starts; see
     /// `SSHTerminalHistoryFingerLead`. `leadStartedFollowing` is set while
     /// that lead is shown and says whether the live screen was followed when
@@ -485,6 +488,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         // Never shift toward a side with no captured rows (the live bottom).
         let shift = frame.rowsBelowViewport > 0 ? historyShiftPixels : 0
         let shouldDraw = needsFullPaint || !frame.rebuiltRows.isEmpty || shift != paintedShiftPixels
+            || frame.kittyGeneration != paintedKittyGeneration
         if !shouldDraw { return true }
         metalLayer.device = renderer.device
         let scale = max(traitCollection.displayScale, 1)
@@ -506,6 +510,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         if cost.submitted {
             needsFullPaint = false
             paintedShiftPixels = shift
+            paintedKittyGeneration = frame.kittyGeneration
             return true
         }
         needsFullPaint = true

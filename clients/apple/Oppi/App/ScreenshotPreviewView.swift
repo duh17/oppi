@@ -70,6 +70,8 @@ struct ScreenshotPreviewView: View {
             SSHTerminalScreenshotPreview()
         case "ssh-terminal-status-blocked":
             SSHTerminalScreenshotPreview(status: .blocked)
+        case "ssh-terminal-kitty":
+            SSHTerminalScreenshotPreview(status: .kitty)
         case "review-comment-inline-draft":
             ReviewCommentInlineDraftScreenshotPreview()
                 .ignoresSafeArea()
