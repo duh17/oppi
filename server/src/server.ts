@@ -54,12 +54,6 @@ import {
 import { isSpeechEnabled } from "./speech-synthesis.js";
 import { LiveVoiceSessionLink } from "./live-voice-speech.js";
 import { FileVoiceCallStore, voiceCallStorePath } from "./voice-call-store.js";
-import { VoiceApprovalBridge } from "./voice-approval-bridge.js";
-import {
-  FileVoiceApprovalReceiptStore,
-  voiceApprovalReceiptStorePath,
-} from "./voice-approval-receipt-store.js";
-import { VoicePermissionGate } from "./voice-permission-gate.js";
 import { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import { SessionRuntimes } from "./runtime-router.js";
 import {
@@ -601,22 +595,9 @@ export class Server {
     });
     this.sessionRuntimes = new SessionRuntimes(this.storage, this.sessions, this.mirrorRuntime);
 
-    const voiceApprovalReceipts = new FileVoiceApprovalReceiptStore(
-      voiceApprovalReceiptStorePath(dataDir),
-    );
-    const voiceApprovalBridge = new VoiceApprovalBridge({
-      activeControllerLease: (callId) => this.voiceCallController.activeControllerLease(callId),
-      respondToUIRequest: (sessionId, response) =>
-        this.sessionRuntimes.respondToUIRequest(sessionId, response),
-      appendReceipt: (receipt) => voiceApprovalReceipts.append(receipt),
-      nextChallengeId: () => randomUUID(),
-      nextNonce: () => randomUUID(),
-      nextReceiptId: () => randomUUID(),
-    });
     this.voiceCallController = new VoiceCallController({
       nextCallId: () => randomUUID(),
       persistence: new FileVoiceCallStore(voiceCallStorePath(dataDir)),
-      approvalAuthority: voiceApprovalBridge,
       dispatchDelegation: (sessionId, delegation) => liveVoice.dispatch(sessionId, delegation),
     });
     // What a caller says arrives in the call's session as their message (steering a busy run);
@@ -628,10 +609,6 @@ export class Server {
       }),
     );
     this.sessions.liveVoiceSpeech = liveVoice.speech;
-    this.sessions.voicePermissionGate = new VoicePermissionGate({
-      bridge: voiceApprovalBridge,
-      calls: this.voiceCallController,
-    });
 
     // Dictation pipeline. Dictation streams create one DictationManager per WebSocket.
     // Enable for xAI or a configured HTTP/Yuwp endpoint.

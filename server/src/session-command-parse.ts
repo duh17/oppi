@@ -165,14 +165,6 @@ function validateKnownCommand(type: string, command: Record<string, unknown>): v
       readRequiredString(command.callId, "callId");
       readRequiredNumber(command.controllerLeaseEpoch, "controllerLeaseEpoch");
       return;
-    case "voice_approval_response":
-      readRequiredString(command.callId, "callId");
-      readRequiredNumber(command.controllerLeaseEpoch, "controllerLeaseEpoch");
-      readRequiredString(command.challengeId, "challengeId");
-      if (typeof command.transcript !== "string") {
-        throw new Error("Invalid payload: expected transcript");
-      }
-      return;
     case "abort":
     case "stop":
     case "stop_session":

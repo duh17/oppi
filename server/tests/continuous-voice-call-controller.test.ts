@@ -1,12 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  DeterministicVoiceCallFrontend,
   VoiceCallController,
   type PersistedVoiceCall,
   type VoiceCallPersistence,
 } from "../src/continuous-voice-call.js";
-import type { VoiceApprovalChallenge } from "../src/voice-approval-bridge.js";
+import { DeterministicVoiceCallFrontend } from "./helpers/deterministic-voice-call-frontend.js";
 
 function makeHarness(
   options: {
@@ -17,19 +16,12 @@ function makeHarness(
 ) {
   let now = 1_000;
   let callSequence = 0;
-  const approvalSubmissions: Array<{ input: unknown; authority: unknown }> = [];
   const controller = new VoiceCallController({
     now: () => now,
     nextCallId: () => `call-${++callSequence}`,
     leaseDurationMs: options.leaseDurationMs ?? 30_000,
     maxRetainedCalls: options.maxRetainedCalls,
     retentionGraceMs: options.retentionGraceMs,
-    approvalAuthority: {
-      submitTranscript: (input, authority) => {
-        approvalSubmissions.push({ input, authority });
-        return { kind: "delivered", decision: "approve_once" };
-      },
-    },
   });
 
   const frontend = (
@@ -41,28 +33,9 @@ function makeHarness(
   return {
     controller,
     frontend,
-    approvalSubmissions,
     setNow(value: number) {
       now = value;
     },
-  };
-}
-
-function challenge(overrides: Partial<VoiceApprovalChallenge> = {}): VoiceApprovalChallenge {
-  return {
-    challengeId: "challenge-1",
-    callId: "call-1",
-    controllerLeaseId: "call-1:1",
-    controllerLeaseEpoch: 1,
-    deviceId: "paired-device-a",
-    sessionId: "target-session-1",
-    requestId: "approval-request-1",
-    actionDigest: "digest-1",
-    targetRefs: ["file:server/src/server.ts"],
-    nonce: "nonce-1",
-    issuedAt: 1_000,
-    expiresAt: 9_000,
-    ...overrides,
   };
 }
 
@@ -301,12 +274,6 @@ describe("continuous voice call controller", () => {
       harness.controller.attachCall({ callId: started.state.callId }, otherDevice.connection),
     ).toThrow("Voice call belongs to a different paired device");
 
-    expect(harness.controller.activeControllerLease(started.state.callId)).toMatchObject({
-      callId: started.state.callId,
-      epoch: attached.state.controllerLeaseEpoch,
-      deviceId: "paired-device-a",
-    });
-
     const detached = harness.controller.detachCall(
       {
         callId: started.state.callId,
@@ -315,7 +282,6 @@ describe("continuous voice call controller", () => {
       replacement.connection,
     );
     expect(detached).toMatchObject({ lifecycle: "active", frontend: "detached" });
-    expect(harness.controller.activeControllerLease(started.state.callId)).toBeUndefined();
 
     const finalFrontend = harness.frontend("connection-4");
     const finalAttachment = harness.controller.attachCall(
@@ -330,231 +296,6 @@ describe("continuous voice call controller", () => {
       finalFrontend.connection,
     );
     expect(ended).toMatchObject({ lifecycle: "ended", frontend: "detached" });
-  });
-
-  it("routes an armed approval through authenticated controller authority only once", async () => {
-    const harness = makeHarness();
-    const frontend = harness.frontend("connection-1");
-    const started = harness.controller.startCall(
-      { controlSessionId: "control-session-1", clientCallId: "client-call-1" },
-      frontend.connection,
-    );
-    const armed = challenge({
-      controllerLeaseId: `${started.state.callId}:${started.state.controllerLeaseEpoch}`,
-      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-    });
-
-    harness.controller.presentApproval(started.state.callId, {
-      challenge: armed,
-      summary: "Allow one focused test command?",
-    });
-
-    expect(frontend.messages).toContainEqual(
-      expect.objectContaining({
-        type: "voice_approval_required",
-        callId: started.state.callId,
-        challengeId: "challenge-1",
-        summary: "Allow one focused test command?",
-        targetRefs: ["file:server/src/server.ts"],
-      }),
-    );
-
-    const result = await harness.controller.submitApprovalTranscript(
-      {
-        callId: started.state.callId,
-        controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-        challengeId: "challenge-1",
-        transcript: "approve once",
-      },
-      frontend.connection,
-    );
-
-    expect(result).toEqual({ kind: "delivered", decision: "approve_once" });
-    expect(harness.approvalSubmissions).toEqual([
-      {
-        input: {
-          challengeId: "challenge-1",
-          callId: started.state.callId,
-          leaseEpoch: started.state.controllerLeaseEpoch,
-          requestId: "approval-request-1",
-          actionDigest: "digest-1",
-          nonce: "nonce-1",
-          transcript: "approve once",
-        },
-        authority: { authenticatedDeviceId: "paired-device-a" },
-      },
-    ]);
-    expect(frontend.messages).toContainEqual(
-      expect.objectContaining({
-        type: "voice_approval_result",
-        challengeId: "challenge-1",
-        outcome: "delivered",
-        decision: "approve_once",
-      }),
-    );
-
-    await expect(
-      harness.controller.submitApprovalTranscript(
-        {
-          callId: started.state.callId,
-          controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-          challengeId: "challenge-1",
-          transcript: "approve once",
-        },
-        frontend.connection,
-      ),
-    ).rejects.toThrow("Voice approval challenge is not pending");
-  });
-
-  it("removes expired and detached lease-scoped approval presentations", () => {
-    const harness = makeHarness();
-    const first = harness.frontend("connection-1");
-    const started = harness.controller.startCall(
-      { controlSessionId: "control-session-1", clientCallId: "client-call-1" },
-      first.connection,
-    );
-    const approval = challenge({
-      challengeId: "challenge-expired",
-      controllerLeaseId: `${started.state.callId}:${started.state.controllerLeaseEpoch}`,
-      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-      expiresAt: 2_000,
-    });
-    harness.controller.presentApproval(started.state.callId, {
-      challenge: approval,
-      summary: "Allow one focused test command?",
-    });
-
-    harness.setNow(approval.expiresAt);
-    expect(harness.controller.snapshot(started.state.callId).pendingApprovals).toEqual([]);
-
-    harness.setNow(2_500);
-    const secondApproval = challenge({
-      challengeId: "challenge-detached",
-      controllerLeaseId: `${started.state.callId}:${started.state.controllerLeaseEpoch}`,
-      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-      issuedAt: 2_500,
-      expiresAt: 8_000,
-    });
-    harness.controller.presentApproval(started.state.callId, {
-      challenge: secondApproval,
-      summary: "Allow one focused test command?",
-    });
-    harness.controller.disconnectConnection(first.connection.connectionId);
-
-    const replacement = harness.frontend("connection-2");
-    const reattached = harness.controller.attachCall(
-      { callId: started.state.callId },
-      replacement.connection,
-    );
-    expect(reattached.state.pendingApprovals).toEqual([]);
-  });
-
-  it("replays approval presentation only while its exact challenge is pending", () => {
-    const harness = makeHarness();
-    const first = harness.frontend("connection-1");
-    const started = harness.controller.startCall(
-      { controlSessionId: "control-session-1", clientCallId: "client-call-1" },
-      first.connection,
-    );
-    const pending = challenge({
-      controllerLeaseId: `${started.state.callId}:${started.state.controllerLeaseEpoch}`,
-      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-      expiresAt: 8_000,
-    });
-    harness.controller.presentApproval(started.state.callId, {
-      challenge: pending,
-      summary: "Allow one focused test command?",
-    });
-
-    const stillPending = harness.controller.attachCall(
-      { callId: started.state.callId, lastEventSeq: started.state.eventSeq },
-      first.connection,
-    );
-    expect(stillPending.state.pendingApprovals).toEqual([
-      expect.objectContaining({ challengeId: pending.challengeId }),
-    ]);
-    expect(stillPending.replay).toContainEqual(
-      expect.objectContaining({
-        type: "voice_approval_required",
-        challengeId: pending.challengeId,
-      }),
-    );
-
-    harness.controller.disconnectConnection(first.connection.connectionId);
-    const replacement = harness.frontend("connection-2");
-    const afterDetach = harness.controller.attachCall(
-      { callId: started.state.callId, lastEventSeq: started.state.eventSeq },
-      replacement.connection,
-    );
-    expect(afterDetach.state.pendingApprovals).toEqual([]);
-    expect(afterDetach.replay).not.toContainEqual(
-      expect.objectContaining({ type: "voice_approval_required" }),
-    );
-  });
-
-  it("does not replay expired or resolved approval presentations", async () => {
-    const harness = makeHarness();
-    const frontend = harness.frontend("connection-1");
-    const started = harness.controller.startCall(
-      { controlSessionId: "control-session-1", clientCallId: "client-call-1" },
-      frontend.connection,
-    );
-    const expiring = challenge({
-      challengeId: "challenge-expiring",
-      controllerLeaseId: `${started.state.callId}:${started.state.controllerLeaseEpoch}`,
-      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-      expiresAt: 2_000,
-    });
-    harness.controller.presentApproval(started.state.callId, {
-      challenge: expiring,
-      summary: "Allow an expiring command?",
-    });
-
-    harness.setNow(expiring.expiresAt);
-    const afterExpiry = harness.controller.attachCall(
-      { callId: started.state.callId, lastEventSeq: started.state.eventSeq },
-      frontend.connection,
-    );
-    expect(afterExpiry.state.pendingApprovals).toEqual([]);
-    expect(afterExpiry.replay).not.toContainEqual(
-      expect.objectContaining({ type: "voice_approval_required" }),
-    );
-
-    const resolved = challenge({
-      challengeId: "challenge-resolved",
-      controllerLeaseId: `${afterExpiry.state.callId}:${afterExpiry.state.controllerLeaseEpoch}`,
-      controllerLeaseEpoch: afterExpiry.state.controllerLeaseEpoch,
-      issuedAt: 2_000,
-      expiresAt: 8_000,
-    });
-    harness.controller.presentApproval(started.state.callId, {
-      challenge: resolved,
-      summary: "Allow one resolved command?",
-    });
-    await harness.controller.submitApprovalTranscript(
-      {
-        callId: started.state.callId,
-        controllerLeaseEpoch: afterExpiry.state.controllerLeaseEpoch,
-        challengeId: resolved.challengeId,
-        transcript: "approve once",
-      },
-      frontend.connection,
-    );
-
-    const afterResolution = harness.controller.attachCall(
-      { callId: started.state.callId, lastEventSeq: afterExpiry.state.eventSeq },
-      frontend.connection,
-    );
-    expect(afterResolution.state.pendingApprovals).toEqual([]);
-    expect(afterResolution.replay).not.toContainEqual(
-      expect.objectContaining({ type: "voice_approval_required" }),
-    );
-    expect(afterResolution.replay).toContainEqual(
-      expect.objectContaining({
-        type: "voice_approval_result",
-        challengeId: resolved.challengeId,
-      }),
-    );
   });
 
   it("attaches a new clientCallId to the existing active call for the same session and device", () => {
@@ -681,7 +422,7 @@ describe("continuous voice call controller", () => {
       firstFrontend.connection,
     );
     const liveFrontend = harness.frontend("connection-2");
-    const live = harness.controller.startCall(
+    harness.controller.startCall(
       { controlSessionId: "control-session-2", clientCallId: "client-call-2" },
       liveFrontend.connection,
     );
@@ -695,7 +436,6 @@ describe("continuous voice call controller", () => {
 
     expect(recovered.state.callId).toBe("call-3");
     expect(() => harness.controller.snapshot(first.state.callId)).toThrow("Unknown voice call");
-    expect(harness.controller.activeControllerLease(live.state.callId)).toBeDefined();
 
     harness.controller.disconnectConnection("connection-3");
     harness.setNow(1_200);
@@ -743,7 +483,7 @@ describe("continuous voice call controller", () => {
     const recovered = startThird();
     expect(recovered.state.callId).toBe("call-3");
     expect(() => harness.controller.snapshot(stale.state.callId)).toThrow("Unknown voice call");
-    expect(harness.controller.activeControllerLease(live.state.callId)).toBeDefined();
+    expect(harness.controller.snapshot(live.state.callId).frontend).toBe("attached");
   });
 
   it("restores call identity, delegations, and replay after process loss and fences the old lease", () => {
@@ -753,9 +493,6 @@ describe("continuous voice call controller", () => {
       now: () => now,
       nextCallId: () => "call-persisted",
       persistence: store,
-      approvalAuthority: {
-        submitTranscript: () => ({ kind: "delivered", decision: "approve_once" }),
-      },
     });
     const attached = new DeterministicVoiceCallFrontend({
       connectionId: "connection-1",
@@ -775,20 +512,11 @@ describe("continuous voice call controller", () => {
     });
     first.applyDelegationUpdate("call-persisted", {
       delegationId: "delegation-1",
-      kind: "acknowledgement",
+      kind: "progress",
       text: "Working on it.",
-    });
-    first.presentApproval("call-persisted", {
-      challenge: challenge({
-        callId: "call-persisted",
-        controllerLeaseId: "call-persisted:1",
-        controllerLeaseEpoch: 1,
-      }),
-      summary: "Allow one test command?",
     });
     const beforeRestart = first.snapshot("call-persisted");
     expect(beforeRestart.frontend).toBe("attached");
-    expect(beforeRestart.pendingApprovals).toHaveLength(1);
 
     now = 5_000;
     const restarted = new VoiceCallController({
@@ -802,15 +530,13 @@ describe("continuous voice call controller", () => {
     expect(restored.controlSessionId).toBe("voice-session-1");
     expect(restored.controllerLeaseEpoch).toBeGreaterThan(beforeRestart.controllerLeaseEpoch);
     expect(restored.controllerLeaseExpiresAt).toBe(now);
-    expect(restored.pendingApprovals).toEqual([]);
     expect(restored.delegations).toEqual([
       expect.objectContaining({
         delegationId: "delegation-1",
-        state: "acknowledged",
+        state: "working",
         latestText: "Working on it.",
       }),
     ]);
-    expect(restarted.activeControllerLease("call-persisted")).toBeUndefined();
 
     const stale = new DeterministicVoiceCallFrontend({
       connectionId: "connection-1",
@@ -839,29 +565,9 @@ describe("continuous voice call controller", () => {
       expect.objectContaining({
         type: "voice_delegation_update",
         delegationId: "delegation-1",
-        kind: "acknowledgement",
+        kind: "progress",
       }),
     );
-    expect(attachedAgain.replay.some((event) => event.type === "voice_approval_required")).toBe(
-      false,
-    );
-  });
-
-  it("reports the single attached live call and stays silent when that is ambiguous", () => {
-    const harness = makeHarness();
-    expect(harness.controller.activeAttachedCallId()).toBeUndefined();
-
-    const first = harness.controller.startCall(
-      { controlSessionId: "control-session-1", clientCallId: "client-call-1" },
-      harness.frontend("connection-1").connection,
-    );
-    expect(harness.controller.activeAttachedCallId()).toBe(first.state.callId);
-
-    harness.controller.startCall(
-      { controlSessionId: "control-session-2", clientCallId: "client-call-2" },
-      harness.frontend("connection-2", "paired-device-b").connection,
-    );
-    expect(harness.controller.activeAttachedCallId()).toBeUndefined();
   });
 
   it("keeps ended-call identity after restart so the same client call cannot be reused", () => {

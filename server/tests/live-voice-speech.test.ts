@@ -1,15 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  DeterministicVoiceCallFrontend,
-  VoiceCallController,
-} from "../src/continuous-voice-call.js";
+import { VoiceCallController, type VoiceDelegation } from "../src/continuous-voice-call.js";
 import {
   VoiceCallMediaCoordinator,
   YuwpVoiceMediaAdapter,
   type LiveVoiceTtsPort,
 } from "../src/continuous-voice-media.js";
-import type { VoiceDelegation } from "../src/continuous-voice.js";
 import {
   LiveVoiceSessionLink,
   LiveVoiceSpeech,
@@ -18,6 +14,7 @@ import {
 import type { SessionBackendEvent } from "../src/pi-events.js";
 import type { SttProvider, SttTranscriptUpdate } from "../src/stt-provider.js";
 import type { VoiceCallDelegationUpdateKind } from "../src/types.js";
+import { DeterministicVoiceCallFrontend } from "./helpers/deterministic-voice-call-frontend.js";
 
 const start = { type: "agent_start" } as SessionBackendEvent;
 

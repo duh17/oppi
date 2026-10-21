@@ -14,8 +14,8 @@ export function voiceCallStorePath(dataDir: string): string {
 /**
  * Durable snapshot of in-memory voice-call controller state.
  *
- * Frontends and lease-scoped approvals are not stored. A new process must
- * fence restored active calls and wait for the paired device to attach again.
+ * Frontends are not stored. A new process must fence restored active calls and wait for
+ * the paired device to attach again.
  */
 export class FileVoiceCallStore implements VoiceCallPersistence {
   constructor(private readonly path: string) {}

@@ -174,7 +174,6 @@ export class WsMessageHandler {
       case "voice_call_detach":
       case "voice_call_keepalive":
       case "voice_call_end":
-      case "voice_approval_response":
         await this.handleVoiceCommand(session, msg, send, meta);
         return;
 
@@ -303,8 +302,7 @@ export class WsMessageHandler {
           | "voice_call_attach"
           | "voice_call_detach"
           | "voice_call_keepalive"
-          | "voice_call_end"
-          | "voice_approval_response";
+          | "voice_call_end";
       }
     >,
     send: (msg: ServerMessage) => void,
@@ -377,20 +375,6 @@ export class WsMessageHandler {
             }),
           );
         }
-        return;
-      }
-
-      if (msg.type === "voice_approval_response") {
-        const result = await voiceCalls.submitApprovalTranscript(
-          {
-            callId: msg.callId,
-            controllerLeaseEpoch: msg.controllerLeaseEpoch,
-            challengeId: msg.challengeId,
-            transcript: msg.transcript,
-          },
-          frontend,
-        );
-        if (requestId) send(runtimeCommandSuccess(msg.type, requestId, result));
         return;
       }
 

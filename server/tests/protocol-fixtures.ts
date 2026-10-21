@@ -634,15 +634,8 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
         latestText: "The tests are running.",
       },
     ],
-    pendingApprovals: [
-      {
-        challengeId: "challenge-1",
-        requestId: "approval-request-1",
-        summary: "Allow one focused test command?",
-        targetRefs: ["command:npm-test"],
-        expiresAt: 1739750500000,
-      },
-    ],
+    // Always empty on the wire: installed phones decode it, spoken approval is gone.
+    pendingApprovals: [],
   },
   voice_delegation_update: {
     type: "voice_delegation_update",
@@ -654,26 +647,6 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     kind: "blocked",
     text: "Approval is required to continue.",
     createdAt: 1739750491000,
-  },
-  voice_approval_required: {
-    type: "voice_approval_required",
-    callId: "voice-call-1",
-    controlSessionId: "control-session-1",
-    eventSeq: 14,
-    challengeId: "challenge-1",
-    requestId: "approval-request-1",
-    summary: "Allow one focused test command?",
-    targetRefs: ["command:npm-test"],
-    expiresAt: 1739750500000,
-  },
-  voice_approval_result: {
-    type: "voice_approval_result",
-    callId: "voice-call-1",
-    controlSessionId: "control-session-1",
-    eventSeq: 15,
-    challengeId: "challenge-1",
-    outcome: "delivered",
-    decision: "approve_once",
   },
 
   // Dictation
@@ -882,8 +855,6 @@ const SERVER_MESSAGE_ORDER = [
   "git_status",
   "voice_call_state",
   "voice_delegation_update",
-  "voice_approval_required",
-  "voice_approval_result",
   "dictation_ready",
   "dictation_result",
   "dictation_final",

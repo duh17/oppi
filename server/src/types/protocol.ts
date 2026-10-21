@@ -114,8 +114,7 @@ export type VoiceCallLifecycleState = "active" | "ended";
 export type VoiceCallFrontendState = "attached" | "detached";
 export type VoiceCallDelegationState =
   "delegated" | "acknowledged" | "working" | "blocked" | "completed";
-export type VoiceCallDelegationUpdateKind =
-  "delegated" | "acknowledgement" | "progress" | "blocked" | "final";
+export type VoiceCallDelegationUpdateKind = "delegated" | "progress" | "blocked" | "final";
 
 export interface VoiceCallDelegationSnapshot {
   delegationId: string;
@@ -145,6 +144,7 @@ export interface VoiceCallStateSnapshot {
   startedAt: number;
   updatedAt: number;
   delegations: VoiceCallDelegationSnapshot[];
+  /** Always empty: installed phones still decode it. Spoken approval is gone. */
   pendingApprovals: VoiceCallApprovalPresentation[];
   partialTranscript?: string;
 }
@@ -159,24 +159,6 @@ export interface VoiceDelegationUpdateMessage {
   kind: VoiceCallDelegationUpdateKind;
   text: string;
   createdAt: number;
-}
-
-export interface VoiceApprovalRequiredMessage extends VoiceCallApprovalPresentation {
-  type: "voice_approval_required";
-  callId: string;
-  controlSessionId: string;
-  eventSeq: number;
-}
-
-export interface VoiceApprovalResultMessage {
-  type: "voice_approval_result";
-  callId: string;
-  controlSessionId: string;
-  eventSeq: number;
-  challengeId: string;
-  outcome: "delivered" | "retry" | "rejected";
-  decision?: "approve_once" | "deny";
-  reason?: string;
 }
 
 /**
@@ -301,14 +283,6 @@ export type ClientMessage =
         type: "voice_call_detach" | "voice_call_keepalive" | "voice_call_end";
         callId: string;
         controllerLeaseEpoch: number;
-        requestId?: string;
-      }
-    | {
-        type: "voice_approval_response";
-        callId: string;
-        controllerLeaseEpoch: number;
-        challengeId: string;
-        transcript: string;
         requestId?: string;
       }
     // ── Dictation (dedicated ASR stream) ──
@@ -813,8 +787,6 @@ export type ServerMessage =
     // ── Continuous voice control ──
     | ({ type: "voice_call_state" } & VoiceCallStateSnapshot)
     | VoiceDelegationUpdateMessage
-    | VoiceApprovalRequiredMessage
-    | VoiceApprovalResultMessage
     // ── Dictation ──
     | {
         type: "dictation_ready";

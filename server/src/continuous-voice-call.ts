@@ -1,31 +1,35 @@
 import type {
   ServerMessage,
-  VoiceApprovalRequiredMessage,
-  VoiceApprovalResultMessage,
   VoiceCallDelegationSnapshot,
   VoiceCallDelegationState,
   VoiceCallDelegationUpdateKind,
   VoiceCallStateSnapshot,
   VoiceDelegationUpdateMessage,
 } from "./types.js";
-import type {
-  VoiceApprovalChallenge,
-  VoiceApprovalSubmissionResult,
-  VoiceControllerLease,
-} from "./voice-approval-bridge.js";
-import type { VoiceDelegation, VoiceDelegationUpdate } from "./continuous-voice.js";
 
 const DEFAULT_LEASE_DURATION_MS = 30_000;
 const DEFAULT_RETENTION_GRACE_MS = 30_000;
 const MAX_REPLAY_EVENTS = 128;
 const MAX_RETAINED_CALLS = 256;
 const MAX_DELEGATIONS_PER_CALL = 256;
-const MAX_PENDING_APPROVALS_PER_CALL = 16;
 const MAX_IDENTIFIER_LENGTH = 128;
 const MAX_DELEGATION_TEXT_LENGTH = 10_000;
 const MAX_UPDATE_TEXT_LENGTH = 2_000;
-const MAX_APPROVAL_SUMMARY_LENGTH = 1_000;
-const MAX_APPROVAL_TRANSCRIPT_LENGTH = 256;
+
+/** One thing the caller said, sent to the call's session as a message. */
+export interface VoiceDelegation {
+  callId: string;
+  delegationId: string;
+  utteranceId: string;
+  request: string;
+  createdAt: number;
+}
+
+export interface VoiceDelegationUpdate {
+  delegationId: string;
+  kind: "progress" | "final" | "blocked";
+  text: string;
+}
 
 /** Owner tokens stay valid for ordinary APIs but never become voice controllers. */
 export function authenticatedVoiceDeviceId(
@@ -43,26 +47,8 @@ export interface VoiceCallFrontendConnection {
 
 export interface VoiceCallAttachResult {
   state: VoiceCallStateSnapshot;
-  replay: VoiceCallEventMessage[];
+  replay: VoiceDelegationUpdateMessage[];
 }
-
-export interface VoiceCallApprovalAuthority {
-  submitTranscript(
-    input: {
-      challengeId: string;
-      callId: string;
-      leaseEpoch: number;
-      requestId: string;
-      actionDigest: string;
-      nonce: string;
-      transcript: string;
-    },
-    authority: { authenticatedDeviceId: string },
-  ): VoiceApprovalSubmissionResult | Promise<VoiceApprovalSubmissionResult>;
-}
-
-export type VoiceCallEventMessage =
-  VoiceDelegationUpdateMessage | VoiceApprovalRequiredMessage | VoiceApprovalResultMessage;
 
 export interface PersistedVoiceCall {
   callId: string;
@@ -77,7 +63,7 @@ export interface PersistedVoiceCall {
   startedAt: number;
   updatedAt: number;
   delegations: VoiceCallDelegationSnapshot[];
-  events: VoiceCallEventMessage[];
+  events: VoiceDelegationUpdateMessage[];
 }
 
 export interface VoiceCallPersistence {
@@ -99,18 +85,11 @@ interface MutableVoiceCall {
   startedAt: number;
   updatedAt: number;
   delegations: Map<string, MutableVoiceDelegation>;
-  pendingApprovals: Map<string, PendingVoiceApproval>;
-  events: VoiceCallEventMessage[];
+  events: VoiceDelegationUpdateMessage[];
   partialTranscript?: string;
 }
 
 type MutableVoiceDelegation = VoiceCallDelegationSnapshot;
-
-interface PendingVoiceApproval {
-  challenge: VoiceApprovalChallenge;
-  summary: string;
-  presentationEventSeq: number;
-}
 
 /**
  * Server-owned provider-neutral call control state.
@@ -136,7 +115,6 @@ export class VoiceCallController {
       leaseDurationMs?: number;
       retentionGraceMs?: number;
       maxRetainedCalls?: number;
-      approvalAuthority?: VoiceCallApprovalAuthority;
       persistence?: VoiceCallPersistence;
       dispatchDelegation?: (controlSessionId: string, delegation: VoiceDelegation) => void;
     },
@@ -214,7 +192,6 @@ export class VoiceCallController {
       startedAt: now,
       updatedAt: now,
       delegations: new Map(),
-      pendingApprovals: new Map(),
       events: [],
     };
     this.calls.set(call.callId, call);
@@ -246,16 +223,11 @@ export class VoiceCallController {
     call.frontendConnection = frontend;
     call.detachedAt = undefined;
     this.renewLease(call);
-    this.pruneExpiredApprovals(call);
 
     const replay =
       lastEventSeq === undefined
         ? []
-        : call.events
-            .filter(
-              (event) => event.eventSeq > lastEventSeq && this.isReplayableEvent(call, event, now),
-            )
-            .map(cloneEvent);
+        : call.events.filter((event) => event.eventSeq > lastEventSeq).map(cloneEvent);
     this.persist();
     return { state: this.snapshot(call.callId), replay };
   }
@@ -295,7 +267,6 @@ export class VoiceCallController {
     call.controllerLeaseExpiresAt = this.now();
     call.eventSeq += 1;
     call.updatedAt = this.now();
-    call.pendingApprovals.clear();
     this.persist();
     return this.snapshot(call.callId);
   }
@@ -351,7 +322,6 @@ export class VoiceCallController {
 
   snapshot(callId: string): VoiceCallStateSnapshot {
     const call = this.requireCall(callId);
-    this.pruneExpiredApprovals(call);
     return {
       callId: call.callId,
       controlSessionId: call.controlSessionId,
@@ -366,31 +336,9 @@ export class VoiceCallController {
       ...(call.partialTranscript !== undefined
         ? { partialTranscript: call.partialTranscript }
         : {}),
-      pendingApprovals: [...call.pendingApprovals.values()].map(({ challenge, summary }) => ({
-        challengeId: challenge.challengeId,
-        requestId: challenge.requestId,
-        summary,
-        targetRefs: [...challenge.targetRefs],
-        expiresAt: challenge.expiresAt,
-      })),
+      // Installed phones decode this non-optionally and never see a challenge.
+      pendingApprovals: [],
     };
-  }
-
-  activeAttachedCallId(): string | undefined {
-    const now = this.now();
-    let found: string | undefined;
-    for (const call of this.calls.values()) {
-      if (
-        call.lifecycle !== "active" ||
-        !call.frontendConnection ||
-        call.controllerLeaseExpiresAt <= now
-      ) {
-        continue;
-      }
-      if (found) return undefined;
-      found = call.callId;
-    }
-    return found;
   }
 
   activeCallIdForControlSession(controlSessionId: string): string | undefined {
@@ -400,26 +348,6 @@ export class VoiceCallController {
       }
     }
     return undefined;
-  }
-
-  activeControllerLease(callId: string): VoiceControllerLease | undefined {
-    const call = this.calls.get(callId);
-    const now = this.now();
-    if (
-      !call ||
-      call.lifecycle !== "active" ||
-      !call.frontendConnection ||
-      call.controllerLeaseExpiresAt <= now
-    ) {
-      return undefined;
-    }
-    return {
-      callId: call.callId,
-      leaseId: leaseId(call),
-      epoch: call.controllerLeaseEpoch,
-      deviceId: call.ownerDeviceId,
-      expiresAt: call.controllerLeaseExpiresAt,
-    };
   }
 
   setPartialTranscript(callId: string, text: string): VoiceCallStateSnapshot {
@@ -525,117 +453,6 @@ export class VoiceCallController {
     return message;
   }
 
-  presentApproval(
-    callId: string,
-    input: { challenge: VoiceApprovalChallenge; summary: string },
-  ): VoiceApprovalRequiredMessage {
-    const call = this.requireActiveCall(callId);
-    if (!this.deps.approvalAuthority) {
-      throw new Error("Voice approval authority is unavailable");
-    }
-    const summary = input.summary.trim();
-    if (!summary || summary.length > MAX_APPROVAL_SUMMARY_LENGTH) {
-      throw new Error("Voice approval summary must be non-empty and bounded");
-    }
-    const { challenge } = input;
-    if (
-      challenge.callId !== call.callId ||
-      challenge.controllerLeaseId !== leaseId(call) ||
-      challenge.controllerLeaseEpoch !== call.controllerLeaseEpoch ||
-      challenge.deviceId !== call.ownerDeviceId
-    ) {
-      throw new Error("Voice approval challenge does not match the active controller lease");
-    }
-    if (challenge.expiresAt <= this.now()) {
-      throw new Error("Voice approval challenge is expired");
-    }
-    this.pruneExpiredApprovals(call);
-    if (call.pendingApprovals.has(challenge.challengeId)) {
-      throw new Error(`Duplicate voice approval challenge: ${challenge.challengeId}`);
-    }
-    if (call.pendingApprovals.size >= MAX_PENDING_APPROVALS_PER_CALL) {
-      throw new Error("Voice approval capacity is reached");
-    }
-
-    const message: VoiceApprovalRequiredMessage = {
-      type: "voice_approval_required",
-      callId: call.callId,
-      controlSessionId: call.controlSessionId,
-      eventSeq: this.nextEventSeq(call),
-      challengeId: challenge.challengeId,
-      requestId: challenge.requestId,
-      summary,
-      targetRefs: [...challenge.targetRefs],
-      expiresAt: challenge.expiresAt,
-    };
-    call.pendingApprovals.set(challenge.challengeId, {
-      challenge,
-      summary,
-      presentationEventSeq: message.eventSeq,
-    });
-    this.publish(call, message);
-    this.persist();
-    return cloneEvent(message);
-  }
-
-  async submitApprovalTranscript(
-    input: {
-      callId: string;
-      controllerLeaseEpoch: number;
-      challengeId: string;
-      transcript: string;
-    },
-    frontend: Pick<VoiceCallFrontendConnection, "connectionId" | "authenticatedDeviceId">,
-  ): Promise<VoiceApprovalSubmissionResult> {
-    const call = this.requireActiveCall(input.callId);
-    this.assertController(call, input.controllerLeaseEpoch, frontend);
-    assertIdentifier(input.challengeId, "challengeId");
-    const transcript = input.transcript.trim();
-    if (!transcript || transcript.length > MAX_APPROVAL_TRANSCRIPT_LENGTH) {
-      throw new Error("Voice approval transcript must be non-empty and bounded");
-    }
-    const pending = call.pendingApprovals.get(input.challengeId);
-    if (!pending) throw new Error("Voice approval challenge is not pending");
-    if (pending.challenge.expiresAt <= this.now()) {
-      call.pendingApprovals.delete(input.challengeId);
-      this.persist();
-      throw new Error("Voice approval challenge is expired");
-    }
-    if (!this.deps.approvalAuthority) {
-      throw new Error("Voice approval authority is unavailable");
-    }
-
-    // Remove before authority delivery so transport retries cannot replay an
-    // authorizing transcript even if the downstream response path fails.
-    call.pendingApprovals.delete(input.challengeId);
-    const challenge = pending.challenge;
-    const result = await this.deps.approvalAuthority.submitTranscript(
-      {
-        challengeId: challenge.challengeId,
-        callId: challenge.callId,
-        leaseEpoch: challenge.controllerLeaseEpoch,
-        requestId: challenge.requestId,
-        actionDigest: challenge.actionDigest,
-        nonce: challenge.nonce,
-        transcript,
-      },
-      { authenticatedDeviceId: frontend.authenticatedDeviceId },
-    );
-    const message: VoiceApprovalResultMessage = {
-      type: "voice_approval_result",
-      callId: call.callId,
-      controlSessionId: call.controlSessionId,
-      eventSeq: this.nextEventSeq(call),
-      challengeId: challenge.challengeId,
-      outcome: result.kind,
-      ...(result.kind === "delivered" ? { decision: result.decision } : {}),
-      ...(result.kind !== "delivered" ? { reason: result.reason } : {}),
-    };
-    this.publish(call, message);
-    this.persist();
-    return result;
-  }
-
   private emitDelegationUpdate(
     call: MutableVoiceCall,
     input: {
@@ -657,7 +474,7 @@ export class VoiceCallController {
     return cloneEvent(message);
   }
 
-  private publish(call: MutableVoiceCall, message: VoiceCallEventMessage): void {
+  private publish(call: MutableVoiceCall, message: VoiceDelegationUpdateMessage): void {
     call.events.push(cloneEvent(message));
     if (call.events.length > MAX_REPLAY_EVENTS) call.events.shift();
     const frontend = call.frontendConnection;
@@ -695,9 +512,6 @@ export class VoiceCallController {
   }
 
   private advanceLeaseGeneration(call: MutableVoiceCall): void {
-    // Approval challenges are bound to one exact lease generation. A reconnect
-    // must obtain a fresh challenge rather than presenting an unusable stale one.
-    call.pendingApprovals.clear();
     call.controllerLeaseEpoch += 1;
     call.eventSeq += 1;
   }
@@ -744,27 +558,6 @@ export class VoiceCallController {
       delegations: [...call.delegations.values()].map((delegation) => ({ ...delegation })),
       events: call.events.map(cloneEvent),
     }));
-  }
-
-  private isReplayableEvent(
-    call: MutableVoiceCall,
-    event: VoiceCallEventMessage,
-    now: number,
-  ): boolean {
-    if (event.type !== "voice_approval_required") return true;
-    const pending = call.pendingApprovals.get(event.challengeId);
-    return (
-      pending !== undefined &&
-      pending.presentationEventSeq === event.eventSeq &&
-      pending.challenge.expiresAt > now
-    );
-  }
-
-  private pruneExpiredApprovals(call: MutableVoiceCall): void {
-    const now = this.now();
-    for (const [challengeId, pending] of call.pendingApprovals) {
-      if (pending.challenge.expiresAt <= now) call.pendingApprovals.delete(challengeId);
-    }
   }
 
   private assertConnectionAuthorized(frontend: VoiceCallFrontendConnection): void {
@@ -835,25 +628,8 @@ export class VoiceCallController {
   }
 }
 
-/** Deterministic transport/frontend fixture for provider-free controller tests. */
-export class DeterministicVoiceCallFrontend {
-  readonly messages: ServerMessage[] = [];
-  readonly audio: Buffer[] = [];
-  readonly connection: VoiceCallFrontendConnection;
-
-  constructor(input: { connectionId: string; authenticatedDeviceId: string }) {
-    this.connection = {
-      ...input,
-      send: (message) => this.messages.push(structuredClone(message)),
-      sendAudio: (pcm) => this.audio.push(Buffer.from(pcm)),
-    };
-  }
-}
-
 function delegationStateFor(kind: VoiceDelegationUpdate["kind"]): VoiceCallDelegationState {
   switch (kind) {
-    case "acknowledgement":
-      return "acknowledged";
     case "progress":
       return "working";
     case "blocked":
@@ -914,6 +690,12 @@ function hydratePersistedCall(record: PersistedVoiceCall): MutableVoiceCall {
     });
   }
 
+  const events: VoiceDelegationUpdateMessage[] = [];
+  for (const event of record.events) {
+    const hydrated = hydratePersistedEvent(event);
+    if (hydrated) events.push(hydrated);
+  }
+
   return {
     callId: record.callId,
     controlSessionId: record.controlSessionId,
@@ -927,22 +709,26 @@ function hydratePersistedCall(record: PersistedVoiceCall): MutableVoiceCall {
     startedAt: record.startedAt,
     updatedAt: record.updatedAt,
     delegations,
-    pendingApprovals: new Map(),
-    events: record.events.map(hydratePersistedEvent),
+    events,
   };
 }
 
-function hydratePersistedEvent(event: VoiceCallEventMessage): VoiceCallEventMessage {
+function hydratePersistedEvent(
+  event: VoiceDelegationUpdateMessage,
+): VoiceDelegationUpdateMessage | undefined {
   if (!event || typeof event !== "object") {
     throw new Error("Voice call replay event is invalid");
   }
-  if (
-    event.type !== "voice_delegation_update" &&
-    event.type !== "voice_approval_required" &&
-    event.type !== "voice_approval_result"
-  ) {
+  // A call file written before spoken approval was removed still holds approval events
+  // nothing sends or replays: drop them rather than refusing to load the call.
+  if (event.type !== "voice_delegation_update") {
+    if (event.type === "voice_approval_required" || event.type === "voice_approval_result") {
+      return undefined;
+    }
     throw new Error("Voice call replay event is invalid");
   }
+  // Same for the voice_update tool's acknowledgement kind: current phones cannot decode it.
+  if ((event.kind as string) === "acknowledgement") return undefined;
   if (!Number.isSafeInteger(event.eventSeq) || event.eventSeq < 0) {
     throw new Error("Voice call eventSeq must be a non-negative safe integer");
   }
@@ -959,10 +745,6 @@ function clientIdentityKey(
   return `${controlSessionId}\0${deviceId}\0${clientCallId}`;
 }
 
-function leaseId(call: Pick<MutableVoiceCall, "callId" | "controllerLeaseEpoch">): string {
-  return `${call.callId}:${call.controllerLeaseEpoch}`;
-}
-
 function assertIdentifier(value: string, field: string): void {
   if (!value.trim() || value.length > MAX_IDENTIFIER_LENGTH) {
     throw new Error(`Voice call ${field} must be non-empty and bounded`);
@@ -974,6 +756,6 @@ function validateFrontend(frontend: VoiceCallFrontendConnection): void {
   assertIdentifier(frontend.authenticatedDeviceId, "authenticatedDeviceId");
 }
 
-function cloneEvent<T extends VoiceCallEventMessage>(event: T): T {
+function cloneEvent<T extends VoiceDelegationUpdateMessage>(event: T): T {
   return structuredClone(event);
 }

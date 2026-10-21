@@ -63,7 +63,6 @@ enum VoiceCallDelegationState: String, Codable, Sendable, Equatable {
 
 enum VoiceCallDelegationUpdateKind: String, Codable, Sendable, Equatable {
     case delegated
-    case acknowledgement
     case progress
     case blocked
     case final
@@ -78,14 +77,6 @@ struct VoiceCallDelegationSnapshot: Codable, Sendable, Equatable {
     let latestText: String?
 }
 
-struct VoiceCallApprovalPresentation: Codable, Sendable, Equatable {
-    let challengeId: String
-    let requestId: String
-    let summary: String
-    let targetRefs: [String]
-    let expiresAt: Int64
-}
-
 struct VoiceCallStateSnapshot: Codable, Sendable, Equatable {
     let callId: String
     let controlSessionId: String
@@ -97,7 +88,6 @@ struct VoiceCallStateSnapshot: Codable, Sendable, Equatable {
     let startedAt: Int64
     let updatedAt: Int64
     let delegations: [VoiceCallDelegationSnapshot]
-    let pendingApprovals: [VoiceCallApprovalPresentation]
     let partialTranscript: String?
 
     init(
@@ -111,7 +101,6 @@ struct VoiceCallStateSnapshot: Codable, Sendable, Equatable {
         startedAt: Int64,
         updatedAt: Int64,
         delegations: [VoiceCallDelegationSnapshot],
-        pendingApprovals: [VoiceCallApprovalPresentation],
         partialTranscript: String? = nil
     ) {
         self.callId = callId
@@ -124,7 +113,6 @@ struct VoiceCallStateSnapshot: Codable, Sendable, Equatable {
         self.startedAt = startedAt
         self.updatedAt = updatedAt
         self.delegations = delegations
-        self.pendingApprovals = pendingApprovals
         self.partialTranscript = partialTranscript
     }
 }
@@ -138,38 +126,6 @@ struct VoiceDelegationUpdateMessage: Sendable, Equatable {
     let kind: VoiceCallDelegationUpdateKind
     let text: String
     let createdAt: Int64
-}
-
-struct VoiceApprovalRequiredMessage: Sendable, Equatable {
-    let callId: String
-    let controlSessionId: String
-    let eventSeq: Int
-    let challengeId: String
-    let requestId: String
-    let summary: String
-    let targetRefs: [String]
-    let expiresAt: Int64
-}
-
-enum VoiceApprovalResultOutcome: String, Codable, Sendable, Equatable {
-    case delivered
-    case retry
-    case rejected
-}
-
-enum VoiceApprovalAuthorizingDecision: String, Codable, Sendable, Equatable {
-    case approveOnce = "approve_once"
-    case deny
-}
-
-struct VoiceApprovalResultMessage: Sendable, Equatable {
-    let callId: String
-    let controlSessionId: String
-    let eventSeq: Int
-    let challengeId: String
-    let outcome: VoiceApprovalResultOutcome
-    let decision: VoiceApprovalAuthorizingDecision?
-    let reason: String?
 }
 
 struct AudioStreamMessage: Sendable, Equatable {
@@ -258,8 +214,6 @@ enum ServerMessage: Sendable, Equatable {
     // Continuous voice control
     case voiceCallState(VoiceCallStateSnapshot)
     case voiceDelegationUpdate(VoiceDelegationUpdateMessage)
-    case voiceApprovalRequired(VoiceApprovalRequiredMessage)
-    case voiceApprovalResult(VoiceApprovalResultMessage)
 
     // Dictation (session audio stream)
     case dictationReady(provider: DictationProviderInfo?, contextApplied: Bool? = nil)
@@ -461,9 +415,8 @@ extension ServerMessage: Decodable {
         // continuous voice control
         case callId, controlSessionId, lifecycle, frontend
         case controllerLeaseEpoch, controllerLeaseExpiresAt, eventSeq, startedAt, updatedAt
-        case delegations, pendingApprovals, delegationId, utteranceId, createdAt, latestText
+        case delegations, delegationId, utteranceId, createdAt, latestText
         case partialTranscript
-        case challengeId, targetRefs, expiresAt, outcome, decision, transcript
         // dictation
         case sttProvider, sttModel, contextApplied
         case text, snap, committedText, activeText
@@ -735,7 +688,6 @@ extension ServerMessage: Decodable {
                     startedAt: try c.decode(Int64.self, forKey: .startedAt),
                     updatedAt: try c.decode(Int64.self, forKey: .updatedAt),
                     delegations: try c.decode([VoiceCallDelegationSnapshot].self, forKey: .delegations),
-                    pendingApprovals: try c.decode([VoiceCallApprovalPresentation].self, forKey: .pendingApprovals),
                     partialTranscript: try c.decodeIfPresent(String.self, forKey: .partialTranscript)
                 )
             )
@@ -751,33 +703,6 @@ extension ServerMessage: Decodable {
                     kind: try c.decode(VoiceCallDelegationUpdateKind.self, forKey: .kind),
                     text: try c.decode(String.self, forKey: .text),
                     createdAt: try c.decode(Int64.self, forKey: .createdAt)
-                )
-            )
-
-        case "voice_approval_required":
-            self = .voiceApprovalRequired(
-                VoiceApprovalRequiredMessage(
-                    callId: try c.decode(String.self, forKey: .callId),
-                    controlSessionId: try c.decode(String.self, forKey: .controlSessionId),
-                    eventSeq: try c.decode(Int.self, forKey: .eventSeq),
-                    challengeId: try c.decode(String.self, forKey: .challengeId),
-                    requestId: try c.decode(String.self, forKey: .requestId),
-                    summary: try c.decode(String.self, forKey: .summary),
-                    targetRefs: try c.decode([String].self, forKey: .targetRefs),
-                    expiresAt: try c.decode(Int64.self, forKey: .expiresAt)
-                )
-            )
-
-        case "voice_approval_result":
-            self = .voiceApprovalResult(
-                VoiceApprovalResultMessage(
-                    callId: try c.decode(String.self, forKey: .callId),
-                    controlSessionId: try c.decode(String.self, forKey: .controlSessionId),
-                    eventSeq: try c.decode(Int.self, forKey: .eventSeq),
-                    challengeId: try c.decode(String.self, forKey: .challengeId),
-                    outcome: try c.decode(VoiceApprovalResultOutcome.self, forKey: .outcome),
-                    decision: try c.decodeIfPresent(VoiceApprovalAuthorizingDecision.self, forKey: .decision),
-                    reason: try c.decodeIfPresent(String.self, forKey: .reason)
                 )
             )
 
@@ -967,8 +892,6 @@ extension ServerMessage {
         case .gitStatus: "gitStatus"
         case .voiceCallState: "voiceCallState"
         case .voiceDelegationUpdate: "voiceDelegationUpdate"
-        case .voiceApprovalRequired: "voiceApprovalRequired"
-        case .voiceApprovalResult: "voiceApprovalResult"
         case .dictationReady: "dictationReady"
         case .dictationResult: "dictationResult"
         case .dictationFinal: "dictationFinal"

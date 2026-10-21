@@ -23,7 +23,7 @@ The model control keeps `session.toolbar.model`. Its purpose label is `Model`. I
 
 During a call the chat input bar is the call surface:
 
-- `chat.liveVoice.mute` is the mic slot. It is present for the whole call, its label is `Mute` or `Unmute`, and its value always carries the call state: `Muted`, or the status (`Connecting`, `Listening`, `Speaking`, an approval, the failure). Read the call state from this value.
+- `chat.liveVoice.mute` is the mic slot. It is present for the whole call, its label is `Mute` or `Unmute`, and its value always carries the call state: `Muted`, or the status (`Connecting`, `Listening`, `Speaking`, the failure). Read the call state from this value.
 - `chat.liveVoice.state` is the visible status in the empty field. It exists only while the field is empty; the user's live transcript or a typed message replaces it.
 - `chat.liveVoice.end` holds the send position for the whole call, including after a failure until End. `chat.send` sits beside it only while there is text to send.
 

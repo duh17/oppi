@@ -164,20 +164,6 @@ describe("parseClientCommand", () => {
       command: "voice_call_end",
       requestId: "req-voice",
     },
-    {
-      name: "voice_approval_response missing transcript",
-      body: {
-        type: "voice_approval_response",
-        callId: "call-1",
-        controllerLeaseEpoch: 1,
-        challengeId: "challenge-1",
-        requestId: "req-voice",
-      },
-      code: "invalid_field",
-      error: "Invalid payload: expected transcript",
-      command: "voice_approval_response",
-      requestId: "req-voice",
-    },
   ])("rejects malformed required fields: $name", ({ body, code, error, command, requestId }) => {
     expect(parseClientCommand(body)).toEqual({
       ok: false,
@@ -305,16 +291,6 @@ describe("parseClientCommand", () => {
     {
       name: "voice_call_end",
       body: { type: "voice_call_end", callId: "call-1", controllerLeaseEpoch: 4 },
-    },
-    {
-      name: "voice_approval_response",
-      body: {
-        type: "voice_approval_response",
-        callId: "call-1",
-        controllerLeaseEpoch: 4,
-        challengeId: "challenge-1",
-        transcript: "approve once",
-      },
     },
   ])("accepts a valid $name command body", ({ body }) => {
     const parsed = parseClientCommand(body);

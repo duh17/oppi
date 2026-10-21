@@ -6,13 +6,11 @@ import {
   selectLiveVoiceMediaAdapter,
   type LiveVoiceTtsPort,
   VoiceCallMediaCoordinator,
-  YuwpVoiceMediaAdapter,
   type VoiceMediaAdapter,
+  type VoiceMediaEvent,
+  YuwpVoiceMediaAdapter,
 } from "../src/continuous-voice-media.js";
-import {
-  DeterministicVoiceCallFrontend,
-  VoiceCallController,
-} from "../src/continuous-voice-call.js";
+import { VoiceCallController } from "../src/continuous-voice-call.js";
 import {
   StreamingSttProvider,
   type SttProvider,
@@ -20,13 +18,9 @@ import {
   type SttStartResult,
   type SttTranscriptUpdate,
 } from "../src/stt-provider.js";
-import {
-  VoiceApprovalBridge,
-  type VoiceApprovalChallenge,
-  type VoiceFrontendSemanticEvent,
-} from "../src/continuous-voice.js";
 import { WsMessageHandler, type WsMessageHandlerDeps } from "../src/ws-message-handler.js";
 import type { ServerMessage, Session } from "../src/types.js";
+import { DeterministicVoiceCallFrontend } from "./helpers/deterministic-voice-call-frontend.js";
 
 /** Test turns end after a short pause; the default is sized for real speech. */
 const TEST_TURN_END_PAUSE_MS = 5;
@@ -38,7 +32,7 @@ function localAdapter(
   return new YuwpVoiceMediaAdapter(stt, { turnEndPauseMs: TEST_TURN_END_PAUSE_MS, ...options });
 }
 
-/** Let the user's pause end the turn and spoken approval delivery settle. */
+/** Let the user's pause end the turn. */
 const turnEnd = () => new Promise<void>((resolve) => setTimeout(resolve, 60));
 
 class ScriptedSttProvider implements SttProvider {
@@ -103,71 +97,6 @@ function makeCalls(): VoiceCallController {
     nextCallId: () => `call-${++callSequence}`,
     now: () => 1_000,
   });
-}
-
-function makeSpokenApprovalHarness() {
-  let now = 1_000;
-  let challengeSequence = 0;
-  let nonceSequence = 0;
-  let receiptSequence = 0;
-  const responses: Array<{ sessionId: string; response: unknown }> = [];
-  const receipts: unknown[] = [];
-  let calls!: VoiceCallController;
-  const bridge = new VoiceApprovalBridge({
-    now: () => now,
-    activeControllerLease: (callId) => calls.activeControllerLease(callId),
-    respondToUIRequest: (sessionId, response) => {
-      responses.push({ sessionId, response });
-      return true;
-    },
-    appendReceipt: (receipt) => receipts.push(receipt),
-    nextChallengeId: () => `challenge-${++challengeSequence}`,
-    nextNonce: () => `nonce-${++nonceSequence}`,
-    nextReceiptId: () => `receipt-${++receiptSequence}`,
-  });
-  calls = new VoiceCallController({
-    now: () => now,
-    nextCallId: () => "call-1",
-    leaseDurationMs: 30_000,
-    approvalAuthority: bridge,
-  });
-  return { calls, bridge, responses, receipts };
-}
-
-function structuredBinding(requestId: string) {
-  return {
-    source: "structured_permission_gate" as const,
-    sessionId: "session-1",
-    requestId,
-    canonicalAction: {
-      kind: "oppi_command",
-      args: ["session", "stop", "worker-1"],
-    },
-    targetRefs: ["session:worker-1"],
-    policyRevision: "policy-7",
-    risk: "voice_eligible" as const,
-    expiresAt: 8_000,
-    responses: {
-      approveOnce: { confirmed: true as const },
-      deny: { confirmed: false as const },
-    },
-  };
-}
-
-function presentArmedChallenge(
-  harness: ReturnType<typeof makeSpokenApprovalHarness>,
-  callId: string,
-  requestId: string,
-  summary = "Stop worker-1?",
-): VoiceApprovalChallenge {
-  harness.bridge.registerBinding(structuredBinding(requestId));
-  const challenge = harness.bridge.issueChallenge({
-    callId,
-    sessionId: "session-1",
-    requestId,
-  });
-  harness.calls.presentApproval(callId, { challenge, summary });
-  return challenge;
 }
 
 describe("continuous voice media", () => {
@@ -831,10 +760,10 @@ describe("continuous voice media", () => {
     await coordinator.detach("connection-1");
   });
 
-  it("Yuwp adapter emits only semantic frontend events", async () => {
+  it("Yuwp adapter reports what the caller says and nothing provider-specific", async () => {
     const stt = new ScriptedSttProvider();
     const adapter = localAdapter(stt);
-    const events: VoiceFrontendSemanticEvent[] = [];
+    const events: VoiceMediaEvent[] = [];
     await adapter.start((event) => {
       events.push(event);
     });
@@ -842,14 +771,8 @@ describe("continuous voice media", () => {
     stt.emit({ text: "hi there", committedText: "hi there", activeText: "" });
     await turnEnd();
 
-    expect(events.map((event) => event.type)).toEqual([
-      "connected",
-      "user_speech_started",
-      "user_transcript_partial",
-      "user_transcript_partial",
-      "user_speech_ended",
-      "user_utterance_committed",
-    ]);
+    expect(events.some((event) => event.type === "user_transcript_partial")).toBe(true);
+    expect(events.at(-1)).toMatchObject({ type: "user_utterance_committed", text: "hi there" });
     expect(JSON.stringify(events)).not.toMatch(/gpt.?live|grok|openai.?realtime|webrtc/i);
   });
 
@@ -920,10 +843,6 @@ describe("continuous voice media", () => {
     });
     const adapter = localAdapter(stt, { tts });
     adapter.setPlaybackSink((chunk) => pcm.push(chunk.toString()));
-    const events: VoiceFrontendSemanticEvent[] = [];
-    await adapter.start((event) => {
-      events.push(event);
-    });
 
     const first = adapter.speak("working on it");
     await tts.waitForSpeak("working on it");
@@ -939,13 +858,6 @@ describe("continuous voice media", () => {
     expect(spoken).toEqual(["working on it", "three open sessions"]);
     expect(cancelled).toEqual([]);
     expect(pcm).toEqual(["working on it", "three open sessions"]);
-    expect(events.map((event) => event.type)).toEqual([
-      "connected",
-      "assistant_speech_started",
-      "assistant_speech_stopped",
-      "assistant_speech_started",
-      "assistant_speech_stopped",
-    ]);
   });
 
   it("plays what the session's agent says as call audio", async () => {
@@ -985,271 +897,8 @@ describe("continuous voice media", () => {
     await coordinator.detach("connection-1");
   });
 
-  it.each([
-    ["approve once", { outcome: "delivered", decision: "approve_once" }, { confirmed: true }],
-    ["Approve once.", { outcome: "delivered", decision: "approve_once" }, { confirmed: true }],
-    ["deny", { outcome: "delivered", decision: "deny" }, { confirmed: false }],
-  ] as const)(
-    "routes a pending-challenge Yuwp %j through submitApprovalTranscript",
-    async (transcript, result, response) => {
-      const harness = makeSpokenApprovalHarness();
-      const stt = new ScriptedSttProvider();
-      const frontend = new DeterministicVoiceCallFrontend({
-        connectionId: "connection-1",
-        authenticatedDeviceId: "paired-device-a",
-      });
-      const coordinator = new VoiceCallMediaCoordinator({
-        createAdapter: () => localAdapter(stt),
-        calls: harness.calls,
-        nextUtteranceId: () => "utterance-1",
-        nextDelegationId: () => "delegation-1",
-      });
-      const started = harness.calls.startCall(
-        { controlSessionId: "voice-1", clientCallId: "client-1" },
-        frontend.connection,
-      );
-      const challenge = presentArmedChallenge(harness, started.state.callId, "request-1");
-      await coordinator.attach({
-        callId: started.state.callId,
-        controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-        frontend: frontend.connection,
-      });
-      const commit = vi.spyOn(harness.calls, "commitFrontendUtterance");
-      const submit = vi.spyOn(harness.calls, "submitApprovalTranscript");
 
-      stt.emit({ text: transcript, committedText: transcript, activeText: "" });
-      await turnEnd();
-
-      expect(submit).toHaveBeenCalledWith(
-        {
-          callId: started.state.callId,
-          controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-          challengeId: challenge.challengeId,
-          transcript,
-        },
-        frontend.connection,
-      );
-      expect(commit).not.toHaveBeenCalled();
-      expect(harness.calls.snapshot(started.state.callId).delegations).toEqual([]);
-      expect(harness.responses).toEqual([
-        {
-          sessionId: "session-1",
-          response: {
-            type: "extension_ui_response",
-            id: "request-1",
-            ...response,
-          },
-        },
-      ]);
-      expect(frontend.messages).toContainEqual(
-        expect.objectContaining({
-          type: "voice_approval_result",
-          challengeId: challenge.challengeId,
-          ...result,
-        }),
-      );
-      expect(JSON.stringify(harness.receipts)).not.toMatch(/Approve once\./);
-      await coordinator.detach("connection-1");
-    },
-  );
-
-  it.each(["tell me more", "repeat"] as const)(
-    "treats pending-challenge Yuwp %j as a non-authorizing retry",
-    async (transcript) => {
-      const harness = makeSpokenApprovalHarness();
-      const stt = new ScriptedSttProvider();
-      const frontend = new DeterministicVoiceCallFrontend({
-        connectionId: "connection-1",
-        authenticatedDeviceId: "paired-device-a",
-      });
-      const coordinator = new VoiceCallMediaCoordinator({
-        createAdapter: () => localAdapter(stt),
-        calls: harness.calls,
-        nextUtteranceId: () => "utterance-1",
-        nextDelegationId: () => "delegation-1",
-      });
-      const started = harness.calls.startCall(
-        { controlSessionId: "voice-1", clientCallId: "client-1" },
-        frontend.connection,
-      );
-      const challenge = presentArmedChallenge(harness, started.state.callId, "request-1");
-      await coordinator.attach({
-        callId: started.state.callId,
-        controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-        frontend: frontend.connection,
-      });
-      const commit = vi.spyOn(harness.calls, "commitFrontendUtterance");
-
-      stt.emit({ text: transcript, committedText: transcript, activeText: "" });
-      await turnEnd();
-
-      expect(commit).not.toHaveBeenCalled();
-      expect(harness.calls.snapshot(started.state.callId).delegations).toEqual([]);
-      expect(harness.responses).toEqual([]);
-      expect(frontend.messages).toContainEqual(
-        expect.objectContaining({
-          type: "voice_approval_result",
-          challengeId: challenge.challengeId,
-          outcome: "retry",
-          reason: transcript === "tell me more" ? "tell_me_more" : "repeat",
-        }),
-      );
-      await coordinator.detach("connection-1");
-    },
-  );
-
-  it.each(["Sure, that seems fine", "approve everything", "deny and approve once"] as const)(
-    "fails closed for ambiguous pending-challenge Yuwp %j",
-    async (transcript) => {
-      const harness = makeSpokenApprovalHarness();
-      const stt = new ScriptedSttProvider();
-      const frontend = new DeterministicVoiceCallFrontend({
-        connectionId: "connection-1",
-        authenticatedDeviceId: "paired-device-a",
-      });
-      const coordinator = new VoiceCallMediaCoordinator({
-        createAdapter: () => localAdapter(stt),
-        calls: harness.calls,
-        nextUtteranceId: () => "utterance-1",
-        nextDelegationId: () => "delegation-1",
-      });
-      const started = harness.calls.startCall(
-        { controlSessionId: "voice-1", clientCallId: "client-1" },
-        frontend.connection,
-      );
-      const challenge = presentArmedChallenge(harness, started.state.callId, "request-1");
-      await coordinator.attach({
-        callId: started.state.callId,
-        controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-        frontend: frontend.connection,
-      });
-      const commit = vi.spyOn(harness.calls, "commitFrontendUtterance");
-      const submit = vi.spyOn(harness.calls, "submitApprovalTranscript");
-
-      stt.emit({ text: transcript, committedText: transcript, activeText: "" });
-      await turnEnd();
-
-      expect(submit).not.toHaveBeenCalled();
-      expect(commit).not.toHaveBeenCalled();
-      expect(harness.calls.snapshot(started.state.callId).delegations).toEqual([]);
-      expect(harness.responses).toEqual([]);
-      expect(harness.calls.snapshot(started.state.callId).pendingApprovals).toEqual([
-        expect.objectContaining({ challengeId: challenge.challengeId }),
-      ]);
-      expect(
-        frontend.messages.some(
-          (message) =>
-            message.type === "voice_delegation_update" || message.type === "voice_approval_result",
-        ),
-      ).toBe(false);
-      await coordinator.detach("connection-1");
-    },
-  );
-
-  it("still delegates a Yuwp utterance when no approval challenge is pending", async () => {
-    const calls = makeCalls();
-    const stt = new ScriptedSttProvider();
-    const frontend = new DeterministicVoiceCallFrontend({
-      connectionId: "connection-1",
-      authenticatedDeviceId: "paired-device-a",
-    });
-    const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => localAdapter(stt),
-      calls,
-      nextUtteranceId: () => "utterance-1",
-      nextDelegationId: () => "delegation-1",
-    });
-    const started = calls.startCall(
-      { controlSessionId: "voice-1", clientCallId: "client-1" },
-      frontend.connection,
-    );
-    await coordinator.attach({
-      callId: started.state.callId,
-      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-      frontend: frontend.connection,
-    });
-    const commit = vi.spyOn(calls, "commitFrontendUtterance");
-    const submit = vi.spyOn(calls, "submitApprovalTranscript");
-
-    stt.emit({
-      text: "approve once",
-      committedText: "approve once",
-      activeText: "",
-    });
-    await turnEnd();
-
-    expect(submit).not.toHaveBeenCalled();
-    expect(commit).toHaveBeenCalled();
-    expect(calls.snapshot(started.state.callId).delegations).toEqual([
-      expect.objectContaining({
-        request: "approve once",
-        state: "delegated",
-      }),
-    ]);
-    await coordinator.detach("connection-1");
-  });
-
-  it("binds multiple pending challenges to the oldest presented challenge", async () => {
-    const harness = makeSpokenApprovalHarness();
-    const stt = new ScriptedSttProvider();
-    const frontend = new DeterministicVoiceCallFrontend({
-      connectionId: "connection-1",
-      authenticatedDeviceId: "paired-device-a",
-    });
-    const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => localAdapter(stt),
-      calls: harness.calls,
-      nextUtteranceId: () => "utterance-1",
-      nextDelegationId: () => "delegation-1",
-    });
-    const started = harness.calls.startCall(
-      { controlSessionId: "voice-1", clientCallId: "client-1" },
-      frontend.connection,
-    );
-    const oldest = presentArmedChallenge(
-      harness,
-      started.state.callId,
-      "request-oldest",
-      "Stop worker-1?",
-    );
-    presentArmedChallenge(harness, started.state.callId, "request-newest", "Stop worker-2?");
-    await coordinator.attach({
-      callId: started.state.callId,
-      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-      frontend: frontend.connection,
-    });
-    const submit = vi.spyOn(harness.calls, "submitApprovalTranscript");
-    const commit = vi.spyOn(harness.calls, "commitFrontendUtterance");
-
-    stt.emit({
-      text: "approve once",
-      committedText: "approve once",
-      activeText: "",
-    });
-    await turnEnd();
-
-    expect(submit).toHaveBeenCalledWith(
-      expect.objectContaining({ challengeId: oldest.challengeId }),
-      frontend.connection,
-    );
-    expect(commit).not.toHaveBeenCalled();
-    expect(harness.responses).toEqual([
-      {
-        sessionId: "session-1",
-        response: {
-          type: "extension_ui_response",
-          id: "request-oldest",
-          confirmed: true,
-        },
-      },
-    ]);
-    expect(harness.calls.snapshot(started.state.callId).pendingApprovals).toEqual([
-      expect.objectContaining({ requestId: "request-newest" }),
-    ]);
-    await coordinator.detach("connection-1");
-  });
-
-  it("aborts in-flight Yuwp TTS on the first user partial while outputSpeaking", async () => {
+  it("aborts in-flight Yuwp TTS on the first user partial", async () => {
     const stt = new ScriptedSttProvider();
     const cancelled: string[] = [];
     const pcm: Buffer[] = [];
@@ -1260,10 +909,7 @@ describe("continuous voice media", () => {
     });
     const adapter = localAdapter(stt, { tts, turnEndPauseMs: 60_000 });
     adapter.setPlaybackSink((chunk) => pcm.push(Buffer.from(chunk)));
-    const events: VoiceFrontendSemanticEvent[] = [];
-    await adapter.start((event) => {
-      events.push(event);
-    });
+    await adapter.start(async () => {});
 
     const speaking = adapter.speak("working on it");
     await tts.waitForSpeak("working on it");
@@ -1274,13 +920,6 @@ describe("continuous voice media", () => {
 
     expect(cancelled).toEqual(["working on it"]);
     expect(pcm).toEqual([]);
-    expect(events.map((event) => event.type)).toEqual([
-      "connected",
-      "assistant_speech_started",
-      "assistant_speech_stopped",
-      "user_speech_started",
-      "user_transcript_partial",
-    ]);
   });
 
   it("delegates a later committed utterance after barge-in and keeps the call up", async () => {
@@ -1349,77 +988,6 @@ describe("continuous voice media", () => {
     await coordinator.detach("connection-1");
   });
 
-  it("routes a later committed approval phrase after barge-in when a challenge is pending", async () => {
-    const harness = makeSpokenApprovalHarness();
-    const stt = new ScriptedSttProvider();
-    const cancelled: string[] = [];
-    const tts = new GateableTtsPort({
-      onCancel(text) {
-        cancelled.push(text);
-      },
-    });
-    const frontend = new DeterministicVoiceCallFrontend({
-      connectionId: "connection-1",
-      authenticatedDeviceId: "paired-device-a",
-    });
-    const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => localAdapter(stt, { tts, turnEndPauseMs: 25 }),
-      calls: harness.calls,
-      nextUtteranceId: () => "utterance-1",
-      nextDelegationId: () => "delegation-1",
-    });
-    const started = harness.calls.startCall(
-      { controlSessionId: "voice-1", clientCallId: "client-1" },
-      frontend.connection,
-    );
-    const challenge = presentArmedChallenge(harness, started.state.callId, "request-1");
-    await coordinator.attach({
-      callId: started.state.callId,
-      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-      frontend: frontend.connection,
-    });
-    const published = coordinator.speak(started.state.callId, "Stop worker-1?");
-    await tts.waitForSpeak("Stop worker-1?");
-    const commit = vi.spyOn(harness.calls, "commitFrontendUtterance");
-    const submit = vi.spyOn(harness.calls, "submitApprovalTranscript");
-
-    stt.emit({ text: "um", activeText: "um" });
-    tts.release("Stop worker-1?");
-    await published;
-
-    expect(cancelled).toEqual(["Stop worker-1?"]);
-    expect(commit).not.toHaveBeenCalled();
-    expect(submit).not.toHaveBeenCalled();
-    expect(harness.calls.snapshot(started.state.callId).delegations).toEqual([]);
-    expect(harness.calls.snapshot(started.state.callId).pendingApprovals).toEqual([
-      expect.objectContaining({ challengeId: challenge.challengeId }),
-    ]);
-    expect(harness.calls.snapshot(started.state.callId).lifecycle).toBe("active");
-
-    stt.emit({
-      text: "approve once",
-      committedText: "approve once",
-      activeText: "",
-    });
-    await turnEnd();
-
-    expect(submit).toHaveBeenCalledWith(
-      {
-        callId: started.state.callId,
-        controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-        challengeId: challenge.challengeId,
-        transcript: "approve once",
-      },
-      frontend.connection,
-    );
-    expect(commit).not.toHaveBeenCalled();
-    expect(harness.calls.snapshot(started.state.callId).delegations).toEqual([]);
-    stt.stopResult = {
-      text: "approve once",
-      committedText: "approve once",
-    };
-    await coordinator.detach("connection-1");
-  });
 });
 
 class GateableTtsPort implements LiveVoiceTtsPort {

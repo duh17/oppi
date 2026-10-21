@@ -6,8 +6,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import type { VoiceCallController } from "./continuous-voice-call.js";
-import type { VoiceDelegation } from "./continuous-voice.js";
+import type { VoiceCallController, VoiceDelegation } from "./continuous-voice-call.js";
 import { createLogger } from "./logger.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { speakableText, speechPassages } from "./speech-synthesis.js";

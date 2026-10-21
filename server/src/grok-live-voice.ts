@@ -8,15 +8,11 @@
  *
  * Media keeps the Live Voice client contract: 16 kHz s16le mono in, 24 kHz s16le mono
  * out, both as raw binary frames on the xAI socket.
- *
- * Approval authority stays out of the model: only the user's own transcript reaches the
- * approval path (`user_transcript_final`), never a delegation Grok composed.
  */
 import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
 
-import type { VoiceFrontendEventHandler } from "./continuous-voice.js";
-import type { VoiceMediaAdapter } from "./continuous-voice-media.js";
+import type { VoiceMediaAdapter, VoiceMediaEventHandler } from "./continuous-voice-media.js";
 import { createLogger } from "./logger.js";
 import { resolveTtsProvider } from "./speech-synthesis.js";
 import type { ServerConfig } from "./types.js";
@@ -103,7 +99,7 @@ const OPEN = 1;
 
 export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   private socket: GrokVoiceSocket | undefined;
-  private handler: VoiceFrontendEventHandler | undefined;
+  private handler: VoiceMediaEventHandler | undefined;
   private playbackSink: ((pcm: Buffer) => void) | undefined;
   private ready = false;
   private stopped = false;
@@ -111,7 +107,6 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   private responseActive = false;
   /** The user finished a turn and xAI's own server-VAD reply has not been created yet. */
   private replyExpected = false;
-  private assistantSpeaking = false;
   private responseWanted = false;
   private responseTimer: ReturnType<typeof setTimeout> | undefined;
   /** When audio already sent to the phone should finish playing. */
@@ -127,8 +122,6 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   /** The latest committed item since Grok last spoke; a spoken reply resets xAI's transcript. */
   private lastCommittedItem: string | undefined;
   private readonly committedItems = new Set<string>();
-  /** Items whose final transcript went out. Later corrections never reach approval. */
-  private readonly finalItems = new Set<string>();
   /** Between `speech_started` and the turn commit; Grok must not start talking over it. */
   private userSpeaking = false;
   /**
@@ -140,9 +133,6 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   private ownCreateId: string | undefined;
   private ownCreateTimer: ReturnType<typeof setTimeout> | undefined;
   private ownCreateSequence = 0;
-  /** Counts user turns; a final belongs to the turn its item was committed in. */
-  private turn = 0;
-  private readonly itemTurns = new Map<string, number>();
   /** Ends the wait for xAI's own reply to a user turn if that reply never comes. */
   private turnReplyTimer: ReturnType<typeof setTimeout> | undefined;
   /** The in-flight response answers a Pi update, not the user, so it cannot start Pi work. */
@@ -183,7 +173,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
     this.playbackSink = sendAudio;
   }
 
-  async start(handler: VoiceFrontendEventHandler): Promise<void> {
+  async start(handler: VoiceMediaEventHandler): Promise<void> {
     this.handler = handler;
     const apiKey = (await this.options.resolveApiKey())?.trim();
     if (!apiKey) throw new Error("Grok Voice needs an xAI sign-in or API key");
@@ -261,7 +251,6 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
       });
     });
     if (this.stopped) throw new Error(ENDED_BEFORE_READY);
-    await handler({ type: "connected" });
   }
 
   feedAudio(pcm: Buffer): void {
@@ -297,10 +286,6 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
     const handler = this.handler;
     this.handler = undefined;
     if (!handler) return;
-    if (this.assistantSpeaking) {
-      this.assistantSpeaking = false;
-      await handler({ type: "assistant_speech_stopped" });
-    }
     await handler({ type: "disconnected" });
   }
 
@@ -358,12 +343,6 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         this.playbackEndsAt = this.now();
         this.userSpeaking = true;
         this.stats.userTurns += 1;
-        this.turn += 1;
-        if (this.assistantSpeaking) {
-          this.assistantSpeaking = false;
-          await handler({ type: "assistant_speech_stopped" });
-        }
-        await handler({ type: "user_speech_started" });
         await handler({ type: "user_transcript_partial", text: "…" });
         return;
       case "input_audio_buffer.speech_stopped":
@@ -371,7 +350,6 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         this.stats.turnEndedAt = this.now();
         // xAI commits the turn and answers it itself (server VAD); wait for that reply.
         this.awaitTurnReply();
-        await handler({ type: "user_speech_ended" });
         return;
       case "conversation.item.input_audio_transcription.updated":
       case "conversation.item.input_audio_transcription.completed": {
@@ -379,10 +357,9 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         if (!text || !event.item_id) return;
         this.noteItem(event.item_id);
         this.transcripts.set(event.item_id, text);
-        if (this.committedItems.has(event.item_id)) {
-          await this.emitFinal(event.item_id, text);
-          return;
-        }
+        // A committed item's later corrections stay on record for the next item's repeated
+        // words, and are not shown as new speech.
+        if (this.committedItems.has(event.item_id)) return;
         const fresh = this.newWords(event.item_id, text);
         if (fresh) await handler({ type: "user_transcript_partial", text: fresh });
         return;
@@ -392,14 +369,11 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         this.noteItem(event.item_id);
         this.lastCommittedItem = event.item_id;
         this.committedItems.add(event.item_id);
-        this.itemTurns.set(event.item_id, this.turn);
         this.userSpeaking = false;
         // xAI's own reply to this turn is coming (it may already be active); a held
         // Pi update follows its response.done.
         if (!this.responseActive) this.awaitTurnReply();
-        const text = this.transcripts.get(event.item_id);
         await handler({ type: "user_transcript_partial", text: "" });
-        if (text) await this.emitFinal(event.item_id, text);
         return;
       }
       case "response.created": {
@@ -435,10 +409,6 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         // A reply that only called a tool must not stretch the latency to a later reply.
         this.stats.turnEndedAt = 0;
         if (event.response?.status === "cancelled") this.stats.cancelledReplies += 1;
-        if (this.assistantSpeaking) {
-          this.assistantSpeaking = false;
-          await handler({ type: "assistant_speech_stopped" });
-        }
         this.flushResponseRequest();
         return;
       case "error":
@@ -457,12 +427,6 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
     if (pcm.length === 0 || this.stopped) return;
     // Grok speaking resets what xAI repeats in the next transcript.
     this.lastCommittedItem = undefined;
-    if (!this.assistantSpeaking) {
-      this.assistantSpeaking = true;
-      this.handler?.({ type: "assistant_speech_started" })?.catch((error: unknown) =>
-        logEventFailure("audio", error),
-      );
-    }
     const now = this.now();
     this.stats.outputBytes += pcm.length;
     const gap = now - this.stats.lastOutputAt;
@@ -571,19 +535,6 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
     this.ownCreateId = undefined;
     if (this.ownCreateTimer) clearTimeout(this.ownCreateTimer);
     this.ownCreateTimer = undefined;
-  }
-
-  /** One final per user turn: a later, corrected transcript must not answer a second challenge. */
-  private async emitFinal(itemId: string, raw: string): Promise<void> {
-    if (this.finalItems.has(itemId)) return;
-    // Words from an earlier turn arriving after the user spoke again: the coordinator's
-    // "heard before speaking" set belongs to the newer turn, so fail closed.
-    if (this.itemTurns.get(itemId) !== this.turn) return;
-    // Nothing new said: earlier words must not stand in for this turn (approval reads this).
-    const text = this.newWords(itemId, raw);
-    if (!text) return;
-    this.finalItems.add(itemId);
-    await this.handler?.({ type: "user_transcript_final", text });
   }
 
   /** Remembers which earlier turns xAI will repeat in this item's transcript. */

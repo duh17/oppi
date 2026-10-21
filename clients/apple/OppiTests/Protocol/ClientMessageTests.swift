@@ -312,19 +312,6 @@ struct ClientMessageTests {
         let detach = try decode(.voiceCallDetach(callId: "call-1", controllerLeaseEpoch: 3, requestId: "voice-3"))
         #expect(detach["type"] as? String == "voice_call_detach")
         #expect(detach["controllerLeaseEpoch"] as? Int == 3)
-
-        let approval = try decode(
-            .voiceApprovalResponse(
-                callId: "call-1",
-                controllerLeaseEpoch: 3,
-                challengeId: "challenge-1",
-                transcript: "approve once",
-                requestId: "voice-4"
-            )
-        )
-        #expect(approval["type"] as? String == "voice_approval_response")
-        #expect(approval["challengeId"] as? String == "challenge-1")
-        #expect(approval["transcript"] as? String == "approve once")
     }
 
     // MARK: - Helpers

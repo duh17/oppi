@@ -211,29 +211,6 @@ struct LiveVoiceCallControllerTests {
         #expect(!harness.controller.isLive)
     }
 
-    @Test("Approval required presents the existing challenge summary")
-    func approvalRequiredPresentsSummary() async throws {
-        let harness = try await startedHarness()
-        harness.channel.emit(
-            .voiceApprovalRequired(
-                VoiceApprovalRequiredMessage(
-                    callId: "call-1",
-                    controlSessionId: "sess-1",
-                    eventSeq: 8,
-                    challengeId: "challenge-1",
-                    requestId: "request-1",
-                    summary: "Allow the test command?",
-                    targetRefs: ["command:npm-test"],
-                    expiresAt: 9_000
-                )
-            )
-        )
-        await waitUntil { harness.controller.approvalSummary == "Allow the test command?" }
-
-        #expect(harness.controller.statusText == "Allow the test command?")
-        #expect(!sentTypes(harness.channel.sent).contains("voice_approval_response"))
-    }
-
     @Test("Mute stops Live Voice capture and drops PCM")
     func muteStopsCapture() async throws {
         let harness = try await startedHarness()
@@ -272,27 +249,13 @@ struct LiveVoiceCallControllerTests {
         #expect(harness.controller.partialTranscript.isEmpty)
     }
 
-    @Test("The composer says Speaking while the reply plays and Muted while muted, unless an approval or a dropped link needs saying")
+    @Test("The composer says Speaking while the reply plays and Muted while muted, unless a dropped link needs saying")
     func composerStatusFollowsPlayback() async throws {
         let harness = try await startedHarness()
         #expect(harness.controller.composerStatus == "Listening")
 
         harness.audio.setPlaybackActive(true)
         #expect(harness.controller.isSpeaking)
-        #expect(harness.controller.composerStatus == "Speaking")
-
-        harness.channel.emit(.voiceApprovalRequired(VoiceApprovalRequiredMessage(
-            callId: "call-1", controlSessionId: "sess-1", eventSeq: 2, challengeId: "challenge-1",
-            requestId: "request-1", summary: "Allow the test command?", targetRefs: [], expiresAt: 9_000
-        )))
-        await waitUntil { harness.controller.approvalSummary != nil }
-        #expect(harness.controller.composerStatus == "Allow the test command?")
-
-        harness.channel.emit(.voiceApprovalResult(VoiceApprovalResultMessage(
-            callId: "call-1", controlSessionId: "sess-1", eventSeq: 3, challengeId: "challenge-1",
-            outcome: .delivered, decision: nil, reason: nil
-        )))
-        await waitUntil { harness.controller.approvalSummary == nil }
         #expect(harness.controller.composerStatus == "Speaking")
 
         harness.channel.emit(.voiceCallState(Self.snapshot(
@@ -303,6 +266,7 @@ struct LiveVoiceCallControllerTests {
 
         harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 5, leaseEpoch: 1)))
         await waitUntil { harness.controller.callState?.eventSeq == 5 }
+        #expect(harness.controller.composerStatus == "Speaking")
         harness.audio.setPlaybackActive(false)
         #expect(harness.controller.composerStatus == "Listening")
         harness.controller.toggleMute()
@@ -649,7 +613,6 @@ struct LiveVoiceCallControllerTests {
             startedAt: 1_000,
             updatedAt: 2_000,
             delegations: delegations,
-            pendingApprovals: [],
             partialTranscript: partialTranscript
         )
     }

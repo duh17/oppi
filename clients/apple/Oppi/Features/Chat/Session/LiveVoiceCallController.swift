@@ -36,9 +36,8 @@ final class LiveVoiceCallController {
     private(set) var isLive = false
     private(set) var isMuted = false
     private(set) var callState: VoiceCallStateSnapshot?
-    private(set) var approvalSummary: String?
-    /// The call's own state: connecting, listening, the agent's progress, an approval to
-    /// answer, or why the call failed. What the user is saying is `partialTranscript`.
+    /// The call's own state: connecting, listening, the agent's progress, or why the call
+    /// failed. What the user is saying is `partialTranscript`.
     private(set) var statusText = "Listening"
     private(set) var lastError: String?
     /// The agent's reply is playing.
@@ -57,8 +56,8 @@ final class LiveVoiceCallController {
 
     /// The composer's placeholder during a call.
     var composerStatus: String {
-        // An approval or a dropped frontend outranks the voice; the reply keeps playing.
-        guard isLive, approvalSummary == nil, callState?.frontend == .attached else {
+        // A dropped frontend outranks the voice; the reply keeps playing.
+        guard isLive, callState?.frontend == .attached else {
             return statusText
         }
         if isSpeaking { return "Speaking" }
@@ -161,7 +160,6 @@ final class LiveVoiceCallController {
         rejoinRequestId = nil
         startSent = false
         callState = nil
-        approvalSummary = nil
         lastError = nil
         statusText = "Connecting"
         isLive = true
@@ -293,16 +291,9 @@ final class LiveVoiceCallController {
         case .voiceDelegationUpdate(let update):
             // Status only. Playback stops when the user talks (a new partial transcript);
             // an update must not cut off speech already playing.
-            if !update.text.isEmpty, approvalSummary == nil {
+            if !update.text.isEmpty {
                 statusText = update.text
             }
-        case .voiceApprovalRequired(let required):
-            let summary = required.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-            approvalSummary = summary.isEmpty ? nil : summary
-            statusText = approvalSummary ?? "Listening"
-        case .voiceApprovalResult:
-            approvalSummary = nil
-            statusText = callState.map(Self.statusText(for:)) ?? "Listening"
         default:
             break
         }
@@ -325,9 +316,7 @@ final class LiveVoiceCallController {
         }
         isLive = true
         persistIdentity(from: snapshot)
-        if approvalSummary == nil {
-            statusText = Self.statusText(for: snapshot)
-        }
+        statusText = Self.statusText(for: snapshot)
         if keepAliveTask == nil {
             startKeepAlive(generation: startGeneration)
         }
@@ -560,7 +549,6 @@ final class LiveVoiceCallController {
         orphanFinishAction = nil
         rejoinRequestId = nil
         callState = nil
-        approvalSummary = nil
         if closeChannel {
             consumeTask?.cancel()
             channel?.close()
@@ -579,7 +567,6 @@ final class LiveVoiceCallController {
         orphanFinishAction = nil
         rejoinRequestId = nil
         callState = nil
-        approvalSummary = nil
         lastError = nil
         isLive = false
         isMuted = false

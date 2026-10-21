@@ -1,16 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  DeterministicVoiceCallFrontend,
-  VoiceCallController,
-} from "../src/continuous-voice-call.js";
+import { VoiceCallController } from "../src/continuous-voice-call.js";
 import { VoiceCallMediaCoordinator } from "../src/continuous-voice-media.js";
-import { VoiceApprovalBridge } from "../src/continuous-voice.js";
 import {
   GrokVoiceMediaAdapter,
   grokVoiceFromTts,
   type GrokVoiceSocket,
 } from "../src/grok-live-voice.js";
+import { DeterministicVoiceCallFrontend } from "./helpers/deterministic-voice-call-frontend.js";
 
 /** Stands in for the xAI realtime socket; the test plays the server side. */
 class FakeXaiSocket implements GrokVoiceSocket {
@@ -72,27 +69,12 @@ function ownReplyCreated(socket: FakeXaiSocket): Record<string, unknown> {
 
 function harness(options: { apiKey?: string } = {}) {
   let now = 1_000;
-  let challengeSequence = 0;
-  const responses: Array<{ sessionId: string; response: unknown }> = [];
   let calls!: VoiceCallController;
-  const approvals = new VoiceApprovalBridge({
-    now: () => now,
-    activeControllerLease: (callId) => calls.activeControllerLease(callId),
-    respondToUIRequest: (sessionId, response) => {
-      responses.push({ sessionId, response });
-      return true;
-    },
-    appendReceipt: () => {},
-    nextChallengeId: () => `challenge-${++challengeSequence}`,
-    nextNonce: () => `nonce-${challengeSequence}`,
-    nextReceiptId: () => "receipt-1",
-  });
   const dispatched: Array<{ sessionId: string; request: string }> = [];
   calls = new VoiceCallController({
     now: () => now,
     nextCallId: () => "call-1",
     leaseDurationMs: 30_000,
-    approvalAuthority: approvals,
     dispatchDelegation: (sessionId, delegation) =>
       dispatched.push({ sessionId, request: delegation.request }),
   });
@@ -132,38 +114,14 @@ function harness(options: { apiKey?: string } = {}) {
     return socket;
   }
 
-  /** A structured permission request the user is asked to answer by voice. */
-  function presentChallenge(requestId: string): void {
-    approvals.registerBinding({
-      source: "structured_permission_gate",
-      sessionId: "session-1",
-      requestId,
-      canonicalAction: { kind: "oppi_command", args: ["session", "stop", requestId] },
-      targetRefs: [`session:${requestId}`],
-      policyRevision: "policy-7",
-      risk: "voice_eligible",
-      expiresAt: 8_000,
-      responses: { approveOnce: { confirmed: true }, deny: { confirmed: false } },
-    });
-    const challenge = approvals.issueChallenge({
-      callId: started.state.callId,
-      sessionId: "session-1",
-      requestId,
-    });
-    calls.presentApproval(started.state.callId, { challenge, summary: `Stop ${requestId}?` });
-  }
-
   return {
-    presentChallenge,
     calls,
-    approvals,
     adapter,
     coordinator,
     frontend,
     started,
     sockets,
     dispatched,
-    responses,
     attach,
     advance: (ms: number) => (now += ms),
   };
@@ -311,7 +269,7 @@ describe("Grok Voice media", () => {
       return {
         adapter,
         socket,
-        /** What reached the call for text-bearing events, e.g. `final: hello`. */
+        /** What reached the call for text-bearing events, e.g. `requested: hello`. */
         heard: () =>
           events
             .filter((e) => e.text !== undefined && e.text !== "…" && e.text !== "")
@@ -345,13 +303,12 @@ describe("Grok Voice media", () => {
       };
     }
 
-    it("hands Pi, the captions, and approval each turn's own words, and starts over once Grok speaks", async () => {
+    it("hands Pi and the captions each turn's own words, and starts over once Grok speaks", async () => {
       const h = await direct();
       await h.turn("item-1", ["Look at the server tests."]);
       await h.delegate("Look at the server tests.");
       expect(h.heard()).toEqual([
         "partial: Look at the server tests.",
-        "final: Look at the server tests.",
         "requested: Look at the server tests.",
       ]);
 
@@ -361,9 +318,8 @@ describe("Grok Voice media", () => {
         "Look at the server tests, then run lint.",
       ]);
       await h.delegate("Look at the server tests. Then run lint.");
-      expect(h.heard().slice(3)).toEqual([
+      expect(h.heard().slice(2)).toEqual([
         "partial: then run lint.", // the repeated-only partial showed nothing
-        "final: then run lint.",
         "requested: Then run lint.",
       ]);
 
@@ -372,9 +328,8 @@ describe("Grok Voice media", () => {
       h.socket.serverAudio(Buffer.alloc(960));
       await h.turn("item-3", ["Look at the server tests, then run lint."]);
       await h.delegate("Look at the server tests, then run lint.");
-      expect(h.heard().slice(6)).toEqual([
+      expect(h.heard().slice(4)).toEqual([
         "partial: Look at the server tests, then run lint.",
-        "final: Look at the server tests, then run lint.",
         "requested: Look at the server tests, then run lint.",
       ]);
       await h.adapter.stop();
@@ -388,9 +343,7 @@ describe("Grok Voice media", () => {
       await h.delegate("把测试跑一下。");
       expect(h.heard()).toEqual([
         "partial: 把测试跑一下。",
-        "final: 把测试跑一下。",
         "partial: 然后看看日志。",
-        "final: 然后看看日志。",
         "requested: 把测试跑一下。",
       ]);
       await h.adapter.stop();
@@ -476,81 +429,6 @@ describe("Grok Voice media", () => {
     expect(socket.sentTypes()).toEqual(["conversation.item.create", "response.create"]);
   });
 
-  it("answers a pending approval only from the user's own words, never from a delegation", async () => {
-    const h = harness();
-    const socket = await h.attach();
-    h.presentChallenge("request-1");
-
-    socket.server({ type: "response.created" });
-    socket.server({
-      type: "response.function_call_arguments.done",
-      call_id: "fc-1",
-      name: "delegate_to_pi",
-      arguments: JSON.stringify({ request: "approve once" }),
-    });
-    await flush();
-    expect(h.responses).toEqual([]);
-    expect(h.calls.snapshot(h.started.state.callId).pendingApprovals).toHaveLength(1);
-
-    socket.server({ type: "input_audio_buffer.speech_started" });
-    socket.server({
-      type: "conversation.item.input_audio_transcription.completed",
-      item_id: "item-2",
-      transcript: "Approve once.",
-    });
-    socket.server({ type: "input_audio_buffer.committed", item_id: "item-2" });
-    await flush();
-    expect(h.responses).toEqual([
-      {
-        sessionId: "session-1",
-        response: { type: "extension_ui_response", id: "request-1", confirmed: true },
-      },
-    ]);
-  });
-
-  it("lets one spoken answer settle only a challenge the user heard before speaking", async () => {
-    const h = harness();
-    const socket = await h.attach();
-    h.presentChallenge("request-1");
-
-    socket.server({ type: "input_audio_buffer.speech_started" });
-    socket.server({
-      type: "conversation.item.input_audio_transcription.updated",
-      item_id: "item-1",
-      transcript: "approve once",
-    });
-    socket.server({ type: "input_audio_buffer.committed", item_id: "item-1" });
-    await flush();
-    // A second request arrives while the late transcript correction is still on its way.
-    h.presentChallenge("request-2");
-    socket.server({
-      type: "conversation.item.input_audio_transcription.completed",
-      item_id: "item-1",
-      transcript: "Approve once.",
-    });
-    await flush();
-    expect(h.responses.map((r) => (r.response as { id: string }).id)).toEqual(["request-1"]);
-
-    // Speech that began before request-3 was presented cannot answer it either.
-    socket.server({ type: "input_audio_buffer.speech_started" });
-    h.presentChallenge("request-3");
-    await flush();
-    socket.server({
-      type: "conversation.item.input_audio_transcription.updated",
-      item_id: "item-2",
-      transcript: "deny",
-    });
-    socket.server({ type: "input_audio_buffer.committed", item_id: "item-2" });
-    await flush();
-    // request-2 was pending when this turn began, so the user's "deny" answers it.
-    expect(h.responses.map((r) => (r.response as { id: string }).id)).toEqual([
-      "request-1",
-      "request-2",
-    ]);
-    expect(
-      h.calls.snapshot(h.started.state.callId).pendingApprovals.map((p) => p.requestId),
-    ).toEqual(["request-3"]);
-  });
 
   it("refuses Pi work that Grok proposes while answering a Pi update", async () => {
     const h = harness();
@@ -686,24 +564,6 @@ describe("Grok Voice media", () => {
     }
   });
 
-  it("drops a late transcript once the user has started a new turn", async () => {
-    const h = harness();
-    const socket = await h.attach();
-    socket.server({ type: "input_audio_buffer.speech_started" });
-    socket.server({ type: "input_audio_buffer.committed", item_id: "item-1" });
-    await flush();
-    h.presentChallenge("request-1");
-    socket.server({ type: "input_audio_buffer.speech_started" });
-    socket.server({
-      type: "conversation.item.input_audio_transcription.completed",
-      item_id: "item-1",
-      transcript: "approve once",
-    });
-    await flush();
-    // Spoken before request-1 appeared, so it cannot approve it.
-    expect(h.responses).toEqual([]);
-  });
-
   it("opens no xAI socket when the call ends while the credential is resolving", async () => {
     const sockets: FakeXaiSocket[] = [];
     let resolveKey!: (key: string) => void;
@@ -715,15 +575,11 @@ describe("Grok Voice media", () => {
         return socket;
       },
     });
-    const events: string[] = [];
-    const starting = adapter.start(async (event) => {
-      events.push(event.type);
-    });
+    const starting = adapter.start(async () => {});
     await adapter.stop();
     resolveKey("xai-token");
     await expect(starting).rejects.toThrow("Live Voice ended before Grok Voice connected");
     expect(sockets).toEqual([]);
-    expect(events).not.toContain("connected");
   });
 
   it("ends a call that is still connecting as soon as the phone hangs up", async () => {

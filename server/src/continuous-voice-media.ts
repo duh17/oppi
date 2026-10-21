@@ -1,23 +1,32 @@
 import { randomUUID } from "node:crypto";
 
 import type { VoiceCallController, VoiceCallFrontendConnection } from "./continuous-voice-call.js";
-import type {
-  VoiceFrontend,
-  VoiceFrontendEventHandler,
-  VoiceFrontendSemanticEvent,
-} from "./continuous-voice.js";
 import type { SttProvider, SttSpeechState, SttTranscriptUpdate } from "./stt-provider.js";
 import { createLogger } from "./logger.js";
 import { startSpeech, type SpeechDeps, type TtsConfig } from "./speech-synthesis.js";
-import { parseVoiceApprovalDecision } from "./voice-approval-bridge.js";
 
 const log = createLogger({ base: { component: "voice_media" } });
 
+/** What a call's voice backend reports while it runs. */
+export type VoiceMediaEvent =
+  | { type: "disconnected"; reason?: string }
+  | { type: "user_transcript_partial"; text: string }
+  /** A finished user turn that the backend's turn policy sends to the session (local ASR). */
+  | { type: "user_utterance_committed"; utteranceId: string; text: string }
+  /** The voice model passed this request to the session (Grok Voice). */
+  | { type: "delegation_requested"; utteranceId: string; text: string };
+
+export type VoiceMediaEventHandler = (event: VoiceMediaEvent) => void | Promise<void>;
+
 /**
- * Media adapters speak only semantic frontend events. Local Yuwp and Grok Voice
- * swap here; VoiceCallController stays provider-neutral.
+ * A call's voice: hears the caller and says what the session's agent speaks. Local Yuwp and
+ * Grok Voice swap here; VoiceCallController stays provider-neutral.
  */
-export interface VoiceMediaAdapter extends VoiceFrontend {
+export interface VoiceMediaAdapter {
+  start(handler: VoiceMediaEventHandler): void | Promise<void>;
+  /** Say the agent's words to the caller, after anything already being said. */
+  speak(text: string): void | Promise<void>;
+  stop(): void | Promise<void>;
   feedAudio?(pcm: Buffer): void;
   setPlaybackSink?(sendAudio: (pcm: Buffer) => void): void;
 }
@@ -90,7 +99,7 @@ const SENTENCE_END = /[。？！?.!]$/;
  * lags.
  */
 export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
-  private handler: VoiceFrontendEventHandler | undefined;
+  private handler: VoiceMediaEventHandler | undefined;
   /** The call's whole transcript as last heard. */
   private transcript = "";
   /** Speech units of `transcript` already handed to Pi (see `speechUnits`). */
@@ -98,7 +107,6 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   private lastTurnText = "";
   private commitInFlight: Promise<void> | undefined;
   private speaking = false;
-  private outputSpeaking = false;
   /** Bumped by barge-in and stop; queued speech from an older generation is dropped. */
   private speechGeneration = 0;
   private speechAbort: AbortController | undefined;
@@ -120,7 +128,7 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     this.playbackSink = sendAudio;
   }
 
-  async start(handler: VoiceFrontendEventHandler): Promise<void> {
+  async start(handler: VoiceMediaEventHandler): Promise<void> {
     this.handler = handler;
     this.stt.onToken((update) => {
       this.handleTranscript(update);
@@ -129,7 +137,6 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
       this.handleSpeechState(state);
     });
     await this.stt.start();
-    await handler({ type: "connected" });
   }
 
   feedAudio(pcm: Buffer): void {
@@ -163,9 +170,6 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     if (generation !== this.speechGeneration) return;
     const abort = new AbortController();
     this.speechAbort = abort;
-    this.outputSpeaking = true;
-    const handler = this.handler;
-    if (handler) await handler({ type: "assistant_speech_started" });
     try {
       if (!this.tts || abort.signal.aborted) return;
       for await (const chunk of this.tts.speak(text, abort.signal)) {
@@ -179,12 +183,8 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
         });
       }
     } finally {
-      // A barge-in already reported the stop and cleared speechAbort.
-      if (this.speechAbort === abort) {
-        this.speechAbort = undefined;
-        this.outputSpeaking = false;
-        if (handler) await handler({ type: "assistant_speech_stopped" });
-      }
+      // A barge-in already cleared speechAbort.
+      if (this.speechAbort === abort) this.speechAbort = undefined;
     }
   }
 
@@ -205,7 +205,6 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     if (!this.speaking) {
       this.speaking = true;
       this.cancelAssistantSpeech();
-      void handler({ type: "user_speech_started" });
     }
     void handler({ type: "user_transcript_partial", text: turn });
     this.scheduleTurnEnd();
@@ -223,9 +222,6 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     if (!abort) return;
     this.speechAbort = undefined;
     abort.abort();
-    this.outputSpeaking = false;
-    const handler = this.handler;
-    if (handler) void handler({ type: "assistant_speech_stopped" });
   }
 
   private handleSpeechState(state: SttSpeechState): void {
@@ -271,10 +267,7 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
       if (!turn) return;
       this.delegatedUnits = speechUnits(this.transcript).length;
       this.lastTurnText = "";
-      if (this.speaking) {
-        this.speaking = false;
-        void handler({ type: "user_speech_ended" });
-      }
+      this.speaking = false;
       await handler({
         type: "user_utterance_committed",
         utteranceId: randomUUID(),
@@ -449,10 +442,7 @@ export class VoiceCallMediaCoordinator {
     }
   }
 
-  private async handleEvent(
-    session: MediaSession,
-    event: VoiceFrontendSemanticEvent,
-  ): Promise<void> {
+  private async handleEvent(session: MediaSession, event: VoiceMediaEvent): Promise<void> {
     switch (event.type) {
       case "user_transcript_partial": {
         const state = this.deps.calls.setPartialTranscript(session.callId, event.text);
@@ -461,32 +451,7 @@ export class VoiceCallMediaCoordinator {
       }
       case "user_utterance_committed": {
         const request = event.text.trim();
-        if (!request) return;
-        // A pending voice_approval_required challenge owns the next committed
-        // utterance. Exact Stage 1 phrases go to submitApprovalTranscript;
-        // anything else fails closed instead of becoming a Pi delegation.
-        const pending = this.pendingChallengeId(session);
-        if (pending) {
-          await this.answerApproval(session, pending, request);
-          return;
-        }
-        this.delegate(session, event.utteranceId, request);
-        return;
-      }
-      case "user_speech_started":
-        // Only a challenge the user could have heard before speaking may take this turn.
-        session.challengesHeard = new Set(
-          this.deps.calls.snapshot(session.callId).pendingApprovals.map((p) => p.challengeId),
-        );
-        return;
-      case "user_transcript_final": {
-        // The user's own words can answer a challenge; they never start Pi work.
-        const heard = session.challengesHeard;
-        session.challengesHeard = undefined; // one answer per turn
-        const pending = this.deps.calls
-          .snapshot(session.callId)
-          .pendingApprovals.find((p) => heard?.has(p.challengeId));
-        if (pending) await this.answerApproval(session, pending.challengeId, event.text.trim());
+        if (request) this.delegate(session, event.utteranceId, request);
         return;
       }
       case "disconnected": {
@@ -508,7 +473,6 @@ export class VoiceCallMediaCoordinator {
         return;
       }
       case "delegation_requested": {
-        // The voice model composed this request, so it is work, never approval evidence.
         const request = event.text.trim();
         if (request) this.delegate(session, event.utteranceId, request);
         return;
@@ -516,28 +480,6 @@ export class VoiceCallMediaCoordinator {
       default:
         return;
     }
-  }
-
-  private pendingChallengeId(session: MediaSession): string | undefined {
-    return this.deps.calls.snapshot(session.callId).pendingApprovals[0]?.challengeId;
-  }
-
-  /** Only exact decision phrases reach the approval authority; anything else is dropped. */
-  private async answerApproval(
-    session: MediaSession,
-    challengeId: string,
-    transcript: string,
-  ): Promise<void> {
-    if (!transcript || !parseVoiceApprovalDecision(transcript)) return;
-    await this.deps.calls.submitApprovalTranscript(
-      {
-        callId: session.callId,
-        controllerLeaseEpoch: session.controllerLeaseEpoch,
-        challengeId,
-        transcript,
-      },
-      session.frontend,
-    );
   }
 
   private delegate(session: MediaSession, utteranceId: string, request: string): void {
@@ -559,6 +501,4 @@ interface MediaSession {
   controllerLeaseEpoch: number;
   frontend: VoiceCallFrontendConnection;
   adapter: VoiceMediaAdapter;
-  /** Challenges pending when the current user turn began. */
-  challengesHeard?: Set<string>;
 }
