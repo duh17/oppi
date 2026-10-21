@@ -38,6 +38,8 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     let text: String
     let images: [ImageAttachment]
     var fetchWorkspaceFileData: ((_ path: String) async throws -> Data)? = nil
+    /// Stored session attachment bytes by attachment id, for a committed message's images.
+    var fetchSessionAttachment: ((_ attachmentId: String) async throws -> Data)? = nil
     var onOpenPathPill: ((UserMessagePathPill, UIView) -> Void)? = nil
     let canFork: Bool
     let onFork: (() -> Void)?
@@ -382,8 +384,11 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         )
         let inlineImagePillsChanged = previousContent.inlineImagePathPills != content.inlineImagePathPills
         let fetchChanged = previousConfiguration.fetchWorkspaceFileData == nil && configuration.fetchWorkspaceFileData != nil
+        let attachmentFetchChanged = previousConfiguration.fetchSessionAttachment == nil
+            && configuration.fetchSessionAttachment != nil
         let paletteChanged = previousThemeID != currentThemeID
-        let shouldRefreshImages = !hasAppliedConfiguration || imagesChanged || inlineImagePillsChanged || fetchChanged || paletteChanged
+        let shouldRefreshImages = !hasAppliedConfiguration || imagesChanged || inlineImagePillsChanged
+            || fetchChanged || attachmentFetchChanged || paletteChanged
         if shouldRefreshImages {
             updateImageStrip(
                 images: configuration.images,
@@ -912,7 +917,10 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             let container = makeThumbnailContainer(
                 borderColor: borderColor,
                 accessibilityIdentifier: "chat.user.thumbnail.\(index)",
-                accessibilityLabel: "Attached image \(index + 1)"
+                accessibilityLabel: "Attached image \(index + 1)",
+                // A stored reference names the image's size, so the placeholder already has
+                // its shape while the bytes are fetched.
+                aspectRatio: attachment.storedAttachmentID == nil ? nil : attachment.aspectRatio
             )
 
             container.isUserInteractionEnabled = true
@@ -920,16 +928,42 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             imageStack.addArrangedSubview(container)
             thumbnailViews.append(container)
 
+            // A committed message names a stored attachment; the slot above is already
+            // reserved at thumbnail size, so the strip never jumps when the bytes land.
+            if let attachmentID = attachment.storedAttachmentID {
+                guard let fetch = currentConfiguration.fetchSessionAttachment else {
+                    // No API client yet: the row keeps its slot and says the image is
+                    // unavailable rather than spinning forever.
+                    installUnavailableThumbnail(
+                        in: container,
+                        palette: palette,
+                        symbolName: "photo.badge.exclamationmark"
+                    )
+                    continue
+                }
+                let task = Task { [weak self, weak container] in
+                    do {
+                        let data = try await fetch(attachmentID)
+                        guard !Task.isCancelled, let self, let container else { return }
+                        self.installThumbnail(
+                            data: data,
+                            mimeType: attachment.mimeType,
+                            in: container,
+                            allowsFullscreen: true
+                        )
+                    } catch {
+                        guard !Task.isCancelled, let self, let container else { return }
+                        self.installUnavailableThumbnail(in: container, palette: palette)
+                    }
+                }
+                decodeTasks.append(task)
+                continue
+            }
+
             if let data = Data(base64Encoded: attachment.data, options: .ignoreUnknownCharacters) {
                 installThumbnail(data: data, mimeType: attachment.mimeType, in: container, allowsFullscreen: true)
             } else {
-                container.subviews.forEach { $0.removeFromSuperview() }
-                let fallback = UIImageView(image: UIImage(systemName: "photo.badge.exclamationmark"))
-                fallback.translatesAutoresizingMaskIntoConstraints = false
-                fallback.tintColor = UIColor(palette.comment)
-                fallback.contentMode = .scaleAspectFit
-                container.addSubview(fallback)
-                pinThumbnailContent(fallback, in: container, inset: 18)
+                installUnavailableThumbnail(in: container, palette: palette, symbolName: "photo.badge.exclamationmark")
             }
         }
 
@@ -987,10 +1021,25 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         decodeTasks.append(task)
     }
 
+    private func installUnavailableThumbnail(
+        in container: UIView,
+        palette: ThemePalette,
+        symbolName: String = "photo"
+    ) {
+        container.subviews.forEach { $0.removeFromSuperview() }
+        let fallback = UIImageView(image: UIImage(systemName: symbolName))
+        fallback.translatesAutoresizingMaskIntoConstraints = false
+        fallback.tintColor = UIColor(palette.comment)
+        fallback.contentMode = .scaleAspectFit
+        container.addSubview(fallback)
+        pinThumbnailContent(fallback, in: container, inset: 18)
+    }
+
     private func makeThumbnailContainer(
         borderColor: CGColor,
         accessibilityIdentifier: String,
-        accessibilityLabel: String
+        accessibilityLabel: String,
+        aspectRatio: CGFloat? = nil
     ) -> UIView {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -1002,6 +1051,25 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         container.isAccessibilityElement = true
         container.accessibilityIdentifier = accessibilityIdentifier
         container.accessibilityLabel = accessibilityLabel
+        if let aspectRatio {
+            // Image aspect inside the fixed 80 pt slot: width 80, height 80/ratio (clamped).
+            let placeholder = UIView()
+            placeholder.translatesAutoresizingMaskIntoConstraints = false
+            placeholder.backgroundColor = UIColor(ThemeRuntimeState.currentPalette().bg)
+                .withAlphaComponent(0.35)
+            placeholder.layer.cornerRadius = Self.thumbnailCornerRadius
+            placeholder.isUserInteractionEnabled = false
+            container.addSubview(placeholder)
+            let height = Self.thumbnailSize / max(aspectRatio, 0.01)
+            NSLayoutConstraint.activate([
+                placeholder.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+                placeholder.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+                placeholder.widthAnchor.constraint(equalToConstant: Self.thumbnailSize),
+                placeholder.heightAnchor.constraint(
+                    equalToConstant: min(Self.thumbnailSize, height)
+                ),
+            ])
+        }
         let spinner = UIActivityIndicatorView(style: .medium)
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.startAnimating()

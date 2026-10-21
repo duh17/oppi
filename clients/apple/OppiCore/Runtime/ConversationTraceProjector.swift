@@ -68,15 +68,20 @@ enum ConversationTraceProjector {
             guard let message else { continue }
             switch message["role"]?.stringValue {
             case "user":
-                let text = extractText(message["content"])
-                if !text.isEmpty {
+                // A committed user message names its stored images in `media`; its text has a
+                // data URI only for an image the server could not store.
+                let projected = userTextAndMedia(message["content"])
+                if !projected.text.isEmpty || !projected.media.isEmpty {
                     var event = TraceEvent(
                         id: String(entry.id),
                         type: .user,
                         timestamp: timestamp,
-                        text: entry.origin == nil ? text : agentMessageText(text, offset: entry.textOffset)
+                        text: entry.origin == nil
+                            ? projected.text
+                            : agentMessageText(projected.text, offset: entry.textOffset)
                     )
                     event.origin = entry.origin
+                    event.media = projected.media.isEmpty ? nil : projected.media
                     events.append(event)
                 }
             case "assistant":
@@ -255,22 +260,71 @@ enum ConversationTraceProjector {
         case .array(let blocks):
             return blocks.compactMap { part -> String? in
                 guard let block = part.objectValue else { return nil }
-                let type = block["type"]?.stringValue
-                if type == "text" || type == "output_text" {
-                    guard let text = block["text"]?.stringValue, !text.isEmpty else { return nil }
-                    return text
-                }
-                guard let data = block["data"]?.stringValue, !data.isEmpty else { return nil }
-                let mimeType = block["mimeType"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
-                switch type {
-                case "image": return "data:\(mimeType ?? "image/png");base64,\(data)"
-                case "audio", "output_audio": return "data:\(mimeType ?? "audio/wav");base64,\(data)"
-                default: return nil
-                }
+                return textPart(block)
             }.joined(separator: "\n")
         default:
             return ""
         }
+    }
+
+    /// A user message's display text and stored images. An image block arrives as a reference
+    /// (`attachment`, from `storeUserMessageImages` on the server) or, when it could not be
+    /// stored, as inline `data` that stays a data URI.
+    static func userTextAndMedia(_ content: JSONValue?) -> (text: String, media: [TraceMediaAttachment]) {
+        switch content {
+        case .string(let text):
+            return (text, [])
+        case .array(let blocks):
+            var parts: [String] = []
+            var media: [TraceMediaAttachment] = []
+            for part in blocks {
+                guard let block = part.objectValue else { continue }
+                if block["type"]?.stringValue == "image",
+                   let record = block["attachment"]?.objectValue,
+                   let attachment = storedAttachment(record) {
+                    media.append(attachment)
+                    continue
+                }
+                if let text = textPart(block) { parts.append(text) }
+            }
+            return (parts.joined(separator: "\n"), media)
+        default:
+            return ("", [])
+        }
+    }
+
+    /// One content block as trace text: a text block, or a media block's data URI.
+    private static func textPart(_ block: [String: JSONValue]) -> String? {
+        let type = block["type"]?.stringValue
+        if type == "text" || type == "output_text" {
+            guard let text = block["text"]?.stringValue, !text.isEmpty else { return nil }
+            return text
+        }
+        guard let data = block["data"]?.stringValue, !data.isEmpty else { return nil }
+        let mimeType = block["mimeType"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
+        switch type {
+        case "image": return "data:\(mimeType ?? "image/png");base64,\(data)"
+        case "audio", "output_audio": return "data:\(mimeType ?? "audio/wav");base64,\(data)"
+        default: return nil
+        }
+    }
+
+    /// The attachment fields a stored image reference carries, as the server's record holds them.
+    private static func storedAttachment(_ record: [String: JSONValue]) -> TraceMediaAttachment? {
+        guard let kind = record["kind"]?.stringValue,
+              let id = record["id"]?.stringValue, !id.isEmpty,
+              let mimeType = record["mimeType"]?.stringValue else { return nil }
+        return TraceMediaAttachment(
+            kind: kind,
+            id: id,
+            mimeType: mimeType,
+            fileName: record["fileName"]?.stringValue,
+            sizeBytes: record["sizeBytes"]?.numberValue.map { Int($0) },
+            sha256: record["sha256"]?.stringValue,
+            width: record["width"]?.numberValue.map { Int($0) },
+            height: record["height"]?.numberValue.map { Int($0) },
+            durationSeconds: record["durationSeconds"]?.numberValue
+        )
     }
 
     /// `joinAssistantTextBlocks`: adjacent text blocks, with a paragraph break where joining

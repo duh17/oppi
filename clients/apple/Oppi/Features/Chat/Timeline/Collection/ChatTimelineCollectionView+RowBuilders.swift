@@ -167,6 +167,17 @@ extension ChatTimelineController {
         let forkAction: (() -> Void)? = nil
 
         // Unified native user row — handles both text-only and image messages.
+        // A committed message's images are stored session attachments: fetch their bytes by
+        // id, keeping the fetcher available even while workspace metadata is still resolving.
+        let attachmentFetcher: ((String) async throws -> Data)? = sessionContent.map { content in
+            { [sessionId, routeScope] attachmentId in
+                try await content.fetchSessionAttachment(
+                    sessionId: sessionId,
+                    attachmentId: attachmentId,
+                    routeScope: routeScope
+                )
+            }
+        }
         return UserTimelineRowConfiguration(
             text: text,
             images: images,
@@ -174,6 +185,7 @@ extension ChatTimelineController {
                 workspaceId: workspaceId,
                 sessionId: sessionId
             ),
+            fetchSessionAttachment: attachmentFetcher,
             onOpenPathPill: { [weak self] pill, sourceView in
                 self?.openUserMessagePathPill(pill, from: sourceView)
             },

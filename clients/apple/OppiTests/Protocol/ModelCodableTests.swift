@@ -846,6 +846,39 @@ struct TraceEventCodableTests {
         #expect(event.tool == nil)
     }
 
+    @Test func decodeUserEventWithStoredImageMedia() throws {
+        let json = """
+        {
+            "id":"e1","type":"user","timestamp":"2025-01-01T00:00:00Z","text":"look at this",
+            "media":[{
+                "kind":"image","id":"att_user_AbCd","mimeType":"image/png",
+                "fileName":"user-image.png","sizeBytes":68,"storageKey":"s1/att_user_AbCd.png",
+                "sha256":"abc","width":1206,"height":2622
+            }]
+        }
+        """
+        let event = try JSONDecoder().decode(TraceEvent.self, from: json.data(using: .utf8)!)
+        #expect(event.type == .user)
+        #expect(event.text == "look at this")
+        let media = try #require(event.media?.first)
+        #expect(media.kind == "image")
+        #expect(media.id == "att_user_AbCd")
+        #expect(media.mimeType == "image/png")
+        #expect(media.fileName == "user-image.png")
+        #expect(media.sizeBytes == 68)
+        #expect(media.width == 1206)
+        #expect(media.height == 2622)
+        #expect(media.durationSeconds == nil)
+    }
+
+    @Test func decodeUserEventWithoutMediaStaysInline() throws {
+        let json = """
+        {"id":"e1","type":"user","timestamp":"2025-01-01T00:00:00Z","text":"data:image/png;base64,AAAA"}
+        """
+        let event = try JSONDecoder().decode(TraceEvent.self, from: json.data(using: .utf8)!)
+        #expect(event.media == nil)
+    }
+
     @Test func decodeAssistantEventWithOptionalStructuralIdentity() throws {
         let indexedJSON = """
         {"id":"e2","type":"assistant","timestamp":"2025-01-01T00:00:00Z","text":"world","contentIndex":3,"runOrdinal":1}

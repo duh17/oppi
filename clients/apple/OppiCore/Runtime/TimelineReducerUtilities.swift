@@ -181,13 +181,31 @@ enum StringFastChecks {
 
 // MARK: - User Message Image Extraction
 
-/// Extract data URI images from user message text.
+/// Extract user-message images: stored attachment references and unresolved data URIs.
 ///
-/// Trace events store images as `data:image/...;base64,...` inline in the
-/// text field. Rendering 1MB+ of base64 as `SwiftUI.Text` freezes the
-/// main thread. This splits the text into clean display text + image
-/// attachments for proper thumbnail rendering.
+/// Trace events name stored images in `media` (their bytes live in the session attachment
+/// store). An image the server could not store keeps its bytes as a
+/// `data:image/...;base64,...` line in the text, which is still split out here.
+/// Rendering 1MB+ of base64 as `SwiftUI.Text` freezes the main thread, so either way the
+/// text becomes clean display text plus thumbnails.
 enum UserMessageImageExtractor {
+
+    /// `media` as stored-attachment references, in order, skipping anything that is not an image.
+    static func storedImages(from media: [TraceMediaAttachment]?) -> [ImageAttachment] {
+        guard let media, !media.isEmpty else { return [] }
+        return media.compactMap { item in
+            guard item.kind == "image", !item.id.isEmpty else { return nil }
+            return ImageAttachment(
+                data: "",
+                mimeType: item.mimeType,
+                attachmentId: item.id,
+                fileName: item.fileName,
+                sizeBytes: item.sizeBytes,
+                width: item.width,
+                height: item.height
+            )
+        }
+    }
 
     static func extractImagesFromText(_ text: String) -> (String, [ImageAttachment]) {
         // Fast path: skip regex when text cannot contain data URIs.

@@ -618,7 +618,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             counts[key, default: 0] += 1
         }
         var remainingImageEchoes = events.reduce(0) { count, event in
-            guard event.type == .user, Self.traceUserEventCarriesImages(event.text ?? "") else {
+            guard event.type == .user, Self.traceUserEventCarriesImages(event) else {
                 return count
             }
             return count + 1
@@ -1106,16 +1106,34 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     private func removeEchoedLocalUserRows(_ newEvents: [TraceEvent], above newestBefore: Int) {
         localUserRowIDs.removeAll { indexForID($0) == nil }
         guard !localUserRowIDs.isEmpty else { return }
-        var pending: [(id: String, text: String)] = localUserRowIDs.compactMap { id in
-            guard let index = indexForID(id), case .userMessage(_, let text, _, _) = items[index] else { return nil }
-            return (id, Self.comparableTimelineUserText(text))
+        var pending: [(id: String, text: String, hasImages: Bool)] = localUserRowIDs.compactMap { id in
+            guard let index = indexForID(id), case .userMessage(_, let text, let images, _) = items[index] else { return nil }
+            return (id, Self.comparableTimelineUserText(text), !images.isEmpty)
         }
         var taken: Set<String> = []
+        // Echoes that show an image, whether inline or as a stored reference. A photo row is a
+        // marker plus thumbnails, so its text never matches the materialized echo.
+        var imageEchoes = newEvents.reduce(0) { count, event in
+            guard event.type == .user, event.origin == nil,
+                  let entry = Self.entryNumber(of: event), entry > newestBefore,
+                  Self.traceUserEventCarriesImages(event) else { return count }
+            return count + 1
+        }
         for event in newEvents where event.type == .user && event.origin == nil {
             guard let entry = Self.entryNumber(of: event), entry > newestBefore else { continue }
             let text = Self.comparableTimelineUserText(event.text ?? "")
             guard let match = pending.firstIndex(where: { $0.text == text }) else { continue }
-            taken.insert(pending.remove(at: match).id)
+            let row = pending.remove(at: match)
+            taken.insert(row.id)
+            // The echo that lands this row takes its image with it.
+            if row.hasImages, imageEchoes > 0 { imageEchoes -= 1 }
+        }
+        if imageEchoes > 0 {
+            for index in pending.indices where imageEchoes > 0 {
+                guard pending[index].hasImages else { continue }
+                taken.insert(pending[index].id)
+                imageEchoes -= 1
+            }
         }
         guard !taken.isEmpty else { return }
         items.removeAll { taken.contains($0.id) }
@@ -1179,7 +1197,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 ), appendOnly: appendOnly)
                 return nil
             }
-            let (cleanText, images) = UserMessageImageExtractor.extractImagesFromText(rawText)
+            let (cleanText, inlineImages) = UserMessageImageExtractor.extractImagesFromText(rawText)
+            // Stored references first: a committed message names them in `media`, and only an
+            // image the server could not store is still inline in the text.
+            let images = UserMessageImageExtractor.storedImages(from: event.media) + inlineImages
             insertItem(.userMessage(
                 id: event.id,
                 text: cleanText,
@@ -2236,6 +2257,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let echoCarriesImages = !UserMessageTextProjection.attachmentPaths(from: text).isEmpty
             || Self.traceUserEventCarriesImages(text)
         return echoCarriesImages
+    }
+
+    private static func traceUserEventCarriesImages(_ event: TraceEvent) -> Bool {
+        if let media = event.media, !media.isEmpty { return true }
+        return traceUserEventCarriesImages(event.text ?? "")
     }
 
     private static func traceUserEventCarriesImages(_ text: String) -> Bool {

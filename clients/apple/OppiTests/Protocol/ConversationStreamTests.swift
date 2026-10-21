@@ -135,6 +135,73 @@ struct ConversationStreamTests {
         #expect(trace[6].timestamp == "2026-10-10T16:33:26.000Z")
     }
 
+    /// A user entry's stored image block projects to `media`, not to inline bytes, and an
+    /// image the server could not store stays a data URI in the text.
+    @Test func userEntryProjectionSplitsStoredImagesFromInlineFallback() throws {
+        let content: JSONValue = .array([
+            .object(["type": .string("text"), "text": .string("look at this")]),
+            .object([
+                "type": .string("image"),
+                "mimeType": .string("image/png"),
+                "attachment": .object([
+                    "kind": .string("image"),
+                    "id": .string("att_user_abc"),
+                    "mimeType": .string("image/png"),
+                    "fileName": .string("user-image.png"),
+                    "sizeBytes": .number(68),
+                    "width": .number(1206),
+                    "height": .number(2622),
+                ]),
+            ]),
+            .object([
+                "type": .string("image"),
+                "data": .string("QUJD"),
+                "mimeType": .string("image/jpeg"),
+            ]),
+        ])
+        let entry = ConversationEntryView(
+            id: 7,
+            kind: "pi.user",
+            model: [.object(["role": .string("user"), "content": content, "timestamp": .number(1_791_650_000_000)])]
+        )
+
+        let events = ConversationTraceProjector.traceEvents(from: [entry])
+        let event = try #require(events.first)
+        #expect(event.type == .user)
+        #expect(event.text == "look at this\ndata:image/jpeg;base64,QUJD")
+        let media = try #require(event.media)
+        #expect(media.count == 1)
+        #expect(media[0].id == "att_user_abc")
+        #expect(media[0].kind == "image")
+        #expect(media[0].mimeType == "image/png")
+        #expect(media[0].width == 1206)
+        #expect(media[0].height == 2622)
+    }
+
+    @Test func userEntryWithOnlyAStoredImageStillProjectsARow() throws {
+        let content: JSONValue = .array([
+            .object([
+                "type": .string("image"),
+                "mimeType": .string("image/png"),
+                "attachment": .object([
+                    "kind": .string("image"),
+                    "id": .string("att_user_abc"),
+                    "mimeType": .string("image/png"),
+                ]),
+            ]),
+        ])
+        let entry = ConversationEntryView(
+            id: 7,
+            kind: "pi.user",
+            model: [.object(["role": .string("user"), "content": content, "timestamp": .number(1_791_650_000_000)])]
+        )
+
+        let event = try #require(ConversationTraceProjector.traceEvents(from: [entry]).first)
+        #expect(event.type == .user)
+        #expect(event.text == "")
+        #expect(event.media?.map(\.id) == ["att_user_abc"])
+    }
+
     @Test func framesForAnotherConversationAndMissingPathsThrow() throws {
         var replica = ConversationReplica()
         try replica.apply(.snapshot(.init(conversationId: 3, head: 0, hasOlder: false, entries: [], docs: ["d": ["a": "x"]])))
@@ -166,7 +233,26 @@ struct ConversationStreamTests {
         let types = Set(golden.trace.map(\.type))
         #expect(types == [.user, .assistant, .thinking, .toolCall, .toolResult, .system, .compaction])
         #expect(golden.trace.contains { $0.type == .toolResult && $0.isError == true })
-        #expect(golden.trace.contains { $0.type == .user && $0.text?.contains("data:image/png;base64,") == true })
+        // A user photo is a stored attachment reference, not inline bytes.
+        #expect(golden.trace.contains {
+            $0.type == .user && $0.media?.contains { $0.kind == "image" } == true
+        })
+        #expect(golden.trace.contains { $0.type == .user && $0.text?.contains("data:image/") == true } == false)
+        let sentEntries = golden.frames.flatMap { frame -> [ConversationEntryView] in
+            switch frame {
+            case .snapshot(let snapshot): return snapshot.entries
+            case .update(let update): return update.entries ?? []
+            case .older(let page): return page.entries
+            }
+        }
+        #expect(sentEntries.contains { entry in
+            let content = entry.model?.first?.objectValue?["content"]?.arrayValue
+            return content?.contains { block in
+                block.objectValue?["type"]?.stringValue == "image"
+                    && block.objectValue?["attachment"]?.objectValue?["id"]?.stringValue != nil
+                    && block.objectValue?["data"] == nil
+            } == true
+        })
         #expect(golden.trace.contains { $0.presentation?.output != nil })
         #expect(golden.trace.contains { $0.type == .toolCall && $0.callSegments != nil && $0.outputPresentation?.kind == "terminal" })
         #expect(golden.frames.contains { if case .older(let page) = $0 { !page.entries.isEmpty } else { false } })

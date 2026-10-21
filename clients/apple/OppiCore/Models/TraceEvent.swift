@@ -90,6 +90,11 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
 
     /// User events only: another agent session sent this input.
     var origin: MessageOrigin? = nil
+    ///
+    /// User events only: images the server stores in the session attachment store. Their bytes
+    /// are fetched from `/sessions/{id}/attachments/{attachmentId}`; `text` carries a data URI
+    /// only for an image the server could not store.
+    var media: [TraceMediaAttachment]? = nil
 
     init(
         id: String,
@@ -119,7 +124,8 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         inputPresentation: ToolInputPresentation? = nil,
         nestedCalls: NestedToolCalls? = nil,
         display: ToolDisplay? = nil,
-        origin: MessageOrigin? = nil
+        origin: MessageOrigin? = nil,
+        media: [TraceMediaAttachment]? = nil
     ) {
         self.id = id
         self.type = type
@@ -149,6 +155,43 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         self.nestedCalls = nestedCalls
         self.display = display
         self.origin = origin
+        self.media = media
+    }
+}
+
+/// A stored media attachment a user message references, the same shape as a tool
+/// `details.media[]` entry. Field names match the server's attachment record.
+struct TraceMediaAttachment: Codable, Equatable, Sendable {
+    let kind: String
+    let id: String
+    let mimeType: String
+    let fileName: String?
+    let sizeBytes: Int?
+    let sha256: String?
+    let width: Int?
+    let height: Int?
+    let durationSeconds: Double?
+
+    init(
+        kind: String,
+        id: String,
+        mimeType: String,
+        fileName: String? = nil,
+        sizeBytes: Int? = nil,
+        sha256: String? = nil,
+        width: Int? = nil,
+        height: Int? = nil,
+        durationSeconds: Double? = nil
+    ) {
+        self.kind = kind
+        self.id = id
+        self.mimeType = mimeType
+        self.fileName = fileName
+        self.sizeBytes = sizeBytes
+        self.sha256 = sha256
+        self.width = width
+        self.height = height
+        self.durationSeconds = durationSeconds
     }
 }
 

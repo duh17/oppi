@@ -167,6 +167,115 @@ struct TimelineReducerImageOrphanTests {
         #expect(images.count == 2, "Should have extracted both image attachments")
     }
 
+    // MARK: - Stored attachment references
+
+    @Test func loadSessionBuildsStoredImageReferencesFromMedia() throws {
+        let reducer = TimelineReducer()
+
+        let media = TraceMediaAttachment(
+            kind: "image", id: "att_user_abc", mimeType: "image/png",
+            fileName: "user-image.png", sizeBytes: 68, width: 1206, height: 2622
+        )
+        var userEvent = TraceEvent(
+            id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z", text: "look at this"
+        )
+        userEvent.media = [media]
+        var assistantEvent = TraceEvent(
+            id: "e2", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z", text: "Seen."
+        )
+        assistantEvent.media = nil
+        reducer.loadSession([userEvent, assistantEvent])
+
+        #expect(reducer.items.count == 2)
+        guard case .userMessage(_, let text, let images, _) = reducer.items[0] else {
+            Issue.record("Expected userMessage at index 0")
+            return
+        }
+        #expect(text == "look at this")
+        #expect(images.count == 1)
+        let image = images[0]
+        #expect(image.storedAttachmentID == "att_user_abc")
+        #expect(image.data.isEmpty)
+        #expect(image.mimeType == "image/png")
+        #expect(image.width == 1206)
+        #expect(image.height == 2622)
+        let aspectRatio = try #require(image.aspectRatio)
+        #expect(abs(aspectRatio - CGFloat(1206) / CGFloat(2622)) < 1e-9)
+    }
+
+    @Test func storedImageMediaDoesNotCarryBytesIntoHistory() {
+        let reducer = TimelineReducer()
+        let media = TraceMediaAttachment(kind: "image", id: "att_user_abc", mimeType: "image/png")
+        var userEvent = TraceEvent(
+            id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z", text: "photo"
+        )
+        userEvent.media = [media]
+
+        reducer.loadSession([userEvent])
+
+        guard case .userMessage(_, let text, let images, _) = reducer.items[0] else {
+            Issue.record("Expected userMessage at index 0")
+            return
+        }
+        #expect(!text.contains("base64"))
+        #expect(images.allSatisfy { $0.data.isEmpty })
+    }
+
+    @Test func inlineFallbackStillExtractsWhenMediaIsAlsoPresent() {
+        let reducer = TimelineReducer()
+        let media = TraceMediaAttachment(kind: "image", id: "att_user_abc", mimeType: "image/png")
+        var userEvent = TraceEvent(
+            id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+            text: "two photos\ndata:image/jpeg;base64,\(Self.fakeBase64A)"
+        )
+        userEvent.media = [media]
+
+        reducer.loadSession([userEvent])
+
+        guard case .userMessage(_, let text, let images, _) = reducer.items[0] else {
+            Issue.record("Expected userMessage at index 0")
+            return
+        }
+        #expect(text == "two photos")
+        #expect(images.count == 2)
+        #expect(images[0].storedAttachmentID == "att_user_abc")
+        #expect(images[1].storedAttachmentID == nil)
+        #expect(images[1].data == Self.fakeBase64A)
+    }
+
+    @Test func mediaEchoLandsLocalPhotoRow() {
+        let reducer = TimelineReducer()
+        reducer.loadSession([
+            TraceEvent(id: "1", type: .user, timestamp: "2025-01-01T00:00:00.000Z", text: "Hello"),
+            TraceEvent(id: "2", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z", text: "Hi"),
+        ])
+
+        let local = ImageAttachment(data: Self.fakeBase64A, mimeType: "image/jpeg")
+        _ = reducer.appendUserMessage("[[oppi-attachments:b:photos=1]]", images: [local])
+
+        let media = TraceMediaAttachment(kind: "image", id: "att_user_abc", mimeType: "image/jpeg")
+        var echo = TraceEvent(
+            id: "3", type: .user, timestamp: "2025-01-01T00:00:02.000Z",
+            text: "Attached files:\n- screenshot.png: .pi/attachments/s1/t1/screenshot.png"
+        )
+        echo.media = [media]
+        reducer.applyConversationCommitted([
+            TraceEvent(id: "1", type: .user, timestamp: "2025-01-01T00:00:00.000Z", text: "Hello"),
+            TraceEvent(id: "2", type: .assistant, timestamp: "2025-01-01T00:00:01.000Z", text: "Hi"),
+            echo,
+            TraceEvent(id: "4", type: .assistant, timestamp: "2025-01-01T00:00:03.000Z", text: "Done."),
+        ])
+
+        // The local photo row is gone; the committed echo row remains, with its stored image.
+        let userRows = reducer.items.compactMap { item -> (String, [ImageAttachment])? in
+            guard case .userMessage(let id, _, let images, _) = item else { return nil }
+            return (id, images)
+        }
+        #expect(userRows.count == 2)
+        #expect(userRows.map(\.0) == ["1", "3"])
+        #expect(userRows[1].1.first?.storedAttachmentID == "att_user_abc")
+    }
+
     @Test func loadSessionTraceUserMessageWithImagesRendersCleanText() {
         let reducer = TimelineReducer()
 
