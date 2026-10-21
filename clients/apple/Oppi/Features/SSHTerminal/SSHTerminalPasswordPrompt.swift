@@ -23,17 +23,37 @@ enum SSHTerminalPasswordPrompt {
     /// are not prompts.
     private static let secretWords: Set<Substring> = ["password", "passphrase", "pin"]
 
-    /// `lineBeforeCursor` is the cursor row's text left of the cursor, as the
-    /// terminal drew it. Nothing after the cursor counts: a prompt that echoes
-    /// what was typed (`Password: hunter2`) is no longer a prompt.
-    static func matches(lineBeforeCursor: String, atShellPrompt: Bool) -> Bool {
-        guard !atShellPrompt else { return false }
-        var line = Substring(lineBeforeCursor)
-        while let last = line.last, last.isWhitespace { line = line.dropLast() }
-        guard line.last == ":" else { return false }
+    /// What prompts that echo one mark per key (`sudo-rs` with `pwfeedback`,
+    /// `sudo -S`, some `ssh` builds) print after the prompt. They are the
+    /// secret, not part of the prompt, so they never decide the match.
+    private static let echoes: Set<Character> = ["*", "\u{2022}", "\u{25CF}"]
+
+    /// The prompt a line is asking for a secret at, or nil. `lineBeforeCursor`
+    /// is the cursor row's text left of the cursor, as the terminal drew it,
+    /// trimmed of trailing spaces and of the mark a prompt echoes for each key
+    /// typed. Nothing after the cursor that is not such an echo counts: a
+    /// prompt that echoes what was typed (`Password: hunter2`) is no longer a
+    /// prompt.
+    static func prompt(inLineBeforeCursor lineBeforeCursor: String, atShellPrompt: Bool) -> String? {
+        guard !atShellPrompt else { return nil }
+        let text = trimmingEcho(lineBeforeCursor)
+        guard text.last == ":" else { return nil }
         // Split the text before the colon into words: `[sudo]`, `for`, and
         // `duh@host's` all become tokens to ignore.
-        let words = line.dropLast().lowercased().split { !$0.isLetter && !$0.isNumber }
-        return words.contains { secretWords.contains($0) }
+        let words = text.dropLast().lowercased().split { !$0.isLetter && !$0.isNumber }
+        guard words.contains(where: { secretWords.contains($0) }) else { return nil }
+        return String(text)
+    }
+
+    static func matches(lineBeforeCursor: String, atShellPrompt: Bool) -> Bool {
+        prompt(inLineBeforeCursor: lineBeforeCursor, atShellPrompt: atShellPrompt) != nil
+    }
+
+    /// `line` without trailing whitespace or echoed key marks. The same trim
+    /// keeps a latched prompt matching while the secret is typed into it.
+    static func trimmingEcho(_ line: String) -> Substring {
+        var text = Substring(line)
+        while let last = text.last, last.isWhitespace || echoes.contains(last) { text = text.dropLast() }
+        return text
     }
 }

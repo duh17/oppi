@@ -403,18 +403,12 @@ final class SSHTerminalEngine {
         return live && value
     }
 
-    /// The text left of the cursor on the cursor's row, as the live viewport
-    /// shows it, or nil while the viewport is scrolled into history. A
-    /// password prompt is the last thing on its line, so this is the whole
-    /// prompt. The row cache is refreshed here when output arrived after the
-    /// last paint, so detection never waits on the display link or Metal; the
-    /// next paint then rebuilds every row that snapshot cleaned.
+    /// The text left of the cursor on the cursor's row, from the live viewport
+    /// snapshot. nil when the viewport is scrolled into history, and nil until
+    /// a paint has snapshotted the newest output: the caller keeps its state
+    /// rather than reading a row the user is not looking at.
     var cursorLineBeforeCursor: String? {
-        guard live, following else { return nil }
-        if cachedRowsChangeCount != changeCount {
-            _ = frame()
-            forceFullRebuild = true
-        }
+        guard live, following, cachedRowsChangeCount == changeCount else { return nil }
         guard let cursor = cachedCursor, cursor.viewport_has_value else { return nil }
         let row = Int(cursor.viewport_y)
         guard cachedRows.indices.contains(row) else { return nil }

@@ -459,6 +459,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             self.setNeedsUpdateProperties()
         }
         grid.useChatBar = { [weak self] in self?.showChatBar() }
+        grid.keyboardDismissed = { [weak self] in self?.manualInputChoice() }
         grid.secureInputChanged = { [weak self] in self?.secureInputChanged($0) }
         grid.pasteImage = { [weak self] in self?.pasteImage($0) }
         return grid

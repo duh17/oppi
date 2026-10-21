@@ -1800,6 +1800,16 @@ struct SSHTerminalTests {
         #expect(grid.isFirstResponder, "the prompt is typed into the terminal")
         #expect(draft() == nil, "and the password cannot reach the draft")
 
+        // pwfeedback echoes one mark per key; the prompt must stay secure and
+        // the chat bar must not come back for the rest of the secret.
+        for mark in ["*", "**", "***"] {
+            channel.engine.receive(Data(mark.utf8))
+            grid.drawFrame()
+            try await settle(mounted)
+            #expect(grid.isSecureTextEntry, "after \(mark)")
+            #expect(draft() == nil, "the draft stays away after \(mark)")
+        }
+
         channel.engine.receive(Data("\r\n".utf8))
         grid.drawFrame()
         try await settle(mounted)

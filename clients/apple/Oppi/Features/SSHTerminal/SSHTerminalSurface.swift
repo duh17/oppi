@@ -67,6 +67,9 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     var rawKeyboardChanged: (Bool) -> Void = { _ in }
     /// A password prompt appeared (true) or ended (false) on the live screen.
     var secureInputChanged: (Bool) -> Void = { _ in }
+    /// The user sent the keyboard away with its hide key or a tap: a manual
+    /// choice, so an automatic switch back after a password prompt stands down.
+    var keyboardDismissed: () -> Void = {}
     var focusComposer: () -> Void = {}
     var useChatBar: () -> Void = {}
     /// Runs on every display-link tick, after that tick's frame is encoded:
@@ -95,6 +98,19 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// The value reported for `isSecureTextEntry`, changed only by
     /// `updateSecureEntry`.
     private var secureEntry = false
+    /// The prompt secure entry latched to: the cursor row it appeared on and
+    /// its text. A prompt that echoes one mark per key (`pwfeedback`) stops
+    /// matching as soon as the secret is typed, so the latch, not a fresh
+    /// match, keeps the keyboard secure until that row is left behind.
+    private struct SecurePrompt: Equatable {
+        var row: Int
+        var text: String
+    }
+    private var securePrompt: SecurePrompt?
+    /// The change count and cursor row of the last completed check, so an
+    /// idle frame costs two reads and no string.
+    private var secureCheckedChanges = -1
+    private var secureCheckedRow = -1
     /// A hardware key is sent from pressesBegan only. While one is down,
     /// insertText/deleteBackward and the edit-menu paste are echoes of the
     /// same press and must not send again. Ended or cancelled presses are
@@ -676,6 +692,9 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             let nanos = UInt64(SSHTerminalTapSequence.doubleTapTimeout * 1_000_000_000)
             try? await Task.sleep(nanoseconds: nanos)
             guard !Task.isCancelled, let self else { return }
+            // Same as the hide key: a tap that sends the keyboard away is the
+            // user's choice, not an automatic switch to undo later.
+            self.keyboardDismissed()
             _ = self.resignFirstResponder()
             self.pendingHide = nil
         }
@@ -1402,7 +1421,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
                     self.useChatBar()
                     _ = self.resignFirstResponder()
                 },
-                hideKeyboard: { [weak self] in _ = self?.resignFirstResponder() }
+                hideKeyboard: { [weak self] in
+                    guard let self else { return }
+                    self.keyboardDismissed()
+                    _ = self.resignFirstResponder()
+                }
             )
         )
         strip.apply(
@@ -1510,16 +1533,38 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         didDrawFrame()
     }
 
-    /// Turns the keyboard's secure entry on while the live screen's cursor sits
-    /// after a password prompt (`Password:`, `[sudo] password for duh:`). The
-    /// trait is read when the keyboard is built, so a change reloads the input
-    /// views once; nothing runs per frame otherwise. The keyboard bar shows a
-    /// lock meanwhile, and the screen moves typing off the chat bar.
+    /// Turns the keyboard's secure entry on while the live screen asks for a
+    /// secret (`Password:`, `[sudo] password for duh:`). The trait is read when
+    /// the keyboard is built, so a change reloads the input views once. Only a
+    /// painted frame that changed the picture asks the terminal again, and a
+    /// frame with no fresh snapshot leaves the state alone. The keyboard bar
+    /// shows a lock meanwhile, and the screen moves typing off the chat bar.
     private func updateSecureEntry() {
-        let secure = channel.connected && SSHTerminalPasswordPrompt.matches(
-            lineBeforeCursor: channel.engine.cursorLineBeforeCursor ?? "",
-            atShellPrompt: channel.engine.cursorAtPrompt
-        )
+        guard channel.connected else {
+            securePrompt = nil
+            applySecureEntry(false)
+            return
+        }
+        let changes = channel.engine.changeCount
+        let row = channel.engine.cursorCell.row
+        guard changes != secureCheckedChanges || row != secureCheckedRow else { return }
+        // nil is history or a picture no frame has drawn yet, not "no prompt".
+        guard let line = channel.engine.cursorLineBeforeCursor else { return }
+        secureCheckedChanges = changes
+        secureCheckedRow = row
+        let latched = securePrompt.map {
+            $0.row == row && SSHTerminalPasswordPrompt.trimmingEcho(line).hasPrefix($0.text)
+        } ?? false
+        if !latched {
+            let prompt = SSHTerminalPasswordPrompt.prompt(
+                inLineBeforeCursor: line, atShellPrompt: channel.engine.cursorAtPrompt
+            )
+            securePrompt = prompt.map { SecurePrompt(row: row, text: $0) }
+        }
+        applySecureEntry(securePrompt != nil)
+    }
+
+    private func applySecureEntry(_ secure: Bool) {
         guard secure != secureEntry else { return }
         secureEntry = secure
         keyStrip?.setSecureInput(secure)

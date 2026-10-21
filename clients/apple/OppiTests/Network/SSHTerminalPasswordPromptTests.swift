@@ -24,6 +24,22 @@ struct SSHTerminalPasswordPromptTests {
         }
     }
 
+    @Test func matchesThroughTheMarkAPromptEchoesForEachKey() {
+        // `sudo-rs` with pwfeedback, `sudo -S`, and some `ssh` builds echo a
+        // mark for each key typed after the prompt.
+        for line in [
+            "Password: *",
+            "Password: **",
+            "Password: ••",
+            "Password: ●",
+            "[sudo] password for duh: ***",
+            "│ Password: *",
+        ] {
+            #expect(SSHTerminalPasswordPrompt.matches(lineBeforeCursor: line, atShellPrompt: false), "\(line)")
+            #expect(SSHTerminalPasswordPrompt.trimmingEcho(line).hasSuffix(":"), "\(line)")
+        }
+    }
+
     @Test func ignoresOrdinaryLinesAndTextAfterThePrompt() {
         for line in [
             "",
@@ -34,8 +50,10 @@ struct SSHTerminalPasswordPromptTests {
             "spin:",
             "shipping:",
             "pinned:",
-            // Echoed input: the prompt is no longer the last thing on the line.
+            // Echoed input that is not a key mark: the prompt is no longer the
+            // last thing on the line.
             "Password: hunter2",
+            "Password: *hunter2",
             "[sudo] password for duh: hunter2",
             "Passphrase for key '/x/id': typed",
         ] {
@@ -44,24 +62,31 @@ struct SSHTerminalPasswordPromptTests {
     }
 
     @Test func neverMatchesWhileTheShellWaitsAtItsOwnInput() {
-        for line in ["Password:", "[sudo] password for duh:", "echo Password: "] {
+        for line in ["Password:", "[sudo] password for duh:", "echo Password: ", "Password: *"] {
             #expect(!SSHTerminalPasswordPrompt.matches(lineBeforeCursor: line, atShellPrompt: true), "\(line)")
         }
     }
 
-    @Test func theEngineReportsThePromptTextLeftOfTheCursor() throws {
+    @Test func theEngineReadsThePromptTextOnlyFromAPaintedSnapshot() throws {
         let engine = try SSHTerminalEngine(geometry: .init(columns: 40, rows: 6)) { _ in }
         engine.receive(Data("$ sudo ls\r\n[sudo] password for duh: ".utf8))
+        // No frame has drawn this output yet: the row is stale, not empty.
+        #expect(engine.cursorLineBeforeCursor == nil)
+
+        _ = engine.frame()
         // The row keeps its empty cells past the cursor's space; the matcher trims.
         let prompt = try #require(engine.cursorLineBeforeCursor)
         #expect(prompt.hasPrefix("[sudo] password for duh: "))
         #expect(SSHTerminalPasswordPrompt.matches(lineBeforeCursor: prompt, atShellPrompt: engine.cursorAtPrompt))
         #expect(!engine.cursorAtPrompt)
+        #expect(SSHTerminalPasswordPrompt.prompt(inLineBeforeCursor: prompt, atShellPrompt: false) == prompt.trimmingCharacters(in: .whitespaces))
 
         // The shell's own prompt input (OSC 133) is a command line, not a secret.
         engine.receive(Data("\u{1b}]133;A\u{7}\u{1b}]133;B\u{7}$ ".utf8))
+        _ = engine.frame()
         #expect(engine.cursorAtPrompt)
         engine.receive(Data("echo Password: ".utf8))
+        _ = engine.frame()
         let typed = try #require(engine.cursorLineBeforeCursor)
         #expect(typed.hasPrefix("$ echo Password: "))
         #expect(!SSHTerminalPasswordPrompt.matches(lineBeforeCursor: typed, atShellPrompt: engine.cursorAtPrompt))
@@ -69,6 +94,7 @@ struct SSHTerminalPasswordPromptTests {
         // Herdr draws a pane border before the text, on the alternate screen,
         // where libghostty reports no shell prompt at all.
         engine.receive(Data("\u{1b}[?1049h│ │ Password: ".utf8))
+        _ = engine.frame()
         let bordered = try #require(engine.cursorLineBeforeCursor)
         #expect(bordered.hasPrefix("│ │ Password: "))
         #expect(!engine.cursorAtPrompt)
@@ -118,6 +144,45 @@ struct SSHTerminalPasswordPromptTests {
         #expect(reported == [true, false, true, false])
     }
 
+    @Test func thePromptStaysSecureWhileTheSecretIsTypedAndHistoryDoesNotEndIt() throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(PasswordPromptStubConnection())
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedPasswordPromptGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        var reported: [Bool] = []
+        grid.secureInputChanged = { reported.append($0) }
+
+        channel.engine.receive(Data("Password: ".utf8))
+        grid.drawFrame()
+        #expect(grid.isSecureTextEntry)
+
+        // pwfeedback: one `*` per key. The prompt still has to hold, or the
+        // rest of the password would land on a normal keyboard.
+        channel.engine.receive(Data("*".utf8))
+        grid.drawFrame()
+        #expect(grid.isSecureTextEntry)
+        channel.engine.receive(Data("*".utf8))
+        grid.drawFrame()
+        #expect(grid.isSecureTextEntry)
+        #expect(reported == [true], "the echo of the secret is not a new prompt")
+
+        // Reading local history is not the live screen: it must not end it.
+        channel.engine.scroll(rows: -1)
+        grid.drawFrame()
+        #expect(grid.isSecureTextEntry)
+        channel.engine.backToLive()
+        grid.drawFrame()
+        #expect(grid.isSecureTextEntry)
+        #expect(reported == [true])
+
+        // Return leaves the row: the shell's next line is no prompt.
+        channel.engine.receive(Data("\r\n$ ls\r\n$ ".utf8))
+        grid.drawFrame()
+        #expect(!grid.isSecureTextEntry)
+        #expect(reported == [true, false])
+    }
+
     private static func find(identifier: String, in view: UIView) -> UIView? {
         if view.accessibilityIdentifier == identifier { return view }
         for child in view.subviews {
@@ -147,6 +212,9 @@ private final class MountedPasswordPromptGrid {
 
     init(_ grid: SSHTerminalGridView) throws {
         self.grid = grid
+        // Detection reads the snapshot a paint took, so the grid needs its
+        // Metal renderer before a frame can report the terminal's own row.
+        _ = try SSHTerminalMetalPipeline.shared()
         let host = UIViewController()
         grid.translatesAutoresizingMaskIntoConstraints = false
         host.view.addSubview(grid)
