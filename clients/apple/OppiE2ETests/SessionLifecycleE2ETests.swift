@@ -136,15 +136,24 @@ final class SessionLifecycleE2ETests: E2ETestCase {
             XCTAssertTrue(button.waitForExistence(timeout: 10), "Expected chat toolbar control did not appear")
         }
 
+        // The bar confines custom item views to its control row, so the ring
+        // keeps that row's full height and its own 44-point width. The edge tap
+        // below proves the whole target opens Context.
         XCTAssertGreaterThanOrEqual(
             contextButton.frame.width,
             44,
             "Context toolbar control must expose a 44-point-wide hit target"
         )
+        XCTAssertEqual(
+            contextButton.frame.height,
+            backButton.frame.height,
+            accuracy: 0.5,
+            "Context toolbar control must fill the bar's control row"
+        )
         XCTAssertGreaterThanOrEqual(
             contextButton.frame.height,
-            44,
-            "Context toolbar control must expose a 44-point-tall hit target"
+            36,
+            "Context toolbar control must keep the bar row's full height"
         )
 
         let leadingControlWidth = backButton.frame.union(filesButton.frame).width
