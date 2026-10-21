@@ -115,6 +115,18 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         currentAssistantID ?? (turnInProgress ? lastAssistantIDThisTurn : nil)
     }
 
+    /// Rows whose content the stream is still writing: every row of a running durable live
+    /// tail (`pi.live` can rewrite any block of the answer in flight, not only the last),
+    /// and the classic open thinking and assistant rows. A row leaves the set when its
+    /// answer commits, its run ends, or its block closes. This is the liveness a
+    /// full-screen reader follows; `isDone` on a thinking item only drives its spinner.
+    var liveRowIDs: Set<String> {
+        var ids: Set<String> = liveTailWasRunning ? Set(liveTailRowIDs) : []
+        if let currentThinkingID { ids.insert(currentThinkingID) }
+        if let currentAssistantID { ids.insert(currentAssistantID) }
+        return ids
+    }
+
     /// ID of the current in-flight compaction cycle's timeline item.
     ///
     /// Set on `compactionStart` (generates a new UUID or reuses the trace-derived ID).
@@ -914,11 +926,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         var rows: [ChatItem] = []
         var answerRowIDs: [String: String] = [:]
         var streamingTextID: String?
-        for (position, block) in tail.blocks.enumerated() {
-            let isLast = position == tail.blocks.count - 1
+        // "Last" means the last block that becomes a row: providers open a text block on
+        // whitespace while still appending to the thinking block before it, and that empty
+        // block must not mark the growing thinking row done.
+        let lastRowPosition = tail.blocks.lastIndex(where: liveTailBlockMakesRow)
+        for (position, block) in tail.blocks.enumerated() where liveTailBlockMakesRow(block) {
+            let isLast = position == lastRowPosition
             switch block {
             case .text(let index, let text):
-                guard !StringFastChecks.isEffectivelyEmpty(text) else { continue }
                 let id = "pi.live-\(liveAnswerGeneration)-text-\(index)"
                 answerRowIDs["text-\(index)"] = id
                 rows.append(TimelineTurnAssembler.makeAssistantItem(
@@ -928,7 +943,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 ))
                 if isLast { streamingTextID = id }
             case .thinking(let index, let text):
-                guard !StringFastChecks.isEffectivelyEmpty(text) else { continue }
                 let id = "pi.live-\(liveAnswerGeneration)-think-\(index)"
                 answerRowIDs["think-\(index)"] = id
                 rows.append(TimelineTurnAssembler.makeThinkingItem(
@@ -938,8 +952,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     isDone: !isLast
                 ))
             case .toolCall(let id, let name, let args, let view):
-                // A committed call (same id) already has its row.
-                guard liveTailRowIDs.contains(id) || indexForID(id) == nil else { continue }
                 rows.append(TimelineTurnAssembler.makeToolCallItem(
                     id: id,
                     tool: name.isEmpty ? "unknown" : name,
@@ -1012,6 +1024,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         if changed || renderMutationCheckpoint() != before {
             bumpRenderVersion()
+        }
+    }
+
+    /// Whether a `pi.live` block shows as a live row: text and thinking with visible text,
+    /// and calls that have no committed row (same id) yet.
+    private func liveTailBlockMakesRow(_ block: TimelineLiveTail.Block) -> Bool {
+        switch block {
+        case .text(_, let text), .thinking(_, let text):
+            !StringFastChecks.isEffectivelyEmpty(text)
+        case .toolCall(let id, _, _, _):
+            liveTailRowIDs.contains(id) || indexForID(id) == nil
         }
     }
 
@@ -1613,9 +1636,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     finalizeAssistantMessage()
                     didMutate = true
                 }
-                // Keep only preview-size text in memory for live rendering.
-                // Once overflowed, continue collecting full text in ToolOutputStore
-                // for post-turn expansion, but skip no-op rerenders.
+                // The item's preview holds the whole thinking text; skip no-op rerenders.
                 if appendThinkingDelta(delta, contentIndex: contentIndex, replace: replace) {
                     hasPendingThinkingUpsert = true
                 }

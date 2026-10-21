@@ -698,7 +698,7 @@ struct ChatTimelineCoordinatorTests {
         let cell = try configuredTimelineCell(in: harness.collectionView, item: 0)
         let thinkingConfig = try #require(cell.contentConfiguration as? ThinkingTimelineRowConfiguration)
         #expect(thinkingConfig.isDone)
-        #expect(thinkingConfig.displayText == "full reasoning block")
+        #expect(thinkingConfig.previewText == "full reasoning block")
     }
 
     @MainActor
@@ -1257,8 +1257,7 @@ struct ChatTimelineCoordinatorTests {
     @Test func thinkingRowContentViewExpandedReportsFiniteFittingSize() {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "preview",
-            fullText: String(repeating: "reasoning line\n", count: 500)
+            previewText: String(repeating: "reasoning line\n", count: 500)
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -1273,8 +1272,7 @@ struct ChatTimelineCoordinatorTests {
     @Test func thinkingRowExpandedUsesCappedViewportHeight() {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "preview",
-            fullText: String(repeating: "reasoning line\n", count: 900)
+            previewText: String(repeating: "reasoning line\n", count: 900)
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -1288,13 +1286,11 @@ struct ChatTimelineCoordinatorTests {
     @Test func thinkingRowExpandedShrinksForShortText() {
         let short = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "preview",
-            fullText: "short thought"
+            previewText: "short thought"
         )
         let long = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "preview",
-            fullText: String(repeating: "reasoning line\n", count: 900)
+            previewText: String(repeating: "reasoning line\n", count: 900)
         )
 
         let shortView = ThinkingTimelineRowContentView(configuration: short)
@@ -1311,7 +1307,6 @@ struct ChatTimelineCoordinatorTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "Reviewing checklist for updates",
-            fullText: nil
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -1328,7 +1323,6 @@ struct ChatTimelineCoordinatorTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "Let me analyze this step by step",
-            fullText: nil
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -1349,7 +1343,6 @@ struct ChatTimelineCoordinatorTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "",
-            fullText: nil
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -1369,12 +1362,10 @@ struct ChatTimelineCoordinatorTests {
         let short = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "hmm",
-            fullText: nil,
         )
         let long = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: String(repeating: "thinking about this problem ", count: 15),
-            fullText: nil,
         )
 
         let shortView = ThinkingTimelineRowContentView(configuration: short)

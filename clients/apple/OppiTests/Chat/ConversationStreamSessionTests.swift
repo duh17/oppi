@@ -176,6 +176,46 @@ struct ConversationStreamSessionTests {
         await harness.finish()
     }
 
+    @Test func liveRowsStayLiveUntilTheirAnswerLands() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let reducer = harness.manager.reducer
+        func thinkingIsDone(_ id: String) -> Bool? {
+            reducer.items.lazy.compactMap { item -> Bool? in
+                if case .thinking(id, _, _, let isDone) = item { isDone } else { nil }
+            }.first
+        }
+        // Providers open a text block on whitespace while the thinking before it still
+        // grows: the empty block makes no row and must not end the thinking.
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "go")], docs: [
+            "pi.live": Wire.live(content: [Wire.thinking("reading"), Wire.text("\n\n")]),
+        ])))
+        #expect(await harness.waitForRows(["1", "pi.live-0-think-0"]))
+        #expect(thinkingIsDone("pi.live-0-think-0") == false)
+        #expect(reducer.liveRowIDs == ["pi.live-0-think-0"])
+
+        // Text follows: the thinking's spinner stops, but the live tail can still rewrite
+        // it until the answer lands, so its row stays live.
+        harness.frame(.update(.init(conversationId: 7, docs: ["pi.live": [
+            .replace(Wire.live(content: [Wire.thinking("reading the test"), Wire.text("Fixed.")])),
+        ]])))
+        #expect(await harness.waitForRows(["1", "pi.live-0-think-0", "pi.live-0-text-1"]))
+        #expect(thinkingIsDone("pi.live-0-think-0") == true)
+        #expect(reducer.liveRowIDs == ["pi.live-0-think-0", "pi.live-0-text-1"])
+
+        // The answer lands with the run ending: its rows keep their ids and nothing is live.
+        harness.frame(.update(.init(
+            conversationId: 7,
+            entries: [Wire.assistant(2, [Wire.thinking("reading the test"), Wire.text("Fixed.")])],
+            docs: ["pi.live": [.delete([.key("run")]), .delete([.key("generation")])]]
+        )))
+        #expect(await harness.waitForCommitted(["1", "2-think-0", "2-text-1"]))
+        #expect(reducer.items.map(\.id) == ["1", "pi.live-0-think-0", "pi.live-0-text-1"])
+        #expect(reducer.liveRowIDs.isEmpty)
+        await harness.finish()
+    }
+
     @Test func whitespaceOnlyThinkingNeverBecomesARow() async throws {
         // Local GLM models emit a "\n" thinking block before every tool call.
         let harness = Harness()

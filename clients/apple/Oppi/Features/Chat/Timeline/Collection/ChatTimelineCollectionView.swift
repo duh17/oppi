@@ -33,6 +33,8 @@ struct ChatTimelineConfiguration {
     let isBusy: Bool
     let showsWorkingIndicator: Bool
     var streamingAssistantID: String?
+    /// `TimelineReducer.liveRowIDs`: rows whose content is still being written.
+    var liveRowIDs: Set<String> = []
     let sessionId: String
     let serverId: String?
     let workspaceId: String?
@@ -574,6 +576,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     /// as execution becomes idle, even if the reducer retains its final ID
     /// for one more render pass.
     var isAssistantStreamingPresentationActive = false
+    /// The apply's `ChatTimelineConfiguration.liveRowIDs`, set before rows are built.
+    var liveRowIDs: Set<String> = []
     var lastDistanceFromBottom: CGFloat = 0
     private var lastBusyAmbientScrollReconcileNs: UInt64 = 0
     let toolOutputLoader = ExpandedToolOutputLoader()
@@ -1055,6 +1059,9 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         }
         let timelineBusyChanged = configuration.isBusy != isTimelineBusy
         isAssistantStreamingPresentationActive = configuration.isBusy
+        // Rows that started or stopped being written; their readers follow the change.
+        let liveRowsChanged = configuration.liveRowIDs.symmetricDifference(liveRowIDs)
+        liveRowIDs = configuration.liveRowIDs
         // Note: isTimelineBusy is updated AFTER the structurallyUnchanged
         // check so the comparison detects busy→idle transitions.
 
@@ -1153,6 +1160,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         let structurallyUnchanged = nextDisplayIDs == previousDisplayIDs
             && configuration.streamingAssistantID == previousStreamingAssistantID
             && configuration.isBusy == isTimelineBusy
+            && liveRowsChanged.isEmpty
             && configuration.showsWorkingIndicator == previousShowsWorkingIndicator
             && configuration.hiddenCount == previousHiddenCount
             && configuration.hasOlderServerPage == previousHasOlderServerPage
@@ -1410,17 +1418,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             // non-streaming layout instead of retaining a blank tail.
             forceReconfigureIDs.append(finalAssistantID)
         }
-        if timelineBusyChanged {
-            // A turn ending is what tells an open full-screen thinking reader
-            // that its trace stopped growing (`isTurnActive`), so every
-            // thinking row has to hear about the change.
-            forceReconfigureIDs.append(contentsOf: applyPlan.nextIDs.filter { id in
-                if case .thinking = applyPlan.nextItemByID[id] {
-                    return true
-                }
-                return false
-            })
-        }
+        forceReconfigureIDs.append(contentsOf: liveRowsChanged.filter { applyPlan.nextItemByID[$0] != nil })
         forceReconfigureIDs.append(
             contentsOf: ChatTimelineApplyPlan.workLineReconfigureIDs(
                 previous: previousWorkLineByID,

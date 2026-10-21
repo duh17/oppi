@@ -242,18 +242,13 @@ extension ChatTimelineController {
         var configuration = ThinkingTimelineRowConfiguration(
             isDone: isDone,
             previewText: preview,
-            fullText: toolOutputStore?.fullOutput(for: itemID),
             maxBubbleHeight: maxBubbleHeight,
             itemID: itemID,
             sourceLabel: currentExtensionHiddenThinkingLabel,
             interactionContext: interactionContext
         )
         configuration.openFullScreen = onOpenChatReader
-        // A durable live tail keeps replacing a thinking block's text after the
-        // block itself reports done, so the reader's liveness is the turn's.
-        // This is the apply's own busy value; `isTimelineBusy` still holds the
-        // previous one because change detection compares against it.
-        configuration.isTurnActive = isAssistantStreamingPresentationActive
+        configuration.isLive = liveRowIDs.contains(itemID)
         return configuration
     }
 

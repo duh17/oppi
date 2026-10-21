@@ -387,14 +387,12 @@ struct LiveStreamingPresentationTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "seed",
-            fullText: nil
         ))
         _ = fittedTimelineSize(for: view, width: 360)
 
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: Array(repeating: "streaming thought line", count: 300).joined(separator: "\n"),
-            fullText: nil
         )
 
         #expect(view.liveStreamingFollowsTailForTesting)
@@ -403,8 +401,7 @@ struct LiveStreamingPresentationTests {
 
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "",
-            fullText: Array(repeating: "streaming thought line", count: 300).joined(separator: "\n")
+            previewText: Array(repeating: "streaming thought line", count: 300).joined(separator: "\n")
         )
         #expect(!view.liveStreamingFollowsTailForTesting)
     }

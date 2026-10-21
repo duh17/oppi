@@ -180,6 +180,7 @@ extension ChatTimelineController {
         config.hiddenCount = hiddenCount
         config.hasOlderServerPage = config.sessionManager?.hasOlderTracePage ?? config.hasOlderServerPage
         config.streamingAssistantID = reducer.streamingAssistantID
+        config.liveRowIDs = reducer.liveRowIDs
         config.scrollCommand = ownedClock.pendingScrollCommand
         config.onQuietWorkLineToggle = { [weak self] turnID in
             self?.handleOwnedQuietToggle(turnID)

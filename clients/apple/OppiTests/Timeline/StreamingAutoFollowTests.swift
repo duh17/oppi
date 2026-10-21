@@ -63,8 +63,7 @@ struct ThinkingStreamingTailVisibilityTests {
         // Transition to done.
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "",
-            fullText: generateLines(80),
+            previewText: generateLines(80),
         )
         #expect(view.isShowingTailForTesting, "Done state should report tail visible")
     }
@@ -79,7 +78,6 @@ struct ThinkingStreamingTailVisibilityTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: text,
-            fullText: nil,
         ))
         // Initial layout to establish bounds — mirrors collection view first layout.
         _ = fittedTimelineSize(for: view, width: 360)
@@ -90,7 +88,6 @@ struct ThinkingStreamingTailVisibilityTests {
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: generateLines(lines),
-            fullText: nil,
         )
         // No external layout — apply() must drive auto-follow on its own.
     }
@@ -99,7 +96,6 @@ struct ThinkingStreamingTailVisibilityTests {
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: text,
-            fullText: nil,
         )
     }
 }

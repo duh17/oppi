@@ -156,8 +156,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         var opened: ChatReaderPayload?
         var configuration = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "",
-            fullText: Array(repeating: "line", count: 320).joined(separator: "\n")
+            previewText: Array(repeating: "line", count: 320).joined(separator: "\n")
         )
         configuration.openFullScreen = { opened = $0 }
         let view = ThinkingTimelineRowContentView(configuration: configuration)

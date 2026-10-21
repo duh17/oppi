@@ -142,6 +142,7 @@ Example:
 - **Client:** Several audio cards in one message no longer collapse onto each other.
 - **Client:** Choosing an Ask option and sliding your finger off the row no longer sends it, and the expanded Ask follows a theme change.
 - **Client:** Blank thinking blocks, such as the ones some local models emit before each tool call, no longer leave empty rows in the chat.
+- **Client:** In durable sessions, a thinking block keeps its spinner while it is still streaming, even when the model has already opened an empty reply after it. Full screen follows the block itself: a trace still being written keeps growing, and a finished trace opens finished even while the turn runs.
 - **Server:** A retried prompt or steer with an attachment is no longer rejected as a conflict after its turn has landed.
 - **Client:** SSH Terminal: holding Delete on the on-screen keyboard repeats while typing in the terminal. A dictated phrase with a newline asks first, like a multi-line paste.
 - **Client:** Editing a staged review comment shows one Save and one Cancel.

@@ -11,7 +11,7 @@ struct ThinkingRowContentViewTests {
     ])
     func doneWebLinksAreInteractiveWithoutOwningVerticalPans(source: String) throws {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
-            isDone: true, previewText: source, fullText: nil
+            isDone: true, previewText: source
         ))
         _ = fittedTimelineSize(for: view, width: 360)
         let textView = try #require(privateTextLabel(in: view))
@@ -32,7 +32,7 @@ struct ThinkingRowContentViewTests {
     func doneWebLinkActionDeliversToTheOpener(urlString: String) throws {
         let url = testUnwrap(URL(string: urlString))
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
-            isDone: true, previewText: "See [details](\(urlString))", fullText: nil
+            isDone: true, previewText: "See [details](\(urlString))"
         ))
         let textView = try #require(privateTextLabel(in: view))
         #expect(textView.delegate === view)
@@ -51,7 +51,7 @@ struct ThinkingRowContentViewTests {
     func nonWebLinkActionKeepsSystemDefault(urlString: String) throws {
         let url = testUnwrap(URL(string: urlString))
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
-            isDone: true, previewText: "[Contact](\(urlString))", fullText: nil
+            isDone: true, previewText: "[Contact](\(urlString))"
         ))
         let textView = try #require(privateTextLabel(in: view))
         let defaultAction = UIAction { _ in }
@@ -62,7 +62,7 @@ struct ThinkingRowContentViewTests {
         // Establish bounds first (mirrors real collection view lifecycle where
         // cells have valid frames before apply() runs on content updates).
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
-            isDone: false, previewText: "seed", fullText: nil
+            isDone: false, previewText: "seed"
         ))
         _ = fittedTimelineSize(for: view, width: 360)
 
@@ -70,7 +70,6 @@ struct ThinkingRowContentViewTests {
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: Array(repeating: "streaming thought line", count: 300).joined(separator: "\n"),
-            fullText: nil
         )
 
         let scrollView = try #require(privateScrollView(in: view))
@@ -85,7 +84,6 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: text,
-            fullText: nil,
             maxBubbleHeight: ThinkingRowHeightPolicy.defaultMaxBubbleHeight
         ))
         _ = fittedTimelineSize(for: view, width: 360)
@@ -98,13 +96,11 @@ struct ThinkingRowContentViewTests {
     @Test func thinkingRowDoesNotInstallFloatingFullScreenButton() {
         let overflowConfig = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "",
-            fullText: Array(repeating: "reasoning", count: 320).joined(separator: "\n")
+            previewText: Array(repeating: "reasoning", count: 320).joined(separator: "\n")
         )
         let shortConfig = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "Short thought",
-            fullText: nil
         )
 
         let overflowView = ThinkingTimelineRowContentView(configuration: overflowConfig)
@@ -120,8 +116,7 @@ struct ThinkingRowContentViewTests {
     @Test func overflowContextMenuIncludesOpenFullScreenAndCopy() throws {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "",
-            fullText: Array(repeating: "line", count: 320).joined(separator: "\n")
+            previewText: Array(repeating: "line", count: 320).joined(separator: "\n")
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -136,8 +131,7 @@ struct ThinkingRowContentViewTests {
     @Test func overflowRegistersPinchAndDoubleTapGesturesButNoSingleTapActivation() throws {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "",
-            fullText: Array(repeating: "line", count: 320).joined(separator: "\n")
+            previewText: Array(repeating: "line", count: 320).joined(separator: "\n")
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -167,8 +161,7 @@ struct ThinkingRowContentViewTests {
         interactionCtx.sessionId = "session-1"
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "",
-            fullText: "Alpha beta gamma",
+            previewText: "Alpha beta gamma",
             interactionContext: interactionCtx
         )
 
@@ -193,7 +186,6 @@ struct ThinkingRowContentViewTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "Analyzing the next step",
-            fullText: nil,
             sourceLabel: "Private reasoning"
         )
 
@@ -213,8 +205,7 @@ struct ThinkingRowContentViewTests {
         interactionCtx.sessionId = "session-1"
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "",
-            fullText: Array(repeating: "line", count: 320).joined(separator: "\n"),
+            previewText: Array(repeating: "line", count: 320).joined(separator: "\n"),
             interactionContext: interactionCtx
         )
 
@@ -247,7 +238,6 @@ struct ThinkingRowContentViewTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: "Short thought",
-            fullText: nil,
             interactionContext: interactionCtx
         )
 
@@ -274,7 +264,6 @@ struct ThinkingRowContentViewTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "Thinking about **bold** and `code`",
-            fullText: nil
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -291,8 +280,7 @@ struct ThinkingRowContentViewTests {
     @Test func doneStripsMarkdownSyntax() throws {
         let config = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "",
-            fullText: "Thinking about **bold** and `code`"
+            previewText: "Thinking about **bold** and `code`"
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -310,7 +298,6 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "Initial thought",
-            fullText: nil
         ))
         _ = fittedTimelineSize(for: view, width: 360)
 
@@ -321,7 +308,6 @@ struct ThinkingRowContentViewTests {
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "Initial thought",
-            fullText: nil
         )
         let sig2 = try #require(privateRenderSignature(in: view))
         #expect(sig1 == sig2, "Render signature should not change for identical content")
@@ -332,7 +318,6 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "Short",
-            fullText: nil
         ))
         _ = fittedTimelineSize(for: view, width: 360)
 
@@ -341,7 +326,6 @@ struct ThinkingRowContentViewTests {
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: "Short thought that grew longer",
-            fullText: nil
         )
         let sig2 = try #require(privateRenderSignature(in: view))
         #expect(sig1 != sig2, "Render signature should change when text changes")
@@ -353,8 +337,7 @@ struct ThinkingRowContentViewTests {
 
         let configuration = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "",
-            fullText: "Same reasoning text"
+            previewText: "Same reasoning text"
         )
 
         ThemeRuntimeState.setThemeID(.dark)
@@ -377,7 +360,6 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: text,
-            fullText: nil
         ))
         _ = fittedTimelineSize(for: view, width: 360)
 
@@ -390,8 +372,7 @@ struct ThinkingRowContentViewTests {
         // Transition to done — markdown parsed, ** stripped.
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: true,
-            previewText: "",
-            fullText: text
+            previewText: text
         )
         _ = fittedTimelineSize(for: view, width: 360)
         #expect(
@@ -407,7 +388,6 @@ struct ThinkingRowContentViewTests {
         let config = ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: longText,
-            fullText: nil
         )
 
         let view = ThinkingTimelineRowContentView(configuration: config)
@@ -428,7 +408,6 @@ struct ThinkingRowContentViewTests {
         var configuration = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: source,
-            fullText: nil
         )
         configuration.openFullScreen = { opened = $0 }
         let view = ThinkingTimelineRowContentView(configuration: configuration)
@@ -459,7 +438,6 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: source,
-            fullText: nil
         ))
         _ = fittedTimelineSize(for: view, width: 360)
 
@@ -478,7 +456,6 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: source,
-            fullText: nil
         ))
 
         view.frame = CGRect(x: 0, y: 0, width: 360, height: 0)
@@ -502,7 +479,6 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: source,
-            fullText: nil
         ))
         _ = fittedTimelineSize(for: view, width: 360)
         let label = try #require(privateTextLabel(in: view))
@@ -512,7 +488,6 @@ struct ThinkingRowContentViewTests {
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: source,
-            fullText: nil
         )
         _ = fittedTimelineSize(for: view, width: 360)
 
@@ -528,12 +503,10 @@ struct ThinkingRowContentViewTests {
         let completed = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: source,
-            fullText: nil
         ))
         let streaming = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: false,
             previewText: source,
-            fullText: nil
         ))
         _ = fittedTimelineSize(for: completed, width: 360)
         _ = fittedTimelineSize(for: streaming, width: 360)
@@ -552,7 +525,6 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: source,
-            fullText: nil,
             maxBubbleHeight: 100_000
         ))
         _ = fittedTimelineSize(for: view, width: 360)
@@ -566,7 +538,6 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: source,
-            fullText: nil
         ))
 
         _ = fittedTimelineSize(for: view, width: 360)
@@ -588,7 +559,6 @@ struct ThinkingRowContentViewTests {
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: original,
-            fullText: nil
         ))
         _ = fittedTimelineSize(for: view, width: 360)
         #expect(privateTextLabel(in: view)?.text?.contains("AAAA") == true)
@@ -596,53 +566,12 @@ struct ThinkingRowContentViewTests {
         view.configuration = ThinkingTimelineRowConfiguration(
             isDone: true,
             previewText: updated,
-            fullText: nil
         )
         _ = fittedTimelineSize(for: view, width: 360)
 
         let rendered = try #require(privateTextLabel(in: view)?.text)
         #expect(!rendered.contains("AAAA"))
         #expect(rendered.contains("BBBB"))
-    }
-
-    // MARK: - Full-screen trace liveness
-
-    /// A durable conversation projects a live thinking block as a completed
-    /// event and then keeps replacing its text, so the row's `isDone` is a
-    /// spinner flag. While the turn runs, the full-screen reader must keep
-    /// streaming; only a settled turn may mount the finished body.
-    @Test func liveTurnKeepsTheFullScreenTraceOpen() {
-        let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
-            isDone: true,
-            previewText: "reading the failing test",
-            fullText: nil
-        ))
-        #expect(view.fullScreenTraceIsCompleteForTesting, "A settled turn finishes the reader's trace")
-
-        var configuration = ThinkingTimelineRowConfiguration(
-            isDone: true,
-            previewText: "reading the failing test",
-            fullText: nil
-        )
-        configuration.isTurnActive = true
-        view.configuration = configuration
-        #expect(!view.fullScreenTraceIsCompleteForTesting, "A running turn keeps growing its trace")
-
-        var appended = ThinkingTimelineRowConfiguration(
-            isDone: true,
-            previewText: "reading the failing test, then the reducer",
-            fullText: nil
-        )
-        appended.isTurnActive = true
-        view.configuration = appended
-        #expect(view.fullScreenTraceIsCompleteForTesting == false)
-
-        view.configuration = ThinkingTimelineRowConfiguration(
-            isDone: true,
-            previewText: "reading the failing test, then the reducer",
-            fullText: nil
-        )
-        #expect(view.fullScreenTraceIsCompleteForTesting, "The turn ending completes an open reader")
     }
 }
 

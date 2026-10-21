@@ -21,23 +21,19 @@ enum ThinkingRowHeightPolicy {
 struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     let isDone: Bool
     let previewText: String
-    let fullText: String?
     let maxBubbleHeight: CGFloat
     let itemID: String?
     let sourceLabel: String?
     var interactionContext: TimelineInteractionContext? = nil
     var openFullScreen: ((ChatReaderPayload) -> Void)? = nil
-    /// The turn is still running, so this trace can still grow even when the
-    /// item reports done. A durable conversation projects a live thinking block
-    /// as a completed event (`TimelineReducer` inserts projected `.thinking`
-    /// events with `isDone: true`) and then keeps replacing its text, so `isDone`
+    /// The stream is still writing this row (`TimelineReducer.liveRowIDs`). A durable
+    /// live tail can rewrite a thinking block that already reports done, so `isDone`
     /// alone cannot decide whether a full-screen reader holds a live trace.
-    var isTurnActive: Bool = false
+    var isLive: Bool = false
 
     init(
         isDone: Bool,
         previewText: String,
-        fullText: String?,
         maxBubbleHeight: CGFloat = ThinkingRowHeightPolicy.defaultMaxBubbleHeight,
         itemID: String? = nil,
         sourceLabel: String? = nil,
@@ -45,24 +41,17 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     ) {
         self.isDone = isDone
         self.previewText = previewText
-        self.fullText = fullText
         self.maxBubbleHeight = maxBubbleHeight
         self.itemID = itemID
         self.sourceLabel = sourceLabel
         self.interactionContext = interactionContext
     }
 
-    /// Best available text for display.
-    var displayText: String {
-        let full = (fullText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return full.isEmpty ? previewText : full
-    }
-
-    /// Whether the trace can no longer grow: its block finished and its turn
-    /// ended. Only then may a full-screen reader mount the finished body instead
-    /// of a live one; `isDone` on its own is a spinner flag.
+    /// Whether the trace can no longer grow: its block finished and the stream
+    /// stopped writing it. Only then may a full-screen reader mount the finished
+    /// body instead of a live one; `isDone` on its own is a spinner flag.
     var traceIsComplete: Bool {
-        isDone && !isTurnActive
+        isDone && !isLive
     }
 
     var normalizedSourceLabel: String {
@@ -159,7 +148,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
     init(configuration: ThinkingTimelineRowConfiguration) {
         self.currentConfiguration = configuration
-        let initialText = configuration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let initialText = configuration.previewText.trimmingCharacters(in: .whitespacesAndNewlines)
         self.currentSourceText = initialText
         self.fullScreenThinkingStream = ThinkingTraceStream(
             text: initialText,
@@ -328,7 +317,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         let isNowStreaming = !configuration.isDone
         let previousText = currentSourceText
         currentConfiguration = configuration
-        currentSourceText = configuration.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        currentSourceText = configuration.previewText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if isNowStreaming && !wasStreaming {
             scrollView.contentOffset = .zero
@@ -749,13 +738,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     // periphery:ignore - used by ThinkingRowContentViewTests via @testable import
     func contextMenuForTesting() -> UIMenu? {
         contextMenu()
-    }
-
-    /// Whether the stream handed to a full-screen reader is finished. A live
-    /// turn keeps it open so the reader keeps appending.
-    // periphery:ignore - used by ThinkingRowContentViewTests via @testable import
-    var fullScreenTraceIsCompleteForTesting: Bool {
-        fullScreenThinkingStream.snapshot.isDone
     }
     #endif
 
