@@ -118,33 +118,50 @@ struct WorkspaceSidebarSessionStatusTests {
         #expect(status.accessibilityValue == "1 session needs attention")
     }
 
-    @Test func blockedKindsCountAsAttentionAndSeenOutcomesDropOut() {
+    @Test func countsOnlyLiveSessionsAndStoppedOutcomesNeverCount() {
         let since = Date(timeIntervalSince1970: 1_000)
-        func session(_ id: String, _ state: ProgramStatusState, kind: ProgramStatusKind? = nil) -> Session {
+        func session(
+            _ id: String,
+            _ status: SessionStatus,
+            _ state: ProgramStatusState,
+            kind: ProgramStatusKind? = nil
+        ) -> Session {
             makeTestSession(
                 id: id,
-                status: .ready,
+                status: status,
                 programStatus: ProgramStatus(state: state, kind: kind, since: since),
                 messageCount: 1,
                 firstMessage: "go"
             )
         }
-        let sessions = [
-            session("approval", .blocked, kind: .permission),
-            session("signin", .blocked, kind: .auth),
-            session("unseen-done", .done),
-            session("seen-done", .done),
-            session("seen-error", .error),
-        ]
-
-        let status = WorkspaceSidebarSessionStatus(
-            sessions: sessions,
-            seenAtForSession: { $0.hasPrefix("seen") ? since : nil }
-        )
+        let status = WorkspaceSidebarSessionStatus(sessions: [
+            session("approval", .ready, .blocked, kind: .permission),
+            session("signin", .ready, .blocked, kind: .auth),
+            session("live-done", .ready, .done),
+            session("live-idle", .ready, .idle),
+            session("stopped-done", .stopped, .done),
+            session("stopped-error", .stopped, .error),
+            session("stopped-idle", .stopped, .idle),
+        ])
 
         #expect(status.blockedCount == 2)
         #expect(status.errorCount == 0)
-        #expect(status.doneCount == 1)
+        #expect(status.workingCount == 0)
+        #expect(status.doneCount == 2)
+    }
+
+    @Test func stoppedSessionsAloneHideTheStatus() {
+        let status = WorkspaceSidebarSessionStatus(sessions: [
+            makeTestSession(
+                id: "finished",
+                status: .stopped,
+                programStatus: ProgramStatus(state: .done, since: Date(timeIntervalSince1970: 1_000)),
+                messageCount: 1,
+                firstMessage: "go"
+            ),
+        ])
+
+        #expect(!status.isVisible)
     }
 
     @Test func showsDoneWhenNoSessionNeedsAttention() {

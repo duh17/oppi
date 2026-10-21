@@ -138,23 +138,24 @@ struct WorkspaceSidebarSessionStatus: Equatable {
         self.doneCount = doneCount
     }
 
-    /// Counts the sessions' statuses. Error and done are the unseen ones: once this device
-    /// has seen an outcome the session is Idle and no longer counts.
+    /// Counts live sessions from server state, the same ones the session list puts in
+    /// Working and Your Turn. Stopped sessions are history and never count, and nothing
+    /// here depends on whether this device has opened a session: Done is every live
+    /// session that finished its turn (a draft awaiting its first prompt is not one).
     init(
         sessions: [Session],
-        pendingAskCountForSession: (String) -> Int = { _ in 0 },
-        seenAtForSession: (String) -> Date? = { _ in nil }
+        pendingAskCountForSession: (String) -> Int = { _ in 0 }
     ) {
         var blockedCount = 0
         var errorCount = 0
         var workingCount = 0
         var doneCount = 0
 
-        for session in sessions {
+        for session in sessions where session.status != .stopped {
             let status = SessionStatusKind.resolve(
                 session: session,
                 pendingAskCount: pendingAskCountForSession(session.id),
-                seenAt: seenAtForSession(session.id)
+                seenAt: nil
             )
             switch status {
             case .needsApproval, .question, .signIn:
@@ -163,9 +164,9 @@ struct WorkspaceSidebarSessionStatus: Equatable {
                 errorCount += 1
             case .working:
                 workingCount += 1
-            case .done:
-                doneCount += 1
-            case .idle, .stopped:
+            case .done, .idle:
+                if !session.isAwaitingFirstPrompt { doneCount += 1 }
+            case .stopped:
                 break
             }
         }

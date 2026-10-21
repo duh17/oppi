@@ -308,8 +308,7 @@ final class WorkspaceSidebarViewController: UIViewController {
                     hasPendingAsk: connection.askRequestStore.hasPending(for: sessionId),
                     hasPendingExtensionDialog: connection.hasPendingExtensionDialog(for: sessionId)
                 )
-            },
-            seenAtForSession: { connection.sessionStore.seenAt(for: $0) }
+            }
         )
     }
 
