@@ -181,8 +181,18 @@ final class ChatRoutesUITests: XCTestCase {
     /// The Top Bar page itself, with nothing pinned in the argument domain, so
     /// these are the writes a person makes: a switch writes the layout, a drag
     /// reorders it, and both survive a relaunch.
+    ///
+    /// This is the one test that writes the persistent layout, so it opens with
+    /// `SCREENSHOT_RESET_TOP_BAR` and restores through a teardown block: a
+    /// failure here cannot leave the bar changed for the suites that share this
+    /// simulator.
     func testTopBarSettingsSwitchAndReorderWriteTheLayout() {
-        launchScreen("settings-chat-top-bar")
+        launchScreen("settings-chat-top-bar", environment: ["SCREENSHOT_RESET_TOP_BAR": "1"])
+        addTeardownBlock { [weak self] in
+            // Teardown blocks run on the main thread, where the test's launch
+            // helper and its app handle live.
+            MainActor.assumeIsolated { self?.resetSavedTopBar() }
+        }
         let rowIDs = ["files", "outline", "context", "terminal"]
         func row(_ id: String) -> XCUIElement { app.cells["settings.chat.topBar.row.\(id)"] }
         func handle(_ id: String) -> XCUIElement { row(id).buttons["settings.chat.topBar.row.\(id)"] }
@@ -223,20 +233,30 @@ final class ChatRoutesUITests: XCTestCase {
             "The hidden button must still be hidden after a relaunch"
         )
 
-        // Leave the layout as this device had it: Outline back on, Terminal back
-        // to the last place.
-        app.switches["settings.chat.topBar.outline"].tap()
-        XCTAssertTrue(
-            waitFor((app.switches["settings.chat.topBar.outline"].value as? String) == "1"),
-            "Outline must come back on"
+        // And the reset flag the test opened with is what puts the device back:
+        // the same launch reads the default layout again.
+        app.terminate()
+        launchScreen("settings-chat-top-bar", environment: ["SCREENSHOT_RESET_TOP_BAR": "1"])
+        for id in rowIDs {
+            XCTAssertTrue(row(id).waitForExistence(timeout: 15), "\(id) must come back as a row")
+        }
+        assertTopToBottom(rowIDs.map(row), "The order after a reset")
+        XCTAssertEqual(
+            app.switches["settings.chat.topBar.outline"].value as? String,
+            "1",
+            "The reset must show the hidden button again"
         )
-        drag(handle("terminal"), below: row("context"))
-        XCTAssertTrue(
-            waitFor(row("terminal").frame.minY > row("context").frame.minY),
-            "Terminal must go back to the last place"
-        )
-        assertTopToBottom(rowIDs.map(row), "The restored order")
         assertRunning()
+    }
+
+    /// Puts the saved top bar layout back on this simulator, whether the test
+    /// that wrote it finished or stopped early.
+    private func resetSavedTopBar() {
+        launchScreen("settings-chat-top-bar", environment: ["SCREENSHOT_RESET_TOP_BAR": "1"])
+        XCTAssertTrue(
+            app.cells["settings.chat.topBar.row.files"].waitForExistence(timeout: 15),
+            "The reset launch must reach the Top Bar page"
+        )
     }
 
     /// Drags a row's reorder handle above or below another row, the way a person
@@ -246,15 +266,6 @@ final class ChatRoutesUITests: XCTestCase {
         handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
             forDuration: 0.8,
             thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)),
-            withVelocity: .slow,
-            thenHoldForDuration: 0.6
-        )
-    }
-
-    private func drag(_ handle: XCUIElement, below row: XCUIElement) {
-        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
-            forDuration: 0.8,
-            thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)),
             withVelocity: .slow,
             thenHoldForDuration: 0.6
         )

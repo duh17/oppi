@@ -82,19 +82,12 @@ final class ChatBarItems {
         let navigationItem = chat.screen.navigationItem
         let joinsRail = SystemVerticalBar.traitIsActive(chat.traitCollection)
         let usesCustomBack = chat.usesCustomChatBackButton
-        let hasWorkspace = chat.session?.workspaceId != nil
-        let showsOutline = chat.outlineAvailability.isAvailable
         let usesColumn = chat.usesTrailingSidePanel
         let palette = HostFactory.root(near: chat)?.themeStore.activeThemeID.palette
             ?? ThemeRuntimeState.currentPalette()
         let colors = ComposerThemeColors(palette: palette)
 
-        let available = Self.availableActions(
-            hasWorkspace: hasWorkspace,
-            showsOutline: showsOutline,
-            terminalEnabled: AppPreferences.Experiments.sshTerminalEnabled
-                && chat.hasUsableTerminalFolder
-        )
+        let available = currentAvailability(of: chat)
         let layout = AppPreferences.ChatTopBar.layout
         let drawn = layout.bar(available: available)
 
@@ -193,6 +186,17 @@ final class ChatBarItems {
             : "\(chat.sessionDisplayName), launched with a saved Agent"
     }
 
+    /// Which actions this chat can offer right now. One owner for the bar and
+    /// for the … menu, so a button that leaves the bar appears in the menu on
+    /// the same pass.
+    private func currentAvailability(of chat: ChatViewController) -> Set<ChatTopBarAction> {
+        Self.availableActions(
+            hasWorkspace: chat.session?.workspaceId != nil,
+            showsOutline: chat.outlineAvailability.isAvailable,
+            terminalEnabled: AppPreferences.Experiments.sshTerminalEnabled && chat.hasUsableTerminalFolder
+        )
+    }
+
     /// Which actions this chat can offer right now: the ring is always there,
     /// Files and Terminal need a workspace, Outline needs a timeline, and
     /// Terminal also needs a workspace folder a shell can start in, so a sandbox
@@ -286,11 +290,7 @@ final class ChatBarItems {
     /// setting, not to a chat's menu.
     private func hiddenTopBarItems() -> [UIMenuElement] {
         guard let chat else { return [] }
-        let available = Self.availableActions(
-            hasWorkspace: chat.session?.workspaceId != nil,
-            showsOutline: chat.outlineAvailability.isAvailable,
-            terminalEnabled: AppPreferences.Experiments.sshTerminalEnabled && chat.hasUsableTerminalFolder
-        )
+        let available = currentAvailability(of: chat)
         let filesOpen = chat.model.isFilePanelVisible
         let items = AppPreferences.ChatTopBar.layout.menu(available: available).map { action in
             let item = UIAction(

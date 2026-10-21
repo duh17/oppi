@@ -349,9 +349,20 @@ final class OppiApp {
     }
 
 #if DEBUG
+    /// A harness screen reads the saved top bar layout, and a UI test can leave
+    /// one behind on a simulator that outlives the run: `SCREENSHOT_RESET_TOP_BAR=1`
+    /// puts the device back on the default before any screen reads it. Lazy and
+    /// once per launch, so a later root rebuild cannot wipe a write from the
+    /// same session.
+    private static let resetSavedTopBarForHarness: Void = {
+        guard ProcessInfo.processInfo.environment["SCREENSHOT_RESET_TOP_BAR"] == "1" else { return }
+        AppPreferences.ChatTopBar.reset(in: .standard)
+    }()
+
     /// The harness or screenshot preview chosen by launch arguments, or nil
     /// for the app.
     private var debugHarness: AnyView? {
+        _ = Self.resetSavedTopBarForHarness
         if HTMLDOMAnnotationHarnessConfig.isEnabled {
             return AnyView(HTMLDOMAnnotationHarnessView().ignoresSafeArea())
         }

@@ -542,6 +542,19 @@ enum AppPreferences {
             defaults.set(layout.storedShown, forKey: shownKey)
             NotificationCenter.default.post(name: didChangeNotification, object: nil)
         }
+
+        /// Forgets the saved layout, so the bar is back to Files, Outline, and
+        /// Context. The screenshot harness calls this for
+        /// `SCREENSHOT_RESET_TOP_BAR=1`, which is how a UI test that writes the
+        /// layout leaves the device as it found it.
+        static func reset(in defaults: UserDefaults) {
+            guard defaults.stringArray(forKey: orderKey) != nil || defaults.stringArray(forKey: shownKey) != nil else {
+                return
+            }
+            defaults.removeObject(forKey: orderKey)
+            defaults.removeObject(forKey: shownKey)
+            NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        }
     }
 
     // MARK: - Appearance

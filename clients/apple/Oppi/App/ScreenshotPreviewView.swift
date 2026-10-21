@@ -90,7 +90,7 @@ struct ScreenshotPreviewView: View {
         case "router-modal-sites":
             RouterModalSitesPreview()
         case "chat-routes":
-            ChatRoutesHarnessView()
+            ChatRoutesHarnessPreview()
         case "ask-card-intent-regression":
             AskCardIntentRegressionPreview()
         case "ask-card-tall-scroll":
@@ -178,7 +178,7 @@ struct ScreenshotPreviewView: View {
         case "workspace-shell":
             WorkspaceShellScreenshotPreview()
         case "chat-top-bar":
-            ChatRoutesHarnessView()
+            ChatRoutesHarnessPreview()
         case "chat-top-bar-default":
             ChatTopBarScreenshotPreview(
                 order: [.files, .outline, .context, .terminal],
@@ -698,6 +698,21 @@ private struct AudioFilePlayerScreenshotPreview: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("screenshot.ready")
     }
+}
+
+/// `SCREENSHOT_SCREEN=chat-routes` / `chat-top-bar`: the production chat over
+/// the `chat-routes` fixtures with the default top bar pinned in the argument
+/// domain, so a layout saved on this simulator cannot change what these screens
+/// show.
+private struct ChatRoutesHarnessPreview: View {
+    init() {
+        ScreenshotVolatileDefaults.apply([
+            AppPreferences.ChatTopBar.orderKey: ChatTopBarLayout.defaultValue.storedOrder,
+            AppPreferences.ChatTopBar.shownKey: ChatTopBarLayout.defaultValue.storedShown,
+        ])
+    }
+
+    var body: some View { ChatRoutesHarnessView() }
 }
 
 /// `SCREENSHOT_SCREEN=chat-top-bar-default`, `-terminal`, `-all`, `-none`, and

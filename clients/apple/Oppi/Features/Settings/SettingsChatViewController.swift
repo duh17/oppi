@@ -184,7 +184,7 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
         switch section {
         case .busy: nil
         case .style: String(localized: "Style")
-        case .topBar: String(localized: "Top Bar")
+        case .topBar: nil
         case .comments: nil
         }
     }
@@ -196,7 +196,7 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
         case .style:
             Self.styleFooter(chatStyle)
         case .topBar:
-            String(localized: "The buttons a chat shows beside the session title, in this order. A button turned off there moves into the … menu.")
+            String(localized: "The buttons a chat shows beside the session title. A button turned off moves into the … menu.")
         case .comments:
             String(localized: "Edit the quick comments shown after selecting text and choosing Comment.")
         }
