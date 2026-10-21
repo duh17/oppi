@@ -50,34 +50,6 @@ enum SSHTerminalBottomBar {
     static let reserve = shownHeight + gridGap
 }
 
-/// The bar's container. It hands a touch in its own top inset strip to the
-/// pill below it, where the pill's 4 pt outset lives: otherwise the strip
-/// would stop at the container and the button would be only 40 pt tall to
-/// touch. UIKit does not descend into a subview whose frame misses the point,
-/// even when that subview widens `point(inside:)`, so the strip point is
-/// clamped into the pill and the pill's own nearest-button rule decides which
-/// control it belongs to.
-final class SSHTerminalBottomBarView: UIView {
-    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        if let hit = super.hitTest(point, with: event), hit !== self { return hit }
-        for pill in subviews.reversed() where !pill.isHidden && pill.isUserInteractionEnabled && pill.alpha > 0.01 {
-            let strip = pill.frame.insetBy(
-                dx: -SSHTerminalGlassPill.touchOutset,
-                dy: -SSHTerminalGlassPill.touchOutset
-            )
-            guard strip.contains(point) else { continue }
-            // Keep the finger's column, so a strip touch in front of … is …;
-            // the row is the pill's middle, where its buttons are.
-            let clamped = CGPoint(
-                x: min(max(point.x, pill.bounds.minX), pill.bounds.maxX),
-                y: pill.bounds.midY
-            )
-            if let hit = pill.hitTest(clamped, with: event) { return hit }
-        }
-        return nil
-    }
-}
-
 /// The chat bar grows over the grid instead of shrinking it: the grid keeps
 /// the room for the bar at rest, so typing more lines, attachments, or
 /// suggestions never resizes the remote terminal. When the bar covers the

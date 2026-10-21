@@ -187,7 +187,7 @@ struct SSHTerminalFloatingPillTests {
             window.rootViewController = nil
         }
         let host = root.view!
-        let bar = SSHTerminalBottomBarView()
+        let bar = SSHTerminalPassthroughView()
         bar.translatesAutoresizingMaskIntoConstraints = false
         let back = SSHTerminalBackPill()
         let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())

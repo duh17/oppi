@@ -24,7 +24,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// and … at the trailing one. It ends at the keyboard layout guide, so
     /// with a docked keyboard up (and a broken connection, the one case that
     /// keeps the bar) it floats just above the keyboard.
-    private let bottomBar = SSHTerminalBottomBarView()
+    private let bottomBar = SSHTerminalPassthroughView()
     private var bottomBarHeight: NSLayoutConstraint?
     private let topStack = UIStackView()
     private let backPill = SSHTerminalBackPill()
