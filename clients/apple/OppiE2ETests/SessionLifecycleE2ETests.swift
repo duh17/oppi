@@ -13,8 +13,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         createAndEnterSession()
 
         // Send a prompt that produces a long response
-        let chatInput = app.textViews["chat.input"]
-        tap(chatInput, named: "chat input")
+        let chatInput = focusChatInput()
         chatInput.typeText("Write a detailed 500 word essay about the history of computing")
 
         let sendButton = app.buttons["chat.send"]
@@ -48,8 +47,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
     func testSlashCommandSuggestionsRemainAvailableMidTurn() throws {
         createAndEnterSession()
 
-        let chatInput = app.textViews["chat.input"]
-        tap(chatInput, named: "chat input")
+        let chatInput = focusChatInput()
         chatInput.typeText("Write a detailed 500 word essay about the history of computing")
         tap(app.buttons["chat.send"], named: "send button", timeout: 3)
 
@@ -59,7 +57,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
             "Streaming did not start before checking slash suggestions"
         )
 
-        tap(chatInput, named: "chat input during active turn")
+        focusChatInput()
         chatInput.typeText("/")
 
         let reloadSuggestion = app.buttons
@@ -91,8 +89,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
     func testBusyModePickerUsesStablePopoverOrderAndSelection() throws {
         createAndEnterSession()
 
-        let chatInput = app.textViews["chat.input"]
-        tap(chatInput, named: "chat input")
+        let chatInput = focusChatInput()
         chatInput.typeText("Write a detailed 500 word essay about the history of computing")
         tap(app.buttons["chat.send"], named: "send button", timeout: 3)
 
@@ -102,6 +99,9 @@ final class SessionLifecycleE2ETests: E2ETestCase {
             "Streaming did not start before checking the busy mode picker"
         )
 
+        // A successful send dismisses the keyboard, and the action row that
+        // holds the busy-mode pill follows focus. Focus the composer again.
+        focusChatInput()
         let picker = app.buttons["chat.busyMode"]
         tap(picker, named: "busy mode picker", timeout: 5)
 
@@ -164,8 +164,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         )
         tap(contextNavigationBar.buttons["chat.context.close"], named: "Context close button")
 
-        let chatInput = app.textViews["chat.input"]
-        tap(chatInput, named: "chat input")
+        let chatInput = focusChatInput()
         chatInput.typeText("/compact")
 
         let compactSuggestion = app.buttons
