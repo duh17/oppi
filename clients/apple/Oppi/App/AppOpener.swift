@@ -89,8 +89,9 @@ struct SessionOpen: Equatable, Sendable {
         self.startedSessionRequestID = startedSessionRequestID
     }
 
-    /// Nil unless `url` is `oppi://session/<id>` with an optional
-    /// `?workspaceId=` hint.
+    /// Nil unless `url` is `oppi://session/<id>`. A `?workspaceId=` query is
+    /// ignored: a URL must never choose the session's workspace (or its lock
+    /// scope); only server-provided payloads carry one.
     init?(url: URL, origin: SessionNavigationSource, sourceServerID: String? = nil) {
         guard url.scheme?.lowercased() == "oppi",
               url.host?.lowercased() == "session" else {
@@ -103,17 +104,8 @@ struct SessionOpen: Equatable, Sendable {
         let sessionId = (String(rawId).removingPercentEncoding ?? String(rawId))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sessionId.isEmpty else { return nil }
-        let workspaceId = components?.queryItems?
-            .first { $0.name == "workspaceId" }?
-            .value?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        self.init(
-            serverId: sourceServerID,
-            sessionId: sessionId,
-            workspaceId: workspaceId?.isEmpty == false ? workspaceId : nil,
-            origin: origin
-        )
+        self.init(serverId: sourceServerID, sessionId: sessionId, origin: origin)
     }
 }
 
@@ -287,10 +279,11 @@ final class AppOpener {
     /// A parked request is given up after this long: it is a tap, not a task.
     private static let parkedRequestLifetime: TimeInterval = 10 * 60
     @ObservationIgnored private var parkedAt: Date?
-    /// One deferred drain is enough while App Lock keeps asking.
-    @ObservationIgnored private var awaitsUnlockDrain = false
     /// Only a foreground app runs parked work; a background launch just parks.
     @ObservationIgnored private var sceneIsActive = false
+    /// A request waiting in App Lock's one deferred slot. It is tracked so a
+    /// leftover Siri receipt or a parked drain cannot overwrite it.
+    @ObservationIgnored private var deferredRequest: AppOpenRequest?
     /// The request the current task is running, so a newer open can abandon
     /// its Siri receipt instead of replaying it at the next launch.
     @ObservationIgnored private var activeRequest: AppOpenRequest?
@@ -337,6 +330,7 @@ final class AppOpener {
         }
         supersede()
         let generation = generation
+        deferredRequest = request
         appLock.performWhenUnlocked { [weak self] in
             self?.accept(request, generation: generation)
         }
@@ -349,7 +343,7 @@ final class AppOpener {
         // A receipt left by a process that died before it came forward opens
         // now. It is an open like any other: a locked app defers it. A parked
         // request is the newer one: it wins the slot.
-        if parked == nil, let receipt = intentSessionOpenTrigger.peek() {
+        if parked == nil, deferredRequest == nil, let receipt = intentSessionOpenTrigger.peek() {
             open(.session(SessionOpen(
                 serverId: receipt.serverId,
                 sessionId: receipt.sessionId,
@@ -366,15 +360,14 @@ final class AppOpener {
     /// A newer tap has already replaced it.
     func sceneDidBecomeActive() {
         sceneIsActive = true
-        // A deferred unlock drain may have died with the previous scene phase;
-        // re-arm it from this foreground boundary.
-        awaitsUnlockDrain = false
         drainParkedIfPossible()
     }
 
     func sceneDidEnterBackground() {
         sceneIsActive = false
-        awaitsUnlockDrain = false
+        // App Lock drops its one deferred action on background; do not keep
+        // advertising a deferred request that can never run.
+        deferredRequest = nil
     }
 
     /// The root's presentation changed (onboarding finished, launch ready): a
@@ -388,9 +381,11 @@ final class AppOpener {
     private func supersede() {
         abandonIntentReceipt(for: activeRequest)
         abandonIntentReceipt(for: parked)
+        abandonIntentReceipt(for: deferredRequest)
         generation &+= 1
         clearParked()
         activeRequest = nil
+        deferredRequest = nil
         currentTask?.cancel()
         currentTask = nil
     }
@@ -403,6 +398,9 @@ final class AppOpener {
 
     private func accept(_ request: AppOpenRequest, generation: UInt64) {
         guard generation == self.generation else { return }
+        // The current accept owns the deferred slot; a superseded accept leaves
+        // the newer request (and its receipt) in place.
+        deferredRequest = nil
         if case .invite(let url) = request {
             startInvite(url, generation: generation)
             return
@@ -436,21 +434,23 @@ final class AppOpener {
         // A background launch or a parked retry runs only while the app is in
         // front; the next active transition drains it.
         guard sceneIsActive else { return }
+        // An open already owns App Lock's one deferred slot; arming a drain now
+        // would replace the user's tap.
+        guard deferredRequest == nil else { return }
         guard !appLock.requiresUnlock() else {
-            // App Lock's deferred slot drains after the next unlock. A parked
-            // request cannot race an open's deferred accept, because opening
-            // anything clears the parked slot first.
-            guard !awaitsUnlockDrain else { return }
-            awaitsUnlockDrain = true
-            appLock.performWhenUnlocked { [weak self] in
-                guard let self else { return }
-                self.awaitsUnlockDrain = false
-                self.drainParkedIfPossible()
-            }
+            // App Lock's deferred slot drains this after the next unlock. A
+            // cancelled unlock drops that slot; the next foreground or root
+            // update re-arms it.
+            appLock.performWhenUnlocked { [weak self] in self?.drainParkedIfPossible() }
             return
         }
+        // Unlocked with a tracked deferred request means App Lock dropped its
+        // action (cancelled unlock): forget it so it cannot block later opens.
+        deferredRequest = nil
         guard canRunNow(request) else { return }
-        clearParked()
+        // Keep `parkedAt`: a retry of the same request must not restart its
+        // 10-minute lifetime.
+        parked = nil
         generation &+= 1
         run(request, generation: generation)
     }
@@ -458,7 +458,6 @@ final class AppOpener {
     private func clearParked() {
         parked = nil
         parkedAt = nil
-        awaitsUnlockDrain = false
     }
 
     /// The server a request needs, when it names one up front. Requests that
@@ -504,7 +503,8 @@ final class AppOpener {
 
     private func park(_ request: AppOpenRequest) {
         parked = request
-        parkedAt = now
+        // A retry of the same request keeps its original deadline.
+        if parkedAt == nil { parkedAt = now }
         activeRequest = nil
         openerLog.notice("Parked open request until the app and its server are ready")
     }
@@ -571,6 +571,7 @@ final class AppOpener {
             park(request)
         } else {
             activeRequest = nil
+            parkedAt = nil
         }
     }
 
@@ -590,7 +591,11 @@ final class AppOpener {
         case .externalURL:
             if let named = open.serverId {
                 guard serverStore.server(for: named) != nil else {
-                    // A receipt for an unpaired server would otherwise toast
+                    // An empty pairing list means it is not readable yet (the
+                    // device is locked), not that the server is gone. Keep the
+                    // receipt for the next launch without toasting.
+                    guard !serverStore.servers.isEmpty else { return .finished }
+                    // A receipt for a removed server would otherwise toast
                     // again at every launch.
                     if let requestID = open.startedSessionRequestID {
                         intentSessionOpenTrigger.abandon(requestID: requestID)
@@ -631,7 +636,7 @@ final class AppOpener {
         let switched = await openServer(serverId, generation: generation)
         guard isCurrent(generation) else { return .finished }
         guard switched, let connection = coordinator.connection(for: serverId) else {
-            toastUnreachable(serverId)
+            toastUnreachableIfFirstAttempt(serverId)
             return .unreachable
         }
 
@@ -670,10 +675,18 @@ final class AppOpener {
         )
         guard isCurrent(generation) else { return .finished }
 
-        let workspaceId = connection.sessionReentryWorkspaceId(
-            for: sessionId,
-            workspaceIdHint: workspaceIdHint
-        )
+        // The route and its lock scope come from loaded session data (the
+        // record, a pending ask, or a dialog), never from a URL hint.
+        let workspaceId = connection.sessionReentryWorkspaceId(for: sessionId)
+        // The destination lock target is the loaded workspace (never a URL
+        // hint). The route gate uses the same value; asking here covers a
+        // record that only became readable after the pre-switch gate, and an
+        // unknown workspace still checks the session and server scopes.
+        guard await scopedLock.authorize(scopedLock.sessionTarget(
+            serverId: serverId,
+            sessionId: sessionId,
+            workspaceId: workspaceId
+        )), isCurrent(generation) else { return .finished }
         navigation.selectedTab = .workspaces
         navigation.openSession(
             WorkspaceSessionNavTarget(
@@ -751,7 +764,7 @@ final class AppOpener {
         let switched = await openServer(server.id, generation: generation)
         guard isCurrent(generation) else { return .finished }
         guard switched else {
-            toastUnreachable(server.id)
+            toastUnreachableIfFirstAttempt(server.id)
             return .unreachable
         }
 
@@ -834,6 +847,13 @@ final class AppOpener {
     func toastUnreachable(_ serverId: String) {
         let name = serverStore.server(for: serverId)?.name ?? "Server \(serverId.prefix(8))"
         toast("Could not reach \(name)")
+    }
+
+    /// A request that stays parked says it once: retries on the next
+    /// foreground are silent (`parkedAt` is kept across them).
+    func toastUnreachableIfFirstAttempt(_ serverId: String) {
+        guard parkedAt == nil else { return }
+        toastUnreachable(serverId)
     }
 
     func resourceReferenceServerName(_ serverID: String) -> String {

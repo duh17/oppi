@@ -90,9 +90,9 @@ struct AppOpenerTests {
             sessionId: "a b",
             origin: .externalURL
         )))
+        // A URL must not choose the session's workspace (or its lock scope).
         #expect(try request("oppi://session/child?workspaceId=w1") == .session(SessionOpen(
             sessionId: "child",
-            workspaceId: "w1",
             origin: .externalURL
         )))
         #expect(try request("oppi://workspace?path=/tmp/project&name=Project") == .createWorkspace(
@@ -776,16 +776,18 @@ struct AppOpenerTests {
 
     @Test func urlWorkspaceHintCannotChooseTheScopedLockScope() async throws {
         let harness = OpenerHarness(
-            servers: [makeServer("server-a")],
+            servers: [makeServer("server-a"), makeServer("server-b")],
             authOutcomes: [.cancelled]
         )
-        harness.addSession("child", workspaceId: "w1", to: "server-a")
-        harness.scopedLock.sessionLookup = { [weak harness] _, sessionId in
-            harness?.connection("server-a").sessionStore.session(id: sessionId)
+        // The session lives on the non-active server, so a pre-switch pass
+        // would also switch servers.
+        harness.addSession("child", workspaceId: "w1", to: "server-b")
+        harness.scopedLock.sessionLookup = { [weak harness] serverId, sessionId in
+            harness?.connection(serverId).sessionStore.session(id: sessionId)
         }
         // The session's workspace is locked.
         harness.scopedLock.lock(
-            .workspace(serverId: "server-a", workspaceId: "w1")
+            .workspace(serverId: "server-b", workspaceId: "w1")
         )
 
         // A URL hint must not move the lock scope off that workspace.
@@ -911,6 +913,140 @@ struct AppOpenerTests {
         #expect(harness.intentTrigger.peek() == nil)
         #expect(harness.connection("server-a").extensionToast == "Server not found for this session link")
         #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+    }
+
+    // MARK: - Repair 2: deferred opens, receipts, destination scope
+
+    @Test func aLockedReceiptDoesNotTakeTheUsersTap() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            appLockTimeout: .immediately,
+            launch: false
+        )
+        harness.addSession("created", workspaceId: "w1", to: "server-a")
+        harness.addSession("tapped", workspaceId: "w1", to: "server-a")
+        let receipt = IntentSessionOpenTrigger.Receipt(
+            requestID: harness.intentTrigger.issueRequestID(),
+            serverId: "server-a",
+            sessionId: "created",
+            workspaceId: "w1",
+            unsentPrompt: nil,
+            session: nil
+        )
+        harness.intentTrigger.enqueue(receipt)
+
+        // Cold + locked: the leftover receipt waits behind App Lock.
+        harness.opener.launchDidFinish()
+        await harness.settle()
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+
+        // The user's tap arrives while the receipt is still deferred.
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "tapped",
+            origin: .externalURL
+        )))
+        await harness.settle()
+        // Newest wins, and the superseded receipt must not replay later.
+        #expect(harness.intentTrigger.peek() == nil)
+
+        #expect(await harness.appLock.unlock())
+        await harness.settle()
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "tapped")
+    }
+
+    @Test func cancelledUnlockThenUnlockStillDrainsTheParkedRequest() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            authOutcomes: [.cancelled, .cancelled, .success],
+            launch: false
+        )
+        harness.addSession("child", workspaceId: "w1", to: "server-a")
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "child",
+            origin: .externalURL
+        )))
+        await harness.settle()
+
+        harness.appLock.setTimeout(.immediately)
+        harness.appLock.appDidEnterBackground()
+        harness.opener.sceneDidEnterBackground()
+        harness.opener.launchDidFinish()
+
+        // Foreground auto-prompts; cancel it and stay locked.
+        if let autoUnlock = harness.appLock.sceneDidBecomeActive() {
+            #expect(await autoUnlock.value == false)
+        }
+        // Arm the deferred drain, then cancel an explicit unlock: App Lock
+        // drops its one deferred action.
+        harness.opener.sceneDidBecomeActive()
+        #expect(!(await harness.appLock.unlock()))
+        // A second foreground must re-arm it; the old flag would skip this.
+        harness.opener.sceneDidBecomeActive()
+        await harness.settle()
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+
+        #expect(await harness.appLock.unlock())
+        await harness.settle()
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
+    }
+
+    @Test func aReceiptForAMissingServerIsKeptWhileThePairingListIsUnavailable() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.intentTrigger.enqueue(IntentSessionOpenTrigger.Receipt(
+            requestID: harness.intentTrigger.issueRequestID(),
+            serverId: "server-gone",
+            sessionId: "created",
+            workspaceId: "w1",
+            unsentPrompt: nil,
+            session: nil
+        ))
+        // A locked Keychain can leave the pairing list empty; that is not proof
+        // the server was removed.
+        harness.serverStore.replaceServersForPreview([])
+
+        harness.opener.launchDidFinish()
+        await harness.settle()
+
+        #expect(harness.intentTrigger.peek() != nil)
+        #expect(harness.coordinator.activeConnection.extensionToast == nil)
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+    }
+
+    @Test func destinationWorkspaceComesFromLoadedDataNotTheRequestHint() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            authOutcomes: [.cancelled]
+        )
+        let connection = harness.connection("server-a")
+        connection.askRequestStore.set(AskRequest(
+            id: "ask-1",
+            sessionId: "child",
+            questions: [],
+            allowCustom: true,
+            timeout: nil,
+            workspaceId: "w1"
+        ), for: "child")
+        // The session record cannot load (refresh fails); only the ask names
+        // its workspace.
+        connection._getSessionTraceForTesting = { _ in throw URLError(.timedOut) }
+        harness.scopedLock.sessionLookup = { [weak harness] serverId, sessionId in
+            harness?.connection(serverId).sessionStore.session(id: sessionId)
+        }
+        harness.scopedLock.lock(.workspace(serverId: "server-a", workspaceId: "w1"))
+
+        // The request carries a hint for an unlocked workspace.
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "child",
+            workspaceId: "other",
+            origin: .externalURL
+        )))
+        await harness.settle()
+
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+        #expect(harness.coordinator.activeServerId == "server-a")
     }
 
     // MARK: - Web and system links
