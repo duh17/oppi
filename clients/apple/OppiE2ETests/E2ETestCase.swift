@@ -733,6 +733,7 @@ class E2ETestCase: XCTestCase {
 
         dismissKeyboardIfPresent()
         for attempt in 0..<2 {
+            scrollSessionRowIntoView(row, in: sessionList)
             tap(row, named: "session row \(sessionId)")
             if waitForChatSessionSurface(in: app, timeout: attempt == 0 ? 8 : 30) {
                 return
@@ -744,6 +745,22 @@ class E2ETestCase: XCTestCase {
             waitForChatSessionSurface(in: app, timeout: 5),
             "Chat input did not appear after entering session \(sessionId)"
         )
+    }
+
+    /// Brings a session row into the part of the list that takes taps.
+    ///
+    /// A collection view prepares cells just outside its viewport: they exist in
+    /// the accessibility tree while `isHittable` stays false, and `tap()` then
+    /// falls back to a coordinate tap that lands beside the list and opens
+    /// nothing. A newly created session sits at the top, so search up first.
+    private func scrollSessionRowIntoView(_ row: XCUIElement, in list: XCUIElement) {
+        guard row.exists, !row.isHittable else { return }
+        for _ in 0..<8 where !row.isHittable {
+            list.swipeDown()
+        }
+        for _ in 0..<8 where !row.isHittable {
+            list.swipeUp()
+        }
     }
 
     /// Creates a new session and enters it.
@@ -1236,25 +1253,43 @@ class E2ETestCase: XCTestCase {
         )
     }
 
-    /// Types a message and taps send without waiting for the turn.
-    func sendMessage(_ message: String) {
+    /// The composer's text view, focused and ready for `typeText`.
+    ///
+    /// The tap that opens a chat can arrive while its composer is still
+    /// settling: the text view exists and reads as hittable, but the touch is
+    /// dropped and nothing becomes first responder, so typing then fails with
+    /// "Neither element nor any descendant has keyboard focus". Tap again until
+    /// the focus predicate holds; the second tap lands on the same coordinates.
+    @discardableResult
+    func focusChatInput(timeout: TimeInterval = 5) -> XCUIElement {
         let chatInput = app.textViews["chat.input"]
         XCTAssertTrue(
             waitForElementToExist(chatInput, timeout: 15),
-            "Chat input not available before sending"
+            "Chat input not available before typing"
         )
-        dismissExtensionSheetIfNeeded(timeout: 1)
-        chatInput.tap()
         let focusPredicate = NSPredicate(format: "hasKeyboardFocus == true")
-        if !focusPredicate.evaluate(with: chatInput) {
-            chatInput.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
-        }
-        let focusDeadline = Date().addingTimeInterval(5)
-        while !focusPredicate.evaluate(with: chatInput) && Date() < focusDeadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        let deadline = Date().addingTimeInterval(timeout)
+        var attempts = 0
+        while !focusPredicate.evaluate(with: chatInput), Date() < deadline {
+            attempts += 1
+            if attempts == 1 {
+                chatInput.tap()
+            } else {
+                chatInput.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
+            }
+            let settle = Date().addingTimeInterval(0.5)
+            while !focusPredicate.evaluate(with: chatInput), Date() < settle {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
         }
         XCTAssertTrue(focusPredicate.evaluate(with: chatInput), "Chat input did not gain keyboard focus")
-        chatInput.typeText(message)
+        return chatInput
+    }
+
+    /// Types a message and taps send without waiting for the turn.
+    func sendMessage(_ message: String) {
+        dismissExtensionSheetIfNeeded(timeout: 1)
+        focusChatInput().typeText(message)
 
         let sendButton = app.buttons["chat.send"]
         tap(sendButton, named: "send button", timeout: 3)
