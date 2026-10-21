@@ -1216,10 +1216,16 @@ final class DataImagePreviewView: UIView {
         view.layer.cornerRadius = 8
         view.clipsToBounds = true
         view.isUserInteractionEnabled = true
-        view.isAccessibilityElement = true
-        view.accessibilityTraits = .image
         view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(openFullScreen)))
         pin(view)
+        // This view is the VoiceOver stop, as the chat's markdown image is:
+        // the renderer inside it would be a second, unactivatable stop.
+        isAccessibilityElement = true
+        accessibilityIdentifier = "fileViewer.image.open"
+        accessibilityLabel = String(localized: "Image")
+        accessibilityHint = String(localized: "Opens image full screen")
+        accessibilityTraits = [.image, .button]
+        accessibilityElementsHidden = true
         if let aspectRatio, aspectRatio > 0 {
             view.heightAnchor.constraint(equalTo: view.widthAnchor, multiplier: 1 / aspectRatio).isActive = true
         } else {
@@ -1228,9 +1234,16 @@ final class DataImagePreviewView: UIView {
     }
 
     /// The rounded box shown while decoding (a spinner) and when the bytes
-    /// are no image (a broken-image mark and a caption).
+    /// are no image (a broken-image mark and a caption). Neither opens
+    /// anything, so neither is a button.
     private func showPlaceholder(failed: Bool) {
         subviews.forEach { $0.removeFromSuperview() }
+        isAccessibilityElement = false
+        accessibilityIdentifier = nil
+        accessibilityLabel = nil
+        accessibilityHint = nil
+        accessibilityTraits = []
+        accessibilityElementsHidden = false
         let box = UIView()
         let palette = ThemeRuntimeState.currentPalette()
         box.backgroundColor = UIColor(palette.bgHighlight)
@@ -1282,6 +1295,13 @@ final class DataImagePreviewView: UIView {
         case (nil, let mimeType):
             FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
         }
+    }
+
+    /// VoiceOver's double tap runs the same action as a touch tap.
+    override func accessibilityActivate() -> Bool {
+        guard isAccessibilityElement else { return false }
+        openFullScreen()
+        return true
     }
 }
 

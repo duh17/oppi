@@ -1365,6 +1365,7 @@
 		A1F1B379B2C93BFE693FF2F1 /* MermaidRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33C6B9D3178696BDFFAA0A2F /* MermaidRendererTests.swift */; };
 		A20CFE95DEC6C3909AAB6290 /* ImageAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87C4D94C50928887C96BE737 /* ImageAttachment.swift */; };
 		A246C0B9D2AE188FBEA47521 /* MermaidStateParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53B61B6C8D1C32195EA104E4 /* MermaidStateParser.swift */; };
+		A24A54F7B75B70851E851BAC /* FileViewerImagePageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57B127F6C3EDDD11E08BA1F2 /* FileViewerImagePageTests.swift */; };
 		A27F949264CBECC25C82E2EB /* QuickSessionOpenIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F3BD780DCD81FAC6DFE18F8 /* QuickSessionOpenIntent.swift */; };
 		A2891EC5C676AEA17C86A56C /* SSHTerminalConnectChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 238CD4ACFBF1BEC48550C643 /* SSHTerminalConnectChrome.swift */; };
 		A28D45E34E868F779C75097E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B9A5B05B2120D7D7B0D2D25F /* PrivacyInfo.xcprivacy */; };
@@ -2903,6 +2904,7 @@
 		577CCB65C6CF16D1A88E5597 /* CodeGutterAlignmentHarnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeGutterAlignmentHarnessView.swift; sourceTree = "<group>"; };
 		5798FD637A227DD071255EBD /* ChatFocusOwnershipTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFocusOwnershipTests.swift; sourceTree = "<group>"; };
 		579D62B4FDE02BFFB4A2E5B2 /* SugiyamaLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SugiyamaLayout.swift; sourceTree = "<group>"; };
+		57B127F6C3EDDD11E08BA1F2 /* FileViewerImagePageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileViewerImagePageTests.swift; sourceTree = "<group>"; };
 		57EB3ADB300AE76A9BF3C3AB /* ChatRoutesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatRoutesUITests.swift; sourceTree = "<group>"; };
 		57EF67A46B1AFED31701EA8C /* MarkdownStressCrashRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownStressCrashRegressionTests.swift; sourceTree = "<group>"; };
 		57F49C65D24FAC0EB9145592 /* WorkspaceFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFiles.swift; sourceTree = "<group>"; };
@@ -5518,6 +5520,7 @@
 				0AD3AD655356B7266A3581D3 /* FileBrowserHostHomeTests.swift */,
 				E0BA66CCCC109E78851528E7 /* FileBrowserPushTransitionMotionTests.swift */,
 				9DB3DA547F5A170F783887D0 /* FileBrowserReviewCommentSelectionTests.swift */,
+				57B127F6C3EDDD11E08BA1F2 /* FileViewerImagePageTests.swift */,
 				BC64E44D15C2FB7AC6B28CD3 /* HTMLDOMElementAnnotationTests.swift */,
 				ECE2055F60C328D0AAE4ED47 /* SessionTouchedFileRoutingTests.swift */,
 				24F79C669C2DC86F4310A2B6 /* VimEngineTests.swift */,
@@ -8566,6 +8569,7 @@
 				396AE1DACAF9313668BD2622 /* FileTypeDetectionTests.swift in Sources */,
 				01BF6DE7908D493CC2BB480B /* FileTypeTests.swift in Sources */,
 				AA3A16D012590F4F43CEAC99 /* FileViewerDescriptorUSDZTests.swift in Sources */,
+				A24A54F7B75B70851E851BAC /* FileViewerImagePageTests.swift in Sources */,
 				EF3D7771FFD76176FD0BCA9F /* FocusedSessionStoreTests.swift in Sources */,
 				9B2AF0E215FA6294C46ECCBE /* FollowTailMeasureTests.swift in Sources */,
 				6BDC364A30CFCDBA799B0758 /* FontSystemTests.swift in Sources */,
