@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// Pure-function text rendering for tool row content.
@@ -302,7 +301,7 @@ enum ToolRowTextRenderer {
 
     static func ansiHighlighted(
         _ text: String,
-        baseForeground: Color = .themeFg
+        baseForeground: UIColor = .themeFg
     ) -> NSAttributedString {
         ANSIParser.attributedString(from: text, baseForeground: baseForeground)
     }
@@ -318,7 +317,7 @@ enum ToolRowTextRenderer {
             string: title,
             attributes: [
                 .font: AppFont.monoMediumSemibold,
-                .foregroundColor: UIColor(Color.themeFg),
+                .foregroundColor: UIColor.themeFg,
             ]
         )
 

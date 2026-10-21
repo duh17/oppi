@@ -1,4 +1,3 @@
-import SwiftUI
 import TipKit
 import UIKit
 
@@ -1201,7 +1200,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         applyImagePreview(configuration: configuration)
 
         // 3. Build render plan and dispatch expanded content
-        let outputColor = configuration.isError ? UIColor(Color.themeRed) : UIColor(Color.themeFg)
+        let outputColor = configuration.isError ? UIColor.themeRed : UIColor.themeFg
         let renderPlan = ToolRowPlanBuilder.build(configuration: configuration)
         let wasExpandedVisible = !expandedContainer.isHidden
         let wasCommandVisible = !bashToolRowView.commandContainer.isHidden

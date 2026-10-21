@@ -542,14 +542,14 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
                 manager: router.voiceInputManager,
                 owner: .reviewCommentInline
             ),
-            volatileColor: UIColor(Color.themeBlue),
+            volatileColor: UIColor.themeBlue,
             volatileBackgroundColor: composerVolatileTranscriptBackgroundColor(),
             correctionRanges: ComposerShared.correctionRanges(
                 manager: router.voiceInputManager,
                 textBeforeRecording: textBeforeRecording,
                 owner: .reviewCommentInline
             ),
-            correctionUnderlineColor: UIColor(Color.themeOrange)
+            correctionUnderlineColor: UIColor.themeOrange
         )
         inputTextView.refreshPlaceholder()
     }

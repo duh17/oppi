@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 import UIKit
 
 /// Owns collapsed voice-message playback for native tool timeline rows.
@@ -44,7 +43,7 @@ final class ToolRowAudioController: NSObject {
         bindAudioStateObservationIfNeeded()
         button.isHidden = false
         button.isAccessibilityElement = true
-        button.tintColor = UIColor(Color.themePurple)
+        button.tintColor = UIColor.themePurple
         button.accessibilityIdentifier = "chat.timeline.row.\(configuration.itemID).audio.play"
         updateButtonImage(configuration: configuration)
     }

@@ -1,5 +1,4 @@
 import UIKit
-import SwiftUI
 
 /// Builds `ToolTimelineRowConfiguration` from a `ChatItem.toolCall`.
 ///
@@ -315,7 +314,7 @@ enum ToolPresentationBuilder {
     private struct CollapsedPresentation {
         var title: String
         var toolNamePrefix: String?
-        var toolNameColor = UIColor(Color.themeCyan)
+        var toolNameColor = UIColor.themeCyan
         var titleLineBreakMode: NSLineBreakMode = .byTruncatingTail
         var languageBadge: String?
         var editAdded: Int?
@@ -343,7 +342,7 @@ enum ToolPresentationBuilder {
             // still available in the inspection rather than reconstructed from a name.
             if let command = inspection.commandText, !command.isEmpty { result.title = command } else if !argsSummary.isEmpty { result.title = argsSummary }
             result.toolNamePrefix = "$"
-            result.toolNameColor = UIColor(Color.themeGreen)
+            result.toolNameColor = UIColor.themeGreen
             return result
         }
 
@@ -371,7 +370,7 @@ enum ToolPresentationBuilder {
         if isInteractive {
             result.title = inspection.interactionSummary ?? inspection.title
             result.toolNamePrefix = nil
-            result.toolNameColor = UIColor(Color.themeCyan)
+            result.toolNameColor = UIColor.themeCyan
             result.titleLineBreakMode = .byTruncatingTail
 
         } else {
@@ -381,7 +380,7 @@ enum ToolPresentationBuilder {
                 result.title = "Voice message"
                 result.languageBadge = nil
                 result.toolNamePrefix = nil
-                result.toolNameColor = UIColor(Color.themePurple)
+                result.toolNameColor = UIColor.themePurple
             } else if let line = NotebookCellPlan.collapsedTitle(from: inspection.input) {
                 // No title segments: the first code line is the cell, the way a
                 // shell row shows the command. Segments, when present, still win
@@ -395,7 +394,7 @@ enum ToolPresentationBuilder {
             } else {
                 result.title = argsSummary.isEmpty ? tool : "\(tool) \(argsSummary)"
                 result.toolNamePrefix = tool
-                result.toolNameColor = UIColor(Color.themeCyan)
+                result.toolNameColor = UIColor.themeCyan
             }
         }
 

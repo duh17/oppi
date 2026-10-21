@@ -252,10 +252,7 @@ struct ThemePaletteBuiltinTests {
                 Issue.record("missing Increase Contrast fill for \(themeID.rawValue)")
             }
             for kind in UserMessagePathPill.Kind.allCases {
-                let chrome = UserTimelinePathPillChrome.glyphAndTextColor(
-                    for: kind,
-                    palette: palette
-                )
+                let chrome = UserTimelinePathPillChrome.glyphAndTextColor(for: kind, palette: palette)
                 for fill in fills {
                     let ratio = wcagContrast(chrome, fill.fill)
                     #expect(
@@ -277,16 +274,28 @@ private func opaqueFill(_ color: Color) -> Color? {
 }
 
 private func wcagContrast(_ foreground: Color, _ background: Color) -> CGFloat {
+    wcagContrast(UIColor(foreground), UIColor(background))
+}
+
+private func wcagContrast(_ foreground: UIColor, _ background: Color) -> CGFloat {
+    wcagContrast(foreground, UIColor(background))
+}
+
+private func wcagContrast(_ foreground: UIColor, _ background: UIColor) -> CGFloat {
     let a = relativeLuminance(foreground)
     let b = relativeLuminance(background)
     return (max(a, b) + 0.05) / (min(a, b) + 0.05)
 }
 
 private func relativeLuminance(_ color: Color) -> CGFloat {
+    relativeLuminance(UIColor(color))
+}
+
+private func relativeLuminance(_ color: UIColor) -> CGFloat {
     var red: CGFloat = 0
     var green: CGFloat = 0
     var blue: CGFloat = 0
-    UIColor(color).getRed(&red, green: &green, blue: &blue, alpha: nil)
+    color.getRed(&red, green: &green, blue: &blue, alpha: nil)
     return 0.2126 * linearize(red) + 0.7152 * linearize(green) + 0.0722 * linearize(blue)
 }
 

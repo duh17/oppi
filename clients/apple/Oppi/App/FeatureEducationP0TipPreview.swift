@@ -267,8 +267,8 @@ private struct FeatureEducationReviewSelectionRepresentable: UIViewRepresentable
         textView.isSelectable = true
         textView.text = "Select a line in this review-capable text view to stage a review comment for your next message.\n\nThe actual app wires this to diffs, code, tool output, and full-screen readers."
         textView.font = AppFont.monoMedium
-        textView.textColor = UIColor(Color.themeFg)
-        textView.backgroundColor = UIColor(Color.themeBgHighlight)
+        textView.textColor = UIColor.themeFg
+        textView.backgroundColor = UIColor.themeBgHighlight
         textView.layer.cornerRadius = 14
         textView.textContainerInset = UIEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
         textView.configureReviewCommentSelection(

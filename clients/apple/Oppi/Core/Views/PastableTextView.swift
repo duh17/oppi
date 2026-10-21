@@ -56,7 +56,7 @@ private func requestSystemDictation(for textView: UITextView) {
 func composerVolatileTranscriptBackgroundColor() -> UIColor {
     // Needs to read clearly against the darker glass composer background
     // without looking like a full text selection.
-    UIColor(Color.themeBlue.opacity(0.20))
+    UIColor.themeBlue.withAlphaComponent(0.20)
 }
 
 /// Clamp raw inline composer content height to min/max line bounds.

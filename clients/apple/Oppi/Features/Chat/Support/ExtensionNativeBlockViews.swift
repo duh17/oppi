@@ -585,7 +585,7 @@ final class ExtensionNativeTerminalView: UIView, ExtensionNativeBlockRendering {
             case .text(let isActivity):
                 text.append(ANSIParser.attributedString(
                     from: line,
-                    baseForeground: isActivity ? palette.comment : palette.fg
+                    baseForeground: isActivity ? UIColor(palette.comment) : UIColor(palette.fg)
                 ))
             }
         }
@@ -603,7 +603,7 @@ final class ExtensionNativeTerminalView: UIView, ExtensionNativeBlockRendering {
         #endif
         while resolved.hasSuffix("\n") { resolved.removeLast() }
         return NSMutableAttributedString(
-            attributedString: ANSIParser.attributedString(from: resolved, baseForeground: palette.fg)
+            attributedString: ANSIParser.attributedString(from: resolved, baseForeground: UIColor(palette.fg))
         )
     }
 

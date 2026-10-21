@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// Non-scrollable UITextView that lets the outer timeline own vertical drags.
@@ -115,10 +114,10 @@ enum UserTimelinePathPillChrome {
     static func glyphAndTextColor(
         for kind: UserMessagePathPill.Kind,
         palette: ThemePalette
-    ) -> Color {
+    ) -> UIColor {
         switch kind {
         case .uploadedFile, .reviewFile, .repoFile, .gitCommit:
-            return palette.userMessageText
+            return UIColor(palette.userMessageText)
         }
     }
 }
@@ -779,9 +778,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             // No 10% hue wash: Dark Increase Contrast fill is already ~4.7:1
             // with userMessageText; a 10% overlay drops below 4.5:1. Pills
             // differ by symbol and prefix, not color.
-            let chrome = UIColor(
-                UserTimelinePathPillChrome.glyphAndTextColor(for: pill.kind, palette: palette)
-            )
+            let chrome = UserTimelinePathPillChrome.glyphAndTextColor(for: pill.kind, palette: palette)
             let pillView = makeCapsuleView(
                 prefix: pill.prefix,
                 text: pill.label,

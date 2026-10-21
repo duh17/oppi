@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 // MARK: - BashRenderInput
@@ -343,11 +342,11 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
     private func applyOutputBackground(isError: Bool) {
         if isError {
-            outputContainer.backgroundColor = UIColor(Color.themeRed.opacity(0.10))
-            outputContainer.layer.borderColor = UIColor(Color.themeRed.opacity(0.35)).cgColor
+            outputContainer.backgroundColor = UIColor.themeRed.withAlphaComponent(0.10)
+            outputContainer.layer.borderColor = UIColor.themeRed.withAlphaComponent(0.35).cgColor
         } else {
-            outputContainer.backgroundColor = UIColor(Color.themeBgDark)
-            outputContainer.layer.borderColor = UIColor(Color.themeComment.opacity(0.2)).cgColor
+            outputContainer.backgroundColor = UIColor.themeBgDark
+            outputContainer.layer.borderColor = UIColor.themeComment.withAlphaComponent(0.2).cgColor
         }
     }
 
@@ -383,7 +382,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         cancelDeferredCommandHighlight()
         commandLabel.attributedText = nil
         commandLabel.text = nil
-        commandLabel.textColor = UIColor(Color.themeFg)
+        commandLabel.textColor = UIColor.themeFg
         commandRenderSignature = nil
         commandShowsHighlight = false
     }
@@ -464,7 +463,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     private func applyPlainCommand(_ text: String) {
         commandLabel.attributedText = nil
         commandLabel.text = text
-        commandLabel.textColor = UIColor(Color.themeFg)
+        commandLabel.textColor = UIColor.themeFg
     }
 
     private func cancelDeferredCommandHighlight() {
@@ -816,22 +815,22 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
         commandContainer.translatesAutoresizingMaskIntoConstraints = false
         commandContainer.layer.cornerRadius = 6
-        commandContainer.backgroundColor = UIColor(Color.themeBgHighlight)
+        commandContainer.backgroundColor = UIColor.themeBgHighlight
         commandContainer.layer.borderWidth = 1
-        commandContainer.layer.borderColor = UIColor(Color.themeBlue.opacity(0.35)).cgColor
+        commandContainer.layer.borderColor = UIColor.themeBlue.withAlphaComponent(0.35).cgColor
         commandContainer.isHidden = true
 
         configureTerminalTextView(commandLabel)
-        commandLabel.textColor = UIColor(Color.themeFg)
+        commandLabel.textColor = UIColor.themeFg
 
         // MARK: Output container — dark terminal pane
 
         outputContainer.translatesAutoresizingMaskIntoConstraints = false
         outputContainer.layer.cornerRadius = 6
         outputContainer.layer.masksToBounds = true
-        outputContainer.backgroundColor = UIColor(Color.themeBgDark)
+        outputContainer.backgroundColor = UIColor.themeBgDark
         outputContainer.layer.borderWidth = 1
-        outputContainer.layer.borderColor = UIColor(Color.themeComment.opacity(0.2)).cgColor
+        outputContainer.layer.borderColor = UIColor.themeComment.withAlphaComponent(0.2).cgColor
         outputContainer.isHidden = true
 
         outputScrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -845,7 +844,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         outputScrollView.delegate = self
 
         configureTerminalTextView(outputLabel)
-        outputLabel.textColor = UIColor(Color.themeFg)
+        outputLabel.textColor = UIColor.themeFg
 
         // MARK: Hierarchy
 

@@ -1,5 +1,4 @@
 import CoreGraphics
-import SwiftUI
 import UIKit
 import WebKit
 
@@ -756,11 +755,11 @@ enum FileShareService {
         origin: CGPoint,
         fullWidth: CGFloat
     ) {
-        let addedBg = UIColor(Color.themeDiffAdded.opacity(0.10))
-        let removedBg = UIColor(Color.themeDiffRemoved.opacity(0.08))
-        let headerBg = UIColor(Color.themeBgHighlight)
-        let addedBar = UIColor(Color.themeDiffAdded)
-        let removedBar = UIColor(Color.themeDiffRemoved)
+        let addedBg = UIColor.themeDiffAdded.withAlphaComponent(0.10)
+        let removedBg = UIColor.themeDiffRemoved.withAlphaComponent(0.08)
+        let headerBg = UIColor.themeBgHighlight
+        let addedBar = UIColor.themeDiffAdded
+        let removedBar = UIColor.themeDiffRemoved
         let barWidth: CGFloat = 2.5
 
         textStorage.enumerateAttribute(

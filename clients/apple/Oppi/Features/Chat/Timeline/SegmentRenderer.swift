@@ -1,5 +1,4 @@
 import UIKit
-import SwiftUI
 
 /// Converts server-rendered `[StyledSegment]` to `NSAttributedString`.
 ///
@@ -11,14 +10,14 @@ enum SegmentRenderer {
 
     private static func color(for style: StyledSegment.Style?) -> UIColor {
         switch style {
-        case .bold:    return UIColor(Color.themeFg)
-        case .muted:   return UIColor(Color.themeFgDim)
-        case .dim:     return UIColor(Color.themeComment)
-        case .accent:  return UIColor(Color.themeCyan)
-        case .success: return UIColor(Color.themeGreen)
-        case .warning: return UIColor(Color.themeYellow)
-        case .error:   return UIColor(Color.themeRed)
-        case nil:      return UIColor(Color.themeFg)
+        case .bold:    return UIColor.themeFg
+        case .muted:   return UIColor.themeFgDim
+        case .dim:     return UIColor.themeComment
+        case .accent:  return UIColor.themeCyan
+        case .success: return UIColor.themeGreen
+        case .warning: return UIColor.themeYellow
+        case .error:   return UIColor.themeRed
+        case nil:      return UIColor.themeFg
         }
     }
 

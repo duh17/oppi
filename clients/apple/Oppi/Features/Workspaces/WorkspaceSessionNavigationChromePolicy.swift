@@ -1,5 +1,3 @@
-import SwiftUI
-
 /// Chrome policy for workspace session navigation.
 ///
 /// Toolbar visibility is owned by the active surface. The workspace session
@@ -18,9 +16,5 @@ enum WorkspaceSessionNavigationChromePolicy {
         case .sessionTimeline:
             return true
         }
-    }
-
-    static func bottomBarVisibility(on surface: Surface) -> Visibility {
-        shouldHideBottomBar(on: surface) ? .hidden : .automatic
     }
 }

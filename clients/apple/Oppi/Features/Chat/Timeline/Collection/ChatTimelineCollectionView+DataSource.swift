@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 // MARK: - Safe-sizing cell
@@ -114,8 +113,8 @@ final class SafeSizingCell: UICollectionViewCell {
         navigationHighlightOverlay.isUserInteractionEnabled = false
         // Hidden until a navigation arrival drives its alpha.
         navigationHighlightOverlay.alpha = 0
-        navigationHighlightOverlay.backgroundColor = UIColor(Color.themeBlue).withAlphaComponent(0.22)
-        navigationHighlightOverlay.layer.borderColor = UIColor(Color.themeBlue).withAlphaComponent(0.55).cgColor
+        navigationHighlightOverlay.backgroundColor = UIColor.themeBlue.withAlphaComponent(0.22)
+        navigationHighlightOverlay.layer.borderColor = UIColor.themeBlue.withAlphaComponent(0.55).cgColor
         navigationHighlightOverlay.layer.borderWidth = 1
         navigationHighlightOverlay.layer.cornerRadius = 14
         navigationHighlightOverlay.layer.cornerCurve = .continuous
@@ -809,9 +808,9 @@ extension ChatTimelineController {
         fallback.text = title
         fallback.secondaryText = detail
         fallback.textProperties.font = AppFont.monoMediumSemibold
-        fallback.textProperties.color = UIColor(Color.themeOrange)
+        fallback.textProperties.color = UIColor.themeOrange
         fallback.secondaryTextProperties.font = AppFont.mono
-        fallback.secondaryTextProperties.color = UIColor(Color.themeComment)
+        fallback.secondaryTextProperties.color = UIColor.themeComment
         cell.releaseToolHeaderAccessibility()
         cell.contentConfiguration = fallback
         cell.backgroundConfiguration = UIBackgroundConfiguration.clear()

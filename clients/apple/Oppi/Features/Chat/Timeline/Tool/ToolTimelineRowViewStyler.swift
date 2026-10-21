@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 @MainActor
@@ -25,12 +24,12 @@ enum ToolTimelineRowViewStyler {
 
         toolImageView.translatesAutoresizingMaskIntoConstraints = false
         toolImageView.contentMode = .scaleAspectFit
-        toolImageView.tintColor = UIColor(Color.themeCyan)
+        toolImageView.tintColor = UIColor.themeCyan
         toolImageView.isHidden = true
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = AppFont.monoMediumSemibold
-        titleLabel.textColor = UIColor(Color.themeToolTitle)
+        titleLabel.textColor = UIColor.themeToolTitle
         titleLabel.numberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -47,31 +46,31 @@ enum ToolTimelineRowViewStyler {
 
         languageBadgeIconView.translatesAutoresizingMaskIntoConstraints = false
         languageBadgeIconView.contentMode = .scaleAspectFit
-        languageBadgeIconView.tintColor = UIColor(Color.themeBlue)
+        languageBadgeIconView.tintColor = UIColor.themeBlue
         languageBadgeIconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
         languageBadgeIconView.setContentCompressionResistancePriority(.required, for: .horizontal)
         languageBadgeIconView.setContentHuggingPriority(.required, for: .horizontal)
         // Size constraints are set by ToolTimelineRowLayoutBuilder.makeLanguageBadgeConstraints()
 
         addedLabel.font = AppFont.monoMediumBold
-        addedLabel.textColor = UIColor(Color.themeDiffAdded)
+        addedLabel.textColor = UIColor.themeDiffAdded
         addedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         addedLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         removedLabel.font = AppFont.monoMediumBold
-        removedLabel.textColor = UIColor(Color.themeDiffRemoved)
+        removedLabel.textColor = UIColor.themeDiffRemoved
         removedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         removedLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         trailingLabel.font = AppFont.monoMedium
-        trailingLabel.textColor = UIColor(Color.themeComment)
+        trailingLabel.textColor = UIColor.themeComment
         trailingLabel.numberOfLines = 1
         trailingLabel.lineBreakMode = .byTruncatingTail
         trailingLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         trailingLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         elapsedLabel.font = AppFont.monoSmall
-        elapsedLabel.textColor = UIColor(Color.themeComment)
+        elapsedLabel.textColor = UIColor.themeComment
         elapsedLabel.numberOfLines = 1
         elapsedLabel.isHidden = true
         elapsedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -80,7 +79,7 @@ enum ToolTimelineRowViewStyler {
 
     static func stylePreviewLabel(_ previewLabel: UILabel) {
         previewLabel.font = AppFont.monoMedium
-        previewLabel.textColor = UIColor(Color.themeToolOutput)
+        previewLabel.textColor = UIColor.themeToolOutput
         previewLabel.numberOfLines = 3
     }
 
@@ -149,7 +148,7 @@ enum ToolTimelineRowViewStyler {
         // Expanded body sits inline in the timeline row with no blur behind
         // it, so it takes the near-opaque card role. `applyTheme` refreshes the
         // fill when a reusable row crosses a live theme change.
-        expandedContainer.backgroundColor = UIColor(ThemeSurfaceStyle.resolve(.opaqueCard).fill)
+        expandedContainer.backgroundColor = UIColor.themeSurfaceFill(.opaqueCard)
 
         expandedScrollView.translatesAutoresizingMaskIntoConstraints = false
         expandedScrollView.alwaysBounceVertical = false

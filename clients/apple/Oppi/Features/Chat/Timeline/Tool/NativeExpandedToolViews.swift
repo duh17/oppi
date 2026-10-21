@@ -1,7 +1,6 @@
 import AVKit
 import CryptoKit
 import UIKit
-import SwiftUI
 
 final class NativeExpandedReadMediaView: UIView {
     private let rootStack = UIStackView()
@@ -1235,7 +1234,7 @@ final class NativeExpandedInlineImageView: UIView {
         failureLabel.translatesAutoresizingMaskIntoConstraints = false
         failureLabel.text = "Image unavailable"
         failureLabel.font = AppFont.monoSmall
-        failureLabel.textColor = UIColor(Color.themeComment)
+        failureLabel.textColor = UIColor.themeComment
         failureLabel.textAlignment = .center
         failureLabel.isHidden = true
         addSubview(failureLabel)
@@ -1243,8 +1242,8 @@ final class NativeExpandedInlineImageView: UIView {
         overflowLabel.translatesAutoresizingMaskIntoConstraints = false
         overflowLabel.text = "Tap to open full image"
         overflowLabel.font = AppFont.monoSmall
-        overflowLabel.textColor = UIColor(Color.themeFg)
-        overflowLabel.backgroundColor = UIColor(ThemeSurfaceStyle.resolve(.opaqueCard).fill)
+        overflowLabel.textColor = UIColor.themeFg
+        overflowLabel.backgroundColor = UIColor.themeSurfaceFill(.opaqueCard)
         overflowLabel.layer.cornerRadius = 6
         overflowLabel.layer.masksToBounds = true
         overflowLabel.textAlignment = .center

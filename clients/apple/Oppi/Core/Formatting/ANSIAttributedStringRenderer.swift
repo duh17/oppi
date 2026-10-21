@@ -1,4 +1,3 @@
-import SwiftUI // Theme color resolution (Color.theme* → UIColor)
 import UIKit
 
 extension ANSIParser {
@@ -8,9 +7,9 @@ extension ANSIParser {
     /// Single-pass UTF-8 scan -> plain text + attribute runs -> NSAttributedString.
     static func attributedString(
         from input: String,
-        baseForeground: Color = .themeFg
+        baseForeground: UIColor = .themeFg
     ) -> NSAttributedString {
-        let baseFg = UIColor(baseForeground)
+        let baseFg = baseForeground
         let baseFont = AppFont.mono
         let sanitizedInput = Self.stripStringControls(input)
 

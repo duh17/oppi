@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 // swiftlint:disable type_body_length
@@ -213,7 +212,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         contentRoot: AppRootEnvironment?
     ) -> UICollectionView {
         let collectionView = AnchoredCollectionView(frame: .zero, collectionViewLayout: Self.makeLayout())
-        collectionView.backgroundColor = UIColor(Color.themeBg)
+        collectionView.backgroundColor = UIColor.themeBg
         collectionView.alwaysBounceVertical = true
         collectionView.keyboardDismissMode = .interactive
         // Keep scrolled transcript text from washing through the navigation
@@ -784,7 +783,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         let currentThemeID = ThemeRuntimeState.currentThemeID()
         guard previousThemeID != currentThemeID else { return }
         previousThemeID = currentThemeID
-        collectionView.backgroundColor = UIColor(Color.themeBg)
+        collectionView.backgroundColor = UIColor.themeBg
         reconfigureVisibleRowsAfterAppearanceChange(
             collectionView: collectionView,
             expectedThemeID: currentThemeID
@@ -1107,7 +1106,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
 
         // Only update backgroundColor when theme changed or on first apply.
         if themeChanged {
-            collectionView.backgroundColor = UIColor(Color.themeBg)
+            collectionView.backgroundColor = UIColor.themeBg
         }
 
         if collectionView.contentInset.top != configuration.topOverlap {

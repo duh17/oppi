@@ -945,9 +945,7 @@ struct UserTimelineRowContentTests {
             ("chat.user.path-pill.9b82f81", "Commit", .gitCommit)
         ]
         for item in cases {
-            let expected = UIColor(
-                UserTimelinePathPillChrome.glyphAndTextColor(for: item.kind, palette: palette)
-            )
+            let expected = UserTimelinePathPillChrome.glyphAndTextColor(for: item.kind, palette: palette)
             let pill = try #require(firstSubview(withAccessibilityIdentifier: item.id, in: view))
             let prefix = try #require(
                 allSubviews(ofType: UILabel.self, in: pill).first { $0.text == item.prefix }

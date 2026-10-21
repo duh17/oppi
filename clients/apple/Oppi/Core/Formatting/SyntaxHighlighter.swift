@@ -1,4 +1,3 @@
-import SwiftUI // Theme color resolution (Color.themeSyntax* → UIColor)
 import UIKit
 
 // MARK: - SyntaxHighlighter
