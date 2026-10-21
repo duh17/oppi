@@ -117,33 +117,41 @@ struct LaunchRefreshTelemetryOutcome: Equatable, Sendable {
 /// push-to-start, a locked install); reads made then fail.
 @MainActor
 enum ProtectedDataAvailability {
-    /// Returns now when protected data is readable, else at the next unlock.
+    /// Returns now when protected data is readable, else once it is.
     static func wait() async {
-        guard !UIApplication.shared.isProtectedDataAvailable else { return }
-        await nextAvailability()
+        while !UIApplication.shared.isProtectedDataAvailable {
+            await nextCheck()
+        }
     }
 
-    /// Returns at the next `protectedDataDidBecomeAvailableNotification`.
-    private static func nextAvailability() async {
+    /// Returns at the next unlock or the next time the app becomes active. A
+    /// suspended app misses the unlock notification, so opening it after
+    /// unlocking must check again.
+    private static func nextCheck() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let observer = ObserverToken()
-            observer.token = NotificationCenter.default.addObserver(
-                forName: UIApplication.protectedDataDidBecomeAvailableNotification,
-                object: nil,
-                queue: .main
-            ) { _ in
-                MainActor.assumeIsolated {
-                    guard let token = observer.token else { return }
-                    observer.token = nil
-                    NotificationCenter.default.removeObserver(token)
-                    continuation.resume()
-                }
+            let observers = ObserverTokens()
+            for name in [
+                UIApplication.protectedDataDidBecomeAvailableNotification,
+                UIApplication.didBecomeActiveNotification,
+            ] {
+                observers.tokens.append(NotificationCenter.default.addObserver(
+                    forName: name,
+                    object: nil,
+                    queue: .main
+                ) { _ in
+                    MainActor.assumeIsolated {
+                        guard !observers.tokens.isEmpty else { return }
+                        observers.tokens.forEach(NotificationCenter.default.removeObserver)
+                        observers.tokens = []
+                        continuation.resume()
+                    }
+                })
             }
         }
     }
 
-    @MainActor private final class ObserverToken {
-        var token: NSObjectProtocol?
+    @MainActor private final class ObserverTokens {
+        var tokens: [NSObjectProtocol] = []
     }
 }
 
@@ -177,7 +185,7 @@ final class OppiApp {
     @ObservationIgnored private var hasConnectedScene = false
     @ObservationIgnored private var pairedServerLoad: Task<Void, Never>?
     @ObservationIgnored private var pairedServerRetry: CheckedContinuation<Void, Never>?
-    @ObservationIgnored private var pairedServerRetryObserver: NSObjectProtocol?
+    @ObservationIgnored private var pairedServerRetryObservers: [NSObjectProtocol] = []
 
     init() {
 #if DEBUG
@@ -214,8 +222,8 @@ final class OppiApp {
             sessionRows: SessionRowDisplayStore(),
             opener: opener
         )
-        // An invite can arrive before launch has read the pairing list;
-        // enrolling against an unread store would fail or miss servers.
+        // An invite or a background pairing deny can arrive before launch has
+        // read the pairing list; acting on an unread store would miss servers.
         opener.awaitPairedServers = { [weak self] in await self?.loadPairedServers() }
     }
 
@@ -414,23 +422,27 @@ final class OppiApp {
     func retryPairedServerLoad() {
         guard let continuation = pairedServerRetry else { return }
         pairedServerRetry = nil
-        if let observer = pairedServerRetryObserver {
-            NotificationCenter.default.removeObserver(observer)
-            pairedServerRetryObserver = nil
-        }
+        pairedServerRetryObservers.forEach(NotificationCenter.default.removeObserver)
+        pairedServerRetryObservers = []
         continuation.resume()
     }
 
-    /// Returns at Retry or the next unlock, whichever comes first.
+    /// Returns at Retry, the next unlock, or the next time the app becomes
+    /// active (a suspended app misses the unlock), whichever comes first.
     private func nextPairedServerLoadAttempt() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             pairedServerRetry = continuation
-            pairedServerRetryObserver = NotificationCenter.default.addObserver(
-                forName: UIApplication.protectedDataDidBecomeAvailableNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.retryPairedServerLoad() }
+            pairedServerRetryObservers = [
+                UIApplication.protectedDataDidBecomeAvailableNotification,
+                UIApplication.didBecomeActiveNotification,
+            ].map { name in
+                NotificationCenter.default.addObserver(
+                    forName: name,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.retryPairedServerLoad() }
+                }
             }
         }
     }

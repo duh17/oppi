@@ -171,6 +171,29 @@ struct AppOpenerTests {
         harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
     }
 
+    @Test func aRequestParkedBeforeThePairingListIsReadStillOpens() async throws {
+        // A locked launch has not read the pairing list yet: its server is
+        // unread, not removed, however often the root redraws.
+        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false, loadsServers: false)
+        harness.addSession("child", workspaceId: "w1", to: "server-a")
+
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "child",
+            origin: .externalURL
+        )))
+        await harness.settle()
+        harness.opener.sceneDidBecomeActive()
+        harness.opener.presentationDidUpdate()
+        #expect(harness.opener._parkedRequestForTesting != nil)
+
+        harness.serverStore.load()
+        harness.opener.launchDidFinish()
+        await harness.settle()
+
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
+    }
+
     @Test func twoRequestsBeforeLaunchOpenOnlyTheLast() async throws {
         let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false)
         harness.addSession("first", workspaceId: "w1", to: "server-a")
@@ -602,6 +625,25 @@ struct AppOpenerTests {
         #expect(harness.navigation.pendingWorkspaceDeepLink?.path == "/tmp/project")
     }
 
+    @Test func inviteWaitsForThePairingList() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false)
+        var releaseLoad: CheckedContinuation<Void, Never>?
+        harness.opener.awaitPairedServers = {
+            await withCheckedContinuation { releaseLoad = $0 }
+        }
+
+        harness.opener.open(.invite(try #require(URL(string: "oppi://connect?v=3&invite=bogus"))))
+        for _ in 0..<1_000 where releaseLoad == nil {
+            await Task.yield()
+        }
+        let release = try #require(releaseLoad)
+        #expect(harness.connection("server-a").extensionToast == nil)
+
+        release.resume()
+        await harness.settle()
+        #expect(harness.connection("server-a").extensionToast == "Unsupported invite link format")
+    }
+
     @Test func inviteWaitsForUnlock() async throws {
         let harness = OpenerHarness(
             servers: [makeServer("server-a")],
@@ -992,28 +1034,6 @@ struct AppOpenerTests {
         harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
     }
 
-    @Test func aReceiptForAMissingServerIsKeptWhileThePairingListIsUnavailable() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")])
-        harness.intentTrigger.enqueue(IntentSessionOpenTrigger.Receipt(
-            requestID: harness.intentTrigger.issueRequestID(),
-            serverId: "server-gone",
-            sessionId: "created",
-            workspaceId: "w1",
-            unsentPrompt: nil,
-            session: nil
-        ))
-        // A locked Keychain can leave the pairing list empty; that is not proof
-        // the server was removed.
-        harness.serverStore.replaceServersForPreview([])
-
-        harness.opener.launchDidFinish()
-        await harness.settle()
-
-        #expect(harness.intentTrigger.peek() != nil)
-        #expect(harness.coordinator.activeConnection.extensionToast == nil)
-        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
-    }
-
     @Test func destinationWorkspaceComesFromLoadedDataNotTheRequestHint() async throws {
         let harness = OpenerHarness(
             servers: [makeServer("server-a")],
@@ -1128,7 +1148,8 @@ private final class OpenerHarness {
         servers: [PairedServer],
         appLockTimeout: AppLockTimeout = .off,
         authOutcomes: [DeviceOwnerAuthentication.Outcome] = [.success],
-        launch: Bool = true
+        launch: Bool = true,
+        loadsServers: Bool = true
     ) {
         let recorder = LinkRecorder()
         self.recorder = recorder
@@ -1150,7 +1171,9 @@ private final class OpenerHarness {
         // The Keychain may hold servers other suites paired; this fixture's
         // list is read from memory.
         let serverStore = ServerStore(loadServers: { servers })
-        serverStore.load()
+        if loadsServers {
+            serverStore.load()
+        }
         self.serverStore = serverStore
         let coordinator = ConnectionCoordinator(serverStore: serverStore)
         self.coordinator = coordinator

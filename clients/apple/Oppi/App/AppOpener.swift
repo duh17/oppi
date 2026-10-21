@@ -261,8 +261,8 @@ final class AppOpener {
     @ObservationIgnored var currentTask: Task<Void, Never>?
     @ObservationIgnored var invitePairingGate = InvitePairingGate()
     @ObservationIgnored var invitePairingTask: Task<Void, Never>?
-    /// Returns once launch has read the pairing list. The app sets it; an
-    /// invite waits on it before enrolling.
+    /// Returns once the app has read the pairing list. The app sets it; an
+    /// invite and a pairing deny wait on it, since neither waits for launch.
     @ObservationIgnored var awaitPairedServers: @MainActor () async -> Void = {}
 #if DEBUG
     /// Replaces the network round trip for a server switch in unit tests.
@@ -427,8 +427,11 @@ final class AppOpener {
     func drainParkedIfPossible() {
         guard let request = parked else { return }
         // A removed server or a sign-out ends the request instead of leaving a
-        // toast that repeats at every launch.
-        if let serverId = serverIdReferenced(by: request), serverStore.server(for: serverId) == nil {
+        // toast that repeats at every launch. Before launch reads the pairing
+        // list, a missing server is only unread.
+        if serverStore.loadState == .loaded,
+           let serverId = serverIdReferenced(by: request),
+           serverStore.server(for: serverId) == nil {
             clearParked()
             return
         }
@@ -599,10 +602,6 @@ final class AppOpener {
         case .externalURL:
             if let named = open.serverId {
                 guard serverStore.server(for: named) != nil else {
-                    // An empty pairing list means it is not readable yet (the
-                    // device is locked), not that the server is gone. Keep the
-                    // receipt for the next launch without toasting.
-                    guard !serverStore.servers.isEmpty else { return .finished }
                     // A receipt for a removed server would otherwise toast
                     // again at every launch.
                     if let requestID = open.startedSessionRequestID {
@@ -819,6 +818,9 @@ final class AppOpener {
     /// The notification service keeps its background-task budget around this
     /// call, so deny is awaited rather than fire-and-forget.
     func denyPairingAndWait(serverId: String, approvalId: String) async {
+        // Deny runs in the background, possibly before any scene starts
+        // launch: it starts the pairing-list read itself.
+        await awaitPairedServers()
         await PairingApprovalController.shared.performNotificationDeny(
             serverId: serverId,
             approvalId: approvalId,
