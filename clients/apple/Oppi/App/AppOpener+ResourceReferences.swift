@@ -453,27 +453,15 @@ extension AppOpener {
                 toastUnreachable(session.serverID)
                 return .unreachable
             }
-            // A `[[session]]` match opens like a timeline session link, and
-            // gets the same preparation: claim, refresh, prefetch, dialogs.
-            await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
-                shouldNavigate: { [weak self] in self?.isCurrent(generation) ?? false },
-                navigate: {}
+            // A `[[session]]` match opens like a timeline session link.
+            return await openPreparedSession(
+                serverId: session.serverID,
+                sessionId: session.sessionID,
+                workspaceIdHint: nil,
+                connection: connection,
+                origin: .inAppHyperlink,
+                generation: generation
             )
-            guard isCurrent(generation) else { return .finished }
-            await connection.prepareExternalSessionOpen(sessionId: session.sessionID)
-            guard isCurrent(generation) else { return .finished }
-            let workspaceID = connection.sessionReentryWorkspaceId(for: session.sessionID)
-            navigation.selectedTab = .workspaces
-            navigation.openSession(
-                WorkspaceSessionNavTarget(
-                    serverId: session.serverID,
-                    sessionId: session.sessionID,
-                    workspaceId: workspaceID,
-                    routeScope: connection.sessionStore.routeScope(for: session.sessionID)
-                ),
-                source: .inAppHyperlink
-            )
-            return .finished
 
         case .workspaceFile(let file):
             guard let connection = coordinator.connection(for: file.serverID),

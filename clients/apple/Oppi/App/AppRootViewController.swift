@@ -66,6 +66,9 @@ final class AppRootViewController: UIViewController {
         content?.view.isUserInteractionEnabled = !showsQuickSession
         content?.view.accessibilityElementsHidden = showsQuickSession
 
+        // A Quick Session parked during launch/onboarding can run now that the
+        // root shows the shell.
+        root.opener.presentationDidUpdate()
         showPairingWait(expiresAt: root.opener.invitePairingWaitExpiresAt)
         // The App Lock cover sits in its own window above this one.
         view.accessibilityElementsHidden = AppLockService.shared.isLocked

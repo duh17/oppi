@@ -32,6 +32,8 @@ struct AppRootEnvironment {
     /// the root's `openURL` action.
     let opener: AppOpener
 
+    /// The app passes its own opener, the one `AppDelegate` wires to the
+    /// notification delegate.
     init(
         coordinator: ConnectionCoordinator,
         navigation: AppNavigation,
@@ -40,7 +42,7 @@ struct AppRootEnvironment {
         composerDraftStore: ComposerDraftStore,
         chatReaderPayloadStore: ChatReaderPayloadStore,
         sessionRows: SessionRowDisplayStore,
-        opener: AppOpener? = nil
+        opener: AppOpener
     ) {
         self.coordinator = coordinator
         self.navigation = navigation
@@ -49,10 +51,32 @@ struct AppRootEnvironment {
         self.composerDraftStore = composerDraftStore
         self.chatReaderPayloadStore = chatReaderPayloadStore
         self.sessionRows = sessionRows
-        self.opener = opener ?? AppOpener(
+        self.opener = opener
+    }
+
+    /// Previews and tests: the root owns an opener built for these services.
+    init(
+        coordinator: ConnectionCoordinator,
+        navigation: AppNavigation,
+        themeStore: ThemeStore,
+        quickCommentTemplateStore: QuickCommentTemplateStore,
+        composerDraftStore: ComposerDraftStore,
+        chatReaderPayloadStore: ChatReaderPayloadStore,
+        sessionRows: SessionRowDisplayStore
+    ) {
+        self.init(
             coordinator: coordinator,
             navigation: navigation,
-            composerDraftStore: composerDraftStore
+            themeStore: themeStore,
+            quickCommentTemplateStore: quickCommentTemplateStore,
+            composerDraftStore: composerDraftStore,
+            chatReaderPayloadStore: chatReaderPayloadStore,
+            sessionRows: sessionRows,
+            opener: AppOpener(
+                coordinator: coordinator,
+                navigation: navigation,
+                composerDraftStore: composerDraftStore
+            )
         )
     }
 }

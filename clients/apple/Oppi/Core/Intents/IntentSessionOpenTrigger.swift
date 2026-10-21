@@ -153,6 +153,17 @@ final class IntentSessionOpenTrigger {
     /// it to build the open request; the opener takes it once the server is up.
     func peek() -> Receipt? { pending }
 
+    /// A newer request replaced this one, so its receipt (and protected prompt)
+    /// must not replay at a later launch.
+    func abandon(requestID: Int) {
+        guard let pending, pending.requestID == requestID else { return }
+        self.pending = nil
+        pendingPromptUnreadable = false
+        persist(nil)
+        ComposerDraftStore.clearIntentSessionPrompt(at: promptFileURL)
+        logger.notice("Start-session handoff abandoned request=\(requestID, privacy: .public)")
+    }
+
     private func takePending() -> Receipt? {
         guard var receipt = pending else { return nil }
         if pendingPromptUnreadable {

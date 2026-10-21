@@ -23,6 +23,28 @@ struct ExtensionSurfaceURLTests {
         }
     }
 
+    @Test func nonHTTPSchemesReachTheSystemOwner() throws {
+        for raw in ["mailto:parent@example.com", "tel:+15551234567", "ftp://example.com/file"] {
+            let url = try #require(URL(string: raw))
+            let outcome = ExtensionSurfaceLinkRouting.outcome(
+                for: url,
+                serverID: serverID,
+                workspaceID: workspaceID,
+                currentSessionId: currentSessionId
+            )
+            #expect(outcome == .open(.system(url)), Comment(rawValue: raw))
+        }
+
+        // A scheme-less path is not a link to open.
+        let relative = try #require(URL(string: "docs/foo.md"))
+        #expect(ExtensionSurfaceLinkRouting.outcome(
+            for: relative,
+            serverID: serverID,
+            workspaceID: workspaceID,
+            currentSessionId: currentSessionId
+        ) == nil)
+    }
+
     @Test func accessibilityHintIsNotHardcodedSessionSentenceForWebOrFile() throws {
         let destinations: [(String, String)] = [
             ("https://example.com/docs", currentSessionId),
@@ -75,10 +97,16 @@ struct ExtensionSurfaceURLTests {
             expected: .unhandled
         ),
         RoutingCase(
-            name: "unknown scheme is unhandled",
+            name: "mailto opens through the system",
+            rawURL: "mailto:parent@example.com",
+            currentSessionId: "session-parent",
+            expected: .system
+        ),
+        RoutingCase(
+            name: "unknown scheme opens through the system",
             rawURL: "ftp://example.com/file",
             currentSessionId: "session-parent",
-            expected: .unhandled
+            expected: .system
         ),
     ]
 
@@ -88,6 +116,7 @@ struct ExtensionSurfaceURLTests {
             case ignore
             case webLink
             case resourceReference
+            case system
             case unhandled
 
             func match(_ outcome: ExtensionSurfaceLinkOutcome?, name: String) {
@@ -101,6 +130,8 @@ struct ExtensionSurfaceURLTests {
                 case (.webLink, .open(.webLink)?):
                     break
                 case (.resourceReference, .open(.resourceReference)?):
+                    break
+                case (.system, .open(.system)?):
                     break
                 case (.unhandled, nil):
                     break

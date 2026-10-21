@@ -280,7 +280,27 @@ final class AppOpener {
     @ObservationIgnored var _openRequestObserverForTesting: (@MainActor (AppOpenRequest) -> Bool)?
     /// Pins the browser preference in tests; nil reads the stored setting.
     @ObservationIgnored var _browserLinkPreferenceForTesting: AppPreferences.Browser.LinkOpeningMode?
+    /// Advances the parked-request lifetime in tests.
+    @ObservationIgnored var _nowForTesting: (() -> Date)?
 #endif
+
+    /// A parked request is given up after this long: it is a tap, not a task.
+    private static let parkedRequestLifetime: TimeInterval = 10 * 60
+    @ObservationIgnored private var parkedAt: Date?
+    /// One deferred drain is enough while App Lock keeps asking.
+    @ObservationIgnored private var awaitsUnlockDrain = false
+    /// Only a foreground app runs parked work; a background launch just parks.
+    @ObservationIgnored private var sceneIsActive = false
+    /// The request the current task is running, so a newer open can abandon
+    /// its Siri receipt instead of replaying it at the next launch.
+    @ObservationIgnored private var activeRequest: AppOpenRequest?
+
+    private var now: Date {
+#if DEBUG
+        if let _nowForTesting { return _nowForTesting() }
+#endif
+        return Date()
+    }
 
     init(
         coordinator: ConnectionCoordinator,
@@ -327,18 +347,16 @@ final class AppOpener {
     func launchDidFinish() {
         hasFinishedLaunch = true
         // A receipt left by a process that died before it came forward opens
-        // now. A parked request is the newer one: it wins the slot.
+        // now. It is an open like any other: a locked app defers it. A parked
+        // request is the newer one: it wins the slot.
         if parked == nil, let receipt = intentSessionOpenTrigger.peek() {
-            run(
-                .session(SessionOpen(
-                    serverId: receipt.serverId,
-                    sessionId: receipt.sessionId,
-                    workspaceId: receipt.workspaceId,
-                    origin: .externalURL,
-                    startedSessionRequestID: receipt.requestID
-                )),
-                generation: generation
-            )
+            open(.session(SessionOpen(
+                serverId: receipt.serverId,
+                sessionId: receipt.sessionId,
+                workspaceId: receipt.workspaceId,
+                origin: .externalURL,
+                startedSessionRequestID: receipt.requestID
+            )))
             return
         }
         drainParkedIfPossible()
@@ -347,16 +365,40 @@ final class AppOpener {
     /// The app is in front again: retry a request whose server was unreachable.
     /// A newer tap has already replaced it.
     func sceneDidBecomeActive() {
+        sceneIsActive = true
+        // A deferred unlock drain may have died with the previous scene phase;
+        // re-arm it from this foreground boundary.
+        awaitsUnlockDrain = false
+        drainParkedIfPossible()
+    }
+
+    func sceneDidEnterBackground() {
+        sceneIsActive = false
+        awaitsUnlockDrain = false
+    }
+
+    /// The root's presentation changed (onboarding finished, launch ready): a
+    /// Quick Session parked behind it can run now.
+    func presentationDidUpdate() {
         drainParkedIfPossible()
     }
 
     // MARK: - Parking
 
     private func supersede() {
+        abandonIntentReceipt(for: activeRequest)
+        abandonIntentReceipt(for: parked)
         generation &+= 1
-        parked = nil
+        clearParked()
+        activeRequest = nil
         currentTask?.cancel()
         currentTask = nil
+    }
+
+    private func abandonIntentReceipt(for request: AppOpenRequest?) {
+        guard case .session(let open)? = request,
+              let requestID = open.startedSessionRequestID else { return }
+        intentSessionOpenTrigger.abandon(requestID: requestID)
     }
 
     private func accept(_ request: AppOpenRequest, generation: UInt64) {
@@ -371,6 +413,7 @@ final class AppOpener {
     private func run(_ request: AppOpenRequest, generation: UInt64) {
         guard generation == self.generation else { return }
         currentTask?.cancel()
+        activeRequest = request
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
             await perform(request, generation: generation)
@@ -378,10 +421,61 @@ final class AppOpener {
     }
 
     func drainParkedIfPossible() {
-        guard let request = parked, canRunNow(request) else { return }
-        parked = nil
+        guard let request = parked else { return }
+        // A removed server or a sign-out ends the request instead of leaving a
+        // toast that repeats at every launch.
+        if let serverId = serverIdReferenced(by: request), serverStore.server(for: serverId) == nil {
+            clearParked()
+            return
+        }
+        if let parkedAt, now.timeIntervalSince(parkedAt) > Self.parkedRequestLifetime {
+            openerLog.notice("Dropping a parked open request that waited too long")
+            clearParked()
+            return
+        }
+        // A background launch or a parked retry runs only while the app is in
+        // front; the next active transition drains it.
+        guard sceneIsActive else { return }
+        guard !appLock.requiresUnlock() else {
+            // App Lock's deferred slot drains after the next unlock. A parked
+            // request cannot race an open's deferred accept, because opening
+            // anything clears the parked slot first.
+            guard !awaitsUnlockDrain else { return }
+            awaitsUnlockDrain = true
+            appLock.performWhenUnlocked { [weak self] in
+                guard let self else { return }
+                self.awaitsUnlockDrain = false
+                self.drainParkedIfPossible()
+            }
+            return
+        }
+        guard canRunNow(request) else { return }
+        clearParked()
         generation &+= 1
         run(request, generation: generation)
+    }
+
+    private func clearParked() {
+        parked = nil
+        parkedAt = nil
+        awaitsUnlockDrain = false
+    }
+
+    /// The server a request needs, when it names one up front. Requests that
+    /// resolve their server later are cleared by the destination's own lookup.
+    private func serverIdReferenced(by request: AppOpenRequest) -> String? {
+        switch request {
+        case .session(let open):
+            return open.serverId
+        case .pairing(let serverId, _, _):
+            return serverId
+        case .resourceReference(let reference), .sessionFile(let reference):
+            return reference.sourceServerID
+        case .createWorkspace(let payload):
+            return payload.resolvedServerId
+        default:
+            return nil
+        }
     }
 
     private var isInviteInFlight: Bool { invitePairingGate.inFlight }
@@ -398,8 +492,11 @@ final class AppOpener {
             return hasFinishedLaunch
                 && navigation.launchPhase == .ready
                 && !navigation.showOnboarding
-        case .invite, .pairing(_, _, .deny):
+        case .pairing(_, _, .deny):
             return true
+        case .invite:
+            // accept() runs an invite on its own generation; it never parks.
+            return false
         default:
             return hasFinishedLaunch
         }
@@ -407,6 +504,8 @@ final class AppOpener {
 
     private func park(_ request: AppOpenRequest) {
         parked = request
+        parkedAt = now
+        activeRequest = nil
         openerLog.notice("Parked open request until the app and its server are ready")
     }
 
@@ -463,12 +562,15 @@ final class AppOpener {
         case .fileLink(let payload):
             outcome = await handleFileLink(payload, generation: generation)
         case .invite:
-            // An invite has its own task and generation: a session tap must
-            // not cancel it, and it never parks.
-            outcome = .finished
+            // accept() runs invites on their own generation; nothing reaches
+            // perform with one.
+            return
         }
-        if outcome == .unreachable, isCurrent(generation) {
+        guard isCurrent(generation) else { return }
+        if outcome == .unreachable {
             park(request)
+        } else {
+            activeRequest = nil
         }
     }
 
@@ -488,6 +590,11 @@ final class AppOpener {
         case .externalURL:
             if let named = open.serverId {
                 guard serverStore.server(for: named) != nil else {
+                    // A receipt for an unpaired server would otherwise toast
+                    // again at every launch.
+                    if let requestID = open.startedSessionRequestID {
+                        intentSessionOpenTrigger.abandon(requestID: requestID)
+                    }
                     toast("Server not found for this session link")
                     return .finished
                 }
@@ -512,11 +619,13 @@ final class AppOpener {
         }
 
         // A locked session (or its workspace or server) asks before Oppi
-        // switches servers, so cancel leaves everything where it was.
+        // switches servers, so cancel leaves everything where it was. The
+        // scope comes from the known session, never from a URL's workspace
+        // hint: the hint is content, not lock authority. The route gate checks
+        // again once the session's workspace is loaded.
         guard await scopedLock.authorize(scopedLock.sessionTarget(
             serverId: serverId,
-            sessionId: open.sessionId,
-            workspaceId: open.workspaceId
+            sessionId: open.sessionId
         )), isCurrent(generation) else { return .finished }
 
         let switched = await openServer(serverId, generation: generation)
@@ -527,35 +636,53 @@ final class AppOpener {
         }
 
         consumeIntentReceiptIfNeeded(for: open, serverId: serverId, connection: connection)
+        return await openPreparedSession(
+            serverId: serverId,
+            sessionId: open.sessionId,
+            workspaceIdHint: open.workspaceId,
+            connection: connection,
+            origin: open.origin,
+            generation: generation
+        )
+    }
 
+    /// The tail every session open shares: dismiss a covering viewer, prepare
+    /// the target (claim, refresh, prefetch, hydrate dialogs), then route it,
+    /// whichever entry point asked. Ask cards have to appear on a push tap as
+    /// on a link tap.
+    func openPreparedSession(
+        serverId: String,
+        sessionId: String,
+        workspaceIdHint: String?,
+        connection: ServerConnection,
+        origin: SessionNavigationSource,
+        generation: UInt64
+    ) async -> AppOpenOutcome {
         await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
             shouldNavigate: { [weak self] in self?.isCurrent(generation) ?? false },
             navigate: {}
         )
         guard isCurrent(generation) else { return .finished }
 
-        // Every source prepares the same way: claim the transport, refresh the
-        // row, prefetch, hydrate dialogs. Ask cards have to appear on a push tap
-        // as on a link tap.
         await connection.prepareExternalSessionOpen(
-            sessionId: open.sessionId,
-            workspaceIdHint: open.workspaceId
+            sessionId: sessionId,
+            workspaceIdHint: workspaceIdHint
         )
         guard isCurrent(generation) else { return .finished }
 
         let workspaceId = connection.sessionReentryWorkspaceId(
-            for: open.sessionId,
-            workspaceIdHint: open.workspaceId
+            for: sessionId,
+            workspaceIdHint: workspaceIdHint
         )
         navigation.selectedTab = .workspaces
         navigation.openSession(
             WorkspaceSessionNavTarget(
                 serverId: serverId,
-                sessionId: open.sessionId,
+                sessionId: sessionId,
                 workspaceId: workspaceId,
-                routeScope: connection.sessionStore.routeScope(for: open.sessionId)
+                routeScope: connection.sessionStore.routeScope(for: sessionId)
             ),
-            source: open.origin
+            source: origin
         )
         return .finished
     }

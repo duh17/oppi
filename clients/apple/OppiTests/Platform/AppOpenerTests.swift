@@ -165,6 +165,7 @@ struct AppOpenerTests {
         #expect(harness.opener._parkedRequestForTesting != nil)
 
         harness.opener.launchDidFinish()
+        harness.opener.sceneDidBecomeActive()
         await harness.settle()
 
         harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
@@ -188,6 +189,7 @@ struct AppOpenerTests {
         )))
         await harness.settle()
         harness.opener.launchDidFinish()
+        harness.opener.sceneDidBecomeActive()
         await harness.settle()
 
         harness.expectSessionRoute(serverId: "server-a", sessionId: "second")
@@ -202,6 +204,7 @@ struct AppOpenerTests {
         #expect(harness.navigation.pendingWorkspaceDeepLink == nil)
 
         harness.opener.launchDidFinish()
+        harness.opener.sceneDidBecomeActive()
         await harness.settle()
 
         let payload = try #require(harness.navigation.pendingWorkspaceDeepLink)
@@ -231,6 +234,7 @@ struct AppOpenerTests {
         #expect(harness.navigation.workspaceStackRouteElements.count == 1)
 
         harness.opener.launchDidFinish()
+        harness.opener.sceneDidBecomeActive()
         await harness.settle()
         #expect(harness.navigation.workspaceStackRouteElements.count == 2)
     }
@@ -679,6 +683,7 @@ struct AppOpenerTests {
         ))
 
         harness.opener.launchDidFinish()
+        harness.opener.sceneDidBecomeActive()
         await harness.settle()
 
         harness.expectSessionRoute(serverId: "server-a", sessionId: "created")
@@ -694,6 +699,7 @@ struct AppOpenerTests {
         #expect(!harness.navigation.showQuickSession)
 
         harness.opener.launchDidFinish()
+        harness.opener.sceneDidBecomeActive()
         await harness.settle()
         #expect(harness.navigation.showQuickSession)
         #expect(harness.navigation.pendingQuickSessionStart?.mode == .dictation)
@@ -702,6 +708,209 @@ struct AppOpenerTests {
         harness.opener.open(.quickSession(QuickSessionStart(mode: .liveVoice)))
         await harness.settle()
         #expect(harness.navigation.pendingQuickSessionStart?.mode == .dictation)
+    }
+
+    // MARK: - Repair: App Lock, lock scope, lifetime
+
+    @Test func parkedRequestWaitsForUnlockBeforeDraining() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            authOutcomes: [.cancelled, .success],
+            launch: false
+        )
+        harness.addSession("child", workspaceId: "w1", to: "server-a")
+
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "child",
+            origin: .externalURL
+        )))
+        await harness.settle()
+        #expect(harness.opener._parkedRequestForTesting != nil)
+
+        // The request is parked for launch; lock the app before launch finishes.
+        harness.appLock.setTimeout(.immediately)
+        harness.appLock.appDidEnterBackground()
+        harness.opener.sceneDidEnterBackground()
+        harness.opener.launchDidFinish()
+
+        // Foreground auto-prompts once; cancel it and stay locked.
+        if let autoUnlock = harness.appLock.sceneDidBecomeActive() {
+            #expect(await autoUnlock.value == false)
+        }
+        harness.opener.sceneDidBecomeActive()
+        await harness.settle()
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+
+        #expect(await harness.appLock.unlock())
+        await harness.settle()
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
+    }
+
+    @Test func scopedLockedTargetBehindAppLockStillAsks() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            appLockTimeout: .immediately,
+            authOutcomes: [.success, .success]
+        )
+        harness.addSession("child", workspaceId: "w1", to: "server-a")
+        harness.scopedLock.lock(
+            .session(serverId: "server-a", sessionId: "child"),
+            workspaceId: "w1"
+        )
+
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "child",
+            origin: .externalURL
+        )))
+        await harness.settle()
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+
+        #expect(await harness.appLock.unlock())
+        await harness.settle()
+        // App Lock's deferred request ran the scoped gate, which asked and
+        // succeeded; it was not silently dropped behind the lock.
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
+    }
+
+    @Test func urlWorkspaceHintCannotChooseTheScopedLockScope() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            authOutcomes: [.cancelled]
+        )
+        harness.addSession("child", workspaceId: "w1", to: "server-a")
+        harness.scopedLock.sessionLookup = { [weak harness] _, sessionId in
+            harness?.connection("server-a").sessionStore.session(id: sessionId)
+        }
+        // The session's workspace is locked.
+        harness.scopedLock.lock(
+            .workspace(serverId: "server-a", workspaceId: "w1")
+        )
+
+        // A URL hint must not move the lock scope off that workspace.
+        harness.opener.open(AppOpenRequest(
+            url: try #require(URL(string: "oppi://session/child?workspaceId=other")),
+            origin: .externalURL
+        ))
+        await harness.settle()
+
+        #expect(harness.coordinator.activeServerId == "server-a")
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+    }
+
+    @Test func quickSessionParkedDuringOnboardingOpensWhenItClears() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.navigation.launchPhase = .ready
+        harness.navigation.showOnboarding = true
+
+        harness.opener.open(.quickSession(QuickSessionStart(mode: .message)))
+        await harness.settle()
+        #expect(!harness.navigation.showQuickSession)
+
+        harness.navigation.showOnboarding = false
+        harness.opener.presentationDidUpdate()
+        await harness.settle()
+        #expect(harness.navigation.showQuickSession)
+    }
+
+    @Test func staleParkedRequestIsDropped() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.addSession("child", workspaceId: "w1", to: "server-a")
+        harness.unreachableServers = ["server-a"]
+
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "child",
+            origin: .externalURL
+        )))
+        await harness.settle()
+        #expect(harness.opener._parkedRequestForTesting != nil)
+
+        let later = Date().addingTimeInterval(601)
+        harness.opener._nowForTesting = { later }
+        harness.unreachableServers = []
+        harness.opener.sceneDidBecomeActive()
+        await harness.settle()
+
+        #expect(harness.opener._parkedRequestForTesting == nil)
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+    }
+
+    @Test func removingTheServerDropsAParkedRequest() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.addSession("child", workspaceId: "w1", to: "server-a")
+        harness.unreachableServers = ["server-a"]
+
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "child",
+            origin: .externalURL
+        )))
+        await harness.settle()
+        #expect(harness.opener._parkedRequestForTesting != nil)
+
+        harness.serverStore.remove(id: "server-a")
+        harness.opener.sceneDidBecomeActive()
+        await harness.settle()
+
+        #expect(harness.opener._parkedRequestForTesting == nil)
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+    }
+
+    @Test func aNewerOpenAbandonsTheParkedSiriReceipt() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.addSession("created", workspaceId: "w1", to: "server-a")
+        harness.opener._browserLinkPreferenceForTesting = .inApp
+        let receipt = IntentSessionOpenTrigger.Receipt(
+            requestID: harness.intentTrigger.issueRequestID(),
+            serverId: "server-a",
+            sessionId: "created",
+            workspaceId: "w1",
+            unsentPrompt: "Do the thing",
+            session: nil
+        )
+        harness.intentTrigger.enqueue(receipt)
+        harness.unreachableServers = ["server-a"]
+
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "created",
+            workspaceId: "w1",
+            origin: .externalURL,
+            startedSessionRequestID: receipt.requestID
+        )))
+        await harness.settle()
+        #expect(harness.opener._parkedRequestForTesting != nil)
+
+        let url = try #require(URL(string: "https://example.com/newer"))
+        harness.opener.open(.webLink(url))
+        await harness.settle()
+
+        // The newer request wins, and the superseded Siri receipt will not
+        // replay at a later launch.
+        #expect(harness.intentTrigger.peek() == nil)
+        #expect(harness.recorder.browserURLs == [url])
+        #expect(harness.opener._parkedRequestForTesting == nil)
+    }
+
+    @Test func aReceiptForAnUnpairedServerIsTakenAndForgotten() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.intentTrigger.enqueue(IntentSessionOpenTrigger.Receipt(
+            requestID: harness.intentTrigger.issueRequestID(),
+            serverId: "server-gone",
+            sessionId: "created",
+            workspaceId: "w1",
+            unsentPrompt: nil,
+            session: nil
+        ))
+
+        harness.opener.launchDidFinish()
+        await harness.settle()
+
+        #expect(harness.intentTrigger.peek() == nil)
+        #expect(harness.connection("server-a").extensionToast == "Server not found for this session link")
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
     }
 
     // MARK: - Web and system links
@@ -829,18 +1038,20 @@ private final class OpenerHarness {
             systemOpen: { recorder.systemURLs.append($0) }
         )
         self.opener = opener
-        if !servers.isEmpty {
-            installConnection(for: servers[0].id, activate: true)
-        }
-        if launch {
-            opener.launchDidFinish()
-        }
         opener._serverReadyForTesting = { [weak self] serverId in
             guard let self else { return false }
             guard !self.unreachableServers.contains(serverId) else { return false }
             guard self.serverStore.server(for: serverId) != nil else { return false }
             self.installConnection(for: serverId, activate: true)
             return true
+        }
+        if !servers.isEmpty {
+            installConnection(for: servers[0].id, activate: true)
+        }
+        // A parked request only runs in a foreground app.
+        opener.sceneDidBecomeActive()
+        if launch {
+            opener.launchDidFinish()
         }
     }
 

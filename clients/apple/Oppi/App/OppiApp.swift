@@ -212,7 +212,10 @@ final class OppiApp {
         opener.sceneDidBecomeActive()
     }
     func sceneWillResignActive() { changeScenePhase(to: .inactive) }
-    func sceneDidEnterBackground() { changeScenePhase(to: .background) }
+    func sceneDidEnterBackground() {
+        opener.sceneDidEnterBackground()
+        changeScenePhase(to: .background)
+    }
 
     private func changeScenePhase(to phase: ScenePhase) {
         guard phase != scenePhase else { return }

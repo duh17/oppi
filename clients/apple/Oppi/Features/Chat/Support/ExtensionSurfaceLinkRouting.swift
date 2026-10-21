@@ -33,6 +33,13 @@ enum ExtensionSurfaceLinkRouting {
             serverID: serverID,
             workspaceID: workspaceID
         ) else {
+            // A non-HTTP scheme (mailto:, tel:, another app's URL) has no
+            // in-app destination, but the surface still consumes the tap, so it
+            // goes to the system through the opener. A scheme-less path stays
+            // unhandled.
+            if let scheme = url.scheme?.lowercased(), !scheme.isEmpty {
+                return .open(.system(url))
+            }
             return nil
         }
         guard case .session(var open) = request else {
