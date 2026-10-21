@@ -133,9 +133,12 @@ final class SessionRowView: UIView {
         } else {
             applyDetails(presentation, status: status)
         }
-        // Compact decides its rows from the width (`prepareLayout`); keeping the
-        // last arrangement until then avoids a relayout on every reconfigure.
-        if !display.isCompact || content.hidesDetails { arrangeDetailRows(joined: false) }
+        // Settle the arrangement for the width this row is drawn at before the
+        // cell measures it. Compact joins its details only while they fit, and
+        // that answer must not carry over from a wider or shorter row: an
+        // arrangement left behind by the previous content does not match the
+        // height the cell was measured with.
+        _ = prepareLayout(width: bounds.width)
         setNeedsLayout()
         if window != nil { startClock() }
     }
@@ -290,14 +293,16 @@ final class SessionRowView: UIView {
 
     /// Compact tries one line first and otherwise falls back to the same two
     /// rows as Standard, so density never hides or truncates a fact Standard
-    /// would show. Called with the row's width before sizing and layout.
-    func prepareLayout(width: CGFloat) {
-        guard let content, display.isCompact, !content.hidesDetails else {
-            arrangeDetailRows(joined: false)
-            return
+    /// would show. Called with the row's width before sizing and layout;
+    /// returns whether the arrangement changed, and with it the row's height.
+    @discardableResult
+    func prepareLayout(width: CGFloat) -> Bool {
+        // An unknown width cannot prove the facts fit on one line.
+        guard let content, display.isCompact, !content.hidesDetails, width > 0 else {
+            return arrangeDetailRows(joined: false)
         }
         let available = width - Self.iconWidth - Self.iconSpacing - Self.trailingInset
-        arrangeDetailRows(joined: joinedRowWidth() <= available)
+        return arrangeDetailRows(joined: joinedRowWidth() <= available)
     }
 
     private func joinedRowWidth() -> CGFloat {
@@ -312,7 +317,8 @@ final class SessionRowView: UIView {
         return widths.reduce(0, +) + CGFloat(widths.count - 1) * Self.detailSpacing
     }
 
-    private func arrangeDetailRows(joined: Bool) {
+    @discardableResult
+    private func arrangeDetailRows(joined: Bool) -> Bool {
         let first: [UIView]
         let second: [UIView]
         if joined {
@@ -322,16 +328,22 @@ final class SessionRowView: UIView {
             first = [contextCluster, firstSpacer, mirrorIndicator]
             second = [metricsCluster, secondSpacer, statusCluster]
         }
+        let firstHidden = content?.hidesDetails == true && !joined
+            || !first.contains { $0 !== firstSpacer && !$0.isHidden }
+        let secondHidden = second.isEmpty
+        let rearranged = joined != joinsDetailRows
+            || firstRow.arrangedSubviews != first
+            || firstRow.isHidden != firstHidden
+            || secondRow.isHidden != secondHidden
         if joined != joinsDetailRows || firstRow.arrangedSubviews != first {
             for view in firstRow.arrangedSubviews + secondRow.arrangedSubviews { view.removeFromSuperview() }
             first.forEach(firstRow.addArrangedSubview)
             second.forEach(secondRow.addArrangedSubview)
             joinsDetailRows = joined
         }
-        let hidesDetails = content?.hidesDetails ?? false
-        firstRow.isHidden = hidesDetails && !joined
-            || !first.contains { $0 !== firstSpacer && !$0.isHidden }
-        secondRow.isHidden = second.isEmpty
+        firstRow.isHidden = firstHidden
+        secondRow.isHidden = secondHidden
+        return rearranged
     }
 
     override func systemLayoutSizeFitting(
@@ -348,8 +360,13 @@ final class SessionRowView: UIView {
     }
 
     override func layoutSubviews() {
-        prepareLayout(width: bounds.width)
+        let rearranged = prepareLayout(width: bounds.width)
         super.layoutSubviews()
+        // The details moved to another line, so the height the list measured
+        // for this cell is stale. The list resizes a cell whose constraints
+        // change (`selfSizingInvalidation`); the row must say so here, because
+        // the new arrangement is made during layout, after the measure pass.
+        if rearranged { invalidateIntrinsicContentSize() }
     }
 
     // MARK: Time

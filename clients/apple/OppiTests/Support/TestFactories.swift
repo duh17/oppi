@@ -49,7 +49,8 @@ func makeTestSession(
 func makeTestAppRoot(
     coordinator: ConnectionCoordinator? = nil,
     themeStore: ThemeStore = ThemeStore(),
-    composerDraftStore: ComposerDraftStore? = nil
+    composerDraftStore: ComposerDraftStore? = nil,
+    sessionRows: SessionRowDisplayStore = SessionRowDisplayStore(fixed: SessionRowDisplay())
 ) -> AppRootEnvironment {
     AppRootEnvironment(
         coordinator: coordinator ?? ConnectionCoordinator(serverStore: ServerStore()),
@@ -62,7 +63,7 @@ func makeTestAppRoot(
             saveDelay: .seconds(60)
         ),
         chatReaderPayloadStore: ChatReaderPayloadStore(),
-        sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
+        sessionRows: sessionRows
     )
 }
 

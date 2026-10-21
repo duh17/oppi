@@ -236,6 +236,12 @@ final class SessionListCollection<
         super.init()
         collectionView.setCollectionViewLayout(makeLayout(appearance), animated: false)
         collectionView.delegate = self
+        // A row's height follows its content: Compact rejoins its details at a
+        // narrower width, a search snippet, Thread strip, or lock appears, and
+        // the row rearranges its stacks for all of those without the list
+        // reconfiguring the item. Measure a cell again whenever its constraints
+        // change, not only when its configuration does.
+        collectionView.selfSizingInvalidation = .enabledIncludingConstraints
         collectionView.keyboardDismissMode = .interactive
         collectionView.accessibilityIdentifier = "workspace.sessionList"
         collectionView.refreshControl = refreshControl
