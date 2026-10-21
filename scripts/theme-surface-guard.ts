@@ -96,7 +96,7 @@ const checks: GuardCheck[] = [
     id: "uikit-ad-hoc-theme-surface-opacity",
     title: "UIKit theme surface alpha re-derived at the call site",
     pattern: String.raw`UIColor\(\s*(Color\.)?themeBg(Dark|Highlight)?\s*\)\.withAlphaComponent\(`,
-    fix: "Use UIColor(ThemeSurfaceStyle.resolve(role).fill) or an opaque semantic theme color",
+    fix: "Use UIColor.themeSurfaceFill(role) or an opaque semantic theme color",
   },
   {
     id: "nonreactive-theme-shape-style",
