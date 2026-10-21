@@ -26,7 +26,6 @@ final class SettingsChatTopBarViewController: UIViewController, UICollectionView
         super.init(nibName: nil, bundle: nil)
         title = String(localized: "Top Bar")
         navigationItem.largeTitleDisplayMode = .inline
-        navigationItem.backBarButtonItem = UIBarButtonItem(title: String(localized: "Chat"))
     }
 
     @available(*, unavailable)
@@ -94,8 +93,9 @@ final class SettingsChatTopBarViewController: UIViewController, UICollectionView
         dataSource?.reorderingHandlers.canReorderItem = { _ in true }
         dataSource?.reorderingHandlers.didReorder = { [weak self] transaction in
             guard let self else { return }
+            // Every action has a row here, so the dragged order is the order.
             let order = transaction.finalSnapshot.itemIdentifiers(inSection: .buttons)
-            AppPreferences.ChatTopBar.setLayout(layout.reordering(order), in: defaults)
+            AppPreferences.ChatTopBar.setLayout(ChatTopBarLayout(order: order, shown: layout.shown), in: defaults)
             // The bar's order now matches; redraw so the snapshot and the
             // preference cannot drift after a drag.
             setNeedsUpdateProperties()
@@ -130,7 +130,7 @@ final class SettingsChatTopBarViewController: UIViewController, UICollectionView
     }
 
     private var footer: String {
-        String(localized: "The buttons a chat shows beside the session title, in this order. A button turned off moves into the … menu, which always stays last. Terminal needs SSH Terminal turned on in Experiments and a workspace folder on the server.")
+        String(localized: "A button turned off moves into the … menu, which always stays last. Terminal also needs a workspace folder on the server.")
     }
 
     /// Rows are switched and dragged, never selected: editing mode stays on for

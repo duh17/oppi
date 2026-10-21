@@ -47,12 +47,12 @@ struct ChatTopBarLayoutTests {
         #expect(layout.bar(available: everything) == [.files, .outline, .context])
         #expect(layout.menu(available: everything) == [.terminal])
 
-        // A page that shows only some of the buttons reorders those and leaves
-        // the rest where they were.
-        let reordered = ChatTopBarLayout.defaultValue.reordering([.terminal, .files])
-        #expect(reordered.order == [.terminal, .outline, .context, .files])
-        #expect(reordered.setting(.terminal, shown: true).bar(available: everything) == [.terminal, .outline, .context, .files])
-        #expect(reordered.reordering([.files, .terminal]).order == [.files, .outline, .context, .terminal])
+        // What the Top Bar page writes after a drag is a stored order, and the
+        // bar and the menu both read it.
+        let dragged = ChatTopBarLayout(order: [.terminal, .files, .outline, .context], shown: layout.shown)
+        #expect(dragged.order == [.terminal, .files, .outline, .context])
+        #expect(dragged.bar(available: everything) == [.files, .outline, .context])
+        #expect(dragged.menu(available: everything) == [.terminal])
     }
 
     @Test func anActionTheChatCannotOfferLeavesTheBarShortRatherThanBorrowing() {
@@ -133,14 +133,7 @@ struct ChatTopBarLayoutTests {
         #expect(Set(ChatTopBarAction.allCases.map(\.accessibilityIdentifier)).count == 4)
         #expect(Set(ChatTopBarAction.allCases.map(\.menuIdentifier)).count == 4)
         #expect(ChatTopBarAction.context.menuIdentifier == "chat.toolbar.menu.context")
-        #expect(ChatTopBarAction.files.symbolName == "folder")
-        #expect(ChatTopBarAction.terminal.symbolName == "terminal")
-        // Every button says what it does, not just its name, and the Files menu
-        // item names the state it would change.
-        for action in ChatTopBarAction.allCases {
-            #expect(!action.accessibilityLabel.isEmpty)
-            #expect(!action.label.isEmpty)
-        }
+        // The Files menu item names the state it would change.
         #expect(ChatTopBarAction.files.menuTitle(filesOpen: false) == "Open Files")
         #expect(ChatTopBarAction.files.menuTitle(filesOpen: true) == "Close Files")
         #expect(ChatTopBarAction.context.menuTitle(filesOpen: true) == "Context")

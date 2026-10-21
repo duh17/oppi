@@ -121,18 +121,6 @@ struct ChatTopBarLayout: Hashable {
         return ChatTopBarLayout(order: order, shown: next)
     }
 
-    /// Applies a reordered run of actions, as a settings page that shows a
-    /// subset of them hands it over. Actions the run does not name keep their
-    /// positions, so a page that leaves Terminal out still reorders the rest.
-    func reordering(_ reordered: [ChatTopBarAction]) -> ChatTopBarLayout {
-        var next = reordered.makeIterator()
-        let named = Set(reordered)
-        return ChatTopBarLayout(
-            order: order.map { named.contains($0) ? next.next() ?? $0 : $0 },
-            shown: shown
-        )
-    }
-
     /// What the bar draws, in order: the shown actions this screen can offer.
     /// An action it cannot offer is not drawn and not offered in the menu
     /// either, because a button that could only fail is worse than no button.

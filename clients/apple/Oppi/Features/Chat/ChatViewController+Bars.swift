@@ -6,12 +6,12 @@ import UIKit
 /// a vertical toolbar rail (the iPhone Duo) the same controls join the rail one
 /// per position and the session slot carries the title's menu.
 ///
-/// The choice is Settings → Chat → Top Bar (`ChatTopBarLayout`). A show/hide
-/// toggle is a per-chat decision and an action this session cannot offer (Files
-/// and Terminal without a workspace, Outline on an empty timeline, Terminal
-/// while the experiment is off) leaves an empty place rather than borrowing
-/// another action's: what the user chose is what the bar shows, and the … menu
-/// never offers what could only fail.
+/// The choice is Settings → Chat → Top Bar (`ChatTopBarLayout`): one device-wide
+/// setting, the same for every chat, not a per-chat decision. An action this
+/// session cannot offer (Files and Terminal without a workspace, Outline on an
+/// empty timeline, Terminal while the experiment is off) leaves no control at
+/// all, and no menu item either: what the user chose is what the bar shows, and
+/// the … menu never offers a button that could only fail.
 ///
 /// Items are built once and refreshed in the chat's `updateProperties()`.
 /// Each control's touch and accessibility activation run the same action.
@@ -24,11 +24,11 @@ final class ChatBarItems {
 
     /// A per-screen state change (a panel opened, a value the bar reads) and a
     /// menu action now build their menus and stay on the same instance. Rail
-    /// items follow `ChatTopBarLayout.order`; a hidden action is hidden, so it
-    /// leaves no item behind. The context ring is not one of these: it is its
+    /// items follow `ChatTopBarLayout.order`, and a hidden action is left out
+    /// rather than left blank. The context ring is not one of these: it is its
     /// own control, placed in the order like the rest.
     private struct ActionControls {
-        /// One rail item (the Duo rail); a hidden item leaves a gap.
+        /// One rail item (the Duo rail); a hidden action has none.
         let rail: UIBarButtonItem
         /// The horizontal bar's plain control inside the trailing glass group.
         let button: UIButton
@@ -45,6 +45,7 @@ final class ChatBarItems {
             identifier: "chat.toolbar.more", label: "More actions"
         ) {}
         button.showsMenuAsPrimaryAction = true
+        button.menu = makeTopBarMenu()
         return button
     }()
     private lazy var backItem = makeBackItem()
@@ -96,7 +97,6 @@ final class ChatBarItems {
         )
         let layout = AppPreferences.ChatTopBar.layout
         let drawn = layout.bar(available: available)
-        let hidden = layout.menu(available: available)
 
         // A shown action draws its own control; a hidden one is only in the …
         // menu. Nothing refills a place another action could not fill.
@@ -154,8 +154,6 @@ final class ChatBarItems {
             ring.apply(usage: chat.contextUsageSnapshot, colors: colors)
             ring.onTap = { [weak chat] in chat?.toggleContextPanel() }
         }
-        moreItem.menu = topBarMenu(hidden: hidden, filesOpen: filesOpen)
-        moreButton.menu = moreItem.menu
 
         if joinsRail {
             railSessionItem.menu = makeSessionMenu(title: chat.sessionDisplayName, includesRename: true)
@@ -264,12 +262,37 @@ final class ChatBarItems {
         trailingStack.addArrangedSubview(moreButton)
     }
 
-    /// The actions without a button, in the user's order, then a divider and
-    /// Customize Top Bar. Terminal while the experiment is off is not in here
-    /// either: it cannot be drawn, so it belongs to the setting, not to a
-    /// chat's menu.
-    private func topBarMenu(hidden: [ChatTopBarAction], filesOpen: Bool) -> UIMenu {
-        let hiddenItems = hidden.map { action in
+    /// The … menu, built once: the hidden actions are resolved when the menu
+    /// opens, so a pass that changes the bar never has to rebuild and re-attach
+    /// the menu its owner is holding.
+    private func makeTopBarMenu() -> UIMenu {
+        let hidden = UIDeferredMenuElement.uncached { [weak self] completion in
+            // The menu asks on the main thread; `assumeIsolated` keeps the call
+            // to the bar's state a main-actor one either way.
+            MainActor.assumeIsolated { completion(self?.hiddenTopBarItems() ?? []) }
+        }
+        let customize = UIAction(
+            title: String(localized: "Customize Top Bar…"),
+            image: UIImage(systemName: "slider.horizontal.3")
+        ) { [weak self] _ in self?.chat?.customizeTopBar() }
+        customize.accessibilityIdentifier = "chat.toolbar.menu.customize"
+        return UIMenu(children: [hidden, customize])
+    }
+
+    /// The actions without a button, in the user's order, for the … menu. An
+    /// inline submenu is what draws the separator above Customize; with nothing
+    /// hidden the menu holds Customize alone. Terminal while the experiment is
+    /// off is not in here either: it cannot be drawn, so it belongs to the
+    /// setting, not to a chat's menu.
+    private func hiddenTopBarItems() -> [UIMenuElement] {
+        guard let chat else { return [] }
+        let available = Self.availableActions(
+            hasWorkspace: chat.session?.workspaceId != nil,
+            showsOutline: chat.outlineAvailability.isAvailable,
+            terminalEnabled: AppPreferences.Experiments.sshTerminalEnabled && chat.hasUsableTerminalFolder
+        )
+        let filesOpen = chat.model.isFilePanelVisible
+        let items = AppPreferences.ChatTopBar.layout.menu(available: available).map { action in
             let item = UIAction(
                 title: action.menuTitle(filesOpen: filesOpen),
                 image: UIImage(systemName: action.symbolName)
@@ -278,21 +301,11 @@ final class ChatBarItems {
             // The ring's number is the reason to open the panel; the menu keeps
             // it visible without a bar position.
             if action == .context {
-                item.subtitle = self.chat?.contextUsageSnapshot.percentText
+                item.subtitle = chat.contextUsageSnapshot.percentText
             }
             return item
         }
-        let customize = UIAction(
-            title: String(localized: "Customize Top Bar…"),
-            image: UIImage(systemName: "slider.horizontal.3")
-        ) { [weak self] _ in self?.chat?.customizeTopBar() }
-        customize.accessibilityIdentifier = "chat.toolbar.menu.customize"
-        // An inline submenu is what draws the separator above Customize; with
-        // nothing hidden the menu is just that one action.
-        let children: [UIMenuElement] = hiddenItems.isEmpty
-            ? [customize]
-            : [UIMenu(options: .displayInline, children: hiddenItems), customize]
-        return UIMenu(children: children)
+        return items.isEmpty ? [] : [UIMenu(options: .displayInline, children: items)]
     }
 
     private static func barButton(
@@ -390,7 +403,7 @@ final class ChatBarItems {
     }
 
     private func makeMoreItem() -> UIBarButtonItem {
-        let item = UIBarButtonItem(image: UIImage(systemName: "ellipsis"), primaryAction: nil, menu: nil)
+        let item = UIBarButtonItem(image: UIImage(systemName: "ellipsis"), primaryAction: nil, menu: makeTopBarMenu())
         item.accessibilityLabel = "More actions"
         item.accessibilityIdentifier = "chat.toolbar.more"
         return item

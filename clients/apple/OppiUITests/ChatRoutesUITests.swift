@@ -148,7 +148,7 @@ final class ChatRoutesUITests: XCTestCase {
         for id in rows {
             XCTAssertTrue(app.cells[id].waitForExistence(timeout: 5), "\(id) must be a row")
         }
-        assertLeftToRight(rows.map { app.cells[$0] }, "The Top Bar page rows")
+        assertTopToBottom(rows.map { app.cells[$0] }, "The Top Bar page rows")
         for id in rows {
             // The handle carries the row's identifier and a "Reorder <label>"
             // label, so the page is always in editing mode.
@@ -161,6 +161,105 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
     }
 
+    /// Settings → Chat → Top Bar is a row that pushes the page, and its summary
+    /// names the buttons the bar shows.
+    func testSettingsChatTopBarRowOpensThePage() {
+        launchScreen("settings-chat")
+        let row = app.buttons["settings.chat.topBar"]
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "The Chat settings page must show its Top Bar row")
+        let summary = row.value as? String ?? ""
+        XCTAssertTrue(summary.contains("Files"), "The row must summarize the layout, not the label again: \(summary)")
+        row.tap()
+        XCTAssertTrue(app.navigationBars["Top Bar"].waitForExistence(timeout: 5), "The Top Bar row must push its page")
+        XCTAssertTrue(
+            app.switches["settings.chat.topBar.files"].waitForExistence(timeout: 5),
+            "The pushed page must be the Top Bar page"
+        )
+        assertRunning()
+    }
+
+    /// The Top Bar page itself, with nothing pinned in the argument domain, so
+    /// these are the writes a person makes: a switch writes the layout, a drag
+    /// reorders it, and both survive a relaunch.
+    func testTopBarSettingsSwitchAndReorderWriteTheLayout() {
+        launchScreen("settings-chat-top-bar")
+        let rowIDs = ["files", "outline", "context", "terminal"]
+        func row(_ id: String) -> XCUIElement { app.cells["settings.chat.topBar.row.\(id)"] }
+        func handle(_ id: String) -> XCUIElement { row(id).buttons["settings.chat.topBar.row.\(id)"] }
+        for id in rowIDs {
+            XCTAssertTrue(row(id).waitForExistence(timeout: 15), "\(id) must be a row")
+        }
+        assertTopToBottom(rowIDs.map(row), "The Top Bar page's opening order")
+        let outlineSwitch = app.switches["settings.chat.topBar.outline"]
+        XCTAssertEqual(outlineSwitch.value as? String, "1", "Outline starts on")
+
+        // A switch writes: Outline off.
+        outlineSwitch.tap()
+        XCTAssertTrue(
+            waitFor((outlineSwitch.value as? String) == "0"),
+            "Turning Outline off must flip its switch"
+        )
+
+        // A drag writes: Terminal's handle to the top.
+        XCTAssertTrue(handle("terminal").exists, "Terminal must keep its reorder handle")
+        drag(handle("terminal"), above: row("files"))
+        XCTAssertTrue(
+            waitFor(row("terminal").frame.minY < row("files").frame.minY),
+            "Dragging Terminal to the top must reorder the page"
+        )
+        assertTopToBottom(["terminal", "files", "outline", "context"].map(row), "The dragged order")
+
+        // Both writes are the layout, not the screen: a fresh launch reads them
+        // back on the page the writes came from.
+        app.terminate()
+        launchScreen("settings-chat-top-bar")
+        for id in rowIDs {
+            XCTAssertTrue(row(id).waitForExistence(timeout: 15), "\(id) must come back as a row")
+        }
+        assertTopToBottom(["terminal", "files", "outline", "context"].map(row), "The order after a relaunch")
+        XCTAssertEqual(
+            app.switches["settings.chat.topBar.outline"].value as? String,
+            "0",
+            "The hidden button must still be hidden after a relaunch"
+        )
+
+        // Leave the layout as this device had it: Outline back on, Terminal back
+        // to the last place.
+        app.switches["settings.chat.topBar.outline"].tap()
+        XCTAssertTrue(
+            waitFor((app.switches["settings.chat.topBar.outline"].value as? String) == "1"),
+            "Outline must come back on"
+        )
+        drag(handle("terminal"), below: row("context"))
+        XCTAssertTrue(
+            waitFor(row("terminal").frame.minY > row("context").frame.minY),
+            "Terminal must go back to the last place"
+        )
+        assertTopToBottom(rowIDs.map(row), "The restored order")
+        assertRunning()
+    }
+
+    /// Drags a row's reorder handle above or below another row, the way a person
+    /// moves it: press on the handle, drag, and hold so the list commits the
+    /// move instead of flinging.
+    private func drag(_ handle: XCUIElement, above row: XCUIElement) {
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+            forDuration: 0.8,
+            thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.6
+        )
+    }
+
+    private func drag(_ handle: XCUIElement, below row: XCUIElement) {
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+            forDuration: 0.8,
+            thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.6
+        )
+    }
+
     /// Left-to-right order of the controls the caller names, which is the order
     /// the user chose. A missing element fails rather than reading as a frame at
     /// zero, which would sort into place and pass.
@@ -170,14 +269,36 @@ final class ChatRoutesUITests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
+        assertOrder(elements, label, keyPath: \.minX, description: "left to right", file: file, line: line)
+    }
+
+    /// Top-to-bottom order of the rows the caller names, for a page whose rows
+    /// stack instead of running across the bar.
+    private func assertTopToBottom(
+        _ elements: [XCUIElement],
+        _ label: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        assertOrder(elements, label, keyPath: \.minY, description: "top to bottom", file: file, line: line)
+    }
+
+    private func assertOrder(
+        _ elements: [XCUIElement],
+        _ label: String,
+        keyPath: KeyPath<CGRect, CGFloat>,
+        description: String,
+        file: StaticString,
+        line: UInt
+    ) {
         let frames = elements.map(\.frame)
         for (index, frame) in frames.enumerated() where frame.isEmpty {
             XCTFail("\(label): element \(index) is missing or has no frame", file: file, line: line)
         }
         XCTAssertEqual(
-            frames.map(\.minX),
-            frames.map(\.minX).sorted(),
-            "\(label) must read left to right in this order",
+            frames.map { $0[keyPath: keyPath] },
+            frames.map { $0[keyPath: keyPath] }.sorted(),
+            "\(label) must read \(description) in this order",
             file: file,
             line: line
         )

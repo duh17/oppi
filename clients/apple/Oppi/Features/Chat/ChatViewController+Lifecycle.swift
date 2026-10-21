@@ -319,7 +319,7 @@ extension ChatViewController {
                 MainActor.assumeIsolated { self?.model.topBarRefresh += 1 }
             },
             // SSH Terminal turning on or off changes whether Terminal can be a
-            // quick action, and the flag writes no notification of its own.
+            // bar button, and the flag writes no notification of its own.
             // Every defaults write posts this, so it passes only on a change.
             center.addObserver(
                 forName: UserDefaults.didChangeNotification,

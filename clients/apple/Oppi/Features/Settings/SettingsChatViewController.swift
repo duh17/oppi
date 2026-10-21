@@ -41,6 +41,14 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
         SSHTerminalSettingsList.pin(collectionView, in: view)
         installDataSource()
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
+        // The Top Bar page is pushed above this one and writes the layout; the
+        // Top Bar row's summary has to follow it while this page is behind.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(topBarDidChange),
+            name: AppPreferences.ChatTopBar.didChangeNotification,
+            object: nil
+        )
         setNeedsUpdateProperties()
     }
 
@@ -49,6 +57,8 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
     }
 
     @objc private func themeDidChange() { setNeedsUpdateProperties() }
+
+    @objc private func topBarDidChange() { setNeedsUpdateProperties() }
 
     override func updateProperties() {
         super.updateProperties()
@@ -297,31 +307,55 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
             cell.configure(
                 title: String(localized: "Top Bar"),
                 value: topBarSummary,
+                valueColor: UIColor(palette.comment),
                 identifier: "settings.chat.topBar",
                 color: UIColor(palette.fg)
-            ) { [weak self] in
-                guard let self else { return }
-                navigationController?.pushViewController(SettingsChatTopBarViewController(), animated: true)
-            }
+            ) { [weak self] in self?.openTopBarSettings() }
         case .quickComments:
             cell.configure(
                 title: String(localized: "Quick Comments"),
                 identifier: "settings.chat.quickComments",
                 color: UIColor(palette.fg)
-            ) { [weak self] in
-                guard let self, let root = HostFactory.root(near: self) else { return }
-                Router.push(
-                    HostFactory.screen(root: root, bars: ScreenBars()) { QuickCommentsSettingsView() },
-                    from: self
-                )
-            }
+            ) { [weak self] in self?.openQuickComments() }
         default:
             break
         }
     }
 
+    /// The Top Bar page. Pushed through the router, like every other screen this
+    /// chat opens, so it lands the same way from Settings and from the chat's …
+    /// menu.
+    private func openTopBarSettings() {
+        Router.push(SettingsChatTopBarViewController(), from: self)
+    }
+
+    private func openQuickComments() {
+        guard let root = HostFactory.root(near: self) else { return }
+        Router.push(
+            HostFactory.screen(root: root, bars: ScreenBars()) { QuickCommentsSettingsView() },
+            from: self
+        )
+    }
+
+    /// The two rows that push a page select like rows, so the whole row and its
+    /// chevron take the tap; a segmented or pop-up row keeps its control's own
+    /// touches and does not select.
     func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        false
+        switch dataSource?.itemIdentifier(for: indexPath) {
+        case .topBar, .quickComments: true
+        default: false
+        }
+    }
+
+    /// The same owner action the row's button runs, so a tap on the chevron and
+    /// a tap on the title cannot diverge.
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        collectionView.deselectItem(at: indexPath, animated: true)
+        switch dataSource?.itemIdentifier(for: indexPath) {
+        case .topBar: openTopBarSettings()
+        case .quickComments: openQuickComments()
+        default: break
+        }
     }
 }
 
@@ -415,10 +449,12 @@ final class SettingsButtonRowCell: UICollectionViewListCell {
     required init?(coder: NSCoder) { nil }
 
     /// `value` is a second line under the title, for a row that summarizes what
-    /// its page holds.
+    /// its page holds. It reads in `valueColor`, the theme's secondary text
+    /// color, so the title stays the row's one strong line.
     func configure(
         title: String,
         value: String? = nil,
+        valueColor: UIColor = .secondaryLabel,
         identifier: String,
         color: UIColor,
         action: @escaping () -> Void
@@ -429,6 +465,11 @@ final class SettingsButtonRowCell: UICollectionViewListCell {
         configuration.titleAlignment = .leading
         configuration.baseForegroundColor = color
         configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0)
+        configuration.subtitleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.foregroundColor = valueColor
+            return outgoing
+        }
         button.configuration = configuration
         button.accessibilityIdentifier = identifier
         button.accessibilityValue = value
