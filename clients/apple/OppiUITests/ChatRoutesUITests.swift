@@ -354,8 +354,9 @@ final class ChatRoutesUITests: XCTestCase {
     }
 
     /// A pending composer image opens the annotate canvas. Its bar must carry
-    /// both ways back — Add to Chat returns the annotated image, Cancel keeps
-    /// the attachment — and the composer must be usable again after each.
+    /// undo/redo beside the checkmark — Add to Chat returns the annotated image,
+    /// Cancel keeps the attachment — and the composer must be usable again
+    /// after each.
     func testPendingImageAnnotateCanvasReturnsToTheComposer() {
         launch(environment: ["OPPI_E2E_CHAT_PENDING_IMAGE_BASE64": Self.composerImagePNGBase64])
         focusComposer()
@@ -363,6 +364,30 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(tile.waitForExistence(timeout: 10), "Seeded composer image did not appear")
 
         openAnnotateCanvas(from: tile)
+        attachScreenshot("canvas-bar-after")
+
+        // The bar carries undo/redo beside the checkmark; both start disabled.
+        let undo = app.buttons["canvas.undo"]
+        let redo = app.buttons["canvas.redo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 5), "The canvas must offer Undo")
+        XCTAssertTrue(redo.waitForExistence(timeout: 5), "The canvas must offer Redo")
+        XCTAssertFalse(undo.isEnabled, "Undo starts disabled on a fresh canvas")
+        XCTAssertFalse(redo.isEnabled, "Redo starts disabled on a fresh canvas")
+
+        // A finger stroke on the canvas lands in its own undo stack.
+        let canvas = app.windows.firstMatch
+        let strokeStart = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.4))
+        let strokeEnd = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5))
+        strokeStart.press(forDuration: 0.15, thenDragTo: strokeEnd, withVelocity: .slow, thenHoldForDuration: 0.2)
+        XCTAssertTrue(waitFor(undo.isEnabled), "Drawing a stroke must enable Undo")
+        attachScreenshot("composer-annotate-undo-redo")
+        attachScreenshot("canvas-bar-after-drawn")
+
+        undo.tap()
+        XCTAssertTrue(waitFor(redo.isEnabled), "Undoing a stroke must enable Redo")
+        redo.tap()
+        XCTAssertTrue(waitFor(undo.isEnabled), "Redoing a stroke must enable Undo again")
+
         app.buttons["composer.canvas.addToChat"].tap()
         XCTAssertTrue(waitForDisappearance(of: app.navigationBars["Canvas"]), "Add to Chat must close the canvas")
         XCTAssertTrue(

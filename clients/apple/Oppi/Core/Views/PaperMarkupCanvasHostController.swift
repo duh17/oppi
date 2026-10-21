@@ -12,6 +12,10 @@ final class PaperMarkupCanvasHostController: UIViewController {
     private let supportedFeatureSet: FeatureSet
     private var isDirty = false
     private var paperViewController: PaperMarkupViewController?
+    private var addButton: UIBarButtonItem?
+    private var undoButton: UIBarButtonItem?
+    private var redoButton: UIBarButtonItem?
+    private var isObservingUndoManager = false
     private var toolPicker: PKToolPicker?
     private var paperBottomConstraint: NSLayoutConstraint?
     private var canApplyInitialFit = false
@@ -133,8 +137,9 @@ final class PaperMarkupCanvasHostController: UIViewController {
         )
     }
 
-    /// The host installs Cancel and Add to Chat on its `navigationItem`, so it
-    /// shows no bar and cannot be dismissed outside a navigation controller.
+    /// The host installs Cancel, undo/redo, and Add to Chat on its
+    /// `navigationItem`, so it shows no bar and cannot be dismissed outside a
+    /// navigation controller.
     /// Present this, not the host itself.
     static func makeNavigationController(
         background: PaperMarkupCanvasSession.Background,
@@ -202,6 +207,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
         view.layoutIfNeeded()
         applyInitialFitIfNeeded(ignorePickerVisibility: true)
         restorePersistedInkingTool()
+        observeUndoManager()
         if !didApplyInitialFit {
             paperViewController?.view.isHidden = false
         }
@@ -266,6 +272,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
 
     fileprivate func markUserChanged() {
         isDirty = true
+        updateUndoButtons()
     }
 
     private func applyInitialFitIfNeeded(ignorePickerVisibility: Bool = false) {
@@ -341,16 +348,103 @@ final class PaperMarkupCanvasHostController: UIViewController {
         navigationItem.leftBarButtonItem?.accessibilityIdentifier = "composer.canvas.cancel"
         navigationItem.leftBarButtonItem?.tintColor = UIColor(palette.fgDim)
 
-        let addButton = UIBarButtonItem(
-            title: "Add to Chat",
-            style: .done,
+        // Round bar items keep the trailing group narrow enough for compact
+        // widths; the checkmark stays the only prominent action.
+        let add = UIBarButtonItem(
+            image: UIImage(systemName: "checkmark"),
+            style: .prominent,
             target: self,
             action: #selector(addToChatTapped)
         )
-        addButton.accessibilityIdentifier = "composer.canvas.addToChat"
-        addButton.tintColor = UIColor(palette.blue)
-        addButton.isEnabled = !isExporting
-        navigationItem.rightBarButtonItems = [addButton]
+        add.accessibilityLabel = "Add to Chat"
+        add.accessibilityIdentifier = "composer.canvas.addToChat"
+        add.tintColor = UIColor(palette.blue)
+        add.isEnabled = !isExporting
+        addButton = add
+
+        let undo = makeHistoryButton(
+            symbol: "arrow.uturn.backward",
+            label: "Undo",
+            identifier: "canvas.undo",
+            action: #selector(undoTapped)
+        )
+        undo.tintColor = UIColor(palette.fg)
+        undoButton = undo
+
+        let redo = makeHistoryButton(
+            symbol: "arrow.uturn.forward",
+            label: "Redo",
+            identifier: "canvas.redo",
+            action: #selector(redoTapped)
+        )
+        redo.tintColor = UIColor(palette.fg)
+        redoButton = redo
+
+        // Trailing-most first: undo, redo, then the prominent checkmark.
+        navigationItem.rightBarButtonItems = [add, redo, undo]
+    }
+
+    private func makeHistoryButton(
+        symbol: String,
+        label: String,
+        identifier: String,
+        action: Selector
+    ) -> UIBarButtonItem {
+        let item = UIBarButtonItem(
+            image: UIImage(systemName: symbol),
+            style: .plain,
+            target: self,
+            action: action
+        )
+        item.accessibilityLabel = label
+        item.accessibilityIdentifier = identifier
+        item.isEnabled = false
+        return item
+    }
+
+    /// The canvas owns its undo stack. Notifications refresh the two buttons as
+    /// strokes land, groups close, and undo/redo replay actions.
+    private func observeUndoManager() {
+        guard !isObservingUndoManager,
+              let manager = paperViewController?.undoManager
+        else { return }
+        isObservingUndoManager = true
+        for name in [
+            Notification.Name.NSUndoManagerDidUndoChange,
+            Notification.Name.NSUndoManagerDidRedoChange,
+            Notification.Name.NSUndoManagerCheckpoint,
+            Notification.Name.NSUndoManagerDidCloseUndoGroup,
+        ] {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(undoStateDidChange),
+                name: name,
+                object: manager
+            )
+        }
+        updateUndoButtons()
+    }
+
+    @objc private func undoStateDidChange(_ notification: Notification) {
+        updateUndoButtons()
+    }
+
+    private func updateUndoButtons() {
+        let manager = paperViewController?.undoManager
+        undoButton?.isEnabled = !isExporting && (manager?.canUndo ?? false)
+        redoButton?.isEnabled = !isExporting && (manager?.canRedo ?? false)
+    }
+
+    @objc private func undoTapped() {
+        guard let manager = paperViewController?.undoManager, manager.canUndo else { return }
+        manager.undo()
+        updateUndoButtons()
+    }
+
+    @objc private func redoTapped() {
+        guard let manager = paperViewController?.undoManager, manager.canRedo else { return }
+        manager.redo()
+        updateUndoButtons()
     }
 
     private func makeInsertButton(palette: ThemePalette) -> UIBarButtonItem {
@@ -444,6 +538,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
         ])
         paper.didMove(toParent: self)
         paperViewController = paper
+        observeUndoManager()
         restorePersistedInkingTool()
         canApplyInitialFit = true
         updatePaperBottomInset()
@@ -536,7 +631,8 @@ final class PaperMarkupCanvasHostController: UIViewController {
 
     private func setExporting(_ exporting: Bool) {
         isExporting = exporting
-        navigationItem.rightBarButtonItems?.first?.isEnabled = !exporting
+        addButton?.isEnabled = !exporting
+        updateUndoButtons()
         if exporting {
             showProgressOverlay()
         } else {

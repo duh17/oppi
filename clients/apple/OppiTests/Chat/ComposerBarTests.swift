@@ -1866,9 +1866,9 @@ struct ComposerBarTests {
         window.isHidden = true
     }
 
-    /// The canvas host installs Cancel and Add to Chat on its `navigationItem`.
-    /// Presented bare it rendered neither, so the annotate screen had no way
-    /// back to the chat.
+    /// The canvas host installs Cancel, undo/redo, and Add to Chat on its
+    /// `navigationItem`. Presented bare it rendered none, so the annotate
+    /// screen had no way back to the chat.
     @Test("Annotate canvas is presented inside a navigation controller carrying its bar")
     func annotateCanvasPresentsWithItsBar() throws {
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -1890,7 +1890,21 @@ struct ComposerBarTests {
 
         #expect(navigation.modalPresentationStyle == .overFullScreen, "The composer keeps rendering under the canvas")
         #expect(host.navigationItem.leftBarButtonItem?.title == "Cancel")
-        #expect(host.navigationItem.rightBarButtonItems?.first?.title == "Add to Chat")
+        let trailing = try #require(host.navigationItem.rightBarButtonItems)
+        // Trailing-most first: the prominent checkmark, then redo, then undo.
+        #expect(trailing.map(\.accessibilityIdentifier) == [
+            "composer.canvas.addToChat",
+            "canvas.redo",
+            "canvas.undo",
+        ])
+        let add = try #require(trailing.first)
+        #expect(add.style == .prominent)
+        #expect(add.accessibilityLabel == "Add to Chat")
+        #expect(add.image?.isSymbolImage == true)
+        #expect(trailing[1].accessibilityLabel == "Redo")
+        #expect(trailing[2].accessibilityLabel == "Undo")
+        #expect(trailing[1].isEnabled == false, "Redo starts disabled without a stroke")
+        #expect(trailing[2].isEnabled == false, "Undo starts disabled without a stroke")
     }
 
     private func showsExpand(in root: UIView) -> Bool {

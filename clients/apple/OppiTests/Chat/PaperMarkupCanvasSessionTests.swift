@@ -1122,7 +1122,9 @@ struct PaperMarkupCanvasSessionTests {
         host.view.layoutIfNeeded()
 
         let navItems = host.navigationItem.rightBarButtonItems ?? []
-        #expect(navItems.contains { $0.title == "Add to Chat" })
+        #expect(navItems.contains { $0.accessibilityIdentifier == "composer.canvas.addToChat" })
+        #expect(navItems.contains { $0.accessibilityIdentifier == "canvas.undo" && !$0.isEnabled })
+        #expect(navItems.contains { $0.accessibilityIdentifier == "canvas.redo" && !$0.isEnabled })
         #expect(!navItems.contains { $0.accessibilityLabel == "Insert" })
         #expect(!navItems.contains { $0.image == UIImage(systemName: "plus") })
 
