@@ -168,6 +168,7 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
     func configure(
         profile: SSHTerminalProfile,
         live: Bool,
+        folderTerminals: [String] = [],
         palette: ThemePalette,
         enabled: Bool,
         onConnect: @escaping () -> Void,
@@ -194,12 +195,20 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
         if let port = profile.portLabel { appendLine(port, color: comment) }
         appendLine(profile.startupLabel, color: comment)
         if live { appendLine("Connected", color: UIColor(palette.green)) }
+        // One line per open folder terminal, so a host with both its own
+        // terminal and a workspace shell says which folders are open.
+        for folder in folderTerminals {
+            appendLine(
+                String(localized: "Connected in \((folder as NSString).abbreviatingWithTildeInPath)"),
+                color: UIColor(palette.green)
+            )
+        }
         conf.attributedSubtitle = AttributedString(subtitle)
         conf.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0)
         connectButton.configuration = conf
         connectButton.accessibilityIdentifier = "sshTerminal.host.row.\(profile.id.uuidString)"
-        connectButton.accessibilityHint = live ? "Open the connected terminal" : "Connect"
-        connectButton.accessibilityValue = live ? "Connected" : nil
+        connectButton.accessibilityHint = live || !folderTerminals.isEmpty ? "Open the connected terminal" : "Connect"
+        connectButton.accessibilityValue = live ? "Connected" : folderTerminals.isEmpty ? nil : "Connected in a folder"
         connectButton.isEnabled = enabled
         if let tapAction {
             connectButton.removeAction(tapAction, for: .touchUpInside)

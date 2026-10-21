@@ -509,6 +509,38 @@ enum AppPreferences {
         }
     }
 
+    // MARK: - Chat Top Bar
+
+    /// Which two actions the chat's top bar keeps as quick actions
+    /// (Files, Terminal, Outline). The rest live in the bar's … menu. Device-local,
+    /// like the other chat display preferences, and the same for every session.
+    enum ChatTopBar {
+        static let actionsKey = "\(AppIdentifiers.subsystem).chatDisplay.topBarActions"
+        static let didChangeNotification = Notification.Name("oppi.chatTopBar.didChange")
+
+        /// Exactly two slot actions in order. A missing or unrecognized value
+        /// falls back to Files and Outline, so nobody who never set this sees a
+        /// different bar.
+        static var selection: ChatTopBarSelection { selection(in: .standard) }
+
+        static func selection(in defaults: UserDefaults) -> ChatTopBarSelection {
+            guard let raw = defaults.stringArray(forKey: actionsKey) else {
+                return .defaultValue
+            }
+            return ChatTopBarSelection(rawValues: raw)
+        }
+
+        static func setSelection(_ selection: ChatTopBarSelection) {
+            setSelection(selection, in: .standard)
+        }
+
+        static func setSelection(_ selection: ChatTopBarSelection, in defaults: UserDefaults) {
+            guard selection.actions != Self.selection(in: defaults).actions else { return }
+            defaults.set(selection.rawValues, forKey: actionsKey)
+            NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        }
+    }
+
     // MARK: - Appearance
 
     /// Spinner and dictation indicator style preferences.

@@ -1,10 +1,16 @@
 import UIKit
 
 /// Add or edit a saved SSH host. Opening never dials. Connect is an explicit tap.
+///
+/// Opened from a workspace's or chat's Terminal, the form starts with the
+/// workspace's server host and `folderTerminal` set: saving it then continues
+/// into that folder's terminal, and Connect opens it instead of the host's own.
 final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDelegate {
     private let profileID: UUID?
     private var profile: SSHTerminalProfile
     private var portText: String
+    /// Set when the form was opened for "Open Terminal here".
+    private let folderTerminal: SSHTerminalFolderTarget?
     private var deviceKey = SSHTerminalDeviceKeyState()
     private var copied = false
     private let session = SSHTerminalConnectSession()
@@ -23,9 +29,15 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         case deleteHost
     }
 
-    init(profileID: UUID? = nil) {
+    /// `host` prefills a new host (the server's address); a saved host always
+    /// shows its own. `folderTerminal` makes this form the first step of
+    /// "Open Terminal here".
+    init(profileID: UUID? = nil, host: String? = nil, folderTerminal: SSHTerminalFolderTarget? = nil) {
         self.profileID = profileID
-        let stored = profileID.flatMap { SSHTerminalProfileStore().profile(id: $0) } ?? SSHTerminalProfile(id: profileID ?? UUID())
+        self.folderTerminal = folderTerminal
+        var stored = profileID.flatMap { SSHTerminalProfileStore().profile(id: $0) }
+            ?? SSHTerminalProfile(id: profileID ?? UUID())
+        if profileID == nil, let host, !host.isEmpty { stored.host = host }
         profile = stored
         portText = String(stored.port)
         var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
@@ -501,6 +513,9 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         case .host:
             return "Remote Login (sshd) must be enabled. When Oppi’s Tailscale node is running, *.ts.net hosts use it; other hosts use your current network."
         case .startup:
+            if folderTerminal != nil {
+                return "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. Enter `herdr` to attach your Herdr session. The connection ends when the command exits (for Herdr, detach with Ctrl-B Q). The command must be on the PATH that SSH commands see.\n\nTerminal from a workspace or chat starts its own login shell in that folder and ignores this command."
+            }
             return "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. Enter `herdr` to attach your Herdr session. The connection ends when the command exits (for Herdr, detach with Ctrl-B Q). The command must be on the PATH that SSH commands see."
         case .identity:
             var text = "Append this public key to ~/.ssh/authorized_keys. Signing requires Face ID or your device passcode. The simulator uses a software key. Oppi never installs the key for you."
@@ -554,13 +569,18 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         session.saveHost(
             profile: normalizedProfile(),
             suppliedPassword: password,
-            experimentEnabled: AppPreferences.Experiments.sshTerminalEnabled,
-            onSaved: applySaved
-        )
+            experimentEnabled: AppPreferences.Experiments.sshTerminalEnabled
+        ) { [weak self] saved in
+            self?.applySaved(saved)
+            // Opened for a workspace folder: the host is usable now, so carry on
+            // into that folder's terminal.
+            if self?.folderTerminal != nil { self?.connect() }
+        }
     }
 
     private func connect(password: String? = nil) {
         guard canConnect else { return }
+        session.folder = folderTerminal?.folder
         session.connect(
             profile: normalizedProfile(),
             suppliedPassword: password,
@@ -591,7 +611,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         do {
             session.cancel()
             try SSHTerminalProfileStore().delete(id: profile.id)
-            SSHTerminalRegistry.shared.close(profile.id, reason: "The host was deleted.")
+            SSHTerminalRegistry.shared.closeAllTerminals(of: profile.id, reason: "The host was deleted.")
             Router.finish(self)
         } catch {
             session.failure = error.localizedDescription

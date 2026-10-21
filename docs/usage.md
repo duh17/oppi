@@ -99,6 +99,8 @@ Selecting text shows a microphone first in the edit menu, followed by **Comment*
 
 **Settings → Chat → Style** picks how every chat looks, classic and durable, on any screen width, unless the chat's Agent has its own [Chat Style](#agents-and-schedules). **Full** (the default) shows every tool call and thinking block. **Compact** folds each turn's tool calls and thinking into one strip you tap to expand, showing **Icons** or **Words**. **Chat** uses a messaging layout: your messages are trailing bubbles, replies are cards, each turn's work is a **Worked 9s · 2 steps** pill, and the title shows the model and thinking level.
 
+**Settings → Chat → Top Bar Buttons** chooses the two quick actions a chat keeps beside the context ring: any two of **Files**, **Terminal**, and **Outline**. The default is Files and Outline. The action that is not chosen moves to the **…** menu at the right end of the bar, with **Customize Top Bar…**, which opens the same setting. **Terminal** is offered only while **SSH Terminal** is on under Experiments, and it opens a login shell in the session's folder ([Open Terminal here](ssh-terminal.md#open-terminal-here)). While the experiment is off the other actions fill the two slots, so the bar is unchanged for anyone who does not use the terminal. A chat with no workspace still shows Outline and the ring, and a session with an empty timeline hides Outline until it has something to outline.
+
 ## Appearance
 
 **Settings → Appearance** picks a built-in theme (Dark, OLED, Light, Night) or an imported custom theme, either by hand or matching Light/Dark to iOS Display & Brightness.
@@ -126,7 +128,7 @@ Create and edit sheets can open a **Pi Control** session (ordinary Pi with globa
 
 ## SSH Terminal experiment
 
-Turn on **Settings → Experiments → SSH Terminal** to save SSH hosts on this device, with password or per-device key sign-in. **Settings → SSH Hosts**, and **Terminal** below **MCP Servers**, open that list. Saved passwords and trusted host keys stay in this device’s Keychain; saved-password reads and Secure Enclave signing require user presence. See [SSH Terminal](ssh-terminal.md) for setup, host trust, reconnect behavior, and supported algorithms.
+Turn on **Settings → Experiments → SSH Terminal** to save SSH hosts on this device, with password or per-device key sign-in. **Settings → SSH Hosts**, and **Terminal** below **MCP Servers**, open that list. A workspace's **Terminal** button and a chat's **Terminal** quick action open a login shell in that workspace's or session's folder on the saved host for that server. Saved passwords and trusted host keys stay in this device’s Keychain; saved-password reads and Secure Enclave signing require user presence. See [SSH Terminal](ssh-terminal.md) for setup, host trust, reconnect behavior, and supported algorithms.
 
 ## Durable Sessions experiment
 

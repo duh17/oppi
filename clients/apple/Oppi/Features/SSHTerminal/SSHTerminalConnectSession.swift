@@ -22,6 +22,9 @@ final class SSHTerminalConnectSession {
     var channel: SSHTerminalChannel?
     var showsTerminal = false
     var connectedProfile: SSHTerminalProfile?
+    /// The folder this session's shell starts in, or nil for the host's own
+    /// terminal. Set before `connect`; it is part of the terminal's identity.
+    var folder: String?
     var devicePasscodeChanged = false
     private var task: Task<Void, Never>?
     private var runID = UUID()
@@ -40,8 +43,8 @@ final class SSHTerminalConnectSession {
         guard experimentEnabled else { return }
         let value = profile.normalized()
         guard value.isConfigured else { return }
-        // Same host, same settings, shell still open: show it. No dial, no sign-in.
-        if let live = registry.terminal(for: value.id), live.profile == value {
+        // Same host, same folder, same settings, shell still open: show it. No dial, no sign-in.
+        if let live = registry.terminal(for: value.id, folder: folder), live.profile == value {
             cancel()
             failure = nil
             hostFailure = nil
@@ -74,10 +77,14 @@ final class SSHTerminalConnectSession {
                 channel = owner
                 let queue = SSHTerminalEventQueue()
                 let session: SSHPTYSession
+                // A folder terminal always runs the login shell in that folder:
+                // the host's Run on Connect command belongs to its own terminal.
+                let folder = self.folder
+                let command = folder.map(SSHTerminalFolderCommand.command) ?? value.startupCommand
                 do {
                     session = try await SSHPTYSession.connect(
                         username: value.username, savedHostKey: savedKey, inboundFlow: queue.flow,
-                        command: value.startupCommand,
+                        command: command,
                         prepareAuthentication: {
                             switch value.authentication {
                             case .password:
@@ -94,12 +101,12 @@ final class SSHTerminalConnectSession {
                     )
                 } catch { queue.finish(); throw error }
                 guard !Task.isCancelled, runID == self.runID else { queue.finish(); await session.cancel(); return }
-                owner.opened(session, command: value.startupCommand)
+                owner.opened(session, command: command)
                 // Sign-in's task (and its password capture) ends here. The
                 // registry's byte consumer owns no authentication material.
                 // It refuses (and closes `owner`) when Oppi is in the background
                 // with no grace left to close the session.
-                let adopted = registry.adopt(owner, profile: value, queue: queue)
+                let adopted = registry.adopt(owner, profile: value, folder: folder, queue: queue)
                 task = nil
                 connecting = false
                 if adopted {

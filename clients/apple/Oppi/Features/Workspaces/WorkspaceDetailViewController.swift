@@ -136,6 +136,9 @@ final class WorkspaceDetailViewController: UIViewController {
         onNowPlaying: { [weak self] in self?.openNowPlaying() }
     )
     var sidebarToggle: UIBarButtonItem?
+    /// The SSH Terminal flag the bars were last built from.
+    private var observedTerminalExperimentFlag = AppPreferences.Experiments.sshTerminalEnabled
+    private let defaultsObserver = DefaultsObserverBox()
 
     lazy var rowActions = SessionListRowActions(
         open: { [weak self] session in self?.openSession(session) },
@@ -200,6 +203,15 @@ final class WorkspaceDetailViewController: UIViewController {
         }
         progressPanel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(progressPanel)
+        // The bar's Terminal item follows the SSH Terminal experiment. The
+        // notification is posted for every defaults write anywhere (some off
+        // the main thread), so it lands on the main queue and passes only when
+        // the flag itself changed.
+        defaultsObserver.token = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.terminalExperimentMaybeChanged() }
+        }
         let safe = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -675,6 +687,14 @@ extension WorkspaceDetailViewController {
     }
 
     /// What the hosted screen kept in `@State`, fresh for each mount.
+    /// The bar's Terminal item follows the SSH Terminal experiment.
+    private func terminalExperimentMaybeChanged() {
+        let enabled = AppPreferences.Experiments.sshTerminalEnabled
+        guard enabled != observedTerminalExperimentFlag else { return }
+        observedTerminalExperimentFlag = enabled
+        setNeedsUpdateProperties()
+    }
+
     struct ContentState {
         var isCreating = false
         var expandedStoppedGroupIDs: Set<String> = []
@@ -794,7 +814,21 @@ extension WorkspaceDetailViewController {
         let showsDictation: Bool
         let showsUnlockedBadge: Bool
         let configurationLabel: String
+        /// SSH Terminal is on, so the bar offers "Open Terminal here".
+        let showsTerminal: Bool
         /// The rail's worktree item carries the title's menu.
         let title: TitleState
+    }
+}
+
+/// Holds a block notification observer for a screen whose `deinit` cancels its
+/// tasks. Reaching the notification center from that `deinit` makes it
+/// nonisolated, which then cannot touch the isolated task properties, so the
+/// token lives here: this box removes it when the screen goes away.
+private final class DefaultsObserverBox: @unchecked Sendable {
+    var token: NSObjectProtocol?
+
+    deinit {
+        if let token { NotificationCenter.default.removeObserver(token) }
     }
 }

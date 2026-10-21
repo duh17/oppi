@@ -18,7 +18,22 @@ For example, on a Mac with an Ed25519 host key:
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-After you save a host, **Terminal** appears directly below **MCP Servers** in the workspace sidebar. Tap it to open the same list. Tap a row to connect and open the shell. The password sheet and host-key prompt appear on the list or the form, whichever you tapped Connect from. A row shows `user@host`, the port when it is not 22, and the Run on Connect command, or **Login shell**. Two rows can use the same machine with different Run on Connect commands. Swipe **Delete Host** removes that saved host and its password only. **Edit Host** in the live terminal opens the form for the connected host. Turning the experiment off hides both entry points and does not create a key. **Tailscale → Check a Machine for Oppi** remains available independently.
+After you save a host, **Terminal** appears directly below **MCP Servers** in the workspace sidebar. Tap it to open the same list. Tap a row to connect and open the shell. The password sheet and host-key prompt appear on the list or the form, whichever you tapped Connect from. A row shows `user@host`, the port when it is not 22, and the Run on Connect command, or **Login shell**. Two rows can use the same machine with different Run on Connect commands. A row also lists each folder a terminal is open in (`Connected in ~/workspace/oppi`). Swipe **Delete Host** removes that saved host and its password only. **Edit Host** in the live terminal opens the form for the connected host. Turning the experiment off hides both entry points and does not create a key. **Tailscale → Check a Machine for Oppi** remains available independently.
+
+## Open Terminal here
+
+A workspace's **Terminal** button (top right, beside **Config**) and a chat's **Terminal** quick action open a login shell on the saved host that serves that workspace's server, starting in a folder:
+
+- from a workspace: the workspace's root folder;
+- from a chat: the session's own worktree folder when it runs in one, else its workspace's root folder.
+
+This is a separate terminal from the host's own, so it never types into a program that host already runs: the host list's row still opens that host's login shell or its Run on Connect command (Herdr, tmux), and that terminal keeps running. A folder terminal always starts your login shell (fish, zsh, bash) in that folder and ignores the host's Run on Connect. The folder path is passed to the host as one quoted word, so spaces, quotes, `$`, and non-ASCII folders work. If the folder is missing, the terminal says `oppi: /that/path: no such folder` and ends instead of opening a shell somewhere else.
+
+Which host: Oppi matches the workspace's server host against the saved SSH hosts, ignoring case and a trailing dot, and treating a tailnet short name (`mac-studio`) and its full name (`mac-studio.tail1234.ts.net`) as the same machine. If more than one host matches, it prefers one with no Run on Connect, then the first saved one. With no match, **Add Host** opens with the server's host filled in and the username empty; saving it then continues into that folder's terminal.
+
+A folder terminal is its own terminal, kept while it is connected like any other: leaving the workspace or chat keeps it, tapping Terminal there again returns to the same shell. Oppi keeps one terminal per saved host and folder, so the same host can have its own terminal plus one per folder. Editing or deleting the host, turning the experiment off, and the background grace end them all.
+
+In a chat, the top bar keeps two quick actions beside the context ring: **Files** and **Outline** by default, with the third action in the **…** menu next to **Customize Top Bar…**. Settings → **Chat** → **Top Bar Buttons** chooses which two. **Terminal** is offered there only while the experiment is on; while it is off, the two remaining actions fill the bar and nothing about the bar changes for people who do not use it.
 
 ## Font and icons
 
@@ -28,7 +43,7 @@ Prompt icons from starship, powerlevel10k, oh-my-posh, and similar (Powerline se
 
 ## Run on Connect
 
-**Run on Connect** runs one command in the terminal instead of a login shell. This is the same exec-with-TTY request as `ssh -t host 'command'` or OpenSSH `RemoteCommand` with `RequestTTY yes`. Enter `herdr` to attach your Herdr session, or `tmux new -A -s main` for tmux. The connection ends when the command exits and the status names the command; **Reconnect** runs it again. The command must be on the `PATH` that non-interactive SSH commands see. Leave it empty for a normal login shell.
+**Run on Connect** runs one command in the terminal instead of a login shell. This is the same exec-with-TTY request as `ssh -t host 'command'` or OpenSSH `RemoteCommand` with `RequestTTY yes`. Enter `herdr` to attach your Herdr session, or `tmux new -A -s main` for tmux. The connection ends when the command exits and the status names the command; **Reconnect** runs it again. The command must be on the `PATH` that non-interactive SSH commands see. Leave it empty for a normal login shell. A [folder terminal](#open-terminal-here) ignores it and starts a login shell in that folder instead.
 
 ## Input bar, touch, and keyboard
 
@@ -125,7 +140,7 @@ The terminal hears these while its connection is open, including after you leave
 
 ## Keeping a terminal open
 
-While Oppi is in the foreground, a connected terminal stays connected when you leave its screen: Back, another tab, another session. Tap that host in the list again (it reads **Connected**) and you get the same live channel and grid, with no reconnect and no sign-in. Oppi keeps one terminal per saved host, so at most as many as you have saved hosts. Connecting a host that already has one shows that terminal; **Reconnect** and a connect after the shell ended open a new one.
+While Oppi is in the foreground, a connected terminal stays connected when you leave its screen: Back, another tab, another session. Tap that host in the list again (it reads **Connected**) and you get the same live channel and grid, with no reconnect and no sign-in. Oppi keeps one terminal per saved host and folder, so at most as many as you have saved hosts plus folders you opened. Connecting an identity that already has one shows that terminal; **Reconnect** and a connect after the shell ended open a new one.
 
 A terminal ends when you tap **Disconnect**, when the remote shell or command exits or the connection drops, when you save changes to the host or delete it, when you turn SSH Terminal off (from Settings → Experiments; no SSH screen has to be open), or when the [background grace](#network-and-reconnect) ends. Saving the host without changing anything keeps it.
 

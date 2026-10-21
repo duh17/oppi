@@ -56,9 +56,12 @@ struct SettingsView: View {
                 }
                 .accessibilityLabel("Editor")
                 .accessibilityIdentifier("settings.row.editor")
-                SettingsIndexRow("Chat", systemImage: "bubble.left.and.text.bubble.right") {
-                    SettingsChatPage()
+                SettingsIndexActionRow {
+                    navigator.push(SettingsChatViewController())
+                } label: {
+                    SettingsRowLabel("Chat", systemImage: "bubble.left.and.text.bubble.right")
                 }
+                .accessibilityLabel("Chat")
                 .accessibilityIdentifier("settings.row.chat")
                 SettingsIndexRow("Sessions", systemImage: "rectangle.stack") {
                     SettingsSessionsPage()

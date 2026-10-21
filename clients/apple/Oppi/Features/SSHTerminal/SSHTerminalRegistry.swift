@@ -13,9 +13,13 @@ import UIKit
 ///   saved host is edited or deleted, when SSH Terminal is turned off, and when
 ///   the background grace ends.
 ///
-/// Bound: one terminal per saved host profile, so at most as many as there are
-/// saved hosts. Connecting a host that already has one replaces it. Terminals
-/// that ended are dropped at once; none is kept for a closed shell.
+/// Bound: one terminal per saved host profile and folder. A host's plain
+/// terminal (the login shell or Run on Connect command) is its own terminal,
+/// and every "open terminal here" folder is another, so opening a folder shell
+/// never types into or replaces the host's terminal. At most as many terminals
+/// as saved hosts plus folders opened. Connecting an identity that already has
+/// one replaces it. Terminals that ended are dropped at once; none is kept for
+/// a closed shell.
 ///
 /// Background: when Oppi enters the background with a live terminal, they keep
 /// running and reading output for `backgroundGrace` under a background task.
@@ -31,6 +35,14 @@ import UIKit
 ///
 /// The registry watches the SSH Terminal experiment flag itself, so turning it
 /// off ends every terminal and connect even when no SSH screen is mounted.
+
+/// Which terminal a saved host holds: its plain one, or one that started in a
+/// folder ("Open Terminal here"). Nil `folder` is the host's own terminal.
+struct SSHTerminalIdentity: Hashable {
+    let profileID: UUID
+    let folder: String?
+}
+
 @MainActor @Observable
 final class SSHTerminalRegistry {
     static let shared = SSHTerminalRegistry()
@@ -39,6 +51,8 @@ final class SSHTerminalRegistry {
 
     struct Terminal {
         let profile: SSHTerminalProfile
+        /// The folder this shell started in, or nil for the host's plain terminal.
+        let folder: String?
         let channel: SSHTerminalChannel
         fileprivate let tasks: [Task<Void, Never>]
     }
@@ -62,7 +76,7 @@ final class SSHTerminalRegistry {
         var taskEnded = false
     }
 
-    private var terminals: [UUID: Terminal] = [:]
+    private var terminals: [SSHTerminalIdentity: Terminal] = [:]
     @ObservationIgnored private var attempts: [UUID: Attempt] = [:]
     @ObservationIgnored private var inBackground = false
     @ObservationIgnored private var grace: Grace?
@@ -122,13 +136,35 @@ final class SSHTerminalRegistry {
 
     func untrack(attempt id: UUID) { attempts[id] = nil }
 
-    /// The connected terminal for a saved host, if any.
-    func terminal(for profileID: UUID) -> Terminal? {
-        guard let terminal = terminals[profileID], terminal.channel.connected else { return nil }
+    /// The connected plain terminal for a saved host, if any.
+    func terminal(for profileID: UUID) -> Terminal? { terminal(for: profileID, folder: nil) }
+
+    /// The connected terminal for a saved host in `folder` (nil: the host's own).
+    func terminal(for profileID: UUID, folder: String?) -> Terminal? {
+        guard let terminal = terminals[SSHTerminalIdentity(profileID: profileID, folder: folder)],
+              terminal.channel.connected else { return nil }
         return terminal
     }
 
+    /// Every connected terminal of `profileID`, the plain one first, then
+    /// folder terminals in folder order.
+    func terminals(for profileID: UUID) -> [Terminal] {
+        terminals.values
+            .filter { $0.profile.id == profileID && $0.channel.connected }
+            .sorted { lhs, rhs in
+                switch (lhs.folder, rhs.folder) {
+                case (nil, nil): false
+                case (nil, _): true
+                case (_, nil): false
+                case let (left?, right?): left < right
+                }
+            }
+    }
+
     func isLive(_ profileID: UUID) -> Bool { terminal(for: profileID) != nil }
+
+    /// Whether any terminal of this host, plain or a folder, is connected.
+    func hasLiveTerminal(_ profileID: UUID) -> Bool { !terminals(for: profileID).isEmpty }
 
     /// Whether the registry holds this channel, connected or not yet dropped.
     func holds(_ channel: SSHTerminalChannel) -> Bool {
@@ -142,7 +178,12 @@ final class SSHTerminalRegistry {
     /// background with no grace running, and while SSH Terminal is off: nothing
     /// would close that session before iOS suspends the process.
     @discardableResult
-    func adopt(_ channel: SSHTerminalChannel, profile: SSHTerminalProfile, queue: SSHTerminalEventQueue) -> Bool {
+    func adopt(
+        _ channel: SSHTerminalChannel,
+        profile: SSHTerminalProfile,
+        folder: String? = nil,
+        queue: SSHTerminalEventQueue
+    ) -> Bool {
         guard experimentEnabled() else {
             queue.finish()
             channel.close(reason: "SSH Terminal was turned off.")
@@ -153,38 +194,53 @@ final class SSHTerminalRegistry {
             channel.closeForBackground()
             return false
         }
-        close(profile.id, reason: "Replaced by a new connection.")
+        let identity = SSHTerminalIdentity(profileID: profile.id, folder: folder)
+        close(identity, reason: "Replaced by a new connection.")
         let consumer = Task { [weak self] in
             await channel.consume(queue)
-            self?.release(channel, of: profile.id)
+            self?.release(channel)
         }
         // The screen's network watch ends with the screen; this one lasts as long as the terminal.
         let watcher = Task { await channel.watchNetwork() }
-        terminals[profile.id] = Terminal(profile: profile, channel: channel, tasks: [consumer, watcher])
+        terminals[identity] = Terminal(profile: profile, folder: folder, channel: channel, tasks: [consumer, watcher])
         return true
     }
 
-    /// Ends a host's terminal, if it has one.
-    func close(_ profileID: UUID, reason: String) {
-        guard let terminal = terminals.removeValue(forKey: profileID) else { return }
+    /// Ends one terminal: a host's plain one (`folder` nil) or one folder's.
+    func close(_ profileID: UUID, folder: String? = nil, reason: String) {
+        close(SSHTerminalIdentity(profileID: profileID, folder: folder), reason: reason)
+    }
+
+    private func close(_ identity: SSHTerminalIdentity, reason: String) {
+        guard let terminal = terminals.removeValue(forKey: identity) else { return }
         terminal.tasks.forEach { $0.cancel() }
         terminal.channel.close(reason: reason)
     }
 
+    /// Ends every terminal of `profileID`: the plain one and every folder.
+    func closeAllTerminals(of profileID: UUID, reason: String) {
+        for identity in terminals.keys where identity.profileID == profileID {
+            close(identity, reason: reason)
+        }
+    }
+
     func closeAll(reason: String) {
-        for id in Array(terminals.keys) { close(id, reason: reason) }
+        for identity in Array(terminals.keys) { close(identity, reason: reason) }
     }
 
-    /// A save of `saved`. A terminal opened with different settings (host,
-    /// port, user, sign-in, Run on Connect) no longer matches the host.
+    /// A save of `saved`. Terminals opened with different settings (host,
+    /// port, user, sign-in, Run on Connect) no longer match the host, wherever
+    /// they started.
     func reconcile(saved: SSHTerminalProfile) {
-        guard let terminal = terminals[saved.id], terminal.profile != saved else { return }
-        close(saved.id, reason: "The host was edited.")
+        for (identity, terminal) in terminals
+        where identity.profileID == saved.id && terminal.profile != saved {
+            close(identity, reason: "The host was edited.")
+        }
     }
 
-    private func release(_ channel: SSHTerminalChannel, of profileID: UUID) {
-        guard let terminal = terminals[profileID], terminal.channel === channel else { return }
-        terminals[profileID] = nil
+    private func release(_ channel: SSHTerminalChannel) {
+        guard let identity = terminals.first(where: { $0.value.channel === channel })?.key,
+              let terminal = terminals.removeValue(forKey: identity) else { return }
         terminal.tasks.forEach { $0.cancel() }
     }
 
@@ -247,8 +303,8 @@ final class SSHTerminalRegistry {
     @discardableResult
     private func closeAllForBackground() -> [Task<Void, Never>] {
         var teardowns = [Task<Void, Never>]()
-        for id in Array(terminals.keys) {
-            guard let terminal = terminals.removeValue(forKey: id) else { continue }
+        for (identity, terminal) in terminals {
+            terminals[identity] = nil
             terminal.tasks.forEach { $0.cancel() }
             terminal.channel.closeForBackground()
             if let teardown = terminal.channel.teardown { teardowns.append(teardown) }

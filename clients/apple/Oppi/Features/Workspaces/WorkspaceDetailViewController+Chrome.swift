@@ -133,6 +133,7 @@ extension WorkspaceDetailViewController {
             showsDictation: showsDictation,
             showsUnlockedBadge: detail.lockBadge == .unlocked,
             configurationLabel: Self.configurationAccessibilityLabel(detail.workspace),
+            showsTerminal: AppPreferences.Experiments.sshTerminalEnabled,
             title: title
         )
         if bars != barState {
@@ -164,6 +165,7 @@ extension WorkspaceDetailViewController {
         let showWorkspaces = UIAction { [weak self] _ in self?.navigation.showWorkspaceListInSplitSidebar() }
         let openConfiguration = UIAction { [weak self] _ in self?.openWorkspaceConfiguration() }
         let openFiles: () -> Void = { [weak self] in self?.openWorkspaceFiles() }
+        let openTerminal: () -> Void = { [weak self] in self?.openWorkspaceTerminal() }
 
         if bars.joinsRail {
             // The principal title is a wide custom view; the rail keeps the
@@ -198,6 +200,10 @@ extension WorkspaceDetailViewController {
                 trailing.append(SessionListBarItems.railItem(badge, priority: .keep))
             }
             trailing.append(SessionListBarItems.railItem(worktreeRailItem(bars.title, tint: tint), priority: .keep))
+            // Terminal sits next to Config: the same place in both bar shapes.
+            if bars.showsTerminal {
+                trailing.append(SessionListBarItems.railItem(terminalBarItem(tint: railTint, title: true, action: openTerminal), priority: .keep))
+            }
             let configuration = UIBarButtonItem(
                 title: String(localized: "Config"),
                 image: UIImage(systemName: "slider.horizontal.3"),
@@ -236,6 +242,9 @@ extension WorkspaceDetailViewController {
             configuration.tintColor = tint
             configuration.accessibilityLabel = bars.configurationLabel
             configuration.accessibilityIdentifier = "workspace.edit.open"
+            if bars.showsTerminal {
+                trailing.append(terminalBarItem(tint: tint, title: false, action: openTerminal))
+            }
             trailing.append(configuration)
             if bars.showsBottomItems {
                 bottom = bottomBar.items(
@@ -263,6 +272,20 @@ extension WorkspaceDetailViewController {
     }
 
     // MARK: Title and worktree menu
+
+    /// "Open Terminal here": a login shell on the saved SSH host for this
+    /// server, starting in the workspace's root folder.
+    private func terminalBarItem(tint: UIColor, title: Bool, action: @escaping () -> Void) -> UIBarButtonItem {
+        let item = UIBarButtonItem(
+            title: title ? String(localized: "Terminal") : nil,
+            image: UIImage(systemName: "terminal"),
+            primaryAction: UIAction { _ in action() }
+        )
+        item.tintColor = tint
+        item.accessibilityLabel = String(localized: "Open terminal here")
+        item.accessibilityIdentifier = "workspace.terminal.open"
+        return item
+    }
 
     private func worktreeMenu(_ title: TitleState) -> UIMenu {
         let actions = title.worktrees.map { worktree in

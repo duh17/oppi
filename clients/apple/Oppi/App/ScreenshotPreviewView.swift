@@ -175,6 +175,14 @@ struct ScreenshotPreviewView: View {
             MetalOrbScreenshotPreview()
         case "workspace-shell":
             WorkspaceShellScreenshotPreview()
+        case "chat-top-bar":
+            ChatRoutesHarnessView()
+        case "chat-top-bar-terminal":
+            ChatTopBarTerminalScreenshotPreview()
+        case "workspace-top-bar":
+            WorkspaceTopBarScreenshotPreview()
+        case "settings-chat":
+            SettingsChatScreenshotPreview()
         case "workspace-file-editor", "workspace-file-editor-markdown", "workspace-file-editor-vim":
             WorkspaceFileEditorScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
                 .ignoresSafeArea()
@@ -659,6 +667,106 @@ private struct AudioFilePlayerScreenshotPreview: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+/// `SCREENSHOT_SCREEN=chat-top-bar-terminal`: the chat's bar with Terminal as a
+/// quick action, over the `chat-routes` fixtures. The experiment flag and the
+/// two chosen buttons go in the volatile argument domain, so the simulator's
+/// saved settings are untouched.
+private struct ChatTopBarTerminalScreenshotPreview: View {
+    init() {
+        ScreenshotVolatileDefaults.apply([
+            AppPreferences.Experiments.sshTerminalKey: true,
+            AppPreferences.ChatTopBar.actionsKey: [
+                ChatTopBarAction.terminal.rawValue,
+                ChatTopBarAction.files.rawValue,
+            ],
+        ])
+    }
+
+    var body: some View { ChatRoutesHarnessView() }
+}
+
+/// `SCREENSHOT_SCREEN=workspace-top-bar`: a workspace's bars with the SSH
+/// Terminal experiment on, so its Terminal button shows beside Config.
+private struct WorkspaceTopBarScreenshotPreview: View {
+    @State private var root: AppRootEnvironment
+
+    init() {
+        ScreenshotVolatileDefaults.apply([AppPreferences.Experiments.sshTerminalKey: true])
+        let coordinator = RouterModalSitesFixtures.makeCoordinator(playing: false)
+        if let connection = coordinator.connection(for: RouterModalSitesFixtures.serverId) {
+            // Visible rows: the screen only raises its workspace load error
+            // when it has nothing to show, and this capture is about the bar.
+            connection.sessionStore.switchServer(to: RouterModalSitesFixtures.serverId)
+            connection.sessionStore.sessions = [
+                Self.session("workspace-bar-1", name: "Fill the Duo side rail", status: .busy, minutesAgo: 2),
+                Self.session("workspace-bar-2", name: "Keep Message on the phone bar", status: .ready, minutesAgo: 18),
+            ]
+        }
+        _root = State(initialValue: AppRootEnvironment(
+            coordinator: coordinator,
+            navigation: AppNavigation(),
+            themeStore: ThemeStore(),
+            quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
+            composerDraftStore: ComposerDraftStore(),
+            chatReaderPayloadStore: ChatReaderPayloadStore(),
+            sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
+        ))
+    }
+
+    var body: some View {
+        RouterPreviewControllerStack(root: root) {
+            WorkspaceDetailViewController(
+                root: root,
+                target: WorkspaceNavTarget(
+                    serverId: RouterModalSitesFixtures.serverId,
+                    workspace: RouterModalSitesFixtures.workspaces[0]
+                )
+            )
+        }
+        .ignoresSafeArea()
+        .accessibilityIdentifier("screenshot.ready")
+    }
+
+    private static func session(
+        _ id: String, name: String, status: SessionStatus, minutesAgo: Double
+    ) -> Session {
+        let lastActivity = Date().addingTimeInterval(-minutesAgo * 60)
+        return Session(
+            id: id,
+            workspaceId: RouterModalSitesFixtures.workspaces[0].id,
+            workspaceName: RouterModalSitesFixtures.workspaces[0].name,
+            name: name,
+            status: status,
+            createdAt: lastActivity.addingTimeInterval(-600),
+            lastActivity: lastActivity,
+            model: "anthropic/claude-opus-5-5",
+            messageCount: 4,
+            tokens: TokenUsage(input: 8_000, output: 1_200),
+            cost: 0.18
+        )
+    }
+}
+
+/// `SCREENSHOT_SCREEN=settings-chat`: Settings → Chat as UIKit, over fixture
+/// services. Nothing here calls a server.
+private struct SettingsChatScreenshotPreview: View {
+    @State private var root = AppRootEnvironment(
+        coordinator: ConnectionCoordinator(serverStore: ServerStore()),
+        navigation: AppNavigation(),
+        themeStore: ThemeStore(),
+        quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
+        composerDraftStore: ComposerDraftStore(),
+        chatReaderPayloadStore: ChatReaderPayloadStore(),
+        sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
+    )
+
+    var body: some View {
+        RouterPreviewControllerStack(root: root) { SettingsChatViewController() }
+            .ignoresSafeArea()
+            .accessibilityIdentifier("screenshot.ready")
     }
 }
 

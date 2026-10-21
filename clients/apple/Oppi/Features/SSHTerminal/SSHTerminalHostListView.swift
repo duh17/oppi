@@ -102,7 +102,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         _ = session.savingHostOnly
         _ = session.channel
         _ = AppScenePhase.shared.isBackground
-        for profile in profiles { _ = SSHTerminalRegistry.shared.isLive(profile.id) }
+        for profile in profiles { _ = SSHTerminalRegistry.shared.terminals(for: profile.id) }
         let themeID = sshTerminalThemeID
         if lastThemeID != themeID {
             lastThemeID = themeID
@@ -137,9 +137,11 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             guard let self, case .host(let id) = item,
                   let profile = self.profiles.first(where: { $0.id == id }) else { return }
             let live = SSHTerminalRegistry.shared.isLive(profile.id)
+            let folderTerminals = SSHTerminalRegistry.shared.terminals(for: profile.id).compactMap(\.folder)
             cell.configure(
                 profile: profile,
                 live: live,
+                folderTerminals: folderTerminals,
                 palette: self.sshTerminalThemeID.palette,
                 enabled: !self.session.connecting && !self.session.passwordPrompt,
                 onConnect: { [weak self] in self?.connect(profile) },
@@ -334,7 +336,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         do {
             if session.connectedProfile?.id == profile.id { session.cancel() }
             try SSHTerminalProfileStore().delete(id: profile.id)
-            SSHTerminalRegistry.shared.close(profile.id, reason: "The host was deleted.")
+            SSHTerminalRegistry.shared.closeAllTerminals(of: profile.id, reason: "The host was deleted.")
             reload()
         } catch {
             session.failure = error.localizedDescription

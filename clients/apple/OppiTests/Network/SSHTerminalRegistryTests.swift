@@ -324,6 +324,98 @@ struct SSHTerminalRegistryTests {
         #expect(harness.tasks.began == 0)
     }
 
+    // MARK: - Folder terminals
+
+    private static let workspaceFolder = "/Users/chen/workspace/oppi"
+
+    /// A connected channel registered under `profile` + `folder`, as the
+    /// folder-terminal connect does.
+    @discardableResult
+    private func openFolder(
+        _ harness: Harness,
+        profile: SSHTerminalProfile,
+        folder: String
+    ) throws -> (channel: SSHTerminalChannel, connection: FakeConnection) {
+        let channel = try SSHTerminalChannel()
+        let connection = FakeConnection()
+        channel.opened(connection)
+        harness.registry.adopt(channel, profile: profile, folder: folder, queue: SSHTerminalEventQueue())
+        return (channel, connection)
+    }
+
+    @Test func aFolderTerminalIsKeptApartFromTheHostsOwnTerminal() async throws {
+        let harness = Harness()
+        let plain = try harness.open()
+        let folder = try openFolder(harness, profile: plain.profile, folder: Self.workspaceFolder)
+
+        // Same saved host, two terminals: neither replaced the other.
+        #expect(harness.registry.terminal(for: plain.profile.id)?.channel === plain.channel)
+        #expect(
+            harness.registry.terminal(for: plain.profile.id, folder: Self.workspaceFolder)?.channel
+                === folder.channel
+        )
+        #expect(plain.channel.connected && folder.channel.connected)
+        #expect(harness.registry.terminals(for: plain.profile.id).count == 2)
+        #expect(harness.registry.hasLiveTerminal(plain.profile.id))
+
+        // Disconnecting the folder shell leaves the host's own terminal alone.
+        harness.registry.close(plain.profile.id, folder: Self.workspaceFolder, reason: "Closed by you.")
+        #expect(!folder.channel.connected)
+        #expect(folder.channel.reason == "Closed by you.")
+        #expect(plain.channel.connected)
+        #expect(harness.registry.terminal(for: plain.profile.id, folder: Self.workspaceFolder) == nil)
+        plain.channel.close(reason: "done")
+    }
+
+    @Test func eachFolderHasItsOwnTerminalAndOnlyItsOwnIsReplaced() async throws {
+        let harness = Harness()
+        let profile = SSHTerminalProfile(host: "one.ts.net", username: "alice")
+        let first = try openFolder(harness, profile: profile, folder: "/a")
+        let second = try openFolder(harness, profile: profile, folder: "/a/b")
+        let replacement = try openFolder(harness, profile: profile, folder: "/a")
+        // The same folder reconnects into a new terminal; a sibling folder and
+        // the host's plain terminal are untouched.
+        #expect(!first.channel.connected)
+        #expect(first.channel.reason == "Replaced by a new connection.")
+        #expect(second.channel.connected)
+        #expect(harness.registry.terminal(for: profile.id, folder: "/a")?.channel === replacement.channel)
+        #expect(harness.registry.terminals(for: profile.id).map(\.folder) == ["/a", "/a/b"])
+        harness.registry.closeAll(reason: "done")
+    }
+
+    @Test func editingOrDeletingTheHostEndsItsFolderTerminalsToo() async throws {
+        let harness = Harness()
+        let profile = SSHTerminalProfile(host: "one.ts.net", username: "alice")
+        let plain = try openFolder(harness, profile: profile, folder: "/a")
+        let folder = try openFolder(harness, profile: profile, folder: "/b")
+        var edited = profile
+        edited.startupCommand = "herdr"
+        harness.registry.reconcile(saved: edited)
+        #expect(!plain.channel.connected && !folder.channel.connected)
+        #expect(harness.registry.terminals(for: profile.id).isEmpty)
+
+        let doomed = try openFolder(harness, profile: profile, folder: "/c")
+        harness.registry.closeAllTerminals(of: profile.id, reason: "The host was deleted.")
+        #expect(!doomed.channel.connected)
+        #expect(doomed.channel.reason == "The host was deleted.")
+    }
+
+    @Test func connectingAFolderWithALiveTerminalAttachesWithoutDialing() async throws {
+        let harness = Harness()
+        let profile = SSHTerminalProfile(host: "one.ts.net", username: "alice")
+        let live = try openFolder(harness, profile: profile, folder: Self.workspaceFolder)
+        let session = SSHTerminalConnectSession(registry: harness.registry)
+        session.folder = Self.workspaceFolder
+        session.connect(profile: profile, experimentEnabled: true)
+        // The same folder attaches; the host's own terminal is a different one.
+        #expect(session.showsTerminal)
+        #expect(session.channel === live.channel)
+        session.cancel()
+        session.showsTerminal = false
+        #expect(live.channel.connected)
+        live.channel.close(reason: "done")
+    }
+
     @Test func aSecondBackgroundEntryDuringTheGraceDoesNotStartAnotherTask() async throws {
         let harness = Harness()
         let live = try harness.open()

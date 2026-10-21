@@ -259,6 +259,26 @@ extension WorkspaceDetailViewController {
         navigation.openWorkspaceConfiguration(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
     }
 
+    /// "Open Terminal here" from the workspace bar: a login shell on the saved
+    /// SSH host that serves this workspace's server, starting in the
+    /// workspace's root folder.
+    func openWorkspaceTerminal() {
+        guard let connection else { return }
+        let workspace = currentWorkspace(connection)
+        let host = connection.credentials?.host
+            ?? root.coordinator.serverStore.servers.first { $0.id == serverId }?.host
+            ?? ""
+        ClientLog.info("SSHTerminal", "Workspace terminal tapped", metadata: [
+            "workspaceId": workspaceId,
+            "serverId": serverId,
+            "hasHostMount": String(workspace.hostMount != nil),
+        ])
+        SSHTerminalFolderEntry.open(
+            SSHTerminalFolderTarget(serverHost: host, folder: workspace.hostMount ?? ""),
+            from: self
+        )
+    }
+
     func pullToRefresh() {
         Task { [weak self] in
             guard let self else { return }

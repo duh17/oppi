@@ -216,7 +216,10 @@ final class SSHTerminalConnectChrome {
         pushingTerminal = true
         let session = session
         let editHost = editHost
-        let hostLabel = profile().endpointLabel
+        var hostLabel = profile().endpointLabel
+        if let folder = session.folder {
+            hostLabel += " \u{00B7} " + (folder as NSString).abbreviatingWithTildeInPath
+        }
         DispatchQueue.main.async {
             guard session.showsTerminal, let channel = session.channel else { return }
             Router.push(SSHTerminalViewController(

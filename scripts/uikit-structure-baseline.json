@@ -355,6 +355,9 @@
     "clients/apple/Oppi/Features/Settings/AutoTitleSettingsView.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Features/Settings/ChatDisplayPreviewCards.swift": {
+      "import SwiftUI": 1
+    },
     "clients/apple/Oppi/Features/Settings/DictationDictionaryView.swift": {
       "import SwiftUI": 1
     },
@@ -368,9 +371,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsAppearancePage.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Settings/SettingsChatPage.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsGeneralPage.swift": {

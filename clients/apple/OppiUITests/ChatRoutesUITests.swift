@@ -18,6 +18,62 @@ final class ChatRoutesUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    // MARK: - Top bar
+
+    /// Two quick actions, the ring, and a … menu. The chosen pair is Files and
+    /// Outline by default; Terminal needs the SSH Terminal experiment.
+    func testTopBarKeepsTwoQuickActionsAndTheRestInTheMenu() {
+        launch()
+        dismissMicrophonePrompt()
+        let files = app.buttons["chat.toolbar.files"]
+        XCTAssertTrue(files.waitForExistence(timeout: 10), "Files is a default quick action")
+        XCTAssertTrue(app.buttons["chat.toolbar.outline"].exists, "Outline is a default quick action")
+        XCTAssertFalse(app.buttons["chat.toolbar.terminal"].exists, "Terminal needs the SSH Terminal experiment")
+        XCTAssertTrue(app.buttons["chat.toolbar.context"].exists, "The context ring always stays")
+        attachScreenshot("chat-top-bar-default")
+
+        let more = app.buttons["chat.toolbar.more"]
+        XCTAssertTrue(more.exists, "The bar keeps a … menu")
+        more.tap()
+        let customize = app.buttons["Customize Top Bar…"]
+        XCTAssertTrue(customize.waitForExistence(timeout: 5), "The … menu must offer Customize Top Bar…")
+        attachScreenshot("chat-top-bar-menu")
+        customize.tap()
+        XCTAssertTrue(app.navigationBars["Chat"].waitForExistence(timeout: 5), "Customize Top Bar must open the Chat settings")
+        XCTAssertTrue(
+            app.segmentedControls["settings.chatStyle"].waitForExistence(timeout: 5),
+            "The Chat settings page must show its style picker"
+        )
+        XCTAssertTrue(
+            app.segmentedControls["settings.chatStyle"].buttons["Full"].waitForExistence(timeout: 5),
+            "The style picker keeps its three choices"
+        )
+        // The push animation fades the bar's title in; capture after it settles.
+        Thread.sleep(forTimeInterval: 0.6)
+        attachScreenshot("chat-settings-top-bar")
+        assertRunning()
+    }
+
+    /// The same bar with Terminal chosen: it takes a slot, Files keeps its own,
+    /// and Outline moves into the … menu.
+    func testTopBarWithTerminalAsAQuickAction() {
+        launchScreen("chat-top-bar-terminal")
+        dismissMicrophonePrompt()
+        XCTAssertTrue(
+            app.buttons["chat.toolbar.terminal"].waitForExistence(timeout: 15),
+            "Terminal must take the first slot when the experiment is on"
+        )
+        XCTAssertTrue(app.buttons["chat.toolbar.files"].exists, "Files keeps the second slot")
+        XCTAssertFalse(app.buttons["chat.toolbar.outline"].exists, "Outline moves to the … menu")
+        XCTAssertTrue(app.buttons["chat.toolbar.context"].exists, "The context ring always stays")
+        attachScreenshot("chat-top-bar-terminal")
+
+        app.buttons["chat.toolbar.more"].tap()
+        XCTAssertTrue(app.buttons["Outline"].waitForExistence(timeout: 5), "Outline is the … menu's action")
+        attachScreenshot("chat-top-bar-terminal-menu")
+        assertRunning()
+    }
+
     // MARK: - Side panels
 
     /// Regular width puts these in the trailing column beside the chat;
@@ -793,6 +849,16 @@ final class ChatRoutesUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         return condition()
+    }
+
+    /// The chat fixtures touch dictation, which asks for the microphone on a
+    /// fresh simulator. Answer it before the screenshots.
+    private func dismissMicrophonePrompt() {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let dontAllow = springboard.buttons["Don’t Allow"]
+        if dontAllow.waitForExistence(timeout: 5) {
+            dontAllow.tap()
+        }
     }
 
     private func attachScreenshot(_ name: String) {
