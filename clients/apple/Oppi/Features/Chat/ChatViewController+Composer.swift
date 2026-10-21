@@ -148,8 +148,6 @@ extension ChatViewController {
         return router
     }
 
-    // MARK: - View lifecycle
-
     // MARK: - Composer actions
 
     func updateFileSuggestions(query: String?) {

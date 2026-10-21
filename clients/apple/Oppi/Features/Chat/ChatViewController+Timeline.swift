@@ -249,10 +249,6 @@ extension ChatViewController {
         timeline.update(configuration: makeTimelineConfiguration(), collectionView: timelineView)
     }
 
-    // MARK: - Observed changes
-
-    /// The chat's reactions to store changes (the SwiftUI screen's
-    /// `onChange`s): each fires when its value changes, not on the first pass.
 }
 
 struct ChatTimelineChromeKey: Equatable {

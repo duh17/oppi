@@ -225,8 +225,6 @@ extension ChatViewController {
         canvasAnchor.reviewCommentSelectionRouter = reviewCommentSelectionRouter
     }
 
-    // MARK: - Timeline
-
     // MARK: - Observed changes
 
     /// The chat's reactions to store changes (the SwiftUI screen's
