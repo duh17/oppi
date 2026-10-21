@@ -133,16 +133,20 @@ final class PaperMarkupCanvasHostController: UIViewController {
         )
     }
 
-    static func present(
+    /// The host installs Cancel and Add to Chat on its `navigationItem`, so it
+    /// shows no bar and cannot be dismissed outside a navigation controller.
+    /// Present this, not the host itself.
+    static func makeNavigationController(
         background: PaperMarkupCanvasSession.Background,
-        from presenter: UIViewController,
         onAddToChat: ((PendingAttachment, String) -> Bool)? = nil,
+        onCancel: (() -> Void)? = nil,
         destination: ComposerCanvasDestination? = nil,
         onDeliveryAccepted: (() -> Void)? = nil
-    ) {
+    ) -> UINavigationController {
         let host = makeFullScreenController(
             background: background,
             onAddToChat: onAddToChat,
+            onCancel: onCancel,
             destination: destination,
             onDeliveryAccepted: onDeliveryAccepted
         )
@@ -151,6 +155,22 @@ final class PaperMarkupCanvasHostController: UIViewController {
         navigation.modalPresentationStyle = .fullScreen
         navigation.overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
         navigation.view.backgroundColor = UIColor(themeID.palette.bgDark)
+        return navigation
+    }
+
+    static func present(
+        background: PaperMarkupCanvasSession.Background,
+        from presenter: UIViewController,
+        onAddToChat: ((PendingAttachment, String) -> Bool)? = nil,
+        destination: ComposerCanvasDestination? = nil,
+        onDeliveryAccepted: (() -> Void)? = nil
+    ) {
+        let navigation = makeNavigationController(
+            background: background,
+            onAddToChat: onAddToChat,
+            destination: destination,
+            onDeliveryAccepted: onDeliveryAccepted
+        )
         presenter.present(navigation, animated: true)
     }
 

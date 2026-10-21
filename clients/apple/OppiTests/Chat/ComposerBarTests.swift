@@ -1866,6 +1866,33 @@ struct ComposerBarTests {
         window.isHidden = true
     }
 
+    /// The canvas host installs Cancel and Add to Chat on its `navigationItem`.
+    /// Presented bare it rendered neither, so the annotate screen had no way
+    /// back to the chat.
+    @Test("Annotate canvas is presented inside a navigation controller carrying its bar")
+    func annotateCanvasPresentsWithItsBar() throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let composer = ComposerBarController()
+        window.rootViewController = composer
+        window.makeKeyAndVisible()
+        defer { window.rootViewController = nil; window.isHidden = true }
+
+        composer.presentCanvas()
+
+        let navigation = try #require(
+            composer.presentedViewController as? UINavigationController,
+            "The composer must present the canvas host inside a navigation controller"
+        )
+        let host = try #require(navigation.viewControllers.first as? PaperMarkupCanvasHostController)
+        host.loadViewIfNeeded()
+
+        #expect(navigation.modalPresentationStyle == .overFullScreen, "The composer keeps rendering under the canvas")
+        #expect(host.navigationItem.leftBarButtonItem?.title == "Cancel")
+        #expect(host.navigationItem.rightBarButtonItems?.first?.title == "Add to Chat")
+    }
+
     private func showsExpand(in root: UIView) -> Bool {
         if root.accessibilityIdentifier == "chat.expand", !root.isHidden { return true }
         return root.subviews.contains { showsExpand(in: $0) }

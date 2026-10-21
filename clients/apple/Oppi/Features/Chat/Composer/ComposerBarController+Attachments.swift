@@ -26,7 +26,10 @@ extension ComposerBarController {
     func presentCanvas() {
         let background = canvasBackgroundImage.map { PaperMarkupCanvasSession.Background.image($0) } ?? .blank
         let replacing = canvasReplacingAttachmentID
-        let controller = PaperMarkupCanvasHostController(
+        // The host puts Cancel and Add to Chat on its navigation item, so the
+        // bar's controller has to come with it. `.overFullScreen` keeps this
+        // bar rendering while the canvas writes its attachment back.
+        let controller = PaperMarkupCanvasHostController.makeNavigationController(
             background: background,
             onAddToChat: { [weak self] attachment, recognizedText in
                 guard let self else { return false }

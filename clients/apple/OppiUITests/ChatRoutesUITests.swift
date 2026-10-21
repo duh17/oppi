@@ -353,6 +353,81 @@ final class ChatRoutesUITests: XCTestCase {
         }
     }
 
+    /// A pending composer image opens the annotate canvas. Its bar must carry
+    /// both ways back — Add to Chat returns the annotated image, Cancel keeps
+    /// the attachment — and the composer must be usable again after each.
+    func testPendingImageAnnotateCanvasReturnsToTheComposer() {
+        launch(environment: ["OPPI_E2E_CHAT_PENDING_IMAGE_BASE64": Self.composerImagePNGBase64])
+        focusComposer()
+        let tile = composerImageTile()
+        XCTAssertTrue(tile.waitForExistence(timeout: 10), "Seeded composer image did not appear")
+
+        openAnnotateCanvas(from: tile)
+        app.buttons["composer.canvas.addToChat"].tap()
+        XCTAssertTrue(waitForDisappearance(of: app.navigationBars["Canvas"]), "Add to Chat must close the canvas")
+        XCTAssertTrue(
+            waitFor(app.descendants(matching: .any)["chat.input"].isHittable),
+            "The composer must be back after Add to Chat"
+        )
+        XCTAssertTrue(composerImageTile().exists, "The annotated image must stay in the composer")
+
+        openAnnotateCanvas(from: composerImageTile())
+        app.buttons["composer.canvas.cancel"].tap()
+        XCTAssertTrue(waitForDisappearance(of: app.navigationBars["Canvas"]), "Cancel must close the canvas")
+        XCTAssertTrue(
+            waitFor(app.descendants(matching: .any)["chat.input"].isHittable),
+            "The composer must be back after Cancel"
+        )
+        XCTAssertTrue(composerImageTile().exists, "Cancel must keep the attachment")
+
+        // The expanded composer presents the same canvas from its own host.
+        focusComposer()
+        app.descendants(matching: .any)["chat.input"].typeText("Draft\nacross\nseveral\ncomposer\nlines ")
+        let expand = app.buttons["chat.expand"]
+        XCTAssertTrue(expand.waitForExistence(timeout: 10), "A multi-line draft shows the expand button")
+        expand.tap()
+        let expandedEditor = app.textViews["expanded.composer.editor"]
+        XCTAssertTrue(expandedEditor.waitForExistence(timeout: 5), "Expanded composer did not open")
+        openAnnotateCanvas(from: composerImageTile())
+        app.buttons["composer.canvas.cancel"].tap()
+        XCTAssertTrue(waitForDisappearance(of: app.navigationBars["Canvas"]), "Cancel must close the expanded canvas")
+        XCTAssertTrue(
+            waitFor(expandedEditor.isHittable),
+            "The expanded composer must be back after Cancel"
+        )
+        app.buttons["expanded.composer.cancel"].tap()
+        XCTAssertTrue(waitForDisappearance(of: expandedEditor), "The expanded composer must close")
+        XCTAssertTrue(
+            waitFor(app.descendants(matching: .any)["chat.input"].isHittable),
+            "The inline composer must be back"
+        )
+        XCTAssertTrue(composerImageTile().exists, "The attachment must survive the expanded canvas")
+        assertRunning()
+    }
+
+    /// The composer's image tile, by prefix: Add to Chat replaces it with a
+    /// freshly exported attachment, so its id changes.
+    private func composerImageTile() -> XCUIElement {
+        app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "chat.attachment.image.annotate.")
+        ).firstMatch
+    }
+
+    private func openAnnotateCanvas(from tile: XCUIElement) {
+        XCTAssertTrue(tile.isHittable, "The composer image tile must be tappable")
+        tile.tap()
+        XCTAssertTrue(app.navigationBars["Canvas"].waitForExistence(timeout: 10), "Tapping the image must open the canvas")
+        XCTAssertTrue(
+            app.buttons["composer.canvas.cancel"].isHittable,
+            "The canvas must offer a visible way back to the chat"
+        )
+        XCTAssertTrue(
+            app.buttons["composer.canvas.addToChat"].isHittable,
+            "The canvas must offer a visible save back to the composer"
+        )
+        attachScreenshot("composer-annotate")
+    }
+
     // MARK: - Chat sheets
 
     func testStashSheetEditReachesTheChat() {
@@ -710,4 +785,8 @@ final class ChatRoutesUITests: XCTestCase {
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
         return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
     }
+
+    /// A 48×32 red tile with a white block, so the canvas has real image bounds.
+    private static let composerImagePNGBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAADAAAAAgCAIAAADbtmxLAAAASUlEQVR42u3XsQ0AIAgFUTAOAxO4f6cTsI4b2BF/cddS8BIqfEeYUsPEAgQIUHfzPV5VTYtPJicDBAgQIECAACnk/GWAAAH63AU51wVxubmRQwAAAABJRU5ErkJggg=="
 }
