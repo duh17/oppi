@@ -106,11 +106,20 @@ struct SSHTerminalFolderResolveTests {
                 worktreeId: "fix-x", root: "/Users/chen/oppi", worktrees: worktrees, lookupError: nil
             ) == .folder("/Users/chen/oppi-fix-x")
         )
-        // A worktree the server no longer lists falls back to the root folder.
+        // A worktree the server no longer lists is a failure: the workspace root
+        // is a folder the session never ran in.
+        guard case .failure(let missing) = SSHTerminalFolderResolve.resolution(
+            worktreeId: "gone", root: "/Users/chen/oppi", worktrees: worktrees, lookupError: nil
+        ) else {
+            Issue.record("a deleted worktree must not fall back to the workspace root")
+            return
+        }
+        #expect(missing.contains("worktree"))
+        // An empty list from a server that answered is the same answer.
         #expect(
             SSHTerminalFolderResolve.resolution(
-                worktreeId: "gone", root: "/Users/chen/oppi", worktrees: worktrees, lookupError: nil
-            ) == .folder("/Users/chen/oppi")
+                worktreeId: "fix-x", root: "/Users/chen/oppi", worktrees: [], lookupError: nil
+            ) != .folder("/Users/chen/oppi")
         )
     }
 

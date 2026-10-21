@@ -77,6 +77,17 @@ struct SSHTerminalFolderCommandTests {
         #expect(cd.lowerBound < exec.lowerBound)
     }
 
+    @Test func surroundingWhitespaceIsTrimmedTheWayTheServerResolvesIt() {
+        // The server trims a workspace mount, so a folder written with a trailing
+        // newline opens the trimmed folder rather than a name with a newline in it.
+        let trailingNewline = word("/tmp/oppi\n")
+        let clean = word("/tmp/oppi")
+        #expect(trailingNewline == clean)
+        #expect(!trailingNewline.contains("\\012"))
+        // Interior newlines are real path bytes and stay.
+        #expect(word("/tmp/two\nlines").contains("\\012"))
+    }
+
     @Test func aMissingFolderIsReportedInsteadOfOpeningAShellElsewhere() {
         let script = word("/nope/missing")
         #expect(script.contains("printf \"oppi: %s: no such folder\\n\" \"$p\" >&2; exit 1"))

@@ -139,9 +139,16 @@ enum SSHTerminalFolderResolve {
             }
             return fallback
         }
-        let path = worktrees.first { $0.id == worktreeId }?.path
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return path.isEmpty ? fallback : .folder(path)
+        // The lookup answered: this list is the whole truth, so a worktree that
+        // is not in it is gone. Opening the workspace root instead would start a
+        // shell in a folder the session never ran in.
+        guard let path = worktrees.first(where: { $0.id == worktreeId })?.path
+            .trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty else {
+            return .failure(
+                String(localized: "This session's worktree is no longer on the server, so there is no folder to open. Open the workspace to check its checkouts.")
+            )
+        }
+        return .folder(path)
     }
 
     /// An older server (or a sandbox workspace) has no worktree route: 404 or a

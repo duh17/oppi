@@ -14,9 +14,12 @@ import Foundation
 /// folder is therefore never a word the login shell parses, whatever it holds:
 /// quotes, `$()`, backticks, spaces, newlines, or non-ASCII.
 enum SSHTerminalFolderCommand {
-    /// Command substitution strips trailing newlines, so the encoded value ends
-    /// with a byte the script removes with `${p%x}`. A folder that really ends
-    /// in a newline then survives exactly.
+    /// Command substitution strips trailing newlines. `script(folder:)` trims the
+    /// folder's surrounding whitespace first — the way the server resolves a
+    /// mount — so a folder that "ends in a newline" opens the trimmed folder and
+    /// a trailing newline never reaches the encoder. The encoded value ends with
+    /// this byte anyway, and the script removes it with `${p%x}`, so the encoder
+    /// stays exact for any caller that hands it one.
     private static let sentinel = "x"
 
     /// `\NNN` (exactly three octal digits) for every UTF-8 byte, then the
@@ -53,9 +56,9 @@ enum SSHTerminalFolderCommand {
     ///
     /// `~` is expanded by the remote `sh` from `$HOME`, not by this device and
     /// not from the iOS container, which has a different home. Surrounding
-    /// whitespace is trimmed the way the server resolves a workspace mount
-    /// (`resolveHostPath`), so the folder that opens is the folder the workspace
-    /// names.
+    /// whitespace, including a trailing newline, is trimmed the way the server
+    /// resolves a workspace mount (`resolveHostPath`), so the folder that opens is
+    /// the folder the workspace names.
     static func script(folder: String) -> String {
         let value = folder.trimmingCharacters(in: .whitespacesAndNewlines)
         // A NUL cannot survive a shell word or a path; refuse rather than let a
