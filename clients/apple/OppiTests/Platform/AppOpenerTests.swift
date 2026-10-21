@@ -212,6 +212,46 @@ struct AppOpenerTests {
         #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
     }
 
+    @Test func inAppSessionLinkAtColdLaunchParksUntilLaunch() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false)
+        harness.addSession("source", workspaceId: "w1", to: "server-a")
+        harness.addSession("target", workspaceId: "w1", to: "server-a")
+        harness.navigation.openWorkspaceSession(.init(
+            serverId: "server-a",
+            sessionId: "source",
+            workspaceId: "w1"
+        ))
+
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "target",
+            origin: .inAppHyperlink
+        )))
+        await harness.settle()
+        #expect(harness.navigation.workspaceStackRouteElements.count == 1)
+
+        harness.opener.launchDidFinish()
+        await harness.settle()
+        #expect(harness.navigation.workspaceStackRouteElements.count == 2)
+    }
+
+    @Test func sceneSessionURLWaitsForUnlock() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            appLockTimeout: .immediately
+        )
+        harness.addSession("child", workspaceId: "w1", to: "server-a")
+        let url = try #require(URL(string: "oppi://session/child"))
+
+        harness.opener.open(AppOpenRequest(url: url, origin: .externalURL))
+        await harness.settle()
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+
+        #expect(await harness.appLock.unlock())
+        await harness.settle()
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
+    }
+
     // MARK: - In-app links
 
     @Test func timelineSessionLinkKeepsTheBackStackAndPreparesTheTarget() async throws {
@@ -538,6 +578,58 @@ struct AppOpenerTests {
         await harness.settle()
 
         harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
+    }
+
+    @Test func workspaceLinkWaitsForUnlock() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            appLockTimeout: .immediately
+        )
+        harness.navigation.launchPhase = .ready
+        harness.navigation.showOnboarding = false
+        let url = try #require(URL(string: "oppi://workspace?path=/tmp/project&name=Locked"))
+
+        harness.opener.open(AppOpenRequest(url: url, origin: .externalURL))
+        await harness.settle()
+        #expect(harness.navigation.pendingWorkspaceDeepLink == nil)
+
+        #expect(await harness.appLock.unlock())
+        await harness.settle()
+        #expect(harness.navigation.pendingWorkspaceDeepLink?.path == "/tmp/project")
+    }
+
+    @Test func inviteWaitsForUnlock() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            appLockTimeout: .immediately,
+            launch: false
+        )
+        harness.opener.open(.invite(try #require(URL(string: "oppi://connect?v=3&invite=bogus"))))
+        await harness.settle()
+        #expect(harness.connection("server-a").extensionToast == nil)
+
+        #expect(await harness.appLock.unlock())
+        await harness.settle()
+        #expect(harness.connection("server-a").extensionToast == "Unsupported invite link format")
+    }
+
+    @Test func quickSessionWaitsForUnlock() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            appLockTimeout: .immediately,
+            launch: false
+        )
+        harness.navigation.launchPhase = .ready
+        harness.navigation.showOnboarding = false
+        harness.opener.launchDidFinish()
+
+        harness.opener.open(.quickSession(QuickSessionStart(mode: .message)))
+        await harness.settle()
+        #expect(!harness.navigation.showQuickSession)
+
+        #expect(await harness.appLock.unlock())
+        await harness.settle()
+        #expect(harness.navigation.showQuickSession)
     }
 
     // MARK: - Siri and Quick Session
