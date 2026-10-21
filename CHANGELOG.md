@@ -72,6 +72,7 @@ Example:
 
 ### Changed
 
+- **Client/Server:** A chat's user photos are stored on the server once and fetched by the app, so reopening a chat with screenshots no longer downloads megabytes of image data on every history load. See [Attachment rendering](docs/attachment-rendering.md#stored-images-in-chat-history).
 - **Client/Server:** The read-aloud speaker, server dictation, and Live Voice (once its experiment is on) appear only while their backend is reachable, and **Server Settings → About This Server → Voice** shows each backend's state. With Engine set to Server, the mic records on-device while server dictation is unavailable. See [Voice backend health](docs/server-configuration.md#voice-backend-health).
 - **Client:** The chat screen, composer, Ask card, Session Outline, and every sheet and settings page are rebuilt in UIKit, so opening chats, scrolling, and moving between screens is faster.
 - **Client:** Long-press and double-tap on your messages and assistant replies select text instead of opening a Copy menu or copying the whole message. Finished replies no longer have a Copy button under them.
@@ -155,6 +156,7 @@ Example:
 
 - **Server:** Existing servers keep the `images.autoResize: false` saved in `config.json`. Run `oppi config set images.autoResize true` for faster image sends, or keep `false` to store full-size originals in sessions.
 - **Server:** The first start opens each durable store (`$OPPI_DATA_DIR/durable/`) with pi-durable 1.4.0, which migrates its SQLite file for good: an `oppi-server` built on Pi 1.3.0 or earlier cannot open it afterwards, so durable sessions do not survive a downgrade past this release. Classic sessions are unaffected.
+- **Compatibility:** Build 55 and older show no images in chat history for user messages once the server updates, because history now refers to stored attachments; update the app together with the server.
 - **Compatibility:** Build 56 requires `oppi-server@0.53.0` and `oppi-mirror@0.53.0`; update the app and the server together. Against 0.52.0, Live Voice fails to start, read aloud and Server Metrics are hidden, push alerts can show only "You have a new notification", durable chats miss streamed cards and older pages, and **Edit with Oppi** on an extension fails.
 - **Compatibility:** After an extension has had an **Edit with Oppi** session in the last 3 days, Builds 53 and 54 cannot load that server's session list or finish pairing from an invite.
 - **Server:** Durable extensions found only by the file name `durable.ts`, or exported with `defineDurableExtension`, no longer load. Declare the entry in `package.json` and default-export the extension.

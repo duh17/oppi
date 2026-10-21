@@ -12,6 +12,9 @@ Oppi already has three attachment paths:
 - tool-produced image attachments through `details.image`
 - tool-produced audio through `kind: "audio_presentation"` and `details.audio`
 
+User message images and tool media share one store: the per-session attachment directory.
+Chat history refers to a stored user image instead of carrying its bytes.
+
 Expanded tool rows understand `details.media[]` for stored image and video attachment metadata. Video attachments use `details.media[]` rather than a markdown URL scheme.
 
 ## Core rule
@@ -87,6 +90,16 @@ type ChatAttachmentRef = {
 Message rendering treats uploaded files primarily as message attachment badges and image previews. The client also keeps an `ImageAttachment` path for base64 image blobs used by pending/optimistic UI and archived traces.
 
 Message attachments and tool-result attachments share the same product idea: files associated with a chat entry. Their wire shapes differ because user uploads and tool results enter the system at different points.
+
+### Stored images in chat history
+
+The images on a user message live in the session attachment store, next to tool media, and chat history sends a reference rather than the bytes. A history reload therefore costs the record, not the photo.
+
+- The stored session log and the durable entry keep the image's base64. Nothing the model receives changes.
+- A trace user event carries `media[]` with the attachment record (`kind`, `id`, `mimeType`, `fileName`, `sizeBytes`, `width`, `height`, `sha256`), the same shape as a tool `details.media[]` entry, and its `text` no longer contains that image's data URI. A durable conversation entry sends the image block as `{ "type": "image", "mimeType", "attachment": { …record } }` with no `data`.
+- The server materializes at projection time, so sessions recorded before this, and images pasted in a terminal session, are covered too. Ids are content-addressed and deterministic (`att_user_<digest>`), and a record the manifest already holds is reused without a write.
+- An image the server cannot store (over the 50 MB attachment cap, undecodable base64, or a write failure) stays a `data:image/...;base64,...` line in the text, the same fallback tool results use.
+- The Apple client fetches stored bytes from `GET /sessions/{sessionId}/attachments/{attachmentId}`, reserves each thumbnail's slot from `width` and `height` before the bytes arrive, and opens the full-screen viewer on tap. Optimistic rows for a just-sent photo keep their in-memory bytes until the committed row replaces them.
 
 ## Tool image output
 
@@ -385,6 +398,7 @@ A complete implementation satisfies these checks:
 - Unknown attachment IDs render fallback text and do not trigger network fetches.
 - Video and audio playback use authenticated range-capable media sources.
 - Large binary data stays out of message text and tool `details` JSON.
+- A user message's photo is delivered once, as a stored attachment reference, so history reloads do not carry its bytes.
 - Session deletion removes attachment bytes and manifest entries.
 
 ## Related docs
