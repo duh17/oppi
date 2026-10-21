@@ -1405,7 +1405,12 @@ struct SSHTerminalTests {
         #expect(throws: HerdrRemoteError.rejected("no herdr server is running")) {
             try HerdrRemote.snapshot(from: .init(output: Data(refused.utf8), errorOutput: Data(), exitStatus: 1))
         }
-        #expect(HerdrRemote.focusCommand(.agent("w1:p2")) == "herdr agent focus w1:p2")
+        // The focus call is one quoted word with the ID escaped, not the ID in
+        // the clear; an ID that is not Herdr's own is never sent back.
+        let focus = try #require(HerdrRemote.focusCommand(.agent("w1:p2")))
+        #expect(focus.hasPrefix("sh -c '"))
+        #expect(focus.contains("exec herdr agent focus \"$i\""))
+        #expect(focus.contains(SSHTerminalRemoteShell.octalEncoded("w1:p2")))
         #expect(HerdrRemote.focusCommand(.workspace("w1; rm -rf ~")) == nil)
     }
 

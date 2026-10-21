@@ -153,6 +153,6 @@ final class SSHTerminalFolderViewController: UIViewController {
         guard let kind = SSHTerminalMultiplexerKind.detected(in: profile.startupCommand) else {
             return String(localized: "Connecting to \(profile.endpointLabel)…")
         }
-        return String(localized: "Opening \(folder) in \(kind.name) on \(profile.endpointLabel)…")
+        return String(localized: "Opening \(folder) in \(kind.multiplexer.name) on \(profile.endpointLabel)…")
     }
 }

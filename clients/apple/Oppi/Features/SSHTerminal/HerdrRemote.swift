@@ -201,16 +201,23 @@ enum HerdrRemote {
     }
 
     /// Herdr IDs are server-generated (`w1`, `w1:p2`). Anything else is refused
-    /// rather than quoted, so a hostile snapshot cannot inject shell syntax.
+    /// rather than quoted, so a hostile snapshot cannot inject shell syntax. The
+    /// ID that passes travels through the same octal-escape builder as every
+    /// other value the host is given, and Herdr's CLI accepts no `--` before its
+    /// argument (0.9.5 prints its usage), so the character check is what keeps it
+    /// from being read as a flag: a leading `-` is refused too.
     static func focusCommand(_ target: FocusTarget) -> String? {
         let (noun, id) = switch target {
         case .workspace(let id): ("workspace", id)
         case .agent(let id): ("agent", id)
         }
-        guard !id.isEmpty, id.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || ":_-".unicodeScalars.contains($0) }) else {
+        guard !id.isEmpty, !id.hasPrefix("-"),
+              id.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || ":_-".unicodeScalars.contains($0) }) else {
             return nil
         }
-        return "herdr \(noun) focus \(id)"
+        let script = SSHTerminalRemoteShell.assign("i", id)
+            + " exec herdr \(noun) focus \"$i\""
+        return SSHTerminalRemoteShell.word(script)
     }
 
     static func snapshot(from result: SSHExecResult) throws -> HerdrSnapshot {

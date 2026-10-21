@@ -9,19 +9,15 @@ import Foundation
 /// open`, so Herdr shows it as the worktree it is. The program is never typed
 /// into, and the same terminal keeps serving every folder on that host.
 struct HerdrMultiplexer: SSHTerminalMultiplexer {
-    /// Herdr opens folders in the host's own terminal, not in one of its own.
-    let placement = SSHTerminalMultiplexerPlacement.hostTerminal
+    let name = "Herdr"
 
-    /// What one side command reports: the host's home folder, the folder as the
-    /// host's own filesystem spells it, and Herdr's snapshot.
-    struct Lookup: Equatable {
-        let home: String
-        /// The folder's physical path (`pwd -P`), or nil when it is not there.
-        let physicalFolder: String?
-        let snapshot: HerdrSnapshot
+    func opening(_ target: SSHTerminalFolderTarget) -> SSHTerminalMultiplexerOpening? {
+        .inHostTerminal { channel in try await open(target, on: channel) }
     }
 
-    func openInHostTerminal(_ target: SSHTerminalFolderTarget, on channel: SSHTerminalChannel) async throws {
+    /// Focuses or creates the folder in the host's terminal, which is already
+    /// connected on `channel`.
+    func open(_ target: SSHTerminalFolderTarget, on channel: SSHTerminalChannel) async throws {
         let lookup = try await Self.lookup(folder: target.folder, on: channel)
         guard let folder = Self.absoluteFolder(target.folder, home: lookup.home) else {
             throw SSHTerminalMultiplexerFailure.noHomeFolder
@@ -39,6 +35,16 @@ struct HerdrMultiplexer: SSHTerminalMultiplexer {
         }
     }
 
+    /// What one side command reports: the host's home folder, the folder as the
+    /// host's own filesystem spells it, and Herdr's snapshot.
+    struct Lookup: Equatable {
+        let home: String
+        /// The folder's physical path (`pwd -P`), or nil when it is not there or
+        /// its path cannot be written on one line.
+        let physicalFolder: String?
+        let snapshot: HerdrSnapshot
+    }
+
     /// One exec channel for the whole lookup: the host's `$HOME`, the folder's
     /// physical path, then the snapshot.
     ///
@@ -46,14 +52,18 @@ struct HerdrMultiplexer: SSHTerminalMultiplexer {
     /// the host's own home. `pwd -P` gives the path the host's filesystem
     /// reports, which is what Herdr puts on a pane: a mount reached through a
     /// symlink (`/tmp` on macOS, a linked home) then matches its own workspace
-    /// instead of opening a second one. A folder that is not there has no
+    /// instead of opening a second one. A folder that is not there — or whose
+    /// path has a newline in it, which would break the line this reports — has no
     /// physical path, so nothing matches and Herdr's create fails with its own
     /// message.
     static func lookupCommand(folder: String) -> String? {
         guard let word = SSHTerminalRemoteShell.folderWord(folder) else { return nil }
         let script = SSHTerminalRemoteShell.assign("p", expression: word)
             + " printf \"oppi-home %s\\n\" \"$HOME\";"
-            + " if cd \"$p\" 2>/dev/null; then printf \"oppi-cwd %s\\n\" \"$(pwd -P)\";"
+            + " if cd \"$p\" 2>/dev/null; then"
+            + " c=\"$(pwd -P)\"; t=\"$(printf %s \"$c\" | tr -d \"\\n\")\";"
+            + " if [ \"$t\" = \"$c\" ]; then printf \"oppi-cwd %s\\n\" \"$c\";"
+            + " else printf \"oppi-cwd\\n\"; fi;"
             + " else printf \"oppi-cwd\\n\"; fi;"
             + " exec \(HerdrRemote.snapshotCommand)"
         return SSHTerminalRemoteShell.word(script)
@@ -77,32 +87,33 @@ struct HerdrMultiplexer: SSHTerminalMultiplexer {
         }
     }
 
-    /// Reads the two header lines, then hands the rest to `HerdrRemote` as the
-    /// snapshot it is.
+    /// Reads the two header lines, then takes everything after the `oppi-cwd` line
+    /// as the snapshot. The command writes no other line between them, so a
+    /// folder whose name holds a newline and a `{` cannot be mistaken for the
+    /// start of Herdr's output.
     static func parse(_ result: SSHExecResult) throws -> Lookup {
         // A Herdr that is missing or refused comes back through here first, so
         // its message survives instead of reading as an unreadable snapshot.
         try HerdrRemote.check(result)
         let text = String(decoding: result.output, as: UTF8.self)
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        guard let jsonStart = lines.firstIndex(where: { $0.hasPrefix("{") }) else {
+        guard let cwdIndex = lines.firstIndex(where: { $0.hasPrefix("oppi-cwd") }) else {
             throw HerdrRemoteError.unreadable
         }
-        let header = lines[..<jsonStart]
-        guard let home = header.first(where: { $0.hasPrefix("oppi-home ") })?
+        guard let home = lines[..<cwdIndex].first(where: { $0.hasPrefix("oppi-home ") })?
             .dropFirst("oppi-home ".count) else {
             throw SSHTerminalMultiplexerFailure.noHomeFolder
         }
-        let physical = header.first(where: { $0.hasPrefix("oppi-cwd") })
-            .map { $0.dropFirst("oppi-cwd".count).trimmingCharacters(in: .whitespaces) }
+        let physical = lines[cwdIndex].dropFirst("oppi-cwd".count)
+            .trimmingCharacters(in: .whitespaces)
         let snapshot = try HerdrRemote.snapshot(from: SSHExecResult(
-            output: Data(lines[jsonStart...].joined(separator: "\n").utf8),
+            output: Data(lines[(cwdIndex + 1)...].joined(separator: "\n").utf8),
             errorOutput: result.errorOutput,
             exitStatus: result.exitStatus
         ))
         return Lookup(
             home: String(home),
-            physicalFolder: physical.flatMap { $0.isEmpty ? nil : String($0) },
+            physicalFolder: physical.isEmpty ? nil : physical,
             snapshot: snapshot
         )
     }

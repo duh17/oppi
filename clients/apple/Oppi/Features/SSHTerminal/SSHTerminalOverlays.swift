@@ -305,10 +305,15 @@ final class SSHTerminalTextBannerView: UIView {
         label.numberOfLines = 2
 
         var configuration = UIButton.Configuration.plain()
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 0)
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8)
         actionButton.configuration = configuration
         actionButton.titleLabel?.adjustsFontForContentSizeCategory = true
         actionButton.accessibilityIdentifier = "\(identifier).action"
+        // A notice can be missed at a glance, so its one control is a full touch
+        // target and never squeezed by a long message.
+        actionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        actionButton.setContentCompressionResistancePriority(.required, for: .vertical)
+        actionButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         actionButton.addAction(UIAction { [weak self] _ in self?.actionHandler?() }, for: .touchUpInside)
 
         let row = UIStackView(arrangedSubviews: [label, actionButton])

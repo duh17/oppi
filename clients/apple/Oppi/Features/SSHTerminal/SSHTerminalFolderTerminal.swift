@@ -32,6 +32,14 @@ struct SSHTerminalFolderTarget: Equatable {
             && !serverHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// The folder's own name, for a notice that has room for one word rather
+    /// than the whole path.
+    var folderName: String {
+        let value = folder.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value == "~" || value == "/" { return value }
+        return value.split(separator: "/").last.map(String.init) ?? value
+    }
+
     /// What the bar, the … menu header, and the host list call this terminal:
     /// the folder as the server stores it. It is a remote path, so this device's
     /// home — and any `~` shortening from it — would name a different folder.
@@ -248,12 +256,12 @@ enum SSHTerminalFolderEntry {
 
     /// Configures `session` to open `target` on `profile`.
     ///
-    /// Three outcomes, one per multiplexer placement:
-    /// - the host starts a multiplexer whose folders open inside its own terminal
-    ///   (Herdr): that terminal opens, and the folder is handed to it;
-    /// - the host starts one that needs a terminal of its own (tmux): a folder
-    ///   terminal runs the command that attaches the folder's session;
-    /// - otherwise the folder terminal is the plain login shell.
+    /// Three outcomes, one per `SSHTerminalMultiplexerOpening`:
+    /// - the multiplexer opens folders inside the host's own terminal (Herdr):
+    ///   that terminal opens, and the folder is handed to it;
+    /// - it needs a terminal of its own (tmux): a folder terminal runs the
+    ///   command that attaches the folder's session;
+    /// - there is no multiplexer: the folder terminal is the plain login shell.
     ///
     /// The folder screen and the Add Host form both come through here, so a host
     /// added for a folder behaves like a saved one.
@@ -266,16 +274,19 @@ enum SSHTerminalFolderEntry {
         session.folderTerminalCommand = nil
         session.multiplexerFolder = nil
         guard let target else { return }
-        let running = SSHTerminalMultiplexerKind.detected(in: profile.startupCommand)?.multiplexer
-        switch running?.placement {
-        case .hostTerminal:
+        // No multiplexer: the plain login shell in the folder.
+        guard let multiplexer = SSHTerminalMultiplexerKind.detected(in: profile.startupCommand)?.multiplexer else {
+            session.folder = target.folder
+            return
+        }
+        switch multiplexer.opening(target) {
+        case .inHostTerminal?:
             // The host's own terminal is the multiplexer; the folder follows.
             session.multiplexerFolder = target
-        case .folderTerminal:
+        case .folderTerminal(let command)?:
             session.folder = target.folder
-            session.folderTerminalCommand = running?.folderCommand(for: target)
+            session.folderTerminalCommand = command
         case nil:
-            // No multiplexer: the plain login shell in the folder.
             session.folder = target.folder
         }
     }

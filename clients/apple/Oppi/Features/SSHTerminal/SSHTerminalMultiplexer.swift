@@ -12,27 +12,6 @@ enum SSHTerminalMultiplexerKind: String, CaseIterable, Sendable {
     case herdr
     case tmux
 
-    /// The multiplexer's name in what the person reads.
-    var name: String {
-        switch self {
-        case .herdr: "Herdr"
-        case .tmux: "tmux"
-        }
-    }
-
-    /// Where a folder opens in this multiplexer.
-    var placement: SSHTerminalMultiplexerPlacement {
-        switch self {
-        case .herdr:
-            // The host's own terminal is the Herdr client, and Herdr is told
-            // which workspace to show over that terminal's side channel.
-            .hostTerminal
-        case .tmux:
-            // A terminal of its own, whose command attaches the folder's session.
-            .folderTerminal
-        }
-    }
-
     /// The implementation. A new multiplexer is one case here and one type
     /// conforming to `SSHTerminalMultiplexer`.
     var multiplexer: any SSHTerminalMultiplexer {
@@ -53,48 +32,36 @@ enum SSHTerminalMultiplexerKind: String, CaseIterable, Sendable {
     }
 }
 
-/// Where "Open Terminal here" lands, the same shape for every multiplexer.
-enum SSHTerminalMultiplexerPlacement: Equatable, Sendable {
-    /// Inside the host's own terminal: the one its Run on Connect command opened.
-    case hostTerminal
-    /// In a terminal of its own, which attaches a multiplexer session that was
-    /// started in the folder and outlives the connection.
-    case folderTerminal
+/// Where one multiplexer puts the folder, and what has to happen for it to get
+/// there. One value per opening keeps every caller identical for every
+/// multiplexer: a folder in Herdr and a folder in tmux feel the same.
+enum SSHTerminalMultiplexerOpening {
+    /// Inside the host's own terminal, the one its Run on Connect command
+    /// already runs: the handler drives the multiplexer over that terminal's side
+    /// exec channel. Nothing is typed into the program.
+    case inHostTerminal((SSHTerminalChannel) async throws -> Void)
+    /// In a terminal of its own, running this command, which attaches the
+    /// multiplexer session started in the folder.
+    case folderTerminal(command: String)
 }
 
 /// One multiplexer's way of opening a folder inside it.
 ///
-/// The two placements are why this is one small interface instead of a
-/// per-multiplexer fork of the whole flow: "Open Terminal here" asks the kind
-/// where its folder goes, and the same two calls open it there. A folder in
-/// Herdr and a folder in tmux feel the same — you land in that folder inside
-/// your multiplexer, and it is still there after a disconnect.
+/// The folders of `.folderTerminal` multiplexers outlive a disconnect because the
+/// session does; `.inHostTerminal` ones live in the session the host's terminal
+/// already shows. Either way the person lands in that folder inside their
+/// multiplexer, and nothing is ever typed into a running program.
 ///
-/// Nothing is ever typed into the program that is already running. A
-/// `.hostTerminal` multiplexer is driven over the terminal's side exec channel,
-/// and a `.folderTerminal` one is the command a new terminal runs. Each
-/// implementation answers the requirement its `placement` names; the other has
-/// the default below, which the flow never calls.
-///
-/// The implementations are plain value types that build command words and read
-/// the host, so they carry no actor of their own: the async call hops to the
+/// The implementation is a plain value type that builds command words and reads
+/// the host, so it carries no actor of its own: the async handler hops to the
 /// terminal's main-actor channel when it runs.
 protocol SSHTerminalMultiplexer: Sendable {
-    var placement: SSHTerminalMultiplexerPlacement { get }
+    /// The multiplexer's name, in what the person reads.
+    var name: String { get }
 
-    /// The command a `.folderTerminal` runs for `target`, or nil when this
-    /// multiplexer opens the folder in the host's own terminal.
-    func folderCommand(for target: SSHTerminalFolderTarget) -> String?
-
-    /// Opens `target` in the multiplexer running in the host's terminal, which
-    /// is already connected on `channel`. Throws with what to tell the person
-    /// when the multiplexer refuses; they stay in that terminal either way.
-    func openInHostTerminal(_ target: SSHTerminalFolderTarget, on channel: SSHTerminalChannel) async throws
-}
-
-extension SSHTerminalMultiplexer {
-    func folderCommand(for target: SSHTerminalFolderTarget) -> String? { nil }
-    func openInHostTerminal(_ target: SSHTerminalFolderTarget, on channel: SSHTerminalChannel) async throws {}
+    /// How this multiplexer opens `target`, or nil when the folder is not one the
+    /// host can open (a relative path, say).
+    func opening(_ target: SSHTerminalFolderTarget) -> SSHTerminalMultiplexerOpening?
 }
 
 /// A multiplexer could not turn what the host reported into a folder.

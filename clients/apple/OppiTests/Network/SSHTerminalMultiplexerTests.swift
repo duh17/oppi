@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import Oppi
 
-/// Which saved Run on Connect commands are multiplexers, and where a folder
-/// opens in each one.
+/// Which saved Run on Connect commands are multiplexers, and how each one opens
+/// a folder.
 @Suite("SSH terminal multiplexer detection")
 @MainActor
 struct SSHTerminalMultiplexerDetectionTests {
@@ -29,15 +29,26 @@ struct SSHTerminalMultiplexerDetectionTests {
         }
     }
 
-    @Test func eachMultiplexerSaysWhereItsFoldersOpen() {
-        #expect(SSHTerminalMultiplexerKind.herdr.placement == .hostTerminal)
-        #expect(SSHTerminalMultiplexerKind.tmux.placement == .folderTerminal)
-        // The implementation agrees with the kind it came from, so the entry
-        // point decides placement and execution the same way.
-        #expect(SSHTerminalMultiplexerKind.herdr.multiplexer.placement == .hostTerminal)
-        #expect(SSHTerminalMultiplexerKind.tmux.multiplexer.placement == .folderTerminal)
-        #expect(SSHTerminalMultiplexerKind.herdr.name == "Herdr")
-        #expect(SSHTerminalMultiplexerKind.tmux.name == "tmux")
+    @Test func eachMultiplexerSaysHowItOpensAFolder() throws {
+        let target = SSHTerminalFolderTarget(
+            serverHost: "mac-studio", folder: "/Users/chen/oppi", label: "oppi"
+        )
+        for kind in SSHTerminalMultiplexerKind.allCases {
+            switch kind.multiplexer.opening(target) {
+            case .folderTerminal(let command)?:
+                #expect(kind == .tmux, "only tmux needs a terminal of its own")
+                #expect(command.hasPrefix("sh -c '"))
+            case .inHostTerminal?:
+                #expect(kind == .herdr, "only Herdr opens folders in its own terminal")
+            case nil:
+                Issue.record("\(kind) cannot open an absolute folder")
+            }
+        }
+        #expect(SSHTerminalMultiplexerKind.herdr.multiplexer.name == "Herdr")
+        #expect(SSHTerminalMultiplexerKind.tmux.multiplexer.name == "tmux")
+        // A folder the host cannot open has no opening at all.
+        let relative = SSHTerminalFolderTarget(serverHost: "mac-studio", folder: "relative/path")
+        #expect(SSHTerminalMultiplexerKind.tmux.multiplexer.opening(relative) == nil)
     }
 }
 
@@ -72,6 +83,16 @@ struct HerdrMultiplexerTests {
         return try JSONDecoder().decode(HerdrSnapshot.self, from: Data(json.utf8))
     }
 
+    /// The focus call is one word for the remote login shell, with Herdr's ID
+    /// escaped like every other value.
+    private func assertFocus(_ commands: [String], id: String, _ hint: String) throws {
+        let command = try #require(commands.first)
+        #expect(commands.count == 1, "\(hint)")
+        #expect(command.hasPrefix("sh -c '"), "\(hint)")
+        #expect(command.contains("exec herdr workspace focus \"$i\""), "\(hint)")
+        #expect(command.contains(SSHTerminalRemoteShell.octalEncoded(id)), "\(hint)")
+    }
+
     @Test func aWorkspaceWithAPaneInTheFolderIsOnlyFocused() throws {
         let snapshot = try snapshot(
             workspaces: [("w1", "oppi", false), ("w2", "scratch", true)],
@@ -81,7 +102,7 @@ struct HerdrMultiplexerTests {
             folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
             matching: ["/Users/chen/oppi"], snapshot: snapshot
         )
-        #expect(commands == ["herdr workspace focus w1"])
+        try assertFocus(commands, id: "w1", "an existing workspace")
     }
 
     @Test func aWorktreeWithAPaneThereIsOnlyFocused() throws {
@@ -95,7 +116,7 @@ struct HerdrMultiplexerTests {
             folder: "/Users/chen/oppi-fix-x", label: "oppi · fix-x", isWorktree: true,
             matching: ["/Users/chen/oppi-fix-x"], snapshot: snapshot
         )
-        #expect(commands == ["herdr workspace focus w3"])
+        try assertFocus(commands, id: "w3", "an existing worktree")
     }
 
     @Test func theFocusedWorkspaceWinsWhenSeveralHaveTheFolder() throws {
@@ -103,12 +124,44 @@ struct HerdrMultiplexerTests {
             workspaces: [("w1", "oppi", false), ("w2", "oppi copy", true)],
             panes: [("w1:p1", "w1", "/Users/chen/oppi"), ("w2:p2", "w2", "/Users/chen/oppi")]
         )
-        #expect(
-            try HerdrMultiplexer.commands(
+        let commands = try HerdrMultiplexer.commands(
+            folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
+            matching: ["/Users/chen/oppi"], snapshot: snapshot
+        )
+        try assertFocus(commands, id: "w2", "the focused match")
+    }
+
+    @Test func aSymlinkedFolderMatchesThePathTheHostReports() throws {
+        // The workspace says `/tmp/oppi`; the host's filesystem (and so Herdr's
+        // pane) says `/private/tmp/oppi`. Both spellings are the folder, so the
+        // workspace that already has it is focused instead of a second one.
+        let snapshot = try snapshot(
+            workspaces: [("w1", "oppi", false)],
+            panes: [("w1:p1", "w1", "/private/tmp/oppi")]
+        )
+        let commands = try HerdrMultiplexer.commands(
+            folder: "/tmp/oppi", label: "oppi", isWorktree: false,
+            matching: ["/tmp/oppi", "/private/tmp/oppi"], snapshot: snapshot
+        )
+        try assertFocus(commands, id: "w1", "a symlinked folder")
+    }
+
+    @Test func aTrailingSlashIsStillTheSameFolder() throws {
+        for pane in ["/Users/chen/oppi/", "/Users/chen/oppi"] {
+            let snapshot = try snapshot(
+                workspaces: [("w1", "oppi", true)],
+                panes: [("w1:p1", "w1", pane)]
+            )
+            let commands = try HerdrMultiplexer.commands(
                 folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
                 matching: ["/Users/chen/oppi"], snapshot: snapshot
-            ) == ["herdr workspace focus w2"]
-        )
+            )
+            try assertFocus(commands, id: "w1", pane)
+        }
+        // The root folder keeps its only slash.
+        #expect(HerdrSnapshot.comparablePath("/") == "/")
+        #expect(HerdrSnapshot.comparablePath("/a/b/") == "/a/b")
+        #expect(HerdrSnapshot.comparablePath("  /a/b  ") == "/a/b")
     }
 
     @Test func aSubfolderIsNotTheFolder() throws {
@@ -133,7 +186,8 @@ struct HerdrMultiplexerTests {
         )
         let folder = "/Users/chen/oppi"
         let commands = try HerdrMultiplexer.commands(
-            folder: folder, label: "oppi", isWorktree: false, matching: [folder], snapshot: snapshot
+            folder: folder, label: "oppi", isWorktree: false,
+            matching: [folder], snapshot: snapshot
         )
         let command = try #require(commands.first)
         #expect(commands.count == 1)
@@ -151,89 +205,14 @@ struct HerdrMultiplexerTests {
         let snapshot = try snapshot(workspaces: [("w1", "scratch", true)], panes: [])
         let folder = "/Users/chen/oppi-fix-x"
         let commands = try HerdrMultiplexer.commands(
-            folder: folder, label: "oppi · fix-x", isWorktree: true, matching: [folder], snapshot: snapshot
+            folder: folder, label: "oppi · fix-x", isWorktree: true,
+            matching: [folder], snapshot: snapshot
         )
         let command = try #require(commands.first)
         #expect(command.contains("herdr worktree open --path \"$p\" --label \"$l\" --focus"))
         #expect(!command.contains("workspace create"))
         #expect(command.contains(SSHTerminalRemoteShell.octalEncoded(folder)))
         #expect(command.contains(SSHTerminalRemoteShell.octalEncoded("oppi · fix-x")))
-    }
-
-    @Test func aSymlinkedFolderMatchesThePathTheHostReports() throws {
-        // The workspace says `/tmp/oppi`; the host's filesystem (and so Herdr's
-        // pane) says `/private/tmp/oppi`. Both spellings are the folder, so the
-        // workspace that already has it is focused instead of a second one.
-        let snapshot = try snapshot(
-            workspaces: [("w1", "oppi", false)],
-            panes: [("w1:p1", "w1", "/private/tmp/oppi")]
-        )
-        let commands = try HerdrMultiplexer.commands(
-            folder: "/tmp/oppi", label: "oppi", isWorktree: false,
-            matching: ["/tmp/oppi", "/private/tmp/oppi"], snapshot: snapshot
-        )
-        #expect(commands == ["herdr workspace focus w1"])
-    }
-
-    @Test func aTrailingSlashIsStillTheSameFolder() throws {
-        for pane in ["/Users/chen/oppi/", "/Users/chen/oppi"] {
-            let snapshot = try snapshot(
-                workspaces: [("w1", "oppi", true)],
-                panes: [("w1:p1", "w1", pane)]
-            )
-            #expect(
-                try HerdrMultiplexer.commands(
-                    folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
-                    matching: ["/Users/chen/oppi"], snapshot: snapshot
-                ) == ["herdr workspace focus w1"],
-                "\(pane)"
-            )
-        }
-        // The root folder keeps its only slash.
-        #expect(HerdrSnapshot.comparablePath("/") == "/")
-        #expect(HerdrSnapshot.comparablePath("/a/b/") == "/a/b")
-        #expect(HerdrSnapshot.comparablePath("  /a/b  ") == "/a/b")
-    }
-
-    @Test func theLookupReadsTheHomeAndThePhysicalFolder() throws {
-        let lookup = try HerdrMultiplexer.parse(SSHExecResult(
-            output: Data("""
-            oppi-home /Users/chen
-            oppi-cwd /private/tmp/oppi
-            \(Self.snapshotJSON)
-
-            """.utf8),
-            errorOutput: Data(),
-            exitStatus: 0
-        ))
-        #expect(lookup.home == "/Users/chen")
-        #expect(lookup.physicalFolder == "/private/tmp/oppi")
-        #expect(lookup.snapshot == (try snapshot(workspaces: [], panes: [])))
-    }
-
-    @Test func aMissingFolderHasNoPhysicalPath() throws {
-        // `cd` failed, so nothing can match and Herdr's create reports it.
-        let lookup = try HerdrMultiplexer.parse(SSHExecResult(
-            output: Data("oppi-home /Users/chen\noppi-cwd\n\(Self.snapshotJSON)\n".utf8),
-            errorOutput: Data(),
-            exitStatus: 0
-        ))
-        #expect(lookup.physicalFolder == nil)
-    }
-
-    @Test func aHerdrRefusalKeepsItsOwnMessage() {
-        // A Herdr that is not running or refuses answers with its own error, and
-        // that message is what the notice shows.
-        let refused = SSHExecResult(
-            output: Data(#"{"error":{"message":"herdr server is not running"}}"#.utf8),
-            errorOutput: Data(),
-            exitStatus: 1
-        )
-        #expect(throws: HerdrRemoteError.rejected("herdr server is not running")) {
-            try HerdrMultiplexer.parse(refused)
-        }
-        let missing = SSHExecResult(output: Data(), errorOutput: Data(), exitStatus: 127)
-        #expect(throws: HerdrRemoteError.notInstalled) { try HerdrMultiplexer.parse(missing) }
     }
 
     @Test func aNamespaceWithoutANameIsCalledAfterItsFolder() throws {
@@ -244,19 +223,25 @@ struct HerdrMultiplexerTests {
 
     @Test func anIDOppiWillNotSendBackIsRefused() throws {
         // Herdr's IDs are its own; a hostile snapshot cannot smuggle shell syntax
-        // through the focus command.
-        let json = """
-        {"workspaces":[{"workspace_id":"w1; rm -rf /","label":"x","focused":true}],
-         "tabs":[],"agents":[],
-         "panes":[{"pane_id":"p","workspace_id":"w1; rm -rf /","cwd":"/Users/chen/oppi"}]}
-        """
-        let snapshot = try JSONDecoder().decode(HerdrSnapshot.self, from: Data(json.utf8))
-        #expect(throws: HerdrRemoteError.unusableID) {
-            try HerdrMultiplexer.commands(
-                folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
-                matching: ["/Users/chen/oppi"], snapshot: snapshot
-            )
+        // through the focus command, and an ID cannot be read as a flag.
+        for id in ["w1; rm -rf /", "-rf", "-", "w1 --focus"] {
+            let json = """
+            {"workspaces":[{"workspace_id":"\(id)","label":"x","focused":true}],
+             "tabs":[],"agents":[],
+             "panes":[{"pane_id":"p","workspace_id":"\(id)","cwd":"/Users/chen/oppi"}]}
+            """
+            let snapshot = try JSONDecoder().decode(HerdrSnapshot.self, from: Data(json.utf8))
+            #expect(throws: HerdrRemoteError.unusableID) {
+                try HerdrMultiplexer.commands(
+                    folder: "/Users/chen/oppi", label: "oppi", isWorktree: false,
+                    matching: ["/Users/chen/oppi"], snapshot: snapshot
+                )
+            }
         }
+        // The focus call itself refuses them too, for the agent list.
+        #expect(HerdrRemote.focusCommand(.workspace("-rf")) == nil)
+        #expect(HerdrRemote.focusCommand(.agent("")) == nil)
+        #expect(HerdrRemote.focusCommand(.workspace("w1:p2")) != nil)
     }
 
     @Test func aTildeFolderBecomesTheHostsOwnAbsolutePath() {
@@ -274,14 +259,76 @@ struct HerdrMultiplexerTests {
         #expect(HerdrMultiplexer.absoluteFolder("~/x", home: "") == nil)
         #expect(HerdrMultiplexer.absoluteFolder("~/x", home: "relative/home") == nil)
         #expect(HerdrMultiplexer.absoluteFolder("relative/x", home: "/Users/chen") == nil)
-        // The lookup is one word, quoted for the remote login shell.
-        let lookup = try? #require(HerdrMultiplexer.lookupCommand(folder: "~/workspace/oppi"))
-        #expect(lookup?.hasPrefix("sh -c '") == true)
-        #expect(lookup?.contains("p=\"$HOME\"/\"$(printf \"") == true)
-        #expect(lookup?.contains("pwd -P") == true)
-        #expect(lookup?.contains("exec herdr api snapshot") == true)
-        // A relative folder has nothing to look up.
-        #expect(HerdrMultiplexer.lookupCommand(folder: "relative/x") == nil)
+    }
+
+    @Test func theLookupReadsTheHomeAndThePhysicalFolder() throws {
+        let lookup = try HerdrMultiplexer.parse(SSHExecResult(
+            output: Data("""
+            oppi-home /Users/chen
+            oppi-cwd /private/tmp/oppi
+            \(Self.snapshotJSON)
+
+            """.utf8),
+            errorOutput: Data(),
+            exitStatus: 0
+        ))
+        #expect(lookup.home == "/Users/chen")
+        #expect(lookup.physicalFolder == "/private/tmp/oppi")
+        #expect(lookup.snapshot == (try snapshot()))
+    }
+
+    @Test func aMissingFolderHasNoPhysicalPath() throws {
+        // `cd` failed, so nothing can match and Herdr's create reports it.
+        let lookup = try HerdrMultiplexer.parse(SSHExecResult(
+            output: Data("oppi-home /Users/chen\noppi-cwd\n\(Self.snapshotJSON)\n".utf8),
+            errorOutput: Data(),
+            exitStatus: 0
+        ))
+        #expect(lookup.physicalFolder == nil)
+        #expect(lookup.home == "/Users/chen")
+    }
+
+    @Test func aFolderWithANewlineCannotSpoofTheSnapshot() throws {
+        // A folder named `a\n{...` would put its own line where the JSON starts
+        // if the shell ever reported it. The command reports no path for it, and
+        // the snapshot is whatever follows the oppi-cwd line.
+        for folder in ["/tmp/a\n{", "/tmp/a\n/a", "/tmp/a\n{\"id\":\"x\"}"] {
+            let command = try #require(HerdrMultiplexer.lookupCommand(folder: folder))
+            #expect(command.contains(SSHTerminalRemoteShell.octalEncoded(folder)), "\(folder)")
+            #expect(!command.contains(folder), "\(folder)")
+            let lookup = try HerdrMultiplexer.parse(SSHExecResult(
+                output: Data("oppi-home /Users/chen\noppi-cwd\n\(Self.snapshotJSON)\n".utf8),
+                errorOutput: Data(),
+                exitStatus: 0
+            ))
+            #expect(lookup.physicalFolder == nil, "\(folder)")
+            #expect(lookup.snapshot == (try snapshot()), "\(folder)")
+        }
+        // Everything after the oppi-cwd line is what Herdr said, so a stray line
+        // there is not skipped to find a later brace: the answer is that the
+        // snapshot cannot be read. Nothing a folder name holds reaches that
+        // region, which is what keeps the parse honest.
+        let odd = SSHExecResult(
+            output: Data("oppi-home /Users/chen\noppi-cwd\n{\"not\":\"snapshot\"}\n\(Self.snapshotJSON)\n".utf8),
+            errorOutput: Data(),
+            exitStatus: 0
+        )
+        #expect(throws: HerdrRemoteError.unreadable) { try HerdrMultiplexer.parse(odd) }
+    }
+
+    @Test func aHerdrRefusalKeepsItsOwnMessage() {
+        // A Herdr that is not running or refuses answers with its own error, and
+        // that message is what the notice shows.
+        let refused = SSHExecResult(
+            output: Data(#"{"error":{"message":"herdr server is not running"}}"#.utf8),
+            errorOutput: Data(),
+            exitStatus: 1
+        )
+        #expect(throws: HerdrRemoteError.rejected("herdr server is not running")) {
+            try HerdrMultiplexer.parse(refused)
+        }
+        let missing = SSHExecResult(output: Data(), errorOutput: Data(), exitStatus: 127)
+        #expect(throws: HerdrRemoteError.notInstalled) { try HerdrMultiplexer.parse(missing) }
     }
 }
 
@@ -291,6 +338,11 @@ struct HerdrMultiplexerTests {
 struct TmuxMultiplexerTests {
     private func target(_ folder: String, label: String = "oppi", isWorktree: Bool = false) -> SSHTerminalFolderTarget {
         SSHTerminalFolderTarget(serverHost: "mac-studio", folder: folder, label: label, isWorktree: isWorktree)
+    }
+
+    private func command(_ target: SSHTerminalFolderTarget) -> String? {
+        guard case .folderTerminal(let command)? = TmuxMultiplexer().opening(target) else { return nil }
+        return command
     }
 
     @Test func theSessionIsNamedAfterTheWorkspaceAndItsFolder() {
@@ -309,26 +361,37 @@ struct TmuxMultiplexerTests {
         #expect(TmuxMultiplexer.sessionName(label: "  ", folder: "/Users/chen/oppi").hasPrefix("oppi-"))
     }
 
-    @Test func aSessionNameCannotCarryTmuxTargetSyntax() {
-        for label in ["oppi.v2", "a:b", "w1:0.1", "release/2.0:next", "two\nlines", "\u{7}bell"] {
+    @Test func aSessionNameCannotCarryTmuxTargetSyntaxOrAFormat() {
+        for label in ["oppi.v2", "a:b", "w1:0.1", "release/2.0:next", "two\nlines", "\u{7}bell", "#{host}", "#(echo x)"] {
             let name = TmuxMultiplexer.sessionName(label: label, folder: "/x")
             #expect(!name.contains("."), "\(label)")
             #expect(!name.contains(":"), "\(label)")
+            // tmux expands `#{...}` and `#(...)` in `-s`, so every `#` is doubled.
+            #expect(!name.contains("#") || name.contains("##"), "\(label)")
             #expect(name.hasSuffix("-" + TmuxMultiplexer.folderHash("/x")))
         }
         #expect(TmuxMultiplexer.sanitized("app.v2:main") == "app-v2-main")
         #expect(TmuxMultiplexer.sanitized("  spaced   name  ") == "spaced name")
         #expect(TmuxMultiplexer.sanitized("日本語 worktree") == "日本語 worktree")
+        #expect(TmuxMultiplexer.sanitized("#{host}") == "##{host}")
+        #expect(TmuxMultiplexer.sanitized("#(echo x)") == "##(echo x)")
         #expect(TmuxMultiplexer.sanitized(String(repeating: "a", count: 80)).count == 48)
     }
 
-    @Test func theCommandAttachesTheFoldersSessionStartedInIt() throws {
-        let command = try #require(TmuxMultiplexer().folderCommand(for: target("~/workspace/oppi")))
+    @Test func theCommandEntersTheFolderThenAttachesItsSession() throws {
+        let command = try #require(command(target("~/workspace/oppi")))
         #expect(command.hasPrefix("sh -c '"))
         #expect(command.hasSuffix("'"))
-        // `new -A`: create the session in the folder the first time, attach it
-        // after that, so the work is still there after a disconnect.
-        #expect(command.contains("exec tmux new -A -s \"$s\" -c \"$p\""))
+        // `new -A`: create the session the first time, attach it after that, so
+        // the work is still there after a disconnect. No `-c`: tmux expands
+        // formats in its arguments and falls back to the home folder when the
+        // folder cannot be entered, so the shell changes folder first and the
+        // session starts in this client's folder.
+        #expect(command.contains("exec tmux new -A -s \"$s\""))
+        // tmux is given no `-c`: the folder is the client's own.
+        #expect(!command.contains("-c \"$p\""))
+        #expect(!command.contains("tmux new -A -c"))
+        #expect(command.contains("cd \"$p\" || { printf \"oppi: %s: no such folder\\n\" \"$p\" >&2; exit 1; }"))
         // `~` is the host's home, built from the host's own `$HOME`.
         #expect(command.contains("p=\"$HOME\"/\"$(printf \""))
         #expect(!command.contains(NSHomeDirectory()))
@@ -340,14 +403,24 @@ struct TmuxMultiplexerTests {
     @Test func aRelativeFolderHasNoCommand() {
         // A relative folder resolves against the server's working directory, so
         // there is nothing to attach a session to.
-        #expect(TmuxMultiplexer().folderCommand(for: target("relative/path")) == nil)
+        #expect(command(target("relative/path")) == nil)
     }
 
     @Test func absoluteFoldersTravelAsEscapedBytes() throws {
         let folder = "/tmp/日本語 with space"
-        let command = try #require(TmuxMultiplexer().folderCommand(for: target(folder, label: "oppi")))
+        let command = try #require(command(target(folder, label: "oppi")))
         #expect(command.contains(SSHTerminalRemoteShell.octalEncoded(folder)))
         #expect(!command.contains(folder))
+    }
+
+    @Test func aFolderWithAHashIsNotAFormat() throws {
+        let folder = "/tmp/#{host}/x"
+        let command = try #require(command(target(folder, label: "oppi #{host}")))
+        // The folder and the label travel as octal bytes, so tmux never sees a
+        // `#{` in them at all.
+        #expect(!command.contains("#{"))
+        #expect(!command.contains("#("))
+        #expect(command.contains(SSHTerminalRemoteShell.octalEncoded(folder)))
     }
 }
 
@@ -372,6 +445,7 @@ struct SSHTerminalMultiplexerQuotingTests {
         "/tmp/-leading-dash",
         "/tmp/line\nbreak",
         "/tmp/dquote\"inside",
+        "/tmp/hash#{host}#(echo x)",
         "/tmp/日本語 フォルダ",
         "/tmp/ trailing space ",
         "/",
@@ -404,7 +478,7 @@ struct SSHTerminalMultiplexerQuotingTests {
                 serverHost: "mac-studio", folder: folder, label: folder, isWorktree: false
             )
             try assertSafeWord(SSHTerminalFolderCommand.command(folder: folder), "plain \(folder)")
-            if let command = TmuxMultiplexer().folderCommand(for: target) {
+            if case .folderTerminal(let command)? = TmuxMultiplexer().opening(target) {
                 try assertSafeWord(command, "tmux \(folder)")
                 // `~` travels as the host's own home, not as the character.
                 if trimmed == "~" {
@@ -415,6 +489,7 @@ struct SSHTerminalMultiplexerQuotingTests {
             }
             if let lookup = HerdrMultiplexer.lookupCommand(folder: folder) {
                 try assertSafeWord(lookup, "herdr lookup \(folder)")
+                #expect(lookup.contains("exec herdr api snapshot"), "\(folder)")
                 if trimmed != "~" {
                     #expect(
                         lookup.contains(SSHTerminalRemoteShell.octalEncoded(trimmed)),
@@ -439,6 +514,16 @@ struct SSHTerminalMultiplexerQuotingTests {
                 #expect(command.contains(SSHTerminalRemoteShell.octalEncoded(trimmed)), "herdr \(index) \(folder)")
                 #expect(!command.contains(folder) || folder == "/", "herdr \(index) \(folder)")
             }
+        }
+    }
+
+    @Test func aFocusCallIsOneSafeWordToo() throws {
+        for id in ["w1", "wY:p7", "w1:p2", "agent_x-1"] {
+            let command = try #require(HerdrRemote.focusCommand(.workspace(id)))
+            try assertSafeWord(command, "focus \(id)")
+            #expect(command.contains("exec herdr workspace focus \"$i\""), "\(id)")
+            #expect(command.contains(SSHTerminalRemoteShell.octalEncoded(id)), "\(id)")
+            #expect(!command.contains(id), "\(id): the ID is not literal shell text")
         }
     }
 

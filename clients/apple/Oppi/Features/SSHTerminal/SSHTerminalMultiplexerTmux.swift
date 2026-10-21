@@ -4,21 +4,30 @@ import Foundation
 ///
 /// A folder gets a terminal of its own — the registry's `(profile, folder)`
 /// identity, as any folder terminal has — and that terminal attaches the
-/// folder's tmux session, creating it in the folder the first time (`tmux new
-/// -A`). The session outlives the connection, so tapping Terminal here again
-/// after a disconnect lands back where the work was.
+/// folder's tmux session, creating it there the first time (`tmux new -A`). The
+/// session outlives the connection, so tapping Terminal here again after a
+/// disconnect lands back where the work was.
 struct TmuxMultiplexer: SSHTerminalMultiplexer {
-    /// tmux opens folders in a terminal of its own.
-    let placement = SSHTerminalMultiplexerPlacement.folderTerminal
+    let name = "tmux"
+
+    func opening(_ target: SSHTerminalFolderTarget) -> SSHTerminalMultiplexerOpening? {
+        folderCommand(for: target).map { .folderTerminal(command: $0) }
+    }
 
     func folderCommand(for target: SSHTerminalFolderTarget) -> String? {
         guard let folder = SSHTerminalRemoteShell.folderWord(target.folder) else { return nil }
         let session = Self.sessionName(label: target.label, folder: target.folder)
         // Both values reach the host as octal escapes and are only ever read
-        // back through "$p" and "$s", so neither can be shell code.
+        // back through "$p" and "$s", so neither can be shell code. `cd` first,
+        // then attach with no `-c`: tmux expands `#{}` and `#()` in its own
+        // arguments, so a folder or label holding a `#` would otherwise be read
+        // as a format, and a folder it cannot enter would quietly start the
+        // session in the home folder. A new session starts in this client's
+        // working directory, which is the folder by then.
         let script = SSHTerminalRemoteShell.assign("p", expression: folder)
             + " " + SSHTerminalRemoteShell.assign("s", session)
-            + " exec tmux new -A -s \"$s\" -c \"$p\""
+            + " cd \"$p\" || { printf \"oppi: %s: no such folder\\n\" \"$p\" >&2; exit 1; };"
+            + " exec tmux new -A -s \"$s\""
         return SSHTerminalRemoteShell.word(script)
     }
 
@@ -35,14 +44,22 @@ struct TmuxMultiplexer: SSHTerminalMultiplexer {
         return "\(name.isEmpty ? "oppi" : name)-\(folderHash(folder))"
     }
 
-    /// tmux reads `.` and `:` as target syntax (`.`, `:`, `session:window`), so
-    /// neither can appear in a session name. Control characters go too; spaces
-    /// and non-ASCII stay, because the name is a label someone reads.
+    /// tmux reads `.` and `:` as target syntax (`.`, `:`, `session:window`) and
+    /// `#` as the start of a format, so a name cannot carry one unescaped: `.`
+    /// and `:` become `-`, and `#` is doubled, which is how tmux asks for a
+    /// literal one. Control characters become `-`; spaces and non-ASCII stay,
+    /// because the name is a label someone reads.
+    ///
+    /// tmux stores a doubled backslash for one it is given (0.9.5 and 3.8 both
+    /// do), which is only cosmetic: the same label is looked up the same way, so
+    /// a session is still found again after a disconnect.
     static func sanitized(_ name: String) -> String {
         var scalars = String.UnicodeScalarView()
         for scalar in name.unicodeScalars {
             if scalar == "." || scalar == ":" || CharacterSet.controlCharacters.contains(scalar) {
                 scalars.append("-")
+            } else if scalar == "#" {
+                scalars.append(contentsOf: "##".unicodeScalars)
             } else {
                 scalars.append(scalar)
             }

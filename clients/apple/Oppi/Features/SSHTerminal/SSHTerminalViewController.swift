@@ -320,6 +320,14 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             reconnectOnReturn = true
         }
         sawClosedForBackground = channel.closedForBackground
+        // A notice asking for Retry cannot be retried on a connection that went
+        // away, so it leaves with it.
+        if !connected, openNoticeRetry != nil {
+            openNotice = nil
+            openNoticeRetry = nil
+            openNoticeTask?.cancel()
+            openNoticeTask = nil
+        }
         if phase == .active { reconnectAfterReturn() }
         if !locked { reconnectAfterReturn() }
         if let session, !session.showsTerminal, isOnScreen, !isMovingFromParent {
@@ -1487,14 +1495,18 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         openNotice = text
         openNoticeRetry = retry
         openNoticeTask?.cancel()
-        openNoticeTask = Task { [weak self] in
-            // A notice that offers a retry stays long enough to start the
-            // program by hand first.
-            try? await Task.sleep(for: .seconds(retry == nil ? 4 : 20))
-            guard !Task.isCancelled else { return }
-            self?.openNotice = nil
-            self?.openNoticeRetry = nil
-            self?.setNeedsUpdateProperties()
+        // A notice that offers a retry waits for it: the person may have to start
+        // the program by hand first, and the reason is still worth reading then.
+        // It leaves on Retry, on success, or when the connection goes.
+        openNoticeTask = nil
+        if retry == nil {
+            openNoticeTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(4))
+                guard !Task.isCancelled else { return }
+                self?.openNotice = nil
+                self?.openNoticeRetry = nil
+                self?.setNeedsUpdateProperties()
+            }
         }
         setNeedsUpdateProperties()
     }
@@ -1595,40 +1607,58 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// was not running yet can be started by hand in the terminal underneath and
     /// then opened without leaving it.
     private func openMultiplexerFolderIfNeeded() {
-        guard let session, let target = session.multiplexerFolder, channel.connected else { return }
+        guard let session, let target = session.multiplexerFolder, channel.connected,
+              let kind = SSHTerminalMultiplexerKind.detected(in: session.connectedProfile?.startupCommand),
+              case .inHostTerminal(let run)? = kind.multiplexer.opening(target) else { return }
         session.multiplexerFolder = nil
-        guard let kind = SSHTerminalMultiplexerKind.detected(in: session.connectedProfile?.startupCommand),
-              kind.placement == .hostTerminal else { return }
-        openFolderInMultiplexer(target, kind: kind)
+        openFolderInMultiplexer(target, multiplexer: kind.multiplexer, run: run)
     }
 
     /// Runs, or re-runs from Retry, the multiplexer's folder open on this
     /// connection. A refusal shows over the terminal, which is where the person
-    /// stays either way.
-    private func openFolderInMultiplexer(_ target: SSHTerminalFolderTarget, kind: SSHTerminalMultiplexerKind) {
+    /// stays either way; the notice keeps its Retry until that is used, the open
+    /// succeeds, or the connection goes away.
+    private func openFolderInMultiplexer(
+        _ target: SSHTerminalFolderTarget,
+        multiplexer: any SSHTerminalMultiplexer,
+        run: @escaping (SSHTerminalChannel) async throws -> Void
+    ) {
         // Whatever this notice said is answered by this attempt, which reports
         // its own result when it finishes.
         openNotice = nil
         openNoticeRetry = nil
         openNoticeTask?.cancel()
         setNeedsUpdateProperties()
-        let multiplexer = kind.multiplexer
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await multiplexer.openInHostTerminal(target, on: channel)
-                showOpenNotice("Opened \(target.folderLabel) in \(kind.name).")
+                try await run(channel)
+                showOpenNotice("Opened \(target.folderLabel) in \(multiplexer.name).")
                 await herdr.refresh(on: channel)
             } catch {
+                // The reason leads, and the folder is its last name: a phone
+                // notice has room for one line of each.
                 showOpenNotice(
-                    "Could not open \(target.folderLabel) in \(kind.name): \(error.localizedDescription)",
+                    Self.failureNotice(target: target, multiplexer: multiplexer, error: error),
                     retry: { [weak self] in
                         guard let self, channel.connected else { return }
-                        openFolderInMultiplexer(target, kind: kind)
+                        openFolderInMultiplexer(target, multiplexer: multiplexer, run: run)
                     }
                 )
             }
         }
+    }
+
+    /// "Herdr is not running. oppi did not open in Herdr." — the reason first,
+    /// then the folder by its own name and the program that refused it.
+    private static func failureNotice(
+        target: SSHTerminalFolderTarget,
+        multiplexer: any SSHTerminalMultiplexer,
+        error: any Error
+    ) -> String {
+        var reason = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !reason.isEmpty, !".!?".contains(reason.last ?? ".") { reason += "." }
+        return "\(reason) \(target.folderName) did not open in \(multiplexer.name)."
     }
 
     private func updatePolling() {
