@@ -147,6 +147,7 @@ struct ConversationStreamTests {
                     "kind": .string("image"),
                     "id": .string("att_user_abc"),
                     "mimeType": .string("image/png"),
+                    "sessionId": .string("session-owner"),
                     "fileName": .string("user-image.png"),
                     "sizeBytes": .number(68),
                     "width": .number(1206),
@@ -170,12 +171,67 @@ struct ConversationStreamTests {
         #expect(event.type == .user)
         #expect(event.text == "look at this\ndata:image/jpeg;base64,QUJD")
         let media = try #require(event.media)
-        #expect(media.count == 1)
+        // One stored reference, then a placeholder for the image left inline in the text.
+        #expect(media.count == 2)
         #expect(media[0].id == "att_user_abc")
         #expect(media[0].kind == "image")
         #expect(media[0].mimeType == "image/png")
         #expect(media[0].width == 1206)
         #expect(media[0].height == 2622)
+        #expect(media[0].sessionId == "session-owner")
+        #expect(media[1].id == nil)
+        #expect(media[1].inline == true)
+    }
+
+    /// A message that mixes a stored image with one the server left inline keeps content order:
+    /// the inline block is a placeholder in `media`, paired with its data URI by the reducer.
+    @MainActor
+    @Test func userEntryKeepsImageOrderAcrossAStoredAndInlineMix() throws {
+        let content: JSONValue = .array([
+            .object(["type": .string("text"), "text": .string("caption")]),
+            .object([
+                "type": .string("image"),
+                "data": .string("QUJD"),
+                "mimeType": .string("image/jpeg"),
+            ]),
+            .object([
+                "type": .string("image"),
+                "mimeType": .string("image/png"),
+                "attachment": .object([
+                    "kind": .string("image"),
+                    "id": .string("att_user_second"),
+                    "mimeType": .string("image/png"),
+                ]),
+            ]),
+        ])
+        let entry = ConversationEntryView(
+            id: 7,
+            kind: "pi.user",
+            model: [.object(["role": .string("user"), "content": content, "timestamp": .number(1_791_650_000_000)])]
+        )
+
+        let event = try #require(ConversationTraceProjector.traceEvents(from: [entry]).first)
+        #expect(event.text == "caption\ndata:image/jpeg;base64,QUJD")
+        let media = try #require(event.media)
+        #expect(media.count == 2)
+        #expect(media[0].inline == true)
+        #expect(media[0].id == nil)
+        #expect(media[0].mimeType == "image/jpeg")
+        #expect(media[1].id == "att_user_second")
+        #expect(media[1].inline == nil)
+
+        // The reducer shows the inline image first, then the stored one.
+        let reducer = TimelineReducer()
+        reducer.loadSession([event])
+        guard case .userMessage(_, let text, let images, _) = reducer.items[0] else {
+            Issue.record("Expected a user message row")
+            return
+        }
+        #expect(text == "caption")
+        #expect(images.count == 2)
+        #expect(images[0].storedAttachmentID == nil)
+        #expect(images[0].data == "QUJD")
+        #expect(images[1].storedAttachmentID == "att_user_second")
     }
 
     @Test func userEntryWithOnlyAStoredImageStillProjectsARow() throws {
@@ -198,7 +254,7 @@ struct ConversationStreamTests {
 
         let event = try #require(ConversationTraceProjector.traceEvents(from: [entry]).first)
         #expect(event.type == .user)
-        #expect(event.text == "")
+        #expect(event.text?.isEmpty == true)
         #expect(event.media?.map(\.id) == ["att_user_abc"])
     }
 

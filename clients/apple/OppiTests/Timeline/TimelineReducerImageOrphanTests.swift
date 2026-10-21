@@ -174,6 +174,7 @@ struct TimelineReducerImageOrphanTests {
 
         let media = TraceMediaAttachment(
             kind: "image", id: "att_user_abc", mimeType: "image/png",
+            sessionId: "session-owner",
             fileName: "user-image.png", sizeBytes: 68, width: 1206, height: 2622
         )
         var userEvent = TraceEvent(
@@ -197,6 +198,7 @@ struct TimelineReducerImageOrphanTests {
         #expect(image.storedAttachmentID == "att_user_abc")
         #expect(image.data.isEmpty)
         #expect(image.mimeType == "image/png")
+        #expect(image.attachmentSessionId == "session-owner")
         #expect(image.width == 1206)
         #expect(image.height == 2622)
         let aspectRatio = try #require(image.aspectRatio)
@@ -241,6 +243,56 @@ struct TimelineReducerImageOrphanTests {
         #expect(images[0].storedAttachmentID == "att_user_abc")
         #expect(images[1].storedAttachmentID == nil)
         #expect(images[1].data == Self.fakeBase64A)
+    }
+
+    @Test func mixedStoredAndInlineImagesKeepBlockOrder() {
+        // The server lists the message's images in content order: a stored reference, then a
+        // placeholder for the image it had to leave inline in the text.
+        var userEvent = TraceEvent(
+            id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+            text: "two photos\ndata:image/jpeg;base64,\(Self.fakeBase64A)"
+        )
+        userEvent.media = [
+            TraceMediaAttachment(kind: "image", id: "att_user_first", mimeType: "image/png"),
+            TraceMediaAttachment(kind: "image", mimeType: "image/jpeg", inline: true),
+        ]
+
+        let reducer = TimelineReducer()
+        reducer.loadSession([userEvent])
+
+        guard case .userMessage(_, let text, let images, _) = reducer.items[0] else {
+            Issue.record("Expected userMessage at index 0")
+            return
+        }
+        #expect(text == "two photos")
+        #expect(images.count == 2)
+        #expect(images[0].storedAttachmentID == "att_user_first")
+        #expect(images[1].storedAttachmentID == nil)
+        #expect(images[1].data == Self.fakeBase64A)
+    }
+
+    @Test func inlineImageBeforeStoredImageKeepsBlockOrder() {
+        var userEvent = TraceEvent(
+            id: "e1", type: .user, timestamp: "2025-01-01T00:00:00.000Z",
+            text: "captioned photo\ndata:image/jpeg;base64,\(Self.fakeBase64A)"
+        )
+        userEvent.media = [
+            TraceMediaAttachment(kind: "image", mimeType: "image/jpeg", inline: true),
+            TraceMediaAttachment(kind: "image", id: "att_user_second", mimeType: "image/png"),
+        ]
+
+        let reducer = TimelineReducer()
+        reducer.loadSession([userEvent])
+
+        guard case .userMessage(_, let text, let images, _) = reducer.items[0] else {
+            Issue.record("Expected userMessage at index 0")
+            return
+        }
+        #expect(text == "captioned photo")
+        #expect(images.count == 2)
+        #expect(images[0].storedAttachmentID == nil)
+        #expect(images[0].data == Self.fakeBase64A)
+        #expect(images[1].storedAttachmentID == "att_user_second")
     }
 
     @Test func mediaEchoLandsLocalPhotoRow() {

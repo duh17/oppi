@@ -41,6 +41,37 @@ enum ImageDecodeCache {
         return image
     }
 
+    /// A decoded thumbnail of a stored session attachment. Attachment ids are
+    /// content-addressed and never change, so the thumbnail stays valid for the process; the
+    /// row reuses it instead of downloading the image again when its cell is configured.
+    static func storedAttachmentThumbnail(
+        for attachmentID: String,
+        sessionId: String?
+    ) -> UIImage? {
+        cacheBox.cache.object(forKey: storedAttachmentKey(attachmentID, sessionId) as NSString)
+    }
+
+    static func storeStoredAttachmentThumbnail(
+        _ image: UIImage,
+        for attachmentID: String,
+        sessionId: String?
+    ) {
+        cacheBox.cache.setObject(
+            image,
+            forKey: storedAttachmentKey(attachmentID, sessionId) as NSString,
+            cost: pixelCost(of: image)
+        )
+    }
+
+    /// Drops every cached image (used by tests).
+    static func removeAll() {
+        cacheBox.cache.removeAllObjects()
+    }
+
+    private static func storedAttachmentKey(_ attachmentID: String, _ sessionId: String?) -> String {
+        "stored-attachment-thumbnail:\(sessionId ?? ""):\(attachmentID)"
+    }
+
     static func decodeKey(for base64: String, maxPixelSize: CGFloat) -> String {
         let prefix = String(base64.prefix(32))
         let suffix = String(base64.suffix(32))

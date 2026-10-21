@@ -1165,6 +1165,61 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("a stored attachment thumbnail is decoded once and reused across row configures")
+    func storedAttachmentThumbnailReusesCachedDecode() async throws {
+        ImageDecodeCache.removeAll()
+        defer { ImageDecodeCache.removeAll() }
+        let png = try #require(makeTestImage().pngData())
+        let attachmentID = "att_user_cached_thumbnail"
+        let counter = StoredAttachmentFetchCounter()
+        func configuration() -> UserTimelineRowConfiguration {
+            UserTimelineRowConfiguration(
+                text: "",
+                images: [ImageAttachment(
+                    data: "",
+                    mimeType: "image/png",
+                    attachmentId: attachmentID,
+                    attachmentSessionId: "session-owner",
+                    width: 120,
+                    height: 90
+                )],
+                fetchSessionAttachment: { requestedID, sessionID in
+                    await counter.increment()
+                    #expect(requestedID == attachmentID)
+                    #expect(sessionID == "session-owner")
+                    return png
+                },
+                canFork: false,
+                onFork: nil
+            )
+        }
+
+        func thumbnailImage(in view: UIView) -> UIImage? {
+            guard let container = firstSubview(
+                withAccessibilityIdentifier: "chat.user.thumbnail.0",
+                in: view
+            ) else { return nil }
+            return firstSubview(ofType: UIImageView.self, in: container)?.image
+        }
+
+        let first = UserTimelineRowContentView(configuration: configuration())
+        let firstRendered = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            thumbnailImage(in: first) != nil
+        }
+        #expect(firstRendered)
+        #expect(await counter.value() == 1)
+
+        // The id is content-addressed, so the second configure draws the cached thumbnail
+        // instead of downloading the image again.
+        let second = UserTimelineRowContentView(configuration: configuration())
+        let secondRendered = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            thumbnailImage(in: second) != nil
+        }
+        #expect(secondRendered)
+        #expect(await counter.value() == 1)
+    }
+
+    @MainActor
     @Test("static and animated image path pills keep the path handler as their only tap owner", arguments: [false, true])
     func nativePathThumbnailKeepsPathTap(animated: Bool) async throws {
         let png = try #require(makeTestImage().pngData())
@@ -1873,7 +1928,16 @@ private func userMessageIconLabel(in view: UserTimelineRowContentView) -> UILabe
     Mirror(reflecting: view).children.first { $0.label == "iconLabel" }?.value as? UILabel
 }
 
-@MainActor
+private actor StoredAttachmentFetchCounter {
+    private(set) var count = 0
+
+    func increment() {
+        count += 1
+    }
+
+    func value() -> Int { count }
+}
+
 private func firstSubview<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {
     if let typed = root as? T {
         return typed

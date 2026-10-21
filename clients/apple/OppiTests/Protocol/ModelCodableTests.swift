@@ -852,6 +852,7 @@ struct TraceEventCodableTests {
             "id":"e1","type":"user","timestamp":"2025-01-01T00:00:00Z","text":"look at this",
             "media":[{
                 "kind":"image","id":"att_user_AbCd","mimeType":"image/png",
+                "sessionId":"session-owner",
                 "fileName":"user-image.png","sizeBytes":68,"storageKey":"s1/att_user_AbCd.png",
                 "sha256":"abc","width":1206,"height":2622
             }]
@@ -869,6 +870,23 @@ struct TraceEventCodableTests {
         #expect(media.width == 1206)
         #expect(media.height == 2622)
         #expect(media.durationSeconds == nil)
+        #expect(media.sessionId == "session-owner")
+        #expect(media.inline == nil)
+    }
+
+    @Test func decodeUserEventWithInlineImagePlaceholder() throws {
+        let json = """
+        {
+            "id":"e1","type":"user","timestamp":"2025-01-01T00:00:00Z",
+            "text":"data:image/png;base64,AAAA",
+            "media":[{"kind":"image","mimeType":"image/png","inline":true}]
+        }
+        """
+        let event = try JSONDecoder().decode(TraceEvent.self, from: json.data(using: .utf8)!)
+        let media = try #require(event.media?.first)
+        #expect(media.id == nil)
+        #expect(media.inline == true)
+        #expect(media.mimeType == "image/png")
     }
 
     @Test func decodeUserEventWithoutMediaStaysInline() throws {

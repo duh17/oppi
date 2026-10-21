@@ -1197,10 +1197,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 ), appendOnly: appendOnly)
                 return nil
             }
-            let (cleanText, inlineImages) = UserMessageImageExtractor.extractImagesFromText(rawText)
-            // Stored references first: a committed message names them in `media`, and only an
-            // image the server could not store is still inline in the text.
-            let images = UserMessageImageExtractor.storedImages(from: event.media) + inlineImages
+            // `media` names the message's images in content order (stored references and
+            // placeholders for the inline fallback); the text still holds only the fallbacks.
+            let (cleanText, images) = UserMessageImageExtractor.images(
+                from: rawText,
+                media: event.media
+            )
             insertItem(.userMessage(
                 id: event.id,
                 text: cleanText,

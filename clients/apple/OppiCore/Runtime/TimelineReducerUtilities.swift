@@ -190,21 +190,41 @@ enum StringFastChecks {
 /// text becomes clean display text plus thumbnails.
 enum UserMessageImageExtractor {
 
-    /// `media` as stored-attachment references, in order, skipping anything that is not an image.
-    static func storedImages(from media: [TraceMediaAttachment]?) -> [ImageAttachment] {
-        guard let media, !media.isEmpty else { return [] }
-        return media.compactMap { item in
-            guard item.kind == "image", !item.id.isEmpty else { return nil }
-            return ImageAttachment(
-                data: "",
-                mimeType: item.mimeType,
-                attachmentId: item.id,
-                fileName: item.fileName,
-                sizeBytes: item.sizeBytes,
-                width: item.width,
-                height: item.height
-            )
+    /// A user message's images in content order, as the row shows them.
+    ///
+    /// `media` lists the message's images in content order: a stored reference (with an `id`)
+    /// or a placeholder for one the server left inline in the text. A placeholder consumes the
+    /// next data URI `text` carried, so a message that mixes stored and inline-fallback images
+    /// keeps the order its blocks had. Without `media` (an older server, or nothing stored)
+    /// this is text order, as before.
+    static func images(
+        from text: String,
+        media: [TraceMediaAttachment]?
+    ) -> (text: String, images: [ImageAttachment]) {
+        let (cleanText, inlineImages) = extractImagesFromText(text)
+        guard let media, !media.isEmpty else { return (cleanText, inlineImages) }
+        var remainingInline = inlineImages[...]
+        var images: [ImageAttachment] = []
+        for item in media where item.kind == "image" {
+            if let id = item.id, !id.isEmpty {
+                images.append(ImageAttachment(
+                    data: "",
+                    mimeType: item.mimeType,
+                    attachmentId: id,
+                    attachmentSessionId: item.sessionId,
+                    fileName: item.fileName,
+                    sizeBytes: item.sizeBytes,
+                    width: item.width,
+                    height: item.height
+                ))
+            } else if item.inline == true, !remainingInline.isEmpty {
+                images.append(remainingInline.removeFirst())
+            }
         }
+        // A data URI the server did not list (an older server, or one the user pasted as text)
+        // follows the ordered images rather than disappearing.
+        images.append(contentsOf: remainingInline)
+        return (cleanText, images)
     }
 
     static func extractImagesFromText(_ text: String) -> (String, [ImageAttachment]) {

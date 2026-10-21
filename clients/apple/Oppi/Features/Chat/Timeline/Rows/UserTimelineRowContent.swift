@@ -38,8 +38,9 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     let text: String
     let images: [ImageAttachment]
     var fetchWorkspaceFileData: ((_ path: String) async throws -> Data)? = nil
-    /// Stored session attachment bytes by attachment id, for a committed message's images.
-    var fetchSessionAttachment: ((_ attachmentId: String) async throws -> Data)? = nil
+    /// Stored session attachment bytes, for a committed message's images. The second
+    /// argument is the session the reference names, when it names one.
+    var fetchSessionAttachment: ((_ attachmentId: String, _ sessionId: String?) async throws -> Data)? = nil
     var onOpenPathPill: ((UserMessagePathPill, UIView) -> Void)? = nil
     let canFork: Bool
     let onFork: (() -> Void)?
@@ -931,6 +932,20 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             // A committed message names a stored attachment; the slot above is already
             // reserved at thumbnail size, so the strip never jumps when the bytes land.
             if let attachmentID = attachment.storedAttachmentID {
+                let ownerSession = attachment.attachmentSessionId
+                // Ids are content-addressed and immutable, so a decoded thumbnail is reused
+                // instead of downloading the image again when this cell is configured.
+                if let cached = ImageDecodeCache.storedAttachmentThumbnail(
+                    for: attachmentID,
+                    sessionId: ownerSession
+                ) {
+                    installStoredThumbnail(
+                        content: .image(cached),
+                        in: container,
+                        attachment: attachment
+                    )
+                    continue
+                }
                 guard let fetch = currentConfiguration.fetchSessionAttachment else {
                     // No API client yet: the row keeps its slot and says the image is
                     // unavailable rather than spinning forever.
@@ -941,15 +956,27 @@ final class UserTimelineRowContentView: UIView, UIContentView {
                     )
                     continue
                 }
+                let mimeType = attachment.mimeType
                 let task = Task { [weak self, weak container] in
                     do {
-                        let data = try await fetch(attachmentID)
+                        let data = try await fetch(attachmentID, ownerSession)
+                        guard !Task.isCancelled else { return }
+                        let content = await Task.detached(priority: .userInitiated) {
+                            UserTimelineImageThumbnailView.decode(data: data, mimeType: mimeType)
+                        }.value
                         guard !Task.isCancelled, let self, let container else { return }
-                        self.installThumbnail(
-                            data: data,
-                            mimeType: attachment.mimeType,
+                        // Keep the small decoded image, never the downloaded bytes.
+                        if case .image(let image) = content {
+                            ImageDecodeCache.storeStoredAttachmentThumbnail(
+                                image,
+                                for: attachmentID,
+                                sessionId: ownerSession
+                            )
+                        }
+                        self.installStoredThumbnail(
+                            content: content,
                             in: container,
-                            allowsFullscreen: true
+                            attachment: attachment
                         )
                     } catch {
                         guard !Task.isCancelled, let self, let container else { return }
@@ -1019,6 +1046,42 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             thumbnail.apply(content, data: data, mimeType: mimeType, allowsFullscreen: allowsFullscreen)
         }
         decodeTasks.append(task)
+    }
+
+    /// A stored attachment's thumbnail. The view draws what was decoded; opening it fetches
+    /// the full bytes then, so scrolling past a photo never keeps its downloads in memory.
+    private func installStoredThumbnail(
+        content: UserTimelineImageThumbnailView.Content,
+        in container: UIView,
+        attachment: ImageAttachment
+    ) {
+        container.subviews.forEach { $0.removeFromSuperview() }
+        let thumbnail = UserTimelineImageThumbnailView()
+        thumbnail.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(thumbnail)
+        pinThumbnailContent(thumbnail, in: container)
+        let attachmentID = attachment.storedAttachmentID
+        let ownerSession = attachment.attachmentSessionId
+        let mimeType = attachment.mimeType
+        let fetch = currentConfiguration.fetchSessionAttachment
+        var onTap: (() -> Void)?
+        if let fetch, let attachmentID, !content.isFailure {
+            onTap = { [weak thumbnail] in
+                guard let thumbnail else { return }
+                Task { [weak thumbnail] in
+                    guard let data = try? await fetch(attachmentID, ownerSession),
+                          let thumbnail else { return }
+                    if ChatReaderOpenLookup.open(
+                        .imageData(data, mimeType: mimeType),
+                        from: thumbnail
+                    ) {
+                        return
+                    }
+                    FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
+                }
+            }
+        }
+        thumbnail.apply(content, onTap: onTap)
     }
 
     private func installUnavailableThumbnail(
@@ -1103,6 +1166,11 @@ private final class UserTimelineImageThumbnailView: UIView {
         case animatedRaster(Data)
         case web(String)
         case failure
+
+        var isFailure: Bool {
+            if case .failure = self { return true }
+            return false
+        }
     }
 
     private var onTap: (() -> Void)?
@@ -1137,13 +1205,11 @@ private final class UserTimelineImageThumbnailView: UIView {
         return .failure
     }
 
+    /// Renders `content` with the bytes it was decoded from: the caller keeps that data only
+    /// where it already needed it (an inline base64 image or a session file).
     func apply(_ content: Content, data: Data, mimeType: String, allowsFullscreen: Bool) {
-        subviews.forEach { $0.removeFromSuperview() }
         switch content {
         case .image(let image):
-            let imageView = UIImageView(image: image)
-            imageView.contentMode = .scaleAspectFit
-            install(imageView)
             onTap = { [weak self] in
                 guard let self else { return }
                 let resolved = UIImage(data: data) ?? image
@@ -1152,10 +1218,7 @@ private final class UserTimelineImageThumbnailView: UIView {
                 }
                 ToolTimelineRowPresentationHelpers.presentFullScreenImage(resolved, from: self)
             }
-        case .animatedRaster(let bytes):
-            let player = InlineAnimatedRasterView(frame: .zero)
-            player.display(data: bytes, maxPixelSize: 512)
-            install(player)
+        case .animatedRaster, .web:
             onTap = { [weak self] in
                 if let self, ChatReaderOpenLookup.open(
                     .imageData(data, mimeType: mimeType),
@@ -1165,20 +1228,41 @@ private final class UserTimelineImageThumbnailView: UIView {
                 }
                 FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
             }
+        case .failure:
+            onTap = nil
+        }
+        render(content)
+        if allowsFullscreen, onTap != nil {
+            setTap(enabled: true)
+        } else {
+            setTap(enabled: false)
+        }
+    }
+
+    /// Renders `content` without keeping the bytes it was decoded from; a tap runs `onTap`,
+    /// which fetches the full image then.
+    func apply(_ content: Content, onTap: (() -> Void)?) {
+        self.onTap = onTap
+        render(content)
+        setTap(enabled: onTap != nil)
+    }
+
+    private func render(_ content: Content) {
+        subviews.forEach { $0.removeFromSuperview() }
+        switch content {
+        case .image(let image):
+            let imageView = UIImageView(image: image)
+            imageView.contentMode = .scaleAspectFit
+            install(imageView)
+        case .animatedRaster(let bytes):
+            let player = InlineAnimatedRasterView(frame: .zero)
+            player.display(data: bytes, maxPixelSize: 512)
+            install(player)
         case .web(let dataURL):
             let web = AnimatedImageWebContainerView()
             web.isUserInteractionEnabled = false
             install(web)
             web.apply(dataURLString: dataURL)
-            onTap = { [weak self] in
-                if let self, ChatReaderOpenLookup.open(
-                    .imageData(data, mimeType: mimeType),
-                    from: self
-                ) {
-                    return
-                }
-                FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
-            }
         case .failure:
             let label = UILabel()
             label.text = String(localized: "Image preview unavailable")
@@ -1202,13 +1286,14 @@ private final class UserTimelineImageThumbnailView: UIView {
                 stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
                 stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             ])
-            onTap = nil
         }
-        // Path-pill containers alone own their tap, for static AND animated data.
-        isUserInteractionEnabled = allowsFullscreen && onTap != nil
-        if isUserInteractionEnabled {
-            addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
-        }
+    }
+
+    /// Path-pill containers alone own their tap, for static AND animated data.
+    private func setTap(enabled: Bool) {
+        isUserInteractionEnabled = enabled
+        guard enabled else { return }
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
     }
 
     @objc private func tapped() { onTap?() }

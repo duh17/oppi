@@ -11,6 +11,8 @@ struct ImageAttachment: Codable, Sendable, Equatable {
     let mimeType: String  // image/jpeg, image/png, etc.
     /// Stored session attachment to fetch instead of `data`.
     let attachmentId: String?
+    /// The session whose attachment store holds `attachmentId`, when the server names it.
+    let attachmentSessionId: String?
     let fileName: String?
     let sizeBytes: Int?
     /// Pixel size of the stored image, so the row reserves layout before the bytes arrive.
@@ -21,6 +23,7 @@ struct ImageAttachment: Codable, Sendable, Equatable {
         data: String,
         mimeType: String,
         attachmentId: String? = nil,
+        attachmentSessionId: String? = nil,
         fileName: String? = nil,
         sizeBytes: Int? = nil,
         width: Int? = nil,
@@ -29,6 +32,7 @@ struct ImageAttachment: Codable, Sendable, Equatable {
         self.data = data
         self.mimeType = mimeType
         self.attachmentId = attachmentId
+        self.attachmentSessionId = attachmentSessionId
         self.fileName = fileName
         self.sizeBytes = sizeBytes
         self.width = width

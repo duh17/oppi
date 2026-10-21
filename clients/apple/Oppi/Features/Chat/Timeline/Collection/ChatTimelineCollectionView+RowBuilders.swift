@@ -169,10 +169,12 @@ extension ChatTimelineController {
         // Unified native user row — handles both text-only and image messages.
         // A committed message's images are stored session attachments: fetch their bytes by
         // id, keeping the fetcher available even while workspace metadata is still resolving.
-        let attachmentFetcher: ((String) async throws -> Data)? = sessionContent.map { content in
-            { [sessionId, routeScope] attachmentId in
+        let attachmentFetcher: ((String, String?) async throws -> Data)? = sessionContent.map { content in
+            { [sessionId, routeScope] attachmentId, ownerSessionId in
+                // A reference names the session that stores its bytes (a conversation can be
+                // bound to more than one); without it, this timeline's session is the owner.
                 try await content.fetchSessionAttachment(
-                    sessionId: sessionId,
+                    sessionId: ownerSessionId ?? sessionId,
                     attachmentId: attachmentId,
                     routeScope: routeScope
                 )

@@ -267,25 +267,41 @@ enum ConversationTraceProjector {
         }
     }
 
-    /// A user message's display text and stored images. An image block arrives as a reference
+    /// A user message's display text and images. An image block arrives as a reference
     /// (`attachment`, from `storeUserMessageImages` on the server) or, when it could not be
-    /// stored, as inline `data` that stays a data URI.
+    /// stored, as inline `data` that stays a data URI. `media` lists the message's images in
+    /// content order, with a placeholder for each inline one, so the client keeps that order
+    /// when a message mixes both.
     static func userTextAndMedia(_ content: JSONValue?) -> (text: String, media: [TraceMediaAttachment]) {
         switch content {
         case .string(let text):
             return (text, [])
         case .array(let blocks):
             var parts: [String] = []
+            var stored: [Int: TraceMediaAttachment] = [:]
+            var inline: Set<Int> = []
             var media: [TraceMediaAttachment] = []
-            for part in blocks {
+            for (index, part) in blocks.enumerated() {
                 guard let block = part.objectValue else { continue }
                 if block["type"]?.stringValue == "image",
                    let record = block["attachment"]?.objectValue,
                    let attachment = storedAttachment(record) {
-                    media.append(attachment)
+                    stored[index] = attachment
                     continue
                 }
+                if block["type"]?.stringValue == "image" { inline.insert(index) }
                 if let text = textPart(block) { parts.append(text) }
+            }
+            guard !stored.isEmpty else { return (parts.joined(separator: "\n"), []) }
+            for index in blocks.indices {
+                if let attachment = stored[index] { media.append(attachment) }
+                else if inline.contains(index), let block = blocks[index].objectValue {
+                    media.append(TraceMediaAttachment(
+                        kind: "image",
+                        mimeType: block["mimeType"]?.stringValue ?? "image/png",
+                        inline: true
+                    ))
+                }
             }
             return (parts.joined(separator: "\n"), media)
         default:
@@ -318,6 +334,7 @@ enum ConversationTraceProjector {
             kind: kind,
             id: id,
             mimeType: mimeType,
+            sessionId: record["sessionId"]?.stringValue,
             fileName: record["fileName"]?.stringValue,
             sizeBytes: record["sizeBytes"]?.numberValue.map { Int($0) },
             sha256: record["sha256"]?.stringValue,

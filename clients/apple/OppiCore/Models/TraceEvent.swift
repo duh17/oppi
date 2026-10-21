@@ -159,39 +159,52 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
-/// A stored media attachment a user message references, the same shape as a tool
-/// `details.media[]` entry. Field names match the server's attachment record.
+/// One image of a user message, the same shape as a tool `details.media[]` entry. Field names
+/// match the server's attachment record.
+///
+/// An entry with an `id` is a stored attachment the client fetches. An entry without one is a
+/// placeholder for an image the server could not store and left inline in the text; it is
+/// listed only so a mixed message keeps content order.
 struct TraceMediaAttachment: Codable, Equatable, Sendable {
     let kind: String
-    let id: String
+    let id: String?
     let mimeType: String
+    /// The session that owns the stored bytes. A conversation can be bound to more than one
+    /// session; the reference names the one whose attachment store holds the image.
+    let sessionId: String?
     let fileName: String?
     let sizeBytes: Int?
     let sha256: String?
     let width: Int?
     let height: Int?
     let durationSeconds: Double?
+    /// True on a placeholder: the image is inline in the event's text, not stored.
+    let inline: Bool?
 
     init(
         kind: String,
-        id: String,
+        id: String? = nil,
         mimeType: String,
+        sessionId: String? = nil,
         fileName: String? = nil,
         sizeBytes: Int? = nil,
         sha256: String? = nil,
         width: Int? = nil,
         height: Int? = nil,
-        durationSeconds: Double? = nil
+        durationSeconds: Double? = nil,
+        inline: Bool? = nil
     ) {
         self.kind = kind
         self.id = id
         self.mimeType = mimeType
+        self.sessionId = sessionId
         self.fileName = fileName
         self.sizeBytes = sizeBytes
         self.sha256 = sha256
         self.width = width
         self.height = height
         self.durationSeconds = durationSeconds
+        self.inline = inline
     }
 }
 
