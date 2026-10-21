@@ -276,7 +276,7 @@ enum AppPreferences {
         private static let lastWorkspaceIdKey = "\(prefix).lastWorkspaceId"
         private static let defaultWorkspaceIdKey = "\(prefix).defaultWorkspaceId"
         private static let lastThinkingLevelKey = "\(prefix).lastThinkingLevel"
-        static let lastAgentIdKey = "\(prefix).lastAgentId"
+        private static let lastAgentIdKey = "\(prefix).lastAgentId"
         private static let pendingDictationCleanupKey = "\(prefix).pendingDictationCleanup"
 
         struct PendingDictationCleanup: Codable, Sendable, Equatable {
@@ -350,10 +350,9 @@ enum AppPreferences {
 
         // MARK: Agent
 
-        /// Last Quick Session Agent pick. `nil` means plain Pi; so does an
-        /// empty value, which previews use to pin plain Pi.
+        /// Last Quick Session Agent pick. `nil` means plain Pi.
         static var lastAgentId: String? {
-            UserDefaults.standard.string(forKey: lastAgentIdKey).flatMap { $0.isEmpty ? nil : $0 }
+            UserDefaults.standard.string(forKey: lastAgentIdKey)
         }
 
         static func saveAgentId(_ id: String?) {

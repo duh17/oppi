@@ -793,7 +793,10 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     // review scope go on explicitly.
 
     private func openSkill(_ name: String) {
-        guard let root = HostFactory.root(near: self) else { return }
+        guard let root = HostFactory.root(near: self) else {
+            assertionFailure("Context panel push needs appRootEnvironment")
+            return
+        }
         let cwd = model.skillCwd
         let connection = connection
         let scope = reviewCommentSelectionScope

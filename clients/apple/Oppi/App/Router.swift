@@ -218,6 +218,10 @@ enum Router {
             let navigation = RouterNavigationController(rootViewController: screen)
             if let theme = theme ?? HostFactory.root(near: presenter)?.themeStore {
                 navigation.interfaceStyle = { theme.userInterfaceStyle }
+            } else {
+                assertionFailure(
+                    "Router.present with navigation needs a theme or an app root above \(type(of: presenter))"
+                )
             }
             container = navigation
         } else if let screen = screen as? RouterModalContainer {

@@ -680,7 +680,9 @@ private struct RouterModalSitesPreview: View {
 
     init() {
         ScreenshotVolatileDefaults.applyDarkTheme(true)
-        ScreenshotVolatileDefaults.apply([AppPreferences.QuickSession.lastAgentIdKey: ""])
+        // Quick Session starts on plain Pi: a remembered Agent would load its
+        // default from the stub server, which fails.
+        UserDefaults.standard.removeObject(forKey: "\(AppIdentifiers.subsystem).quickSession.lastAgentId")
         let site = ProcessInfo.processInfo.environment["SCREENSHOT_MODAL_SITE"] ?? "quick-session"
         self.site = site
         _root = State(initialValue: AppRootEnvironment(

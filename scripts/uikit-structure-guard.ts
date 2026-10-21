@@ -162,7 +162,7 @@ for (const line of failures) console.log(line);
 console.log(`
 UIKit owns iOS app structure, modal presentation, and new views, previews and
 harnesses included. Present and push through the router (routerModal,
-ScreenNavigator present/push/finish; previews host with RouterPreviewStack or
+ScreenNavigator push/finish; previews host with RouterPreviewStack or
 RouterPreviewNavigation) and host SwiftUI only through HostFactory. See ${guide}.
 NavigationStack, NavigationSplitView, NavigationLink, .navigationDestination(,
 .sheet(, .fullScreenCover(, .popover(, .inspector(, UIHostingController(, and

@@ -268,8 +268,7 @@ final class GuidedControlComposerController: UIViewController {
             picker,
             presentation: .popover.arrowDirections(.down).keepsPopoverInCompactWidth(),
             from: self,
-            sourceView: stackedThinkingPill,
-            theme: root.themeStore
+            sourceView: stackedThinkingPill
         )
     }
 

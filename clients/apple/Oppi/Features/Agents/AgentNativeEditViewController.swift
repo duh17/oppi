@@ -877,7 +877,7 @@ final class AgentNativeEditViewController: UIViewController, UICollectionViewDel
     }
 
     /// The picker gets this editor's server explicitly.
-    private func presentModelPicker(root: AppRootEnvironment) {
+    private func presentModelPicker() {
         let draft = draft
         let picker = ModelPickerViewController(
             currentModel: draft.model.managementNilIfBlank,
@@ -888,7 +888,7 @@ final class AgentNativeEditViewController: UIViewController, UICollectionViewDel
                 AppPreferences.RecentModels.record(draft.model)
             }
         )
-        Router.present(picker, presentation: .sheet.inNavigation(), from: self, theme: root.themeStore)
+        Router.present(picker, presentation: .sheet.inNavigation(), from: self)
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
@@ -902,7 +902,7 @@ final class AgentNativeEditViewController: UIViewController, UICollectionViewDel
         let navigator = ScreenNavigator.forUIKitScreen(self, root: root)
         switch item {
         case .model:
-            presentModelPicker(root: root)
+            presentModelPicker()
         case .tools:
             AgentNativeEditPages.pushTools(draft, navigator: navigator)
         case .skills:

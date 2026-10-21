@@ -336,7 +336,7 @@ final class ScreenNavigator {
     static let unattached = ScreenNavigator(root: nil)
 
     /// The screen this navigator acts for: a hosted screen, or a UIKit
-    /// screen whose SwiftUI leaves push and present through it.
+    /// screen whose SwiftUI leaves push through it.
     fileprivate weak var controller: UIViewController?
     private let root: AppRootEnvironment?
     private var search: ScreenSearchController?
@@ -350,15 +350,14 @@ final class ScreenNavigator {
         self.root = root
     }
 
-    /// A navigator for a UIKit screen, to push and present from it: Edit
-    /// Agent's tool and skill pages, the chat Files panel's and the file
-    /// browser's pushed files, and the chat a review file opens. SwiftUI leaf
+    /// A navigator for a UIKit screen, to push from it: Edit Agent's tool and
+    /// skill pages, and the chat file browser's pushed files. SwiftUI leaf
     /// content the screen hosts gets it with
     /// `.environment(\.screenNavigator, navigator)`.
     ///
-    /// Push and present only. The leaf does not own the screen, so `finish()`
-    /// would pop the whole UIKit screen, and `routerSearchable` would install
-    /// a second search controller over the screen's own.
+    /// Push only. The leaf does not own the screen, so `finish()` would pop
+    /// the whole UIKit screen, and `routerSearchable` would install a second
+    /// search controller over the screen's own.
     static func forUIKitScreen(_ screen: UIViewController, root: AppRootEnvironment) -> ScreenNavigator {
         let navigator = ScreenNavigator(root: root)
         navigator.controller = screen
