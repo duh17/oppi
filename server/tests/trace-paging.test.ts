@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -73,6 +73,32 @@ function fixtureEntries(): unknown[] {
 }
 
 describe("trace paging", () => {
+  it("sends a user image as a stored media reference, not inline bytes", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "trace-paging-images-"));
+    tmpDir = dataDir;
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    );
+    const path = tempJsonl([
+      messageEntry("1", null, "user", [
+        { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+      ]),
+      messageEntry("2", "1", "assistant", textBlock("Got it.")),
+    ]);
+
+    const result = readSessionTracePageFromFile(path, {
+      attachmentDataDir: dataDir,
+      attachmentSessionId: "s-page",
+    });
+
+    const user = result.trace.find((event) => event.type === "user");
+    expect(user?.media).toHaveLength(1);
+    expect(user?.media?.[0]).toMatchObject({ kind: "image", width: 1, height: 1 });
+    expect(JSON.stringify(result.trace)).not.toContain("data:image/");
+    expect(existsSync(join(dataDir, "session-attachments", "s-page", "manifest.json"))).toBe(true);
+  });
+
   it("returns a latest page in chronological order without orphaning tool results", () => {
     const path = tempJsonl(fixtureEntries());
 
@@ -244,12 +270,7 @@ describe("trace paging", () => {
     });
 
     expect(around.page.staleCursor).toBe(false);
-    expect(around.trace.map((event) => event.id)).toEqual([
-      "a1-text-0",
-      "u2",
-      "tc-1",
-      "result-r1",
-    ]);
+    expect(around.trace.map((event) => event.id)).toEqual(["a1-text-0", "u2", "tc-1", "result-r1"]);
     expect(around.trace.some((event) => event.id === "a3-text-0")).toBe(false);
     expect(around.page.hasOlder).toBe(true);
     expect(around.page.olderCursor).toEqual(expect.any(String));

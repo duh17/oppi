@@ -33,7 +33,32 @@ const usage = {
 const userEntry: ConversationEntryView = {
   id: 8,
   kind: "pi.user",
-  model: [{ role: "user", content: "List the files", timestamp: 1_791_650_000_000 }],
+  model: [
+    {
+      role: "user",
+      // A user message with a photo: the server stores the image and the stream carries the
+      // reference, never the bytes (see `storeUserMessageImages`).
+      content: [
+        { type: "text", text: "List the files" },
+        {
+          type: "image",
+          mimeType: "image/png",
+          attachment: {
+            kind: "image",
+            id: "att_user_AbCdEfGhIjKl",
+            mimeType: "image/png",
+            fileName: "user-image.png",
+            sizeBytes: 68,
+            storageKey: "test-session-1/att_user_AbCdEfGhIjKl.png",
+            sha256: "6f7a3fbcdb3d8b4a2bcd6cb9f9b0c2b1a9f9bb0a2c55d3f7d3c53e6f0c1b9a7d",
+            width: 1,
+            height: 1,
+          },
+        },
+      ],
+      timestamp: 1_791_650_000_000,
+    },
+  ],
 };
 
 const toolCallEntry: ConversationEntryView = {

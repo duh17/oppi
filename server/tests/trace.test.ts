@@ -372,11 +372,9 @@ describe("parseJsonl", () => {
       "toolCall",
       "assistant",
     ]);
-    expect(events.filter((event) => event.type === "assistant").map((event) => event.text)).toEqual([
-      "First\n\n### Adjacent",
-      "After thinking",
-      "After tool",
-    ]);
+    expect(events.filter((event) => event.type === "assistant").map((event) => event.text)).toEqual(
+      ["First\n\n### Adjacent", "After thinking", "After tool"],
+    );
   });
 
   it("uses the shared adjacent-run policy across tool, thinking, media, and unknown boundaries", () => {
@@ -395,12 +393,14 @@ describe("parseJsonl", () => {
         { type: "text", text: "Tail\n\n" },
       ],
     };
-    const events = parseJsonl(JSON.stringify({
-      type: "message",
-      id: "msg-shared-runs",
-      timestamp: "2026-01-01T00:00:01Z",
-      message,
-    }));
+    const events = parseJsonl(
+      JSON.stringify({
+        type: "message",
+        id: "msg-shared-runs",
+        timestamp: "2026-01-01T00:00:01Z",
+        message,
+      }),
+    );
 
     const assistantEvents = events.filter((event) => event.type === "assistant");
     expect(assistantEvents.map((event) => event.text)).toEqual(projectAssistantTextRuns(message));
@@ -1196,6 +1196,91 @@ describe("trace media replay", () => {
 
     const attachment = await getSessionAttachment(dataDir, "session-2", blocks[0]!.id);
     expect(attachment ? await readFile(attachment.path) : null).toEqual(pngBytes);
+  });
+});
+
+describe("user message images", () => {
+  let dataDir: string;
+  // A real 1x1 PNG, so the stored record also carries its dimensions.
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const imageBlock = { type: "image", data: png.toString("base64"), mimeType: "image/png" };
+
+  function jsonlFor(content: unknown): string {
+    return JSON.stringify({
+      type: "message",
+      id: "user-1",
+      timestamp: "2026-01-01T00:00:00Z",
+      message: { role: "user", content },
+    });
+  }
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "trace-user-images-"));
+  });
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("stores a user image and sends a media reference instead of its bytes", () => {
+    const events = parseJsonl(jsonlFor([{ type: "text", text: "look at this" }, imageBlock]), {
+      attachmentDataDir: dataDir,
+      attachmentSessionId: "s-trace",
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.text).toBe("look at this");
+    expect(events[0]?.media).toHaveLength(1);
+    expect(events[0]?.media?.[0]).toMatchObject({
+      kind: "image",
+      mimeType: "image/png",
+      fileName: "user-image.png",
+      sizeBytes: png.length,
+      width: 1,
+      height: 1,
+    });
+    expect(String(events[0]?.media?.[0]?.id)).toMatch(/^att_user_/);
+    expect(JSON.stringify(events[0])).not.toContain("data:image/");
+    expect(JSON.stringify(events[0])).not.toContain(png.toString("base64"));
+  });
+
+  it("keeps a photo-only user message as one row with media and empty text", () => {
+    const events = parseJsonl(jsonlFor([imageBlock]), {
+      attachmentDataDir: dataDir,
+      attachmentSessionId: "s-trace",
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe("user");
+    expect(events[0]?.text).toBe("");
+    expect(events[0]?.media).toHaveLength(1);
+  });
+
+  it("keeps the inline data URI for an image it cannot store", () => {
+    const events = parseJsonl(
+      jsonlFor([{ type: "image", data: "not base64!", mimeType: "image/png" }]),
+      { attachmentDataDir: dataDir, attachmentSessionId: "s-trace" },
+    );
+
+    expect(events[0]?.media).toBeUndefined();
+    expect(events[0]?.text).toBe("data:image/png;base64,not base64!");
+  });
+
+  it("leaves user images inline when no attachment store is configured", () => {
+    const events = parseJsonl(jsonlFor([imageBlock]));
+
+    expect(events[0]?.media).toBeUndefined();
+    expect(events[0]?.text).toBe(`data:image/png;base64,${png.toString("base64")}`);
+  });
+
+  it("is idempotent across projections", () => {
+    const options = { attachmentDataDir: dataDir, attachmentSessionId: "s-trace" };
+    const first = parseJsonl(jsonlFor([imageBlock]), options);
+    const second = parseJsonl(jsonlFor([imageBlock]), options);
+
+    expect(second[0]?.media?.[0]?.id).toBe(first[0]?.media?.[0]?.id);
   });
 });
 

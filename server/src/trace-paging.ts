@@ -1184,7 +1184,11 @@ function estimateTraceEventCount(
 
 function estimateMessageEventCount(message: SessionEntry["message"]): number {
   if (!message) return 0;
-  if (message.role === "user") return hasTextContent(message.content) ? 1 : 0;
+  // A user message shows as one row: its text, or the images it carries (a photo-only prompt
+  // still emits a user event, with `media` when the bytes are stored).
+  if (message.role === "user") {
+    return hasTextContent(message.content) || hasMediaContent(message.content) ? 1 : 0;
+  }
   if (message.role === "toolResult") return 1;
   if (message.role !== "assistant") return 0;
   if (typeof message.content === "string") return message.content.length > 0 ? 1 : 0;
@@ -1207,6 +1211,19 @@ function hasTextContent(content: unknown): boolean {
   return content.some((block) => {
     const record = asRecord(block);
     return record ? isTextBlock(record) : false;
+  });
+}
+
+/** Image or audio blocks with bytes: the trace renders them (stored, or as a data URI). */
+function hasMediaContent(content: unknown): boolean {
+  if (!Array.isArray(content)) return false;
+  return content.some((block) => {
+    const record = asRecord(block);
+    return (
+      (record?.type === "image" || record?.type === "audio") &&
+      typeof record.data === "string" &&
+      record.data.length > 0
+    );
   });
 }
 

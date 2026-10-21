@@ -23,6 +23,7 @@ import { DurableUIClientDoc, sanitizeTranscriptCard } from "../extensions/durabl
 import { agentMessageOrigin } from "../extensions/durable/sessions/agent-message.js";
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
+import { storeUserMessageImages } from "./session-attachments.js";
 import type {
   ConversationEntryCard,
   ConversationEntryView,
@@ -186,14 +187,21 @@ const CLIENT_MESSAGE_FIELDS = new Map<string, readonly string[]>([
 
 /**
  * Content block fields clients read, by block type. Thinking and text signatures are
- * provider replay state. Block types not listed (audio) arrive whole.
+ * provider replay state. Block types not listed (audio) arrive whole. A user message's image
+ * block leaves as either its bytes or, once stored, a reference (`attachment`) to them.
  */
 const CLIENT_BLOCK_FIELDS = new Map<string, readonly string[]>([
   ["text", ["type", "text"]],
   ["thinking", ["type", "thinking"]],
   ["toolCall", ["type", "id", "name", "arguments", "partialJson"]],
-  ["image", ["type", "data", "mimeType"]],
+  ["image", ["type", "data", "mimeType", "attachment"]],
 ]);
+
+/** Where a user message's image bytes are stored: the session's attachment store. */
+export interface UserImageStoreScope {
+  dataDir: string;
+  sessionId: string;
+}
 
 function pick(source: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> {
   const picked: Record<string, unknown> = {};
@@ -201,19 +209,40 @@ function pick(source: Record<string, unknown>, fields: readonly string[]): Recor
   return picked;
 }
 
-function projectBlock(block: unknown): unknown {
+function projectBlock(block: unknown, attachment?: Record<string, unknown>): unknown {
   const record = asRecord(block);
+  if (record && attachment) {
+    // A stored user image: the client renders it from the session attachment route.
+    return {
+      type: "image",
+      ...(typeof record.mimeType === "string" ? { mimeType: record.mimeType } : {}),
+      attachment,
+    };
+  }
   const fields = typeof record?.type === "string" && CLIENT_BLOCK_FIELDS.get(record.type);
   return record && fields ? pick(record, fields) : block;
 }
 
 /** `message` with only the fields clients read (`CLIENT_MESSAGE_FIELDS`). */
-function projectMessage(message: Message): ConversationMessageView {
+function projectMessage(message: Message, images?: UserImageStoreScope): ConversationMessageView {
   const record = message as unknown as ConversationMessageView;
   const fields = CLIENT_MESSAGE_FIELDS.get(record.role);
   if (!fields) return record;
   const view = pick(record, fields) as ConversationMessageView;
-  if (Array.isArray(view.content)) view.content = view.content.map(projectBlock);
+  if (!Array.isArray(view.content)) return view;
+  // A user message's images move into the session attachment store at projection time, so
+  // the stream carries a reference and never the bytes (the model still gets them).
+  const storedByIndex =
+    record.role === "user" && images
+      ? new Map(
+          storeUserMessageImages({
+            dataDir: images.dataDir,
+            sessionId: images.sessionId,
+            content: view.content,
+          }).map((stored) => [stored.blockIndex, stored.details]),
+        )
+      : undefined;
+  view.content = view.content.map((block, index) => projectBlock(block, storedByIndex?.get(index)));
   return view;
 }
 
@@ -227,6 +256,7 @@ export function projectEntry(
   renderers: MobileRendererRegistry,
   tools: ToolPresenter,
   presentation: EntryPresentation = {},
+  images?: UserImageStoreScope,
 ): ConversationEntryView {
   const view: ConversationEntryView = { id: entry.id, kind: entry.kind };
   if (presentation.hidden) return { ...view, hidden: true };
@@ -235,7 +265,7 @@ export function projectEntry(
   if (entry.model) {
     const model: ConversationMessageView[] = [];
     for (const message of entry.model) {
-      const projected = projectMessage(message);
+      const projected = projectMessage(message, images);
       model.push(projected);
       if (message.role !== "toolResult") continue;
       // Trace history normalizes audio and strips server-private paths at the client

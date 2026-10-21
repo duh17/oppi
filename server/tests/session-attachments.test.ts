@@ -7,6 +7,9 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+
 import {
   addSessionAttachmentFile,
   getSessionAttachment,
@@ -15,6 +18,8 @@ import {
   materializeToolMediaDetails,
   sessionAttachmentDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolCall,
+  sessionAttachmentMediaDetailsForToolResult,
+  storeUserMessageImages,
   streamSessionAttachment,
 } from "../src/session-attachments.js";
 
@@ -842,6 +847,114 @@ describe("session attachments", () => {
     expect(replayed.audio.storageKey).toBeUndefined();
     expect(replayed.audio.base64).toBeUndefined();
     expect(replayed.audio.path).toBeUndefined();
+  });
+});
+
+describe("user message images", () => {
+  const png = Buffer.from("user-message-png-bytes");
+
+  function imageBlock(bytes: Buffer, mimeType = "image/png") {
+    return { type: "image", data: bytes.toString("base64"), mimeType };
+  }
+
+  function readManifestRecords(sessionId: string) {
+    const path = join(root, "session-attachments", sessionId, "manifest.json");
+    return JSON.parse(readFileSync(path, "utf8")) as {
+      attachments: Array<{ id: string; kind: string; mimeType: string; fileName: string }>;
+    };
+  }
+
+  it("stores a user message image with a deterministic id and reports its details", () => {
+    const stored = storeUserMessageImages({
+      dataDir: root,
+      sessionId: "s-user",
+      content: [{ type: "text", text: "look" }, imageBlock(png)],
+    });
+
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.blockIndex).toBe(1);
+    expect(stored[0]?.details).toMatchObject({
+      kind: "image",
+      mimeType: "image/png",
+      fileName: "user-image.png",
+      sizeBytes: png.length,
+      sha256: createHash("sha256").update(png).digest("hex"),
+    });
+    expect(String(stored[0]?.details.id)).toMatch(/^att_user_[A-Za-z0-9_-]+$/);
+
+    const manifest = readManifestRecords("s-user");
+    expect(manifest.attachments).toHaveLength(1);
+    expect(manifest.attachments[0]?.id).toBe(stored[0]?.details.id);
+    expect(
+      existsSync(join(root, "session-attachments", "s-user", `${manifest.attachments[0]?.id}.png`)),
+    ).toBe(true);
+  });
+
+  it("is idempotent: a second projection reuses the record without rewriting it", () => {
+    const first = storeUserMessageImages({
+      dataDir: root,
+      sessionId: "s-idem",
+      content: [imageBlock(png)],
+    });
+    const manifestPath = join(root, "session-attachments", "s-idem", "manifest.json");
+    const before = readFileSync(manifestPath, "utf8");
+    const second = storeUserMessageImages({
+      dataDir: root,
+      sessionId: "s-idem",
+      content: [imageBlock(png)],
+    });
+
+    expect(second).toEqual(first);
+    expect(readFileSync(manifestPath, "utf8")).toBe(before);
+    expect(readManifestRecords("s-idem").attachments).toHaveLength(1);
+  });
+
+  it("dedupes identical images in one message and stores distinct ones once", () => {
+    const other = Buffer.from("another-image");
+    const stored = storeUserMessageImages({
+      dataDir: root,
+      sessionId: "s-dedupe",
+      content: [imageBlock(png), imageBlock(other), imageBlock(png)],
+    });
+
+    expect(stored.map((entry) => entry.blockIndex)).toEqual([0, 1, 2]);
+    expect(stored[0]?.details.id).toBe(stored[2]?.details.id);
+    expect(stored[1]?.details.id).not.toBe(stored[0]?.details.id);
+    expect(readManifestRecords("s-dedupe").attachments).toHaveLength(2);
+  });
+
+  it("skips images it cannot store, leaving them for the inline fallback", () => {
+    const stored = storeUserMessageImages({
+      dataDir: root,
+      sessionId: "s-fallback",
+      maxImageBytes: 8,
+      content: [
+        { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+        { type: "image", data: "not base64!", mimeType: "image/png" },
+        { type: "image", mimeType: "image/png" },
+        { type: "image", data: Buffer.from("tiny").toString("base64"), mimeType: "image/png" },
+        { type: "text", text: "hello" },
+      ],
+    });
+
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.blockIndex).toBe(3);
+    expect(readManifestRecords("s-fallback").attachments).toHaveLength(1);
+  });
+
+  it("reports stored images of a tool result without matching user images", () => {
+    const stored = storeUserMessageImages({
+      dataDir: root,
+      sessionId: "s-scope",
+      content: [imageBlock(png)],
+    });
+    expect(sessionAttachmentMediaDetailsForToolCall(root, "s-scope", "user")).toEqual([]);
+    expect(
+      sessionAttachmentMediaDetailsForToolResult(root, "s-scope", "tool-1", [
+        { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+      ]),
+    ).toEqual([]);
+    expect(stored[0]?.details.id).toBeDefined();
   });
 });
 

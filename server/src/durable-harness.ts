@@ -62,6 +62,7 @@ import {
   type ConversationStreamMode,
   type ConversationStreamSubscription,
 } from "./durable-conversation-stream.js";
+import type { UserImageStoreScope } from "./durable-conversation-view.js";
 import { DurableModels } from "./durable-models.js";
 import { createLogger } from "./logger.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
@@ -283,6 +284,8 @@ interface TranscriptStream {
   readonly options: {
     renderers: MobileRendererRegistry;
     mode: ConversationStreamMode;
+    /** Where user-message images of the conversation's session are stored. */
+    images?: UserImageStoreScope;
     send: (frame: ConversationStreamServerMessage) => void;
     onLost: () => void;
   };
@@ -591,6 +594,8 @@ export class SessionHost {
     options: {
       renderers: MobileRendererRegistry;
       mode?: ConversationStreamMode;
+      /** Where user-message images of the conversation's session are stored. */
+      images?: UserImageStoreScope;
       afterEntryId?: number;
       send: (frame: ConversationStreamServerMessage) => void;
     },
@@ -601,6 +606,7 @@ export class SessionHost {
       const streamOptions: TranscriptStream["options"] = {
         renderers: options.renderers,
         mode: options.mode ?? "full",
+        ...(options.images ? { images: options.images } : {}),
         send: options.send,
         onLost: () => void this.reattachLostTranscript(stream),
       };
@@ -632,7 +638,13 @@ export class SessionHost {
   /** `Transcript` paging: the conversation stream's `older` frame for entries before `beforeEntryId`. */
   async olderEntries(
     id: ConversationId,
-    options: { renderers: MobileRendererRegistry; beforeEntryId: number; limit?: number },
+    options: {
+      renderers: MobileRendererRegistry;
+      /** Where user-message images of the conversation's session are stored. */
+      images?: UserImageStoreScope;
+      beforeEntryId: number;
+      limit?: number;
+    },
   ): Promise<Extract<ConversationStreamServerMessage, { type: "older" }>> {
     return this.use((harness) =>
       readOlderConversationEntries({ harness, conversationId: id, ...options }),

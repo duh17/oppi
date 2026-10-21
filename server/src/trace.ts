@@ -46,6 +46,7 @@ import { validatedNestedCalls } from "./tool-nested-calls.js";
 import {
   sessionAttachmentDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolResult,
+  storeUserMessageImages,
 } from "./session-attachments.js";
 import { projectAssistantContentRuns, projectAssistantTimelineBlocks } from "./session-protocol.js";
 
@@ -401,6 +402,12 @@ export interface TraceEvent {
   presentation?: TraceEventPresentation;
   /** For user: another agent session sent this input; `text` is its displayed text. */
   origin?: MessageOrigin;
+  /**
+   * For user: image attachments the server stores for this message. Their bytes are in
+   * `session-attachments`, not in `text`, which lists them as data URIs only when they could
+   * not be stored (`storeUserMessageImages`). Same shape as a tool `details.media[]` entry.
+   */
+  media?: Record<string, unknown>[];
 }
 
 export interface TraceEventPresentationField {
@@ -946,8 +953,24 @@ function emitMessageEvents(
   const content = msg.content;
 
   if (role === "user") {
-    const text = extractText(content);
-    if (text) {
+    // User images live in the session attachment store, so history does not carry their bytes
+    // on every delivery. An image that cannot be stored keeps its data URI in `text`.
+    const storedImages =
+      options.attachmentDataDir && options.attachmentSessionId
+        ? storeUserMessageImages({
+            dataDir: options.attachmentDataDir,
+            sessionId: options.attachmentSessionId,
+            content,
+          })
+        : [];
+    const text = extractText(
+      content,
+      storedImages.length > 0
+        ? { skipMediaBlockIndexes: new Set(storedImages.map((image) => image.blockIndex)) }
+        : {},
+    );
+    const media = storedImages.map((image) => image.details);
+    if (text || media.length > 0) {
       // Durable agent messages keep their kind and data on the projected entry.
       const agentMessage = agentMessageOrigin(entry.customType, entry.data);
       events.push({
@@ -956,6 +979,7 @@ function emitMessageEvents(
         timestamp,
         text: agentMessage ? agentMessageText(text, agentMessage) : text,
         ...(agentMessage ? { origin: agentMessage.origin } : {}),
+        ...(media.length > 0 ? { media } : {}),
       });
     }
   } else if (role === "assistant") {
@@ -1489,15 +1513,23 @@ const KNOWN_BLOCK_TYPES: ReadonlySet<string> = new Set([
   "output_audio",
 ]);
 
-function extractText(content: unknown, options: { includeMediaDataURIs?: boolean } = {}): string {
+function extractText(
+  content: unknown,
+  options: {
+    includeMediaDataURIs?: boolean;
+    /** Content block indexes whose bytes the server stores; their data URI is left out. */
+    skipMediaBlockIndexes?: ReadonlySet<number>;
+  } = {},
+): string {
   const includeMediaDataURIs = options.includeMediaDataURIs ?? true;
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
-      .map((b: Record<string, unknown>) => {
+      .map((b: Record<string, unknown>, index: number) => {
         if (isTextBlock(b)) {
           return b.text;
         }
+        if (options.skipMediaBlockIndexes?.has(index)) return null;
         // Image/audio content blocks -> data URI so iOS extractors can render them
         if (includeMediaDataURIs && b.type === "image" && b.data) {
           const mime = (b.mimeType as string) || "image/png";

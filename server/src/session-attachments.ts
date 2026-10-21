@@ -74,6 +74,16 @@ export interface MaterializeToolMediaContentOptions {
   fallbackFileName?: string;
 }
 
+/** Attachment id key for the images of a user message: no tool call names them. */
+const USER_MESSAGE_IMAGE_ID_KEY = "user";
+
+/** One image block of a user message that the store now owns. */
+export interface StoredUserMessageImage {
+  /** Index of the image block in the message content array. */
+  blockIndex: number;
+  details: Record<string, unknown>;
+}
+
 export interface AddSessionAttachmentFileOptions {
   dataDir: string;
   sessionId: string;
@@ -302,8 +312,8 @@ function attachmentSha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function formatAttachmentId(toolCallId: string | undefined, digest: string): string {
-  if (toolCallId) return `att_${toolCallId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 32)}_${digest}`;
+function formatAttachmentId(idKey: string | undefined, digest: string): string {
+  if (idKey) return `att_${idKey.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 32)}_${digest}`;
   return `att_${generateId(12)}_${digest}`;
 }
 
@@ -721,6 +731,8 @@ function storeAttachment(options: {
   dataDir: string;
   sessionId: string;
   toolCallId?: string;
+  /** Replaces `toolCallId` in the content-addressed id, for media no tool call names. */
+  idKey?: string;
   kind: SessionAttachmentKind;
   mimeType: string;
   fileName: string;
@@ -731,7 +743,7 @@ function storeAttachment(options: {
   text?: string;
 }): SessionAttachmentRecord {
   const { dataDir, sessionId, toolCallId, kind, mimeType, fileName, bytes } = options;
-  const id = attachmentIdFor(toolCallId, bytes);
+  const id = attachmentIdFor(options.idKey ?? toolCallId, bytes);
   const extension = mimeExtension(mimeType, fileName);
   const storageKey = `${sessionId}/${id}.${extension}`;
   const dir = sessionDir(dataDir, sessionId);
@@ -803,6 +815,82 @@ export function addSessionAttachmentFile(
   }
 
   return attachmentDetails(record);
+}
+
+/** Base64 bytes of an image block, or null when it cannot be stored as an attachment. */
+function imageBytesFromBlock(block: Record<string, unknown>, maxBytes: number): Buffer | null {
+  const raw = typeof block.data === "string" ? block.data.trim() : "";
+  // No bytes, or already a reference to stored bytes.
+  if (!raw || !/^[A-Za-z0-9+/]+={0,2}$/.test(raw) || raw.length % 4 === 1) return null;
+  const bytes = Buffer.from(raw, "base64");
+  if (bytes.length <= 0 || bytes.length > maxBytes) return null;
+  return bytes;
+}
+
+/**
+ * Move the image blocks of a user message into the session attachment store and return their
+ * attachment details by block index. Content-addressed and idempotent: the same image always
+ * gets the same id, and a record the manifest already holds is reused without touching its
+ * bytes or the manifest. It runs at projection time, so history from before the phone and
+ * images pasted in a terminal are covered too; the stored session log keeps its base64 for
+ * the model.
+ *
+ * Blocks it cannot store (no base64, a bad decode, an empty or oversized image, a write
+ * failure) are left out, so the caller keeps them inline exactly as before.
+ */
+export function storeUserMessageImages(options: {
+  dataDir: string;
+  sessionId: string;
+  content: unknown;
+  /** Cap for one image; defaults to the store's own `MAX_SESSION_ATTACHMENT_BYTES`. */
+  maxImageBytes?: number;
+}): StoredUserMessageImage[] {
+  if (!Array.isArray(options.content)) return [];
+  const maxBytes = Math.min(
+    options.maxImageBytes ?? MAX_SESSION_ATTACHMENT_BYTES,
+    MAX_SESSION_ATTACHMENT_BYTES,
+  );
+  const candidates: Array<{ blockIndex: number; bytes: Buffer; mimeType: string }> = [];
+  for (const [blockIndex, value] of options.content.entries()) {
+    const block = asRecord(value);
+    if (!block || block.type !== "image") continue;
+    const bytes = imageBytesFromBlock(block, maxBytes);
+    if (!bytes) continue;
+    candidates.push({ blockIndex, bytes, mimeType: normalizeImageMimeType(block.mimeType) });
+  }
+  if (candidates.length === 0) return [];
+
+  // Read the manifest once, and only when there is an image to store.
+  let byId: Map<string, SessionAttachmentRecord> | undefined;
+  const stored: StoredUserMessageImage[] = [];
+  for (const candidate of candidates) {
+    const id = attachmentIdFor(USER_MESSAGE_IMAGE_ID_KEY, candidate.bytes);
+    byId ??= new Map(
+      readManifest(options.dataDir, options.sessionId).attachments.map((record) => [
+        record.id,
+        record,
+      ]),
+    );
+    let record = byId.get(id);
+    if (!record) {
+      try {
+        record = storeAttachment({
+          dataDir: options.dataDir,
+          sessionId: options.sessionId,
+          idKey: USER_MESSAGE_IMAGE_ID_KEY,
+          kind: "image",
+          mimeType: candidate.mimeType,
+          fileName: safeFileName("user-image", candidate.mimeType, "image"),
+          bytes: candidate.bytes,
+        });
+      } catch {
+        continue;
+      }
+      byId.set(id, record);
+    }
+    stored.push({ blockIndex: candidate.blockIndex, details: attachmentDetails(record) });
+  }
+  return stored;
 }
 
 export function materializeToolAudioDetails(options: MaterializeToolAudioOptions): unknown {

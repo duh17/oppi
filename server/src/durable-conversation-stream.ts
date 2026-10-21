@@ -43,6 +43,7 @@ import {
   toolCallsOf,
   type DocPresenter,
   type ToolPresenter,
+  type UserImageStoreScope,
 } from "./durable-conversation-view.js";
 import { isAbortedAttempt, isRecoveredPartial } from "./durable-history.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
@@ -148,6 +149,8 @@ class ConversationRoom implements DocPresenter {
     private readonly harness: Harness,
     readonly conversationId: ConversationId,
     private readonly renderers: MobileRendererRegistry,
+    /** Where user-message images of this conversation's session are stored. */
+    private readonly images?: UserImageStoreScope,
   ) {
     // Subscribe before reading so no commit falls between the read and the listener.
     this.detach.push(harness.subscribeCommits((publication) => this.publish(publication)));
@@ -449,10 +452,16 @@ class ConversationRoom implements DocPresenter {
   entryView(entry: EntryRecord): ConversationEntryView {
     let view = this.entryViews.get(entry.id);
     if (!view) {
-      view = projectEntry(entry, this.renderers, this, {
-        inputCard: this.inputCards.get(entry.id),
-        hidden: this.hidden.has(entry.id),
-      });
+      view = projectEntry(
+        entry,
+        this.renderers,
+        this,
+        {
+          inputCard: this.inputCards.get(entry.id),
+          hidden: this.hidden.has(entry.id),
+        },
+        this.images,
+      );
       this.entryViews.set(entry.id, view);
     }
     return view;
@@ -737,6 +746,7 @@ async function roomFor(
   harness: Harness,
   conversationId: ConversationId,
   renderers: MobileRendererRegistry,
+  images?: UserImageStoreScope,
 ): Promise<ConversationRoom> {
   let rooms = ROOMS.get(harness);
   if (!rooms) {
@@ -745,7 +755,7 @@ async function roomFor(
   }
   let room = rooms.get(conversationId);
   if (!room) {
-    room = new ConversationRoom(harness, conversationId, renderers);
+    room = new ConversationRoom(harness, conversationId, renderers, images);
     rooms.set(conversationId, room);
   }
   await room.ready;
@@ -761,6 +771,8 @@ export async function attachConversationStream(options: {
   harness: Harness;
   conversationId: ConversationId;
   renderers: MobileRendererRegistry;
+  /** Where user-message images of the conversation's session are stored. */
+  images?: UserImageStoreScope;
   /** Default `full`. */
   mode?: ConversationStreamMode;
   /** `full` mode's resume cursor. */
@@ -770,7 +782,12 @@ export async function attachConversationStream(options: {
   onLost?: () => void;
 }): Promise<ConversationStreamSubscription> {
   for (;;) {
-    const room = await roomFor(options.harness, options.conversationId, options.renderers);
+    const room = await roomFor(
+      options.harness,
+      options.conversationId,
+      options.renderers,
+      options.images,
+    );
     // The first frame shows decided presentation only.
     await room.settled();
     // The last subscriber may have left this loaded room while we waited for it. It removed
@@ -828,6 +845,8 @@ export async function readOlderConversationEntries(options: {
   harness: Harness;
   conversationId: ConversationId;
   renderers: MobileRendererRegistry;
+  /** Where user-message images of the conversation's session are stored. */
+  images?: UserImageStoreScope;
   beforeEntryId: number;
   limit?: number;
 }): Promise<OlderFrame> {
@@ -880,7 +899,13 @@ export async function readOlderConversationEntries(options: {
     type: "older",
     conversationId,
     entries: page.map((entry) =>
-      projectEntry(entry, renderers, tools, { inputCard: cards.get(entry.id as EntryId) }),
+      projectEntry(
+        entry,
+        renderers,
+        tools,
+        { inputCard: cards.get(entry.id as EntryId) },
+        options.images,
+      ),
     ),
     hasOlder: shown.length > limit || cursor !== undefined,
   };

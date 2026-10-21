@@ -26,7 +26,7 @@
             "edit",
             "bash"
           ],
-          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-rxPC3P"
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-h0ZxOP"
         },
         "pi.usage": {
           "models": {},
@@ -45,7 +45,7 @@
             {
               "role": "user",
               "content": "List the files",
-              "timestamp": 1792463688455
+              "timestamp": 1792616221293
             }
           ]
         },
@@ -55,7 +55,7 @@
           "model": [
             {
               "role": "system",
-              "timestamp": 1792463688458
+              "timestamp": 1792616221296
             }
           ]
         }
@@ -109,7 +109,7 @@
                   "text": ""
                 }
               ],
-              "api": "faux:1792463688434:wibm94gonuq",
+              "api": "faux:1792616221271:p0ow652a7ti",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -127,7 +127,7 @@
                 }
               },
               "stopReason": "pending",
-              "timestamp": 1792463688455
+              "timestamp": 1792616221293
             }
           ]
         ]
@@ -161,7 +161,7 @@
                   }
                 }
               ],
-              "timestamp": 1792463688455,
+              "timestamp": 1792616221293,
               "stopReason": "toolUse"
             }
           ],
@@ -211,7 +211,7 @@
                   "text": "README.md\nsrc\n"
                 }
               ],
-              "timestamp": 1792463688678,
+              "timestamp": 1792616221533,
               "toolCallId": "call-list",
               "toolName": "bash",
               "isError": false
@@ -278,7 +278,7 @@
                   "text": "There are two entries: README.md and src."
                 }
               ],
-              "timestamp": 1792463688455,
+              "timestamp": 1792616221293,
               "stopReason": "stop"
             }
           ]
@@ -365,11 +365,21 @@
                 },
                 {
                   "type": "image",
-                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-                  "mimeType": "image/png"
+                  "mimeType": "image/png",
+                  "attachment": {
+                    "kind": "image",
+                    "id": "att_user_QxztaRaiohoVbjhw",
+                    "mimeType": "image/png",
+                    "fileName": "user-image.png",
+                    "sizeBytes": 68,
+                    "storageKey": "golden-session/att_user_QxztaRaiohoVbjhw.png",
+                    "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                    "width": 1,
+                    "height": 1
+                  }
                 }
               ],
-              "timestamp": 1792463689081
+              "timestamp": 1792616221944
             }
           ]
         }
@@ -420,7 +430,7 @@
                   }
                 }
               ],
-              "timestamp": 1792463688455,
+              "timestamp": 1792616221293,
               "stopReason": "toolUse"
             }
           ],
@@ -480,7 +490,7 @@
                   "text": "<harness>\n[error] Command exited with code 3\n</harness>"
                 }
               ],
-              "timestamp": 1792463689167,
+              "timestamp": 1792616222044,
               "toolCallId": "call-fail",
               "toolName": "bash",
               "isError": true
@@ -564,7 +574,7 @@
                   "text": "The command failed with exit code 3."
                 }
               ],
-              "timestamp": 1792463688455,
+              "timestamp": 1792616221293,
               "stopReason": "stop"
             }
           ]
@@ -731,7 +741,7 @@
                   "text": "Thanks for the job report."
                 }
               ],
-              "timestamp": 1792463688455,
+              "timestamp": 1792616221293,
               "stopReason": "stop"
             }
           ]
@@ -812,7 +822,7 @@
             {
               "role": "user",
               "content": "[Report from session Child]\n\nChild finished: 3 files changed.",
-              "timestamp": 1792463690221
+              "timestamp": 1792616223117
             }
           ],
           "origin": {
@@ -866,7 +876,7 @@
                   "text": "Noted the child's report."
                 }
               ],
-              "timestamp": 1792463688455,
+              "timestamp": 1792616221293,
               "stopReason": "stop"
             }
           ]
@@ -976,7 +986,7 @@
                   "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nSummary of the work so far: listed files, ran a failing command.\n</summary>"
                 }
               ],
-              "timestamp": 1792463690728
+              "timestamp": 1792616223639
             }
           ]
         },
@@ -987,7 +997,7 @@
             {
               "role": "user",
               "content": "[Report from session Child]\n\nChild finished: 3 files changed.",
-              "timestamp": 1792463690221
+              "timestamp": 1792616223117
             }
           ],
           "origin": {
@@ -1010,7 +1020,7 @@
                   "text": "Noted the child's report."
                 }
               ],
-              "timestamp": 1792463688455,
+              "timestamp": 1792616221293,
               "stopReason": "stop"
             }
           ]
@@ -1033,7 +1043,7 @@
             "edit",
             "bash"
           ],
-          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-rxPC3P"
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-h0ZxOP"
         },
         "pi.usage": {
           "models": {
@@ -1067,7 +1077,7 @@
             {
               "role": "user",
               "content": "Explain it at length",
-              "timestamp": 1792463691030
+              "timestamp": 1792616223944
             }
           ]
         },
@@ -1077,7 +1087,7 @@
           "model": [
             {
               "role": "system",
-              "timestamp": 1792463691031
+              "timestamp": 1792616223947
             }
           ]
         }
@@ -1127,7 +1137,7 @@
                   "text": "partial0 partial1 partial2 parti"
                 }
               ],
-              "api": "faux:1792463688434:wibm94gonuq",
+              "api": "faux:1792616221271:p0ow652a7ti",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -1145,7 +1155,7 @@
                 }
               },
               "stopReason": "pending",
-              "timestamp": 1792463688455
+              "timestamp": 1792616221293
             }
           ]
         ]
@@ -1176,7 +1186,7 @@
                       "text": "partial0 partial1 partial2 parti"
                     }
                   ],
-                  "api": "faux:1792463688434:wibm94gonuq",
+                  "api": "faux:1792616221271:p0ow652a7ti",
                   "provider": "faux",
                   "model": "faux-1",
                   "usage": {
@@ -1194,7 +1204,7 @@
                     }
                   },
                   "stopReason": "pending",
-                  "timestamp": 1792463688455
+                  "timestamp": 1792616221293
                 }
               }
             }
@@ -1223,7 +1233,7 @@
                 "edit",
                 "bash"
               ],
-              "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-rxPC3P"
+              "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-h0ZxOP"
             }
           ]
         ],
@@ -1270,7 +1280,7 @@
                   "text": "A complete answer after the restart."
                 }
               ],
-              "timestamp": 1792463691169,
+              "timestamp": 1792616224096,
               "stopReason": "stop"
             }
           ]
@@ -1351,7 +1361,7 @@
             {
               "role": "user",
               "content": "List the files",
-              "timestamp": 1792463688455
+              "timestamp": 1792616221293
             }
           ]
         },
@@ -1361,7 +1371,7 @@
           "model": [
             {
               "role": "system",
-              "timestamp": 1792463688458
+              "timestamp": 1792616221296
             }
           ]
         },
@@ -1389,7 +1399,7 @@
                   }
                 }
               ],
-              "timestamp": 1792463688455,
+              "timestamp": 1792616221293,
               "stopReason": "toolUse"
             }
           ],
@@ -1439,7 +1449,7 @@
                   "text": "README.md\nsrc\n"
                 }
               ],
-              "timestamp": 1792463688678,
+              "timestamp": 1792616221533,
               "toolCallId": "call-list",
               "toolName": "bash",
               "isError": false
@@ -1458,7 +1468,7 @@
                   "text": "There are two entries: README.md and src."
                 }
               ],
-              "timestamp": 1792463688455,
+              "timestamp": 1792616221293,
               "stopReason": "stop"
             }
           ]
@@ -1476,11 +1486,21 @@
                 },
                 {
                   "type": "image",
-                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-                  "mimeType": "image/png"
+                  "mimeType": "image/png",
+                  "attachment": {
+                    "kind": "image",
+                    "id": "att_user_QxztaRaiohoVbjhw",
+                    "mimeType": "image/png",
+                    "fileName": "user-image.png",
+                    "sizeBytes": 68,
+                    "storageKey": "golden-session/att_user_QxztaRaiohoVbjhw.png",
+                    "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                    "width": 1,
+                    "height": 1
+                  }
                 }
               ],
-              "timestamp": 1792463689081
+              "timestamp": 1792616221944
             }
           ]
         },
@@ -1500,7 +1520,7 @@
                   }
                 }
               ],
-              "timestamp": 1792463688455,
+              "timestamp": 1792616221293,
               "stopReason": "toolUse"
             }
           ],
@@ -1560,7 +1580,7 @@
                   "text": "<harness>\n[error] Command exited with code 3\n</harness>"
                 }
               ],
-              "timestamp": 1792463689167,
+              "timestamp": 1792616222044,
               "toolCallId": "call-fail",
               "toolName": "bash",
               "isError": true
@@ -1579,7 +1599,7 @@
                   "text": "The command failed with exit code 3."
                 }
               ],
-              "timestamp": 1792463688455,
+              "timestamp": 1792616221293,
               "stopReason": "stop"
             }
           ]
@@ -1640,7 +1660,7 @@
                   "text": "Thanks for the job report."
                 }
               ],
-              "timestamp": 1792463688455,
+              "timestamp": 1792616221293,
               "stopReason": "stop"
             }
           ]
@@ -1653,19 +1673,19 @@
     {
       "id": "8",
       "type": "user",
-      "timestamp": "2026-10-20T02:34:48.455Z",
+      "timestamp": "2026-10-21T20:57:01.293Z",
       "text": "List the files"
     },
     {
       "id": "12-think-0",
       "type": "thinking",
-      "timestamp": "2026-10-20T02:34:48.455Z",
+      "timestamp": "2026-10-21T20:57:01.293Z",
       "thinking": "The user wants a file listing."
     },
     {
       "id": "12-text-1",
       "type": "assistant",
-      "timestamp": "2026-10-20T02:34:48.455Z",
+      "timestamp": "2026-10-21T20:57:01.293Z",
       "text": "Listing the files.",
       "contentIndex": 1,
       "runOrdinal": 0
@@ -1673,7 +1693,7 @@
     {
       "id": "call-list",
       "type": "toolCall",
-      "timestamp": "2026-10-20T02:34:48.455Z",
+      "timestamp": "2026-10-21T20:57:01.293Z",
       "tool": "bash",
       "args": {
         "command": "printf 'README.md\\nsrc\\n'"
@@ -1703,7 +1723,7 @@
     {
       "id": "result-14",
       "type": "toolResult",
-      "timestamp": "2026-10-20T02:34:48.678Z",
+      "timestamp": "2026-10-21T20:57:01.533Z",
       "toolCallId": "call-list",
       "toolName": "bash",
       "output": "README.md\nsrc\n",
@@ -1718,7 +1738,7 @@
     {
       "id": "16-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-20T02:34:48.455Z",
+      "timestamp": "2026-10-21T20:57:01.293Z",
       "text": "There are two entries: README.md and src.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -1726,13 +1746,26 @@
     {
       "id": "17",
       "type": "user",
-      "timestamp": "2026-10-20T02:34:49.081Z",
-      "text": "Run the failing command for this image\ndata:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+      "timestamp": "2026-10-21T20:57:01.944Z",
+      "text": "Run the failing command for this image",
+      "media": [
+        {
+          "kind": "image",
+          "id": "att_user_QxztaRaiohoVbjhw",
+          "mimeType": "image/png",
+          "fileName": "user-image.png",
+          "sizeBytes": 68,
+          "storageKey": "golden-session/att_user_QxztaRaiohoVbjhw.png",
+          "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+          "width": 1,
+          "height": 1
+        }
+      ]
     },
     {
       "id": "call-fail",
       "type": "toolCall",
-      "timestamp": "2026-10-20T02:34:48.455Z",
+      "timestamp": "2026-10-21T20:57:01.293Z",
       "tool": "bash",
       "args": {
         "command": "echo boom >&2; exit 3"
@@ -1762,7 +1795,7 @@
     {
       "id": "result-22",
       "type": "toolResult",
-      "timestamp": "2026-10-20T02:34:49.167Z",
+      "timestamp": "2026-10-21T20:57:02.044Z",
       "toolCallId": "call-fail",
       "toolName": "bash",
       "output": "boom\n\n<harness>\n[error] Command exited with code 3\n</harness>",
@@ -1783,7 +1816,7 @@
     {
       "id": "24-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-20T02:34:48.455Z",
+      "timestamp": "2026-10-21T20:57:01.293Z",
       "text": "The command failed with exit code 3.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -1835,7 +1868,7 @@
     {
       "id": "30-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-20T02:34:48.455Z",
+      "timestamp": "2026-10-21T20:57:01.293Z",
       "text": "Thanks for the job report.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -1843,7 +1876,7 @@
     {
       "id": "31",
       "type": "user",
-      "timestamp": "2026-10-20T02:34:50.221Z",
+      "timestamp": "2026-10-21T20:57:03.117Z",
       "text": "Child finished: 3 files changed.",
       "origin": {
         "kind": "session",
@@ -1855,7 +1888,7 @@
     {
       "id": "34-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-20T02:34:48.455Z",
+      "timestamp": "2026-10-21T20:57:01.293Z",
       "text": "Noted the child's report.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -1863,19 +1896,19 @@
     {
       "id": "36",
       "type": "compaction",
-      "timestamp": "2026-10-20T02:34:50.728Z",
+      "timestamp": "2026-10-21T20:57:03.639Z",
       "text": "Context compacted: Summary of the work so far: listed files, ran a failing command."
     },
     {
       "id": "38",
       "type": "user",
-      "timestamp": "2026-10-20T02:34:51.030Z",
+      "timestamp": "2026-10-21T20:57:03.944Z",
       "text": "Explain it at length"
     },
     {
       "id": "43-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-20T02:34:51.169Z",
+      "timestamp": "2026-10-21T20:57:04.096Z",
       "text": "A complete answer after the restart.",
       "contentIndex": 0,
       "runOrdinal": 0
