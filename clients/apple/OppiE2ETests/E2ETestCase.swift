@@ -83,6 +83,22 @@ class E2ETestCase: XCTestCase {
     /// Override to add launch environment or arguments before the app starts.
     func configureE2ELaunch(_ application: XCUIApplication) {}
 
+    /// Keeps the shared app's auto-open hints in step with the current case.
+    private func configureSharedLaunchHints() {
+        guard let shared = Self._app else { return }
+        if !e2eLaunchesWorkspaceHomeOnly && !e2eLaunchesSessionsInboxOnly {
+            shared.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = e2eAutoOpenWorkspaceName
+            if e2eAutoCreatesSessionOnLaunch {
+                shared.launchEnvironment["OPPI_E2E_AUTO_CREATE_SESSION"] = "1"
+            } else {
+                shared.launchEnvironment.removeValue(forKey: "OPPI_E2E_AUTO_CREATE_SESSION")
+            }
+        } else {
+            shared.launchEnvironment.removeValue(forKey: "OPPI_E2E_AUTO_OPEN_WORKSPACE")
+            shared.launchEnvironment.removeValue(forKey: "OPPI_E2E_AUTO_CREATE_SESSION")
+        }
+    }
+
     /// Override in labs that need server-side fixtures before the app refreshes.
     func seedE2EFixtures() throws {}
 
@@ -93,6 +109,10 @@ class E2ETestCase: XCTestCase {
         continueAfterFailure = false
         resetDeviceOrientation()
         try seedE2EFixtures()
+        // The app (and its launch environment) is shared across classes, so a
+        // case that relaunches it must not inherit another class's auto-open
+        // hints.
+        configureSharedLaunchHints()
 
         if e2eRequiresFreshLaunch {
             Self._app?.terminate()
@@ -181,6 +201,12 @@ class E2ETestCase: XCTestCase {
             if e2eAutoCreatesSessionOnLaunch {
                 application.launchEnvironment["OPPI_E2E_AUTO_CREATE_SESSION"] = "1"
             }
+        } else {
+            // The app is shared across classes, so a launch hint from an earlier
+            // class would otherwise auto-open a workspace on this class's
+            // relaunches too.
+            application.launchEnvironment.removeValue(forKey: "OPPI_E2E_AUTO_OPEN_WORKSPACE")
+            application.launchEnvironment.removeValue(forKey: "OPPI_E2E_AUTO_CREATE_SESSION")
         }
         configureE2ELaunch(application)
         application.launch()
