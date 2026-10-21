@@ -191,14 +191,6 @@ export const CHAT_METRIC_REGISTRY = {
     unit: "count",
     description: "Stable per-session cumulative unique changed file count snapshot.",
   },
-  "chat.session_added_lines": {
-    unit: "count",
-    description: "Stable per-session cumulative added line count snapshot.",
-  },
-  "chat.session_removed_lines": {
-    unit: "count",
-    description: "Stable per-session cumulative removed line count snapshot.",
-  },
   "chat.session_context_tokens": {
     unit: "count",
     description: "Stable session context token usage snapshot.",

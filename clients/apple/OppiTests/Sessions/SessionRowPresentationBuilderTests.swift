@@ -16,9 +16,7 @@ struct SessionRowPresentationBuilderTests {
             mutatingToolCalls: filesChanged,
             compactionCount: compactions,
             filesChanged: filesChanged,
-            changedFiles: (0..<filesChanged).map { "file-\($0).swift" },
-            addedLines: 0,
-            removedLines: 0
+            changedFiles: (0..<filesChanged).map { "file-\($0).swift" }
         )
         return Session(
             id: id,

@@ -169,22 +169,6 @@ describe("telemetry module", () => {
               tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
             },
             {
-              ts: generatedAt + 30,
-              metric: "chat.session_added_lines",
-              value: 48,
-              unit: "count",
-              sessionId: "session-1",
-              tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
-            },
-            {
-              ts: generatedAt + 31,
-              metric: "chat.session_removed_lines",
-              value: 13,
-              unit: "count",
-              sessionId: "session-1",
-              tags: { provider: "anthropic", model: "claude-sonnet-4-5" },
-            },
-            {
               ts: generatedAt + 32,
               metric: "chat.session_context_tokens",
               value: 3_200,
@@ -223,7 +207,7 @@ describe("telemetry module", () => {
         samples: Array<{ metric: string; value: number }>;
       };
       expect(record.appVersion).toBe("1.0.0");
-      expect(record.sampleCount).toBe(13);
+      expect(record.sampleCount).toBe(11);
       expect(record.samples[0]?.metric).toBe("chat.ttft_ms");
       expect(record.samples[2]?.metric).toBe("chat.fresh_content_lag_ms");
       expect(record.samples[3]?.metric).toBe("chat.queue_sync_ms");
@@ -232,10 +216,8 @@ describe("telemetry module", () => {
       expect(record.samples[6]?.metric).toBe("chat.session_output_tokens");
       expect(record.samples[7]?.metric).toBe("chat.session_mutating_tool_calls");
       expect(record.samples[8]?.metric).toBe("chat.session_files_changed");
-      expect(record.samples[9]?.metric).toBe("chat.session_added_lines");
-      expect(record.samples[10]?.metric).toBe("chat.session_removed_lines");
-      expect(record.samples[11]?.metric).toBe("chat.session_context_tokens");
-      expect(record.samples[12]?.metric).toBe("chat.session_context_window");
+      expect(record.samples[9]?.metric).toBe("chat.session_context_tokens");
+      expect(record.samples[10]?.metric).toBe("chat.session_context_window");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

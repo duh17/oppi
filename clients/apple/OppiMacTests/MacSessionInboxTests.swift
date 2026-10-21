@@ -271,9 +271,7 @@ struct MacSessionInboxRowChromeTests {
             mutatingToolCalls: 4,
             compactionCount: 2,
             filesChanged: 4,
-            changedFiles: ["a.swift", "b.swift", "c.swift", "d.swift"],
-            addedLines: 10,
-            removedLines: 2
+            changedFiles: ["a.swift", "b.swift", "c.swift", "d.swift"]
         )
         let presentation = SessionRowPresentationBuilder.make(
             session: session,
@@ -425,9 +423,7 @@ struct MacSessionInboxRowHierarchyTests {
             mutatingToolCalls: 4,
             compactionCount: 2,
             filesChanged: 4,
-            changedFiles: ["a.swift", "b.swift", "c.swift", "d.swift"],
-            addedLines: 10,
-            removedLines: 2
+            changedFiles: ["a.swift", "b.swift", "c.swift", "d.swift"]
         )
         let presentation = SessionRowPresentationBuilder.make(
             session: session,
@@ -657,9 +653,7 @@ struct MacSessionInboxRowPresentationTests {
             mutatingToolCalls: 4,
             compactionCount: 2,
             filesChanged: 4,
-            changedFiles: ["a.swift", "b.swift", "c.swift", "d.swift"],
-            addedLines: 10,
-            removedLines: 2
+            changedFiles: ["a.swift", "b.swift", "c.swift", "d.swift"]
         )
 
         var busy = makeSession(id: "busy", status: .busy)

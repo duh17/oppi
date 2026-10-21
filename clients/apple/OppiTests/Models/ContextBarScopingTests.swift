@@ -191,41 +191,6 @@ struct ContextBarScopingTests {
         #expect(display.isEmpty)
     }
 
-    // MARK: - Cross-session overlap
-
-    @Test func sharedFilePathsMarksOnlyDisplayedFilesTouchedByOtherSession() {
-        let displayFiles = [
-            makeFile("a.swift", added: 1, removed: 0),
-            makeFile("b.swift", added: 1, removed: 0),
-        ]
-        let current = makeSession(id: "current", status: .ready, workspaceId: "w1", changedFiles: ["/project/a.swift", "/project/b.swift"])
-        let other = makeSession(id: "other", status: .ready, workspaceId: "w1", changedFiles: ["/project/b.swift", "/project/c.swift"])
-
-        let shared = ContextBarCrossSessionEdits.sharedFilePaths(
-            displayFiles: displayFiles,
-            currentSessionId: current.id,
-            workspaceId: "w1",
-            sessions: [current, other]
-        )
-
-        #expect(shared == ["b.swift"])
-    }
-
-    @Test func sharedFilePathsIgnoresOtherWorkspaces() {
-        let displayFiles = [makeFile("b.swift", added: 1, removed: 0)]
-        let current = makeSession(id: "current", status: .ready, workspaceId: "w1", changedFiles: ["/project/b.swift"])
-        let other = makeSession(id: "other", status: .ready, workspaceId: "w2", changedFiles: ["/project/b.swift"])
-
-        let shared = ContextBarCrossSessionEdits.sharedFilePaths(
-            displayFiles: displayFiles,
-            currentSessionId: current.id,
-            workspaceId: "w1",
-            sessions: [current, other]
-        )
-
-        #expect(shared.isEmpty)
-    }
-
     // MARK: - Quick action routing
 
     @Test func quickActionTapInSessionUsesCurrentSessionByDefault() {
@@ -331,35 +296,6 @@ struct ContextBarScopingTests {
             addedLines: 0, removedLines: 0,
             stashCount: 0, lastCommitMessage: nil, lastCommitDate: nil, recentCommits: []
         )
-    }
-
-    private func makeSession(
-        id: String,
-        status: SessionStatus,
-        workspaceId: String? = nil,
-        changedFiles: [String] = []
-    ) -> Session {
-        var session = Session(
-            id: id,
-            status: status,
-            createdAt: Date(),
-            lastActivity: Date(),
-            messageCount: 0,
-            tokens: TokenUsage(input: 0, output: 0),
-            cost: 0
-        )
-        session.workspaceId = workspaceId
-        if !changedFiles.isEmpty {
-            session.changeStats = SessionChangeStats(
-                mutatingToolCalls: changedFiles.count,
-                filesChanged: changedFiles.count,
-                changedFiles: changedFiles,
-                changedFilesOverflow: nil,
-                addedLines: 0,
-                removedLines: 0
-            )
-        }
-        return session
     }
 
     private func makeScope(sessionFiles: [GitFileStatus]) -> SessionScopedGitStatus {

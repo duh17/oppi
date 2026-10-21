@@ -883,8 +883,6 @@ describe("workspaces module", () => {
           mutatingToolCalls: 1,
           filesChanged: 1,
           changedFiles: ["review.swift"],
-          addedLines: 1,
-          removedLines: 1,
         },
       });
       const ctx = {

@@ -80,8 +80,6 @@ enum ChatMetricName: String, Codable, Sendable {
     case sessionOutputTokens = "chat.session_output_tokens"
     case sessionMutatingToolCalls = "chat.session_mutating_tool_calls"
     case sessionFilesChanged = "chat.session_files_changed"
-    case sessionAddedLines = "chat.session_added_lines"
-    case sessionRemovedLines = "chat.session_removed_lines"
     case sessionContextTokens = "chat.session_context_tokens"
     case sessionContextWindow = "chat.session_context_window"
     case voicePrewarmMs = "chat.voice_prewarm_ms"

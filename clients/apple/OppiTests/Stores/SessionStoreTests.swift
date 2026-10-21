@@ -436,9 +436,7 @@ struct SessionStorePartitioningTests {
             mutatingToolCalls: 1,
             filesChanged: 1,
             changedFiles: [absoluteSourcePath],
-            changedFilesOverflow: nil,
-            addedLines: 8,
-            removedLines: 2
+            changedFilesOverflow: nil
         )
         store.upsert(fullState)
 
@@ -452,9 +450,7 @@ struct SessionStorePartitioningTests {
             mutatingToolCalls: 1,
             filesChanged: 1,
             changedFiles: [],
-            changedFilesOverflow: 1,
-            addedLines: 8,
-            removedLines: 2
+            changedFilesOverflow: 1
         )
 
         #expect(store.applySummary(filteredSummary))
@@ -469,9 +465,7 @@ struct SessionStorePartitioningTests {
             mutatingToolCalls: 2,
             filesChanged: 2,
             changedFiles: ["server/src/session-events.ts", "README.md"],
-            changedFilesOverflow: nil,
-            addedLines: 12,
-            removedLines: 3
+            changedFilesOverflow: nil
         )
         #expect(store.applySummary(usefulSummary))
         #expect(store.session(id: "s1")?.changeStats?.changedFiles == ["server/src/session-events.ts", "README.md"])
@@ -495,9 +489,7 @@ struct SessionStorePartitioningTests {
             mutatingToolCalls: 3,
             filesChanged: 2,
             changedFiles: [absoluteSourcePath, absoluteReadmePath],
-            changedFilesOverflow: nil,
-            addedLines: 14,
-            removedLines: 4
+            changedFilesOverflow: nil
         )
         #expect(store.upsert(fullStateUpdate))
 
@@ -536,7 +528,7 @@ struct SessionStorePartitioningTests {
         ))
     }
 
-    @Test func staleSummaryPreservesExistingLineStatistics() {
+    @Test func staleSummaryPreservesExistingChangeStats() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
 
@@ -548,11 +540,9 @@ struct SessionStorePartitioningTests {
         )
         fullState.changeStats = SessionChangeStats(
             mutatingToolCalls: 3,
-            filesChanged: 1,
-            changedFiles: ["src/App.swift"],
-            changedFilesOverflow: nil,
-            addedLines: 30,
-            removedLines: 12
+            filesChanged: 2,
+            changedFiles: ["src/App.swift", "README.md"],
+            changedFilesOverflow: nil
         )
         store.upsert(fullState)
 
@@ -566,15 +556,13 @@ struct SessionStorePartitioningTests {
             mutatingToolCalls: 2,
             filesChanged: 1,
             changedFiles: ["src/App.swift"],
-            changedFilesOverflow: nil,
-            addedLines: 1,
-            removedLines: 99
+            changedFilesOverflow: nil
         )
 
         #expect(store.applySummary(staleSummary))
         #expect(store.session(id: "s1")?.changeStats?.mutatingToolCalls == 3)
-        #expect(store.session(id: "s1")?.changeStats?.addedLines == 30)
-        #expect(store.session(id: "s1")?.changeStats?.removedLines == 12)
+        #expect(store.session(id: "s1")?.changeStats?.changedFiles == ["src/App.swift", "README.md"])
+        #expect(store.session(id: "s1")?.changeStats?.filesChanged == 2)
     }
 
     @Test func lossySummaryPreservesDistinctFullStatePaths() {
@@ -592,9 +580,7 @@ struct SessionStorePartitioningTests {
             mutatingToolCalls: 2,
             filesChanged: distinctPaths.count,
             changedFiles: distinctPaths,
-            changedFilesOverflow: nil,
-            addedLines: 4,
-            removedLines: 1
+            changedFilesOverflow: nil
         )
         store.upsert(fullState)
 
@@ -608,9 +594,7 @@ struct SessionStorePartitioningTests {
             mutatingToolCalls: 2,
             filesChanged: distinctPaths.count,
             changedFiles: [],
-            changedFilesOverflow: distinctPaths.count,
-            addedLines: 4,
-            removedLines: 1
+            changedFilesOverflow: distinctPaths.count
         )
 
         #expect(store.applySummary(lossySummary))
@@ -619,7 +603,7 @@ struct SessionStorePartitioningTests {
         #expect(store.session(id: "s1")?.changeStats?.changedFilesOverflow == nil)
     }
 
-    @Test func completeSummaryUsesItsNewerPathProjectionAndLineStatistics() {
+    @Test func completeSummaryUsesItsNewerPathProjection() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
 
@@ -633,9 +617,7 @@ struct SessionStorePartitioningTests {
             mutatingToolCalls: 1,
             filesChanged: 1,
             changedFiles: ["/outside/src/App.swift"],
-            changedFilesOverflow: nil,
-            addedLines: 4,
-            removedLines: 1
+            changedFilesOverflow: nil
         )
         store.upsert(fullState)
 
@@ -649,17 +631,13 @@ struct SessionStorePartitioningTests {
             mutatingToolCalls: 2,
             filesChanged: 2,
             changedFiles: ["src/App.swift", "README.md"],
-            changedFilesOverflow: nil,
-            addedLines: 12,
-            removedLines: 3
+            changedFilesOverflow: nil
         )
 
         #expect(store.applySummary(completeSummary))
         #expect(store.session(id: "s1")?.changeStats?.changedFiles == ["src/App.swift", "README.md"])
         #expect(store.session(id: "s1")?.changeStats?.filesChanged == 2)
         #expect(store.session(id: "s1")?.changeStats?.changedFilesOverflow == nil)
-        #expect(store.session(id: "s1")?.changeStats?.addedLines == 12)
-        #expect(store.session(id: "s1")?.changeStats?.removedLines == 3)
     }
 
     @Test func summaryIngestionLanesShareLossyChangeStatsMerge() {
@@ -684,9 +662,7 @@ struct SessionStorePartitioningTests {
                 mutatingToolCalls: 2,
                 filesChanged: 2,
                 changedFiles: ["/outside/src/App.swift", "src/App.swift"],
-                changedFilesOverflow: nil,
-                addedLines: 20,
-                removedLines: 8
+                changedFilesOverflow: nil
             )
             store.upsert(fullState)
 
@@ -700,9 +676,7 @@ struct SessionStorePartitioningTests {
                 mutatingToolCalls: 2,
                 filesChanged: 2,
                 changedFiles: [],
-                changedFilesOverflow: 2,
-                addedLines: 20,
-                removedLines: 8
+                changedFilesOverflow: 2
             )
 
             switch lane {
@@ -722,8 +696,6 @@ struct SessionStorePartitioningTests {
 
             let stats = store.session(id: "s1")?.changeStats
             #expect(stats?.changedFiles == ["/outside/src/App.swift", "src/App.swift"], "lane: \(lane)")
-            #expect(stats?.addedLines == 20, "lane: \(lane)")
-            #expect(stats?.removedLines == 8, "lane: \(lane)")
             #expect(stats?.changedFilesOverflow == nil, "lane: \(lane)")
         }
     }

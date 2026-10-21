@@ -98,9 +98,7 @@ struct SessionListPerfBench {
                     mutatingToolCalls: Int.random(in: 0...100),
                     filesChanged: Int.random(in: 0...30),
                     changedFiles: (0..<min(5, Int.random(in: 0...10))).map { "file\($0).swift" },
-                    changedFilesOverflow: nil,
-                    addedLines: Int.random(in: 0...500),
-                    removedLines: Int.random(in: 0...300)
+                    changedFilesOverflow: nil
                 ) : nil,
                 contextTokens: Int.random(in: 5000...180000),
                 contextWindow: Bool.random() ? 200000 : nil,

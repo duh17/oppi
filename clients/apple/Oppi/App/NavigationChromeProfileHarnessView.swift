@@ -370,9 +370,7 @@ struct NavigationChromeProfileHarnessView: View {
                 mutatingToolCalls: 1,
                 filesChanged: 1,
                 changedFiles: ["clients/apple/Oppi/App/NavigationChromeProfileHarnessView.swift"],
-                changedFilesOverflow: nil,
-                addedLines: 12,
-                removedLines: 3
+                changedFilesOverflow: nil
             ),
             contextTokens: 0,
             contextWindow: 128_000,

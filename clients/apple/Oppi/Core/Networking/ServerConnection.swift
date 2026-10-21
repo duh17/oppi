@@ -363,8 +363,6 @@ final class ServerConnection {
         let totalTokens: Int
         let mutatingToolCalls: Int
         let filesChanged: Int
-        let addedLines: Int
-        let removedLines: Int
         let contextTokens: Int
         let contextWindow: Int
 
@@ -373,8 +371,6 @@ final class ServerConnection {
                 || totalTokens > 0
                 || mutatingToolCalls > 0
                 || filesChanged > 0
-                || addedLines > 0
-                || removedLines > 0
                 || contextTokens > 0
         }
     }

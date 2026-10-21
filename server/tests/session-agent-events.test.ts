@@ -764,8 +764,6 @@ describe("SessionAgentEventCoordinator", () => {
       mutatingToolCalls: 1,
       filesChanged: 1,
       changedFiles: ["src/a.ts"],
-      addedLines: 2,
-      removedLines: 0,
     });
     const summary = buildSessionSummary(active.session);
     const summaryBroadcasts = broadcast.mock.calls.filter(
@@ -816,8 +814,6 @@ describe("SessionAgentEventCoordinator", () => {
       mutatingToolCalls: 1,
       filesChanged: 1,
       changedFiles: ["src/a.ts"],
-      addedLines: 0,
-      removedLines: 0,
     });
     const summary = buildSessionSummary(active.session);
     const summaryBroadcasts = broadcast.mock.calls.filter(

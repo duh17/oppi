@@ -71,80 +71,6 @@ enum ContextBarQuickActionRouting {
     }
 }
 
-enum ContextBarCrossSessionEdits {
-    static func sharedFilePaths(
-        displayFiles: [GitFileStatus],
-        currentSessionId: String?,
-        workspaceId: String?,
-        sessions: [Session]
-    ) -> Set<String> {
-        guard let currentSessionId, !displayFiles.isEmpty else { return [] }
-        var originalPathByNormalizedPath: [String: String] = [:]
-        originalPathByNormalizedPath.reserveCapacity(displayFiles.count)
-        for file in displayFiles {
-            originalPathByNormalizedPath[normalizedPath(file.path)] = file.path
-        }
-
-        let displayedPathSet = Set(originalPathByNormalizedPath.keys)
-        guard !displayedPathSet.isEmpty else { return [] }
-
-        var remainingPaths = displayedPathSet
-        var sharedPaths: Set<String> = []
-
-        for session in sessions where session.id != currentSessionId {
-            if let workspaceId, let sessionWorkspaceId = session.workspaceId, sessionWorkspaceId != workspaceId {
-                continue
-            }
-            guard let changedFiles = session.changeStats?.changedFiles, !changedFiles.isEmpty else { continue }
-
-            for changedFile in changedFiles {
-                let matches = matchingDisplayedPaths(for: changedFile, remainingDisplayedPaths: remainingPaths)
-                guard !matches.isEmpty else { continue }
-
-                for path in matches {
-                    sharedPaths.insert(originalPathByNormalizedPath[path] ?? path)
-                    remainingPaths.remove(path)
-                }
-
-                if remainingPaths.isEmpty {
-                    return sharedPaths
-                }
-            }
-        }
-
-        return sharedPaths
-    }
-
-    private static func normalizedPath(_ path: String) -> String {
-        path.replacing("\\", with: "/")
-    }
-
-    private static func matchingDisplayedPaths(
-        for sessionPath: String,
-        remainingDisplayedPaths: Set<String>
-    ) -> [String] {
-        guard !remainingDisplayedPaths.isEmpty else { return [] }
-
-        let normalizedSessionPath = normalizedPath(sessionPath)
-        let components = normalizedSessionPath.split(separator: "/", omittingEmptySubsequences: true)
-        var matches: [String] = []
-
-        func appendIfDisplayed(_ candidate: String) {
-            guard remainingDisplayedPaths.contains(candidate), !matches.contains(candidate) else { return }
-            matches.append(candidate)
-        }
-
-        appendIfDisplayed(normalizedSessionPath)
-
-        guard components.count > 1 else { return matches }
-        for index in components.indices {
-            appendIfDisplayed(components[index...].joined(separator: "/"))
-        }
-
-        return matches
-    }
-}
-
 // MARK: - Bar
 
 /// Expandable bar showing workspace git status, over the top of the chat's
@@ -528,13 +454,7 @@ final class WorkspaceContextBarView: UIView {
         renderCollapsedRow(palette: palette)
         expandedStack.isHidden = !isExpanded
         guard isExpanded else { return }
-        let sharedPaths = ContextBarCrossSessionEdits.sharedFilePaths(
-            displayFiles: displayFiles,
-            currentSessionId: context.sessionId,
-            workspaceId: context.workspaceId,
-            sessions: sessions
-        )
-        renderPanel(sharedPaths: sharedPaths, themeID: themeID)
+        renderPanel(themeID: themeID)
         selectionBar.isHidden = !isSelecting
         if isSelecting {
             renderSelectionBar(themeID: themeID)
@@ -668,7 +588,6 @@ final class WorkspaceContextBarView: UIView {
     /// its gesture.
     private struct PanelKey: Equatable {
         let files: [GitFileStatus]
-        let sharedPaths: Set<String>
         let isSelecting: Bool
         let commits: [GitCommitSummary]
         let hasMoreCommits: Bool
@@ -680,10 +599,9 @@ final class WorkspaceContextBarView: UIView {
         let themeID: ThemeID
     }
 
-    private func renderPanel(sharedPaths: Set<String>, themeID: ThemeID) {
+    private func renderPanel(themeID: ThemeID) {
         let key = PanelKey(
             files: displayFiles,
-            sharedPaths: sharedPaths,
             isSelecting: isSelecting,
             commits: allCommits,
             hasMoreCommits: hasMoreCommits,
@@ -713,7 +631,7 @@ final class WorkspaceContextBarView: UIView {
         }
 
         if !displayFiles.isEmpty {
-            panelStack.addArrangedSubview(fileListView(sharedPaths: sharedPaths, palette: palette))
+            panelStack.addArrangedSubview(fileListView(palette: palette))
         }
 
         if !allCommits.isEmpty {
@@ -770,37 +688,15 @@ final class WorkspaceContextBarView: UIView {
         }
     }
 
-    private func fileListView(sharedPaths: Set<String>, palette: ThemePalette) -> UIView {
+    private func fileListView(palette: ThemePalette) -> UIView {
         let list = UIStackView()
         list.axis = .vertical
         list.spacing = 1
         list.isLayoutMarginsRelativeArrangement = true
         list.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0)
 
-        if !sharedPaths.isEmpty {
-            let orange = UIColor(palette.orange)
-            let icon = UIImageView(image: UIImage(systemName: "rectangle.on.rectangle"))
-            icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font(.caption2, .caption1, .semibold))
-            icon.tintColor = orange
-            let count = sharedPaths.count
-            let text = Self.label(
-                "\(count) file\(count == 1 ? "" : "s") touched in another session",
-                font: font(.caption2, .caption1, .medium),
-                color: orange
-            )
-            let hint = Self.row(
-                [icon, text, Self.spacer()],
-                spacing: 5,
-                insets: NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 3, trailing: 12)
-            )
-            hint.isAccessibilityElement = true
-            hint.accessibilityLabel = text.text
-            hint.accessibilityIdentifier = "context-bar-overlap-hint"
-            list.addArrangedSubview(hint)
-        }
-
         for file in displayFiles {
-            let row = fileRow(file, isSharedEdit: sharedPaths.contains(file.path), palette: palette)
+            let row = fileRow(file, palette: palette)
             list.addArrangedSubview(row.view)
             fileRows.append((file.path, row.view, row.mark))
         }
@@ -823,7 +719,6 @@ final class WorkspaceContextBarView: UIView {
     /// A changed file's row, and its selection checkmark while selecting.
     private func fileRow(
         _ file: GitFileStatus,
-        isSharedEdit: Bool,
         palette: ThemePalette
     ) -> (view: UIView, mark: UIImageView?) {
         let canTap = context.workspaceId != nil
@@ -835,26 +730,11 @@ final class WorkspaceContextBarView: UIView {
             check.widthAnchor.constraint(equalToConstant: 16).isActive = true
             mark = check
         }
-        var badges: [UIView] = []
-        if isSharedEdit {
-            let orange = UIColor(palette.orange)
-            let badgeIcon = UIImageView(image: UIImage(systemName: "rectangle.on.rectangle"))
-            badgeIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
-                font: font(fixed: 8, .semibold, regular: .caption2, .semibold)
-            )
-            badgeIcon.tintColor = orange
-            let badge = CapsuleView()
-            Self.pad(badgeIcon, in: badge, NSDirectionalEdgeInsets(top: 2, leading: 5, bottom: 2, trailing: 5))
-            badge.backgroundColor = orange.withAlphaComponent(0.12)
-            badge.isAccessibilityElement = false
-            badges.append(badge)
-        }
         let content = ChangedFileRow.content(
             path: file.path,
             added: file.addedLines,
             removed: file.removedLines,
             leading: mark.map { [$0] } ?? [],
-            beforeCounts: badges,
             showsChevron: !isSelecting && canTap,
             fonts: .init(
                 path: font(.caption2, .caption1, mono: true),
@@ -864,10 +744,6 @@ final class WorkspaceContextBarView: UIView {
             verticalInset: usesRegularTypography ? 5 : 4,
             palette: palette
         )
-        var labelParts = content.labelParts
-        if isSharedEdit {
-            labelParts.insert(String(localized: "Touched in another session"), at: 1)
-        }
         let row = PlainRowButton(wrapping: content.stack) { [weak self] in
             guard let self else { return }
             if isSelecting {
@@ -876,7 +752,7 @@ final class WorkspaceContextBarView: UIView {
                 presentFileReview(file)
             }
         }
-        row.accessibilityLabel = labelParts.joined(separator: ", ")
+        row.accessibilityLabel = content.labelParts.joined(separator: ", ")
         return (row, mark)
     }
 
@@ -1486,15 +1362,6 @@ extension WorkspaceContextBarView: UIGestureRecognizerDelegate {
         shouldBeRequiredToFailBy other: UIGestureRecognizer
     ) -> Bool {
         gestureRecognizer === dragSelectGesture && other === scrollView.panGestureRecognizer
-    }
-}
-
-/// A badge whose ends stay round at every height.
-private final class CapsuleView: UIView {
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        layer.cornerCurve = .continuous
-        layer.cornerRadius = bounds.height / 2
     }
 }
 

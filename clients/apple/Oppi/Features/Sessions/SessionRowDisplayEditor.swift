@@ -56,7 +56,7 @@ struct SessionRowPreviewSubject {
             startedAgo: 7_200, activeAgo: 180, cost: 3.14,
             changeStats: SessionChangeStats(
                 mutatingToolCalls: 31, compactionCount: 2, filesChanged: 7,
-                changedFiles: [], changedFilesOverflow: nil, addedLines: 210, removedLines: 64
+                changedFiles: [], changedFilesOverflow: nil
             ),
             contextTokens: 96_000,
             programStatus: ProgramStatus(state: .done, since: now.addingTimeInterval(-180))

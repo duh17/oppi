@@ -1982,8 +1982,6 @@ const AGENT_WORKLOAD_METRICS = new Set([
   "chat.session_output_tokens",
   "chat.session_mutating_tool_calls",
   "chat.session_files_changed",
-  "chat.session_added_lines",
-  "chat.session_removed_lines",
   "chat.session_context_tokens",
   "chat.session_context_window",
   "server.compaction_ms",

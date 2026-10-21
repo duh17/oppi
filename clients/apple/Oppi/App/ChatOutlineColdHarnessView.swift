@@ -673,9 +673,7 @@ private enum ChatRoutesFixture {
                 mutatingToolCalls: 1,
                 filesChanged: 2,
                 changedFiles: [changedPath, touchedPath],
-                changedFilesOverflow: nil,
-                addedLines: 2,
-                removedLines: 1
+                changedFilesOverflow: nil
             ),
             contextTokens: 1_000,
             contextWindow: 128_000,

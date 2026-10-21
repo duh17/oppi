@@ -5,12 +5,7 @@ import { mintSessionId } from "../id.js";
 import { ICON_ASSET_ID_PATTERN, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
-import type {
-  Session,
-  SessionChangeStats,
-  SessionInteraction,
-  SessionInteractionKind,
-} from "../types.js";
+import type { Session, SessionInteraction, SessionInteractionKind } from "../types.js";
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "../sqlite-compat.js";
 import {
   createSessionStateSessionsTable,
@@ -189,9 +184,9 @@ export class SessionSqliteStore {
   }
 
   upsertSession(session: Session): void {
-    const normalized = normalizeDeclaredSession(this.restoreInternalFields(session));
+    const normalized = normalizeDeclaredSession(session);
     this.stmtUpsert.run(normalized.id, ...sessionRowValues(normalized));
-    this.cache?.set(normalized.id, stripInternalFields(normalized));
+    this.cache?.set(normalized.id, normalized);
   }
 
   getSession(sessionId: string): Session | undefined {
@@ -201,9 +196,8 @@ export class SessionSqliteStore {
     const session = this.getSessionFromDb(sessionId);
     if (!session) return undefined;
 
-    const stripped = stripInternalFields(session);
-    this.cache?.set(session.id, stripped);
-    return stripped;
+    this.cache?.set(session.id, session);
+    return session;
   }
 
   listSessions(): Session[] {
@@ -268,7 +262,7 @@ export class SessionSqliteStore {
          ORDER BY last_activity DESC, id ASC`,
       )
       .all() as SessionRow[];
-    return this.decodeRows(rows).map(stripInternalFields);
+    return this.decodeRows(rows);
   }
 
   listAllWorkspaceSessionSnapshots(workspaceId: string, worktreeId?: string): Session[] {
@@ -611,8 +605,7 @@ export class SessionSqliteStore {
         `SELECT ${SESSION_COLUMNS} FROM session_state_sessions WHERE launch_idempotency_key = ?`,
       )
       .get(key) as SessionRow | undefined;
-    const session = row ? this.decodeRow(row) : undefined;
-    return session ? stripInternalFields(session) : undefined;
+    return row ? this.decodeRow(row) : undefined;
   }
 
   claimSessionLaunchRecovery(
@@ -624,23 +617,20 @@ export class SessionSqliteStore {
     const launch = session.launch;
     if (!launch?.idempotencyKey) return undefined;
 
-    // Everything that reads (internal stats, trace repair) happens before the write, so the
-    // claim itself is one autocommit compare-and-swap: another connection that took the lease
+    // The claim is one autocommit compare-and-swap: another connection that took the lease
     // first makes it match no row instead of failing a stale transaction.
-    const recovered = normalizeDeclaredSession(
-      this.restoreInternalFields({
-        ...session,
-        launch: {
-          ...launch,
-          status: "launching",
-          lease: {
-            owner: leaseOwner,
-            acquiredAt: nowMs,
-            expiresAt: nowMs + leaseTtlMs,
-          },
+    const recovered = normalizeDeclaredSession({
+      ...session,
+      launch: {
+        ...launch,
+        status: "launching",
+        lease: {
+          owner: leaseOwner,
+          acquiredAt: nowMs,
+          expiresAt: nowMs + leaseTtlMs,
         },
-      }),
-    );
+      },
+    });
     const expectedLeaseOwner = launch.lease?.owner ?? null;
     const expectedLeaseExpiresAt = launch.lease?.expiresAt ?? null;
 
@@ -656,9 +646,8 @@ export class SessionSqliteStore {
     ) as { changes?: number };
     if (result.changes !== 1) return undefined;
 
-    const stripped = stripInternalFields(recovered);
-    this.cache?.set(recovered.id, stripped);
-    return stripped;
+    this.cache?.set(recovered.id, recovered);
+    return recovered;
   }
 
   private ensureCache(): Map<string, Session> {
@@ -668,7 +657,7 @@ export class SessionSqliteStore {
 
     this.cache = new Map();
     for (const session of this.decodeRows(this.stmtList.all() as SessionRow[])) {
-      this.cache.set(session.id, stripInternalFields(session));
+      this.cache.set(session.id, session);
     }
     return this.cache;
   }
@@ -700,23 +689,6 @@ export class SessionSqliteStore {
   private getSessionFromDb(sessionId: string): Session | undefined {
     const row = this.stmtGet.get(sessionId) as SessionRow | undefined;
     return row ? this.decodeRow(row) : undefined;
-  }
-
-  private restoreInternalFields(session: Session): Session {
-    if (session.changeStats?._fileLineCounts) return session;
-    if (!session.changeStats || session.changeStats.filesChanged === 0) return session;
-
-    const existing = this.getSessionFromDb(session.id);
-    if (!existing?.changeStats?._fileLineCounts) return session;
-
-    return {
-      ...session,
-      changeStats: {
-        ...session.changeStats,
-        _fileLineCounts: existing.changeStats._fileLineCounts,
-        _sessionCreatedFiles: existing.changeStats._sessionCreatedFiles,
-      },
-    };
   }
 
   private queryWorkspaceProjectedSessions(
@@ -1026,7 +998,18 @@ function normalizeDeclaredSession(session: Session): Session {
     normalized.model = session.model;
   }
   if (session.changeStats !== undefined && session.changeStats !== null) {
-    normalized.changeStats = session.changeStats;
+    // Known fields only: rows saved before 0.53 also hold estimated line counts
+    // and a per-file line-count map that must not reach clients.
+    const stats = session.changeStats;
+    normalized.changeStats = {
+      mutatingToolCalls: stats.mutatingToolCalls,
+      ...(stats.compactionCount !== undefined ? { compactionCount: stats.compactionCount } : {}),
+      filesChanged: stats.filesChanged,
+      changedFiles: stats.changedFiles,
+      ...(stats.changedFilesOverflow !== undefined
+        ? { changedFilesOverflow: stats.changedFilesOverflow }
+        : {}),
+    };
   }
   if (session.contextTokens !== undefined && session.contextTokens !== null) {
     normalized.contextTokens = session.contextTokens;
@@ -1157,17 +1140,6 @@ function migrateDurableLaunchIcon(value: unknown): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-/** Strip internal change-stat bookkeeping before exposing cached sessions. */
-function stripInternalFields(session: Session): Session {
-  const stats = session.changeStats;
-  if (!stats?._fileLineCounts && !stats?._sessionCreatedFiles) {
-    return session;
-  }
-
-  const { _fileLineCounts: _, _sessionCreatedFiles: __, ...cleanStats } = stats;
-  return { ...session, changeStats: cleanStats as SessionChangeStats };
 }
 
 function sortSessions(sessions: Session[]): Session[] {

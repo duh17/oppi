@@ -64,7 +64,6 @@ enum ChangedFileRow {
         added: Int?,
         removed: Int?,
         leading: [UIView] = [],
-        beforeCounts: [UIView] = [],
         afterCounts: [UIView] = [],
         showsChevron: Bool,
         fonts: Fonts,
@@ -85,7 +84,7 @@ enum ChangedFileRow {
         pathLabel.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
         pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        var items = leading + [iconView, pathLabel] + beforeCounts
+        var items = leading + [iconView, pathLabel]
         var labelParts = [path.shortenedPath]
         if let added, added > 0 {
             items.append(label("+\(added)", font: fonts.count, color: UIColor(palette.toolDiffAdded)))

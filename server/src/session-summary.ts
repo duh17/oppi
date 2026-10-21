@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 
 import { isServerDurableSession } from "./session-runtime-capabilities.js";
-import type { Session, SessionSummary, SessionSummaryChangeStats } from "./types.js";
+import type { Session, SessionChangeStats, SessionSummary } from "./types.js";
 
 /**
  * Build the mobile/session-list projection for a Session.
@@ -53,7 +53,7 @@ export function buildSessionSummary(session: Session): SessionSummary {
 
 function buildSessionSummaryChangeStats(
   stats: Session["changeStats"],
-): SessionSummaryChangeStats | undefined {
+): SessionChangeStats | undefined {
   if (!stats) {
     return undefined;
   }
@@ -73,8 +73,6 @@ function buildSessionSummaryChangeStats(
     filesChanged: stats.filesChanged,
     changedFiles,
     ...(changedFilesOverflow > 0 ? { changedFilesOverflow } : {}),
-    addedLines: stats.addedLines,
-    removedLines: stats.removedLines,
   };
 }
 

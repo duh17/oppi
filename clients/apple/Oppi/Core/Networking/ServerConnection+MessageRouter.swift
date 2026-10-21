@@ -301,8 +301,6 @@ extension ServerConnection {
             (.sessionOutputTokens, Double(snapshot.outputTokens)),
             (.sessionMutatingToolCalls, Double(snapshot.mutatingToolCalls)),
             (.sessionFilesChanged, Double(snapshot.filesChanged)),
-            (.sessionAddedLines, Double(snapshot.addedLines)),
-            (.sessionRemovedLines, Double(snapshot.removedLines)),
             (.sessionContextTokens, Double(snapshot.contextTokens)),
             (.sessionContextWindow, Double(snapshot.contextWindow)),
         ]
@@ -344,8 +342,6 @@ extension ServerConnection {
         let outputTokens = max(0, session.tokens.output)
         let mutatingToolCalls = max(0, session.changeStats?.mutatingToolCalls ?? 0)
         let filesChanged = max(0, session.changeStats?.filesChanged ?? 0)
-        let addedLines = max(0, session.changeStats?.addedLines ?? 0)
-        let removedLines = max(0, session.changeStats?.removedLines ?? 0)
         let contextTokens = max(0, session.contextTokens ?? 0)
         let contextWindow = max(0, session.contextWindow ?? 0)
 
@@ -358,8 +354,6 @@ extension ServerConnection {
             totalTokens: inputTokens + outputTokens,
             mutatingToolCalls: mutatingToolCalls,
             filesChanged: filesChanged,
-            addedLines: addedLines,
-            removedLines: removedLines,
             contextTokens: contextTokens,
             contextWindow: contextWindow
         )

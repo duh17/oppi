@@ -117,8 +117,6 @@ describe("buildSessionSummary", () => {
           compactionCount: 2,
           filesChanged: 4,
           changedFiles: ["src/app.ts", "/tmp/secret.txt", "~/Library/private.txt", "  "],
-          addedLines: 10,
-          removedLines: 1,
         },
       }),
     );
@@ -140,10 +138,6 @@ describe("buildSessionSummary", () => {
           filesChanged: 1,
           changedFiles: ["src/app.ts"],
           changedFilesOverflow: 3,
-          addedLines: 10,
-          removedLines: 4,
-          _fileLineCounts: { "src/app.ts": 42 },
-          _sessionCreatedFiles: ["src/app.ts"],
         },
       }),
     );
@@ -157,10 +151,6 @@ describe("buildSessionSummary", () => {
       filesChanged: 1,
       changedFiles: ["src/app.ts"],
       changedFilesOverflow: 3,
-      addedLines: 10,
-      removedLines: 4,
     });
-    expect(summary.changeStats).not.toHaveProperty("_fileLineCounts");
-    expect(summary.changeStats).not.toHaveProperty("_sessionCreatedFiles");
   });
 });

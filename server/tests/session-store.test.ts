@@ -396,8 +396,6 @@ describe("session sqlite store", () => {
           mutatingToolCalls: 1,
           filesChanged: 1,
           changedFiles: ["src/a.ts"],
-          addedLines: 2,
-          removedLines: 3,
         },
         launch: {
           source: "agent",
@@ -429,7 +427,7 @@ describe("session sqlite store", () => {
         contextWindow: 200,
         firstMessage: "first",
         lastMessage: "last",
-        changeStats: { changedFiles: ["src/a.ts"], addedLines: 2, removedLines: 3 },
+        changeStats: { changedFiles: ["src/a.ts"] },
         launch: {
           agentId: "agent-reviewer",
           agentVersion: 4,

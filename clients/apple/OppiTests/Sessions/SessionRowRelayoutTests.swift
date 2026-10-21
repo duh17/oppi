@@ -33,9 +33,7 @@ struct SessionRowRelayoutTests {
             mutatingToolCalls: 3,
             compactionCount: 1,
             filesChanged: 3,
-            changedFiles: ["a.swift", "b.swift", "c.swift"],
-            addedLines: 10,
-            removedLines: 2
+            changedFiles: ["a.swift", "b.swift", "c.swift"]
         )
         return session
     }

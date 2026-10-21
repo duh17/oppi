@@ -887,8 +887,6 @@ describe("sessions API", () => {
           mutatingToolCalls: 1,
           filesChanged: 1,
           changedFiles: [externalFile],
-          addedLines: 0,
-          removedLines: 0,
         },
       });
 

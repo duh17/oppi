@@ -29,12 +29,7 @@ import { stripAnsiEscapes } from "./ansi.js";
 import { normalizePiUsage, type NormalizedUsage } from "./token-usage.js";
 import { createLogger } from "./logger.js";
 import { stripImageMediaFromDetails } from "./session-media-sanitization.js";
-import {
-  countTextLines,
-  extractToolMutations,
-  normalizeMutationToolName,
-  type ParsedToolMutation,
-} from "./tool-mutations.js";
+import { extractToolMutations, normalizeMutationToolName } from "./tool-mutations.js";
 
 const log = createLogger({ base: { component: "session_protocol" } });
 
@@ -1450,8 +1445,6 @@ function ensureSessionChangeStats(session: Session): NonNullable<Session["change
     mutatingToolCalls: 0,
     filesChanged: 0,
     changedFiles: [],
-    addedLines: 0,
-    removedLines: 0,
   };
   session.changeStats = stats;
   return stats;
@@ -1489,50 +1482,19 @@ export function updateSessionChangeStats(
     filesChanged,
     changedFiles: dedupedChangedFiles,
     changedFilesOverflow,
-    addedLines: existing?.addedLines ?? 0,
-    removedLines: existing?.removedLines ?? 0,
   };
 
   stats.mutatingToolCalls += 1;
 
-  const fileLineCounts: Record<string, number> = existing?._fileLineCounts
-    ? { ...existing._fileLineCounts }
-    : {};
-  const sessionCreatedFiles = new Set<string>(existing?._sessionCreatedFiles ?? []);
-
   for (const mutation of extractToolMutations(toolName, rawArgs)) {
     const path = mutation.path;
-    const wasAlreadyTracked = path ? stats.changedFiles.includes(path) : false;
-    if (path && !wasAlreadyTracked) {
-      stats.filesChanged += 1;
-
-      if (stats.changedFiles.length < MAX_TRACKED_CHANGED_FILES) {
-        stats.changedFiles.push(path);
-      } else {
-        stats.changedFilesOverflow += 1;
-      }
-    }
-
-    const { added, removed, isNewFile } = estimateMutationLineDelta(mutation, fileLineCounts);
-
-    // Track files first created in this session. Only mark as created if
-    // this is the first write/add-file patch AND the file wasn't already
-    // touched by a prior edit (which proves it pre-existed).
-    if (isNewFile && path && !wasAlreadyTracked) {
-      sessionCreatedFiles.add(path);
-    }
-
-    // For files created in this session, "removed" lines should reduce
-    // addedLines instead of incrementing removedLines. From the pre-session
-    // baseline the file didn't exist — you can't remove lines that were never
-    // there. Without this, writing a 568-line file then editing it 3 lines
-    // shorter shows (+568, -3) instead of the correct (+565, -0).
-    if (path && sessionCreatedFiles.has(path) && removed > 0) {
-      stats.addedLines = Math.max(0, stats.addedLines - removed);
+    if (!path || stats.changedFiles.includes(path)) continue;
+    stats.filesChanged += 1;
+    if (stats.changedFiles.length < MAX_TRACKED_CHANGED_FILES) {
+      stats.changedFiles.push(path);
     } else {
-      stats.removedLines += removed;
+      stats.changedFilesOverflow += 1;
     }
-    stats.addedLines += added;
   }
 
   session.changeStats = {
@@ -1543,61 +1505,7 @@ export function updateSessionChangeStats(
     filesChanged: stats.filesChanged,
     changedFiles: stats.changedFiles,
     ...(stats.changedFilesOverflow > 0 ? { changedFilesOverflow: stats.changedFilesOverflow } : {}),
-    addedLines: stats.addedLines,
-    removedLines: stats.removedLines,
-    _fileLineCounts: fileLineCounts,
-    _sessionCreatedFiles: [...sessionCreatedFiles],
   };
-}
-
-/**
- * Estimate line additions/removals for a single parsed write/edit mutation.
- *
- * `fileLineCounts` tracks per-file line counts across calls so that repeated
- * writes to the same file compute a delta instead of counting every line as
- * added.  The map is mutated in place (caller persists it on changeStats).
- */
-function estimateMutationLineDelta(
-  mutation: ParsedToolMutation,
-  fileLineCounts: Record<string, number>,
-): { added: number; removed: number; isNewFile: boolean } {
-  if (mutation.kind === "write") {
-    if (mutation.content.length === 0) {
-      return { added: 0, removed: 0, isNewFile: false };
-    }
-
-    const newLines = countTextLines(mutation.content);
-    const previousLines = mutation.path !== null ? (fileLineCounts[mutation.path] ?? 0) : 0;
-    const isNewFile = previousLines === 0;
-
-    // Update tracked count for this file
-    if (mutation.path !== null) {
-      fileLineCounts[mutation.path] = newLines;
-    }
-
-    return {
-      added: Math.max(0, newLines - previousLines),
-      removed: Math.max(0, previousLines - newLines),
-      isNewFile,
-    };
-  }
-
-  if (mutation.oldText.length === 0 && mutation.newText.length === 0) {
-    return { added: 0, removed: 0, isNewFile: false };
-  }
-
-  const oldLines = countTextLines(mutation.oldText);
-  const newLines = countTextLines(mutation.newText);
-  const added = Math.max(0, newLines - oldLines);
-  const removed = Math.max(0, oldLines - newLines);
-  const netLineDelta = newLines - oldLines;
-
-  // Update tracked count so subsequent writes to this file are accurate.
-  if (mutation.path !== null && mutation.path in fileLineCounts) {
-    fileLineCounts[mutation.path] = Math.max(0, fileLineCounts[mutation.path] + netLineDelta);
-  }
-
-  return { added, removed, isNewFile: mutation.isNewFile === true };
 }
 
 // ─── Session Message Counters ───

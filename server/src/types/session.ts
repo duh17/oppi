@@ -9,7 +9,11 @@ export interface TokenUsage {
   cacheWrite: number;
 }
 
-export interface SessionSummaryChangeStats {
+/**
+ * What a session's edit/write tool calls touched. Line counts come from Git, not
+ * from here: tool arguments miss `bash` and other writers.
+ */
+export interface SessionChangeStats {
   /** Count of mutating file tool calls (edit/write) observed in this session. */
   mutatingToolCalls: number;
   /** Number of successful compaction cycles observed in this session. */
@@ -20,10 +24,6 @@ export interface SessionSummaryChangeStats {
   changedFiles: string[];
   /** Count of additional changed files not included in changedFiles sample. */
   changedFilesOverflow?: number;
-  /** Best-effort aggregate line additions (from edit/write args). */
-  addedLines: number;
-  /** Best-effort aggregate line removals (from edit/write args). */
-  removedLines: number;
 }
 
 /**
@@ -158,23 +158,6 @@ export interface SessionLaunchMetadata {
   };
 }
 
-export interface SessionChangeStats extends SessionSummaryChangeStats {
-  /**
-   * @internal Per-file line count tracking for accurate write deltas.
-   * Maps file path → last known line count so repeated writes to the same
-   * file compute a delta instead of counting the full content as added.
-   * Persisted to disk but ignored by iOS (unknown Codable keys are skipped).
-   */
-  _fileLineCounts?: Record<string, number>;
-  /**
-   * @internal Paths of files first created (written from scratch) in this session.
-   * For these files, line removals from edits reduce addedLines instead of
-   * incrementing removedLines, because the pre-session baseline is 0 — you
-   * can't "remove" lines that never existed.
-   */
-  _sessionCreatedFiles?: string[];
-}
-
 export interface Session {
   id: string;
   workspaceId?: string; // workspace that owns this session
@@ -270,7 +253,7 @@ export interface SessionSummary {
   messageCount: number;
   tokens: TokenUsage;
   cost: number;
-  changeStats?: SessionSummaryChangeStats;
+  changeStats?: SessionChangeStats;
   contextTokens?: number;
   contextWindow?: number;
   firstMessage?: string;

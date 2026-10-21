@@ -366,8 +366,6 @@ struct ProtocolSnapshotTests {
         #expect(stats?.filesChanged == 6)
         #expect(stats?.changedFiles == ["src/main.ts", "README.md"])
         #expect(stats?.changedFilesOverflow == 4)
-        #expect(stats?.addedLines == 45)
-        #expect(stats?.removedLines == 12)
     }
 
     @Test func extensionUIRequest() throws {

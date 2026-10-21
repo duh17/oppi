@@ -935,9 +935,9 @@ final class SessionStore {
         guard let incoming else { return existing }
         guard let existing else { return incoming }
 
-        // Mutation-derived line stats are snapshots. A lower mutation count is
-        // stale, so retaining the whole existing snapshot avoids regressing
-        // lines, paths, counts, or overflow together.
+        // Change stats are snapshots. A lower mutation count is stale, so
+        // retaining the whole existing snapshot avoids regressing paths,
+        // counts, or overflow together.
         guard incoming.mutatingToolCalls >= existing.mutatingToolCalls else {
             return existing
         }
@@ -960,9 +960,7 @@ final class SessionStore {
             changedFiles: changedFiles,
             changedFilesOverflow: filesChanged > changedFiles.count
                 ? filesChanged - changedFiles.count
-                : nil,
-            addedLines: incoming.addedLines,
-            removedLines: incoming.removedLines
+                : nil
         )
     }
 

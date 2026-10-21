@@ -784,8 +784,6 @@ describe("SessionTraceService", () => {
             filesChanged: 2,
             changedFiles: ["src/App.swift", "README.md"],
             changedFilesOverflow: 1,
-            addedLines: 10,
-            removedLines: 3,
           },
         }),
       ),

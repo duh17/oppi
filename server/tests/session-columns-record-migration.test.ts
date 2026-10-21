@@ -70,6 +70,7 @@ const DURABLE_SESSION: Session = {
   messageCount: 12,
   tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
   cost: 0.25,
+  // Saved before 0.53: estimated line counts and their bookkeeping, which reads drop.
   changeStats: {
     mutatingToolCalls: 2,
     filesChanged: 1,
@@ -78,7 +79,7 @@ const DURABLE_SESSION: Session = {
     removedLines: 1,
     _fileLineCounts: { "src/a.ts": 42 },
     _sessionCreatedFiles: ["src/a.ts"],
-  },
+  } as Session["changeStats"],
   contextTokens: 900,
   contextWindow: 200_000,
   firstMessage: "first",
@@ -238,7 +239,7 @@ describe("session_state_sessions columns-only migration", () => {
       ]),
     );
     expect(migrated.indexes).toContain("session_state_sessions_durable_idx");
-    // Change-stat bookkeeping survives in the cache so later writes keep computing deltas.
+    // The migration copies stored change stats as they are; reads drop the pre-0.53 fields.
     expect(JSON.parse(migrated.summaries.get("sess-durable") ?? "{}").changeStats).toEqual(
       DURABLE_SESSION.changeStats,
     );
@@ -379,12 +380,12 @@ describe("session_state_sessions columns-only migration", () => {
   });
 });
 
-/** What a full read returned before, minus the stored workspace name and change-stat bookkeeping. */
+/** What a full read returned before, minus the stored workspace name and pre-0.53 line counts. */
 function expectedAfterMigration(legacy: Session): Session {
   const { workspaceName: _, ...session } = legacy;
   if (!session.changeStats) return session;
-  const { _fileLineCounts: __, _sessionCreatedFiles: ___, ...changeStats } = session.changeStats;
-  return { ...session, changeStats };
+  const { mutatingToolCalls, filesChanged, changedFiles } = session.changeStats;
+  return { ...session, changeStats: { mutatingToolCalls, filesChanged, changedFiles } };
 }
 
 /** The table as the previous server wrote it, after the dead-schema cleanup. */

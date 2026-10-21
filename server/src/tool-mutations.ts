@@ -1,6 +1,6 @@
 export type ParsedToolMutation =
   | { kind: "write"; path: string | null; content: string }
-  | { kind: "edit"; path: string | null; oldText: string; newText: string; isNewFile?: boolean };
+  | { kind: "edit"; path: string | null; oldText: string; newText: string };
 
 /** Known Pi mutation tool names. Last dotted segments are not authority. */
 const MUTATION_TOOL_ALIASES = new Map<string, string>([
@@ -68,11 +68,6 @@ export function extractPath(candidate: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-export function countTextLines(text: string): number {
-  if (text.length === 0) return 0;
-  return text.split("\n").length;
-}
-
 function mutationFromOldNew(
   path: string | null,
   rawEdit: unknown,
@@ -101,7 +96,6 @@ function parseCodexPatchMutations(patch: string): Extract<ParsedToolMutation, { 
       path: current.path,
       oldText: hunk.oldLines.join("\n"),
       newText: hunk.newLines.join("\n"),
-      isNewFile: current.action === "add",
     });
     hunk = null;
   };
@@ -115,10 +109,7 @@ function parseCodexPatchMutations(patch: string): Extract<ParsedToolMutation, { 
     const marker = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(line);
     if (marker) {
       flushFile();
-      current = {
-        action: marker[1] === "Add" ? "add" : marker[1] === "Delete" ? "delete" : "update",
-        path: extractPath(marker[2]) ?? "",
-      };
+      current = { path: extractPath(marker[2]) ?? "" };
       hunk = null;
       continue;
     }
@@ -144,10 +135,7 @@ function parseCodexPatchMutations(patch: string): Extract<ParsedToolMutation, { 
   return mutations.filter((mutation) => mutation.path !== "");
 }
 
-type PatchAction = "add" | "update" | "delete";
-
 interface PatchFileState {
-  action: PatchAction;
   path: string;
 }
 
