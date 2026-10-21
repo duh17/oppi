@@ -1416,6 +1416,38 @@ struct ComposerBarTests {
         window.isHidden = true
     }
 
+    @Test("Thinking levels stay reachable when the popover is shorter than the list")
+    func thinkingLevelsScrollInsideAShortPopover() throws {
+        let picker = ComposerThinkingPickerController(
+            levels: ThinkingLevel.allCases,
+            selected: .medium,
+            colors: .placeholder,
+            onSelect: { _ in },
+            onSaveDefault: nil
+        )
+        picker.loadViewIfNeeded()
+        // An iPhone in landscape with the keyboard up leaves the popover about this tall.
+        picker.view.frame = CGRect(x: 0, y: 0, width: 220, height: 120)
+        picker.view.layoutIfNeeded()
+
+        let scroll = try #require(picker.view.firstDescendant(where: { $0 is UIScrollView }) as? UIScrollView)
+        #expect(scroll.contentSize.height > scroll.bounds.height, "The list overflows the short popover")
+        let off = try #require(picker.view.firstDescendant(where: {
+            $0.accessibilityIdentifier == "session.toolbar.thinking.option.off"
+        }))
+        #expect(
+            !scroll.bounds.intersects(off.convert(off.bounds, to: scroll)),
+            "Off starts below the popover's fold"
+        )
+
+        scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height), animated: false)
+        picker.view.layoutIfNeeded()
+        #expect(
+            scroll.bounds.insetBy(dx: 0, dy: -0.5).contains(off.convert(off.bounds, to: scroll)),
+            "Scrolling the list must bring Off into the popover"
+        )
+    }
+
     @Test("A long Ask scrolls its rows inside the capped slot, rows fit their text, and actions stay in view")
     func longAskScrollsInsideCappedSlotWithActionsInView() throws {
         let host = ComposerBarTestHost()

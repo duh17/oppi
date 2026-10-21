@@ -223,7 +223,9 @@ enum WorkspaceRuntimeIconRenderer {
 }
 
 /// Thinking-level list plus optional "Save as Default". UIKit so the composer
-/// never hosts SwiftUI inside a popover.
+/// never hosts SwiftUI inside a popover. The rows scroll inside whatever height
+/// the popover gets: an iPhone in landscape leaves little room above the
+/// keyboard, and every level must stay reachable.
 final class ComposerThinkingPickerController: UIViewController, RouterModalContainer {
     var onDismissed: (() -> Void)?
 
@@ -232,6 +234,7 @@ final class ComposerThinkingPickerController: UIViewController, RouterModalConta
     private var onSelect: (ThinkingLevel) -> Void
     private var onSaveDefault: (() -> Void)?
     private let colors: ComposerThemeColors
+    private let scroll = UIScrollView()
     private let stack = UIStackView()
 
     init(
@@ -255,15 +258,24 @@ final class ComposerThinkingPickerController: UIViewController, RouterModalConta
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = colors.bg
+        scroll.alwaysBounceVertical = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.accessibilityIdentifier = "session.toolbar.thinking.scroll"
         stack.axis = .vertical
         stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
+        view.addSubview(scroll)
+        scroll.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 6),
-            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -6),
+            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: view.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 6),
+            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -6),
+            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
         ])
         rebuild()
     }
