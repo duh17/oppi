@@ -13,6 +13,16 @@ enum SSHTerminalFloatingControls {
         !keyboardUp || !connected
     }
 
+    /// Rows the grid leaves free for the bottom bar. Only with the keyboard
+    /// down: with a docked keyboard up the bar is gone, and when a broken
+    /// connection brings it back it floats over the grid's bottom rows instead
+    /// of taking them. A connection change therefore never resizes the shell;
+    /// only a keyboard change does, and it already sends one.
+    @MainActor
+    static func bottomBarReserve(keyboardUp: Bool) -> CGFloat {
+        keyboardUp ? 0 : SSHTerminalBottomBar.reserve
+    }
+
     /// Dot on the Back pill: Herdr waiting, or a blocked program. Same
     /// signals as the Herdr attention tint and the waiting-program card.
     /// OSC 9 notifications are not this.
@@ -21,19 +31,38 @@ enum SSHTerminalFloatingControls {
     }
 }
 
-/// Bottom bar geometry. The glass is 36 pt tall and rests 4 pt above the
-/// keyboard layout guide (the bottom safe area without a keyboard), and the
-/// grid keeps 8 pt more free so no row touches the glass. Hiding the bar gives
-/// all of it back to the grid, inside the one resize a keyboard change sends.
+/// Bottom bar geometry. The glass is 36 pt tall, inset 4 pt from the top of a
+/// 44 pt container, which rests 4 pt above the keyboard layout guide (the
+/// bottom safe area without a keyboard). The container's top inset is where
+/// the pills' 4 pt touch outset lives, so a finger just above the glass still
+/// reaches the button; the grid keeps 8 pt more free so no row touches the
+/// glass. Hiding the bar gives all of it back to the grid, inside the one
+/// resize a keyboard change sends.
 @MainActor
 enum SSHTerminalBottomBar {
     static let pillHeight = SSHTerminalGlassPill.height
+    static let topInset: CGFloat = 4
     static let bottomInset: CGFloat = 4
     static let gridGap: CGFloat = 8
-    /// The container's height while the bar shows.
-    static let shownHeight = pillHeight + bottomInset
+    /// The container's height while the bar shows: a 44 pt touch target.
+    static let shownHeight = pillHeight + topInset + bottomInset
     /// Rows the grid leaves free while the bar shows.
     static let reserve = shownHeight + gridGap
+}
+
+/// The bar's container. It hands a touch in its own top inset strip to the
+/// pill below it, where the pill's 4 pt outset is: otherwise the strip would
+/// stop at the container and the button would be only 40 pt tall to touch.
+final class SSHTerminalBottomBarView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if let hit = super.hitTest(point, with: event), hit !== self { return hit }
+        // No subview held the point inside its frame: a pill's outset may
+        // still reach it, just above the glass.
+        for subview in subviews.reversed() where !subview.isHidden && subview.isUserInteractionEnabled {
+            if let hit = subview.hitTest(convert(point, to: subview), with: event) { return hit }
+        }
+        return nil
+    }
 }
 
 /// The chat bar grows over the grid instead of shrinking it: the grid keeps

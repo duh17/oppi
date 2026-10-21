@@ -24,7 +24,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// and … at the trailing one. It ends at the keyboard layout guide, so
     /// with a docked keyboard up (and a broken connection, the one case that
     /// keeps the bar) it floats just above the keyboard.
-    private let bottomBar = UIView()
+    private let bottomBar = SSHTerminalBottomBarView()
     private var bottomBarHeight: NSLayoutConstraint?
     private let topStack = UIStackView()
     private let backPill = SSHTerminalBackPill()
@@ -55,11 +55,11 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// only with focus (the keyboard), width, or text size; never as the
     /// draft grows.
     private var composerReservedHeight: CGFloat = 0
-    /// The bottom bar's height while it shows. Folded into the one resize a
-    /// keyboard change already sends, so showing the bar never resizes the
-    /// remote shell on its own.
+    /// Rows the grid leaves free for the bottom bar, from the one rule in
+    /// `SSHTerminalFloatingControls`: never with a keyboard up, so reconnecting
+    /// never resizes the remote shell.
     private var bottomBarReserve: CGFloat {
-        controlsVisible ? SSHTerminalBottomBar.reserve : 0
+        SSHTerminalFloatingControls.bottomBarReserve(keyboardUp: keyboardUp)
     }
     /// How much of the grid's bottom the chat bar covers right now.
     private var composerCoveredHeight: CGFloat = 0
@@ -73,6 +73,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// file path opens inside.
     private var pairedHome: String?
     private var pairedHomeTask: Task<Void, Never>?
+    /// The Open or Browse Files Here lookup in flight, so a second choice can
+    /// replace it and leaving the screen cancels it.
+    private var openTask: Task<Void, Never>?
     private var copyNoticeText: String?
     private var copyNoticeTask: Task<Void, Never>?
     private var lastCopies = 0
@@ -232,6 +235,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         openNoticeTask?.cancel()
         pairedHomeTask?.cancel()
         pairedHomeTask = nil
+        openTask?.cancel()
+        openTask = nil
         herdrTask?.cancel()
         herdrTask = nil
         keymapTask?.cancel()
@@ -430,9 +435,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             // Clear of a landscape notch: the grid runs edge to edge, the
             // controls stay inside the safe area.
             backPill.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: controlsInset),
-            backPill.topAnchor.constraint(equalTo: bottomBar.topAnchor),
+            backPill.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: SSHTerminalBottomBar.topInset),
             morePill.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -controlsInset),
-            morePill.topAnchor.constraint(equalTo: bottomBar.topAnchor),
+            morePill.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: SSHTerminalBottomBar.topInset),
             bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             // The guide rests on the bottom safe area and rides the keyboard.
@@ -526,6 +531,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         pairedHome = nil
         pairedHomeTask?.cancel()
         pairedHomeTask = nil
+        openTask?.cancel()
+        openTask = nil
         detached = false
         cursorShiftHeld = false
         rawKeyboard = false
@@ -1328,16 +1335,18 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             return
         }
         showOpenNotice("Opening \(path.split(separator: "/").last.map(String.init) ?? path)…")
-        Task { [weak self] in
+        startOpenTask { [weak self] in
+            guard let self else { return }
             do {
                 let home = try await Self.hostHome(api: api)
-                guard let self else { return }
+                guard !Task.isCancelled else { return }
                 self.pairedHome = home
-                guard let target = self.absoluteHostPath(path) ?? (path.hasPrefix("/") ? path : nil) else {
+                guard let target = self.absoluteHostPath(path) else {
                     self.showOpenNotice("That path cannot be resolved on the host.")
                     return
                 }
                 let status = try await api.getHostPathStatus(path: target)
+                guard !Task.isCancelled else { return }
                 switch SSHTerminalHostPathPolicy.plan(status: status, home: home) {
                 case .file(let file):
                     self.pushHostFile(serverId: server.id, path: file, root: root)
@@ -1346,8 +1355,11 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
                 case .refused(let reason):
                     self.showOpenNotice(reason)
                 }
+            } catch is CancellationError {
+                return
             } catch {
-                self?.showOpenNotice("That path could not be opened on the host.")
+                guard !Task.isCancelled else { return }
+                self.showOpenNotice("That path could not be opened on the host.")
             }
         }
     }
@@ -1357,30 +1369,47 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         guard let server = pairedServer, let root = HostFactory.root(near: self),
               let api = root.coordinator.apiClient(for: server.id) else { return }
         let folder = channel.workingDirectory
-        Task { [weak self] in
+        startOpenTask { [weak self] in
+            guard let self else { return }
             do {
                 let home = try await Self.hostHome(api: api)
-                guard let self else { return }
+                guard !Task.isCancelled else { return }
                 self.pairedHome = home
                 guard SSHTerminalHostPathPolicy.isInside(home: home, path: folder) else {
                     self.showOpenNotice("Files open inside the server's home folder.")
                     return
                 }
                 self.pushHostFolder(serverId: server.id, folder: folder, home: home, root: root)
+            } catch is CancellationError {
+                return
             } catch {
-                self?.showOpenNotice("The server's home folder could not be read.")
+                guard !Task.isCancelled else { return }
+                self.showOpenNotice("The server's home folder could not be read.")
             }
+        }
+    }
+
+    /// One Open or Browse at a time, and never after the screen was left: a
+    /// second choice replaces the first, and Back before the lookup finishes
+    /// does not push onto the screen below.
+    private func startOpenTask(_ work: @escaping @MainActor () async -> Void) {
+        openTask?.cancel()
+        openTask = Task { [weak self] in
+            await work()
+            guard let self else { return }
+            self.openTask = nil
         }
     }
 
     private static func hostHome(api: APIClient) async throws -> String {
         let status = try await api.getHostPathStatus(path: "~")
-        guard status.resolvedPath.hasPrefix("/") else { throw SSHTerminalError.engineUnavailable }
+        guard status.resolvedPath.hasPrefix("/") else { throw SSHTerminalHostFilesError.homePathInvalid }
         return status.resolvedPath
     }
 
     /// The viewer opens a file through its own server, above this terminal.
     private func pushHostFile(serverId: String, path: String, root: AppRootEnvironment) {
+        guard navigationController?.topViewController === self else { return }
         let target = WorkspaceLinkedFileNavTarget.hostFile(serverId: serverId, workspaceId: "", path: path)
         Router.push(
             WorkspaceLinkedFileViewController(target: target, placement: .pushed, root: root),
@@ -1392,6 +1421,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// passed the way its own navigation builds it: no home prefix, a trailing
     /// slash, and empty for the home folder itself.
     private func pushHostFolder(serverId: String, folder: String, home: String, root: AppRootEnvironment) {
+        guard navigationController?.topViewController === self else { return }
         let trimmedHome = home.hasSuffix("/") && home.count > 1 ? String(home.dropLast()) : home
         var relative = folder == trimmedHome ? "" : String(folder.dropFirst(trimmedHome.count + 1))
         if !relative.isEmpty, !relative.hasSuffix("/") { relative += "/" }

@@ -5,12 +5,12 @@ import UIKit
 
 @Suite("SSH terminal floating controls")
 struct SSHTerminalFloatingControlsTests {
-    @Test @MainActor func theBottomBarKeepsItsRowsFreeAboveTheHomeIndicator() {
-        // 36 pt of glass, 4 pt above the keyboard guide, and 8 pt of clearance
-        // so no terminal row sits under the glass.
-        #expect(SSHTerminalBottomBar.shownHeight == SSHTerminalGlassPill.height + 4)
-        #expect(SSHTerminalBottomBar.reserve == SSHTerminalBottomBar.shownHeight + 8)
-        #expect(SSHTerminalBottomBar.reserve > SSHTerminalGlassPill.height)
+    @Test @MainActor func theBarOnlyTakesRowsWithTheKeyboardDown() {
+        #expect(SSHTerminalFloatingControls.bottomBarReserve(keyboardUp: true) == 0)
+        #expect(
+            SSHTerminalFloatingControls.bottomBarReserve(keyboardUp: false) == SSHTerminalBottomBar.reserve,
+            "no connection argument: a reconnect cannot change the rows"
+        )
     }
 
     @Test func dockedKeyboardIsUpAndFloatingKeyboardIsNot() {
@@ -187,7 +187,7 @@ struct SSHTerminalFloatingPillTests {
             window.rootViewController = nil
         }
         let host = root.view!
-        let bar = UIView()
+        let bar = SSHTerminalBottomBarView()
         bar.translatesAutoresizingMaskIntoConstraints = false
         let back = SSHTerminalBackPill()
         let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())
@@ -209,9 +209,9 @@ struct SSHTerminalFloatingPillTests {
             bar.bottomAnchor.constraint(equalTo: host.bottomAnchor),
             bar.heightAnchor.constraint(equalToConstant: SSHTerminalBottomBar.shownHeight),
             back.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 12),
-            back.topAnchor.constraint(equalTo: bar.topAnchor),
+            back.topAnchor.constraint(equalTo: bar.topAnchor, constant: SSHTerminalBottomBar.topInset),
             pill.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -12),
-            pill.topAnchor.constraint(equalTo: bar.topAnchor),
+            pill.topAnchor.constraint(equalTo: bar.topAnchor, constant: SSHTerminalBottomBar.topInset),
         ])
         host.layoutIfNeeded()
 
@@ -224,6 +224,16 @@ struct SSHTerminalFloatingPillTests {
         ] {
             let center = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: host)
             #expect(host.hitTest(center, with: nil) === button, "\(id) answers a touch through the bar")
+        }
+        // Each button answers a 44 pt tall touch: 3 pt above the glass is the
+        // bar's top inset strip, which the container hands to the pill.
+        for (button, id) in [
+            (back.button as UIView, "sshTerminal.back"),
+            (pill.more, "sshTerminal.more"),
+        ] {
+            let above = button.convert(CGPoint(x: button.bounds.midX, y: -3), to: host)
+            #expect(above.y < button.convert(button.bounds, to: host).minY, "\(id): the point is above the glass")
+            #expect(host.hitTest(above, with: nil) === button, "\(id) answers a touch 3 pt above it")
         }
         // The grid keeps every row above the bar: a touch just above it is the grid.
         #expect(host.hitTest(CGPoint(x: 195, y: grid.frame.maxY - 1), with: nil) === grid)

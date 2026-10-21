@@ -1746,6 +1746,7 @@ struct SSHTerminalTests {
             return try #require(view)
         }
         let barTop = try pill(control("sshTerminal.back")).convert(CGPoint.zero, to: terminal.view).y
+            - SSHTerminalBottomBar.topInset
         let gridBottom = grid.convert(CGPoint(x: 0, y: grid.bounds.maxY), to: terminal.view).y
         #expect(abs((barTop - gridBottom) - SSHTerminalBottomBar.gridGap) < 0.5)
         #expect(
@@ -1775,12 +1776,25 @@ struct SSHTerminalTests {
         // A broken connection keeps Back and Reconnect in reach with the keyboard up.
         keyboard(top: window.bounds.maxY - 336)
         #expect(try hiddenFromVoiceOver("sshTerminal.back"), "the bar is gone with the keyboard up")
+        try await Task.sleep(for: .milliseconds(200))
+        nav.view.layoutIfNeeded()
+        let keyboardUpSize = grid.bounds.size
         channel.event(.closed)
         #expect(await waitForMainActorCondition {
             terminal.updatePropertiesIfNeeded()
             nav.view.layoutIfNeeded()
             return (try? touched("sshTerminal.back")) === back
         }, "Back stays with the keyboard up once the connection is gone")
+        // The bar comes back over the grid's bottom rows rather than taking
+        // rows: reconnecting with the keyboard up does not resize the shell.
+        let floatingBarTop = try pill(control("sshTerminal.back")).convert(CGPoint.zero, to: terminal.view).y
+            - SSHTerminalBottomBar.topInset
+        let floatingGridBottom = grid.convert(CGPoint(x: 0, y: grid.bounds.maxY), to: terminal.view).y
+        #expect(floatingBarTop < floatingGridBottom, "the bar floats over the grid, so it took no rows")
+        #expect(
+            grid.bounds.height + SSHTerminalBottomBar.reserve > keyboardUpSize.height,
+            "the grid did not give the bar its rows back either"
+        )
 
         keyboard(top: window.bounds.maxY - 336)
         nav.popViewController(animated: false)

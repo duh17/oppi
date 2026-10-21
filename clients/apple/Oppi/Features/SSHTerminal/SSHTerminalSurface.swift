@@ -794,8 +794,9 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         )
     }
 
-    /// The items a hold menu shows, in order: Open, Copy, Paste. Nothing
-    /// openable means no menu of our own.
+    /// The items a hold menu shows, in order: Open when the cell can open
+    /// something, Copy when there is a word or a link to copy, then Paste. A
+    /// cell with nothing to open and nothing to copy keeps the system's menu.
     static func holdMenu(
         held: SSHTerminalHeldCell?,
         target: SSHTerminalOpenTarget?,
@@ -804,15 +805,17 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         copy: @escaping () -> Void,
         paste: @escaping () -> Void
     ) -> UIMenu? {
-        guard let target else { return nil }
-        var items: [UIMenuElement] = [
-            UIAction(title: openTitle(for: target), image: UIImage(systemName: "arrow.up.forward.app")) { _ in
-                open(target)
-            },
-        ]
-        if held?.text.isEmpty == false {
+        var items: [UIMenuElement] = []
+        if let target {
+            items.append(UIAction(
+                title: openTitle(for: target),
+                image: UIImage(systemName: "arrow.up.forward.app")
+            ) { _ in open(target) })
+        }
+        if let held, copyText(for: held) != nil {
             items.append(UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in copy() })
         }
+        guard !items.isEmpty else { return nil }
         if canPaste {
             items.append(UIAction(title: "Paste", image: UIImage(systemName: "doc.on.clipboard")) { _ in paste() })
         }
@@ -1024,13 +1027,21 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         editMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))
     }
     /// Copy in the hold menu: the same local copy the double tap makes, never
-    /// a remote clipboard write.
+    /// a remote clipboard write. A cell on an OSC 8 link copies the link, so a
+    /// blank or punctuation cell under a link still copies something.
     private func copyHeldWord() {
-        guard let held = heldCell, !held.text.isEmpty else { return }
-        let snapshot = SSHTerminalSelectionSnapshot(text: held.text, spans: held.spans)
-        channel.copyLocalSelection(held.text)
+        guard let held = heldCell, let text = Self.copyText(for: held) else { return }
+        let snapshot = SSHTerminalSelectionSnapshot(text: text, spans: held.text == text ? held.spans : [])
+        channel.copyLocalSelection(text)
         showHighlight(snapshot, lingering: true)
         needsPaint = true
+    }
+
+    /// What Copy puts on this device's clipboard: the link the cell carries,
+    /// else its word.
+    static func copyText(for held: SSHTerminalHeldCell) -> String? {
+        if let hyperlink = held.hyperlink, !hyperlink.isEmpty { return hyperlink }
+        return held.text.isEmpty ? nil : held.text
     }
 
     /// Starts the selection, or the mouse press in an app that asked for

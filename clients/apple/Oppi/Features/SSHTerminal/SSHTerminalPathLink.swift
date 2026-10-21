@@ -2,13 +2,37 @@ import Foundation
 
 /// The shell's working directory, from OSC 7. libghostty stores the bytes the
 /// shell emitted without parsing them, so only a local `file:` URL becomes a
-/// path. The host part of `file://host/path` is dropped: it names the machine
-/// the shell runs on, which is the machine this terminal is connected to.
+/// path. `file://host/path` names the machine the shell runs on: a terminal
+/// connected to one host must not resolve paths reported from another (a
+/// nested `ssh` or a `tmux` session on a different machine), so the host is
+/// kept and compared per connection.
 enum SSHTerminalWorkingDirectory {
     static let maximumBytes = 4096
 
+    struct Report: Equatable {
+        /// The machine in the URL, lowercased without a trailing dot; empty
+        /// for a URL that names none.
+        var host: String
+        var path: String
+
+        /// A host that says nothing about which machine this is.
+        var isLocal: Bool { host.isEmpty || host == "localhost" }
+
+        /// The folder this connection may use, given the host first seen on
+        /// it. A different machine leaves the folder unknown.
+        func folder(firstHost: String?) -> String? {
+            guard !isLocal else { return path }
+            guard let firstHost, !firstHost.isEmpty else { return path }
+            return firstHost == host ? path : nil
+        }
+    }
+
     /// A local path, or nil when the shell reported nothing usable.
     static func path(from raw: String) -> String? {
+        report(from: raw)?.path
+    }
+
+    static func report(from raw: String) -> Report? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.utf8.count <= maximumBytes else { return nil }
         guard !trimmed.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }) else { return nil }
@@ -17,7 +41,10 @@ enum SSHTerminalWorkingDirectory {
             return nil
         }
         guard url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { return nil }
-        return normalize(url.path)
+        guard let path = normalize(url.path) else { return nil }
+        var host = (url.host ?? "").lowercased()
+        if host.hasSuffix(".") { host.removeLast() }
+        return Report(host: host, path: path)
     }
 
     /// A lexical path: absolute, no control characters, no `..` left, and no
@@ -74,16 +101,18 @@ enum SSHTerminalOpenResolution {
             return webTarget(hyperlink)
         }
         guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
-        if let web = webTarget(openableText(text)) { return web }
-        guard let path = pathTarget(openableText(text), folder: folder) else { return nil }
+        // Whole first: `http://localhost:3000` is a URL with a port, not a
+        // path with a line number.
+        if let web = webTarget(text) { return web }
+        guard let path = pathTarget(strippingLineColumn(text), folder: folder) else { return nil }
         return .path(path)
     }
 
     /// Drop one `:line` or `:line:column` suffix, which editors print after a
     /// path. Copy keeps it; Open would otherwise look for a file named `x:42`.
-    static func openableText(_ text: String) -> String {
+    /// Only paths reach this: a URL's `:port` must survive.
+    static func strippingLineColumn(_ text: String) -> String {
         var value = text
-        // A URL with a port keeps its colon: only a trailing :digits is stripped.
         if let range = value.range(of: ":[0-9]+(:[0-9]+)?$", options: .regularExpression) {
             value.removeSubrange(range)
         }
@@ -106,8 +135,9 @@ enum SSHTerminalOpenResolution {
         guard !value.contains(where: { $0.isWhitespace }) else { return nil }
         if value.hasPrefix("~/") {
             let rest = String(value.dropFirst(2))
-            guard !rest.isEmpty else { return nil }
-            return "~/" + SSHTerminalPathResolution.normalizingRelative(rest)
+            guard !rest.isEmpty,
+                  let relative = SSHTerminalPathResolution.normalizingRelative(rest) else { return nil }
+            return "~/" + relative
         }
         if value.hasPrefix("/") {
             return SSHTerminalWorkingDirectory.normalize(value)
@@ -154,20 +184,22 @@ enum SSHTerminalPathResolution {
         return stack.map { "/" + $0 }
     }
 
-    /// Collapse `.` and `..` in a relative path, keeping it relative.
-    static func normalizingRelative(_ path: String) -> String {
+    /// Collapse `.` and `..` in a relative path, keeping it relative. A `..`
+    /// that climbs above the start is not a path: `~/../x` is not `~/x`.
+    static func normalizingRelative(_ path: String) -> String? {
         var stack = [String]()
         for component in path.split(separator: "/", omittingEmptySubsequences: true) {
             switch component {
             case ".":
                 continue
             case "..":
-                if !stack.isEmpty { stack.removeLast() }
+                guard !stack.isEmpty else { return nil }
+                stack.removeLast()
             default:
                 stack.append(String(component))
             }
         }
-        return stack.joined(separator: "/")
+        return stack.isEmpty ? nil : stack.joined(separator: "/")
     }
 }
 
@@ -180,15 +212,18 @@ enum SSHTerminalServerMatch {
     static func serverId(forHost host: String, paired: [(id: String, host: String)]) -> String? {
         let target = normalize(host)
         guard !target.isEmpty else { return nil }
-        for server in paired where normalize(server.host) == target {
-            return server.id
-        }
-        for server in paired {
+        func matches(_ server: (id: String, host: String)) -> Bool {
             let candidate = normalize(server.host)
-            if isTailnetName(candidate), shortName(candidate) == target { return server.id }
-            if isTailnetName(target), shortName(target) == candidate { return server.id }
+            if candidate == target { return true }
+            if isTailnetName(candidate), shortName(candidate) == target { return true }
+            if isTailnetName(target), shortName(target) == candidate { return true }
+            return false
         }
-        return nil
+        // An exact name wins outright; anything else must be unambiguous, or
+        // the terminal would open a file on the wrong server.
+        if let exact = paired.first(where: { normalize($0.host) == target }) { return exact.id }
+        let loose = paired.filter(matches)
+        return loose.count == 1 ? loose[0].id : nil
     }
 
     /// Case-insensitive, without a trailing root dot.
@@ -225,8 +260,8 @@ enum SSHTerminalHostPathPolicy {
 
     /// A file opens in the viewer, a folder in the Files browser, and anything
     /// else is refused with the reason the screen shows.
-    static func plan(status: HostPathStatus, home: String, resolved: String? = nil) -> SSHTerminalHostPathPlan {
-        let path = resolved ?? status.resolvedPath
+    static func plan(status: HostPathStatus, home: String) -> SSHTerminalHostPathPlan {
+        let path = status.resolvedPath
         guard status.exists else { return .refused("That path is not on the host.") }
         guard isInside(home: home, path: path) else {
             return .refused("Files open inside the server's home folder.")
@@ -235,6 +270,12 @@ enum SSHTerminalHostPathPolicy {
         if status.isFile { return .file(path) }
         return .refused("That path is not a file or a folder.")
     }
+}
+
+/// Why a path on a paired server could not be opened before any file was read.
+enum SSHTerminalHostFilesError: Error {
+    /// The server did not report a home folder, so nothing is rooted anywhere.
+    case homePathInvalid
 }
 
 /// The … menu's header: the screen's name, then the shell's folder when the

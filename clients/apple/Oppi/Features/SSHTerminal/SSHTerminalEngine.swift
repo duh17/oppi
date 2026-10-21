@@ -78,6 +78,11 @@ final class SSHTerminalEngine {
     /// shell emitted, and a bare path or another scheme leaves this empty so
     /// relative paths stay unopenable rather than guessed.
     private(set) var workingDirectory = ""
+    /// The machine the first usable OSC 7 report named on this connection. A
+    /// later report from another machine (a nested ssh, a tmux session on a
+    /// different host) leaves the folder unknown instead of resolving this
+    /// server's paths against it.
+    private var workingDirectoryHost: String?
     /// OSC 7501 records for this terminal. Outlives `close()` so unseen
     /// `done`/`error` records can still be shown after the program exits.
     let programStatus = SSHTerminalProgramStatusStore()
@@ -178,8 +183,12 @@ final class SSHTerminalEngine {
         }
         if pwdChanged {
             var value = GhosttyString()
-            if ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_PWD, &value) == GHOSTTY_SUCCESS {
-                workingDirectory = SSHTerminalWorkingDirectory.path(from: Self.copy(value)) ?? ""
+            if ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_PWD, &value) == GHOSTTY_SUCCESS,
+               let report = SSHTerminalWorkingDirectory.report(from: Self.copy(value)) {
+                if workingDirectoryHost == nil, !report.isLocal {
+                    workingDirectoryHost = report.host
+                }
+                workingDirectory = report.folder(firstHost: workingDirectoryHost) ?? ""
             } else {
                 workingDirectory = ""
             }
@@ -967,6 +976,7 @@ final class SSHTerminalEngine {
                 owner.title = ""
                 owner.titleChanged = false
                 owner.workingDirectory = ""
+                owner.workingDirectoryHost = nil
                 owner.pwdChanged = false
             }
         }

@@ -15,6 +15,18 @@ struct SSHTerminalWorkingDirectoryTests {
         #expect(SSHTerminalWorkingDirectory.path(from: "  file://host/tmp  ") == "/tmp")
     }
 
+    @Test func theReportedHostDecidesWhetherTheFolderIsUsable() {
+        let first = SSHTerminalWorkingDirectory.report(from: "file://mac-studio/Users/duh/workspace")
+        #expect(first == .init(host: "mac-studio", path: "/Users/duh/workspace"))
+        #expect(first?.folder(firstHost: nil) == "/Users/duh/workspace")
+        #expect(first?.folder(firstHost: "mac-studio") == "/Users/duh/workspace")
+        #expect(first?.folder(firstHost: "other-box") == nil, "a nested shell on another host is unknown here")
+        // A host that says nothing about the machine is always usable.
+        #expect(SSHTerminalWorkingDirectory.report(from: "file:///tmp/x")?.isLocal == true)
+        #expect(SSHTerminalWorkingDirectory.report(from: "file://localhost/tmp/x")?.folder(firstHost: "mac-studio") == "/tmp/x")
+        #expect(SSHTerminalWorkingDirectory.report(from: "file://Mac-Studio./tmp")?.host == "mac-studio")
+    }
+
     @Test func onlyFileURLsAreAFolder() {
         #expect(SSHTerminalWorkingDirectory.path(from: "") == nil)
         #expect(SSHTerminalWorkingDirectory.path(from: "/Users/duh") == nil, "a bare path is not OSC 7")
@@ -41,6 +53,11 @@ struct SSHTerminalWorkingDirectoryTests {
         #expect(engine.workingDirectory == "/Users/duh/workspace/oppi")
         engine.receive(Data("\u{1b}]7;file://mac-studio/tmp/a%20b\u{7}".utf8))
         #expect(engine.workingDirectory == "/tmp/a b", "BEL-terminated OSC 7 reads the same")
+        // A nested shell on another machine must not resolve this server's paths.
+        engine.receive(Data("\u{1b}]7;file://other-box/srv/x\u{1b}\\".utf8))
+        #expect(engine.workingDirectory.isEmpty)
+        engine.receive(Data("\u{1b}]7;file://mac-studio/tmp/c\u{1b}\\".utf8))
+        #expect(engine.workingDirectory == "/tmp/c", "the first host still counts")
         // RIS clears the folder with the title and the program records.
         engine.receive(Data("\u{1b}c".utf8))
         #expect(engine.workingDirectory.isEmpty)
@@ -51,16 +68,25 @@ struct SSHTerminalWorkingDirectoryTests {
 struct SSHTerminalOpenResolutionTests {
     private let folder = "/Users/duh/workspace/oppi"
 
-    @Test func trailingLineAndColumnAreDroppedForOpening() {
-        #expect(SSHTerminalOpenResolution.openableText("/a/b.swift:42") == "/a/b.swift")
-        #expect(SSHTerminalOpenResolution.openableText("/a/b.swift:42:7") == "/a/b.swift")
-        #expect(SSHTerminalOpenResolution.openableText("src/x.swift:1") == "src/x.swift")
-        #expect(SSHTerminalOpenResolution.openableText("error:") == "error:")
+    @Test func trailingLineAndColumnAreDroppedOnlyForPaths() {
+        #expect(SSHTerminalOpenResolution.strippingLineColumn("/a/b.swift:42") == "/a/b.swift")
+        #expect(SSHTerminalOpenResolution.strippingLineColumn("/a/b.swift:12:3") == "/a/b.swift")
+        #expect(SSHTerminalOpenResolution.strippingLineColumn("src/x.swift:1") == "src/x.swift")
+        #expect(SSHTerminalOpenResolution.strippingLineColumn("error:") == "error:")
+        #expect(SSHTerminalOpenResolution.strippingLineColumn("a:b") == "a:b")
+        // A URL is resolved whole, so its port is not read as a line number.
         #expect(
-            SSHTerminalOpenResolution.openableText("http://example.com:8080/a") == "http://example.com:8080/a",
-            "a URL keeps its port"
+            SSHTerminalOpenResolution.target(text: "http://localhost:5173", hyperlink: nil, folder: nil)
+                == .web(url: URL(string: "http://localhost:5173")!, hostLabel: "localhost")
         )
-        #expect(SSHTerminalOpenResolution.openableText("a:b") == "a:b")
+        #expect(
+            SSHTerminalOpenResolution.target(text: "https://ex.com:8443/x", hyperlink: nil, folder: nil)
+                == .web(url: URL(string: "https://ex.com:8443/x")!, hostLabel: "ex.com")
+        )
+        #expect(
+            SSHTerminalOpenResolution.target(text: "/a/b.swift:12:3", hyperlink: nil, folder: nil)
+                == .path("/a/b.swift")
+        )
     }
 
     @Test func webLinksOpenOnlyForHTTPAndHTTPS() {
@@ -130,6 +156,14 @@ struct SSHTerminalOpenResolutionTests {
         )
     }
 
+    @Test func aHomePathCannotClimbAboveHome() {
+        #expect(SSHTerminalOpenResolution.target(text: "~/../x", hyperlink: nil, folder: nil) == nil)
+        #expect(SSHTerminalOpenResolution.target(text: "~/a/../b", hyperlink: nil, folder: nil) == .path("~/b"))
+        #expect(SSHTerminalPathResolution.normalizingRelative("../x") == nil)
+        #expect(SSHTerminalPathResolution.normalizingRelative("a/../../x") == nil)
+        #expect(SSHTerminalPathResolution.normalizingRelative("") == nil)
+    }
+
     @Test func aFolderThatIsRelativeIsNotUsableAsABase() {
         #expect(
             SSHTerminalOpenResolution.target(text: "a/b", hyperlink: nil, folder: "relative/folder") == nil
@@ -152,6 +186,15 @@ struct SSHTerminalServerMatchTests {
         #expect(SSHTerminalServerMatch.serverId(forHost: "mac-studio.tail1234.ts.net.", paired: paired) == "studio")
         #expect(SSHTerminalServerMatch.serverId(forHost: "mac-mini.", paired: paired) == "mini")
         #expect(SSHTerminalServerMatch.serverId(forHost: "192.0.2.10", paired: paired) == "box")
+    }
+
+    @Test func twoServersWithTheSameShortNameMatchNothing() {
+        let ambiguous: [(id: String, host: String)] = [
+            (id: "a", host: "mac-studio.a1.ts.net"),
+            (id: "b", host: "mac-studio.b2.ts.net"),
+        ]
+        #expect(SSHTerminalServerMatch.serverId(forHost: "mac-studio", paired: ambiguous) == nil)
+        #expect(SSHTerminalServerMatch.serverId(forHost: "mac-studio.a1.ts.net", paired: ambiguous) == "a")
     }
 
     @Test func anotherMachineOrAShorterNameDoesNotMatch() {
@@ -265,22 +308,46 @@ struct SSHTerminalHoldMenuTitleTests {
         #expect(menu.children.allSatisfy { $0 is UIAction })
     }
 
-    @Test func nothingOpenableLeavesTheSystemMenuAndAnEmptyClipboardHasNoPaste() throws {
-        #expect(
-            SSHTerminalGridView.holdMenu(
-                held: SSHTerminalHeldCell(text: "just words", spans: [], hyperlink: nil),
-                target: nil,
-                canPaste: true,
-                open: { _ in }, copy: {}, paste: {}
-            ) == nil,
-            "plain text keeps the system's Paste menu"
-        )
+    @Test func aWordWithNothingToOpenStillGetsCopyAndPaste() throws {
+        // An unpaired host, or a path outside its home: the owner has no
+        // target, and Copy must still be there.
+        let word = SSHTerminalHeldCell(text: "/opt/homebrew/bin/brew", spans: [], hyperlink: nil)
         let menu = try #require(SSHTerminalGridView.holdMenu(
-            held: SSHTerminalHeldCell(text: "", spans: [], hyperlink: "https://example.com/a"),
+            held: word,
+            target: nil,
+            canPaste: true,
+            open: { _ in }, copy: {}, paste: {}
+        ))
+        #expect(menu.children.map(\.title) == ["Copy", "Paste"])
+        let noClipboard = try #require(SSHTerminalGridView.holdMenu(
+            held: word, target: nil, canPaste: false, open: { _ in }, copy: {}, paste: {}
+        ))
+        #expect(noClipboard.children.map(\.title) == ["Copy"])
+    }
+
+    @Test func aLinkOnABlankCellCopiesTheLink() throws {
+        let held = SSHTerminalHeldCell(text: "", spans: [], hyperlink: "https://example.com/a")
+        #expect(SSHTerminalGridView.copyText(for: held) == "https://example.com/a")
+        let menu = try #require(SSHTerminalGridView.holdMenu(
+            held: held,
             target: .web(url: URL(string: "https://example.com/a")!, hostLabel: "example.com"),
             canPaste: false,
             open: { _ in }, copy: {}, paste: {}
         ))
-        #expect(menu.children.map(\.title) == ["Open example.com"], "a link with no word is Open only")
+        #expect(menu.children.map(\.title) == ["Open example.com", "Copy"])
+        #expect(SSHTerminalGridView.copyText(for: SSHTerminalHeldCell(text: "notes.md", spans: [], hyperlink: nil)) == "notes.md")
+        #expect(SSHTerminalGridView.copyText(for: SSHTerminalHeldCell(text: "", spans: [], hyperlink: nil)) == nil)
+    }
+
+    @Test func aPlainCellKeepsTheSystemMenu() {
+        #expect(
+            SSHTerminalGridView.holdMenu(
+                held: SSHTerminalHeldCell(text: "", spans: [], hyperlink: nil),
+                target: nil,
+                canPaste: true,
+                open: { _ in }, copy: {}, paste: {}
+            ) == nil,
+            "nothing to open and nothing to copy keeps the system's Paste menu"
+        )
     }
 }
