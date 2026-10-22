@@ -24,7 +24,7 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 A workspace's **Terminal** button (top right, beside **Config**) and a chat's **Terminal** button open that folder on the saved host that serves the workspace's server:
 
 - from a workspace: the workspace's root folder;
-- from a chat: the session's own worktree folder when it runs in one, else its workspace's root folder.
+- from a chat: the session's own worktree folder when it runs in one, else its workspace's root folder. A chat in a worktree whose folder cannot be looked up (the server is not connected, or it no longer lists that worktree) shows **Cannot Open Terminal** with the reason instead of opening the workspace root, a folder the chat never ran in.
 
 Where the folder opens depends on the selected host's **Run on Connect** command. Its first word decides, by name, so `/Users/you/.local/bin/herdr` and `herdr --attach` count as Herdr:
 

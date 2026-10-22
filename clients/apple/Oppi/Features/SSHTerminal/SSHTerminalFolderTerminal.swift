@@ -140,8 +140,15 @@ enum SSHTerminalFolderResolve {
         apiClient: APIClient?
     ) async -> SSHTerminalFolderResolution {
         let root = workspace.hostMount?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard let worktreeId, worktreeId != WorkspaceWorktree.mainId, let apiClient else {
+        guard let worktreeId, worktreeId != WorkspaceWorktree.mainId else {
             return root.isEmpty ? .noFolder : .folder(path: root, label: workspace.name, isWorktree: false)
+        }
+        // A worktree that cannot be looked up is never answered with the
+        // workspace root, a folder the session did not run in.
+        guard let apiClient else {
+            return .failure(
+                String(localized: "This session runs in a worktree, but the server is not connected, so its folder cannot be looked up. Reconnect and try again.")
+            )
         }
         do {
             let worktrees = try await apiClient.listWorkspaceWorktrees(workspaceId: workspace.id)

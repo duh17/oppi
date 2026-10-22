@@ -159,6 +159,25 @@ struct SSHTerminalFolderResolveTests {
         )
     }
 
+    @MainActor
+    @Test func aWorktreeSessionWithoutAServerConnectionFailsInsteadOfOpeningTheRoot() async {
+        let workspace = makeTestWorkspace(name: "oppi", hostMount: "/Users/chen/oppi")
+        let resolved = await SSHTerminalFolderResolve.folder(workspace: workspace, worktreeId: "fix-x", apiClient: nil)
+        guard case .failure(let reason) = resolved else {
+            Issue.record("a worktree that cannot be looked up must not fall back to the workspace root: \(resolved)")
+            return
+        }
+        #expect(reason.contains("worktree"))
+
+        // Only a chat with no worktree (or the main checkout) may use the root without a server.
+        let plain = await SSHTerminalFolderResolve.folder(workspace: workspace, worktreeId: nil, apiClient: nil)
+        #expect(plain == root("/Users/chen/oppi"))
+        let main = await SSHTerminalFolderResolve.folder(
+            workspace: workspace, worktreeId: WorkspaceWorktree.mainId, apiClient: nil
+        )
+        #expect(main == root("/Users/chen/oppi"))
+    }
+
     @Test func onlyAnUnsupportedRouteFallsBackSilently() {
         // An older server has no worktree route: its sessions still run in the
         // workspace root, so the terminal opens there.
