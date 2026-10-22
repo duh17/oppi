@@ -40,6 +40,7 @@ import type { AgentBackend } from "./agent-backend.js";
 import type { SessionStopCoordinator } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
 import { materializeToolMediaDetails } from "./session-attachments.js";
+import { attachedFilesBlock } from "./chat-attachments.js";
 import { recordStartedQueueItem } from "./session-queue-utils.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { normalizeMutationToolName } from "./tool-mutations.js";
@@ -145,8 +146,18 @@ export class SessionAgentEventCoordinator {
     }
 
     if (data.type === "queue_item_started") {
-      // A native queue (durable) placed a queued steer or follow-up into the run.
-      if (recordStartedQueueItem(active.session, data.item.message)) {
+      // A native queue (durable) placed a queued steer or follow-up into the run. Its
+      // display text is what was typed; an attachment-only input records its
+      // "Attached files:" block, as admission does.
+      const text = data.item.message.trim()
+        ? data.item.message
+        : attachedFilesBlock(
+            (data.item.attachments ?? []).map((ref) => ({
+              name: ref.name,
+              path: ref.workspacePath,
+            })),
+          );
+      if (text && recordStartedQueueItem(active.session, text)) {
         this.deps.onFirstMessage?.(active.session);
       }
       this.deps.broadcast(key, data);

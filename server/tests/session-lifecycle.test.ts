@@ -1759,10 +1759,8 @@ describe("SessionManager message queue", () => {
     expect(onFirstMessage).toHaveBeenCalledWith(session);
   });
 
-  it("counts an image-only input a native queue places, as its first message", () => {
+  it("records an image-only input a native queue places as its attached-files block", () => {
     const { manager, session } = makeManagerHarness({ status: "busy" });
-    const onFirstMessage = vi.fn();
-    manager.onFirstMessage = onFirstMessage;
 
     feedEvent(manager, "s1", {
       type: "queue_item_started",
@@ -1788,7 +1786,8 @@ describe("SessionManager message queue", () => {
     });
 
     expect(session.messageCount).toBe(1);
-    expect(onFirstMessage).toHaveBeenCalledTimes(1);
+    expect(session.lastMessage).toBe("Attached files:\n- shot.png: shot.png");
+    expect(session.firstMessage).toBe("Attached files:\n- shot.png: shot.png");
   });
 
   it("counts a queued item the SDK reconcile finds started", async () => {

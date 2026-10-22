@@ -77,6 +77,18 @@ async function sha256ForFile(path: string): Promise<string> {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+/**
+ * The "Attached files:" block a prompt carries for its attachments, one line per file
+ * with its path when known; "" when there are none.
+ */
+export function attachedFilesBlock(files: ReadonlyArray<{ name: string; path?: string }>): string {
+  if (files.length === 0) return "";
+  const lines = files.map((file) =>
+    file.path ? `- ${file.name}: ${file.path}` : `- ${file.name}`,
+  );
+  return ["Attached files:", ...lines].join("\n");
+}
+
 export async function materializeChatAttachments(
   options: MaterializeChatAttachmentsOptions,
 ): Promise<MaterializeChatAttachmentsResult> {
@@ -194,14 +206,9 @@ export async function materializeChatAttachments(
     }),
   );
 
-  const fileLines = materialized.map((item) => `- ${item.name}: ${item.relativePath}`);
-
-  const sections: string[] = [];
-  if (fileLines.length > 0) {
-    sections.push(["Attached files:", ...fileLines].join("\n"));
-  }
-
-  const attachmentBlock = sections.join("\n\n");
+  const attachmentBlock = attachedFilesBlock(
+    materialized.map((item) => ({ name: item.name, path: item.relativePath })),
+  );
   const message = attachmentBlock
     ? options.message.trim().length > 0
       ? `${options.message}\n\n${attachmentBlock}`
