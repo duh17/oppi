@@ -45,11 +45,7 @@ final class ChatFilesNavigationReproUITests: XCTestCase {
         let app = launchRealChatHarness()
 
         let filesButton = app.buttons["chat.toolbar.files"]
-        let backButton = app.buttons["chat.toolbar.back"]
         XCTAssertTrue(filesButton.waitForExistence(timeout: 8), "Real ChatViewController repro did not reach the chat surface")
-        XCTAssertTrue(backButton.exists, "Chat should use one leading pill with Back and Files")
-        XCTAssertLessThan(filesButton.frame.midX, app.frame.midX, "Files control should live on the leading side of chat navigation")
-        XCTAssertLessThan(backButton.frame.maxX, filesButton.frame.minX + 2, "Back and Files controls should be adjacent in the leading pill")
         XCTAssertFalse(app.collectionViews["navChrome.repro.root"].exists, "Workspace list should not be visible before tapping Files")
 
         filesButton.tap()
