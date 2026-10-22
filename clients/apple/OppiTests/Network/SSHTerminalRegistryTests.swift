@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Synchronization
 import Testing
 import UIKit
@@ -145,12 +146,15 @@ struct SSHTerminalRegistryTests {
         var live = SSHTerminalProfile(host: "one.ts.net", username: "alice", authentication: .deviceKey)
         live.savesSudoPassword = true
         let open = try harness.open(live)
-        defer { try? SSHTerminalProfileStore().delete(id: live.id) }
+        let name = "SSHTerminalRegistryTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = SSHTerminalProfileStore(defaults: defaults, keychain: InMemoryCredentialKeychain())
 
         // The form removed the sudo password: the connection is the same one.
         var edited = live
         edited.savesSudoPassword = false
-        let session = SSHTerminalConnectSession(registry: harness.registry)
+        let session = SSHTerminalConnectSession(registry: harness.registry, profileStore: { store })
         session.connect(profile: edited)
         try await waitUntil { session.showsTerminal }
         #expect(session.channel === open.channel)
@@ -158,6 +162,37 @@ struct SSHTerminalRegistryTests {
         #expect(harness.registry.terminals(for: live.id).count == 1)
         #expect(harness.registry.terminal(for: live.id)?.profile.savesSudoPassword == false)
         #expect(session.currentProfile?.savesSudoPassword == false)
+        open.channel.close(reason: "done")
+    }
+
+    @Test func turningOnSavePasswordForALiveHostAsksInConnectModeThenAttaches() async throws {
+        let harness = Harness()
+        let name = "SSHTerminalRegistryTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let keychain = InMemoryCredentialKeychain()
+        let store = SSHTerminalProfileStore(defaults: defaults, keychain: keychain)
+        let live = SSHTerminalProfile(host: "one.ts.net", username: "alice", authentication: .password)
+        let open = try harness.open(live)
+        try store.save(live)
+
+        // The form turned Save Password on and typed no password.
+        var edited = live
+        edited.savesPassword = true
+        let session = SSHTerminalConnectSession(registry: harness.registry, profileStore: { store })
+        session.connect(profile: edited)
+        #expect(session.passwordPrompt)
+        #expect(!session.savingHostOnly, "a save-only sheet would save and stop short of attaching")
+        #expect(!session.showsTerminal)
+
+        // The sheet submits back through connect: it saves the password and attaches.
+        session.connect(profile: edited, suppliedPassword: "pw-fixture")
+        try await waitUntil { session.showsTerminal }
+        #expect(session.channel === open.channel)
+        #expect(open.channel.connected, "no replacement was dialed")
+        #expect(harness.registry.terminals(for: live.id).count == 1)
+        #expect(store.profile(id: live.id)?.savesPassword == true)
+        #expect(keychain.items[SSHTerminalProfileStore.passwordAccount(for: live.id)] != nil)
         open.channel.close(reason: "done")
     }
 
@@ -526,4 +561,12 @@ final class FakeBackgroundTasks: AppBackgroundTasks {
         guard endedCount == 0 else { return }
         await withCheckedContinuation { endWaiter = $0 }
     }
+}
+
+private final class InMemoryCredentialKeychain: SSHCredentialStoring, @unchecked Sendable {
+    var items: [String: Data] = [:]
+
+    func load(account: String, requirePresence: Bool, authenticationContext: LAContext?) throws -> Data? { items[account] }
+    func save(_ data: Data, account: String, requirePresence: Bool) throws { items[account] = data }
+    func delete(account: String) throws { items.removeValue(forKey: account) }
 }

@@ -81,6 +81,13 @@ final class SSHTerminalConnectSession {
         if let live = registry.terminal(for: value.id, folder: folder), live.profile.sameConnection(as: value) {
             if live.profile == value && sudoPassword == nil {
                 show(live)
+            } else if value.authentication == .password && value.savesPassword && suppliedPassword == nil
+                        && !value.reusesSavedPassword(of: profileStore().profile(id: value.id)) {
+                // Save Password was just turned on and no password is stored:
+                // ask in connect mode, so submitting comes back through here,
+                // saves it, and attaches (a save-only sheet would stop short).
+                savingHostOnly = false
+                passwordPrompt = true
             } else {
                 saveHost(
                     profile: value, suppliedPassword: suppliedPassword, sudoPassword: sudoPassword
