@@ -55,6 +55,7 @@ Example:
 ### Changed
 
 - **Mirror:** `oppi-mirror` uses `ws` 8.22.0, the version `oppi-server` pins.
+- **Server:** A one-time (`at`) schedule moves to Archived after its run succeeds, so finished one-time schedules leave the Active list. A failed run keeps it active so you can see the failure and run it again.
 
 ## [0.53.0] - 2026-10-22
 

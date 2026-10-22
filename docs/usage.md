@@ -124,7 +124,7 @@ The sidebar holds saved **Agents** and **Schedules**.
 
 - Agents store reusable definitions and can use one Unicode emoji or SF Symbol as an icon.
 - **Edit Agent → Chat Style** picks how that Agent's sessions look on this device: **Full**, **Compact**, or **Chat**, or **Settings** to follow **Settings → Chat → Style**. The choice stays on the device, so another phone or iPad keeps its own, and a change restyles the Agent's open sessions too.
-- Schedules support `at`, `every`, and `cron` triggers. Each schedule can target a workspace, saved Agent, or existing session. Oppi keeps run history for manual and approved automatic runs.
+- Schedules support `at`, `every`, and `cron` triggers. A one-time `at` schedule moves to Archived once its run succeeds; a failed run keeps it active. Each schedule can target a workspace, saved Agent, or existing session. Oppi keeps run history for manual and approved automatic runs.
 
 Create and edit sheets can open a **Pi Control** session (ordinary Pi with global settings, tools, Skills, Extensions, `SYSTEM.md`, and `APPEND_SYSTEM.md`) or use the native forms.
 

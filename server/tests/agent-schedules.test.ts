@@ -413,6 +413,8 @@ describe("agent schedule durable core", () => {
     expect(inputs).toEqual([`sess-1:${existingRun.idempotencyKey}`]);
     expect(store.getRun(newRun.id)?.status).toBe("completed");
     expect(store.getRun(existingRun.id)?.status).toBe("completed");
+    // A manual run of a one-time schedule leaves its due slot, and the schedule, pending.
+    expect(store.getSchedule(newSession.id)?.status).toBe("active");
   });
 
   it("dispatches due runs for active schedules", async () => {
@@ -441,6 +443,7 @@ describe("agent schedule durable core", () => {
 
     expect(launch).toHaveBeenCalledTimes(1);
     expect(store.getRun(run.id)).toMatchObject({ status: "completed" });
+    expect(store.getSchedule(schedule.id)).toMatchObject({ status: "archived", archivedAt: 1_000 });
   });
 
   it("prevents stale lease owners from dispatching reclaimed runs", async () => {

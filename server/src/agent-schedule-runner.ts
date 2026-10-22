@@ -1,5 +1,9 @@
 import { cronMatchesNow } from "./agent-schedule-cron.js";
-import type { AgentSchedule, AgentScheduleTrigger } from "./agent-schedules.js";
+import {
+  atSlotKey,
+  type AgentSchedule,
+  type AgentScheduleTrigger,
+} from "./agent-schedules.js";
 import { recordScheduleRun } from "./schedule-run-metrics.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
@@ -159,7 +163,7 @@ export function dueSlotKeysForSchedule(schedule: AgentSchedule, now: number): st
 
 function dueSlotKeys(trigger: AgentScheduleTrigger, createdAt: number, now: number): string[] {
   if (trigger.type === "at") {
-    return now >= trigger.at && createdAt <= trigger.at ? [`at:${trigger.at}`] : [];
+    return now >= trigger.at && createdAt <= trigger.at ? [atSlotKey(trigger.at)] : [];
   }
 
   if (trigger.type === "every") {

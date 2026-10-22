@@ -22,6 +22,11 @@ export class ScheduleIdempotencyConflictError extends Error {
 }
 
 export type AgentScheduleStatus = "active" | "paused" | "archived";
+
+/** The one due slot of an `at` trigger. */
+export function atSlotKey(at: number): string {
+  return `at:${at}`;
+}
 export type AgentScheduleRunStatus = "pending" | "claimed" | "running" | "completed" | "failed";
 export type AgentScheduleRunKind = "due" | "manual";
 
@@ -513,19 +518,22 @@ export class AgentScheduleStore {
         action.type === "new_session"
           ? await hooks.launchNewSession({ run, schedule, action })
           : await hooks.sendExistingSessionInput({ run, schedule, action });
-      const completed = this.db
-        .prepare(
-          `UPDATE agent_schedule_runs
-           SET status = 'completed', completed_at = ?, updated_at = ?, result_json = ?
-           WHERE id = ? AND status = 'running' AND lease_owner = ?
-             AND (lease_expires_at IS NULL OR lease_expires_at > ?)`,
-        )
-        .run(now, now, JSON.stringify(result ?? null), run.id, options.leaseOwner, now) as {
-        changes?: number;
-      };
-      if (completed.changes !== undefined && completed.changes !== 1) {
-        throw new Error(`Schedule run lease was lost: ${run.id}`);
-      }
+      this.db.transaction(() => {
+        const completed = this.db
+          .prepare(
+            `UPDATE agent_schedule_runs
+             SET status = 'completed', completed_at = ?, updated_at = ?, result_json = ?
+             WHERE id = ? AND status = 'running' AND lease_owner = ?
+               AND (lease_expires_at IS NULL OR lease_expires_at > ?)`,
+          )
+          .run(now, now, JSON.stringify(result ?? null), run.id, options.leaseOwner, now) as {
+          changes?: number;
+        };
+        if (completed.changes !== undefined && completed.changes !== 1) {
+          throw new Error(`Schedule run lease was lost: ${run.id}`);
+        }
+        this.archiveIfOneTimeSlotDelivered(run, now);
+      })();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const failed = this.db
@@ -549,6 +557,25 @@ export class AgentScheduleStore {
     const completed = this.getRun(run.id);
     if (!completed) throw new Error(`Schedule run disappeared: ${run.id}`);
     return completed;
+  }
+
+  /**
+   * A one-time schedule is done once its due slot completes, so it leaves Active for Archived,
+   * where it stays recoverable. Restoring it never reruns that slot: the slot's run already
+   * exists under its idempotency key. A failed slot keeps the schedule active so the failure stays
+   * visible; a manual run, or a slot whose time was edited away while it ran, archives nothing.
+   */
+  private archiveIfOneTimeSlotDelivered(run: AgentScheduleRun, now: number): void {
+    if (run.kind !== "due") return;
+    const schedule = this.getSchedule(run.scheduleId);
+    if (schedule?.trigger.type !== "at" || atSlotKey(schedule.trigger.at) !== run.slotKey) return;
+    this.db
+      .prepare(
+        `UPDATE agent_schedules
+         SET status = 'archived', updated_at = ?, archived_at = ?
+         WHERE id = ? AND status <> 'archived'`,
+      )
+      .run(now, now, schedule.id);
   }
 
   private createRun(input: {

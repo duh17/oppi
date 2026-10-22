@@ -140,6 +140,13 @@ describe("agent schedule runner", () => {
     expect(sessions[0]?.launch?.source).toBe("schedule");
     expect(sessions[0]?.launch?.schedule).toMatchObject({ scheduleId: schedule.id });
     expect(sessions[0]?.launch?.modelPolicy).toBeUndefined();
+    expect(store.getSchedule(schedule.id)?.status).toBe("archived");
+
+    // Restoring the finished one-time schedule must not fire its slot again.
+    store.restoreSchedule(schedule.id, 3_000);
+    await runner.runOnce();
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(store.listRuns(schedule.id)).toHaveLength(1);
   });
 
   it("drains the active dispatch and starts no more work after stop", async () => {
@@ -251,6 +258,8 @@ describe("agent schedule runner", () => {
         promptError: 'Required model "ds4/deepseek-v4-flash" is not available',
       },
     });
+    // A failed one-time slot stays in Active, where the failure is visible and can be rerun.
+    expect(store.getSchedule(schedule.id)?.status).toBe("active");
   });
 
   it("names the unavailable Extension in the failed run error and the dispatch log", async () => {
