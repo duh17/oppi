@@ -597,6 +597,62 @@ struct ComposerDraftStoreTests {
         #expect(store.lastError == "Failed to load local message drafts.")
     }
 
+    @Test func savingBeforeFirstLoadKeepsDraftsOnDisk() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let saved = fixture.makeStore()
+        await saved.load()
+        let savedKey = try fixture.key(sessionID: "saved")
+        saved.setDraft(.init(text: "saved draft", repoPointers: []), for: savedKey)
+        await saved.flush()
+
+        // A background launch waiting for protected data has not loaded yet
+        // when the scene backgrounds and flushes.
+        let launching = fixture.makeStore()
+        await launching.flush()
+        await launching.load()
+
+        #expect(launching.record(for: savedKey)?.payload.text == "saved draft")
+    }
+
+    @Test func unreadableDraftFileIsNotOverwrittenUntilItCanBeRead() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let first = fixture.makeStore()
+        await first.load()
+        let savedKey = try fixture.key(sessionID: "saved")
+        let newKey = try fixture.key(sessionID: "new")
+        first.setDraft(.init(text: "saved draft", repoPointers: []), for: savedKey)
+        await first.flush()
+
+        // Data protection while the device is locked: the file exists but
+        // cannot be read.
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: fixture.fileURL.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.fileURL.path) }
+        let launching = fixture.makeStore()
+        await launching.load()
+        launching.setDraft(.init(text: "typed while locked", repoPointers: []), for: newKey)
+        await launching.flush()
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.fileURL.path)
+        let whileUnreadable = fixture.makeStore()
+        await whileUnreadable.load()
+        #expect(whileUnreadable.record(for: savedKey)?.payload.text == "saved draft")
+
+        // Once readable, the next save keeps the saved draft and the new one.
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: fixture.fileURL.path)
+        let retrying = fixture.makeStore()
+        await retrying.load()
+        retrying.setDraft(.init(text: "typed while locked", repoPointers: []), for: newKey)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.fileURL.path)
+        await retrying.flush()
+
+        let reloaded = fixture.makeStore()
+        await reloaded.load()
+        #expect(reloaded.record(for: savedKey)?.payload.text == "saved draft")
+        #expect(reloaded.record(for: newKey)?.payload.text == "typed while locked")
+    }
+
     private struct Fixture {
         let rootURL: URL
         let fileURL: URL

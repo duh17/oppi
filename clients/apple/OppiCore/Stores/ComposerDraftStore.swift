@@ -363,6 +363,7 @@ final class ComposerDraftStore {
     @ObservationIgnored private let lifecycleFallbackURL: URL
     @ObservationIgnored private let saveDelay: Duration
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    @ObservationIgnored private var durableFileUnreadable = false
     @ObservationIgnored private var pendingLegacyDraft: PendingLegacyDraft?
     @ObservationIgnored private var fallbackDocument = ComposerDraftFallbackDocument.empty
     @ObservationIgnored private var attachmentDataByKey: [ComposerDraftKey: [String: Data]] = [:]
@@ -438,9 +439,12 @@ final class ComposerDraftStore {
         self.saveDelay = saveDelay
     }
 
-    func load() async {
-        guard !isLoaded else { return }
-
+    /// Reads the durable drafts file into memory. A file that exists but cannot
+    /// be read (data protection while the device is locked) leaves
+    /// `durableFileUnreadable` set so no save overwrites drafts that were never
+    /// read; the next save reads again. A file that is corrupt or from another
+    /// version is not protected: it stays replaceable.
+    private func loadDurableRecords() async {
         do {
             let loadedRecords = try await persistence.load()
             for record in loadedRecords {
@@ -452,10 +456,18 @@ final class ComposerDraftStore {
                     fileURL: persistenceFileURL
                 )
             )
+            durableFileUnreadable = false
         } catch {
+            durableFileUnreadable = !(error is DecodingError || error is ComposerDraftPersistenceError)
             lastError = "Failed to load local message drafts."
             composerDraftLogger.error("Draft load failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    func load() async {
+        guard !isLoaded else { return }
+
+        await loadDurableRecords()
 
         do {
             if let fallback = try await persistence.loadLifecycleFallback() {
@@ -878,6 +890,14 @@ final class ComposerDraftStore {
     }
 
     private func persistCurrentRecords() async {
+        // Before the first load the in-memory set is empty and writing it would
+        // delete the saved drafts (a scene backgrounding while the launch waits
+        // for protected data flushes here).
+        guard isLoaded else { return }
+        if durableFileUnreadable {
+            await loadDurableRecords()
+            guard !durableFileUnreadable else { return }
+        }
         let snapshot = recordsForPersistence()
 
         do {
