@@ -251,6 +251,12 @@ describe("session_state_sessions columns-only migration", () => {
       for (const legacy of LEGACY_SESSIONS) {
         expect(store.getSession(legacy.id)).toEqual(expectedAfterMigration(legacy));
       }
+      // Workspace lists decode rows without the full-read repairs; they drop the
+      // pre-0.53 fields too.
+      const listed = store
+        .listAllWorkspaceSessionSnapshots("ws-1")
+        .find((session) => session.id === DURABLE_SESSION.id);
+      expect(listed?.changeStats).toEqual(expectedAfterMigration(DURABLE_SESSION).changeStats);
     } finally {
       store.close();
     }

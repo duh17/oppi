@@ -741,7 +741,12 @@ export class SessionSqliteStore {
       )
       .all(...params) as SessionRow[];
 
-    return rows.map(buildSession);
+    // Lists skip the full-read repairs but still drop pre-0.53 change-stat keys.
+    return rows.map((row) => {
+      const session = buildSession(row);
+      if (session.changeStats) session.changeStats = projectChangeStats(session.changeStats);
+      return session;
+    });
   }
 }
 
@@ -758,7 +763,10 @@ function normalizeStoredSessionRuntimeKind(value: unknown): Session["runtime"] |
   return undefined;
 }
 
-/** The one row decoder. Workspace lists use it as is; full reads add the repairs. */
+/**
+ * The one row decoder. Full reads add the repairs (`normalizeDeclaredSession`); workspace
+ * lists add only the change-stat projection.
+ */
 function buildSession(row: SessionRow): Session {
   // Neither writer stores null members, so the cached fields copy over as they are.
   const {
@@ -823,8 +831,26 @@ function buildSession(row: SessionRow): Session {
     "piSessionFiles",
   );
   if (piSessionFiles && piSessionFiles.length > 0) session.piSessionFiles = piSessionFiles;
-
   return session;
+}
+
+/**
+ * Known fields only: rows saved before 0.53 also hold estimated line counts and a
+ * per-file line-count map that must not reach clients or stay in memory. The line
+ * counts go out as 0 for Build 55 (see `SessionChangeStats.addedLines`).
+ */
+function projectChangeStats(stats: NonNullable<Session["changeStats"]>): Session["changeStats"] {
+  return {
+    mutatingToolCalls: stats.mutatingToolCalls,
+    ...(stats.compactionCount !== undefined ? { compactionCount: stats.compactionCount } : {}),
+    filesChanged: stats.filesChanged,
+    changedFiles: stats.changedFiles,
+    ...(stats.changedFilesOverflow !== undefined
+      ? { changedFilesOverflow: stats.changedFilesOverflow }
+      : {}),
+    addedLines: 0,
+    removedLines: 0,
+  };
 }
 
 /** Columns every write sets, after `id`; `sessionRowValues` returns values in this order. */
@@ -998,21 +1024,7 @@ function normalizeDeclaredSession(session: Session): Session {
     normalized.model = session.model;
   }
   if (session.changeStats !== undefined && session.changeStats !== null) {
-    // Known fields only: rows saved before 0.53 also hold estimated line counts and a
-    // per-file line-count map that must not reach clients. The line counts go out as 0
-    // for Build 55 (see `SessionChangeStats.addedLines`).
-    const stats = session.changeStats;
-    normalized.changeStats = {
-      mutatingToolCalls: stats.mutatingToolCalls,
-      ...(stats.compactionCount !== undefined ? { compactionCount: stats.compactionCount } : {}),
-      filesChanged: stats.filesChanged,
-      changedFiles: stats.changedFiles,
-      ...(stats.changedFilesOverflow !== undefined
-        ? { changedFilesOverflow: stats.changedFilesOverflow }
-        : {}),
-      addedLines: 0,
-      removedLines: 0,
-    };
+    normalized.changeStats = projectChangeStats(session.changeStats);
   }
   if (session.contextTokens !== undefined && session.contextTokens !== null) {
     normalized.contextTokens = session.contextTokens;
