@@ -85,9 +85,10 @@ enum CrossProcessFileLock {
     static func withLock<T>(
         fileAt url: URL,
         protection: URLFileProtection,
+        classes: FileClasses = .fileSystem,
         _ body: () throws -> T
     ) throws -> T {
-        let fd = try openLockFile(at: url, protection: protection)
+        let fd = try openLockFile(at: url, protection: protection, classes: classes)
         guard flock(fd, LOCK_EX) == 0 else {
             let error = POSIXError.current
             close(fd)
@@ -100,22 +101,20 @@ enum CrossProcessFileLock {
         return try body()
     }
 
-    private static func openLockFile(at url: URL, protection: URLFileProtection) throws -> Int32 {
+    private static func openLockFile(at url: URL, protection: URLFileProtection, classes: FileClasses) throws -> Int32 {
         // Two tries: another process may create the file between the two opens.
         for _ in 0..<2 {
             let created = open(url.path, O_CREAT | O_EXCL | O_RDWR, 0o600)
             if created >= 0 {
-                setProtection(protection, at: url)
+                classes.set(protection, url)
                 return created
             }
             guard errno == EEXIST else { throw POSIXError.current }
             let existing = open(url.path, O_RDWR)
             if existing >= 0 {
-                // Nil where the file system reports no class. The Simulator reports one set
-                // through `setResourceValue`, as `setProtection` does.
-                if let current = try? url.resourceValues(forKeys: [.fileProtectionKey]).fileProtection,
-                   current != protection {
-                    setProtection(protection, at: url)
+                // Nil where the file system reports no class.
+                if let current = classes.read(url), current != protection {
+                    classes.set(protection, url)
                 }
                 return existing
             }
@@ -124,10 +123,26 @@ enum CrossProcessFileLock {
         throw POSIXError(.ENOENT)
     }
 
-    /// Best effort, through the documented way to change an existing file's class. It can
-    /// fail while the phone is locked; the next open while unlocked sets it again.
-    private static func setProtection(_ protection: URLFileProtection, at url: URL) {
-        try? (url as NSURL).setResourceValue(protection, forKey: .fileProtectionKey)
+    /// How the lock reads and sets a file's protection class. Tests substitute it: whether the
+    /// Simulator lets a process weaken a class or open a Class B file depends on its keybag
+    /// state, which a test cannot set.
+    struct FileClasses {
+        var read: (URL) -> URLFileProtection?
+        var set: (URLFileProtection, URL) -> Void
+
+        /// The class the file system reports now (past any cached resource value), and a best
+        /// effort change through the documented way to change an existing file's class. That
+        /// can fail while the phone is locked; the next open while unlocked sets it again.
+        static var fileSystem: FileClasses {
+            FileClasses(
+                read: { url in
+                    try? URL(fileURLWithPath: url.path).resourceValues(forKeys: [.fileProtectionKey]).fileProtection
+                },
+                set: { protection, url in
+                    try? (url as NSURL).setResourceValue(protection, forKey: .fileProtectionKey)
+                }
+            )
+        }
     }
 }
 

@@ -227,22 +227,34 @@ struct PushEnvelopeTests {
 
     // MARK: - Push state lock
 
-    /// The class as the file system reports it now, past any cached resource value.
-    private static func protection(of url: URL) throws -> URLFileProtection? {
-        try URL(fileURLWithPath: url.path).resourceValues(forKeys: [.fileProtectionKey]).fileProtection
+    /// File classes kept in memory: the lock's class logic, without depending on whether the
+    /// Simulator's keybag lets this process weaken a class right now (a fresh test host may not).
+    private final class RecordedClasses {
+        var classes: [String: URLFileProtection] = [:]
+        var sets: [URLFileProtection] = []
+        var access: CrossProcessFileLock.FileClasses {
+            CrossProcessFileLock.FileClasses(
+                read: { [unowned self] url in self.classes[url.path] },
+                set: { [unowned self] protection, url in
+                    self.sets.append(protection)
+                    self.classes[url.path] = protection
+                }
+            )
+        }
     }
 
     /// A file created in a directory the app's at-rest upgrade made Class B would be Class B,
-    /// which the extension cannot open again while the phone is locked.
+    /// which the extension cannot open again while the phone is locked. So the creator sets the
+    /// lock's class itself instead of inheriting the directory's.
     @Test func aNewLockFileGetsTheClassTheExtensionCanOpenWhileLocked() throws {
         let directory = try Self.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        try (directory as NSURL).setResourceValue(URLFileProtection.completeUnlessOpen, forKey: .fileProtectionKey)
         let url = directory.appendingPathComponent("replay.lock")
+        let recorded = RecordedClasses()
 
-        try CrossProcessFileLock.withLock(fileAt: url, protection: .completeUntilFirstUserAuthentication) {}
+        try CrossProcessFileLock.withLock(fileAt: url, protection: .completeUntilFirstUserAuthentication, classes: recorded.access) {}
 
-        #expect(try Self.protection(of: url) == .completeUntilFirstUserAuthentication)
+        #expect(recorded.sets == [.completeUntilFirstUserAuthentication])
     }
 
     /// The app and the extension each open the lock file on their own: replacing it would let
@@ -251,12 +263,15 @@ struct PushEnvelopeTests {
         let directory = try Self.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("replay.lock")
-        try CrossProcessFileLock.withLock(fileAt: url, protection: .completeUntilFirstUserAuthentication) {}
+        let recorded = RecordedClasses()
+        try CrossProcessFileLock.withLock(fileAt: url, protection: .completeUntilFirstUserAuthentication, classes: recorded.access) {}
         let inode = try #require(FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? Int)
-        try (url as NSURL).setResourceValue(URLFileProtection.completeUnlessOpen, forKey: .fileProtectionKey)
-        #expect(try Self.protection(of: url) == .completeUnlessOpen)
+        recorded.classes[url.path] = .completeUnlessOpen
+        recorded.sets = []
 
-        let blocked = try CrossProcessFileLock.withLock(fileAt: url, protection: .completeUntilFirstUserAuthentication) {
+        let blocked = try CrossProcessFileLock.withLock(
+            fileAt: url, protection: .completeUntilFirstUserAuthentication, classes: recorded.access
+        ) {
             let other = open(url.path, O_RDWR)
             defer { close(other) }
             return other >= 0 && flock(other, LOCK_EX | LOCK_NB) != 0 && errno == EWOULDBLOCK
@@ -264,7 +279,12 @@ struct PushEnvelopeTests {
 
         #expect(blocked)
         #expect(try FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? Int == inode)
-        #expect(try Self.protection(of: url) == .completeUntilFirstUserAuthentication)
+        #expect(recorded.sets == [.completeUntilFirstUserAuthentication])
+
+        // A lock file that already has the right class is left alone.
+        recorded.sets = []
+        try CrossProcessFileLock.withLock(fileAt: url, protection: .completeUntilFirstUserAuthentication, classes: recorded.access) {}
+        #expect(recorded.sets.isEmpty)
     }
 
     // MARK: - App icon badge
