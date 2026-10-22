@@ -92,8 +92,23 @@ const IOS_TEST_TARGET_ROOTS = [
   "clients/apple/OppiE2ETests/",
   "clients/apple/OppiPerfTests/",
 ];
-const IOS_TEST_SOURCE_PATH_READ =
-  /\b(?:fileURLWithPath|contentsOfFile|atPath)\s*:\s*#file(?:Path)?\b|\bURL\s*\(\s*filePath\s*:\s*#file(?:Path)?\b/;
+const IOS_TEST_FILE_LITERAL = /#file(?:Path)?\b/g;
+
+/**
+ * The first #file/#filePath in a test source that is not a failure-location default argument
+ * (`file: StaticString = #filePath,` or `file: String = #file)`), or null.
+ */
+function findTestSourcePathUse(stripped) {
+  for (const match of stripped.matchAll(IOS_TEST_FILE_LITERAL)) {
+    const before = stripped.slice(Math.max(0, match.index - 80), match.index);
+    const after = stripped.slice(match.index + match[0].length, match.index + match[0].length + 4);
+    const defaultArgument = /\b(?:file|filePath)\s*:\s*(?:StaticString|String)\s*=\s*$/.test(before) && /^\s*[,)]/.test(after);
+    if (!defaultArgument) {
+      return { index: match.index };
+    }
+  }
+  return null;
+}
 
 const IOS_VOICE_LIFECYCLE_GUARDED_PREFIXES = [
   "clients/apple/Oppi/App/",
@@ -1263,7 +1278,7 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
       );
   for (const file of testFiles.sort()) {
     const parsed = readSwiftSource(repoRoot, file);
-    const match = parsed && findFirstMatch(parsed.stripped, IOS_TEST_SOURCE_PATH_READ);
+    const match = parsed && findTestSourcePathUse(parsed.stripped);
     if (!match) {
       continue;
     }
@@ -1274,7 +1289,7 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
         file,
         line: location.line,
         column: location.column,
-        reason: "Tests must not open files through #filePath; pool builds compile it to a mapped /^src path.",
+        reason: "Tests use #filePath/#file only as a failure-location default argument; pool builds compile it to a mapped /^src path, so a path built from it opens nothing.",
         remediation:
           "Load the file from the test bundle (add it as a resource of the test target; see TestFixtures/ProtocolFixtures in OppiTests).",
       }),

@@ -1094,14 +1094,16 @@ describe("Mac architecture layer rules", () => {
         "clients/apple/OppiTests/A.swift",
         "clients/apple/OppiE2ETests/B.swift",
         "clients/apple/OppiPerfTests/C.swift",
+        "clients/apple/OppiUITests/F.swift",
       ];
       write(join(repoRoot, readers[0]), "let u = URL(fileURLWithPath: #filePath).deletingLastPathComponent()\n");
       write(join(repoRoot, readers[1]), "let d = FileManager.default.contents(atPath: #file)\n");
-      write(join(repoRoot, readers[2]), "let u = URL(filePath: #filePath)\n");
-      // Failure locations and comments are fine; so is #filePath outside the test targets.
+      write(join(repoRoot, readers[2]), "let p = #filePath\nlet u = URL(fileURLWithPath: p)\n");
+      write(join(repoRoot, readers[3]), "func root(_ path: String = #filePath) -> URL { URL(fileURLWithPath: path) }\n");
+      // Failure-location defaults and comments are fine; so is #filePath outside the test targets.
       write(
         join(repoRoot, "clients/apple/OppiUITests/D.swift"),
-        "func check(file: StaticString = #filePath, line: UInt = #line) {}\n// URL(fileURLWithPath: #filePath)\n",
+        "func check(file: StaticString = #filePath, line: UInt = #line) {}\nfunc near(_ a: Int, file: String = #file) {}\n// URL(fileURLWithPath: #filePath)\n",
       );
       write(join(repoRoot, "clients/apple/OppiMacTests/E.swift"), "let u = URL(fileURLWithPath: #filePath)\n");
       const violations = findIosLayerViolations(repoRoot).filter((v) => v.rule === "ios-test-no-source-paths");

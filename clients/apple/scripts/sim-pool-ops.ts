@@ -1599,20 +1599,26 @@ async function runBuildPhase(input: {
     phase.code = session.cancelExitCode();
     return phase;
   }
-  let packagesLock: HeldLock | undefined;
+  // A build that did not prove its process group stopped may still be writing .build/dd:
+  // keep the checkout lock until this process exits instead of handing it on.
+  let releaseCheckout = true;
+  const scheme = extractFlagValue("-scheme", input.argv);
   try {
     phase.lockWaitSeconds = nowEpoch() - lockStart;
     dropBuildDescriptionsMissingVendor(process.cwd(), derivedData);
+    if (scheme && input.argv.includes("build-for-testing")) {
+      // xcodebuild never deletes an xctestrun; after an SDK bump the old one would sit
+      // beside the new one, and the test phase must find exactly the one this build writes.
+      removeXctestruns(join(derivedData, "Build", "Products"), scheme);
+    }
     const cache = compilationCache(process.env, config.appleDir, derivedData, input.argv);
     if (cache?.packages) {
-      const scheme = extractFlagValue("-scheme", input.argv) ?? "Oppi";
-      const shared = await sharedPackages(session, config, cache.packages, scheme, input.logFile);
-      if ("code" in shared) {
-        phase.code = shared.code;
-        phase.uncertain = shared.uncertain;
+      const resolved = await resolveSharedPackages(session, config, cache.packages, scheme ?? "Oppi", input.logFile);
+      if (resolved) {
+        phase.code = resolved.code;
+        phase.uncertain = resolved.uncertain;
         return phase;
       }
-      packagesLock = shared.lock;
     }
     if (cache) {
       log(`[sim-pool] Compilation cache: ${cache.root}`);
@@ -1620,7 +1626,7 @@ async function runBuildPhase(input: {
     const heavy = await acquireHeavyBuildSlot(process.env, session, log);
     if (!heavy) {
       phase.uncertain = true;
-      phase.code = session.cancelExitCode();
+      phase.code = session.canceled ? session.cancelExitCode() : 143;
       return phase;
     }
     phase.heavyWaitSeconds = heavy.waitedSeconds;
@@ -1643,6 +1649,7 @@ async function runBuildPhase(input: {
       phase.code = result.code;
       phase.hung = result.hung;
       phase.uncertain = !result.stop.quiescent || session.canceled;
+      releaseCheckout = result.stop.quiescent;
     } finally {
       heavy.lock?.release();
     }
@@ -1651,29 +1658,37 @@ async function runBuildPhase(input: {
         const products = cloneProducts(derivedData, input.cloneFor.runDir);
         phase.xctestrun = findXctestrun(products, input.cloneFor.scheme);
         log(`[sim-pool] Test products: ${products}`);
+        log(`[sim-pool] xctestrun: ${phase.xctestrun}`);
       } catch (error) {
         log(`[sim-pool] ${error instanceof Error ? error.message : String(error)}`);
         phase.code = 1;
       }
     }
   } finally {
-    packagesLock?.release();
-    checkoutLock.release();
+    if (releaseCheckout) checkoutLock.release();
   }
   return phase;
 }
 
+function removeXctestruns(products: string, scheme: string): void {
+  if (!existsSync(products)) return;
+  for (const name of readdirSync(products)) {
+    if (name.startsWith(`${scheme}_`) && name.endsWith(".xctestrun")) rmSync(join(products, name), { force: true });
+  }
+}
+
 /**
- * The shared SwiftPM checkouts for this Package.resolved, resolved once under an exclusive
- * lock; returns a shared lock to hold while building against them, or the failed exit code.
+ * Resolve the shared SwiftPM checkouts for this Package.resolved once, strictly from its pins,
+ * under an exclusive lock. Builds read them with resolution and updates off, and a new
+ * Package.resolved gets a new directory, so readers need no lock. Returns the failure, if any.
  */
-async function sharedPackages(
+async function resolveSharedPackages(
   session: CommandSession,
   config: PoolConfig,
   packages: string,
   scheme: string,
   buildLog: string,
-): Promise<{ lock: HeldLock } | { code: number; uncertain: boolean }> {
+): Promise<{ code: number; uncertain: boolean } | undefined> {
   const lockFile = `${packages}.lock`;
   if (!existsSync(packagesResolvedMarker(packages))) {
     const exclusive = await waitForFlock(lockFile, "exclusive", session, () =>
@@ -1690,7 +1705,10 @@ async function sharedPackages(
           config,
           command: "xcodebuild",
           // xcodebuild requires a scheme alongside -derivedDataPath.
-          argv: ["-resolvePackageDependencies", "-project", "Oppi.xcodeproj", "-scheme", scheme, "-clonedSourcePackagesDirPath", packages],
+          argv: [
+            "-resolvePackageDependencies", "-project", "Oppi.xcodeproj", "-scheme", scheme,
+            "-clonedSourcePackagesDirPath", packages, "-onlyUsePackageVersionsFromResolvedFile",
+          ],
           logFile,
           derivedData: checkoutDerivedData(config.buildBase),
           destination: SLOTLESS_BUILD_DESTINATION,
@@ -1706,8 +1724,7 @@ async function sharedPackages(
       exclusive.release();
     }
   }
-  const shared = await waitForFlock(lockFile, "shared", session);
-  return shared ? { lock: shared } : { code: session.cancelExitCode(), uncertain: true };
+  return undefined;
 }
 
 function pruneOldLogs(logDir: string): void {
@@ -1864,6 +1881,16 @@ export async function commandRun(
   try {
     if (plan.kind === "build" || plan.kind === "split") {
       const runDir = plan.kind === "split" ? runDirectory(config.buildBase, stamp) : undefined;
+      // OPPI_SIM_POOL_PRODUCTS_DIR: a build-for-testing caller (unit-shards) gets its own clone
+      // of the products, taken under the same checkout lock as the build.
+      const productsDir = process.env.OPPI_SIM_POOL_PRODUCTS_DIR;
+      const scheme = extractFlagValue("-scheme", plan.buildArgv);
+      const cloneFor =
+        plan.kind === "split" && runDir
+          ? { runDir, scheme: plan.scheme }
+          : plan.kind === "build" && productsDir && scheme && plan.buildArgv.includes("build-for-testing")
+            ? { runDir: productsDir, scheme }
+            : undefined;
       build = await runBuildPhase({
         session,
         config,
@@ -1871,7 +1898,7 @@ export async function commandRun(
         argv: plan.buildArgv,
         extraSettings,
         logFile: join(logDir, `build-${stamp}.log`),
-        ...(runDir && plan.kind === "split" ? { cloneFor: { runDir, scheme: plan.scheme } } : {}),
+        ...(cloneFor ? { cloneFor } : {}),
       });
       exitCode = build.code;
       hangDetected = build.hung;

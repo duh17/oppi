@@ -306,8 +306,19 @@ export async function acquireHeavyBuildSlot(
       announced = true;
       log(`[sim-pool] all ${slots} machine-wide xcode-build slots busy (${dir}); waiting`);
     }
+    // Like heavy.sh: a waiter whose caller is gone (a killed pre-push hook) does not build later.
+    if (callerGone(env)) {
+      log("[sim-pool] caller is gone; not starting the queued build");
+      return undefined;
+    }
     await session.waitWhileIdle(pollMs);
   }
+}
+
+function callerGone(env: NodeJS.ProcessEnv): boolean {
+  const parent = Number(env.OPPI_HEAVY_PARENT_PID);
+  if (parent > 0) return !processAlive(parent);
+  return process.ppid === 1;
 }
 
 /**

@@ -421,10 +421,13 @@ describe("sim-pool CLI", () => {
 
   test("a build with no test action runs in the checkout DerivedData without a simulator slot", () => {
     const fx = slotlessFixture("build-only");
+    const productsDir = join(fx.root, "clone");
     const result = spawnSync("bun", [cli, "run", "--", "xcodebuild", "-scheme", "OppiUnitTests", "build-for-testing"], {
-      cwd: fx.apple, env: fx.env, encoding: "utf8",
+      cwd: fx.apple, env: { ...fx.env, OPPI_SIM_POOL_PRODUCTS_DIR: productsDir }, encoding: "utf8",
     });
     expect(result.status).toBe(0);
+    // The caller asked for its own clone of the products (unit-shards).
+    expect(readdirSync(join(productsDir, "Build", "Products"))).toEqual(["OppiUnitTests_iphonesimulator-arm64.xctestrun"]);
     const calls = fx.calls();
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain("generic/platform=iOS Simulator");
@@ -440,6 +443,10 @@ describe("sim-pool CLI", () => {
 
   test("a test run builds without a slot, then runs the cloned products with the test flags in a slot", () => {
     const fx = slotlessFixture("split");
+    // An xctestrun from an earlier SDK stays in DerivedData; the run must use only the new one.
+    const products = join(fx.apple, ".build", "dd", "Build", "Products");
+    mkdirSync(products, { recursive: true });
+    writeFileSync(join(products, "OppiUnitTests_iphonesimulator27.0-arm64.xctestrun"), "stale");
     const result = spawnSync(
       "bun",
       [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "OppiUnitTests", "test",

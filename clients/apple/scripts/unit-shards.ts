@@ -5,7 +5,8 @@
 //   bun clients/apple/scripts/unit-shards.ts --record <sim-pool log of a full run>
 //
 // 1. Build once without a simulator slot (`sim-pool.sh run -- ... build-for-testing`).
-// 2. Clone the products under the checkout build lock, so a rebuild cannot change them.
+// 2. sim-pool clones the products (OPPI_SIM_POOL_PRODUCTS_DIR) under the build's checkout
+//    lock, so a rebuild cannot change them.
 // 3. Split the top-level test types of OppiTests into N shards by recorded suite seconds
 //    (unit-shard-seconds.json; unknown types count TEST_SECONDS per @Test). Shards 1..N-1
 //    run `-only-testing` lists; the last shard runs `-skip-testing` of everything the
@@ -16,8 +17,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, closeSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as sleep } from "node:timers/promises";
-import { checkoutDerivedData, cloneProducts, findXctestrun, runDirectory, waitForFlock } from "./sim-pool-build";
+import { findXctestrun, runDirectory } from "./sim-pool-build";
 
 const SCHEME = "OppiUnitTests";
 const BUNDLE = "OppiTests";
@@ -193,28 +193,20 @@ async function main(argv: string[]): Promise<number> {
   const shards = Number(shardsArg >= 0 ? argv[shardsArg + 1] : process.env.OPPI_UNIT_SHARDS ?? "3");
   if (!Number.isInteger(shards) || shards < 1) throw new Error(`invalid shard count ${shards}`);
 
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  const runDir = runDirectory(join(appleDir, ".build"), `shards-${stamp}`);
+  // sim-pool clones the products into runDir under the same checkout lock as the build, so
+  // another run in this checkout cannot swap them in between.
   const build = spawnSync(join(scriptDir, "sim-pool.sh"), ["run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", SCHEME, "build-for-testing"], {
     cwd: appleDir,
     stdio: "inherit",
+    env: { ...process.env, OPPI_SIM_POOL_PRODUCTS_DIR: runDir },
   });
   if (build.status !== 0) {
     console.error(`[unit-shards] build failed (exit ${build.status ?? build.signal})`);
     return build.status || 1;
   }
-
-  const buildBase = join(appleDir, ".build");
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
-  const runDir = runDirectory(buildBase, `shards-${stamp}`);
-  const dd = checkoutDerivedData(buildBase);
-  const lock = await waitForFlock(`${dd}.lock`, "exclusive", { canceled: false, waitWhileIdle: async (ms) => { await sleep(ms); } }, () =>
-    console.error("[unit-shards] waiting for this checkout's build lock to clone products"),
-  );
-  let xctestrun: string;
-  try {
-    xctestrun = findXctestrun(cloneProducts(dd, runDir), SCHEME);
-  } finally {
-    lock?.release();
-  }
+  const xctestrun = findXctestrun(join(runDir, "Build", "Products"), SCHEME);
 
   // --strict (release): every test blocks; no quarantine, no pass-on-rerun.
   const strict = argv.includes("--strict");
