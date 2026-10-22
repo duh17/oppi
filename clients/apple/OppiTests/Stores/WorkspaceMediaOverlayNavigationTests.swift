@@ -438,6 +438,32 @@ struct WorkspaceMediaOverlayNavigationTests {
         #expect(navigation.splitDetailTarget == .session(second))
     }
 
+    @Test func anotherServersChatDuringFullscreenKeepsItsServerAfterTheLateEnd() {
+        let navigation = readyNavigation()
+        let chat = WorkspaceSessionNavTarget(
+            serverId: "server-b",
+            sessionId: "chat-1",
+            workspaceId: "ws-b"
+        )
+        let otherServerChat = WorkspaceSessionNavTarget(
+            serverId: "server-a",
+            sessionId: "chat-a",
+            workspaceId: "ws-a"
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceSession(chat)
+
+        navigation.beginMediaOverlay(activeServerId: "server-b")
+        // The sidebar opens a chat on another server, and the shell switches
+        // to that server, before AVKit's end arrives.
+        navigation.openWorkspaceSession(otherServerChat)
+        #expect(!navigation.isMediaOverlayActive)
+
+        // The late end must not put server-b back under server-a's chat.
+        #expect(navigation.endMediaOverlay(currentServerId: "server-a") == nil)
+        #expect(navigation.splitDetailTarget == .session(otherServerChat))
+    }
+
     private func readyNavigation() -> AppNavigation {
         let navigation = AppNavigation()
         navigation.launchPhase = .ready

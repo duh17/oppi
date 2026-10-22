@@ -254,8 +254,8 @@ final class AppNavigation {
     private var mediaOverlayDepth = 0
     private var mediaOverlaySnapshot: MediaOverlaySnapshot?
     private var isRestoringMediaOverlay = false
-    /// A person's Back ended the overlay's route authority. A late AVKit end
-    /// may still restore the active server, never the chat route it replaced.
+    /// A person's navigation ended the overlay's authority. A late AVKit end
+    /// restores neither the chat route nor the server that navigation left.
     private var mediaOverlayEndedByUserNavigation = false
 
     /// Screens pushed on the compact workspace stack above the all-sessions
@@ -473,10 +473,12 @@ final class AppNavigation {
             return nil
         }
         mediaOverlaySnapshot = nil
-        if !mediaOverlayEndedByUserNavigation {
-            restoreMediaOverlaySnapshot(snapshot)
-        }
+        let endedByUserNavigation = mediaOverlayEndedByUserNavigation
         mediaOverlayEndedByUserNavigation = false
+        // The person moved on during full screen (Back, the sidebar, another
+        // server's chat): the snapshot's chat and server are both stale.
+        guard !endedByUserNavigation else { return nil }
+        restoreMediaOverlaySnapshot(snapshot)
         if WorkspaceMediaOverlayNavigationPolicy.shouldRestoreServer(
             snapshotServerId: snapshot.activeServerId,
             currentServerId: currentServerId
