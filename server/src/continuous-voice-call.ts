@@ -16,6 +16,12 @@ const DEFAULT_RETENTION_GRACE_MS = 30_000;
  * while stays well inside it.
  */
 const DEFAULT_DETACHED_CALL_TTL_MS = 10 * 60_000;
+/**
+ * How long an ended call's record, with what the caller said and the session answered, stays
+ * on disk. Nothing reads an ended call after this: the app forgets a call when it sees it end,
+ * and an attach to a missing call makes it start a new one.
+ */
+const ENDED_CALL_RETENTION_MS = 24 * 60 * 60_000;
 const MAX_REPLAY_EVENTS = 128;
 const MAX_RETAINED_CALLS = 256;
 const MAX_DELEGATIONS_PER_CALL = 256;
@@ -281,14 +287,36 @@ export class VoiceCallController {
   ): VoiceCallStateSnapshot {
     const call = this.requireActiveCall(input.callId);
     this.assertController(call, input.controllerLeaseEpoch, frontend);
-    call.lifecycle = "ended";
-    call.frontendConnection = undefined;
-    call.controllerLeaseEpoch += 1;
-    call.controllerLeaseExpiresAt = this.now();
-    call.eventSeq += 1;
-    call.updatedAt = this.now();
+    this.end(call);
     this.persist();
     return this.snapshot(call.callId);
+  }
+
+  /**
+   * The session was deleted: end its active calls and forget every call it had, with their
+   * delegation text, in memory and on disk. An attached frontend is told its call ended.
+   * Returns the connections whose media the caller must release, as End does.
+   */
+  removeSessionCalls(controlSessionId: string): string[] {
+    const connectionIds: string[] = [];
+    let removed = false;
+    for (const [callId, call] of this.calls) {
+      if (call.controlSessionId !== controlSessionId) continue;
+      const frontend = call.frontendConnection;
+      if (call.lifecycle === "active") this.end(call);
+      if (frontend) {
+        connectionIds.push(frontend.connectionId);
+        try {
+          frontend.send({ type: "voice_call_state", ...this.snapshot(callId) });
+        } catch {
+          // The call is gone either way; a dead transport has nothing left to learn.
+        }
+      }
+      this.forget(call);
+      removed = true;
+    }
+    if (removed) this.persist();
+    return connectionIds;
   }
 
   /**
@@ -539,14 +567,31 @@ export class VoiceCallController {
       ) {
         continue;
       }
-      call.lifecycle = "ended";
-      call.controllerLeaseEpoch += 1;
-      call.controllerLeaseExpiresAt = now;
-      call.eventSeq += 1;
-      call.updatedAt = now;
+      this.end(call);
       changed = true;
     }
     if (changed) this.persist();
+  }
+
+  private end(call: MutableVoiceCall): void {
+    const now = this.now();
+    call.lifecycle = "ended";
+    call.frontendConnection = undefined;
+    call.controllerLeaseEpoch += 1;
+    call.controllerLeaseExpiresAt = now;
+    call.eventSeq += 1;
+    call.updatedAt = now;
+  }
+
+  private forget(call: MutableVoiceCall): void {
+    this.calls.delete(call.callId);
+    this.callsByClientIdentity.delete(
+      clientIdentityKey(call.controlSessionId, call.ownerDeviceId, call.clientCallId),
+    );
+  }
+
+  private isPastEndedRetention(call: MutableVoiceCall): boolean {
+    return call.lifecycle === "ended" && call.updatedAt + ENDED_CALL_RETENTION_MS <= this.now();
   }
 
   private nextEventSeq(call: MutableVoiceCall): number {
@@ -593,7 +638,13 @@ export class VoiceCallController {
       persistence.quarantine(error);
       return;
     }
-    if (restored.size === 0) return;
+    let droppedExpired = false;
+    for (const [callId, call] of restored) {
+      if (!this.isPastEndedRetention(call)) continue;
+      restored.delete(callId);
+      droppedExpired = true;
+    }
+    if (restored.size === 0 && !droppedExpired) return;
     for (const call of restored.values()) {
       if (call.lifecycle === "active") {
         this.detach(call);
@@ -608,6 +659,9 @@ export class VoiceCallController {
   }
 
   private persist(): void {
+    for (const call of [...this.calls.values()]) {
+      if (this.isPastEndedRetention(call)) this.forget(call);
+    }
     this.deps.persistence?.save(this.serializeCalls());
   }
 
@@ -662,7 +716,7 @@ export class VoiceCallController {
     if (this.calls.size < this.maxRetainedCalls) return;
     const now = this.now();
     let changed = false;
-    for (const [callId, call] of this.calls) {
+    for (const call of [...this.calls.values()]) {
       const staleDetached =
         call.lifecycle === "active" &&
         !call.frontendConnection &&
@@ -673,10 +727,7 @@ export class VoiceCallController {
         call.frontendConnection !== undefined &&
         call.controllerLeaseExpiresAt + this.retentionGraceMs <= now;
       if (call.lifecycle !== "ended" && !staleDetached && !staleExpiredAttachment) continue;
-      this.calls.delete(callId);
-      this.callsByClientIdentity.delete(
-        clientIdentityKey(call.controlSessionId, call.ownerDeviceId, call.clientCallId),
-      );
+      this.forget(call);
       changed = true;
       if (this.calls.size < this.maxRetainedCalls) break;
     }

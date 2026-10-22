@@ -219,4 +219,201 @@ describe("FileVoiceCallStore", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  describe("what the file keeps about a call", () => {
+    const HOUR_MS = 60 * 60_000;
+
+    function withStoreDir(run: (path: string) => void): void {
+      const dir = mkdtempSync(join(tmpdir(), "oppi-voice-call-retention-"));
+      try {
+        run(voiceCallStorePath(dir));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    function storedCallIds(path: string): string[] {
+      const raw = JSON.parse(readFileSync(path, "utf8")) as { calls: Array<{ callId: string }> };
+      return raw.calls.map((call) => call.callId);
+    }
+
+    function startAndSay(
+      controller: VoiceCallController,
+      frontend: DeterministicVoiceCallFrontend,
+      input: { sessionId: string; clientCallId: string; callId: string; request: string },
+    ) {
+      const started = controller.startCall(
+        { controlSessionId: input.sessionId, clientCallId: input.clientCallId },
+        frontend.connection,
+      );
+      controller.commitFrontendUtterance({
+        callId: input.callId,
+        controllerLeaseEpoch: started.state.controllerLeaseEpoch,
+        frontendConnectionId: frontend.connection.connectionId,
+        utteranceId: `utterance-${input.callId}`,
+        delegationId: `delegation-${input.callId}`,
+        request: input.request,
+      });
+      return started.state;
+    }
+
+    it("removes a deleted session's calls from memory and disk and ends its active call", () => {
+      withStoreDir((path) => {
+        let callSequence = 0;
+        const controller = new VoiceCallController({
+          now: () => 1_000,
+          nextCallId: () => `call-${++callSequence}`,
+          persistence: new FileVoiceCallStore(path),
+        });
+        const deletedFront = new DeterministicVoiceCallFrontend({
+          connectionId: "connection-deleted",
+          authenticatedDeviceId: "paired-device-a",
+        });
+        const otherFront = new DeterministicVoiceCallFrontend({
+          connectionId: "connection-other",
+          authenticatedDeviceId: "paired-device-a",
+        });
+        // The deleted session has an ended call and a live one; both carry what was said.
+        const first = startAndSay(controller, deletedFront, {
+          sessionId: "deleted-session",
+          clientCallId: "client-1",
+          callId: "call-1",
+          request: "SECRET first request",
+        });
+        controller.endCall(
+          { callId: "call-1", controllerLeaseEpoch: first.controllerLeaseEpoch },
+          deletedFront.connection,
+        );
+        startAndSay(controller, deletedFront, {
+          sessionId: "deleted-session",
+          clientCallId: "client-2",
+          callId: "call-2",
+          request: "SECRET second request",
+        });
+        startAndSay(controller, otherFront, {
+          sessionId: "kept-session",
+          clientCallId: "client-3",
+          callId: "call-3",
+          request: "kept request",
+        });
+        expect(storedCallIds(path)).toEqual(["call-1", "call-2", "call-3"]);
+
+        const released = controller.removeSessionCalls("deleted-session");
+
+        // Media to release is the live call's connection, and its frontend hears the call ended.
+        expect(released).toEqual(["connection-deleted"]);
+        expect(deletedFront.messages.at(-1)).toMatchObject({
+          type: "voice_call_state",
+          callId: "call-2",
+          lifecycle: "ended",
+        });
+        expect(() => controller.snapshot("call-1")).toThrow("Unknown voice call");
+        expect(() => controller.snapshot("call-2")).toThrow("Unknown voice call");
+        expect(controller.activeCallIdForControlSession("deleted-session")).toBeUndefined();
+        expect(controller.snapshot("call-3").lifecycle).toBe("active");
+        expect(otherFront.messages.at(-1)).not.toMatchObject({ lifecycle: "ended" });
+
+        expect(storedCallIds(path)).toEqual(["call-3"]);
+        const onDisk = readFileSync(path, "utf8");
+        expect(onDisk).not.toContain("SECRET");
+        expect(onDisk).toContain("kept request");
+      });
+    });
+
+    it("drops an ended call 24 hours after it ended, at load and at the next save", () => {
+      withStoreDir((path) => {
+        let now = 1_000;
+        const callIds = ["call-old", "call-young", "call-3"];
+        const controller = new VoiceCallController({
+          now: () => now,
+          nextCallId: () => callIds.shift() as string,
+          persistence: new FileVoiceCallStore(path),
+        });
+        const front = new DeterministicVoiceCallFrontend({
+          connectionId: "connection-1",
+          authenticatedDeviceId: "paired-device-a",
+        });
+        const endAt = (callId: string, sessionId: string, clientCallId: string, at: number) => {
+          now = at;
+          const state = startAndSay(controller, front, {
+            sessionId,
+            clientCallId,
+            callId,
+            request: `request of ${callId}`,
+          });
+          controller.endCall(
+            { callId, controllerLeaseEpoch: state.controllerLeaseEpoch },
+            front.connection,
+          );
+        };
+        endAt("call-old", "session-1", "client-old", 1_000);
+        endAt("call-young", "session-2", "client-young", 10 * HOUR_MS);
+        expect(storedCallIds(path)).toEqual(["call-old", "call-young"]);
+
+        // Just short of 24 hours after the old call ended: a restart keeps both.
+        const keepsBoth = new VoiceCallController({
+          now: () => 1_000 + 24 * HOUR_MS - 1,
+          nextCallId: () => "unused",
+          persistence: new FileVoiceCallStore(path),
+        });
+        expect(keepsBoth.snapshot("call-old").lifecycle).toBe("ended");
+        expect(storedCallIds(path)).toEqual(["call-old", "call-young"]);
+
+        // At 24 hours the old call is gone from memory and from the file; the younger stays.
+        const restarted = new VoiceCallController({
+          now: () => 1_000 + 24 * HOUR_MS,
+          nextCallId: () => "unused",
+          persistence: new FileVoiceCallStore(path),
+        });
+        expect(() => restarted.snapshot("call-old")).toThrow("Unknown voice call");
+        expect(restarted.snapshot("call-young").lifecycle).toBe("ended");
+        expect(storedCallIds(path)).toEqual(["call-young"]);
+        expect(readFileSync(path, "utf8")).not.toContain("request of call-old");
+
+        // A running server prunes on its next save too: the younger call ages out.
+        now = 10 * HOUR_MS + 24 * HOUR_MS;
+        startAndSay(controller, front, {
+          sessionId: "session-3",
+          clientCallId: "client-new",
+          callId: "call-3",
+          request: "fresh request",
+        });
+        expect(storedCallIds(path)).toEqual(["call-3"]);
+      });
+    });
+
+    it("still writes the file when every stored call has aged out at load", () => {
+      withStoreDir((path) => {
+        let callSequence = 0;
+        const controller = new VoiceCallController({
+          now: () => 1_000,
+          nextCallId: () => `call-${++callSequence}`,
+          persistence: new FileVoiceCallStore(path),
+        });
+        const front = new DeterministicVoiceCallFrontend({
+          connectionId: "connection-1",
+          authenticatedDeviceId: "paired-device-a",
+        });
+        const state = startAndSay(controller, front, {
+          sessionId: "session-1",
+          clientCallId: "client-1",
+          callId: "call-1",
+          request: "SECRET only request",
+        });
+        controller.endCall(
+          { callId: "call-1", controllerLeaseEpoch: state.controllerLeaseEpoch },
+          front.connection,
+        );
+
+        new VoiceCallController({
+          now: () => 1_000 + 25 * HOUR_MS,
+          nextCallId: () => "unused",
+          persistence: new FileVoiceCallStore(path),
+        });
+
+        expect(readFileSync(path, "utf8")).not.toContain("SECRET");
+        expect(storedCallIds(path)).toEqual([]);
+      });
+    });
+  });
 });

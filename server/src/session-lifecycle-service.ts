@@ -181,6 +181,8 @@ export interface SessionLifecycleServiceDeps {
   >;
   ensureSessionContextWindow: (session: Session) => Session;
   deleteSearchIndexSession?: (sessionId: string) => void;
+  /** End the session's Live Voice calls, release their media, and forget their records. */
+  endSessionVoiceCalls?: (sessionId: string) => Promise<void>;
 }
 
 /**
@@ -880,6 +882,8 @@ export class SessionLifecycleService {
   }
 
   async deleteSession(session: Session): Promise<DeleteSessionResult> {
+    // First, so a call cannot keep sending the caller's words into a session being deleted.
+    await this.deps.endSessionVoiceCalls?.(session.id);
     await this.deps.sessionRuntimes.stopSessionIfActive(session.id);
 
     let deletedTracePaths: string[];

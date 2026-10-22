@@ -997,6 +997,11 @@ export class Server {
       },
       pairing: this.pairing,
       onOwnerTokenRotated: () => this.closeAllDeviceConnections(),
+      endSessionVoiceCalls: async (sessionId) => {
+        for (const connectionId of this.voiceCallController.removeSessionCalls(sessionId)) {
+          await this.voiceMediaCoordinator.detach(connectionId);
+        }
+      },
       stopWorkspaceVm: (workspaceId) => SdkBackend.stopWorkspaceVm(workspaceId),
       metrics: this.opsMetrics,
       serverMetrics: {

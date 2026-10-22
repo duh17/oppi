@@ -91,6 +91,8 @@ export interface RouteContext {
   pairing: DevicePairing;
   /** Close every network device socket when the owner token rotates. */
   onOwnerTokenRotated?: () => void;
+  /** End a deleted session's Live Voice calls and forget their records. Composed in server.ts. */
+  endSessionVoiceCalls?: (sessionId: string) => Promise<void>;
   /** Stop the sandbox VM for a deleted workspace. Composed in server.ts. */
   stopWorkspaceVm?: (workspaceId: string) => void | Promise<void>;
   /** Server operational metrics. Optional so route tests can omit it. */
