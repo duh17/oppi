@@ -74,7 +74,58 @@ export interface RelayDeps {
   log?: RelayLog;
 }
 
-/** In-memory fixed-window counter per client address. Nothing is persisted. */
+const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+const IPV6_GROUP = /^[0-9a-f]{1,4}$/i;
+
+function parseIpv4(text: string): number[] | null {
+  const match = IPV4.exec(text);
+  if (!match) return null;
+  const octets = match.slice(1).map(Number);
+  return octets.every((octet) => octet <= 255) ? octets : null;
+}
+
+/** The eight 16-bit groups of an IPv6 address (zone id dropped), or null. */
+function parseIpv6(text: string): number[] | null {
+  let address = text.split("%")[0] ?? "";
+  if (!address.includes(":")) return null;
+  // A dotted IPv4 tail (`::ffff:192.0.2.1`) is the last two groups.
+  const lastColon = address.lastIndexOf(":");
+  const tail = address.slice(lastColon + 1);
+  if (tail.includes(".")) {
+    const octets = parseIpv4(tail);
+    if (!octets) return null;
+    const [a = 0, b = 0, c = 0, d = 0] = octets;
+    address = `${address.slice(0, lastColon + 1)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const halves = address.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const rest = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const missing = 8 - head.length - rest.length;
+  if (halves.length === 1 ? missing !== 0 : missing < 1) return null;
+  const groups = [...head, ...Array<string>(halves.length === 2 ? missing : 0).fill("0"), ...rest];
+  if (!groups.every((group) => IPV6_GROUP.test(group))) return null;
+  return groups.map((group) => parseInt(group, 16));
+}
+
+/**
+ * What a client address counts as for rate limits. An IPv6 address counts as its /64: one
+ * subscriber usually holds a whole /64, so keying on the full address would let it pick a
+ * new address per request. IPv4 (also IPv4-mapped IPv6) counts as itself; anything else
+ * unparsed, as its text.
+ */
+export function addressLimitKey(address: string | null): string {
+  if (!address) return "unknown";
+  const groups = parseIpv6(address);
+  if (!groups) return address;
+  if (groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff) {
+    const [high = 0, low = 0] = groups.slice(6);
+    return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+  }
+  return `${groups.slice(0, 4).map((group) => group.toString(16)).join(":")}::/64`;
+}
+
+/** In-memory fixed-window counter per client address (`addressLimitKey`). Nothing is persisted. */
 class AddressLimiter {
   private readonly hits = new Map<string, { windowStart: number; count: number }>();
 
@@ -84,7 +135,7 @@ class AddressLimiter {
   ) {}
 
   allow(address: string | null, now: number): boolean {
-    const key = address ?? "unknown";
+    const key = addressLimitKey(address);
     if (this.hits.size > 10_000) {
       for (const [entryKey, entry] of this.hits) {
         if (now - entry.windowStart >= this.windowMs) this.hits.delete(entryKey);
@@ -629,7 +680,14 @@ export function createRelayHandler(deps: RelayDeps): (
     throw new HttpError(502, "apns_unavailable");
   }
 
-  async function deletePermissionBySendToken(request: Request): Promise<Response> {
+  async function deletePermissionBySendToken(
+    request: Request,
+    clientAddress: string | null,
+  ): Promise<Response> {
+    // Looks up a send token too, so it shares the push limit.
+    if (!pushLimiter.allow(clientAddress, now())) {
+      throw new HttpError(429, "rate_limited", { "retry-after": "60" });
+    }
     const token = parseSendToken(bearer(request));
     const record = await store.getRegistration(token.registrationId);
     const permission = record?.permissions.find((entry) => entry.id === token.permissionId);
@@ -655,7 +713,9 @@ export function createRelayHandler(deps: RelayDeps): (
     if (path === "/v1/live-activity" && method === "POST") {
       return postLiveActivity(request, await readBody(request), clientAddress);
     }
-    if (path === "/v1/permission" && method === "DELETE") return deletePermissionBySendToken(request);
+    if (path === "/v1/permission" && method === "DELETE") {
+      return deletePermissionBySendToken(request, clientAddress);
+    }
 
     const permissionMatch = /^\/v1\/registrations\/([^/]+)\/permissions(?:\/([^/]+))?$/.exec(path);
     if (permissionMatch) {

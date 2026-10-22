@@ -127,8 +127,7 @@ export class MemoryRelayStore implements RelayStore {
   async deletePermission(id: string, permissionId: string): Promise<void> {
     const record = this.registrations.get(id);
     if (!record) return;
-    applyDeletePermission(record, permissionId);
-    this.persist();
+    if (applyDeletePermission(record, permissionId)) this.persist();
   }
 
   async authorizePush(

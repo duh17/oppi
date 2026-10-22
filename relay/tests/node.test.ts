@@ -208,12 +208,29 @@ describe("node adapter", () => {
       body: { event: "update", running: 1, needsYou: 0 },
     });
     expect(liveActivity).toMatchObject({ status: 429, json: { error: "rate_limited" } });
+    // So do a server's permission releases.
+    expect(await call(harness, "DELETE", "/v1/permission", { address, bearer: madeUp })).toMatchObject({
+      status: 429,
+      json: { error: "rate_limited" },
+    });
     // The limit is the address's, not the token's: a real token from it waits too.
     const sendToken = await mintSendToken(harness, await registerUnattested(harness));
     expect((await push(sendToken)).status).toBe(429);
     expect((await push(sendToken, nextAddress())).status).toBe(200);
     harness.advance(60_000);
     expect((await push(sendToken)).status).toBe(200);
+  });
+
+  it("counts an IPv6 client's whole /64 as one address", async () => {
+    harness = await startHarness();
+    const madeUp = `osp1.r_${"A".repeat(22)}.p_${"B".repeat(22)}.${"C".repeat(43)}`;
+    const push = (address: string) =>
+      call(harness, "POST", "/v1/push", { address, bearer: madeUp, body: { envelope: fakeEnvelope() } });
+    for (let index = 0; index < PUSHES_PER_ADDRESS_PER_MINUTE; index += 1) {
+      expect((await push(`2001:db8:0:7:${index.toString(16)}::1`)).status).toBe(410);
+    }
+    expect((await push("2001:0db8:0000:0007:ffff:ffff:ffff:ffff")).status).toBe(429);
+    expect((await push("2001:db8:0:8::1")).status).toBe(410);
   });
 
   it("keys address limits on the X-Forwarded-For entry the proxy appended", async () => {

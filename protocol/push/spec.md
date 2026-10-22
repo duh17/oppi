@@ -308,6 +308,7 @@ when the client address passed its per-minute limit; `502 apns_unavailable` for 
 `5xx`, or network failure.
 
 **`DELETE /v1/permission`** → `204`, idempotent. The server revokes its own permission.
+Shares the per-address push limit (`429 rate_limited` with `Retry-After: 60`).
 
 **`GET /v1/version`** → `200 {"api": 1}`.
 

@@ -84,9 +84,9 @@ export class RegistrationObject extends DurableObject<Env> {
 
   async deletePermission(permissionId: string): Promise<void> {
     const record = await this.read();
-    if (!record) return;
-    applyDeletePermission(record, permissionId);
-    await this.ctx.storage.put(RECORD_KEY, record);
+    if (record && applyDeletePermission(record, permissionId)) {
+      await this.ctx.storage.put(RECORD_KEY, record);
+    }
   }
 
   async authorizePush(

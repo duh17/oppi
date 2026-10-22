@@ -229,8 +229,12 @@ export function applyAddPermission(
   return "ok";
 }
 
-export function applyDeletePermission(record: RegistrationRecord, permissionId: string): void {
-  record.permissions = record.permissions.filter((entry) => entry.id !== permissionId);
+/** False when the registration held no such permission: nothing to write. */
+export function applyDeletePermission(record: RegistrationRecord, permissionId: string): boolean {
+  const kept = record.permissions.filter((entry) => entry.id !== permissionId);
+  if (kept.length === record.permissions.length) return false;
+  record.permissions = kept;
+  return true;
 }
 
 export function applyAuthorizePush(
