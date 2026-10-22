@@ -249,14 +249,14 @@ struct MarkdownInlineVideoNativePlayTests {
                 offset = min(offset + 120, maxOffset)
                 timeline.collectionView.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
                 timeline.collectionView.layoutIfNeeded()
-                try? await Task.sleep(for: .milliseconds(120))
+                await Task.yield()
                 expectNoPlayerAnywhere("pass \(pass) down")
             }
             while offset > 0 {
                 offset = max(offset - 120, 0)
                 timeline.collectionView.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
                 timeline.collectionView.layoutIfNeeded()
-                try? await Task.sleep(for: .milliseconds(120))
+                await Task.yield()
                 expectNoPlayerAnywhere("pass \(pass) up")
             }
         }
@@ -268,6 +268,12 @@ struct MarkdownInlineVideoNativePlayTests {
             return !visible.isEmpty && visible.allSatisfy { $0.debugStillImageForTesting != nil }
         }
         #expect(onScreenStills, "visible rows never showed their still frame")
+        // Work scrolling started asynchronously has had time to land by now: no cell the
+        // scroll ever showed, on screen or in the reuse pool, may have built a player.
+        for video in seen {
+            #expect(!video.debugHasPlayerForTesting, "scroll left a player mounted before any tap")
+            #expect(video.debugPlaybackModelForTesting.player == nil, "scroll built an AVPlayer before any tap")
+        }
         // One generation per video identity across every re-entry.
         #expect(store.debugGenerationCountForTesting == videoCount)
 
