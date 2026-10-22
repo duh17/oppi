@@ -97,9 +97,9 @@ enum ChatTopBarAction: String, CaseIterable, Identifiable, Hashable {
 /// A menu draws a plain image at its own size but resizes its symbols; an
 /// unconfigured symbol there measures as body text at the small symbol scale
 /// (folder 19 pt and list 17 pt wide on iPhone), so the menu's logo is
-/// `diamond.fill` at that configuration.
+/// `diamond.fill` at that configuration. What's New draws it at `.title3`.
 @MainActor
-private enum GitLogoImage {
+enum GitLogoImage {
     private static var cache: [CGFloat: UIImage] = [:]
 
     static func image(textStyle: UIFont.TextStyle?) -> UIImage? {

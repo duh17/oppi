@@ -527,6 +527,26 @@ extension View {
         }
     }
 
+    /// Boolean form of `routerModal(item:presentation:onDismiss:screen:)`.
+    /// Named apart from `routerModal(isPresented:...content:)`: that one's
+    /// trailing-closure call sites would otherwise bind to this overload.
+    func routerScreenModal(
+        isPresented: Binding<Bool>,
+        presentation: ModalPresentation = .sheet,
+        onDismiss: (() -> Void)? = nil,
+        screen: @escaping () -> RouterScreen
+    ) -> some View {
+        background {
+            RouterModalFlagAnchor(
+                isPresented: isPresented,
+                presentation: presentation,
+                onDismiss: onDismiss,
+                screen: { _ in screen() }
+            )
+            .accessibilityHidden(true)
+        }
+    }
+
     /// Boolean form of `routerModal(item:presentation:onDismiss:content:)`.
     func routerModal<ModalContent: View>(
         isPresented: Binding<Bool>,

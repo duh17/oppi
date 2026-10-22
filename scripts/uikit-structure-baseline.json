@@ -292,9 +292,6 @@
     "clients/apple/Oppi/Features/Onboarding/WaitingForPairingApprovalView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Onboarding/WhatsNewView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Schedules/ScheduleHostedScreens.swift": {
       "import SwiftUI": 1
     },

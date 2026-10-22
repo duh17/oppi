@@ -71,9 +71,11 @@ struct AppRootLayer: View {
             }
             // Full screen covers this view, which then stops updating, so the
             // screen closes itself instead of waiting for the cleared flag.
-            .routerModal(isPresented: $nav.showWhatsNew, presentation: .fullScreen) {
-                WhatsNewScreen()
-            }
+            .routerScreenModal(
+                isPresented: $nav.showWhatsNew,
+                presentation: .fullScreen,
+                screen: { .controller { WhatsNewViewController { Router.finish($0) } } }
+            )
             .onChange(of: navigation.selectedTab) { _, _ in
                 navigation.routeLegacySelectedTabIfNeeded()
             }
@@ -398,17 +400,6 @@ enum ExtensionEditorComposer {
                     connection.extensionToast = "\(failurePrefix): \(error.localizedDescription)"
                 }
             }
-        }
-    }
-}
-
-/// What's New, closed by its own Continue.
-private struct WhatsNewScreen: View {
-    @Environment(\.screenNavigator) private var navigator
-
-    var body: some View {
-        WhatsNewView {
-            navigator.finish()
         }
     }
 }
