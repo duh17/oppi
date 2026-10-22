@@ -361,7 +361,7 @@ final class AskCardView: UIView, UIScrollViewDelegate {
                 optionRows.append(row)
             }
         }
-        optionsStack.isHidden = optionRows.isEmpty
+        optionsStack.setHiddenIfChanged(optionRows.isEmpty)
 
         pageButtons.forEach { $0.removeFromSuperview() }
         pageButtons = []
@@ -439,20 +439,20 @@ final class AskCardView: UIView, UIScrollViewDelegate {
         expandButton.configuration?.baseForegroundColor = colors.comment
 
         selectionPill.apply(question: question, colors: colors)
-        selectionPillRow.isHidden = selectionPill.isHidden
+        selectionPillRow.setHiddenIfChanged(selectionPill.isHidden)
         if let command = display.commandPreview {
             commandPreview.apply(command: command, colors: colors)
-            commandPreview.isHidden = false
+            commandPreview.setHiddenIfChanged(false)
         } else {
-            commandPreview.isHidden = true
+            commandPreview.setHiddenIfChanged(true)
         }
     }
 
     private func applyPager(_ state: AskCardViewState) {
         let total = AskCard.pageCount(for: state.request)
-        pagerRow.isHidden = state.request.questions.count <= 1
-        pagerDots.isHidden = pageButtons.isEmpty
-        pagerLabel.isHidden = !pageButtons.isEmpty
+        pagerRow.setHiddenIfChanged(state.request.questions.count <= 1)
+        pagerDots.setHiddenIfChanged(pageButtons.isEmpty)
+        pagerLabel.setHiddenIfChanged(!pageButtons.isEmpty)
         pagerLabel.text = "\(state.page + 1) of \(total)"
         pagerLabel.textColor = state.colors.comment
         for (index, button) in pageButtons.enumerated() {
@@ -491,7 +491,7 @@ final class AskCardView: UIView, UIScrollViewDelegate {
         let question = state.question
         let selected = question.flatMap { AskCardShared.multiSelectCount(for: $0, answers: state.answers) } ?? 0
         let showsDone = question?.multiSelect == true && selected > 0 && !state.isLastQuestionPage
-        doneButton.isHidden = !showsDone
+        doneButton.setHiddenIfChanged(!showsDone)
         if showsDone {
             doneButton.configuration = Self.capsuleConfiguration(
                 title: "Done (\(selected) selected)",
@@ -518,7 +518,7 @@ final class AskCardView: UIView, UIScrollViewDelegate {
         ignoreButton.accessibilityLabel = "\(ignoreTitle) \u{2192}"
         ignoreButton.isEnabled = !state.isSubmitted
 
-        sendButton.isHidden = !state.isLastQuestionPage
+        sendButton.setHiddenIfChanged(!state.isLastQuestionPage)
         if state.isLastQuestionPage {
             sendButton.configuration = Self.capsuleConfiguration(
                 title: state.responseFailed ? "Retry" : "Send",

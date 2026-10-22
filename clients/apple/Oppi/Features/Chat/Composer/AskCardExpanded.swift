@@ -483,8 +483,8 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
         titleLabel.text = isSingleQuestionSingleSelect
             ? nil
             : "Question \(currentPage + 1) of \(request.questions.count)"
-        titleLabel.isHidden = isSingleQuestionSingleSelect
-        backButton.isHidden = isSingleQuestionSingleSelect || currentPage == 0
+        titleLabel.setHiddenIfChanged(isSingleQuestionSingleSelect)
+        backButton.setHiddenIfChanged(isSingleQuestionSingleSelect || currentPage == 0)
         backButton.configuration?.baseForegroundColor = colors.blue
 
         guard let question = currentQuestion else { return }
@@ -506,7 +506,7 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
             builtPage = currentPage
         }
         selectionPill.apply(question: question, colors: colors)
-        selectionPillRow.isHidden = selectionPill.isHidden
+        selectionPillRow.setHiddenIfChanged(selectionPill.isHidden)
         for (row, option) in zip(optionRows, question.options) {
             row.apply(
                 option: option,
@@ -518,7 +518,7 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
 
         let count = AskCardShared.multiSelectCount(for: question, answers: answers) ?? 0
         let showsDone = question.multiSelect && count > 0 && !isLastQuestionPage
-        multiSelectDone.superview?.isHidden = !showsDone
+        multiSelectDone.superview?.setHiddenIfChanged(!showsDone)
         if showsDone {
             var config = UIButton.Configuration.plain()
             config.title = "Done (\(count) selected)"
@@ -553,7 +553,7 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
                 optionRows.append(row)
             }
         }
-        optionsStack.isHidden = optionRows.isEmpty
+        optionsStack.setHiddenIfChanged(optionRows.isEmpty)
         if builtPage != nil, !reduceMotion {
             UIView.transition(
                 with: contentStack,
@@ -566,9 +566,9 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
 
     private func applyCustomField(question: AskQuestion) {
         let show = request.map(AskCardExpanded.pinsCustomAnswerInBottomChrome) ?? false
-        customWrap.isHidden = !show
+        customWrap.setHiddenIfChanged(!show)
         customHint.textColor = colors.comment
-        customHint.isHidden = focusedQuestionId == question.id
+        customHint.setHiddenIfChanged(focusedQuestionId == question.id)
         customPlaceholder.textColor = colors.comment
         customField.backgroundColor = colors.bgHighlight
         customField.layer.borderColor = colors.comment.withAlphaComponent(0.12).cgColor
@@ -603,8 +603,8 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
     private func applyFooterActions() {
         let onBlue = ComposerColorContrast.foreground(for: colors.blue, fg: colors.fg, bg: colors.bg)
         if usesPinnedConfirmationActions {
-            footerStack.isHidden = true
-            pinnedStack.isHidden = false
+            footerStack.setHiddenIfChanged(true)
+            pinnedStack.setHiddenIfChanged(false)
             var closeConfig = UIButton.Configuration.plain()
             closeConfig.title = AskCardExpanded.confirmationDismissTitle
             closeConfig.baseForegroundColor = colors.comment
@@ -618,8 +618,8 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
             layoutPinnedActions()
             return
         }
-        footerStack.isHidden = false
-        pinnedStack.isHidden = true
+        footerStack.setHiddenIfChanged(false)
+        pinnedStack.setHiddenIfChanged(true)
 
         var ignoreConfig = UIButton.Configuration.plain()
         ignoreConfig.title = isLastQuestionPage ? "Ignore & Send" : "Ignore"
@@ -639,8 +639,8 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
         } else {
             showsSend = isLastQuestionPage
         }
-        nextButton.isHidden = isSingleQuestionSingleSelect || isLastQuestionPage
-        sendButton.isHidden = !showsSend
+        nextButton.setHiddenIfChanged(isSingleQuestionSingleSelect || isLastQuestionPage)
+        sendButton.setHiddenIfChanged(!showsSend)
         sendButton.configuration = Self.filledConfiguration(
             title: "Send", foreground: onBlue, fill: colors.blue, weight: .semibold
         )
@@ -704,7 +704,7 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
 
     private func applyMic() {
         guard let manager = voiceInputManager else {
-            micButton.isHidden = true
+            micButton.setHiddenIfChanged(true)
             return
         }
         let owns = dictationQuestionId != nil && dictationQuestionId == currentQuestion?.id
@@ -715,7 +715,7 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
         micButton.isEnabled = presentation.isEnabled
         micButton.accessibilityLabel = presentation.accessibilityLabel
         micButton.accessibilityValue = presentation.accessibilityValue
-        micButton.isHidden = false
+        micButton.setHiddenIfChanged(false)
     }
 
     // MARK: - Actions

@@ -220,8 +220,8 @@ private final class ComposerSuggestionCell: UICollectionViewCell {
     }
 
     func applyFile(_ suggestion: FileSuggestion, colors: ComposerThemeColors, showsDivider: Bool) {
-        trailingLabel.isHidden = true
-        subtitleLabel.isHidden = suggestion.parentPath == nil
+        trailingLabel.setHiddenIfChanged(true)
+        subtitleLabel.setHiddenIfChanged(suggestion.parentPath == nil)
         subtitleLabel.text = suggestion.parentPath
         subtitleLabel.font = UIFont.monospacedSystemFont(
             ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize,
@@ -253,12 +253,12 @@ private final class ComposerSuggestionCell: UICollectionViewCell {
             )
         }
         divider.backgroundColor = colors.comment.withAlphaComponent(0.18)
-        divider.isHidden = !showsDivider
+        divider.setHiddenIfChanged(!showsDivider)
         hitTarget.accessibilityLabel = suggestion.displayName
     }
 
     func applySlash(_ command: SlashCommand, colors: ComposerThemeColors, showsDivider: Bool) {
-        trailingLabel.isHidden = false
+        trailingLabel.setHiddenIfChanged(false)
         let iconColor: UIColor
         switch command.source {
         case .builtin: iconColor = colors.blue
@@ -283,16 +283,16 @@ private final class ComposerSuggestionCell: UICollectionViewCell {
         )
         trailingLabel.textColor = colors.comment
         if let description = command.description {
-            subtitleLabel.isHidden = false
+            subtitleLabel.setHiddenIfChanged(false)
             subtitleLabel.text = description
             subtitleLabel.font = UIFont.preferredFont(forTextStyle: .caption2)
             subtitleLabel.textColor = colors.comment
         } else {
-            subtitleLabel.isHidden = true
+            subtitleLabel.setHiddenIfChanged(true)
             subtitleLabel.text = nil
         }
         divider.backgroundColor = colors.comment.withAlphaComponent(0.18)
-        divider.isHidden = !showsDivider
+        divider.setHiddenIfChanged(!showsDivider)
         hitTarget.accessibilityLabel = command.invocation
     }
 
