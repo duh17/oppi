@@ -1708,20 +1708,13 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         }
     }
 
-    /// What the program has sent so far, for `passwordPromptIsLive`: read when
-    /// Fill Password is tapped. nil unless secure entry is latched to a prompt.
-    func passwordFillStamp() -> Int? {
-        secureEntry && securePrompt != nil ? channel.engine.outputGeneration : nil
-    }
-
     /// Whether the prompt secure entry latched to is still on the live screen
-    /// right now, and the program has sent nothing since `stamp`. The secure
-    /// entry latch cannot answer this: it moves with painted frames, which stop
-    /// while the app is inactive (under Face ID) and debounce a prompt that
-    /// ends, so this reads the terminal itself.
-    func passwordPromptIsLive(since stamp: Int) -> Bool {
+    /// right now. The secure entry latch cannot answer this: it moves with
+    /// painted frames, which stop while the app is inactive (under Face ID) and
+    /// debounce a prompt that ends, so this reads the terminal itself.
+    func passwordPromptIsLive() -> Bool {
         guard secureEntry, let prompt = securePrompt, channel.connected else { return false }
-        return channel.engine.isShowingPasswordPrompt(row: prompt.row, text: prompt.text, afterOutput: stamp)
+        return channel.engine.isShowingPasswordPrompt(row: prompt.row, text: prompt.text)
     }
 
     private func applySecureEntry(_ secure: Bool) {

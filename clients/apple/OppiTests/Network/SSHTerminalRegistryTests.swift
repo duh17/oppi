@@ -140,6 +140,27 @@ struct SSHTerminalRegistryTests {
         live.channel.close(reason: "done")
     }
 
+    @Test func connectingFromTheFormAfterOnlyAPasswordChangedAttachesToTheLiveTerminal() async throws {
+        let harness = Harness()
+        var live = SSHTerminalProfile(host: "one.ts.net", username: "alice", authentication: .deviceKey)
+        live.savesSudoPassword = true
+        let open = try harness.open(live)
+        defer { try? SSHTerminalProfileStore().delete(id: live.id) }
+
+        // The form removed the sudo password: the connection is the same one.
+        var edited = live
+        edited.savesSudoPassword = false
+        let session = SSHTerminalConnectSession(registry: harness.registry)
+        session.connect(profile: edited)
+        try await waitUntil { session.showsTerminal }
+        #expect(session.channel === open.channel)
+        #expect(open.channel.connected, "no replacement was dialed")
+        #expect(harness.registry.terminals(for: live.id).count == 1)
+        #expect(harness.registry.terminal(for: live.id)?.profile.savesSudoPassword == false)
+        #expect(session.currentProfile?.savesSudoPassword == false)
+        open.channel.close(reason: "done")
+    }
+
     // MARK: - Connects in flight
 
     @Test func aConnectInFlightIsCancelledWhenOppiEntersTheBackground() async throws {

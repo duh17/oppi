@@ -1389,7 +1389,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// with painted frames, which stop under Face ID.
     private func fillPassword() {
         guard passwordFillTask == nil, isPasswordFillOffered(), let profile = passwordFillProfile,
-              let grid = gridView, let stamp = grid.passwordFillStamp() else { return }
+              let grid = gridView else { return }
         let channel = channel
         passwordFillPromptEnded = false
         passwordFillTask = Task { [weak self, weak grid] in
@@ -1397,7 +1397,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
                 profile: profile,
                 promptIsLive: { [weak self, weak grid] in
                     guard let self, let grid else { return false }
-                    return self.channel === channel && self.isOnScreen && grid.passwordPromptIsLive(since: stamp)
+                    return self.channel === channel && self.isOnScreen && grid.passwordPromptIsLive()
                 },
                 send: { channel.send($0) }
             )

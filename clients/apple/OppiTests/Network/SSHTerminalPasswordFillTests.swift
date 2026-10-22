@@ -167,39 +167,49 @@ struct SSHTerminalPasswordFillTests {
     // The send-time check reads the live terminal. A real engine is fed what a
     // program would send while the Face ID sheet is up.
 
-    @Test @MainActor func theLivePromptCheckHoldsOnlyWhileTheScreenIsUnchanged() throws {
+    private static let promptText = "[sudo] password for duh:"
+
+    /// One line of other output, then the prompt on row 1 with the cursor after it.
+    @MainActor private static func engineAtPrompt() throws -> (engine: SSHTerminalEngine, row: Int) {
         let engine = try SSHTerminalChannel().engine
-        engine.receive(Data("[sudo] password for duh: ".utf8))
-        let row = engine.cursorCell.row
-        let text = "[sudo] password for duh:"
-        let generation = engine.outputGeneration
-        #expect(engine.isShowingPasswordPrompt(row: row, text: text, afterOutput: generation))
+        engine.receive(Data("other pane\r\n[sudo] password for duh: ".utf8))
+        return (engine, engine.cursorCell.row)
+    }
+
+    @Test @MainActor func theLivePromptCheckHoldsWhileTheCursorSitsAtThePrompt() throws {
+        let (engine, row) = try Self.engineAtPrompt()
+        #expect(row == 1)
+        #expect(engine.isShowingPasswordPrompt(row: row, text: Self.promptText))
 
         // A prompt that echoes a mark per key is still that prompt.
         engine.receive(Data("**".utf8))
-        #expect(engine.isShowingPasswordPrompt(row: row, text: text, afterOutput: engine.outputGeneration))
-        // Any output since the check began says no, even if the row looks the same.
-        #expect(!engine.isShowingPasswordPrompt(row: row, text: text, afterOutput: generation))
+        #expect(engine.isShowingPasswordPrompt(row: row, text: Self.promptText))
 
-        // The row says something else now, with the cursor still on it.
-        engine.receive(Data("\r\u{1B}[Kbash$ ".utf8))
-        #expect(!engine.isShowingPasswordPrompt(row: row, text: text, afterOutput: engine.outputGeneration))
+        // Another pane redrawing (Herdr) leaves the cursor on the prompt.
+        engine.receive(Data("\u{1B}7\u{1B}[1;1Hredrawn elsewhere\u{1B}8".utf8))
+        #expect(engine.isShowingPasswordPrompt(row: row, text: Self.promptText))
     }
 
-    @Test @MainActor func aShellPromptOnTheNextRowIsNotThePrompt() throws {
-        let engine = try SSHTerminalChannel().engine
-        engine.receive(Data("[sudo] password for duh: ".utf8))
-        let row = engine.cursorCell.row
+    @Test @MainActor func aPromptThatChangedIsNotThePrompt() throws {
+        // The row says something else now, with the cursor still on it.
+        var (engine, row) = try Self.engineAtPrompt()
+        engine.receive(Data("\r\u{1B}[Kbash$ ".utf8))
+        #expect(!engine.isShowingPasswordPrompt(row: row, text: Self.promptText))
+
+        // A shell prompt on the next row.
+        (engine, row) = try Self.engineAtPrompt()
         engine.receive(Data("\r\n$ ".utf8))
-        #expect(!engine.isShowingPasswordPrompt(row: row, text: "[sudo] password for duh:", afterOutput: engine.outputGeneration))
+        #expect(!engine.isShowingPasswordPrompt(row: row, text: Self.promptText))
+
+        // The cursor left the row without the screen scrolling.
+        (engine, row) = try Self.engineAtPrompt()
+        engine.receive(Data("\u{1B}[1;1H".utf8))
+        #expect(!engine.isShowingPasswordPrompt(row: row, text: Self.promptText))
     }
 
     @Test @MainActor func aPromptThatEndedInOneBurstWhileTheCheckWasUpSendsNothing() async throws {
         let fixture = try Fixture(password: "secret")
-        let engine = try SSHTerminalChannel().engine
-        engine.receive(Data("[sudo] password for duh: ".utf8))
-        let row = engine.cursorCell.row
-        let generation = engine.outputGeneration
+        let (engine, row) = try Self.engineAtPrompt()
         // The program ends the prompt and the shell draws its own, in one chunk,
         // while the approval is up. No frame is painted meanwhile.
         nonisolated(unsafe) let unsafeEngine = engine
@@ -208,22 +218,35 @@ struct SSHTerminalPasswordFillTests {
         }
         let outcome = await SSHTerminalPasswordFill.fill(
             profile: fixture.profile, store: fixture.store, evaluate: approveThenOutput,
-            promptIsLive: { engine.isShowingPasswordPrompt(row: row, text: "[sudo] password for duh:", afterOutput: generation) },
+            promptIsLive: { engine.isShowingPasswordPrompt(row: row, text: Self.promptText) },
             send: { fixture.sent.append($0); return true }
         )
         #expect(outcome == .promptEnded)
         #expect(fixture.sent.isEmpty, "a password typed at a shell prompt would show on screen")
     }
 
+    @Test @MainActor func outputElsewhereWhileTheCheckWasUpStillFillsThePrompt() async throws {
+        let fixture = try Fixture(password: "secret")
+        let (engine, row) = try Self.engineAtPrompt()
+        nonisolated(unsafe) let unsafeEngine = engine
+        let approveThenOutput: @Sendable (LAContext, String) async throws -> Void = { _, _ in
+            await MainActor.run { unsafeEngine.receive(Data("\u{1B}7\u{1B}[1;1Hanother pane\u{1B}8".utf8)) }
+        }
+        let outcome = await SSHTerminalPasswordFill.fill(
+            profile: fixture.profile, store: fixture.store, evaluate: approveThenOutput,
+            promptIsLive: { engine.isShowingPasswordPrompt(row: row, text: Self.promptText) },
+            send: { fixture.sent.append($0); return true }
+        )
+        #expect(outcome == .filled)
+        #expect(fixture.sent == [Data("secret".utf8)])
+    }
+
     @Test @MainActor func anUnchangedPromptIsFilledAfterTheCheck() async throws {
         let fixture = try Fixture(password: "secret")
-        let engine = try SSHTerminalChannel().engine
-        engine.receive(Data("[sudo] password for duh: ".utf8))
-        let row = engine.cursorCell.row
-        let generation = engine.outputGeneration
+        let (engine, row) = try Self.engineAtPrompt()
         let outcome = await SSHTerminalPasswordFill.fill(
             profile: fixture.profile, store: fixture.store, evaluate: fixture.evaluate,
-            promptIsLive: { engine.isShowingPasswordPrompt(row: row, text: "[sudo] password for duh:", afterOutput: generation) },
+            promptIsLive: { engine.isShowingPasswordPrompt(row: row, text: Self.promptText) },
             send: { fixture.sent.append($0); return true }
         )
         #expect(outcome == .filled)

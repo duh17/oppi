@@ -74,9 +74,22 @@ final class SSHTerminalConnectSession {
     ) {
         let value = profile.normalized()
         guard value.isConfigured else { return }
-        // Same host, same folder, same settings, shell still open: show it. No dial, no sign-in.
-        if let live = registry.terminal(for: value.id, folder: folder), live.profile == value {
-            show(live)
+        // Same host, same folder, same connection settings, shell still open:
+        // show it. No dial, no sign-in. A form that also changed which
+        // passwords are saved, or typed one, saves them first (and the
+        // registry updates the live terminal) rather than dialing a replacement.
+        if let live = registry.terminal(for: value.id, folder: folder), live.profile.sameConnection(as: value) {
+            if live.profile == value && sudoPassword == nil {
+                show(live)
+            } else {
+                saveHost(
+                    profile: value, suppliedPassword: suppliedPassword, sudoPassword: sudoPassword
+                ) { [weak self] saved in
+                    onSaved?(saved)
+                    guard let self, let live = self.registry.terminal(for: saved.id, folder: self.folder) else { return }
+                    self.show(live)
+                }
+            }
             return
         }
         promptTarget = PromptTarget(profile: value, isReconnect: reconnecting)

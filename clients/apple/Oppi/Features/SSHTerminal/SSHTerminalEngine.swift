@@ -116,10 +116,6 @@ final class SSHTerminalEngine {
     /// Bumped by anything that can change the picture. The display link repaints
     /// when it moved, so output never invalidates SwiftUI.
     private(set) var changeCount = 0
-    /// Bumped by every chunk the host sent, and by nothing else (not a resize
-    /// or a scroll). A caller that read the screen and later needs to know the
-    /// program has said nothing since compares this.
-    private(set) var outputGeneration = 0
     /// Starts the grid display link. Without this, an idle-paused link never
     /// sees PTY output, scroll, or resize.
     var onPictureChange: (() -> Void)?
@@ -243,7 +239,6 @@ final class SSHTerminalEngine {
 
     func receive(_ bytes: Data) {
         guard live else { return }
-        outputGeneration &+= 1
         notePictureChange()
         bytes.withUnsafeBytes { buffer in
             ghostty_terminal_vt_write(terminal, buffer.bindMemory(to: UInt8.self).baseAddress, bytes.count)
@@ -703,12 +698,13 @@ final class SSHTerminalEngine {
 
     /// Whether the password prompt that was on screen at `row` with `text`
     /// (what `SSHTerminalPasswordPrompt` matched) is still what the cursor
-    /// sits at, on the live screen, with the program silent since
-    /// `outputGeneration` was read. Every condition has to hold: output since,
-    /// a cursor that moved to another row, a row that now says something else,
-    /// a shell prompt, and a screen that cannot be read all answer no.
-    func isShowingPasswordPrompt(row: Int, text: String, afterOutput generation: Int) -> Bool {
-        guard live, following, outputGeneration == generation, !cursorAtPrompt,
+    /// sits at, on the live screen. Output elsewhere does not matter (another
+    /// Herdr pane may redraw while the person is on Face ID); what matters is
+    /// the cursor's own row. Every condition has to hold: a cursor that moved
+    /// to another row, a row that now says something else, a shell prompt, a
+    /// viewport in history, and a screen that cannot be read all answer no.
+    func isShowingPasswordPrompt(row: Int, text: String) -> Bool {
+        guard live, following, !cursorAtPrompt,
               cursorCell.row == row, let line = liveCursorLineBeforeCursor() else { return false }
         func normalized(_ value: some StringProtocol) -> Substring {
             Substring(value).drop { $0.isWhitespace }
