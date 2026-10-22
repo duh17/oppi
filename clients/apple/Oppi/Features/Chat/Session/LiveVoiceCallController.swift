@@ -526,7 +526,6 @@ final class LiveVoiceCallController {
             // The socket dropped after the start (or attach) went out, so its snapshot will
             // never come. Ask again: the same clientCallId re-enters the call the first start
             // made, and the snapshot reaches the end or detach this orphan is waiting to send.
-            rejoinRequestId = nil
             if startSent {
                 await sendStart()
             } else if let identity = memory.callIdentity(forServer: serverKey) {
@@ -537,14 +536,19 @@ final class LiveVoiceCallController {
             orphanFinishAction = nil
             await sendFinish(action, callState: snapshot)
             resetLocalCall(clearIdentity: action == .end)
-        case .commandResult(_, _, let success, _, let error):
-            if !success {
-                orphanFinishAction = nil
-                failClosed(error ?? "Live Voice failed.", closeChannel: true)
+        case .commandResult(_, let requestId, let success, _, _):
+            // The stream also carries other callers' results; only the orphan's own request
+            // failing means there is no call to finish. The person already pressed End or
+            // Leave, so it closes quietly with no error left on the composer.
+            if !success, requestId != nil, requestId == pendingRequestId {
+                resetLocalCall(clearIdentity: true)
             }
-        case .error(let message, _, _):
-            orphanFinishAction = nil
-            failClosed(message, closeChannel: true)
+        case .error(_, _, let fatal):
+            // A run error on the session's stream is not about this call; a fatal one means the
+            // session is gone, so the call cannot be finished.
+            if fatal {
+                resetLocalCall(clearIdentity: true)
+            }
         default:
             break
         }

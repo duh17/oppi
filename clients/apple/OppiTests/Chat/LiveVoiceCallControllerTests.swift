@@ -639,6 +639,54 @@ struct LiveVoiceCallControllerTests {
         #expect(!harness.controller.isLive)
     }
 
+    @Test("Unrelated failures during an orphaned finish do not drop the end")
+    func orphanIgnoresUnrelatedFailures() async throws {
+        let harness = try await connectingHarness()
+        let endTask = Task { await harness.controller.end() }
+        await waitUntil { !harness.controller.isLive }
+
+        harness.channel.emit(.commandResult(
+            command: "set_model", requestId: "someone-else", success: false, data: nil, error: "No such model"
+        ))
+        harness.channel.emit(.commandResult(
+            command: "voice_call_keepalive", requestId: "an-older-request", success: false, data: nil,
+            error: "Stale voice controller lease"
+        ))
+        harness.channel.emit(.error(message: "Provider overloaded", code: nil, fatal: false))
+        harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-orphan", eventSeq: 1, leaseEpoch: 1)))
+        await waitUntil { sentTypes(harness.channel.sent).contains("voice_call_end") }
+        await endTask.value
+        await harness.startTask.value
+
+        #expect(leasePayload(harness.channel.sent.last)?.0 == "call-orphan")
+        #expect(harness.controller.lastError == nil)
+    }
+
+    @Test("An orphan's own rejected start closes quietly: no error on the composer after End")
+    func orphanRejectedStartClosesWithoutError() async throws {
+        let harness = try await connectingHarness()
+        let endTask = Task { await harness.controller.end() }
+        await waitUntil { !harness.controller.isLive }
+        harness.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
+        await waitUntil { sentTypes(harness.channel.sent).count == 2 }
+        #expect(sentTypes(harness.channel.sent) == ["voice_call_start", "voice_call_start"])
+
+        harness.channel.emit(.commandResult(
+            command: "voice_call_start",
+            requestId: requestId(of: harness.channel.sent.last),
+            success: false,
+            data: nil,
+            error: "Voice call identity already belongs to an ended call"
+        ))
+        await waitUntil { harness.channel.closed }
+        await endTask.value
+        await harness.startTask.value
+
+        #expect(harness.controller.lastError == nil)
+        #expect(!harness.controller.holdsComposer)
+        #expect(!harness.controller.isLive)
+    }
+
     // MARK: - Shell-swap remount
 
     /// The chat that takes over a session after an iPad rotation: its own controller on the
