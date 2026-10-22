@@ -430,6 +430,15 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         case .authorized, .provisional, .ephemeral:
             return true
         case .notDetermined:
+            #if DEBUG
+            // Nobody answers the alert in a unit-test host or an E2E run (E2E dismisses
+            // SpringBoard alerts only at launch), and while it is up the pool simulator's scene
+            // stays inactive, which fails every later run on that device that needs frames.
+            let environment = ProcessInfo.processInfo.environment
+            if environment["XCTestConfigurationFilePath"] != nil || environment["PI_E2E_INVITE_URL"] != nil {
+                return false
+            }
+            #endif
             do {
                 return try await center.requestAuthorization(options: [.alert, .sound, .badge])
             } catch {
