@@ -117,6 +117,7 @@ Target: iOS `1.1.2` Build `56`, `oppi-server@0.53.0`, and `oppi-mirror@0.53.0` (
 - **Client:** Edit tool rows, the quiet strip, and Session Outline no longer label line counts as Requested.
 - **Client:** The workspace sidebar's checkmark counts only sessions that are still loaded and finished, like Working and Your Turn; stopped sessions no longer count.
 - **Build:** `server/setup.sh` installs with `npm ci` from `package-lock.json` and needs Node.js 22.19 or later; it no longer uses Bun, and `server/bun.lock` is gone.
+- **Server:** The sandbox runs on Gondolin 0.14.0, which no longer depends on `node-forge` (GHSA-86w9-cpqp-85rv) and processes a sandbox's file requests strictly in order, so a workspace mount can't be raced to reach files outside it. `npm audit` for the server's runtime dependencies is clean.
 
 ### Fixed
 
