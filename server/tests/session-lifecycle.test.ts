@@ -1742,6 +1742,55 @@ describe("SessionManager message queue", () => {
     expect(session.lastMessage).toBe("queued steer");
   });
 
+  it("gives a session its first message from a queued steer that starts", async () => {
+    // A turn an extension or background job started has no recorded user message yet.
+    const { manager, sdkBackend, session } = makeManagerHarness({ status: "busy" });
+    const onFirstMessage = vi.fn();
+    manager.onFirstMessage = onFirstMessage;
+
+    await manager.sendSteer("s1", "name me", { clientTurnId: "turn-first" });
+    expect(onFirstMessage).not.toHaveBeenCalled();
+
+    sdkBackend.session.clearQueue();
+    feedEvent(manager, "s1", { type: "turn_start", turnId: "t-first", timestamp: Date.now() });
+
+    expect(session.firstMessage).toBe("name me");
+    expect(onFirstMessage).toHaveBeenCalledTimes(1);
+    expect(onFirstMessage).toHaveBeenCalledWith(session);
+  });
+
+  it("counts an image-only input a native queue places, as its first message", () => {
+    const { manager, session } = makeManagerHarness({ status: "busy" });
+    const onFirstMessage = vi.fn();
+    manager.onFirstMessage = onFirstMessage;
+
+    feedEvent(manager, "s1", {
+      type: "queue_item_started",
+      kind: "steer",
+      item: {
+        id: "7",
+        message: "",
+        createdAt: 1,
+        attachments: [
+          {
+            type: "attachment",
+            id: "img",
+            source: "workspace",
+            name: "shot.png",
+            mimeType: "image/png",
+            kind: "image",
+            sizeBytes: 4,
+            workspacePath: "shot.png",
+          },
+        ],
+      },
+      queueVersion: 1,
+    });
+
+    expect(session.messageCount).toBe(1);
+    expect(onFirstMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("counts a queued item the SDK reconcile finds started", async () => {
     const { manager, sdkBackend, session } = makeManagerHarness({ status: "busy" });
 

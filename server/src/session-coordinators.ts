@@ -220,6 +220,7 @@ export function createSessionCoordinatorBundle(
     resolveWorkspaceRoot,
     maxTurnAttachmentBytes,
     uploadStoreConfig,
+    onFirstMessage: deps.onFirstMessage,
   });
 
   const inputCoordinator = new SessionInputCoordinator({
@@ -255,6 +256,7 @@ export function createSessionCoordinatorBundle(
     refreshQueuedMessages: (key) => queueCoordinator.refreshQueuedMessages(key),
     markQueuedMessageStarted: (key, message) =>
       queueCoordinator.markQueuedMessageStarted(key, message),
+    onFirstMessage: deps.onFirstMessage,
     schedulePostCompactionQueueFlush: (key) =>
       queueCoordinator.schedulePostCompactionQueueFlush(key),
     resumeQueuedCompactions: (key) => commandCoordinator.resumeQueuedCompactions(key),

@@ -34,12 +34,13 @@ export type QueueStateMessage = Extract<ServerMessage, { type: "queue_state" }>;
 
 /**
  * A queued steer or follow-up reached the model: count it as the session's message,
- * as a prompt that runs right away is counted when admitted. Terminal-owned (pi-tui)
- * sessions record user messages from their own events instead.
+ * as a prompt that runs right away is counted when admitted (an image-only one too).
+ * Terminal-owned (pi-tui) sessions record user messages from their own events instead.
+ * Returns whether it became the session's first message, which callers announce.
  */
-export function recordStartedQueueItem(session: Session, text: string): void {
-  if (!text.trim() || !shouldRecordPromptLocally(session)) return;
-  appendSessionMessage(session, { role: "user", content: text, timestamp: Date.now() });
+export function recordStartedQueueItem(session: Session, text: string): boolean {
+  if (!shouldRecordPromptLocally(session)) return false;
+  return appendSessionMessage(session, { role: "user", content: text, timestamp: Date.now() });
 }
 
 export type QueueItemStartedMessage = Extract<ServerMessage, { type: "queue_item_started" }>;

@@ -44,7 +44,7 @@ import { recordStartedQueueItem } from "./session-queue-utils.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { normalizeMutationToolName } from "./tool-mutations.js";
 import { projectVisibleCustomMessage, type SessionEntry as TraceSessionEntry } from "./trace.js";
-import type { ServerMessage, SessionSummary } from "./types.js";
+import type { ServerMessage, Session, SessionSummary } from "./types.js";
 
 export interface SessionAgentEventState extends EventProcessorSessionState, TurnSessionState {
   subscribers: Set<(msg: ServerMessage) => void>;
@@ -66,6 +66,7 @@ export interface SessionAgentEventCoordinatorDeps {
   resetIdleTimer: (key: string) => void;
   handleSessionSettled?: (key: string) => void;
   markQueuedMessageStarted?: (key: string, message: PiMessage) => void;
+  onFirstMessage?: (session: Session) => void;
   refreshQueuedMessages?: (key: string) => void;
   schedulePostCompactionQueueFlush?: (key: string) => void;
   resumeQueuedCompactions?: (key: string) => void;
@@ -145,7 +146,9 @@ export class SessionAgentEventCoordinator {
 
     if (data.type === "queue_item_started") {
       // A native queue (durable) placed a queued steer or follow-up into the run.
-      recordStartedQueueItem(active.session, data.item.message);
+      if (recordStartedQueueItem(active.session, data.item.message)) {
+        this.deps.onFirstMessage?.(active.session);
+      }
       this.deps.broadcast(key, data);
       return;
     }
