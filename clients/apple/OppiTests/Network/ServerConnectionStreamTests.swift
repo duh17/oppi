@@ -1194,6 +1194,7 @@ struct ServerConnectionStreamTests {
 
     @Test func externalOpenClaimReleasesAfterTargetViewBinds() async {
         let conn = makeExternalOpenConnection()
+        conn._connectedStreamWaitTimeoutForTesting = .milliseconds(200)
         await conn.prepareExternalSessionOpen(sessionId: "target")
 
         // Appear is not enough: the claim stays until the target stream binds.

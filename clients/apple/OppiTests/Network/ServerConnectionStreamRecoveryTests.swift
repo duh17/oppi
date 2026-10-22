@@ -332,6 +332,8 @@ struct ServerConnectionStreamRecoveryTests {
     @Test func streamSessionWaitsForTransportDemotionBeforeMissingEndpoint() async throws {
         let connection = ServerConnection()
         defer { cleanup(connection) }
+        // The stub stream never reports connected; this test makes no claim about that wait.
+        connection._connectedStreamWaitTimeoutForTesting = .milliseconds(200)
 
         let holdDemotion = OSAllocatedUnfairLock(initialState: true)
         defer { holdDemotion.withLock { $0 = false } }
@@ -518,6 +520,7 @@ struct ServerConnectionStreamRecoveryTests {
         defer { cleanup(connection) }
         connection.setAPIClientForTesting(nil)
         connection._focusedStreamReadinessPollForTesting = .milliseconds(5)
+        connection._connectedStreamWaitTimeoutForTesting = .milliseconds(200)
         var connectCalls = 0
         connection._connectStreamForTesting = {
             connectCalls += 1

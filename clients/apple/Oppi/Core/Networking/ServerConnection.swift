@@ -418,6 +418,12 @@ final class ServerConnection {
     /// Test seam: shorten the bounded external-open claim window.
     var _externalSessionOpenClaimWindowForTesting: Duration?
 
+    /// Test seam: shorten how long `streamSession` waits for the socket to report connected.
+    var _connectedStreamWaitTimeoutForTesting: Duration?
+
+    /// Test seam: shorten how long `setModel` waits for the session's `connected` bootstrap.
+    var _sessionBootstrapWaitTimeoutForTesting: Duration?
+
     /// Test seam: shorten the wait before the voice backend follow-up read.
     var _voiceBackendFollowUpDelayForTesting: Duration?
 

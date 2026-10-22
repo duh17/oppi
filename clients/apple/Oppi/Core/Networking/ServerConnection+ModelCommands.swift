@@ -60,7 +60,8 @@ extension ServerConnection {
         guard let sessionId = focusedSessionId else {
             throw WebSocketError.notConnected
         }
-        if await waitForFocusedSessionBootstrap(sessionId: sessionId, timeout: .seconds(3)) {
+        let bootstrapTimeout = _sessionBootstrapWaitTimeoutForTesting ?? .seconds(3)
+        if await waitForFocusedSessionBootstrap(sessionId: sessionId, timeout: bootstrapTimeout) {
             _ = try await sendCommandAwaitingResult(command: "set_model") { requestId in
                 .setModel(
                     provider: provider,

@@ -99,6 +99,7 @@ struct ServerConnectionModelCommandsTests {
     /// `connected` never follows. The switch must go over HTTP, not into the dropped stream.
     @Test func setModelUsesHTTPWhenTheSessionNeverBootstraps() async throws {
         let (connection, _) = makeTestConnection()
+        connection._sessionBootstrapWaitTimeoutForTesting = .milliseconds(200)
         await markFocusedSessionFullySubscribed(connection)
         defer {
             connection.streamConsumptionTask?.cancel()

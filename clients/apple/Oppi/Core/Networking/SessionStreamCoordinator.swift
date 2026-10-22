@@ -138,7 +138,9 @@ final class SessionStreamCoordinator {
         let waitOutcome: String
         if connection.wsClient?.status == .connected {
             waitOutcome = "already_connected"
-        } else if await connection.waitForConnectedStream(timeout: .seconds(10)) {
+        } else if await connection.waitForConnectedStream(
+            timeout: connection._connectedStreamWaitTimeoutForTesting ?? .seconds(10)
+        ) {
             waitOutcome = "connected"
         } else {
             waitOutcome = "timeout"
