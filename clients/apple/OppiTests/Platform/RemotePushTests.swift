@@ -518,13 +518,38 @@ struct PushSendPermissionTests {
         try await withBackend {
             try storeRelayRegistration("r_A")
             try await connect()
-            let configuration = configuration
-            await PushRegistration.shared.disable(serverId: serverId, api: nil, relay: nil) {
-                PushRelayClient(relay: $0, session: URLSession(configuration: configuration))
-            }
+            try await connect(server: Self.otherServer)
+            await disable(serverId)
 
             #expect(backend.deletedPermissions == ["p_1"])
+            #expect(backend.deletedRegistrations.isEmpty)
             #expect(PushSharedStore.allKeys().allSatisfy { $0.serverId != serverId })
+        }
+    }
+
+    /// Push off everywhere: the relay keeps nothing for this phone, and turning push on again
+    /// registers anew.
+    @Test func turningPushOffOnTheLastServerDeletesTheRelayRegistration() async throws {
+        try await withBackend {
+            try storeRelayRegistration("r_A")
+            try await connect()
+            try await connect(server: Self.otherServer)
+            await disable(otherServerId)
+            #expect(PushRelayRegistrationStore.load(relay: relay, environment: .sandbox)?.registrationId == "r_A")
+            await disable(serverId)
+
+            #expect(backend.deletedRegistrations == ["r_A"])
+            #expect(backend.deletedPermissions == ["p_2"])
+            #expect(PushRelayRegistrationStore.load(relay: relay, environment: .sandbox) == nil)
+
+            // Turning push on again: an attested registration and a new token for the server.
+            try await connect()
+            #expect(backend.registrations == 1)
+            #expect(PushRelayRegistrationStore.load(relay: relay, environment: .sandbox)?.appAttestKeyId
+                == ReinstalledAppAttest.newKey)
+            #expect(backend.mints.last == "r_NEW")
+            #expect(backend.sentTokens.last == "osp1.r_NEW.p_3.secret")
+            #expect(PushSendTokenStore.load(serverId: serverId)?.sendToken == "osp1.r_NEW.p_3.secret")
         }
     }
 

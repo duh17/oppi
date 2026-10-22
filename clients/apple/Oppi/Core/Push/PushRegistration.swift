@@ -354,7 +354,9 @@ final class PushRegistration {
 
     /// Turn push off for a server: the server forgets this device's key and token, the relay
     /// the permission, and this phone the keys and token, so the relay lists the server's
-    /// card no more.
+    /// card no more. When no other server's token is on the same relay registration, the
+    /// relay forgets the registration too (push token, App Attest key, Live Activity tokens),
+    /// and so does this phone; turning push on again registers anew.
     ///
     /// `relay` is the server's relay when its connection knows it; without it (an offline
     /// server, or one whose capabilities have not loaded) the permission's registration ID
@@ -376,9 +378,31 @@ final class PushRegistration {
         if let permission,
            let registration = Self.relayRegistration(holding: permission.registrationId, relay: relay),
            let registrationRelay = URL(string: registration.relay) {
-            try? await relayClient(registrationRelay).deletePermission(permission.permissionId, registration: registration)
+            let client = relayClient(registrationRelay)
+            if isUnused(registration, relay: registrationRelay) {
+                // Best effort: one the relay keeps is replaced when this phone registers
+                // again, and deleted when APNs retires its token.
+                do {
+                    try await client.deleteRegistration(registration)
+                } catch {
+                    logger.error("Push relay registration not deleted: \(String(describing: error), privacy: .public)")
+                }
+                PushRelayRegistrationStore.delete(registration)
+            } else {
+                try? await client.deletePermission(permission.permissionId, registration: registration)
+            }
         }
         pruneKeys(serverId: serverId, keeping: 0)
+    }
+
+    /// No server holds a send token on `registration`, and none is registering at its relay.
+    private func isUnused(_ registration: PushRelayClient.Registration, relay: URL) -> Bool {
+        guard let environment = APNsEnvironment(rawValue: registration.environment),
+              relayRegistrationTasks[PushRelayRegistrationStore.account(relay: relay, environment: environment)] == nil
+        else { return false }
+        return !PushSendTokenStore.all().contains {
+            PushRelayClient.permission(ofSendToken: $0.sendToken)?.registrationId == registration.registrationId
+        }
     }
 
     private static func relayRegistration(holding registrationId: String, relay: URL?) -> PushRelayClient.Registration? {

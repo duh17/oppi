@@ -313,6 +313,21 @@ enum PushSendTokenStore {
     static func delete(serverId: String) {
         SecItemDelete(query(serverId: serverId) as CFDictionary)
     }
+
+    /// Every server's stored token.
+    static func all() -> [Entry] {
+        let lookup: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccessGroup as String: SharedConstants.keychainAccessGroup,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(lookup as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [Data] else { return [] }
+        return items.compactMap { try? JSONDecoder().decode(Entry.self, from: $0) }
+    }
 }
 
 /// The relay registration for each relay and APNs environment, in this app's keychain.
