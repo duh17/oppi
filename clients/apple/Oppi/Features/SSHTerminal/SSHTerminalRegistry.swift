@@ -203,6 +203,12 @@ final class SSHTerminalRegistry {
         terminal.channel.close(reason: reason)
     }
 
+    /// Ends every terminal the registry holds, including one whose channel has
+    /// already dropped but is not released yet, so its tasks stop too.
+    func closeAll(reason: String) {
+        for identity in Array(terminals.keys) { close(identity, reason: reason) }
+    }
+
     /// Ends every terminal of `profileID`: the plain one and every folder.
     func closeAllTerminals(of profileID: UUID, reason: String) {
         for identity in terminals.keys where identity.profileID == profileID {

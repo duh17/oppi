@@ -53,9 +53,9 @@ struct SSHTerminalSwitcherTests {
     }
 
     private func closeEverything(_ registry: SSHTerminalRegistry) {
-        for id in Set(registry.openTerminals().map(\.profile.id)) {
-            registry.closeAllTerminals(of: id, reason: "done")
-        }
+        // Every entry, not only the connected ones: a dropped terminal's tasks
+        // must not outlive the test.
+        registry.closeAll(reason: "done")
     }
 
     @discardableResult
