@@ -156,13 +156,25 @@ final class ReleaseGateE2ETests: E2ETestCase {
             "Sent image thumbnail did not appear in the user timeline row"
         )
 
+        // The sent prompt starts a real run that settles a moment later. Its agent_settled
+        // must reach the app before the harness busy state below, or it ends that busy
+        // state and takes the stop button away between the wait and the tap.
+        let stopButton = app.buttons["chat.stop"]
+        let realRunSettled = Date().addingTimeInterval(20)
+        while Date() < realRunSettled,
+            (try? e2eSession(sessionId: sessionId)["status"] as? String) != "ready" || stopButton.exists
+        {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertEqual(try e2eSession(sessionId: sessionId)["status"] as? String, "ready", "The attachment prompt's run did not settle")
+        XCTAssertFalse(stopButton.exists, "The app still shows the attachment prompt's run as busy")
+
         try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_start"])
         defer {
             _ = try? sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_end"])
             _ = try? sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_settled"])
         }
 
-        let stopButton = app.buttons["chat.stop"]
         XCTAssertTrue(waitForElementToExist(stopButton, timeout: 10), "Stop button never appeared after harness busy state")
         tap(stopButton, named: "stop response button", timeout: 1)
         // The server ends a stopped run with agent_end, then agent_settled; the app
