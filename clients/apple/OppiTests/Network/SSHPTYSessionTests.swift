@@ -338,7 +338,7 @@ struct SSHPTYSessionTests {
                 }
             }
             // A stalled main actor on the first batch, then a slow consumer.
-            try await Task.sleep(for: firstBatch ? .milliseconds(1500) : .milliseconds(20))
+            try await Task.sleep(for: firstBatch ? .milliseconds(500) : .milliseconds(20))
             firstBatch = false
             queue.release(bytes: batchBytes)
         }
@@ -363,6 +363,7 @@ struct SSHPTYSessionTests {
         let connecting = Task {
             try await SSHPTYSession.connect(
                 username: "fixture", savedHostKey: SSHHostKey(openSSH: String(openSSHPublicKey: fixture.hostKey.publicKey)),
+                signInTimeout: .seconds(1),
                 prepareAuthentication: {
                     _ = try await SSHIdentityKeyStore.authenticatedIdentity(context: context)
                     return .password("fixture-correct")
@@ -376,9 +377,9 @@ struct SSHPTYSessionTests {
         await context.started.first(where: { _ in true })
         #expect(!dialed.withLock { $0 })
         #expect(fixture.authRequests == 0)
-        // Presence outlasts the actual 20 s network sign-in timeout. Once
+        // Presence outlasts the (shortened) network sign-in timeout. Once
         // approved, a fresh deadline must still allow authentication to finish.
-        try await Task.sleep(for: .seconds(21))
+        try await Task.sleep(for: .milliseconds(1500))
         #expect(!dialed.withLock { $0 })
         context.approve()
         let session = try await connecting.value

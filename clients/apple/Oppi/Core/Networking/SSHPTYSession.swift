@@ -67,6 +67,8 @@ struct SSHPTYConfiguration: Sendable {
     /// exec-with-TTY request as OpenSSH `RemoteCommand` + `RequestTTY yes`
     /// (`ssh -t host 'command'`). The session ends when the command exits.
     var command: String?
+    /// How long sign-in may take once the socket exists. Tests shorten it.
+    var signInTimeout = SSHConnection.signInTimeout
 }
 
 /// Owns one `SSHConnection` and exactly one interactive PTY child channel on
@@ -108,6 +110,7 @@ final class SSHPTYSession: @unchecked Sendable {
         savedHostKey: SSHHostKey?,
         inboundFlow: SSHPTYInboundFlow? = nil,
         command: String? = nil,
+        signInTimeout: TimeAmount = SSHConnection.signInTimeout,
         prepareAuthentication: @Sendable () async throws -> SSHAuthentication,
         dial: @Sendable () async throws -> Int32,
         sink: @escaping SSHPTYByteSink
@@ -122,6 +125,7 @@ final class SSHPTYSession: @unchecked Sendable {
             savedHostKey: savedHostKey, inboundFlow: inboundFlow
         )
         configuration.command = command
+        configuration.signInTimeout = signInTimeout
         return try await connect(configuration: configuration, socket: socket, sink: sink)
     }
 
@@ -136,7 +140,8 @@ final class SSHPTYSession: @unchecked Sendable {
             username: configuration.username,
             authentication: configuration.authentication,
             savedHostKey: configuration.savedHostKey,
-            socket: socket
+            socket: socket,
+            signInTimeout: configuration.signInTimeout
         )
         let parent = connection.channel
         let loop = parent.eventLoop

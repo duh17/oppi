@@ -121,7 +121,8 @@ struct SSHConnection: Sendable {
         username: String,
         authentication: SSHAuthentication,
         savedHostKey: SSHHostKey?,
-        socket: Int32
+        socket: Int32,
+        signInTimeout: TimeAmount = SSHConnection.signInTimeout
     ) async throws -> SSHConnection {
         let loop = MultiThreadedEventLoopGroup.singleton.next()
         let authenticated = loop.makePromise(of: Void.self)
