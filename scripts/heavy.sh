@@ -13,7 +13,7 @@
 # OPPI_HEAVY_POLL (seconds between retries while every slot is busy, default 5),
 # OPPI_HEAVY_PARENT_PID (a waiting job gives up with status 143 once this process is gone, so
 # a killed pre-push hook does not leave queued jobs that later run for nobody; a waiting job
-# also gives up when it has been orphaned to init).
+# also gives up when it has been orphaned to init). A free slot runs regardless.
 #
 # Fairness: there is no queue. A waiter retries every OPPI_HEAVY_POLL seconds and a newcomer
 # tries at once, so a newcomer can take a slot that freed between a waiter's polls.
@@ -45,7 +45,6 @@ parent_gone() {
   [[ "$(ps -o ppid= -p $$ | tr -d ' ')" == "1" ]]
 }
 while true; do
-  if parent_gone; then echo "[heavy] caller is gone; not starting '$class' job" >&2; exit 143; fi
   for ((i = 0; i < slots; i++)); do
     # -t 0: try without waiting. lockf exits 75 when the slot is busy, but the command may
     # also exit 75, so the command marks that it started before running.
@@ -58,5 +57,8 @@ while true; do
   if [[ $announced -eq 0 ]]; then
     echo "[heavy] all $slots '$class' slots busy; waiting" >&2; announced=1
   fi
+  # Checked only after a full round of slot attempts failed: a free slot always runs, and only
+  # a job that would keep waiting gives up.
+  if parent_gone; then echo "[heavy] caller is gone; not starting '$class' job" >&2; exit 143; fi
   sleep "${OPPI_HEAVY_POLL:-5}"
 done

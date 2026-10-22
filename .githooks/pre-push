@@ -64,12 +64,15 @@ run_self_test() {
     echo "pre-push self-test: the lane runner must not capture status with \"\$@\" || status=\$?" >&2
     exit 1
   fi
-  # Callers must not put run_cached in an ||, &&, or if-test either: that disables set -e
-  # inside its nested shell and a lane's early failure is lost. (Bracketed operators keep
-  # this check from matching its own source; comment lines are ignored.)
+  # Callers must not put run_cached or apple_then_mac in an ||, &&, !, or if/while/until test
+  # either: that disables set -e inside its nested shell and a lane's early failure is lost.
+  # (Bracketed operators keep this check from matching its own source; comment lines are
+  # ignored. A backslash-continued || on the next line is not caught.)
   if grep -vE '^[[:space:]]*#' "$REPO_ROOT/.githooks/pre-push" \
-    | grep -E -e 'run_cached.*[|][|]' -e 'run_cached.*[&][&]' -e '![[:space:]]*run_cached' >/dev/null; then
-    echo "pre-push self-test: the lane runner must not be called from a logical list or if-test" >&2
+    | grep -E -e '(run_cached|apple_then_mac).*[|][|]' -e '(run_cached|apple_then_mac).*[&][&]' \
+      -e '![[:space:]]*(run_cached|apple_then_mac)' \
+      -e '(if|while|until)[[:space:]]+(run_cached|apple_then_mac)' >/dev/null; then
+    echo "pre-push self-test: the lane runners must not be called from a logical list or if-test" >&2
     exit 1
   fi
 

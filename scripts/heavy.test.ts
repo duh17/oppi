@@ -121,6 +121,18 @@ describe.skipIf(!hasLockf)("heavy.sh", () => {
     expect(await a.exited).toBe(0);
   });
 
+  test("an orphaned caller (ppid 1) still runs its command when a slot is free", async () => {
+    // Double fork: the subshell's background child is reparented to init once the subshell exits.
+    const out = join(dir, "orphan-out");
+    const outer = Bun.spawn(
+      ["bash", "-c", '( bash "$0" server-full -- bash -c "echo ran > \\"$1\\"" _ "$1" >/dev/null 2>&1 & )', heavy, out],
+      { env: env(), stdout: "ignore", stderr: "ignore" },
+    );
+    await outer.exited;
+    await waitFor(() => existsSync(out), "orphaned caller to run its command");
+    expect(readFileSync(out, "utf8")).toBe("ran\n");
+  });
+
   test("classes are independent", async () => {
     const a = holder("a", "server-full");
     await waitFor(() => existsSync(join(dir, "a.started")), "holder");
