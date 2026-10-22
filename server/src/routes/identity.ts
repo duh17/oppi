@@ -727,12 +727,20 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const pushRegistration = ctx.push
       ? ctx.storage.getPushRegistrations().find((entry) => entry.deviceId === deviceId)
       : undefined;
+    // The end of a card this server drove is sent now, while the registration still exists; the
+    // send is bounded and never throws, and nothing here waits for it.
+    const cardEnded = pushRegistration
+      ? (ctx.endLiveActivityCard?.(deviceId) ?? Promise.resolve()).catch(() => undefined)
+      : Promise.resolve();
     // Removes the device's push registration in the same write.
     if (!ctx.storage.revokeDevice(deviceId)) {
       helpers.error(res, 404, "Unknown or already-revoked device");
       return;
     }
-    if (pushRegistration) ctx.push?.sender.releasePermission(pushRegistration);
+    // The relay refuses the end once the permission is gone: release it after the end.
+    if (pushRegistration) {
+      void cardEnded.then(() => ctx.push?.sender.releasePermission(pushRegistration));
+    }
     log.warn("auth.device_revoked", { device: deviceId });
     ctx.onDeviceRevoked?.(deviceId);
     helpers.json(res, { ok: true });

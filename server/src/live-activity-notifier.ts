@@ -2,6 +2,7 @@ import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { PushSender } from "./push/push-sender.js";
 import type { LiveActivityPush } from "./push/relay-client.js";
+import type { LiveActivityStateStore, PersistedCard } from "./live-activity-state-store.js";
 import type { PushRegistration, Session } from "./types.js";
 
 const log = createLogger({ base: { component: "live_activity" } });
@@ -25,6 +26,14 @@ export const LIVE_ACTIVITY_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const LEAVE_GRACE_MS = 120_000;
 /** After a failed send (relay or network down), try once more after this. */
 const RETRY_AFTER_FAILURE_MS = 5 * 60_000;
+/**
+ * A restarted server keeps updating a card it remembers while it is younger than this, and
+ * ends and restarts it only when it is nearer Apple's 8 hours: the margin covers a card that
+ * started earlier than the server noted.
+ */
+export const LIVE_ACTIVITY_RESTORE_MAX_AGE_MS = 7.5 * 60 * 60 * 1000;
+/** Cards are written to disk this long after the last change, so one burst is one write. */
+const PERSIST_DEBOUNCE_MS = 2_000;
 /**
  * An update that finds no update token at the relay is tried again, once a minute, this many
  * times: the phone may still be reporting a new card's token. After that the card is out of
@@ -76,6 +85,18 @@ function threadRoot(session: Session, byId: ReadonlyMap<string, Session>): strin
   return current.id;
 }
 
+/** Resolves when `work` does or after `ms`, whichever is first; `work` keeps running. */
+async function within(work: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    work,
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]);
+  clearTimeout(timer);
+}
+
 function sameCounts(a: LiveActivityCounts | undefined, b: LiveActivityCounts): boolean {
   return a !== undefined && a.running === b.running && a.needsYou === b.needsYou;
 }
@@ -124,6 +145,8 @@ export interface LiveActivityNotifierOptions {
   isDevicePresent: (deviceId: string) => boolean;
   /** Counts across the server's live sessions now. */
   counts: () => LiveActivityCounts;
+  /** Where the cards survive a restart; without it a restart forgets them. */
+  state?: LiveActivityStateStore;
   now?: () => number;
 }
 
@@ -162,6 +185,10 @@ export class LiveActivityNotifier {
    */
   private countsRoseAt: number | undefined;
   private stopped = false;
+  /** False until `start` has read the saved cards; nothing is written before that. */
+  private stateLoaded = false;
+  private persistTimer: ReturnType<typeof setTimeout> | undefined;
+  private lastPersisted: string | undefined;
 
   constructor(
     private readonly push: Pick<PushSender, "registrations" | "sendLiveActivity">,
@@ -171,25 +198,134 @@ export class LiveActivityNotifier {
   }
 
   /**
-   * After a restart the server does not know what any card shows or when it started.
-   * Reconcile each device once, a minute in so sessions settle first: a card left from before
-   * the restart ends when nothing runs, and is restarted otherwise, since it may be near
-   * Apple's 8 hours. The relay answers `no_activity`, at no quota cost, when there is no card.
+   * After a restart the server does not know what any card shows. Reconcile each device once,
+   * a minute in so sessions settle first: a card left from before the restart ends when
+   * nothing runs, and is updated otherwise. The relay answers `no_activity`, at no quota cost,
+   * when there is no card.
+   *
+   * A card saved by the last process keeps its start time while it is under 7.5 hours old, so
+   * work that goes on gets an update, not an end and a start (whose alert lights the screen).
+   * With nothing saved, or a card that old, the card may be near Apple's 8 hours: it is ended
+   * and, while work goes on, restarted.
    */
   start(): void {
     const now = this.now();
+    const saved = this.options.state?.load() ?? new Map<string, PersistedCard>();
+    this.stateLoaded = true;
     for (const registration of this.registrations()) {
       const device = this.device(registration.deviceId);
+      const card = saved.get(registration.deviceId);
+      if (
+        card &&
+        device.activity === "unknown" &&
+        card.startedAt <= now &&
+        now - card.startedAt < LIVE_ACTIVITY_RESTORE_MAX_AGE_MS
+      ) {
+        device.startedAt = card.startedAt;
+      }
       device.lastSentAt = now;
       this.schedule(registration.deviceId);
     }
+    this.persistSoon();
   }
 
+  /** Cancel every timer and write the cards down. Sends nothing; see `endLiveCards`. */
   stop(): void {
     this.stopped = true;
     for (const device of this.devices.values()) {
       if (device.timer) clearTimeout(device.timer);
       device.timer = undefined;
+    }
+    this.persistNow();
+  }
+
+  /**
+   * End each card this server may have up, once, within `timeoutMs` in all: for a server that
+   * stops for good, which would leave the card showing stale counts. Skips a device the app
+   * drives (present) and one with a send in flight. Stops the notifier first, so no timer
+   * races these sends. Never throws.
+   */
+  async endLiveCards(timeoutMs: number): Promise<void> {
+    this.stop();
+    const registrations = this.registrations();
+    const ends: Promise<void>[] = [];
+    for (const [deviceId, device] of this.devices) {
+      const registration = registrations.find((entry) => entry.deviceId === deviceId);
+      if (registration && !this.options.isDevicePresent(deviceId) && this.cardMayBeUp(device)) {
+        ends.push(this.endCard(registration, device));
+      }
+    }
+    await within(Promise.all(ends), timeoutMs);
+    this.persistNow();
+  }
+
+  /**
+   * End one device's card, best effort, within `timeoutMs`: for a device that is being revoked,
+   * whose registration is about to go. Call it before the registration is removed, since a
+   * send checks the registration when it starts. Resolves when the end is done or the time is
+   * up; never throws. The app is not asked whether it drives the card: the device is leaving.
+   */
+  async endCardOf(deviceId: string, timeoutMs: number): Promise<void> {
+    const registration = this.registrations().find((entry) => entry.deviceId === deviceId);
+    const device = this.devices.get(deviceId);
+    if (!registration || !device || !this.cardMayBeUp(device)) return;
+    await within(this.endCard(registration, device), timeoutMs);
+  }
+
+  /** Whether this server may have a card up on the device that still shows counts. */
+  private cardMayBeUp(device: DeviceState): boolean {
+    if (device.sending) return false;
+    if (device.activity === "live") return true;
+    return device.activity === "unknown" && device.shown !== undefined && !isEmpty(device.shown);
+  }
+
+  /** One `end`, outside the flush cycle. A card the relay has no token for is gone as well. */
+  private async endCard(registration: PushRegistration, device: DeviceState): Promise<void> {
+    device.sending = true;
+    try {
+      if ((await this.send(registration, device, "end", EMPTY)) !== "failed") {
+        this.settle(device, "none", EMPTY);
+      }
+    } catch (err: unknown) {
+      log.warn("live_activity.send_failed", { error: safeErrorMessage(err) });
+    } finally {
+      device.sending = false;
+    }
+    this.persistSoon();
+  }
+
+  /** Write the cards this server believes are up, soon; a burst of changes is one write. */
+  private persistSoon(): void {
+    if (!this.stateLoaded || !this.options.state || this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = undefined;
+      this.persistNow();
+    }, PERSIST_DEBOUNCE_MS);
+    this.persistTimer.unref?.();
+  }
+
+  private persistNow(): void {
+    if (this.persistTimer) clearTimeout(this.persistTimer);
+    this.persistTimer = undefined;
+    const store = this.options.state;
+    if (!this.stateLoaded || !store) return;
+    const cards = new Map<string, PersistedCard>();
+    for (const [deviceId, device] of this.devices) {
+      if (
+        (device.activity === "live" || device.activity === "unknown") &&
+        device.startedAt !== undefined
+      ) {
+        cards.set(deviceId, { activity: device.activity, startedAt: device.startedAt });
+      }
+    }
+    const snapshot = JSON.stringify([...cards]);
+    if (snapshot === this.lastPersisted) return;
+    try {
+      store.save(cards);
+      this.lastPersisted = snapshot;
+    } catch (err: unknown) {
+      // A restart then falls back to ending and restarting the card.
+      log.warn("live_activity.state_save_failed", { error: safeErrorMessage(err) });
     }
   }
 
@@ -232,6 +368,7 @@ export class LiveActivityNotifier {
       device.shown = recentChange ? undefined : counts;
     }
     this.schedule(deviceId);
+    this.persistSoon();
   }
 
   private registrations(): PushRegistration[] {
@@ -273,6 +410,7 @@ export class LiveActivityNotifier {
     const device = this.devices.get(deviceId);
     if (device) this.cancel(device);
     this.devices.delete(deviceId);
+    this.persistSoon();
   }
 
   private cancel(device: DeviceState): void {
@@ -358,6 +496,7 @@ export class LiveActivityNotifier {
       device.sending = false;
       device.lastSentAt = this.now();
     }
+    this.persistSoon();
     if (this.devices.get(deviceId) === device) this.schedule(deviceId);
   }
 

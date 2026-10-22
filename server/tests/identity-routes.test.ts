@@ -302,6 +302,70 @@ describe("identity module", () => {
     expect(revokeRes.statusCode).toBe(200);
   });
 
+  describe("revoking a device that has a Live Activity card", () => {
+    const registration = { deviceId: "dev_a", sendToken: "osp1.r.p.s", liveActivity: true };
+
+    function revoke(
+      endLiveActivityCard: (deviceId: string) => Promise<void>,
+      order: string[],
+    ): { res: ReturnType<typeof makeResponse>; releasePermission: ReturnType<typeof vi.fn> } {
+      const releasePermission = vi.fn(() => void order.push("release"));
+      const ctx = {
+        storage: {
+          getPushRegistrations: () => [registration],
+          revokeDevice: () => {
+            order.push("revoke");
+            return true;
+          },
+        },
+        push: { sender: { releasePermission } },
+        endLiveActivityCard: (deviceId: string) => {
+          order.push(`end ${deviceId}`);
+          return endLiveActivityCard(deviceId);
+        },
+      } as unknown as RouteContext;
+      const res = makeResponse();
+      void createIdentityRoutes(
+        ctx,
+        createRouteHelpers(),
+      )({
+        method: "DELETE",
+        path: "/auth/devices/dev_a",
+        url: new URL("https://paired.example/auth/devices/dev_a"),
+        req: makeRequest() as never,
+        res: res as never,
+      });
+      return { res, releasePermission };
+    }
+
+    it("ends the card before the registration goes and releases the permission after it", async () => {
+      const order: string[] = [];
+      let finishEnd: () => void = () => undefined;
+      const { res, releasePermission } = revoke(
+        () => new Promise<void>((resolve) => (finishEnd = resolve)),
+        order,
+      );
+      await vi.waitFor(() => expect(res.statusCode).toBe(200));
+      // The revoke answered without waiting for the end.
+      expect(order).toEqual(["end dev_a", "revoke"]);
+      expect(releasePermission).not.toHaveBeenCalled();
+      finishEnd();
+      await vi.waitFor(() => expect(releasePermission).toHaveBeenCalledWith(registration));
+      expect(order).toEqual(["end dev_a", "revoke", "release"]);
+    });
+
+    it("still revokes and releases when ending the card fails", async () => {
+      const order: string[] = [];
+      const { res, releasePermission } = revoke(
+        () => Promise.reject(new Error("relay down")),
+        order,
+      );
+      await vi.waitFor(() => expect(releasePermission).toHaveBeenCalledWith(registration));
+      expect(res.statusCode).toBe(200);
+      expect(order).toEqual(["end dev_a", "revoke", "release"]);
+    });
+  });
+
   it.each(["/auth/migrate", "/auth/finalize", "/auth/compat"])(
     "does not dispatch deleted %s",
     async (path) => {

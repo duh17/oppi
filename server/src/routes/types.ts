@@ -68,6 +68,11 @@ export interface RouteContext {
   /** Close upgraded sockets owned by a newly revoked device. */
   onDeviceRevoked?: (deviceId: string) => void;
   /**
+   * Best effort, bounded: end the device's Live Activity card. Called before the revoke removes
+   * the push registration, which the send needs; never throws.
+   */
+  endLiveActivityCard?: (deviceId: string) => Promise<void>;
+  /**
    * E2E UI harness: close a session's focused sockets like a dropped connection; resolves with
    * the count once they have closed.
    */
