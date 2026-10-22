@@ -340,6 +340,16 @@ extension ChatViewController {
             controller: scrollController,
             presentation: mountedPresentation
         )
+        // A call the same session's chat held in the other shell is rejoined here
+        // once that chat has detached it.
+        LiveVoiceRemountHandoff.shared.chatDidAppear(
+            sessionId: sessionId,
+            owner: self,
+            presentation: mountedPresentation
+        ) { [weak self] in
+            guard let self, hasAppeared, !liveVoiceController.isLive else { return }
+            startLiveVoice()
+        }
         logMountTelemetry(
             "Chat appeared",
             metadata: ChatMountTelemetry.appearMetadata(
@@ -469,6 +479,7 @@ extension ChatViewController {
                 presentation: mountedPresentation.telemetryLabel
             )
         )
+        LiveVoiceRemountHandoff.shared.chatDidDisappear(sessionId: sessionId, owner: self)
         // Freeze the viewport before cleanup can publish an empty timeline
         // and make collection geometry look tail-attached during the push.
         scrollController.suspendForNavigation()
@@ -503,6 +514,8 @@ extension ChatViewController {
         // same session keeps its stream (late or repeated cleanup is a no-op).
         sessionManager.cleanup()
         let liveVoiceController = liveVoiceController
+        let sessionId = sessionId
+        let callResumesUnder = shellSwapRemount ? appNavigation.workspaceNavigationPresentation : nil
         let composerDraftStore = root?.composerDraftStore
         let sessionManager = sessionManager
         let connection = connection
@@ -516,7 +529,11 @@ extension ChatViewController {
             if endedIncognito == nil, let incognitoEnd, let incognitoRouteWatch {
                 incognitoEnd.endWhenRouteDrops(incognitoRouteWatch)
             }
-            await liveVoiceController.leave()
+            await LiveVoiceRemountHandoff.shared.leave(
+                call: liveVoiceController,
+                sessionId: sessionId,
+                remountedUnder: callResumesUnder
+            )
             if let composerDraftStore {
                 await composerDraftStore.flush()
             }

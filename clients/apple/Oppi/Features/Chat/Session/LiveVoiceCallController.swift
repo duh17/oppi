@@ -611,6 +611,98 @@ final class LiveVoiceCallController {
     }
 }
 
+/// Carries a Live Voice call across a stack/split shell swap.
+///
+/// A rotation that swaps the workspace shell frees the session's chat and mounts a new one
+/// (see `ChatScrollShellSwapHandoff`). The old chat detaches its call as it leaves; the call
+/// stays on the server and `LiveVoiceCallController.start` rejoins it from session memory.
+/// This hands the rejoin to the chat that takes over, once the detach has gone out, so a
+/// stale detach cannot land after the new chat's attach. A chat that leaves for any other
+/// reason (closed, session switched) is not a swap, so it never records a departure and
+/// the call stays detached as before.
+///
+/// The incoming chat can appear before or after the detach completes; either order rejoins.
+/// A departure is claimable for `departureWindow` only, so a chat opened later does not
+/// resume a call the user left.
+@MainActor
+final class LiveVoiceRemountHandoff {
+    static let shared = LiveVoiceRemountHandoff()
+
+    static let departureWindow: Duration = .seconds(5)
+
+    private struct Waiting {
+        let owner: ObjectIdentifier
+        let presentation: WorkspaceNavigationPresentation
+        let rejoin: @MainActor () -> Void
+    }
+
+    private struct Departure {
+        let resumeUnder: WorkspaceNavigationPresentation
+        let detachedAt: ContinuousClock.Instant
+    }
+
+    private var waiting: [String: Waiting] = [:]
+    private var departures: [String: Departure] = [:]
+
+    /// A chat for `sessionId` appeared under `presentation`; `rejoin` restarts its call. It runs
+    /// when the same session's chat in the other shell has detached a live call for this swap.
+    func chatDidAppear(
+        sessionId: String,
+        owner: AnyObject,
+        presentation: WorkspaceNavigationPresentation,
+        now: ContinuousClock.Instant = .now,
+        rejoin: @escaping @MainActor () -> Void
+    ) {
+        pruneDepartures(now: now)
+        if let departure = departures[sessionId], departure.resumeUnder == presentation {
+            departures[sessionId] = nil
+            waiting[sessionId] = nil
+            rejoin()
+            return
+        }
+        waiting[sessionId] = Waiting(
+            owner: ObjectIdentifier(owner),
+            presentation: presentation,
+            rejoin: rejoin
+        )
+    }
+
+    func chatDidDisappear(sessionId: String, owner: AnyObject) {
+        if waiting[sessionId]?.owner == ObjectIdentifier(owner) {
+            waiting[sessionId] = nil
+        }
+    }
+
+    /// Leaves `call` for the chat of `sessionId` that is going away. With `remountedUnder` set,
+    /// the chat left because its shell was swapped for that presentation; if the call is up the
+    /// chat that takes over rejoins it. Without it, the chat left for good and the call stays
+    /// detached.
+    func leave(
+        call: LiveVoiceCallController,
+        sessionId: String,
+        remountedUnder: WorkspaceNavigationPresentation?,
+        now: @autoclosure () -> ContinuousClock.Instant = .now
+    ) async {
+        let carriesCall = remountedUnder != nil && call.isLive
+        await call.leave()
+        guard carriesCall, let presentation = remountedUnder else { return }
+        let now = now()
+        pruneDepartures(now: now)
+        if let waiter = waiting[sessionId], waiter.presentation == presentation {
+            waiting[sessionId] = nil
+            waiter.rejoin()
+        } else {
+            departures[sessionId] = Departure(resumeUnder: presentation, detachedAt: now)
+        }
+    }
+
+    private func pruneDepartures(now: ContinuousClock.Instant) {
+        departures = departures.filter { _, departure in
+            now - departure.detachedAt <= Self.departureWindow
+        }
+    }
+}
+
 @MainActor
 final class ServerConnectionLiveVoiceChannel: LiveVoiceCallChannel {
     private let connection: ServerConnection
