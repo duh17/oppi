@@ -67,6 +67,14 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
             && username == other.username && authentication == other.authentication
     }
 
+    /// Whether a shell opened with `other` is still the shell this profile
+    /// describes: same host, port, user, sign-in, and Run on Connect. Whether a
+    /// password is saved for it (`savesPassword`, `savesSudoPassword`) does not
+    /// change the connection.
+    func sameConnection(as other: Self) -> Bool {
+        sameCredentials(as: other) && startupCommand == other.startupCommand
+    }
+
     /// Whether `saved` keeps a stored password that still belongs to this
     /// host: Save Password was on, and host, port, user and method are unchanged.
     func reusesSavedPassword(of saved: Self?) -> Bool {

@@ -55,7 +55,9 @@ final class SSHTerminalRegistry {
     static let backgroundGrace: Duration = .seconds(25)
 
     struct Terminal {
-        let profile: SSHTerminalProfile
+        /// What the shell was opened with. Only its saved-password flags change
+        /// while it is live (`reconcile`).
+        fileprivate(set) var profile: SSHTerminalProfile
         /// The folder this shell started in, or nil for the host's plain terminal.
         let folder: String?
         /// What the folder terminal runs instead of the plain login shell
@@ -208,14 +210,25 @@ final class SSHTerminalRegistry {
         }
     }
 
-    /// A save of `saved`. Terminals opened with different settings (host,
+    /// A save of `saved`. Terminals opened with other connection settings (host,
     /// port, user, sign-in, Run on Connect) no longer match the host, wherever
-    /// they started.
+    /// they started, and end. A save that only adds or removes a saved password
+    /// leaves the shell alone and updates what the terminal knows, so Fill
+    /// Password appears or goes without a reconnect.
     func reconcile(saved: SSHTerminalProfile) {
-        for (identity, terminal) in terminals
-        where identity.profileID == saved.id && terminal.profile != saved {
-            close(identity, reason: "The host was edited.")
+        for (identity, terminal) in terminals where identity.profileID == saved.id {
+            if terminal.profile.sameConnection(as: saved) {
+                terminals[identity]?.profile = saved
+            } else {
+                close(identity, reason: "The host was edited.")
+            }
         }
+    }
+
+    /// The profile the live terminal on `channel` runs with, kept current by
+    /// `reconcile`. Nil when the registry does not hold the channel.
+    func profile(of channel: SSHTerminalChannel) -> SSHTerminalProfile? {
+        terminals.values.first { $0.channel === channel }?.profile
     }
 
     private func release(_ channel: SSHTerminalChannel) {

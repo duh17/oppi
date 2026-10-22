@@ -18,6 +18,9 @@ enum SSHTerminalPasswordFill {
         case filled
         /// The person dismissed the prompt. Nothing was sent, and nothing needs saying.
         case cancelled
+        /// The person approved, but the password prompt was gone by then.
+        /// Nothing was sent.
+        case promptEnded
         /// Nothing was sent. The text says why.
         case failed(String)
     }
@@ -41,27 +44,26 @@ enum SSHTerminalPasswordFill {
     }
 
     /// Asks, reads the password, and sends it with `send` (true when the
-    /// terminal accepted the bytes). `stillOffered` runs after the approval and
-    /// before the send: a prompt can end while the person is on Face ID, and a
-    /// password typed at a shell prompt would show on screen.
+    /// terminal accepted the bytes). `promptIsLive` runs after the approval and
+    /// right before the send, and must read the live screen: a prompt can end
+    /// while the person is on Face ID, and a password typed at a shell prompt
+    /// (or another program's) would show on screen.
     @MainActor
     static func fill(
         profile: SSHTerminalProfile,
         store: SSHTerminalProfileStore = SSHTerminalProfileStore(),
         evaluate: @escaping @Sendable (LAContext, String) async throws -> Void = SSHTerminalProfileStore.askDeviceOwner,
-        stillOffered: () -> Bool,
+        promptIsLive: () -> Bool,
         send: (Data) -> Bool
     ) async -> Outcome {
-        var password: Data
+        let password: Data
         do {
             password = try await store.passwordToFill(for: profile, reason: reason(for: profile), evaluate: evaluate)
         } catch {
             return outcome(for: error)
         }
-        // Best effort: the channel's queue keeps its own copy until the pump
-        // writes it, and the JSON the Keychain returned cannot be wiped.
-        defer { password.resetBytes(in: 0..<password.count) }
-        guard !Task.isCancelled, stillOffered() else { return .cancelled }
+        guard !Task.isCancelled else { return .cancelled }
+        guard promptIsLive() else { return .promptEnded }
         return send(password) ? .filled : .failed("The terminal did not accept the input.")
     }
 

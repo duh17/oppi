@@ -381,7 +381,7 @@ final class SSHTerminalKeyStripView: UIView {
             systemImage: "key.fill",
             id: "sshTerminal.key.fillPassword",
             accessibilityLabel: "Fill password",
-            hint: "Asks for Face ID, then types the saved password without pressing Return",
+            hint: "Asks for Face ID, Touch ID, or your passcode, then types the saved password without pressing Return",
             in: row
         ) { [weak self] in
             self?.handlers.fillPassword()

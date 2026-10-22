@@ -32,6 +32,12 @@ final class SSHTerminalConnectSession {
     var channel: SSHTerminalChannel?
     var showsTerminal = false
     var connectedProfile: SSHTerminalProfile?
+    /// `connectedProfile` as the live terminal knows it now: saving a password
+    /// for the host (or removing one) updates the terminal's profile in place,
+    /// and a stale copy would hide or show Fill Password wrongly.
+    var currentProfile: SSHTerminalProfile? {
+        channel.flatMap { registry.profile(of: $0) } ?? connectedProfile
+    }
     /// The folder this session's shell starts in, or nil for the host's own
     /// terminal. Set before `connect`; it is part of the terminal's identity.
     var folder: String?
@@ -221,9 +227,14 @@ final class SSHTerminalConnectSession {
     /// Opens the terminal this session stands for again: its host, folder, and
     /// attach command, whichever screen opened the session.
     func reconnect(suppliedPassword: String? = nil, onSaved: ((SSHTerminalProfile) -> Void)? = nil) {
-        guard let connectedProfile else { return }
+        guard var profile = currentProfile else { return }
+        // A save that only changed which passwords are kept keeps this
+        // connection; reconnecting with the older copy would delete the new one.
+        if let stored = profileStore().profile(id: profile.id), stored.sameConnection(as: profile) {
+            profile = stored
+        }
         connect(
-            profile: connectedProfile, suppliedPassword: suppliedPassword,
+            profile: profile, suppliedPassword: suppliedPassword,
             reconnecting: true, onSaved: onSaved
         )
     }

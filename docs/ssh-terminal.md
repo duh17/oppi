@@ -140,8 +140,8 @@ At a password prompt (the one that turns on **Secure Input**), the keyboard's ba
 
 - **Which password.** A host that signs in with a password and has **Save Password** on fills that saved sign-in password. A host that signs in with **This Device’s Key** fills its optional **Sudo Password**, set in the host's form. A host with neither never shows the key.
 - **Every tap asks.** Fill Password always asks for Face ID, Touch ID, or the passcode, and the prompt names the host, for example **Fill the password for duh@mac-studio**. It never reuses the [5-minute approval](#approval-reuse) that signing in keeps. Cancelling or failing the check sends nothing.
-- **What is sent.** The password's bytes are typed at the prompt as a keyboard would type them (not as a bracketed paste), and **Return is not pressed**: you decide when to answer. A **Filled password** note confirms it. Oppi clears its own copy as soon as the bytes are queued for sending.
-- **When it is offered.** Only while the prompt is on the live screen. Scrolling into history hides it, and so does the prompt ending or the connection closing. If the prompt ends while Face ID is up, nothing is sent.
+- **What is sent.** The password's bytes are typed at the prompt as a keyboard would type them (not as a bracketed paste), and **Return is not pressed**: you decide when to answer. A **Filled password** note confirms it. Oppi does not keep the password after sending it.
+- **When it is offered.** Only while the prompt is on the live screen. Scrolling into history hides it, and so does the prompt ending or the connection closing. Right before sending, Oppi checks the terminal's live screen: if the prompt ended, the program printed anything, or the cursor moved while Face ID was up, nothing is sent and a note says the prompt ended.
 - **Where it goes.** The password goes to whatever program on this terminal is showing that prompt, not necessarily the host's own `sudo`. For example, in a Herdr pane that ran `ssh` to another machine, the prompt is that machine's, and Fill Password would type this host's saved password into it. That is why the confirmation names the host: read it before approving.
 - **VoiceOver.** The key is **Fill password for** the host, as `user@host`.
 
@@ -211,7 +211,7 @@ The terminal hears these while its connection is open, including after you leave
 
 While Oppi is in the foreground, a connected terminal stays connected when you leave its screen: Back, another tab, another session. Tap that host in the list again (it reads **Connected**) and you get the same live channel and grid, with no reconnect and no sign-in. Oppi keeps one terminal per saved host and folder, so at most as many as you have saved hosts plus folders you opened. Connecting an identity that already has one shows that terminal; **Reconnect** and a connect after the shell ended open a new one.
 
-A terminal ends when you tap **Disconnect**, when the remote shell or command exits or the connection drops, when you save changes to the host or delete it, or when the [background grace](#network-and-reconnect) ends. Saving the host without changing anything keeps it.
+A terminal ends when you tap **Disconnect**, when the remote shell or command exits or the connection drops, when you save changes to the host or delete it, or when the [background grace](#network-and-reconnect) ends. Saving the host without changing anything keeps it, and so does saving or removing only a password.
 
 While a terminal is off screen Oppi still reads its output and answers its terminal queries, and checks the connection after a network change. The Herdr list and program shortcuts load again when you return.
 

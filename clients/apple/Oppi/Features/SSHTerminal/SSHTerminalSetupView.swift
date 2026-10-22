@@ -543,7 +543,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         case .host:
             var text = "Remote Login (sshd) must be enabled. When Oppi’s Tailscale node is running, *.ts.net hosts use it; other hosts use your current network."
             if profile.authentication == .deviceKey {
-                text += "\n\nA sudo password is optional. It stays in this device’s private Keychain, and at a terminal password prompt Fill Password types it after Face ID, without pressing Return. It goes to whatever program on that terminal shows the prompt. Changing the host, port, or user removes it."
+                text += "\n\nA sudo password is optional. It stays in this device’s private Keychain, and at a terminal password prompt Fill Password types it after Face ID, Touch ID, or your passcode, without pressing Return. It goes to whatever program on that terminal shows the prompt. Changing the host, port, or user removes it."
             }
             return text
         case .startup:

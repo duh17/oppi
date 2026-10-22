@@ -132,7 +132,7 @@ struct SSHTerminalPasswordFillTests {
         for _ in 0..<2 {
             let outcome = await SSHTerminalPasswordFill.fill(
                 profile: fixture.profile, store: fixture.store, evaluate: fixture.evaluate,
-                stillOffered: { true }, send: { fixture.sent.append($0); return true }
+                promptIsLive: { true }, send: { fixture.sent.append($0); return true }
             )
             #expect(outcome == .filled)
         }
@@ -152,7 +152,7 @@ struct SSHTerminalPasswordFillTests {
             let fixture = try Fixture(password: "secret", evaluateFails: failure)
             let outcome = await SSHTerminalPasswordFill.fill(
                 profile: fixture.profile, store: fixture.store, evaluate: fixture.evaluate,
-                stillOffered: { true }, send: { fixture.sent.append($0); return true }
+                promptIsLive: { true }, send: { fixture.sent.append($0); return true }
             )
             #expect(fixture.sent.isEmpty)
             #expect(fixture.keychain.loads == 0, "the Keychain is not read without approval")
@@ -164,14 +164,70 @@ struct SSHTerminalPasswordFillTests {
         }
     }
 
-    @Test @MainActor func nothingIsSentWhenThePromptEndedWhileTheCheckWasUp() async throws {
+    // The send-time check reads the live terminal. A real engine is fed what a
+    // program would send while the Face ID sheet is up.
+
+    @Test @MainActor func theLivePromptCheckHoldsOnlyWhileTheScreenIsUnchanged() throws {
+        let engine = try SSHTerminalChannel().engine
+        engine.receive(Data("[sudo] password for duh: ".utf8))
+        let row = engine.cursorCell.row
+        let text = "[sudo] password for duh:"
+        let generation = engine.outputGeneration
+        #expect(engine.isShowingPasswordPrompt(row: row, text: text, afterOutput: generation))
+
+        // A prompt that echoes a mark per key is still that prompt.
+        engine.receive(Data("**".utf8))
+        #expect(engine.isShowingPasswordPrompt(row: row, text: text, afterOutput: engine.outputGeneration))
+        // Any output since the check began says no, even if the row looks the same.
+        #expect(!engine.isShowingPasswordPrompt(row: row, text: text, afterOutput: generation))
+
+        // The row says something else now, with the cursor still on it.
+        engine.receive(Data("\r\u{1B}[Kbash$ ".utf8))
+        #expect(!engine.isShowingPasswordPrompt(row: row, text: text, afterOutput: engine.outputGeneration))
+    }
+
+    @Test @MainActor func aShellPromptOnTheNextRowIsNotThePrompt() throws {
+        let engine = try SSHTerminalChannel().engine
+        engine.receive(Data("[sudo] password for duh: ".utf8))
+        let row = engine.cursorCell.row
+        engine.receive(Data("\r\n$ ".utf8))
+        #expect(!engine.isShowingPasswordPrompt(row: row, text: "[sudo] password for duh:", afterOutput: engine.outputGeneration))
+    }
+
+    @Test @MainActor func aPromptThatEndedInOneBurstWhileTheCheckWasUpSendsNothing() async throws {
         let fixture = try Fixture(password: "secret")
+        let engine = try SSHTerminalChannel().engine
+        engine.receive(Data("[sudo] password for duh: ".utf8))
+        let row = engine.cursorCell.row
+        let generation = engine.outputGeneration
+        // The program ends the prompt and the shell draws its own, in one chunk,
+        // while the approval is up. No frame is painted meanwhile.
+        nonisolated(unsafe) let unsafeEngine = engine
+        let approveThenOutput: @Sendable (LAContext, String) async throws -> Void = { _, _ in
+            await MainActor.run { unsafeEngine.receive(Data("\r\n$ ".utf8)) }
+        }
+        let outcome = await SSHTerminalPasswordFill.fill(
+            profile: fixture.profile, store: fixture.store, evaluate: approveThenOutput,
+            promptIsLive: { engine.isShowingPasswordPrompt(row: row, text: "[sudo] password for duh:", afterOutput: generation) },
+            send: { fixture.sent.append($0); return true }
+        )
+        #expect(outcome == .promptEnded)
+        #expect(fixture.sent.isEmpty, "a password typed at a shell prompt would show on screen")
+    }
+
+    @Test @MainActor func anUnchangedPromptIsFilledAfterTheCheck() async throws {
+        let fixture = try Fixture(password: "secret")
+        let engine = try SSHTerminalChannel().engine
+        engine.receive(Data("[sudo] password for duh: ".utf8))
+        let row = engine.cursorCell.row
+        let generation = engine.outputGeneration
         let outcome = await SSHTerminalPasswordFill.fill(
             profile: fixture.profile, store: fixture.store, evaluate: fixture.evaluate,
-            stillOffered: { false }, send: { fixture.sent.append($0); return true }
+            promptIsLive: { engine.isShowingPasswordPrompt(row: row, text: "[sudo] password for duh:", afterOutput: generation) },
+            send: { fixture.sent.append($0); return true }
         )
-        #expect(outcome == .cancelled)
-        #expect(fixture.sent.isEmpty, "a password typed at a shell prompt would show on screen")
+        #expect(outcome == .filled)
+        #expect(fixture.sent == [Data("secret".utf8)])
     }
 
     @Test @MainActor func aProfileEditedAfterTheOfferCannotFillTheOldSecret() async throws {
@@ -180,7 +236,7 @@ struct SSHTerminalPasswordFillTests {
         moved.host = "elsewhere.ts.net"
         let outcome = await SSHTerminalPasswordFill.fill(
             profile: moved, store: fixture.store, evaluate: fixture.evaluate,
-            stillOffered: { true }, send: { fixture.sent.append($0); return true }
+            promptIsLive: { true }, send: { fixture.sent.append($0); return true }
         )
         guard case .failed = outcome else { Issue.record("expected a failure, got \(outcome)"); return }
         #expect(fixture.sent.isEmpty)
@@ -193,7 +249,7 @@ struct SSHTerminalPasswordFillTests {
         channel.opened(connection)
         let outcome = await SSHTerminalPasswordFill.fill(
             profile: fixture.profile, store: fixture.store, evaluate: fixture.evaluate,
-            stillOffered: { true }, send: { channel.send($0) }
+            promptIsLive: { true }, send: { channel.send($0) }
         )
         #expect(outcome == .filled)
         var received = Data()

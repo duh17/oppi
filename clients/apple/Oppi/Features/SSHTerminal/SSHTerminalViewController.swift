@@ -94,6 +94,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var secureEntryActive = false
     /// The Face ID prompt and send behind a tap on Fill Password, until it ends.
     private var passwordFillTask: Task<Void, Never>?
+    /// The password prompt ended while that task was waiting on the person.
+    private var passwordFillPromptEnded = false
     /// The cursor shift was held for history or a touch on the last update.
     private var cursorShiftHeld = false
     private var rawKeyboard = false
@@ -1327,7 +1329,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// so the input moves to the terminal while the prompt is up.
     private func secureInputChanged(_ secure: Bool) {
         secureEntryActive = secure
-        if !secure { passwordFillTask?.cancel() }
+        if !secure, passwordFillTask != nil {
+            passwordFillPromptEnded = true
+            passwordFillTask?.cancel()
+        }
         setNeedsUpdateProperties()
         if secure {
             guard !automaticTerminalTyping, inputMode == .chat, !rawKeyboard else { return }
@@ -1356,7 +1361,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     /// The saved host this terminal is connected to, which says whether there
     /// is a password to fill.
-    private var passwordFillProfile: SSHTerminalProfile? { session?.connectedProfile ?? previewFillProfile }
+    private var passwordFillProfile: SSHTerminalProfile? { session?.currentProfile ?? previewFillProfile }
 
     /// The screenshot preview has no connect session; it names the host here.
     var previewFillProfile: SSHTerminalProfile?
@@ -1379,16 +1384,20 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     /// Asks for Face ID, then types the saved password at the prompt without
     /// pressing Return. Nothing is typed when the person cancels, the check
-    /// fails, or the prompt is gone by the time it passes.
+    /// fails, or the prompt is gone by the time it passes. Right before the
+    /// send the live screen decides, not the secure-entry latch: that moves
+    /// with painted frames, which stop under Face ID.
     private func fillPassword() {
-        guard passwordFillTask == nil, isPasswordFillOffered(), let profile = passwordFillProfile else { return }
+        guard passwordFillTask == nil, isPasswordFillOffered(), let profile = passwordFillProfile,
+              let grid = gridView, let stamp = grid.passwordFillStamp() else { return }
         let channel = channel
-        passwordFillTask = Task { [weak self] in
+        passwordFillPromptEnded = false
+        passwordFillTask = Task { [weak self, weak grid] in
             let outcome = await SSHTerminalPasswordFill.fill(
                 profile: profile,
-                stillOffered: { [weak self] in
-                    guard let self else { return false }
-                    return self.channel === channel && self.isOnScreen && self.isPasswordFillOffered()
+                promptIsLive: { [weak self, weak grid] in
+                    guard let self, let grid else { return false }
+                    return self.channel === channel && self.isOnScreen && grid.passwordPromptIsLive(since: stamp)
                 },
                 send: { channel.send($0) }
             )
@@ -1396,7 +1405,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             self.passwordFillTask = nil
             switch outcome {
             case .filled: self.showPasteNotice("Filled password")
-            case .cancelled: break
+            case .cancelled:
+                // The prompt ending dismissed the check itself.
+                if self.passwordFillPromptEnded { self.showPasteNotice("Password not filled. The prompt ended.") }
+            case .promptEnded: self.showPasteNotice("Password not filled. The prompt ended.")
             case .failed(let message): self.showPasteNotice("Password not filled. \(message)")
             }
         }

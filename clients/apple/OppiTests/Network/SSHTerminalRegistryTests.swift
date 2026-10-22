@@ -93,6 +93,37 @@ struct SSHTerminalRegistryTests {
         #expect(harness.registry.terminal(for: doomed.profile.id) == nil)
     }
 
+    @Test func savingOnlyAPasswordKeepsTheTerminalAndShowsTheKeyWithoutReconnecting() async throws {
+        let harness = Harness()
+        let profile = SSHTerminalProfile(host: "one.ts.net", username: "alice", authentication: .deviceKey)
+        let live = try harness.open(profile)
+        let session = SSHTerminalConnectSession(registry: harness.registry)
+        session.channel = live.channel
+        session.connectedProfile = profile
+        func offered() -> Bool {
+            SSHTerminalPasswordFill.isOffered(
+                profile: session.currentProfile, secureEntry: true, inHistory: false, connected: live.channel.connected
+            )
+        }
+        #expect(!offered())
+
+        var saved = profile
+        saved.savesSudoPassword = true
+        harness.registry.reconcile(saved: saved)
+        #expect(live.channel.connected, "a saved password does not change the connection")
+        #expect(harness.registry.terminal(for: profile.id)?.profile == saved)
+        #expect(offered())
+
+        harness.registry.reconcile(saved: profile)
+        #expect(live.channel.connected)
+        #expect(!offered())
+
+        // A connection setting still ends it.
+        saved.username = "bob"
+        harness.registry.reconcile(saved: saved)
+        #expect(!live.channel.connected)
+    }
+
     @Test func connectingAHostWithALiveTerminalAttachesToItWithoutDialing() async throws {
         let harness = Harness()
         let live = try harness.open()
