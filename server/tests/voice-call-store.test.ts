@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -128,6 +128,46 @@ describe("FileVoiceCallStore", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "fails the boot and leaves a valid store alone when the file cannot be read",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "oppi-voice-call-store-unreadable-"));
+      const path = voiceCallStorePath(dir);
+      try {
+        const writer = new VoiceCallController({
+          now: () => 1_000,
+          nextCallId: () => "call-kept",
+          persistence: new FileVoiceCallStore(path),
+        });
+        writer.startCall(
+          { controlSessionId: "voice-session-1", clientCallId: "client-call-1" },
+          new DeterministicVoiceCallFrontend({
+            connectionId: "connection-1",
+            authenticatedDeviceId: "paired-device-a",
+          }).connection,
+        );
+        const before = readFileSync(path, "utf8");
+        chmodSync(path, 0o000);
+
+        // A permission error says nothing about the contents: no quarantine, no empty boot.
+        expect(
+          () =>
+            new VoiceCallController({
+              now: () => 2_000,
+              nextCallId: () => "unused",
+              persistence: new FileVoiceCallStore(path),
+            }),
+        ).toThrow(/EACCES/);
+
+        chmodSync(path, 0o600);
+        expect(readdirSync(dir)).toEqual(["voice-calls.json"]);
+        expect(readFileSync(path, "utf8")).toBe(before);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("loads a call file written before spoken approval was removed", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-voice-call-store-legacy-"));

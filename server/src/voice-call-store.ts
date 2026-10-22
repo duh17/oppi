@@ -2,7 +2,11 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import type { PersistedVoiceCall, VoiceCallPersistence } from "./continuous-voice-call.js";
+import {
+  CorruptVoiceCallStoreError,
+  type PersistedVoiceCall,
+  type VoiceCallPersistence,
+} from "./continuous-voice-call.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger({ base: { component: "voice_call_store" } });
@@ -25,11 +29,13 @@ export class FileVoiceCallStore implements VoiceCallPersistence {
 
   load(): PersistedVoiceCall[] {
     if (!existsSync(this.path)) return [];
+    // A read error (EACCES, EIO, EISDIR) propagates: it says nothing about the contents.
+    const text = readFileSync(this.path, "utf8");
     let parsed: unknown;
     try {
-      parsed = JSON.parse(readFileSync(this.path, "utf8"));
+      parsed = JSON.parse(text);
     } catch {
-      throw new Error("Voice call store is unreadable");
+      throw new CorruptVoiceCallStoreError("Voice call store is unreadable");
     }
     return parsePersistedVoiceCallFile(parsed);
   }
@@ -69,57 +75,57 @@ export class FileVoiceCallStore implements VoiceCallPersistence {
 
 export function parsePersistedVoiceCallFile(value: unknown): PersistedVoiceCall[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Voice call store must be an object");
+    throw new CorruptVoiceCallStoreError("Voice call store must be an object");
   }
   const record = value as { version?: unknown; calls?: unknown };
   if (record.version !== STORE_VERSION) {
-    throw new Error("Voice call store version is unsupported");
+    throw new CorruptVoiceCallStoreError("Voice call store version is unsupported");
   }
   if (!Array.isArray(record.calls)) {
-    throw new Error("Voice call store calls must be an array");
+    throw new CorruptVoiceCallStoreError("Voice call store calls must be an array");
   }
   if (record.calls.length > MAX_PERSISTED_CALLS) {
-    throw new Error("Voice call capacity is reached");
+    throw new CorruptVoiceCallStoreError("Voice call capacity is reached");
   }
   return record.calls.map((entry, index) => parsePersistedVoiceCall(entry, index));
 }
 
 function parsePersistedVoiceCall(value: unknown, index: number): PersistedVoiceCall {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`Voice call store entry ${index} must be an object`);
+    throw new CorruptVoiceCallStoreError(`Voice call store entry ${index} must be an object`);
   }
   const record = value as Record<string, unknown>;
   if (typeof record.callId !== "string")
-    throw new Error(`Voice call store entry ${index} is invalid`);
+    throw new CorruptVoiceCallStoreError(`Voice call store entry ${index} is invalid`);
   if (typeof record.controlSessionId !== "string") {
-    throw new Error(`Voice call store entry ${index} is invalid`);
+    throw new CorruptVoiceCallStoreError(`Voice call store entry ${index} is invalid`);
   }
   if (typeof record.clientCallId !== "string") {
-    throw new Error(`Voice call store entry ${index} is invalid`);
+    throw new CorruptVoiceCallStoreError(`Voice call store entry ${index} is invalid`);
   }
   if (typeof record.ownerDeviceId !== "string") {
-    throw new Error(`Voice call store entry ${index} is invalid`);
+    throw new CorruptVoiceCallStoreError(`Voice call store entry ${index} is invalid`);
   }
   if (record.lifecycle !== "active" && record.lifecycle !== "ended") {
-    throw new Error(`Voice call store entry ${index} is invalid`);
+    throw new CorruptVoiceCallStoreError(`Voice call store entry ${index} is invalid`);
   }
   if (typeof record.controllerLeaseEpoch !== "number") {
-    throw new Error(`Voice call store entry ${index} is invalid`);
+    throw new CorruptVoiceCallStoreError(`Voice call store entry ${index} is invalid`);
   }
   if (typeof record.controllerLeaseExpiresAt !== "number") {
-    throw new Error(`Voice call store entry ${index} is invalid`);
+    throw new CorruptVoiceCallStoreError(`Voice call store entry ${index} is invalid`);
   }
   if (typeof record.eventSeq !== "number") {
-    throw new Error(`Voice call store entry ${index} is invalid`);
+    throw new CorruptVoiceCallStoreError(`Voice call store entry ${index} is invalid`);
   }
   if (typeof record.startedAt !== "number" || typeof record.updatedAt !== "number") {
-    throw new Error(`Voice call store entry ${index} is invalid`);
+    throw new CorruptVoiceCallStoreError(`Voice call store entry ${index} is invalid`);
   }
   if (record.detachedAt !== undefined && typeof record.detachedAt !== "number") {
-    throw new Error(`Voice call store entry ${index} is invalid`);
+    throw new CorruptVoiceCallStoreError(`Voice call store entry ${index} is invalid`);
   }
   if (!Array.isArray(record.delegations) || !Array.isArray(record.events)) {
-    throw new Error(`Voice call store entry ${index} is invalid`);
+    throw new CorruptVoiceCallStoreError(`Voice call store entry ${index} is invalid`);
   }
   return record as unknown as PersistedVoiceCall;
 }

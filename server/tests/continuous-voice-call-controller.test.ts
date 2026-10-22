@@ -722,4 +722,8 @@ class MemoryVoiceCallStore implements VoiceCallPersistence {
   save(calls: readonly PersistedVoiceCall[]): void {
     this.records = structuredClone(calls);
   }
+
+  quarantine(reason: unknown): void {
+    throw reason;
+  }
 }

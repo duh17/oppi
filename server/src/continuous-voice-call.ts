@@ -80,13 +80,26 @@ export interface PersistedVoiceCall {
 }
 
 export interface VoiceCallPersistence {
+  /**
+   * Throws CorruptVoiceCallStoreError when the stored bytes are unusable. Any other error
+   * (the file exists but cannot be read) means the store may be fine, so it is not set aside.
+   */
   load(): readonly PersistedVoiceCall[];
   save(calls: readonly PersistedVoiceCall[]): void;
   /**
-   * The stored calls could not be read or restored. The store sets them aside so the
-   * controller can start empty instead of keeping the server from booting.
+   * The stored calls are corrupt: parsing, validation, or restoring them failed. The store
+   * sets them aside so the controller can start empty instead of keeping the server from
+   * booting.
    */
-  quarantine?(reason: unknown): void;
+  quarantine(reason: unknown): void;
+}
+
+/** The persisted call data itself is unusable, as opposed to the file being unreadable. */
+export class CorruptVoiceCallStoreError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CorruptVoiceCallStoreError";
+  }
 }
 
 interface MutableVoiceCall {
@@ -623,9 +636,18 @@ export class VoiceCallController {
   private restorePersistedCalls(): void {
     const persistence = this.deps.persistence;
     if (!persistence) return;
+    let records: readonly PersistedVoiceCall[];
+    try {
+      records = persistence.load();
+    } catch (error) {
+      // An unreadable file (permissions, I/O) is not proven bad: fail the boot, keep the file.
+      if (!(error instanceof CorruptVoiceCallStoreError)) throw error;
+      persistence.quarantine(error);
+      return;
+    }
     const restored = new Map<string, MutableVoiceCall>();
     try {
-      for (const record of persistence.load()) {
+      for (const record of records) {
         const call = hydratePersistedCall(record);
         if (restored.has(call.callId)) {
           throw new Error("Voice call identity must be unique and non-empty");
@@ -633,8 +655,6 @@ export class VoiceCallController {
         restored.set(call.callId, call);
       }
     } catch (error) {
-      // Without a way to set the file aside, refuse to boot on it as before.
-      if (!persistence.quarantine) throw error;
       persistence.quarantine(error);
       return;
     }
