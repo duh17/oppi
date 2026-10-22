@@ -93,10 +93,14 @@ export interface QuotaLimits {
 }
 
 /**
- * Sized for normal use within the Workers Free plan: each push costs one Worker request, one
- * Durable Object request, and one row written (100,000 a day each). 1,000 phones at the daily
- * cap use them all; normal use is a few dozen a day. An Oppi server keeps its own per-device
- * budget at or below these. Unattested registrations exist only in sandbox (development builds,
+ * Sized for normal use within the Workers Free plan (100,000 Worker requests, Durable Object
+ * requests, and rows written a day each). An alert or Live Activity update costs one of each;
+ * a Live Activity `start` that replaces a card's token and a delivered `end` cost two Durable
+ * Object requests and two rows; each phone Live Activity upload two requests and one row (the
+ * per-endpoint table is in relay/README.md, "What each request costs"). A phone at the alert
+ * cap with a busy Live Activity is about 170 Durable Object requests a day, so about 600 such
+ * phones fill the plan; normal use is about 100. The quotas are per phone and shared by every
+ * server it is paired with. Unattested registrations exist only in sandbox (development builds,
  * Simulator, and health probes), so they get just enough for testing.
  */
 export const DEFAULT_QUOTA_LIMITS: QuotaLimits = {
@@ -392,7 +396,8 @@ export function applyAuthorizeLiveActivity(
     record.liveActivityQuota,
     now,
     // An `end` is never refused for the day's limit, so a full quota cannot leave a card
-    // showing finished work; its overdraft on top (so 48 for 40) bounds a failing-end loop.
+    // showing finished work; its overdraft on top (48 for 40, 28 for 20) bounds a failing-end
+    // loop.
     (record.attested ? limits.liveActivityAttestedPerDay : limits.liveActivityUnattestedPerDay) +
       (event === "end" ? limits.liveActivityEndOverdraft : 0),
     limits.liveActivityPerMinute,

@@ -58,7 +58,7 @@ stays inside the free plan:
 | Pushes per phone per UTC day | 100 with App Attest; 20 for sandbox registrations without it |
 | Pushes per phone per minute | 10 |
 | Registrations per phone | 1 per APNs token; registering again keeps the day's counts |
-| Live Activity pushes per phone per UTC day | 40 with App Attest; 20 for sandbox registrations without it, counted apart from alerts. An `end` is counted but never refused for the day's 40: it has an overdraft of 8 more (so 48) |
+| Live Activity pushes per phone per UTC day | 40 with App Attest; 20 for sandbox registrations without it, counted apart from alerts. An `end` is counted but never refused for the day's limit: it has an overdraft of 8 more (48 with App Attest, 28 without) |
 | Live Activity pushes per phone per minute | 3, `end` included |
 | Pushes, Live Activity pushes, and permission releases per client address per minute | 60 together, checked before any send token is looked up; an IPv6 address counts as its /64 |
 | Registrations without App Attest | sandbox only, 5 per client address per hour |
@@ -69,11 +69,39 @@ routine alerts stopping at 80), so one server alone rarely reaches the relay's l
 relay's limits are per phone and shared by every server that phone is paired with. A server
 keeps its count in memory, so a restart starts that server's count over.
 
-The Free plan allows 100,000 Worker requests and 100,000 Durable Object requests a day, and a
-push costs about one of each. That covers about 1,000 phones at the daily cap and several
-thousand in normal use. When a daily limit is reached, every push fails until 00:00 UTC; the
-Free plan never bills. A determined flood of junk requests can still use up a day's limit.
-The limits above raise the cost of that; they cannot prevent it on this plan.
+The Free plan allows 100,000 Worker requests, 100,000 Durable Object requests, and 100,000
+rows written a day. An alert costs one of each; the table below has the rest. A phone at
+every cap (100 alerts, a busy Live Activity, 10 uploads of its Live Activity state) uses about
+170 Durable Object requests a day, so about 600 such phones fill the plan; normal use is about
+100 a day, room for about 1,000 phones. When a daily Durable Object limit is reached, every
+push fails until 00:00 UTC, and the relay answers `503 relay_capacity` with `Retry-After` set
+to then; when the Worker request limit is reached, Cloudflare answers before the relay runs.
+The Free plan never bills. A determined flood of junk requests can still use up a day's
+limit. The limits above raise the cost of that; they cannot prevent it on this plan.
+
+### What each request costs
+
+On the Cloudflare adapter every request is one Worker request; Durable Object requests (one
+per stub call or alarm) and rows written (each `put`, `setAlarm`, and deleted key) are:
+
+| Request | Durable Object requests | Rows written |
+| --- | --- | --- |
+| `POST /v1/challenge` | 1 (2 when never used: its cleanup alarm) | 2 (3 when never used) |
+| Register, new APNs token | 3 (challenge, bind, create) | 4 (challenge, bind, registration, its expiry alarm) |
+| Register again, same APNs token | 5 (adds reading and deleting the old one) | about 5 |
+| Register without App Attest | 1 or 2 more (reading the token's current registration) | the same |
+| Mint a permission | 3 with App Attest (read, counter, add), 2 without | 2, or 1 |
+| `POST /v1/push` | 1 | 1 (0 when refused) |
+| `POST /v1/push` that APNs answers with a retired token | 3 | 3 |
+| Live Activity `update` | 1 | 1 (0 when refused) |
+| Live Activity `end` delivered, or `start` that replaces a card's token | 2 | 2 |
+| `PUT .../live-activity` | 2 | 1 |
+| `DELETE /v1/registrations/{id}` | 4 with App Attest, 3 without | 3, or 2 |
+| `DELETE /v1/permission` | 2 (1 for an unknown token) | 1 (0 when nothing changed) |
+| Idle-expiry alarm, once per registration per 90 days or more | 1, or 2 when it deletes | 1, or 2 when it deletes |
+
+The first push after a registration's object starts also reads whether it has an alarm (a
+row read, not written); a registration made before idle expiry existed gets its alarm then.
 
 The limits count pushes only. They need no account, no identifiers beyond what the table in
 [What the relay sees and keeps](#what-the-relay-sees-and-keeps) lists, and no analytics. If

@@ -316,19 +316,25 @@ Shares the per-address push limit (`429 rate_limited` with `Retry-After: 60`).
 
 Per registration and UTC day: 100 pushes when attested, 20 when not (sandbox only). Per
 registration: at most 10 pushes per minute. A phone holds one registration per APNs token,
-so registering again never resets these counts. They fit normal use within the Cloudflare
-Workers Free plan: a push costs one Worker request, one Durable Object request, and one row
-written, of 100,000 each a day, so 1,000 phones at the daily cap use them all and normal use
-(a few dozen a day) leaves room for several thousand. A refused push writes nothing.
-Unattested registrations: at most 5 per client address per hour (in memory). Pushes: at most
-60 per client address per minute (in memory), checked before the send token is looked up.
+so registering again never resets these counts. The counts are the phone's, shared by every
+server it is paired with. They fit normal use within the Cloudflare Workers Free plan
+(100,000 Worker requests, Durable Object requests, and rows written a day each). An alert or
+Live Activity update costs one Worker request, one Durable Object request, and one row; a
+delivered Live Activity `end`, or a `start` that replaces a card's token, two Durable Object
+requests and two rows; each Live Activity upload from the phone two requests and one row
+(`relay/README.md`, "What each request costs"). A
+phone at every cap uses about 170 Durable Object requests a day, so about 600 such phones
+fill the plan; normal use is about 100. A refused push writes nothing. Unattested
+registrations: at most 5 per client address per hour (in memory). Pushes, Live Activity
+pushes, and permission releases: at most 60 per client address per minute together (in
+memory), checked before the send token is looked up. An IPv6 client address counts as its /64.
 
 Live Activity pushes (3.6) have their own counters: 40 per registration and UTC day when
 attested, 20 when not, and 3 a minute. They never spend the alert quota and alerts never
 spend theirs; registering again keeps both. A Live Activity push refused before APNs
 (`409 no_activity`) is not counted. An `end` is counted but never refused for the day's
-40 (so a full quota cannot leave a card showing finished work) and has an overdraft of 8 more,
-so 48 a day; the per-minute limit still applies. A delivered `end` clears the card's update
+limit (so a full quota cannot leave a card showing finished work) and has an overdraft of 8
+more: 48 a day when attested, 28 when not. The per-minute limit still applies. A delivered `end` clears the card's update
 token, but one APNs failed (`502`) keeps it and may be sent again, which the overdraft bounds.
 
 ### 3.4 Relay storage
@@ -545,10 +551,14 @@ removes them from Notification Center when it becomes active: they open nothing.
 - Revoking a device or rotating the owner token removes its registration in the same
   write and asks the relay to delete the permission.
 - Per-device budget, in memory: 100 pushes per UTC day and 10 per minute for each device,
-  matching the relay's quota so the server stops before the relay refuses. Routine events
+  the same numbers as the relay's quota. The relay's quota is per phone and shared by every
+  server that phone is paired with, so a server within its own budget can still get a relay
+  `429` once other servers have used the phone's quota; the relay's answer decides. Routine events
   (`error`, `notify`, `device_enrolled`) stop at 80 a day and 8 a minute; the rest
   is kept for `blocked` and `pairing_approval`, which wait on the user. A relay `429` with
-  `Retry-After` pauses that device's pushes until it passes.
+  `Retry-After` pauses that device's pushes until it passes; so does a relay `503
+  relay_capacity` with `Retry-After` (section 3), the same way (per device for alerts, per
+  event kind for Live Activity). A `503` without `Retry-After` is a relay failure.
 - Session events, at most once a minute per session and event. `blocked` (Needs you): any
   session enters `blocked`, skipping devices that hold a live stream; the body names what it
   waits on (2.4). `error` (Failed): a
