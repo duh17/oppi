@@ -430,6 +430,27 @@ describe("node adapter", () => {
     expect((await push()).status).toBe(200);
   });
 
+  it("deletes a registration that has carried no push for 90 days", async () => {
+    const day = 86_400_000;
+    harness = await startHarness({ now: Date.parse("2026-01-01T00:00:00Z") });
+    const idle = await mintSendToken(harness, await registerUnattested(harness));
+    const active = await mintSendToken(harness, await registerUnattested(harness, "sandbox", "b".repeat(64)));
+    const push = (sendToken: string) =>
+      call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } });
+
+    harness.advance(89 * day);
+    expect((await push(active)).status).toBe(200);
+    harness.advance(day - 60_000);
+    // A minute before 90 days the idle one is still there; its own push would keep it.
+    expect((await call(harness, "POST", `/v1/live-activity`, { bearer: idle, body: { event: "end", running: 0, needsYou: 0 } })).status).toBe(409);
+    harness.advance(2 * 60_000);
+    expect((await push(idle)).status).toBe(410);
+    // The other one pushed 1 day ago.
+    expect((await push(active)).status).toBe(200);
+    harness.advance(90 * day);
+    expect((await push(active)).status).toBe(410);
+  });
+
   it("signs one APNs provider token for concurrent requests, and a new one after APNs refuses it", async () => {
     const concurrent = new ApnsProviderToken({ keyP8: apnsKeyP8, keyId: "KEYID12345", teamId: "TESTTEAM01" });
     const [first, second] = await Promise.all([concurrent.get(), concurrent.get()]);

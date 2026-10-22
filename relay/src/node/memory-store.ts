@@ -2,6 +2,9 @@
  * In-memory relay store for the Node adapter, optionally persisted to one JSON file.
  * Node runs JavaScript on one thread and no method awaits between reading and writing a
  * record, so each operation is atomic per registration.
+ *
+ * Idle registrations (`registrationExpiresAt`) go in a sweep at most once a minute, run by the
+ * calls that carry the time; a self-hosted relay serves a handful of phones, so a scan is cheap.
  */
 
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -14,6 +17,7 @@ import {
   applyDeletePermission,
   applySetLiveActivity,
   DEFAULT_QUOTA_LIMITS,
+  registrationExpiresAt,
   type AddPermissionResult,
   type LiveActivityAuthorization,
   type LiveActivityEvent,
@@ -34,6 +38,7 @@ interface Snapshot {
 export class MemoryRelayStore implements RelayStore {
   private readonly challenges = new Map<string, number>();
   private readonly registrations = new Map<string, RegistrationRecord>();
+  private sweptAt = -Infinity;
 
   constructor(
     private readonly options: { persistPath?: string; limits?: QuotaLimits } = {},
@@ -77,7 +82,19 @@ export class MemoryRelayStore implements RelayStore {
     return expiresAt !== undefined && expiresAt >= now;
   }
 
+  /** Delete registrations idle past `registrationExpiresAt`. */
+  private sweep(now: number): void {
+    if (now - this.sweptAt < 60_000) return;
+    this.sweptAt = now;
+    let removed = false;
+    for (const record of this.registrations.values()) {
+      if (now >= registrationExpiresAt(record)) removed = this.registrations.delete(record.id) || removed;
+    }
+    if (removed) this.persist();
+  }
+
   async createRegistration(record: RegistrationRecord): Promise<void> {
+    this.sweep(record.createdAt);
     this.registrations.set(record.id, structuredClone(record));
     this.persist();
   }
@@ -136,6 +153,7 @@ export class MemoryRelayStore implements RelayStore {
     secretHash: string,
     now: number,
   ): Promise<PushAuthorization> {
+    this.sweep(now);
     const record = this.registrations.get(id);
     if (!record) return { ok: false, reason: "gone" };
     const result = applyAuthorizePush(
@@ -155,6 +173,7 @@ export class MemoryRelayStore implements RelayStore {
     assertionCounter: number | null,
     now: number,
   ): Promise<SetLiveActivityResult> {
+    this.sweep(now);
     const record = this.registrations.get(id);
     if (!record) return "gone";
     if (!applySetLiveActivity(record, update, assertionCounter, now)) return "stale";
@@ -169,6 +188,7 @@ export class MemoryRelayStore implements RelayStore {
     event: LiveActivityEvent,
     now: number,
   ): Promise<LiveActivityAuthorization> {
+    this.sweep(now);
     const record = this.registrations.get(id);
     if (!record) return { ok: false, reason: "gone" };
     const { authorization, changed } = applyAuthorizeLiveActivity(

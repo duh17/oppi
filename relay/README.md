@@ -25,7 +25,8 @@ The protocol, the envelope, and the threat model are in
 No envelopes, IP addresses, request bodies, or request logs are stored. Logs carry event names
 and status codes only. Client addresses feed in-memory rate limits and are never written down.
 A registration is deleted when APNs reports its token retired (`410`, `400 BadDeviceToken`,
-`400 DeviceTokenNotForTopic`) or when the app deletes it.
+`400 DeviceTokenNotForTopic`), when the app deletes it, or after 90 days without a push (from
+its creation or last counted push, read from the quota counters it already keeps).
 
 The APNs request is fixed: `apns-push-type: alert`, priority 10, the configured topic, an
 expiration of at most an hour, and the payload

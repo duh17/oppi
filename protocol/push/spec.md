@@ -344,6 +344,13 @@ APNs token, the id of its current registration (the Cloudflare adapter keys this
 token and stores only the id). Challenges until used or expired. No envelopes, no Live
 Activity counts, no client addresses, no request logs.
 
+A registration that carries no push, alert or Live Activity, for 90 days is deleted with its
+permissions and its APNs-token entry. The relay counts from its creation or the last counted
+push, whichever is later, using the quota counters above, so this keeps no extra data. The
+Cloudflare adapter sets one alarm per registration, which moves itself to the last push + 90
+days; the Node adapter sweeps on its next call. A phone whose registration went this way gets
+`410` on its next relay call and registers again.
+
 ### 3.5 APNs request (fixed template)
 
 The relay accepts no APNs headers or payload fields from callers.

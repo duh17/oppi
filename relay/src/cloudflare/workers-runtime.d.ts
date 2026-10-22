@@ -9,6 +9,7 @@ interface DurableObjectStorage {
   put<T>(key: string, value: T): Promise<void>;
   deleteAll(): Promise<void>;
   setAlarm(scheduledTime: number): Promise<void>;
+  getAlarm(): Promise<number | null>;
 }
 
 interface DurableObjectState {

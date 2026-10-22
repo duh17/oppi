@@ -25,6 +25,7 @@ import {
   applyClearLiveActivityToken,
   applyDeletePermission,
   applySetLiveActivity,
+  registrationExpiresAt,
   type AddPermissionResult,
   type LiveActivityAuthorization,
   type LiveActivityEvent,
@@ -51,8 +52,22 @@ export interface Env {
 const RECORD_KEY = "registration";
 
 export class RegistrationObject extends DurableObject<Env> {
+  private expiryAlarmChecked = false;
+
   private async read(): Promise<RegistrationRecord | null> {
     return (await this.ctx.storage.get<RegistrationRecord>(RECORD_KEY)) ?? null;
+  }
+
+  /**
+   * Registrations created before idle expiry existed have no alarm. The first push after this
+   * object starts checks once (a read) and sets one only then; pushes never set alarms.
+   */
+  private async ensureExpiryAlarm(record: RegistrationRecord): Promise<void> {
+    if (this.expiryAlarmChecked) return;
+    this.expiryAlarmChecked = true;
+    if ((await this.ctx.storage.getAlarm()) === null) {
+      await this.ctx.storage.setAlarm(registrationExpiresAt(record));
+    }
   }
 
   async load(): Promise<RegistrationRecord | null> {
@@ -61,6 +76,25 @@ export class RegistrationObject extends DurableObject<Env> {
 
   async create(record: RegistrationRecord): Promise<void> {
     await this.ctx.storage.put(RECORD_KEY, record);
+    // One alarm for the registration's life: it fires when the registration could first have
+    // gone idle and moves itself to the last push + 90 days, so a push writes no alarm.
+    await this.ctx.storage.setAlarm(registrationExpiresAt(record));
+    this.expiryAlarmChecked = true;
+  }
+
+  async alarm(): Promise<void> {
+    const record = await this.read();
+    // Deleted already; `deleteAll` also drops the alarm on this compatibility date.
+    if (!record) return;
+    const expiresAt = registrationExpiresAt(record);
+    if (Date.now() < expiresAt) {
+      await this.ctx.storage.setAlarm(expiresAt);
+      return;
+    }
+    await this.ctx.storage.deleteAll();
+    // A binding left behind if this throws is harmless: it names a registration that is gone.
+    const { APNS_TOKENS } = this.env;
+    await APNS_TOKENS.get(APNS_TOKENS.idFromName(record.apnsToken)).unbind(record.id);
   }
 
   async remove(): Promise<void> {
@@ -98,7 +132,10 @@ export class RegistrationObject extends DurableObject<Env> {
     if (!record) return { ok: false, reason: "gone" };
     const result = applyAuthorizePush(record, permissionId, secretHash, now);
     // A refused push changes no count worth keeping; skipping the write saves free-plan rows.
-    if (result.ok) await this.ctx.storage.put(RECORD_KEY, record);
+    if (result.ok) {
+      await this.ctx.storage.put(RECORD_KEY, record);
+      await this.ensureExpiryAlarm(record);
+    }
     return result;
   }
 
@@ -130,7 +167,10 @@ export class RegistrationObject extends DurableObject<Env> {
       now,
     );
     // A refused push writes nothing unless it ended a dismissal; skipping saves free-plan rows.
-    if (changed) await this.ctx.storage.put(RECORD_KEY, record);
+    if (changed) {
+      await this.ctx.storage.put(RECORD_KEY, record);
+      await this.ensureExpiryAlarm(record);
+    }
     return authorization;
   }
 

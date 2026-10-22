@@ -111,6 +111,21 @@ export const DEFAULT_QUOTA_LIMITS: QuotaLimits = {
 };
 
 export const MAX_PERMISSIONS_PER_REGISTRATION = 16;
+/** A registration that carries no push for this long is deleted (spec §3.4). */
+export const REGISTRATION_IDLE_MS = 90 * 86_400_000;
+
+/**
+ * When an idle registration is deleted: 90 days after it was created or last carried a push
+ * (alert or Live Activity), whichever is later. Reads only times the record already keeps:
+ * each counted push sets its quota's `minuteStart` in the write it already makes, so tracking
+ * this adds no field and no write.
+ */
+export function registrationExpiresAt(record: RegistrationRecord): number {
+  return (
+    Math.max(record.createdAt, record.quota.minuteStart, record.liveActivityQuota?.minuteStart ?? 0) +
+    REGISTRATION_IDLE_MS
+  );
+}
 /** Apple ends a Live Activity after 8 hours; its update token is useless after that. */
 export const LIVE_ACTIVITY_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 
@@ -154,6 +169,10 @@ export type AddPermissionResult = "ok" | "limit" | "gone";
 
 export type SetLiveActivityResult = "ok" | "stale" | "gone";
 
+/**
+ * Each store also deletes a registration once `registrationExpiresAt` passes, in its own way:
+ * Cloudflare with one Durable Object alarm per registration, Node with a sweep.
+ */
 export interface RelayStore {
   putChallenge(challenge: string, expiresAt: number): Promise<void>;
   /** True only the first time, before expiry; the challenge is gone afterwards. */
