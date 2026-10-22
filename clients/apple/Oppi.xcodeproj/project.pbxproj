@@ -154,6 +154,7 @@
 		128ECE8532556DC6046151F3 /* ConversationStreamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46FC611DD7114F5511B7665B /* ConversationStreamTests.swift */; };
 		12913C1D3E7E5915637E1178 /* MermaidTextUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4A7823A5C60628A22055031 /* MermaidTextUtils.swift */; };
 		129CAD08EE169A8FFA591D2F /* DeviceAuthSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11AFBF72E219993C0610E630 /* DeviceAuthSessionTests.swift */; };
+		12A46F734B6D2FFE88FADDC2 /* UIView+VisibleWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A13F360F8079F7DC27038DDD /* UIView+VisibleWindow.swift */; };
 		12E61261F7BA0300CA6049F2 /* unix-ws-echo.mjs in Resources */ = {isa = PBXBuildFile; fileRef = 5AEC6B59602529A805CAA784 /* unix-ws-echo.mjs */; };
 		130BD3A1C4CAEB259EC06837 /* MacServerLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6967D1470CC713AF430A8877 /* MacServerLifecycleTests.swift */; };
 		132B819CC1D38707206B8152 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 22CBADB19FF5C739FC72FA85 /* AppIcon.icon */; };
@@ -3503,6 +3504,7 @@
 		A07551E96DF56608E48380DE /* ChatTimelineCollectionView+Keybinding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatTimelineCollectionView+Keybinding.swift"; sourceTree = "<group>"; };
 		A09B87529615B3D5677B49D9 /* ServerConnection+StoreUpdates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ServerConnection+StoreUpdates.swift"; sourceTree = "<group>"; };
 		A0B4FC7599C52AD4251C28C5 /* ReviewableControlMarkdownTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewableControlMarkdownTests.swift; sourceTree = "<group>"; };
+		A13F360F8079F7DC27038DDD /* UIView+VisibleWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UIView+VisibleWindow.swift"; sourceTree = "<group>"; };
 		A1558C763E23EC22ADD01AE4 /* QuickSessionLaunchRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickSessionLaunchRouting.swift; sourceTree = "<group>"; };
 		A1757503C86C6ECCC1CC91C3 /* ServerSkillDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSkillDetailView.swift; sourceTree = "<group>"; };
 		A1C0B572906E01F931C647C4 /* AssistantMarkdownSegmentApplier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantMarkdownSegmentApplier.swift; sourceTree = "<group>"; };
@@ -4740,6 +4742,7 @@
 				AD7CE46B558C2418C9D441C8 /* SessionStatus+Color.swift */,
 				A5A08CDC411F41CBF7121CC4 /* String+Path.swift */,
 				B8C05B4064B261AE4D4E8BC3 /* UIFont+Scaled.swift */,
+				A13F360F8079F7DC27038DDD /* UIView+VisibleWindow.swift */,
 				87C081F15A3F4C889F4B2A9F /* View+iPadReadableContent.swift */,
 			);
 			path = Extensions;
@@ -10015,6 +10018,7 @@
 				30B1D90B4BA4BB2B47CFE262 /* TypewriterAnimator.swift in Sources */,
 				1CC4C71E1C446C18E8669824 /* UIFont+Scaled.swift in Sources */,
 				D3EFD60482D4A5CB36790C2C /* UIHangHarnessView.swift in Sources */,
+				12A46F734B6D2FFE88FADDC2 /* UIView+VisibleWindow.swift in Sources */,
 				DAD1B990DB0744F12AD93486 /* USDZLocalFileStore.swift in Sources */,
 				8AEB1C6307230720F40EAE38 /* USDZRenderingPreview.swift in Sources */,
 				C75F2E6631D3A6FFD0EF292C /* UnifiedPatchParser.swift in Sources */,

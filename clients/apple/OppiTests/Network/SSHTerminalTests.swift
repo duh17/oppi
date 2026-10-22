@@ -1903,13 +1903,11 @@ struct SSHTerminalTests {
             grid.convert(CGPoint(x: 0, y: grid.bounds.maxY), to: terminal.view).y
         }
 
-        // The keyboard below is posted by hand, so a real one must not be
-        // moving the keyboard guide as well. A simulator without a hardware
-        // keyboard raises one for any earlier test's leftover first responder.
-        // This is hygiene: the settled wait at the end is what makes the test
-        // independent of timing, since the screen corrects a missed keyboard
-        // prediction when it releases its held resize.
-        #expect(await mounted.waitForNoRealKeyboard(), "a real keyboard is still up: \(mounted.keyboardDiagnostics())")
+        // The keyboard below is posted by hand, so send any real one an earlier
+        // test left up away first. It cannot make this test fail if it survives:
+        // the bar and the grid hang off the same keyboard guide, so every
+        // comparison here holds with the guide raised or resting.
+        await mounted.dismissStrayKeyboards()
         #expect(try backPillTop() >= gridBottom(), "the bar starts below the grid")
 
         // Typing, then the connection drops: the bar floats above the keyboard
@@ -1933,7 +1931,7 @@ struct SSHTerminalTests {
         #expect(try backPillTop() >= gridBottom(), "the bar is below the grid again")
         #expect(
             settled,
-            "the remote terminal ends above the bar again: engine rows \(channel.engine.geometry.rows), grid rows \(Int(grid.bounds.height / grid.cellSize.height))"
+            "the remote terminal ends above the bar again: engine rows \(channel.engine.geometry.rows), grid rows \(Int(grid.bounds.height / grid.cellSize.height)), \(mounted.keyboardDiagnostics())"
         )
     }
 
@@ -2161,10 +2159,17 @@ private final class MountedTerminalTestController {
         window.rootViewController = nil
     }
 
-    /// Sends a real software keyboard away and waits for the screen's keyboard
-    /// guide to rest at the bottom. Tests that post their own keyboard frames
-    /// need this: a real keyboard keeps moving the guide the grid sits on.
-    func waitForNoRealKeyboard() async -> Bool {
+    /// Sends a software keyboard an earlier test left behind away, and lets a
+    /// dismissal already animating finish so the guide stops moving before the
+    /// first measurement.
+    ///
+    /// This does not wait for an idle guide, because it cannot always get one:
+    /// the simulator keeps a keyboard raised for a field whose window went away
+    /// mid dismissal, no responder is left to resign it, and a test cannot
+    /// dismiss a keyboard its process no longer owns. Everything the bar tests
+    /// measure is relative to the guide the bar and the grid are both anchored
+    /// to, so a raised keyboard shifts both and cancels out.
+    func dismissStrayKeyboards() async {
         // Another test may have hidden its window with a field still focused;
         // that keeps the real keyboard up, and it is not in this window's chain.
         // OppiTests runs serially (not parallelizable in project.yml); with
@@ -2172,11 +2177,12 @@ private final class MountedTerminalTestController {
         for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
             for window in scene.windows { window.endEditing(true) }
         }
-        return await waitForMainActorCondition(timeout: .seconds(3)) {
+        for _ in 0..<10 {
             host.view.layoutIfNeeded()
             // A software keyboard is far taller than the home-indicator strip
             // the guide rests as.
-            return controller.view.keyboardLayoutGuide.layoutFrame.height < 100
+            if controller.view.keyboardLayoutGuide.layoutFrame.height < 100 { return }
+            try? await Task.sleep(for: .milliseconds(100))
         }
     }
 

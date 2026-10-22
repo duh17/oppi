@@ -1538,7 +1538,7 @@ struct VoiceInputManagerTests {
             hostView = screen.view
         }
         window.makeKeyAndVisible()
-        defer { window.isHidden = true; window.rootViewController = nil }
+        defer { hideTestWindow(window); window.rootViewController = nil }
         hostView.layoutIfNeeded()
         try await manager.startRecording(
             keyboardLanguage: "en-US",

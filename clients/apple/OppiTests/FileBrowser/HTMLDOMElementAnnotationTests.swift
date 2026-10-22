@@ -251,7 +251,7 @@ struct HTMLDOMElementAnnotationTests {
             <div id="first" class="group"><button hidden>Hidden</button><button>Save</button></div>
             <div id="second" class="group"><button>Save</button></div>
             """, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         // An assigned light-DOM button has a rect, but its shadow slot is
         // suppressed; it must not shift the two readable button positions.
         _ = try await pageString("""
@@ -319,7 +319,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func unavailableStandalonePickerStaysHiddenOnBrowseAndContextRemoval() async throws {
         let fixture = try await makeFixture(html: Self.nestedFixture)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let picker = fixture.view.htmlDOMPickControllerForTesting
         #expect(picker.canPick)
         #expect(picker.enterButtonForTesting.superview?.superview?.isHidden == false)
@@ -334,7 +334,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func pickShieldOwnsTouchesAndDoesNotActivatePageControls() async throws {
         let fixture = try await makeFixture(html: Self.controlFixture)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
 
@@ -366,7 +366,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func nestedParentSelectionRestoresBrowseWithoutReloading() async throws {
         let fixture = try await makeFixture(html: Self.nestedFixture)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         let generation = fixture.view.navigationGenerationForTesting
         let hash = fixture.view.loadedSourceSHA256ForTesting
@@ -399,7 +399,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func selectionTracksScrollAndPageZoom() async throws {
         let fixture = try await makeFixture(html: Self.coordinateFixture)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
 
@@ -443,7 +443,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func sanitizerExcludesSensitiveDescendantsShadowsAndFrames() async throws {
         let fixture = try await makeFixture(html: Self.sensitiveFixture)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         try await pageString(
             """
             const host = document.getElementById('open-host');
@@ -514,7 +514,7 @@ struct HTMLDOMElementAnnotationTests {
     @Test func composedTreeTextExcludesUndistributedLightDOMAndInactiveSlotFallback() async throws {
         let harness = try makeStashHarness()
         let fixture = try await makeFixture(html: Self.composedTreeFixture, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
 
@@ -559,7 +559,7 @@ struct HTMLDOMElementAnnotationTests {
     @Test func closedShadowUndistributedLightTextDoesNotLeakIntoSavedPrompt() async throws {
         let harness = try makeStashHarness()
         let fixture = try await makeFixture(html: Self.closedShadowLightDOMFixture, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
         let secrets = ["SECRET_CLOSED_CUSTOM", "SECRET_CLOSED_ORDINARY"]
@@ -629,7 +629,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func isolatedSHA256MatchesCryptoKitAtPaddingUnicodeAndSizeBoundaries() async throws {
         let fixture = try await makeFixture(html: Self.digestFixture)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
         let target = try await cssRect(id: "digest-target", in: fixture.view)
@@ -684,7 +684,7 @@ struct HTMLDOMElementAnnotationTests {
     @Test func viewportRefreshRejectsACloneInsteadOfAdoptingIt() async throws {
         let harness = try makeStashHarness()
         let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let kept = try harness.store.create(
             workspaceId: "workspace",
             sessionId: "session-html",
@@ -723,7 +723,7 @@ struct HTMLDOMElementAnnotationTests {
     @Test func interruptedSaveCannotCrossABrowseAndNewPickSession() async throws {
         let harness = try makeStashHarness()
         let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
         let leaf = try await cssRect(id: "leaf", in: fixture.view)
@@ -769,7 +769,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func pageWorldOverrideDoesNotBecomeANativeAction() async throws {
         let fixture = try await makeFixture(html: Self.controlFixture)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         _ = try await pageString(
             """
             document.elementFromPoint = function() { return document.getElementById('trap'); };
@@ -794,7 +794,7 @@ struct HTMLDOMElementAnnotationTests {
     @Test func staleMutationNavigationAndLateCallbackDoNotStageAComment() async throws {
         let harness = try makeStashHarness()
         let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let kept = try harness.store.create(
             workspaceId: "workspace",
             sessionId: "session-html",
@@ -841,7 +841,7 @@ struct HTMLDOMElementAnnotationTests {
     @Test func commentSavesSanitizedReferenceThroughTheExistingStashThenBrowseRestores() async throws {
         let harness = try makeStashHarness()
         let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
         let leaf = try await cssRect(id: "leaf", in: fixture.view)
@@ -893,7 +893,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func lateLookupAfterBrowseDoesNotRestoreHighlight() async throws {
         let fixture = try await makeFixture(html: Self.nestedFixture)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
         let leaf = try await cssRect(id: "leaf", in: fixture.view)
@@ -927,7 +927,7 @@ struct HTMLDOMElementAnnotationTests {
     @Test func lateCommentAfterBrowseDoesNotPresentComposerOrError() async throws {
         let harness = try makeStashHarness()
         let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
         let leaf = try await cssRect(id: "leaf", in: fixture.view)
@@ -982,7 +982,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func exitThenReenterDropsTheLateLookup() async throws {
         let fixture = try await makeFixture(html: Self.nestedFixture)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
         let leaf = try await cssRect(id: "leaf", in: fixture.view)
@@ -1014,7 +1014,7 @@ struct HTMLDOMElementAnnotationTests {
     @Test func supersededCommentDoesNotClearNewerSelectionOrUseCapturedSession() async throws {
         let harness = try makeStashHarness()
         let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
         let leaf = try await cssRect(id: "leaf", in: fixture.view)
@@ -1063,7 +1063,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func enterPickResignsNativeKeyboardOwnershipWithoutADomWrite() async throws {
         let fixture = try await makeFixture(html: Self.focusFixture)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         let webView = fixture.view.webViewForTesting
         #expect(!HTMLDOMWebKitLookupClient.lookupFunction.contains(".blur("))
@@ -1093,7 +1093,7 @@ struct HTMLDOMElementAnnotationTests {
     @Test func replacedNodeAndUntruncatedTextChangeAreRejectedBeforeStaging() async throws {
         let harness = try makeStashHarness()
         let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
         let leaf = try await cssRect(id: "leaf", in: fixture.view)
@@ -1125,7 +1125,7 @@ struct HTMLDOMElementAnnotationTests {
     @Test func textChangePastTheStoredExcerptIsRejected() async throws {
         let harness = try makeStashHarness()
         let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
         let leaf = try await cssRect(id: "leaf", in: fixture.view)
@@ -1167,7 +1167,7 @@ struct HTMLDOMElementAnnotationTests {
     @Test func changeAfterComposerOpensIsRejectedWhenSaving() async throws {
         let harness = try makeStashHarness()
         let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
         let leaf = try await cssRect(id: "leaf", in: fixture.view)
@@ -1192,7 +1192,7 @@ struct HTMLDOMElementAnnotationTests {
     @Test func browseAfterComposerOpensCannotStageTheSelection() async throws {
         let harness = try makeStashHarness()
         let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
         let leaf = try await cssRect(id: "leaf", in: fixture.view)
@@ -1216,7 +1216,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func pickControlsUseBrowseWordingAndFortyFourPointTargets() async throws {
         let fixture = try await makeFixture(html: Self.nestedFixture)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         fixture.view.layoutIfNeeded()
         #expect(controller.enterButtonForTesting.bounds.height >= 44)
@@ -1261,7 +1261,7 @@ struct HTMLDOMElementAnnotationTests {
     @Test func cancellingTheComposerDoesNotStageOrDispatch() async throws {
         let harness = try makeStashHarness()
         let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
-        defer { fixture.window.isHidden = true }
+        defer { fixture.dismiss() }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
         let leaf = try await cssRect(id: "leaf", in: fixture.view)
@@ -1703,6 +1703,16 @@ private struct HostedHTML {
     let window: UIWindow
     let host: UIViewController
     let view: HTMLRenderView
+
+    /// Pick-mode tests leave an inline comment composer open, and that is a real
+    /// software keyboard on the simulator. Close the composer before the window
+    /// goes: hidden mid keyboard animation, its input keeps the keyboard up for
+    /// every test that runs after this one, with no responder left to dismiss it.
+    @MainActor
+    func dismiss() {
+        closeInlineComposer(in: window)
+        hideTestWindow(window)
+    }
 }
 
 @MainActor

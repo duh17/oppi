@@ -236,7 +236,7 @@ struct PastableTextView: UIViewRepresentable {
         applyComposerInputTraits(to: textView, autocorrectionEnabled: autocorrectionEnabled)
         if traitsChanged {
             DispatchQueue.main.async {
-                guard textView.window != nil else { return }
+                guard textView.isOnVisibleWindow else { return }
                 textView.reloadInputViews()
             }
         }
@@ -259,7 +259,7 @@ struct PastableTextView: UIViewRepresentable {
         if focusRequestID != context.coordinator.lastFocusRequestID {
             context.coordinator.lastFocusRequestID = focusRequestID
             DispatchQueue.main.async {
-                guard textView.window != nil else { return }
+                guard textView.isOnVisibleWindow else { return }
                 if !textView.isFirstResponder {
                     textView.becomeFirstResponder()
                 }
@@ -279,7 +279,7 @@ struct PastableTextView: UIViewRepresentable {
         if dictationRequestID != context.coordinator.lastDictationRequestID {
             context.coordinator.lastDictationRequestID = dictationRequestID
             DispatchQueue.main.async {
-                guard textView.window != nil else { return }
+                guard textView.isOnVisibleWindow else { return }
                 requestSystemDictation(for: textView)
             }
         }
@@ -995,7 +995,7 @@ class PastableUITextView: UITextView {
         isKeyboardSuppressed = suppressed
         inputView = suppressed ? UIView() : nil
         keyboardRestoreTap.isEnabled = suppressed && allowsKeyboardRestoreOnTap
-        if window != nil {
+        if isOnVisibleWindow {
             reloadInputViews()
         }
     }

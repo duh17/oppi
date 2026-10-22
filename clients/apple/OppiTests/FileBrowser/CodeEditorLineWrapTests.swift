@@ -47,7 +47,7 @@ struct CodeEditorLineWrapTests {
 
     @Test func openedUnwrappedKeepsLongLinesOnOneRowAndScrollsToTheCaret() throws {
         let (controller, _, window) = try makeEditor(wrapsLines: false)
-        defer { window.isHidden = true }
+        defer { hideTestWindow(window) }
         let textView = controller.textView
         let rowHeight = try #require(textView.font).lineHeight
 
@@ -78,7 +78,7 @@ struct CodeEditorLineWrapTests {
     @Test func caretStaysInViewAcrossRotationVisualModeAndLineStart() throws {
         // No gutter: the caret at column 0 sits within one margin of the edge.
         let (controller, _, window) = try makeEditor(wrapsLines: false, showsLineNumbers: false)
-        defer { window.isHidden = true }
+        defer { hideTestWindow(window) }
         let textView = controller.textView
         #expect(textView.becomeFirstResponder())
         textView.selectedRange = NSRange(location: 0, length: 0)
@@ -110,7 +110,7 @@ struct CodeEditorLineWrapTests {
 
     @Test func keyboardHeightChangesKeepTheUsersSidewaysScroll() throws {
         let (controller, _, window) = try makeEditor(wrapsLines: false)
-        defer { window.isHidden = true }
+        defer { hideTestWindow(window) }
         let textView = controller.textView
         #expect(textView.becomeFirstResponder())
         textView.selectedRange = NSRange(location: 0, length: 0)
@@ -128,7 +128,7 @@ struct CodeEditorLineWrapTests {
 
     @Test func wrappingAgainFitsLinesToTheViewAndDropsSidewaysScroll() throws {
         let (controller, preferences, window) = try makeEditor(wrapsLines: false)
-        defer { window.isHidden = true }
+        defer { hideTestWindow(window) }
         let textView = controller.textView
         textView.contentOffset.x = 500
 

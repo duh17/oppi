@@ -372,7 +372,7 @@ struct FullScreenReviewCommentSelectionTests {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        defer { closeInlineComposer(in: window); hideTestWindow(window) }
         hostController.loadViewIfNeeded()
         body.translatesAutoresizingMaskIntoConstraints = false
         hostController.view.addSubview(body)
@@ -517,7 +517,7 @@ struct FullScreenReviewCommentSelectionTests {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = controller
         window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        defer { closeInlineComposer(in: window); hideTestWindow(window) }
         controller.loadViewIfNeeded()
         controller.view.frame = window.bounds
         controller.view.setNeedsLayout()
@@ -572,7 +572,7 @@ struct FullScreenReviewCommentSelectionTests {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        defer { closeInlineComposer(in: window); hideTestWindow(window) }
         hostController.loadViewIfNeeded()
         body.translatesAutoresizingMaskIntoConstraints = false
         hostController.view.addSubview(body)
@@ -635,7 +635,7 @@ struct FullScreenReviewCommentSelectionTests {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = hostController
         window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        defer { closeInlineComposer(in: window); hideTestWindow(window) }
         hostController.loadViewIfNeeded()
         body.translatesAutoresizingMaskIntoConstraints = false
         hostController.view.addSubview(body)
@@ -2603,7 +2603,7 @@ struct FullScreenReviewCommentSelectionTests {
         let window = UIWindow(frame: UIScreen.main.bounds)
         window.rootViewController = fixture.controller
         window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        defer { closeInlineComposer(in: window); hideTestWindow(window) }
         let html = try #require(fixture.controller.installedBodyViewForTesting as? HTMLRenderView)
         let annotate = try #require(fixture.controller.floatingAnnotateButtonForTesting)
         let pick = try #require(fixture.controller.floatingPickButtonForTesting)
@@ -2635,7 +2635,7 @@ struct FullScreenReviewCommentSelectionTests {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = fixture.controller
         window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        defer { closeInlineComposer(in: window); hideTestWindow(window) }
         let html = try #require(fixture.controller.installedBodyViewForTesting as? HTMLRenderView)
         let comment = try #require(fixture.controller.floatingPickCommentButtonForTesting)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { html.isRenderReady })
@@ -2737,7 +2737,7 @@ struct FullScreenReviewCommentSelectionTests {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = fixture.controller
         window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        defer { closeInlineComposer(in: window); hideTestWindow(window) }
         fixture.controller.view.layoutIfNeeded()
         let body = try #require(fixture.controller.installedBodyViewForTesting as? NativeFullScreenRenderedDocumentBody)
         let picker = try #require(body.mermaidPicker)
@@ -2907,7 +2907,7 @@ struct FullScreenReviewCommentSelectionTests {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = fixture.controller
         window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        defer { closeInlineComposer(in: window); hideTestWindow(window) }
         fixture.controller.view.layoutIfNeeded()
 
         let button = try #require(fixture.controller.floatingStashButtonForTesting)
@@ -2935,7 +2935,7 @@ struct FullScreenReviewCommentSelectionTests {
         window.makeKeyAndVisible()
         defer {
             container.dismiss(animated: false)
-            window.isHidden = true
+            hideTestWindow(window)
         }
         fixture.controller.view.frame = container.view.bounds
         container.view.addSubview(fixture.controller.view)

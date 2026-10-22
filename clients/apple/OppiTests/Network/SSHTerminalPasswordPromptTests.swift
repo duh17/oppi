@@ -458,7 +458,8 @@ private final class MountedPasswordPromptGrid {
     }
 
     func dismiss() {
-        window.isHidden = true
+        // A password prompt leaves the grid holding the keyboard.
+        hideTestWindow(window)
         window.rootViewController = nil
     }
 }

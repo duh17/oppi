@@ -736,7 +736,7 @@ struct WorkspaceFileEditorSurfaceTests {
     @Test func themeRecolorKeepsTheSameTextViewSelectionAndUndo() async throws {
         let harness = Harness()
         let (controller, window) = makeController(harness)
-        defer { window.isHidden = true }
+        defer { hideTestWindow(window) }
         let textView = controller.textView
         #expect(textView.becomeFirstResponder())
         textView.selectedRange = NSRange(location: (textView.text as NSString).length, length: 0)
@@ -762,7 +762,7 @@ struct WorkspaceFileEditorSurfaceTests {
     @Test func previewShowsCurrentDraftAndReturnsToTheSameTextView() async throws {
         let harness = Harness()
         let (controller, window) = makeController(harness)
-        defer { window.isHidden = true }
+        defer { hideTestWindow(window) }
         let textView = controller.textView
         textView.becomeFirstResponder()
         textView.insertText("draft ")
@@ -813,7 +813,7 @@ struct WorkspaceFileEditorSurfaceTests {
     @Test func finishEditingDetachesAndFlushesWithoutWaiting() async {
         let harness = Harness()
         let (controller, window) = makeController(harness)
-        defer { window.isHidden = true }
+        defer { hideTestWindow(window) }
         controller.textView.becomeFirstResponder()
         controller.textView.insertText("!")
         controller.finishEditing()
@@ -917,7 +917,7 @@ struct WorkspaceFileEditorListContinuationTests {
             store: harness.store,
             transport: harness.scripted.transport
         )
-        defer { window.isHidden = true }
+        defer { hideTestWindow(window) }
         let textView = controller.textView
         #expect(textView.becomeFirstResponder())
         textView.selectedRange = NSRange(location: (textView.text as NSString).length, length: 0)
@@ -1038,7 +1038,7 @@ struct WorkspaceFileEditEntryTests {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
         window.rootViewController = host
         window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        defer { hideTestWindow(window) }
 
         var edit: UIBarButtonItem?
         let shown = await waitForMainActorCondition(timeout: .seconds(5)) {
@@ -1083,7 +1083,7 @@ struct WorkspaceFileEditEntryTests {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
         window.rootViewController = navigation
         window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        defer { hideTestWindow(window) }
 
         let shown = await waitForMainActorCondition(timeout: .seconds(5)) {
             navigation.view.layoutIfNeeded()

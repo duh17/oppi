@@ -64,7 +64,7 @@ extension ComposerBarController {
 
     func attemptFocusIfRequested() {
         guard let host, host.content.focusRequestID != 0 else { return }
-        guard textView.window != nil else { return }
+        guard textView.isOnVisibleWindow else { return }
         if !textView.isFirstResponder {
             guard textView.becomeFirstResponder() else { return }
         }

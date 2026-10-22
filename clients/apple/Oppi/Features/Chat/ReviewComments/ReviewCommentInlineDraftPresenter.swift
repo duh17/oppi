@@ -256,8 +256,8 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             if request.startsDictation, router.voiceInputManager != nil {
                 await handleMicTap()
             }
-            if !isTornDown, !inputTextView.isFirstResponder {
-                inputTextView.becomeFirstResponder()
+            if !inputTextView.isFirstResponder {
+                focusInputIfLive()
             }
         }
     }
@@ -750,7 +750,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     private func handleKeyboardRestoreRequest() {
         guard suppressKeyboard else { return }
         suppressKeyboard = false
-        inputTextView.becomeFirstResponder()
+        focusInputIfLive()
         guard let manager = router.voiceInputManager,
               ComposerShared.ownsVoiceInput(manager, owner: .reviewCommentInline),
               manager.isRecording || manager.isPreparing else { return }
@@ -792,7 +792,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         if updateInputTextHeight(animated: true) {
             updateFrame(animated: true)
         }
-        inputTextView.becomeFirstResponder()
+        focusInputIfLive()
     }
 
     private func textBinding() -> Binding<String> {
@@ -828,7 +828,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
                 self.suppressKeyboard = suppressed
                 self.inputTextView.setKeyboardSuppressed(suppressed)
                 if suppressed {
-                    self.inputTextView.becomeFirstResponder()
+                    self.focusInputIfLive()
                     self.updateFrame(animated: false)
                 }
             }
@@ -906,6 +906,16 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         saveCurrentBody()
     }
 
+    /// Focus for typing, but only while this composer is still the screen's.
+    /// A save that fails after the composer closed (Back, another comment, the
+    /// screen popped) must not raise the keyboard over what replaced it: the
+    /// input is out of the window by then, so the keyboard would come up with
+    /// no responder to resign it and stay up for the rest of the app's life.
+    private func focusInputIfLive() {
+        guard !isTornDown, inputTextView.isOnVisibleWindow else { return }
+        inputTextView.becomeFirstResponder()
+    }
+
     private func saveCurrentBody() {
         let body = (inputTextView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else {
@@ -926,7 +936,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
                 updateSaveButton()
                 suppressKeyboard = false
                 inputTextView.setKeyboardSuppressed(false)
-                inputTextView.becomeFirstResponder()
+                focusInputIfLive()
             }
         }
     }

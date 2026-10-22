@@ -253,3 +253,33 @@ enum ProtocolFixtures {
         try Data(contentsOf: url(path))
     }
 }
+
+/// Takes a test window off screen without leaving its keyboard behind.
+///
+/// Hiding a window does not resign its first responder. When the window (and
+/// the focused field in it) goes away mid keyboard transition, the simulator's
+/// software keyboard stays up with no responder left to resign it, and it keeps
+/// the keyboard layout guide raised in every later test: the SSH terminal bar
+/// test read a keyboard none of its own code showed. End editing first, so
+/// UIKit runs the keyboard's dismissal for this window.
+@MainActor
+func hideTestWindow(_ window: UIWindow) {
+    window.endEditing(true)
+    window.isHidden = true
+}
+
+/// Closes an open inline review-comment composer the way its Cancel button
+/// does. Tests that leave one open would otherwise hide their window with a
+/// live input still focused, which keeps the simulator keyboard up for the rest
+/// of the run (see `hideTestWindow(_:)`).
+@MainActor
+func closeInlineComposer(in root: UIView) {
+    func search(_ view: UIView) -> ReviewCommentInlineDraftView? {
+        if let composer = view as? ReviewCommentInlineDraftView { return composer }
+        for child in view.subviews {
+            if let found = search(child) { return found }
+        }
+        return nil
+    }
+    search(root)?.dismiss(animated: false)
+}

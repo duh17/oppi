@@ -255,6 +255,7 @@ install -m 755 .githooks/pre-push "$(git rev-parse --git-path hooks)/pre-push"
 - Group related tests with `@Suite`.
 - Put `@MainActor` on the suite when all tests need main actor isolation.
 - Use `Issue.record()` instead of `XCTFail()`.
+- Take a test window down with `hideTestWindow(_:)` (`Support/TestFactories.swift`), not `window.isHidden = true`, whenever the screen inside it can hold a first responder (a composer, an inline comment field, an editor, the terminal grid). Close an inline review-comment composer first with `closeInlineComposer(in:)`, the way its Cancel button does. Hiding a window does not resign its first responder: an input that goes away with its window, or a focus request that lands after it, raises a simulator software keyboard with no responder in any visible window to dismiss it, and it stays up for the rest of the run. Tests that read a keyboard layout guide must therefore measure against it rather than assume it rests (`SSHTerminalTests.theBarTakesItsRowsBackWhenTheKeyboardGoesDownWhileDisconnected` measures the bar against that guide, not against an idle screen).
 
 ### iOS E2E tests
 

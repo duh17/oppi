@@ -34,7 +34,7 @@ struct ComposerBarTests {
         host.view.addSubview(stack)
         window.rootViewController = host
         window.makeKeyAndVisible()
-        defer { window.isHidden = true; window.rootViewController = nil }
+        defer { hideTestWindow(window); window.rootViewController = nil }
         let colors = ComposerThemeColors(palette: ThemeRuntimeState.currentThemeID().palette)
         panel.apply(content: .empty, colors: colors)
         for _ in 0..<2 {
@@ -1288,8 +1288,8 @@ struct ComposerBarTests {
             #expect(host.content.focusRequestID == 7)
             #expect(host.consumedFocus == 0)
         }
+        hideTestWindow(window)
         window.rootViewController = nil
-        window.isHidden = true
     }
 
     @Test("Applying twice keeps a presented picker source and updates the list")
@@ -1365,8 +1365,8 @@ struct ComposerBarTests {
         #expect(updated >= 1)
         #expect(again?.superview != nil)
         controller.dismiss(animated: false)
+        hideTestWindow(window)
         window.rootViewController = nil
-        window.isHidden = true
     }
 
     @Test("Thinking levels stay reachable when the popover is shorter than the list")
@@ -1406,7 +1406,7 @@ struct ComposerBarTests {
         let host = ComposerBarTestHost()
         host.content.askRequest = Self.longMultiSelectAsk
         let (controller, window) = Self.mountComposer(host)
-        defer { window.rootViewController = nil; window.isHidden = true }
+        defer { hideTestWindow(window); window.rootViewController = nil }
 
         let scroll = try #require(descendant(in: controller.view, identifier: "chat.ask.scroll") as? UIScrollView)
         let card = try #require(scroll.superview)
@@ -1445,7 +1445,7 @@ struct ComposerBarTests {
             onToggleMute: {}, onEnd: {}
         )
         let (controller, window) = Self.mountComposer(host)
-        defer { window.rootViewController = nil; window.isHidden = true }
+        defer { hideTestWindow(window); window.rootViewController = nil }
 
         let diameter = ComposerInputMetrics.controlDiameter
         let mic = try #require(descendant(in: controller.view, identifier: ComposerLiveVoiceCall.muteIdentifier))
@@ -1475,7 +1475,7 @@ struct ComposerBarTests {
         let host = ComposerBarTestHost()
         host.content.askRequest = Self.shortAsk(id: "short")
         let (controller, window) = Self.mountComposer(host)
-        defer { window.rootViewController = nil; window.isHidden = true }
+        defer { hideTestWindow(window); window.rootViewController = nil }
 
         let scroll = try #require(descendant(in: controller.view, identifier: "chat.ask.scroll") as? UIScrollView)
         #expect(!scroll.isScrollEnabled)
@@ -1488,7 +1488,7 @@ struct ComposerBarTests {
         let host = ComposerBarTestHost()
         host.content.askRequest = Self.longMultiSelectAsk
         let (controller, window) = Self.mountComposer(host)
-        defer { window.rootViewController = nil; window.isHidden = true }
+        defer { hideTestWindow(window); window.rootViewController = nil }
         let scroll = try #require(descendant(in: controller.view, identifier: "chat.ask.scroll") as? UIScrollView)
         scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height), animated: false)
 
@@ -1510,7 +1510,7 @@ struct ComposerBarTests {
         host.holdsAskCompletions = true
         host.content.askRequest = Self.longMultiSelectAsk
         let (controller, window) = Self.mountComposer(host)
-        defer { window.rootViewController = nil; window.isHidden = true }
+        defer { hideTestWindow(window); window.rootViewController = nil }
 
         let option = try #require(descendant(in: controller.view, identifier: "ask.option.trackpad") as? UIControl)
         option.sendActions(for: .touchUpInside)
@@ -1546,7 +1546,7 @@ struct ComposerBarTests {
             timeout: nil
         )
         let (controller, window) = Self.mountComposer(host)
-        defer { window.rootViewController = nil; window.isHidden = true }
+        defer { hideTestWindow(window); window.rootViewController = nil }
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
 
         let input = try #require(descendant(in: controller.view, identifier: "chat.input") as? UITextView)
@@ -1582,7 +1582,7 @@ struct ComposerBarTests {
             timeout: nil
         )
         let (controller, window) = Self.mountComposer(host)
-        defer { window.rootViewController = nil; window.isHidden = true }
+        defer { hideTestWindow(window); window.rootViewController = nil }
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
 
         let input = try #require(descendant(in: controller.view, identifier: "chat.input") as? UITextView)
@@ -1685,8 +1685,8 @@ struct ComposerBarTests {
         host.text = ""
         controller.apply()
         #expect(!showsExpand(in: controller.view))
+        hideTestWindow(window)
         window.rootViewController = nil
-        window.isHidden = true
     }
 
     @Test("A busy bar keeps its idle height while the busy-mode tip is not presented")
@@ -1751,8 +1751,8 @@ struct ComposerBarTests {
         let titleWidth = ("routes" as NSString).size(withAttributes: [.font: font]).width
         #expect(model.bounds.width >= titleWidth + 20)
         #expect(model.bounds.height <= 24)
+        hideTestWindow(window)
         window.rootViewController = nil
-        window.isHidden = true
     }
 
     @Test("Review quick comments stay visible between the attach and cancel buttons")
@@ -1815,8 +1815,8 @@ struct ComposerBarTests {
         // Four default chips overflow an iPhone row: they scroll, Cancel keeps its size.
         #expect(cancel.bounds.width >= 32)
         #expect((scroll as? UIScrollView).map { $0.contentSize.width > $0.bounds.width } == true)
+        hideTestWindow(window)
         window.rootViewController = nil
-        window.isHidden = true
     }
 
     /// The canvas host installs Cancel, undo/redo, and Add to Chat on its
@@ -1830,7 +1830,7 @@ struct ComposerBarTests {
         let composer = ComposerBarController()
         window.rootViewController = composer
         window.makeKeyAndVisible()
-        defer { window.rootViewController = nil; window.isHidden = true }
+        defer { hideTestWindow(window); window.rootViewController = nil }
 
         composer.presentCanvas()
 
@@ -1947,7 +1947,7 @@ struct ComposerDictatedCommentRowTests {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
         window.rootViewController = screen
         window.makeKeyAndVisible()
-        defer { window.rootViewController = nil; window.isHidden = true }
+        defer { hideTestWindow(window); window.rootViewController = nil }
 
         // The timeline text the user selected holds first responder.
         let selection = UITextView(frame: CGRect(x: 20, y: 100, width: 360, height: 200))
