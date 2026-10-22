@@ -18,13 +18,29 @@ struct ReviewCommentStripChromeTests {
         #expect(!chat.model.nowPlayingDrawerExpanded)
         #expect(chat.model.extensionDrawerCollapseRequestID == collapseRequest + 1)
 
-        chat.handleExtensionDrawerExpansion(true)
+        chat.handleExtensionDrawerExpansion(true, in: .aboveEditor)
         #expect(!chat.model.reviewCommentDrawerExpanded)
 
         chat.toggleNowPlayingDrawer()
         #expect(chat.model.nowPlayingDrawerExpanded)
         chat.toggleReviewCommentDrawer()
         #expect(!chat.model.nowPlayingDrawerExpanded)
+    }
+
+    @Test("Live subagent tails keep streaming while any extension drawer stays expanded")
+    func liveTailsFollowTheDrawersTogether() {
+        let (connection, _) = makeTestConnection(sessionId: "drawer-tails")
+        let chat = ChatViewController(sessionId: "drawer-tails", connection: connection, navigation: AppNavigation())
+
+        chat.handleExtensionDrawerExpansion(true, in: .aboveEditor)
+        chat.handleExtensionDrawerExpansion(true, in: .belowEditor)
+        chat.handleExtensionDrawerExpansion(false, in: .aboveEditor)
+        #expect(chat.model.extensionDrawerExpanded, "the below-editor drawer still shows tails")
+        #expect(chat.sessionManager.followsReturnedChildren)
+
+        chat.handleExtensionDrawerExpansion(false, in: .belowEditor)
+        #expect(!chat.model.extensionDrawerExpanded)
+        #expect(!chat.sessionManager.followsReturnedChildren)
     }
 
     @Test("Collapsed pill title keeps the full staged-count phrase")

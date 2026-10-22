@@ -56,9 +56,12 @@ final class ChatScreenModel {
     var nowPlayingDrawerExpanded = false
     var reviewCommentDrawerExpanded = false
     var extensionDrawerCollapseRequestID = 0
+    /// The extension placements whose panel has an entry expanded. Each panel
+    /// reports its own state, so collapsing one leaves the other's.
+    var expandedExtensionDrawerPlacements: Set<ExtensionSurfacePlacementGroup> = []
     /// An extension drawer is expanded, so drawer rows that link to child sessions show
     /// their live tails.
-    var extensionDrawerExpanded = false
+    var extensionDrawerExpanded: Bool { !expandedExtensionDrawerPlacements.isEmpty }
     var reviewCommentStashPresentation: ReviewCommentStripChrome.StashPresentation?
     var activeReviewCommentRequest: ReviewCommentSelectionRequest?
     /// Bumped when Settings → Chat → Style changes.

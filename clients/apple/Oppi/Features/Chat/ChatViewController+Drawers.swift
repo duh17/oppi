@@ -65,10 +65,14 @@ extension ChatViewController {
         }
     }
 
-    func handleExtensionDrawerExpansion(_ expanded: Bool) {
-        if model.extensionDrawerExpanded != expanded { model.extensionDrawerExpanded = expanded }
+    func handleExtensionDrawerExpansion(_ expanded: Bool, in placement: ExtensionSurfacePlacementGroup) {
+        if expanded {
+            model.expandedExtensionDrawerPlacements.insert(placement)
+        } else {
+            model.expandedExtensionDrawerPlacements.remove(placement)
+        }
         // Children whose call returned stream only while a drawer could list them.
-        sessionManager.followsReturnedChildren = expanded
+        sessionManager.followsReturnedChildren = model.extensionDrawerExpanded
         if expanded {
             model.reviewCommentDrawerExpanded = false
             collapseNotifyChip()

@@ -103,7 +103,7 @@ final class ChatFooterAboveView: UIView {
             stack.addArrangedSubview(row)
         }
 
-        panel.onExpandedEntryChange = { [weak chat] in chat?.handleExtensionDrawerExpansion($0) }
+        panel.onExpandedEntryChange = { [weak chat] in chat?.handleExtensionDrawerExpansion($0, in: .aboveEditor) }
         reviewPill.onToggle = { [weak chat] in chat?.toggleReviewCommentDrawer() }
         reviewPill.onOpenFullScreen = { [weak chat] in chat?.presentReviewCommentStashSheet() }
         reviewDrawer.onEdit = { [weak chat] in chat?.presentReviewCommentStashSheet(editing: $0) }
@@ -419,7 +419,7 @@ final class ChatFooterBelowView: UIView {
             row.leadingAnchor.constraint(equalTo: leadingAnchor),
             row.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
-        panel.onExpandedEntryChange = { [weak chat] in chat?.handleExtensionDrawerExpansion($0) }
+        panel.onExpandedEntryChange = { [weak chat] in chat?.handleExtensionDrawerExpansion($0, in: .belowEditor) }
     }
 
     @available(*, unavailable)
