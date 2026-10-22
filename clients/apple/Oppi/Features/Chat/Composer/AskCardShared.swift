@@ -293,12 +293,12 @@ final class AskOptionChoiceRowView: UIControl {
         titleLabel.textColor = colors.fg
         let description = option.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         descriptionLabel.text = description
-        descriptionLabel.isHidden = description.isEmpty
+        descriptionLabel.setHiddenIfChanged(description.isEmpty)
         descriptionLabel.textColor = colors.comment
         // Multi-select leads with a checkbox. Single-select keeps its trailing
         // slot even while unselected, so selecting never rewraps the title.
-        checkboxSlot.isHidden = !isMultiSelect
-        checkSlot.isHidden = isMultiSelect
+        checkboxSlot.setHiddenIfChanged(!isMultiSelect)
+        checkSlot.setHiddenIfChanged(isMultiSelect)
         checkbox.apply(
             isSelected: isSelected,
             colors: colors,
