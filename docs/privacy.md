@@ -158,6 +158,14 @@ The relay stores the push token, environment, App Attest public key and counter,
 
 **Turning it off.** Turning push off for a server, or revoking this device on the server, deletes this device's push registration on that server and asks the relay to delete the send permission. Removing the server from the app asks the relay to delete the send permission; the server then deletes the registration the next time it tries to push, when the relay refuses it. Your device deletes the server's push keys when you turn push off or remove the server.
 
+## SSH Terminal
+
+SSH Terminal connects from this device directly to an SSH host you add. It does not go through the Oppi server, and nothing connects until you add a host and tap Connect. Oppi shows the host's key fingerprint first and sends no credentials until you trust it. Everything you type, paste, or dictate into a terminal is sent to that host, and the host's programs decide what they do with it.
+
+A pasted image or a file attached from the terminal is saved on the host in a private folder (`oppi-ssh-<uid>`, owner-only) under its `$TMPDIR`, or under `/tmp` when the host sets none, and its path is typed into the shell. Oppi does not delete it; it stays until the host's own temporary-folder cleanup removes it. A program on the host can copy text to this device's clipboard while you are viewing its terminal. That copy stays on this device (it does not reach Universal Clipboard), and a host can never read your clipboard or a file on this device. Terminal notifications appear only as cards inside Oppi. If the SSH host is also a server you paired, opening a path from the terminal reads that file through the paired server, not over SSH.
+
+Saved hosts (address, port, user name, sign-in method, and Run on Connect command) are stored in this device's preferences. Saved passwords, sudo passwords, and trusted host keys are stored in this device's private Keychain, are never synced to another device, and are never placed in preferences or logs. A saved password or sudo password needs Face ID, Touch ID, or your passcode to read, and Oppi remembers a sign-in approval for 5 minutes. **Fill Password**, which types a saved password at a terminal password prompt, asks every time, names the host, and types only into the prompt you confirmed. It never presses Return. Deleting a host deletes its saved passwords. See [SSH Terminal](ssh-terminal.md#credentials-and-host-trust).
+
 ## Network metadata
 
 After pairing, Oppi uses authenticated HTTPS/WSS. Automatic routing evaluates verified LAN HTTPS and paired HTTPS; Tailscale HTTPS is supported. The local CLI stays on an owner-only Unix socket.
