@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  appAlertsForPending,
   hasPendingBlockingUIRequest,
   pendingAskSnapshots,
   pendingBlockingUIRequestCount,
@@ -107,5 +108,36 @@ describe("session attention", () => {
 
     expect(pendingBlockingUIRequestCount(pending, "s1")).toBe(1);
     expect(hasPendingBlockingUIRequest(pending, "s1")).toBe(true);
+  });
+});
+
+describe("appAlertsForPending", () => {
+  const dialog = (method: string, extra: Record<string, unknown> = {}): ServerMessage =>
+    ({
+      type: "extension_ui_request",
+      id: `${method}-1`,
+      sessionId: "s1",
+      method,
+      ...extra,
+    }) as unknown as ServerMessage;
+  const ask = dialog("ask", { questions: [{ question: "Which one?" }] });
+  const select = dialog("select", { options: ["a", "b"] });
+  const confirm = dialog("confirm");
+  const input = dialog("input");
+  const editor = dialog("editor");
+
+  it.each([
+    ["ask", [ask], true],
+    ["select", [select], true],
+    ["confirm", [confirm], true],
+    ["input", [input], true],
+    ["editor", [editor], false],
+    ["nothing pending", [], false],
+    ["a notification only", [dialog("setStatus")], false],
+    ["an ask with no questions", [dialog("ask", { questions: [] })], false],
+    ["confirm, then editor: the last dialog wins", [confirm, editor], false],
+    ["editor, then confirm: the last dialog wins", [editor, confirm], true],
+  ])("%s", (_name, messages, expected) => {
+    expect(appAlertsForPending(messages)).toBe(expected);
   });
 });

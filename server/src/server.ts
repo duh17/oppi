@@ -35,7 +35,7 @@ import { markLegacyControlDomains } from "./legacy-app-compat.js";
 import { defaultModelRefFromGlobalSettings, ModelCatalog } from "./model-catalog.js";
 import { ExtensionProviderCatalog } from "./extension-model-discovery.js";
 import type { ProgramStatusSync } from "./program-status.js";
-import { isPendingUserReplyRequest } from "./session-attention.js";
+import { appAlertsForPending } from "./session-attention.js";
 import { SessionPushNotifier } from "./session-push-notifier.js";
 import { LiveActivityNotifier, liveActivityCounts } from "./live-activity-notifier.js";
 import { FileLiveActivityStateStore, liveActivityStatePath } from "./live-activity-state-store.js";
@@ -588,16 +588,8 @@ export class Server {
     this.sessionPushNotifier = new SessionPushNotifier(this.push, this.storage, {
       isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),
       liveSessions: () => this.liveSessions(),
-      appAlertsFor: (sessionId) => {
-        const waiting = this.sessionRuntimes
-          .getPendingUIRequestMessages(sessionId)
-          .filter(
-            (message): message is Extract<ServerMessage, { type: "extension_ui_request" }> =>
-              message.type === "extension_ui_request" && isPendingUserReplyRequest(message),
-          );
-        const method = waiting.at(-1)?.method;
-        return method !== undefined && method !== "editor";
-      },
+      appAlertsFor: (sessionId) =>
+        appAlertsForPending(this.sessionRuntimes.getPendingUIRequestMessages(sessionId)),
     });
     this.liveActivityNotifier = new LiveActivityNotifier(this.push, {
       isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),

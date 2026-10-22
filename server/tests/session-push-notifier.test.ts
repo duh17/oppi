@@ -224,18 +224,23 @@ describe("SessionPushNotifier", () => {
     const T0 = Date.parse("2026-10-17T12:00:00Z");
     const toBlocked = (since: number) =>
       change({ state: "working" }, { state: "blocked", kind: "permission", since });
-    const blockedSession = (since: number) =>
+    const blockedSession = (since: number, kind: "permission" | "question" = "permission") =>
       makeSession({
-        programStatus: { state: "blocked", kind: "permission", message: "Push to main?", since },
+        programStatus: { state: "blocked", kind, message: "Push to main?", since },
       });
 
     afterEach(() => vi.useRealTimers());
 
     /** `appAlerts`: the app posts its own local alert for what the session waits on. */
-    function setup(devices: string[], present: string[], appAlerts = false) {
+    function setup(
+      devices: string[],
+      present: string[],
+      appAlerts = false,
+      kind: "permission" | "question" = "permission",
+    ) {
       vi.useFakeTimers({ now: T0 });
       const push = makePush(devices);
-      const session = blockedSession(T0);
+      const session = blockedSession(T0, kind);
       const live = [session];
       const presentSet = new Set(present);
       const notifier = new SessionPushNotifier(push, makeStorage(session), {
@@ -307,12 +312,13 @@ describe("SessionPushNotifier", () => {
     });
 
     it("pushes what the app has no local alert for, such as an editor, on any leave", () => {
-      const { push, notifier } = setup(["phone"], [], false);
+      // An editor dialog derives to the `question` kind, yet the app posts no alert for it.
+      const { push, notifier } = setup(["phone"], [], false, "question");
       notifier.deviceLeft("dev-phone", { heardAt: T0 + 5_000, dropped: false });
       expect(push.send).toHaveBeenCalledTimes(1);
       expect(push.send).toHaveBeenCalledWith(
         target("phone"),
-        expect.objectContaining({ event: "blocked", kind: "permission" }),
+        expect.objectContaining({ event: "blocked", kind: "question" }),
       );
     });
 

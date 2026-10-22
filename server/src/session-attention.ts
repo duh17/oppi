@@ -136,3 +136,19 @@ export function isPendingUserReplyRequest(message: {
       return false;
   }
 }
+
+/**
+ * Whether the app posts its own local alert for what a session waits on while it runs in the
+ * background. The last pending user-reply dialog is what the session waits on (program status
+ * takes the same one). The app turns `ask`, `select`, `confirm`, and `input` into an ask it
+ * alerts for; an `editor` gets no local alert. False when nothing is pending.
+ */
+export function appAlertsForPending(messages: ServerMessage[]): boolean {
+  let method: string | undefined;
+  for (const message of messages) {
+    if (message.type === "extension_ui_request" && isPendingUserReplyRequest(message)) {
+      method = message.method;
+    }
+  }
+  return method !== undefined && method !== "editor";
+}
