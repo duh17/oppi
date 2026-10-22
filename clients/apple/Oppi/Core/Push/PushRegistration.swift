@@ -246,7 +246,17 @@ final class PushRegistration {
     /// Turn push off for a server: the server forgets this device's key and token, the relay
     /// the permission, and this phone the keys and token, so the relay lists the server's
     /// card no more.
-    func disable(serverId: String, api: APIClient?, relay: URL?) async {
+    ///
+    /// `relay` is the server's relay when its connection knows it; without it (an offline
+    /// server, or one whose capabilities have not loaded) the permission's registration ID
+    /// finds the stored registration, so the relay still stops taking the server's pushes,
+    /// which this phone could no longer open.
+    func disable(
+        serverId: String,
+        api: APIClient?,
+        relay: URL?,
+        relayClient: (URL) -> PushRelayClient = { PushRelayClient(relay: $0) }
+    ) async {
         Self.setEnabled(false, serverId: serverId)
         let permission = PushSendTokenStore.load(serverId: serverId)
             .flatMap { PushRelayClient.permission(ofSendToken: $0.sendToken) }
@@ -254,12 +264,21 @@ final class PushRegistration {
         PushSendTokenStore.delete(serverId: serverId)
         LiveActivityRelaySync.shared.publish()
         try? await api?.deletePushRegistration()
-        if let relay, let permission, let environment = APNsEnvironment.current,
-           let registration = PushRelayRegistrationStore.load(relay: relay, environment: environment),
-           permission.registrationId == registration.registrationId {
-            try? await PushRelayClient(relay: relay).deletePermission(permission.permissionId, registration: registration)
+        if let permission,
+           let registration = Self.relayRegistration(holding: permission.registrationId, relay: relay),
+           let registrationRelay = URL(string: registration.relay) {
+            try? await relayClient(registrationRelay).deletePermission(permission.permissionId, registration: registration)
         }
         pruneKeys(serverId: serverId, keeping: 0)
+    }
+
+    private static func relayRegistration(holding registrationId: String, relay: URL?) -> PushRelayClient.Registration? {
+        if let relay, let environment = APNsEnvironment.current,
+           let registration = PushRelayRegistrationStore.load(relay: relay, environment: environment),
+           registration.registrationId == registrationId {
+            return registration
+        }
+        return PushRelayRegistrationStore.all().first { $0.registrationId == registrationId }
     }
 
     // MARK: - Keys

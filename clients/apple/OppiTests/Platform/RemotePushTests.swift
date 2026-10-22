@@ -424,6 +424,21 @@ struct PushSendPermissionTests {
         }
     }
 
+    /// Removing a server that is offline: neither it nor its relay is known this launch.
+    @Test func turningPushOffWithoutTheServersRelayStillReleasesItsPermission() async throws {
+        try await withBackend {
+            try storeRelayRegistration("r_A")
+            try await connect()
+            let configuration = configuration
+            await PushRegistration.shared.disable(serverId: serverId, api: nil, relay: nil) {
+                PushRelayClient(relay: $0, session: URLSession(configuration: configuration))
+            }
+
+            #expect(backend.deletedPermissions == ["p_1"])
+            #expect(PushSharedStore.allKeys().allSatisfy { $0.serverId != serverId })
+        }
+    }
+
     @Test func aNewPairingGetsANewPermission() async throws {
         try await withBackend {
             try storeRelayRegistration("r_A")
