@@ -724,13 +724,19 @@ final class RouterModalPresenter {
         guard let screen else { return }
         let container = screen.navigationController ?? screen
         guard !container.isBeingDismissed else { return }
-        // Still presenting, or another of the screen's modals above it is
-        // closing: dismiss once that transition ends.
-        if let transition = container.transitionCoordinator {
-            transition.animate(alongsideTransition: nil) { _ in Router.dismiss(container) }
-        } else {
+        let dismiss = {
+            guard !container.isBeingDismissed else { return }
             Router.dismiss(container)
         }
+        // Still presenting, or another of the screen's modals above it is
+        // closing: dismiss once that transition ends. A coordinator that cannot
+        // queue the completion returns false; dismiss now rather than leave the
+        // modal up with no owner.
+        if let transition = container.transitionCoordinator,
+           transition.animate(alongsideTransition: nil, completion: { _ in dismiss() }) {
+            return
+        }
+        dismiss()
     }
 
     /// A UIKit screen's slot, set from its state in `updateProperties()`: a
