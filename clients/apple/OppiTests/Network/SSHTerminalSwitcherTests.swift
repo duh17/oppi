@@ -290,7 +290,11 @@ struct SSHTerminalSwitcherTests {
         #expect(session.promptTarget?.profile.id == hostA.id, "the sheet is about the form's host, not B")
         #expect(session.promptTarget?.isReconnect == false)
         chrome.sync()
-        try await Task.sleep(for: .milliseconds(100))
+        // A loaded simulator can take longer than a frame to present the sheet.
+        for _ in 0..<100 where !((opening.presentedViewController as? UINavigationController)?
+            .viewControllers.first is SSHTerminalPasswordViewController) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         let sheet = try #require(
             (opening.presentedViewController as? UINavigationController)?.viewControllers.first
                 as? SSHTerminalPasswordViewController
