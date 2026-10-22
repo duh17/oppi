@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SealedPushEnvelope } from "../src/push/envelope.js";
+import { PUSH_ENVELOPE_BYTES, type SealedPushEnvelope } from "../src/push/envelope.js";
 import {
   LIVE_ACTIVITY_DEVICE_BUDGET,
   PUSH_DEVICE_BUDGET,
@@ -229,6 +229,157 @@ describe("PushSender", () => {
       error: "quota_exceeded",
     });
     expect(quota.calls).toHaveLength(1);
+  });
+
+  it("keeps the push config it started with, whatever config.json says later", async () => {
+    const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
+    const off = sender(fetchImpl);
+    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+    expect(off.relays()).toBeUndefined();
+    expect(off.registrations()).toEqual([]);
+
+    const on = sender(fetchImpl);
+    const [registration] = on.registrations();
+    if (!registration) throw new Error("missing registration");
+    storage.updateConfig({ push: { mode: "off" } });
+    expect(on.relays()).toEqual([PRIMARY]);
+    expect(await on.send(registration, notification)).toEqual({ status: "delivered" });
+    expect(calls).toHaveLength(1);
+  });
+
+  describe("send tokens the primary relay retired", () => {
+    const gone = () => new Response(JSON.stringify({ error: "gone" }), { status: 410 });
+
+    it("remembers a token pruned by the primary, not one a standby refused", async () => {
+      storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY, STANDBY] } });
+      const standbyGone = relayFetch({ [STANDBY]: gone });
+      const push = sender(standbyGone.fetchImpl);
+      const [registration] = push.registrations();
+      if (!registration) throw new Error("missing registration");
+
+      await push.send(registration, notification);
+      expect(push.isSendTokenGone(registration.sendToken)).toBe(false);
+
+      const primaryGone = relayFetch({ [PRIMARY]: gone });
+      const pruning = sender(primaryGone.fetchImpl);
+      await pruning.send(registration, notification);
+      expect(storage.getPushRegistrations()).toEqual([]);
+      expect(pruning.isSendTokenGone(registration.sendToken)).toBe(true);
+      expect(pruning.isSendTokenGone("osp1.r_a.p_b.other")).toBe(false);
+    });
+
+    it("keeps a bounded memory, forgetting the oldest token first", async () => {
+      storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+      const { fetchImpl } = relayFetch({ [PRIMARY]: gone });
+      // A new UTC day per send, so the device budget never refuses before the relay answers.
+      let clock = Date.parse("2026-01-01T12:00:00Z");
+      const push = new PushSender(storage, {
+        signingKey: signing.privateKey,
+        fetch: fetchImpl,
+        now: () => clock,
+      });
+      const [first] = push.registrations();
+      if (!first) throw new Error("missing registration");
+      const tokens: string[] = [];
+      for (let index = 0; index < 257; index += 1) {
+        const sendToken = `osp1.r_a.p_a.secret-${index}`;
+        tokens.push(sendToken);
+        storage.setPushRegistration({ ...first, sendToken });
+        const [current] = push.registrations();
+        if (!current) throw new Error("missing registration");
+        await push.send(current, notification);
+        clock += 86_400_000;
+      }
+      expect(push.isSendTokenGone(tokens[0]!)).toBe(false);
+      expect(push.isSendTokenGone(tokens[1]!)).toBe(true);
+      expect(push.isSendTokenGone(tokens[256]!)).toBe(true);
+    });
+  });
+
+  describe("a relay at capacity (503 with Retry-After)", () => {
+    const capacity = (retryAfter?: string) => () =>
+      new Response(JSON.stringify({ error: "relay_capacity" }), {
+        status: 503,
+        ...(retryAfter ? { headers: { "retry-after": retryAfter } } : {}),
+      });
+    let clock: number;
+    beforeEach(() => {
+      clock = Date.parse("2026-10-17T12:00:00Z");
+    });
+
+    function timed(fetchImpl: typeof fetch): PushSender {
+      storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY, STANDBY] } });
+      storage.setPushRegistration({
+        deviceId,
+        keyId: vectors.recipient.keyId,
+        publicKey: vectors.recipient.publicKey,
+        sendToken: "osp1.r_a.p_a.secret-a",
+        liveActivity: true,
+        events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
+      });
+      return new PushSender(storage, {
+        signingKey: signing.privateKey,
+        fetch: fetchImpl,
+        now: () => clock,
+      });
+    }
+
+    it("pauses the device like a 429 quota, without trying the standby", async () => {
+      let answer = capacity("30");
+      const { fetchImpl, calls } = relayFetch({ [PRIMARY]: () => answer(), [STANDBY]: ok });
+      const push = timed(fetchImpl);
+      const [registration] = push.registrations();
+      if (!registration) throw new Error("missing registration");
+
+      expect(await push.send(registration, notification)).toEqual({
+        status: "rejected",
+        httpStatus: 503,
+        error: "relay_capacity",
+        retryAfterSeconds: 30,
+      });
+      answer = () => ok();
+      clock += 29_000;
+      expect((await push.send(registration, notification))?.status).toBe("throttled");
+      expect(calls).toHaveLength(1);
+      clock += 1_000;
+      expect((await push.send(registration, notification))?.status).toBe("delivered");
+    });
+
+    it("pauses Live Activity pushes of that kind and counts nothing", async () => {
+      let answer = capacity("30");
+      const { fetchImpl, calls } = relayFetch({ [PRIMARY]: () => answer(), [STANDBY]: ok });
+      const push = timed(fetchImpl);
+      const [registration] = push.registrations();
+      if (!registration) throw new Error("missing registration");
+      const update = { event: "update" as const, running: 1, needsYou: 0 };
+
+      expect(await push.sendLiveActivity(registration, update)).toMatchObject({
+        status: "rejected",
+        retryAfterSeconds: 30,
+      });
+      answer = () => ok();
+      expect((await push.sendLiveActivity(registration, update))?.status).toBe("throttled");
+      expect(calls).toHaveLength(1);
+      clock += 30_000;
+      for (let index = 0; index < LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay; index += 1) {
+        expect((await push.sendLiveActivity(registration, update))?.status).toBe("delivered");
+      }
+    });
+
+    it("stays an outage, failing over to the standby, without Retry-After", async () => {
+      const { fetchImpl, calls } = relayFetch({ [PRIMARY]: capacity(), [STANDBY]: ok });
+      const push = timed(fetchImpl);
+      const [registration] = push.registrations();
+      if (!registration) throw new Error("missing registration");
+
+      expect(await push.send(registration, notification)).toEqual({ status: "delivered" });
+      expect(calls.map((call) => new URL(call.url).origin)).toEqual([PRIMARY, STANDBY]);
+
+      const both = relayFetch({ [PRIMARY]: capacity(), [STANDBY]: capacity("abc") });
+      expect(await timed(both.fetchImpl).send(registration, notification)).toEqual({
+        status: "unavailable",
+      });
+    });
   });
 
   describe("per-device budget", () => {
@@ -486,6 +637,42 @@ describe("PushSender", () => {
 });
 
 describe("RelayClient", () => {
+  /** A response whose unread body reports being cancelled. */
+  function tracked(status: number, cancelled: string[], label: string): Response {
+    return new Response(
+      new ReadableStream({
+        cancel() {
+          cancelled.push(label);
+        },
+      }),
+      { status },
+    );
+  }
+
+  it("cancels the bodies it does not read: success, failover, gone, and delete", async () => {
+    const cancelled: string[] = [];
+    const client = (responses: Record<string, () => Response>) =>
+      new RelayClient([PRIMARY, STANDBY], { fetch: relayFetch(responses).fetchImpl });
+    const request = {
+      envelope: "x".repeat(Math.ceil((PUSH_ENVELOPE_BYTES * 4) / 3)) as SealedPushEnvelope,
+    };
+    const push = { event: "update" as const, running: 1, needsYou: 0 };
+
+    await client({ [PRIMARY]: () => tracked(200, cancelled, "200") }).push("t", request);
+    await client({
+      [PRIMARY]: () => tracked(503, cancelled, "503"),
+      [STANDBY]: () => tracked(200, cancelled, "standby 200"),
+    }).push("t", request);
+    await client({ [PRIMARY]: () => tracked(410, cancelled, "410") }).push("t", request);
+    await client({
+      [PRIMARY]: () => tracked(500, cancelled, "la 500"),
+      [STANDBY]: () => tracked(200, cancelled, "la 200"),
+    }).liveActivity("t", push);
+    await client({ [PRIMARY]: () => tracked(404, cancelled, "delete") }).deletePermission("t");
+
+    expect(cancelled).toEqual(["200", "503", "standby 200", "410", "la 500", "la 200", "delete"]);
+  });
+
   it("refuses anything that is not a sealed v1 envelope", async () => {
     const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
     const client = new RelayClient([PRIMARY], { fetch: fetchImpl });

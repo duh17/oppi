@@ -14,7 +14,10 @@ export type RelaySendResult =
   | { status: "delivered" }
   /** The relay holds no such permission or registration. `prune`: the primary said so. */
   | { status: "gone"; prune: boolean }
-  /** A deterministic refusal (bad request, quota): no failover. `retryAfterSeconds` on a quota. */
+  /**
+   * A deterministic refusal (bad request, quota, relay at capacity): no failover.
+   * `retryAfterSeconds` on a `429` quota or a `503` with `Retry-After`.
+   */
   | { status: "rejected"; httpStatus: number; error?: string; retryAfterSeconds?: number }
   /** No relay accepted the push (network, timeout, 5xx). */
   | { status: "unavailable" };
@@ -76,17 +79,25 @@ export class RelayClient {
 
     for (const [index, origin] of this.origins.entries()) {
       const response = await this.request(origin, "/v1/push", "POST", sendToken, body);
-      if (!response || response.status >= 500) continue;
-      if (response.status === 200) return { status: "delivered" };
-      if (response.status === 410) return { status: "gone", prune: index === 0 };
-      const retryAfterSeconds = Number(response.headers.get("retry-after") ?? "");
+      if (!response) continue;
+      const retryAfterSeconds = pauseSeconds(response);
+      if (response.status >= 500 && retryAfterSeconds === undefined) {
+        await discard(response);
+        continue;
+      }
+      if (response.status === 200) {
+        await discard(response);
+        return { status: "delivered" };
+      }
+      if (response.status === 410) {
+        await discard(response);
+        return { status: "gone", prune: index === 0 };
+      }
       return {
         status: "rejected",
         httpStatus: response.status,
         error: await errorCode(response),
-        ...(response.status === 429 && Number.isInteger(retryAfterSeconds) && retryAfterSeconds > 0
-          ? { retryAfterSeconds }
-          : {}),
+        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
       };
     }
     return { status: "unavailable" };
@@ -103,24 +114,30 @@ export class RelayClient {
     for (const [index, origin] of this.origins.entries()) {
       const response = await this.request(origin, "/v1/live-activity", "POST", sendToken, body);
       if (!response) continue;
-      if (response.status >= 500) {
+      const retryAfterSeconds = pauseSeconds(response);
+      if (response.status >= 500 && retryAfterSeconds === undefined) {
         if (response.status === 502 && (await errorCode(response)) === "apns_unavailable") {
           charged = true;
+        } else {
+          await discard(response);
         }
         continue;
       }
-      if (response.status === 200) return { status: "delivered" };
-      if (response.status === 410) return { status: "gone", prune: index === 0 };
+      if (response.status === 200) {
+        await discard(response);
+        return { status: "delivered" };
+      }
+      if (response.status === 410) {
+        await discard(response);
+        return { status: "gone", prune: index === 0 };
+      }
       const error = await errorCode(response);
       if (response.status === 409 && error === "no_activity") return { status: "no_activity" };
-      const retryAfterSeconds = Number(response.headers.get("retry-after") ?? "");
       return {
         status: "rejected",
         httpStatus: response.status,
         error,
-        ...(response.status === 429 && Number.isInteger(retryAfterSeconds) && retryAfterSeconds > 0
-          ? { retryAfterSeconds }
-          : {}),
+        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
       };
     }
     return { status: "unavailable", charged };
@@ -130,7 +147,9 @@ export class RelayClient {
   async deletePermission(sendToken: string): Promise<boolean> {
     for (const origin of this.origins) {
       const response = await this.request(origin, "/v1/permission", "DELETE", sendToken);
-      if (response && response.status < 500) return response.status === 204;
+      if (!response) continue;
+      await discard(response);
+      if (response.status < 500) return response.status === 204;
     }
     return false;
   }
@@ -156,6 +175,25 @@ export class RelayClient {
     } catch {
       return null;
     }
+  }
+}
+
+/**
+ * The pause a relay asks for: a `429` quota or a `503` at capacity, each with a positive whole
+ * `Retry-After`. A `503` without one is an outage and fails over.
+ */
+function pauseSeconds(response: Response): number | undefined {
+  if (response.status !== 429 && response.status !== 503) return undefined;
+  const seconds = Number(response.headers.get("retry-after") ?? "");
+  return Number.isInteger(seconds) && seconds > 0 ? seconds : undefined;
+}
+
+/** Frees the connection of a response whose body is not read. */
+async function discard(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Already consumed or closed.
   }
 }
 

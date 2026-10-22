@@ -50,6 +50,8 @@ const pushOnlyRecord = {
   registeredAt: 1,
   events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
 };
+/** The push relay the server starts with: `push` config is read at startup only. */
+const pushRelay = "https://push.example.test";
 const deviceKeys = generateKeyPairSync("ec", { namedCurve: "P-256" });
 
 function devicePublicKey(): { kty: string; crv: string; x: string; y: string } {
@@ -133,6 +135,7 @@ beforeAll(async () => {
     host: "127.0.0.1",
     tls: { mode: "self-signed" },
     pushRegistrations: [pushOnlyRecord],
+    push: { mode: "relay", relays: [pushRelay] },
   });
   storage.ensurePaired();
   const deviceJwk = deviceKeys.publicKey.export({ format: "jwk" }) as { x: string; y: string };
@@ -1309,7 +1312,7 @@ describe("removed user skills API", () => {
 // ── Push registration ──
 
 describe("push registration API", () => {
-  const relay = "https://push.example.test";
+  const relay = pushRelay;
   const pushVectors = JSON.parse(
     readFileSync(
       new URL("../../protocol/push/vectors/cryptokit-hpke.json", import.meta.url),
@@ -1347,25 +1350,11 @@ describe("push registration API", () => {
     };
   }
 
-  function setPushMode(mode: "off" | "relay"): void {
-    storage.updateConfig({ push: mode === "relay" ? { mode, relays: [relay] } : { mode } });
-  }
-
   afterAll(() => {
-    setPushMode("off");
     storage.removePushRegistration(deviceId);
   });
 
-  it("advertises the relay and accepts registrations only in relay mode", async () => {
-    setPushMode("off");
-    const offInfo = (await (await get("/server/info")).json()) as {
-      capabilities: { pushNotifications?: unknown };
-    };
-    expect(offInfo.capabilities.pushNotifications).toBeUndefined();
-    const refused = await put("/me/push-registration", signedRegistration());
-    expect(refused.status).toBe(409);
-
-    setPushMode("relay");
+  it("advertises the relay the server started with", async () => {
     const info = (await (await get("/server/info")).json()) as {
       capabilities: { pushNotifications?: unknown };
     };
@@ -1373,7 +1362,6 @@ describe("push registration API", () => {
   });
 
   it("stores the key signed by the calling device and returns the pinned server key", async () => {
-    setPushMode("relay");
     const res = await put("/me/push-registration", signedRegistration());
     expect(res.status).toBe(200);
     const body = (await res.json()) as { serverPublicKey: string; keyId: string };
@@ -1386,7 +1374,6 @@ describe("push registration API", () => {
   });
 
   it("rejects a registration the device key did not sign, or minted at another relay", async () => {
-    setPushMode("relay");
     storage.removePushRegistration(deviceId);
     const otherKey = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
     expect(
@@ -1404,7 +1391,6 @@ describe("push registration API", () => {
   });
 
   it("records whether the phone accepts Live Activity pushes, and rejects a non-boolean", async () => {
-    setPushMode("relay");
     const liveActivity = () =>
       storage.getPushRegistrations().find((entry) => entry.deviceId === deviceId)?.liveActivity;
     expect(
@@ -1419,7 +1405,6 @@ describe("push registration API", () => {
   });
 
   it("DELETE /me/push-registration forgets the calling device's registration", async () => {
-    setPushMode("relay");
     expect((await put("/me/push-registration", signedRegistration())).status).toBe(200);
     const res = await del("/me/push-registration");
     expect(res.status).toBe(200);

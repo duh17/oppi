@@ -208,7 +208,7 @@ export function activePushRelays(config: Pick<ServerConfig, "push">): string[] |
  * failure is real: that send token stays usable at the relay until the app revokes it.
  */
 export async function releasePushPermissions(
-  relays: string[],
+  relays: readonly string[],
   registrations: PushRegistration[],
   fetchImpl?: typeof fetch,
 ): Promise<PushRegistration[]> {
@@ -219,6 +219,10 @@ export async function releasePushPermissions(
     ),
   );
   return registrations.filter((_, index) => !released[index]);
+}
+
+function sendTokenHash(sendToken: string): string {
+  return createHash("sha256").update(sendToken, "utf8").digest("base64url");
 }
 
 /** Stable per device and session, unlinkable across devices (spec §5). */
@@ -273,21 +277,44 @@ function pushPlaintext(notification: PushNotification, ts: number): PushPlaintex
   }
 }
 
+/** How many pruned send tokens the server remembers. One entry is a 32-byte hash. */
+const GONE_SEND_TOKENS_MAX = 256;
+
 export class PushSender {
   private readonly now: () => number;
   private readonly budget = new DeviceBudget();
   private readonly liveActivityBudget = new LiveActivityBudget();
+  /**
+   * The `push` config block as it was at startup. `ConfigStore.mutate` reloads `config.json`
+   * on every locked write, so reading it live would apply a `push.mode` edit at a random later
+   * moment instead of at the restart the docs promise. The per-device `events` and
+   * `liveActivity` come from each registration, not from this block.
+   */
+  private readonly pushRelays: readonly string[] | undefined;
+  /**
+   * Hashes of send tokens the primary relay answered `410` for, oldest first. In memory: after
+   * a restart the phone may register the dead token once more, and the next send's `410`
+   * teaches the server again, so persisting would save one relay call and need a new config key.
+   */
+  private readonly goneSendTokens = new Set<string>();
 
   constructor(
     private readonly storage: PushSenderStorage,
     private readonly options: PushSenderOptions,
   ) {
     this.now = options.now ?? Date.now;
+    const relays = activePushRelays(storage.getConfig());
+    this.pushRelays = relays && [...relays];
   }
 
-  /** Relay origins from the server's current config (the CLI asks for a restart after edits). */
-  relays(): string[] | undefined {
-    return activePushRelays(this.storage.getConfig());
+  /** Relay origins from startup config (a change to `push` needs a server restart). */
+  relays(): readonly string[] | undefined {
+    return this.pushRelays;
+  }
+
+  /** True when the primary relay retired this send token (`410`): registering it again is futile. */
+  isSendTokenGone(sendToken: string): boolean {
+    return this.goneSendTokens.has(sendTokenHash(sendToken));
   }
 
   /**
@@ -418,6 +445,7 @@ export class PushSender {
   ): void {
     if (result.status === "gone" && result.prune) {
       this.storage.removePushRegistration(registration.deviceId, registration.sendToken);
+      this.rememberGoneSendToken(registration.sendToken);
       log.info("push.registration_pruned", { device: registration.deviceId });
     } else if (result.status !== "delivered" && result.status !== "no_activity") {
       log.warn("push.not_delivered", {
@@ -431,6 +459,16 @@ export class PushSender {
       result: result.status,
     });
     this.options.metrics?.record("server.push_result", 1, { result: result.status, event });
+  }
+
+  private rememberGoneSendToken(sendToken: string): void {
+    const hash = sendTokenHash(sendToken);
+    this.goneSendTokens.delete(hash);
+    this.goneSendTokens.add(hash);
+    if (this.goneSendTokens.size > GONE_SEND_TOKENS_MAX) {
+      const oldest = this.goneSendTokens.values().next().value;
+      if (oldest !== undefined) this.goneSendTokens.delete(oldest);
+    }
   }
 
   /** Best effort: tell the relay a forgotten registration's permission is no longer used. */
