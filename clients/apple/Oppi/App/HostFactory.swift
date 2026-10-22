@@ -714,6 +714,25 @@ final class RouterModalPresenter {
     /// Dismissing to present the same item again with another style.
     private var isRepresenting = false
 
+    /// The screen that owns this slot is gone: the shell drops its whole
+    /// layout on an iPad rotation (stack and split swap) and under a server lock.
+    /// The modal presents from the window's root, so it would outlive its
+    /// screen with callbacks into nothing. Close it the way SwiftUI closed a
+    /// sheet with its view. Neither `clearItem` nor `onDismiss` runs, and the
+    /// container's late `onDismissed` finds no presenter.
+    isolated deinit {
+        guard let screen else { return }
+        let container = screen.navigationController ?? screen
+        guard !container.isBeingDismissed else { return }
+        // Still presenting, or another of the screen's modals above it is
+        // closing: dismiss once that transition ends.
+        if let transition = container.transitionCoordinator {
+            transition.animate(alongsideTransition: nil) { _ in Router.dismiss(container) }
+        } else {
+            Router.dismiss(container)
+        }
+    }
+
     /// A UIKit screen's slot, set from its state in `updateProperties()`: a
     /// non-nil `id` presents `screen`, nil dismisses, and `clear` resets the
     /// screen's state after a swipe-down or the modal's own `finish()`.

@@ -328,6 +328,63 @@ struct RouterHostFactoryTests {
         #expect(isSettled(presenter.presentedViewController))
     }
 
+    /// The shell drops its whole layout on an iPad rotation (stack↔split) and
+    /// when a scoped server lock engages. A chat's modal presents from the
+    /// window's root, so it outlived the chat: further typing in the expanded
+    /// composer went nowhere, Cancel did nothing, and a locked server's sheet
+    /// stayed above the lock cover. The chat can have two up at once: its
+    /// model picker over its expanded composer.
+    @Test("a screen's open modals close when the shell tears the screen down, without calling back into it")
+    func ownerTeardownDismissesItsModals() async throws {
+        let shell = UIViewController()
+        let window = try showInWindow(shell)
+        defer { hide(window) }
+        var clears = 0
+        var dismissals = 0
+        weak var weakOwner: ModalOwnerScreen?
+        do {
+            let owner = ModalOwnerScreen()
+            weakOwner = owner
+            shell.addChild(owner)
+            shell.view.addSubview(owner.view)
+            owner.didMove(toParent: shell)
+
+            let root = makeTestAppRoot()
+            func open(_ slot: RouterModalPresenter, _ presentation: ModalPresentation) {
+                slot.update(
+                    id: AnyHashable("open"),
+                    presentation: presentation.inNavigation(),
+                    root: root,
+                    onDismiss: { dismissals += 1 },
+                    clear: { clears += 1 },
+                    screen: { .controller { UIViewController() } }
+                )
+            }
+            open(owner.lower, ModalPresentation(style: .overFullScreen))
+            #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+                isSettled(shell.presentedViewController)
+            })
+            open(owner.upper, .sheet)
+            #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+                isSettled(shell.presentedViewController?.presentedViewController)
+            })
+
+            // `WorkspaceShellController.replaceLayout`: the layout leaves and
+            // nothing keeps its screens.
+            owner.willMove(toParent: nil)
+            owner.view.removeFromSuperview()
+            owner.removeFromParent()
+        }
+        // UIKit may hold the removed screen until its autorelease pool drains.
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { weakOwner == nil })
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            shell.presentedViewController == nil
+        })
+        #expect(clears == 0)
+        #expect(dismissals == 0)
+    }
+
     @Test("routerSearchable gives the host a search bar bound to the screen's text both ways")
     func searchTextBridgesBothWays() async throws {
         let state = RouteState()
@@ -614,6 +671,20 @@ private final class ColumnScreen: UIViewController, TrailingColumnKeyboardScreen
 
     func hidePanel() {
         column.show(nil, root: nil)
+    }
+}
+
+/// A UIKit screen with modal slots, as the chat and its composer have.
+/// `upper` is released first: it closes while `lower` asks to close too.
+@MainActor
+private final class ModalOwnerScreen: UIViewController {
+    let upper = RouterModalPresenter()
+    let lower = RouterModalPresenter()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        upper.anchor = self
+        lower.anchor = self
     }
 }
 
