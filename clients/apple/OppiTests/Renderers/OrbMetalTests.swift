@@ -752,13 +752,16 @@ struct MicButtonOrbLayoutTests {
         }
     }
 
-    /// The idle button paints a solid disc; listening shows only the orb, so almost none of
-    /// that disc may remain. (The UIKit sibling asserts the same through `micFillIsClear`.)
+    /// The idle button paints a 44 pt disc in `themeBgHighlight` (about 1,500 px at scale 1);
+    /// listening shows only the orb, so almost no pixel of that exact color may remain. If the
+    /// `if !showsOrb` fill in `MicButtonLabel` came back, the listening count would be ~1,400
+    /// and fail the second expectation; the first proves the counter can see the fill at all.
+    /// (The UIKit sibling asserts the same through `micFillIsClear`.)
     @Test func swiftUIListeningOmitsTheFillDiscWhenShowingAnOrb() throws {
-        let idle = try solidMicLabelPixelCount(isRecording: false)
-        let listening = try solidMicLabelPixelCount(isRecording: true)
-        #expect(idle > 1_000, "the idle button should paint its fill disc: \(idle) solid pixels")
-        #expect(listening * 4 < idle, "listening kept the fill disc: \(listening) solid pixels vs \(idle) idle")
+        let idle = try micLabelFillPixelCount(isRecording: false)
+        let listening = try micLabelFillPixelCount(isRecording: true)
+        #expect(idle > 1_000, "the idle button should paint its fill disc: \(idle) fill-colored pixels")
+        #expect(listening < 100, "listening kept the fill disc: \(listening) fill-colored pixels vs \(idle) idle")
     }
 }
 
@@ -992,15 +995,15 @@ private func micButtonFitSize(diameter: CGFloat) -> CGSize {
     return host.sizeThatFits(in: CGSize(width: 400, height: 400))
 }
 
-/// Pixels of a 44 pt composing-style `MicButtonLabel` (rendered at scale 1) that are
-/// almost fully opaque.
+/// Pixels of a 44 pt composing-style `MicButtonLabel` (rendered at scale 1) that are opaque and
+/// the `themeBgHighlight` fill color, so orb dots and the glyph do not count.
 @MainActor
-private func solidMicLabelPixelCount(isRecording: Bool) throws -> Int {
+private func micLabelFillPixelCount(isRecording: Bool) throws -> Int {
     guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else {
         throw TestHostError.missingScene
     }
     let window = UIWindow(windowScene: scene)
-    window.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+    window.frame = CGRect(x: 0, y: 0, width: 80, height: 80)
     let host = UIHostingController(
         rootView: MicButtonLabel(
             isRecording: isRecording,
@@ -1013,6 +1016,8 @@ private func solidMicLabelPixelCount(isRecording: Bool) throws -> Int {
             dictationStyle: .composing
         )
     )
+    // Without this the window's status-bar inset pushes the label out of the snapshot.
+    host.safeAreaRegions = []
     host.view.backgroundColor = .clear
     window.rootViewController = host
     window.makeKeyAndVisible()
@@ -1036,7 +1041,15 @@ private func solidMicLabelPixelCount(isRecording: Bool) throws -> Int {
         return true
     }
     guard drew else { throw TestHostError.timeout("no mic label bitmap context") }
-    return stride(from: 3, to: bytes.count, by: 4).reduce(0) { $0 + (bytes[$1] >= 250 ? 1 : 0) }
+    var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+    UIColor(Color.themeBgHighlight).resolvedColor(with: window.traitCollection)
+        .getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+    let expected = [red, green, blue].map { Int(($0 * 255).rounded()) }
+    return stride(from: 0, to: bytes.count, by: 4).reduce(0) { count, index in
+        guard bytes[index + 3] >= 250 else { return count }
+        let matches = (0..<3).allSatisfy { abs(Int(bytes[index + $0]) - expected[$0]) <= 6 }
+        return count + (matches ? 1 : 0)
+    }
 }
 
 private func firstSubview<T: UIView>(of root: UIView, type: T.Type) -> T? {
