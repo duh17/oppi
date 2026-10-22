@@ -66,10 +66,12 @@ final class SSHTerminalEngine {
     static let maximumPasteBytes = 64 * 1024
     static let maximumCopyBytes = 1024 * 1024
     /// Bytes of decoded Kitty images kept per screen. Enough for a handful of
-    /// full-window pictures (`kitten icat`, chafa, Pi image output) while a
-    /// remote host cannot exhaust memory: libghostty evicts the oldest images
-    /// past this and rejects anything larger. Only the direct transmission
-    /// medium is enabled, so this is never backed by a local file.
+    /// full-window pictures (`kitten icat`, chafa, Pi image output); libghostty
+    /// evicts the oldest images past this and rejects anything larger. It bounds
+    /// what is stored, not what receiving costs: libghostty buffers up to
+    /// 400 MiB of received data and inflates up to 400 MiB more while an image
+    /// arrives (PNG decoding itself is held to this limit). Only the direct
+    /// transmission medium is enabled, so this is never backed by a local file.
     static let kittyImageStorageLimit = SSHTerminalKittyGraphics.imageStorageLimitBytes
     /// Receives a remote copy after the triggering write has been interpreted.
     var copied: (String) -> Void = { _ in }

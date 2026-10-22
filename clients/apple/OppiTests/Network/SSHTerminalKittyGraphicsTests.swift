@@ -92,6 +92,26 @@ struct SSHTerminalKittyGraphicsTests {
         #expect(replies.map { String(decoding: $0, as: UTF8.self) } == ["\u{1b}_Gi=9;OK\u{1b}\\"])
     }
 
+    /// `f=100` is PNG only. Any bytes the terminal shows can carry this escape
+    /// code, so another format must never reach ImageIO's other decoders, even
+    /// behind a forged PNG signature.
+    @Test func nonPNGPayloadsAreRefusedAsPNG() throws {
+        let rows = [[Pixel(red: 1, green: 2, blue: 3), Pixel(red: 4, green: 5, blue: 6)]]
+        let jpeg = try encoded("public.jpeg", width: 2, height: 1, rows: rows)
+        let gif = try encoded("com.compuserve.gif", width: 2, height: 1, rows: rows)
+        let tiff = try encoded("public.tiff", width: 2, height: 1, rows: rows)
+        let forged = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + jpeg
+        var replies = [Data]()
+        let engine = try engine { replies.append($0) }
+        for (id, payload) in [(21, jpeg), (22, gif), (23, tiff), (24, forged)] {
+            engine.receive(kitty("a=T,f=100,i=\(id),c=2,r=1", payload: payload.base64EncodedString()))
+        }
+        #expect(engine.frame().kitty == nil, "nothing is stored")
+        #expect(replies.map { String(decoding: $0, as: UTF8.self) } == [21, 22, 23, 24].map {
+            "\u{1b}_Gi=\($0);EINVAL: invalid data\u{1b}\\"
+        })
+    }
+
     @Test func supportQueryIsAnsweredBeforeAnyImageExists() throws {
         var replies = [Data]()
         let engine = try engine { replies.append($0) }
@@ -860,6 +880,11 @@ struct SSHTerminalKittyGraphicsTests {
     /// A PNG built the way a program on the host would: any row count, real
     /// color, sRGB.
     private func png(width: Int, height: Int, rows: [[Pixel]]) throws -> Data {
+        try encoded("public.png", width: width, height: height, rows: rows)
+    }
+
+    /// The same picture in any ImageIO format, for the not-PNG refusals.
+    private func encoded(_ type: String, width: Int, height: Int, rows: [[Pixel]]) throws -> Data {
         var bytes = [UInt8]()
         for row in rows {
             for pixel in row { bytes += [pixel.red, pixel.green, pixel.blue, pixel.alpha] }
@@ -876,7 +901,7 @@ struct SSHTerminalKittyGraphicsTests {
         })
         let data = try #require(CFDataCreateMutable(nil, 0))
         let destination = try #require(
-            CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil)
+            CGImageDestinationCreateWithData(data, type as CFString, 1, nil)
         )
         CGImageDestinationAddImage(destination, image, nil)
         #expect(CGImageDestinationFinalize(destination))

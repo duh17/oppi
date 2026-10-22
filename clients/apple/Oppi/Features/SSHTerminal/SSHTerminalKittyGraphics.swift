@@ -199,6 +199,9 @@ enum SSHTerminalKittyPNGDecoder {
     /// Idempotent. Must run before a terminal accepts PNG payloads.
     static func install() { _ = installed }
 
+    private static let pngSignature: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+    private static let pngType = "public.png"
+
     /// Decodes one PNG into the RGBA buffer libghostty owns. The library frees
     /// the buffer with the allocator it passed, so it is allocated with
     /// `ghostty_alloc` rather than `malloc`.
@@ -215,7 +218,16 @@ enum SSHTerminalKittyPNGDecoder {
         let encoded = Data(
             bytesNoCopy: UnsafeMutableRawPointer(mutating: data), count: length, deallocator: .none
         )
-        guard let source = CGImageSourceCreateWithData(encoded as CFData, nil),
+        // `f=100` means PNG, and the bytes come from whatever the terminal shows
+        // (`cat` of a hostile file reaches here too). ImageIO sniffs the format,
+        // so without these checks a payload would reach its JPEG, HEIC, TIFF, PSD,
+        // GIF, and BMP decoders as well. Only a PNG signature, decoded as PNG, is
+        // accepted.
+        guard encoded.starts(with: pngSignature),
+              let source = CGImageSourceCreateWithData(
+                  encoded as CFData, [kCGImageSourceTypeIdentifierHint: pngType] as CFDictionary
+              ),
+              CGImageSourceGetType(source) as String? == pngType,
               let declared = declaredPixelSize(source),
               Self.allowedByteCount(width: declared.width, height: declared.height) != nil else {
             // Refused from the header alone: ImageIO has decoded nothing, so a
