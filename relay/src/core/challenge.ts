@@ -78,7 +78,11 @@ export class ChallengeIssuer {
     return { challenge: base64urlEncode(concatBytes(signed, await this.tag(signed))), expiresAt };
   }
 
-  /** The tag is compared in constant time, then the expiry checked. */
+  /**
+   * The tag is compared in constant time, then the expiry checked. No upper bound on the
+   * expiry: only this relay's key makes a valid tag, so every expiry it accepts is one it
+   * issued, and a bound would only refuse valid challenges when instances' clocks differ.
+   */
   async verify(challenge: string, now: number): Promise<boolean> {
     const bytes = base64urlDecode(challenge);
     if (!bytes || bytes.length !== SIGNED_BYTES + TAG_BYTES) return false;
@@ -86,6 +90,6 @@ export class ChallengeIssuer {
     if (!bytesEqual(await this.tag(signed), bytes.subarray(SIGNED_BYTES))) return false;
     const view = new DataView(bytes.buffer, bytes.byteOffset, EXPIRY_BYTES);
     const expiresAt = view.getUint16(0) * 2 ** 32 + view.getUint32(2);
-    return expiresAt >= now && expiresAt <= now + CHALLENGE_TTL_MS;
+    return expiresAt >= now;
   }
 }
