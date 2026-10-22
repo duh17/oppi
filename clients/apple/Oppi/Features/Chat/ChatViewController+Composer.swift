@@ -389,7 +389,9 @@ extension ChatViewController {
     }
 
     /// Live Voice talks to this chat's session: its agent hears the caller and answers out loud.
-    func startLiveVoice() {
+    /// `rejoinOnly` is for a start nobody tapped (a call carried across a shell swap): it
+    /// attaches the remembered call and ends rather than start a new one.
+    func startLiveVoice(rejoinOnly: Bool = false) {
         guard let routeScope = focusedRouteScope else { return }
         // The call starts with an empty field, now rather than on the next pass, so a
         // message placed in the composer right after (a Quick Session's first) is the
@@ -400,11 +402,14 @@ extension ChatViewController {
         let liveVoiceController = liveVoiceController
         let sessionId = sessionId
         let connection = connection
-        Task {
+        Task { [weak self] in
             await liveVoiceController.start(
                 sessionId: sessionId,
                 routeScope: routeScope,
-                using: connection
+                using: connection,
+                rejoinOnly: rejoinOnly,
+                // The microphone prompt can outlast the chat.
+                isStillWanted: { self?.hasAppeared == true }
             )
         }
     }

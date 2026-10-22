@@ -584,6 +584,7 @@ struct LiveVoiceCallControllerTests {
         taking harness: Harness,
         handoff: LiveVoiceRemountHandoff,
         presentation: WorkspaceNavigationPresentation,
+        serverId: String = "server-1",
         now: ContinuousClock.Instant = .now
     ) -> (controller: LiveVoiceCallController, channel: FakeLiveVoiceCallChannel, owner: NSObject) {
         let channel = FakeLiveVoiceCallChannel()
@@ -596,12 +597,17 @@ struct LiveVoiceCallControllerTests {
         )
         let owner = NSObject()
         handoff.chatDidAppear(
+            serverId: serverId,
             sessionId: "sess-1",
             owner: owner,
             presentation: presentation,
             now: now
         ) {
-            Task { await controller.start(sessionId: "sess-1", routeScope: .workspace("ws-1")) }
+            Task {
+                await controller.start(
+                    sessionId: "sess-1", routeScope: .workspace("ws-1"), rejoinOnly: true
+                )
+            }
         }
         return (controller, channel, owner)
     }
@@ -625,7 +631,8 @@ struct LiveVoiceCallControllerTests {
         let handoff = LiveVoiceRemountHandoff()
         let old = Task {
             await handoff.leave(
-                call: harness.controller, sessionId: "sess-1", remountedUnder: .split
+                call: harness.controller, serverId: "server-1", sessionId: "sess-1",
+                remountedUnder: .split
             )
         }
         await old.value
@@ -642,7 +649,10 @@ struct LiveVoiceCallControllerTests {
         let chat = remountedChat(taking: harness, handoff: handoff, presentation: .split)
         #expect(chat.channel.opened.isEmpty, "Nothing rejoins while the old chat still holds the call")
 
-        await handoff.leave(call: harness.controller, sessionId: "sess-1", remountedUnder: .split)
+        await handoff.leave(
+            call: harness.controller, serverId: "server-1", sessionId: "sess-1",
+            remountedUnder: .split
+        )
         #expect(sentTypes(harness.channel.sent).last == "voice_call_detach")
         await expectRejoined(chat)
     }
@@ -652,7 +662,9 @@ struct LiveVoiceCallControllerTests {
         let harness = try await startedHarness()
         let handoff = LiveVoiceRemountHandoff()
 
-        await handoff.leave(call: harness.controller, sessionId: "sess-1", remountedUnder: nil)
+        await handoff.leave(
+            call: harness.controller, serverId: "server-1", sessionId: "sess-1", remountedUnder: nil
+        )
         let reopened = remountedChat(taking: harness, handoff: handoff, presentation: .split)
         try await Task.sleep(for: .milliseconds(100))
 
@@ -667,7 +679,9 @@ struct LiveVoiceCallControllerTests {
         let idle = LiveVoiceCallController(
             channel: FakeLiveVoiceCallChannel(), memory: FakeLiveVoiceSessionMemory()
         )
-        await calllessHandoff.leave(call: idle, sessionId: "sess-1", remountedUnder: .split)
+        await calllessHandoff.leave(
+            call: idle, serverId: "server-1", sessionId: "sess-1", remountedUnder: .split
+        )
         let harness = try await startedHarness()
         let calllessChat = remountedChat(taking: harness, handoff: calllessHandoff, presentation: .split)
         try await Task.sleep(for: .milliseconds(100))
@@ -676,7 +690,8 @@ struct LiveVoiceCallControllerTests {
         let handoff = LiveVoiceRemountHandoff()
         let start = ContinuousClock.now
         await handoff.leave(
-            call: harness.controller, sessionId: "sess-1", remountedUnder: .split, now: start
+            call: harness.controller, serverId: "server-1", sessionId: "sess-1",
+            remountedUnder: .split, now: start
         )
         let lateChat = remountedChat(
             taking: harness,
@@ -687,6 +702,90 @@ struct LiveVoiceCallControllerTests {
         try await Task.sleep(for: .milliseconds(100))
         #expect(lateChat.channel.opened.isEmpty)
         #expect(!lateChat.controller.isLive)
+    }
+
+    @Test("A call still connecting when its chat is swapped out is not carried")
+    func connectingCallIsNotCarried() async throws {
+        let harness = try await connectingHarness()
+        let handoff = LiveVoiceRemountHandoff()
+
+        // Its detach would only go out later, from the orphan path, possibly after the next
+        // chat's attach; so nothing rejoins it.
+        await handoff.leave(
+            call: harness.controller, serverId: "server-1", sessionId: "sess-1",
+            remountedUnder: .split
+        )
+        let chat = remountedChat(taking: harness, handoff: handoff, presentation: .split)
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(chat.channel.opened.isEmpty)
+        #expect(!chat.controller.isLive)
+    }
+
+    @Test("A rejoin whose attach fails ends the call; it never starts a new one")
+    func failedRejoinAttachDoesNotStartACall() async throws {
+        let harness = try await startedHarness()
+        let handoff = LiveVoiceRemountHandoff()
+        await handoff.leave(
+            call: harness.controller, serverId: "server-1", sessionId: "sess-1",
+            remountedUnder: .split
+        )
+        let chat = remountedChat(taking: harness, handoff: handoff, presentation: .split)
+
+        await waitUntil { !chat.channel.opened.isEmpty }
+        chat.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
+        await waitUntil { sentTypes(chat.channel.sent).contains("voice_call_attach") }
+        let attach = chat.channel.sent.last { $0.typeLabel == "voice_call_attach" }
+        chat.channel.emit(.commandResult(
+            command: "voice_call_attach",
+            requestId: requestId(of: attach),
+            success: false,
+            data: nil,
+            error: "Voice call has ended"
+        ))
+        await waitUntil { chat.controller.lastError != nil || sentTypes(chat.channel.sent).count > 1 }
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(sentTypes(chat.channel.sent) == ["voice_call_attach"], "No start: the mic never opens on a new call")
+        #expect(!chat.controller.isLive)
+        #expect(chat.controller.lastError == "Live Voice ended.")
+        #expect(harness.memory.callIdentity(forServer: "server-1") == nil, "The dead call is forgotten")
+    }
+
+    @Test("A rejoin with no remembered call ends without starting one")
+    func rejoinWithoutRememberedCallDoesNotStart() async throws {
+        let channel = FakeLiveVoiceCallChannel()
+        let controller = LiveVoiceCallController(
+            channel: channel, audio: FakeLiveVoiceAudioOwner(), memory: FakeLiveVoiceSessionMemory(),
+            serverKey: "server-1", clientCallId: "client-call-1"
+        )
+        let task = Task {
+            await controller.start(sessionId: "sess-1", routeScope: .workspace("ws-1"), rejoinOnly: true)
+        }
+        await waitUntil { !channel.opened.isEmpty }
+        channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
+        await task.value
+
+        #expect(channel.sent.isEmpty)
+        #expect(!controller.isLive)
+        #expect(controller.lastError == "Live Voice ended.")
+    }
+
+    @Test("The same session id on another server is not the same chat")
+    func handoffIsKeyedByServer() async throws {
+        let harness = try await startedHarness()
+        let handoff = LiveVoiceRemountHandoff()
+        await handoff.leave(
+            call: harness.controller, serverId: "server-1", sessionId: "sess-1",
+            remountedUnder: .split
+        )
+        let other = remountedChat(
+            taking: harness, handoff: handoff, presentation: .split, serverId: "server-2"
+        )
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(other.channel.opened.isEmpty)
+
+        await expectRejoined(remountedChat(taking: harness, handoff: handoff, presentation: .split))
     }
 
     private func connectingHarness(keepAliveInterval: Duration = .seconds(10)) async throws -> Harness {

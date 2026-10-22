@@ -95,6 +95,9 @@ final class LiveVoiceCallController {
     @ObservationIgnored private var keepAliveTask: Task<Void, Never>?
     @ObservationIgnored private var didConfirmCall = false
     @ObservationIgnored private var startSent = false
+    /// This start may only attach the remembered call, never start one (see `start`).
+    @ObservationIgnored private var rejoinOnly = false
+    private static let endedText = "Live Voice ended."
     @ObservationIgnored private var pendingRequestId: String?
     /// Request id of an attach that rejoins a call (a remembered one, or this one after the
     /// stream reconnected). Until it answers the lease is unknown, so no keepalive goes out;
@@ -128,7 +131,21 @@ final class LiveVoiceCallController {
 
     var isActive: Bool { isLive }
 
-    func start(sessionId: String, routeScope: SessionRouteScope, using connection: ServerConnection) async {
+    /// The server confirmed the call and it is up. A call still connecting is not carried
+    /// across a shell swap: its detach would only go out later, from the orphan path.
+    var hasConfirmedCall: Bool { callState?.lifecycle == .active }
+
+    /// `rejoinOnly` starts no call of its own: it attaches the remembered one, and a missing or
+    /// refused call ends this one. For a start nobody tapped, which must not open the mic on a
+    /// new call. `isStillWanted` is asked once the microphone permission settles, so a start
+    /// whose chat went away meanwhile does not run the mic.
+    func start(
+        sessionId: String,
+        routeScope: SessionRouteScope,
+        using connection: ServerConnection,
+        rejoinOnly: Bool = false,
+        isStillWanted: @MainActor () -> Bool = { true }
+    ) async {
         // Without the microphone the call would start and send silence while showing "Listening".
         guard await Self.hasMicrophoneAccess() else {
             failClosed(
@@ -137,18 +154,20 @@ final class LiveVoiceCallController {
             )
             return
         }
+        guard isStillWanted() else { return }
         bind(connection, sessionId: sessionId)
         // A reply being read aloud would talk over the call.
         connection.audioPlayer.stop()
-        await start(sessionId: sessionId, routeScope: routeScope)
+        await start(sessionId: sessionId, routeScope: routeScope, rejoinOnly: rejoinOnly)
     }
 
-    func start(sessionId: String, routeScope: SessionRouteScope) async {
+    func start(sessionId: String, routeScope: SessionRouteScope, rejoinOnly: Bool = false) async {
         guard let channel else {
             failClosed("Live Voice is not connected to a server.", closeChannel: false)
             return
         }
 
+        self.rejoinOnly = rejoinOnly
         startGeneration &+= 1
         let generation = startGeneration
         consumeTask?.cancel()
@@ -282,7 +301,7 @@ final class LiveVoiceCallController {
                 }
             } else if snapshot.lifecycle == .ended {
                 memory.clearCallIdentity(forServer: serverKey)
-                failClosed("Live Voice ended.", closeChannel: true)
+                failClosed(Self.endedText, closeChannel: true)
             }
         case .commandResult(let command, let requestId, let success, _, let error):
             // The session's stream also carries other callers' command results (model, compact).
@@ -293,7 +312,11 @@ final class LiveVoiceCallController {
                     // The call is gone (ended, or the server no longer has it): start a new
                     // one instead of failing the call the user is on.
                     forgetStoredCall()
-                    await sendStart()
+                    if rejoinOnly {
+                        failClosed(Self.endedText, closeChannel: true)
+                    } else {
+                        await sendStart()
+                    }
                     return
                 }
             }
@@ -433,6 +456,11 @@ final class LiveVoiceCallController {
             clientCallId = identity.clientCallId
             await sendAttach(callId: identity.callId, lastEventSeq: identity.eventSeq)
             rejoinRequestId = pendingRequestId
+            return
+        }
+        if rejoinOnly {
+            // Nothing remembered to rejoin.
+            failClosed(Self.endedText, closeChannel: true)
             return
         }
         if !startSent {
@@ -624,11 +652,20 @@ final class LiveVoiceCallController {
 /// The incoming chat can appear before or after the detach completes; either order rejoins.
 /// A departure is claimable for `departureWindow` only, so a chat opened later does not
 /// resume a call the user left.
+///
+/// Only a confirmed call is carried. One still connecting leaves through the orphan path,
+/// whose detach goes out later, possibly after the next chat's attach.
 @MainActor
 final class LiveVoiceRemountHandoff {
     static let shared = LiveVoiceRemountHandoff()
 
     static let departureWindow: Duration = .seconds(5)
+
+    /// The same session id on two servers is two chats.
+    private struct Key: Hashable {
+        let serverId: String
+        let sessionId: String
+    }
 
     private struct Waiting {
         let owner: ObjectIdentifier
@@ -641,58 +678,63 @@ final class LiveVoiceRemountHandoff {
         let detachedAt: ContinuousClock.Instant
     }
 
-    private var waiting: [String: Waiting] = [:]
-    private var departures: [String: Departure] = [:]
+    private var waiting: [Key: Waiting] = [:]
+    private var departures: [Key: Departure] = [:]
 
     /// A chat for `sessionId` appeared under `presentation`; `rejoin` restarts its call. It runs
     /// when the same session's chat in the other shell has detached a live call for this swap.
     func chatDidAppear(
+        serverId: String,
         sessionId: String,
         owner: AnyObject,
         presentation: WorkspaceNavigationPresentation,
         now: ContinuousClock.Instant = .now,
         rejoin: @escaping @MainActor () -> Void
     ) {
+        let key = Key(serverId: serverId, sessionId: sessionId)
         pruneDepartures(now: now)
-        if let departure = departures[sessionId], departure.resumeUnder == presentation {
-            departures[sessionId] = nil
-            waiting[sessionId] = nil
+        if let departure = departures[key], departure.resumeUnder == presentation {
+            departures[key] = nil
+            waiting[key] = nil
             rejoin()
             return
         }
-        waiting[sessionId] = Waiting(
+        waiting[key] = Waiting(
             owner: ObjectIdentifier(owner),
             presentation: presentation,
             rejoin: rejoin
         )
     }
 
-    func chatDidDisappear(sessionId: String, owner: AnyObject) {
-        if waiting[sessionId]?.owner == ObjectIdentifier(owner) {
-            waiting[sessionId] = nil
+    func chatDidDisappear(serverId: String, sessionId: String, owner: AnyObject) {
+        let key = Key(serverId: serverId, sessionId: sessionId)
+        if waiting[key]?.owner == ObjectIdentifier(owner) {
+            waiting[key] = nil
         }
     }
 
     /// Leaves `call` for the chat of `sessionId` that is going away. With `remountedUnder` set,
-    /// the chat left because its shell was swapped for that presentation; if the call is up the
-    /// chat that takes over rejoins it. Without it, the chat left for good and the call stays
-    /// detached.
+    /// the chat left because its shell was swapped for that presentation; if the call is
+    /// confirmed the chat that takes over rejoins it. Without it, or with a call still
+    /// connecting, the call leaves as before and stays detached.
     func leave(
         call: LiveVoiceCallController,
+        serverId: String,
         sessionId: String,
         remountedUnder: WorkspaceNavigationPresentation?,
         now: @autoclosure () -> ContinuousClock.Instant = .now
     ) async {
-        let carriesCall = remountedUnder != nil && call.isLive
+        let carriesCall = remountedUnder != nil && call.hasConfirmedCall
         await call.leave()
         guard carriesCall, let presentation = remountedUnder else { return }
+        let key = Key(serverId: serverId, sessionId: sessionId)
         let now = now()
         pruneDepartures(now: now)
-        if let waiter = waiting[sessionId], waiter.presentation == presentation {
-            waiting[sessionId] = nil
+        if let waiter = waiting[key], waiter.presentation == presentation {
+            waiting[key] = nil
             waiter.rejoin()
         } else {
-            departures[sessionId] = Departure(resumeUnder: presentation, detachedAt: now)
+            departures[key] = Departure(resumeUnder: presentation, detachedAt: now)
         }
     }
 

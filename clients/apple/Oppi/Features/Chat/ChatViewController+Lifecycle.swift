@@ -342,13 +342,15 @@ extension ChatViewController {
         )
         // A call the same session's chat held in the other shell is rejoined here
         // once that chat has detached it.
+        // Nobody tapped, so it only attaches that call; it never opens a new one.
         LiveVoiceRemountHandoff.shared.chatDidAppear(
+            serverId: resolvedServerId ?? "",
             sessionId: sessionId,
             owner: self,
             presentation: mountedPresentation
         ) { [weak self] in
             guard let self, hasAppeared, !liveVoiceController.isLive else { return }
-            startLiveVoice()
+            startLiveVoice(rejoinOnly: true)
         }
         logMountTelemetry(
             "Chat appeared",
@@ -479,7 +481,11 @@ extension ChatViewController {
                 presentation: mountedPresentation.telemetryLabel
             )
         )
-        LiveVoiceRemountHandoff.shared.chatDidDisappear(sessionId: sessionId, owner: self)
+        LiveVoiceRemountHandoff.shared.chatDidDisappear(
+            serverId: resolvedServerId ?? "",
+            sessionId: sessionId,
+            owner: self
+        )
         // Freeze the viewport before cleanup can publish an empty timeline
         // and make collection geometry look tail-attached during the push.
         scrollController.suspendForNavigation()
@@ -515,7 +521,14 @@ extension ChatViewController {
         sessionManager.cleanup()
         let liveVoiceController = liveVoiceController
         let sessionId = sessionId
-        let callResumesUnder = shellSwapRemount ? appNavigation.workspaceNavigationPresentation : nil
+        let serverId = resolvedServerId ?? ""
+        // A locked server swaps the layout for its lock cover (`WorkspaceShellController`):
+        // the presentation differs then too, but nothing takes this chat over.
+        let shellCoveredByLock = root?.coordinator.activeServerId
+            .map { ScopedLockService.shared.isLocked(.server($0)) } ?? false
+        let callResumesUnder = shellSwapRemount && !shellCoveredByLock
+            ? appNavigation.workspaceNavigationPresentation
+            : nil
         let composerDraftStore = root?.composerDraftStore
         let sessionManager = sessionManager
         let connection = connection
@@ -531,6 +544,7 @@ extension ChatViewController {
             }
             await LiveVoiceRemountHandoff.shared.leave(
                 call: liveVoiceController,
+                serverId: serverId,
                 sessionId: sessionId,
                 remountedUnder: callResumesUnder
             )
