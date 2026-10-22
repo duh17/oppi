@@ -269,21 +269,31 @@ describe("LiveActivityNotifier", () => {
     expect(events()).toEqual(["end 0/0"]);
   });
 
-  it("does not retry a start the relay refused until the counts change, and ends at zero", async () => {
+  it("sends no more starts after the relay refused one, ends at zero, and starts the next work's card", async () => {
     answer = () => ({ status: "no_activity" });
     leave();
     change({ running: 1, needsYou: 0 });
     await vi.advanceTimersByTimeAsync(30 * 60_000);
     expect(events()).toEqual(["start 1/0"]);
-    change({ running: 2, needsYou: 0 });
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(events()).toEqual(["start 1/0", "start 2/0"]);
     // A dismissed card's refusal lasts until an end says the counts reached zero.
+    change({ running: 2, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    change({ running: 3, needsYou: 1 });
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(events()).toEqual(["start 1/0"]);
     change({ running: 0, needsYou: 0 });
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(events()).toEqual(["start 1/0", "start 2/0", "end 0/0"]);
+    expect(events()).toEqual(["start 1/0", "end 0/0"]);
     await vi.advanceTimersByTimeAsync(30 * 60_000);
-    expect(sent).toHaveLength(3);
+    expect(sent).toHaveLength(2);
+    // The end cleared the dismissal at the relay: the next work shows a card again.
+    answer = () => ({ status: "delivered" });
+    change({ running: 1, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events()).toEqual(["start 1/0", "end 0/0", "start 1/0"]);
+    change({ running: 2, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events()).toEqual(["start 1/0", "end 0/0", "start 1/0", "update 2/0"]);
   });
 
   it("retries after a relay outage and waits out a quota's Retry-After", async () => {

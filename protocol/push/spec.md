@@ -564,8 +564,9 @@ removes them from Notification Center when it becomes active: they open nothing.
   second card next to one the person sees or bring back one they dismissed. An `update`
   answered `409 no_activity` is tried again once a minute up to 5 times (the phone may still
   be reporting a new card's token), then the card is lost: nothing more goes out until the
-  counts reach zero. A refused `start` is not retried until the counts change, and an `end`
-  follows at zero (it ends a dismissal at the relay). Every card is ended and started again
+  counts reach zero. A `start` answered `409 no_activity` (dismissed card, or no
+  start token) also makes the card lost: no more starts until the counts reach zero, when an
+  `end` goes out (it ends a dismissal at the relay) and the next work starts a card. Every card is ended and started again
   by 8 hours from the earliest it can have started, while work goes on: when this server
   started it; for an unknown card, the latest of the time the counts last rose from zero,
   this server's last start, and 8 hours before the server lost track (so a card left from

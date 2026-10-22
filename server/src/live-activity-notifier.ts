@@ -413,8 +413,10 @@ export class LiveActivityNotifier {
       device.missedUpdates = 0;
     } else if (result === "no_activity") {
       // No start token at the relay (the phone turned Live Activities off), or the person
-      // dismissed the card. Try again when the counts change.
-      this.settle(device, "none", counts);
+      // dismissed the card. The relay refuses every start until an `end` ends the dismissal,
+      // and each refused start still costs it a request, so send nothing until the counts
+      // reach zero: `lost` ends the card then, and the next work starts a new one.
+      this.settle(device, "lost", undefined);
     }
   }
 
