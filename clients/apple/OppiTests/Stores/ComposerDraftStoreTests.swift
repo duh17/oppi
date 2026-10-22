@@ -597,6 +597,48 @@ struct ComposerDraftStoreTests {
         #expect(store.lastError == "Failed to load local message drafts.")
     }
 
+    @Test func corruptDraftFileStaysReplaceable() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try Data("not json".utf8).write(to: fixture.fileURL, options: .atomic)
+        let key = try fixture.key(sessionID: "new")
+
+        let store = fixture.makeStore()
+        await store.load()
+        store.setDraft(.init(text: "typed after corruption", repoPointers: []), for: key)
+        await store.flush()
+
+        let reloaded = fixture.makeStore()
+        await reloaded.load()
+        #expect(reloaded.lastError == nil)
+        #expect(reloaded.record(for: key)?.payload.text == "typed after corruption")
+    }
+
+    @Test func flushingAnUnreadableLoadedStoreWithoutEditsKeepsTheFile() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let first = fixture.makeStore()
+        await first.load()
+        let savedKey = try fixture.key(sessionID: "saved")
+        first.setDraft(.init(text: "saved draft", repoPointers: []), for: savedKey)
+        await first.flush()
+
+        // A background launch while locked: the file exists but cannot be
+        // read, and the scene backgrounding flushes an empty in-memory set.
+        // Saving it would delete the file.
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: fixture.fileURL.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.fileURL.path) }
+        let launching = fixture.makeStore()
+        await launching.load()
+        await launching.flush()
+
+        #expect(FileManager.default.fileExists(atPath: fixture.fileURL.path))
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.fileURL.path)
+        let reloaded = fixture.makeStore()
+        await reloaded.load()
+        #expect(reloaded.record(for: savedKey)?.payload.text == "saved draft")
+    }
+
     @Test func savingBeforeFirstLoadKeepsDraftsOnDisk() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

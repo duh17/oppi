@@ -111,6 +111,15 @@ struct AppLockMachine: Equatable {
         }
     }
 
+    /// Starts over as a cold launch with `timeout` does (locked, auto-prompt
+    /// pending). The scoped-unlock generation moves forward, never back to a
+    /// value an earlier scoped unlock could still match.
+    mutating func restart(timeout: AppLockTimeout) {
+        let generation = scopedUnlockGeneration
+        self = AppLockMachine(timeout: timeout, isAvailable: isAvailable)
+        scopedUnlockGeneration = generation &+ 1
+    }
+
     mutating func setTimeout(_ timeout: AppLockTimeout) {
         self.timeout = timeout
         if !isEnabled {
@@ -206,13 +215,14 @@ final class AppLockService {
     /// data is available, reads the stored timeout again. When App Lock is on,
     /// the machine restarts exactly as a cold launch with App Lock on does
     /// (locked, auto-prompt pending).
-    private func rereadTimeoutIfStartedBeforeFirstUnlock() {
+    /// Startup calls this as soon as protected data is available so readers of
+    /// `isEnabled` never see the stale `.off`; the entry points below repeat it.
+    func refreshStoredTimeoutAfterProtectedData() {
         guard timeoutMayBeUnread, isProtectedDataAvailable() else { return }
         timeoutMayBeUnread = false
         let stored = AppLockSettings.timeout(in: defaults)
         guard stored.isEnabled, stored != machine.timeout else { return }
-        let available = machine.isAvailable
-        update { $0 = AppLockMachine(timeout: stored, isAvailable: available) }
+        update { $0.restart(timeout: stored) }
     }
 
     /// Runs `action` now when Oppi does not need unlocking, otherwise after the
@@ -250,7 +260,7 @@ final class AppLockService {
 
     /// Whether external entry points (intents) must unlock before work.
     func requiresUnlock() -> Bool {
-        rereadTimeoutIfStartedBeforeFirstUnlock()
+        refreshStoredTimeoutAfterProtectedData()
         return machine.requiresUnlock(at: now())
     }
 
@@ -290,7 +300,7 @@ final class AppLockService {
     /// automatic unlock prompt for this lock.
     @discardableResult
     func sceneDidBecomeActive() -> Task<Bool, Never>? {
-        rereadTimeoutIfStartedBeforeFirstUnlock()
+        refreshStoredTimeoutAfterProtectedData()
         refreshAvailability()
         update { $0.didBecomeActive(at: now()) }
         var autoPrompt = false

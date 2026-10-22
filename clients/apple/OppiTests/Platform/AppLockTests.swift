@@ -348,6 +348,33 @@ struct AppLockServiceTests {
         #expect(harness.service.isLocked)
     }
 
+    @Test func startupRefreshMakesIsEnabledTrueBeforeAnyEntryPointRuns() {
+        // Readers of isEnabled (local ask notifications, scoped locks) run
+        // during startup, before any scene or intent calls the machine.
+        let harness = Harness(timeout: .off, outcomes: [], protectedDataAvailable: false)
+        AppLockSettings.setTimeout(.fiveMinutes, in: harness.defaults)
+        #expect(!harness.service.isEnabled)
+
+        harness.protectedData.available = true
+        harness.service.refreshStoredTimeoutAfterProtectedData()
+
+        #expect(harness.service.isEnabled)
+        #expect(harness.service.timeout == .fiveMinutes)
+    }
+
+    @Test func startupRefreshKeepsScopedUnlocksFromBecomingValidAgain() {
+        let harness = Harness(timeout: .off, outcomes: [], protectedDataAvailable: false)
+        harness.service.appDidEnterBackground()
+        harness.service.appDidEnterBackground()
+        let before = harness.service.scopedUnlockGeneration
+        AppLockSettings.setTimeout(.fiveMinutes, in: harness.defaults)
+        harness.protectedData.available = true
+
+        harness.service.refreshStoredTimeoutAfterProtectedData()
+
+        #expect(harness.service.scopedUnlockGeneration == before + 1)
+    }
+
     @Test func normalLaunchDoesNotReadTheStoredTimeoutAgain() {
         let harness = Harness(timeout: .off, outcomes: [])
         AppLockSettings.setTimeout(.fiveMinutes, in: harness.defaults)

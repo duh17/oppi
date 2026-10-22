@@ -473,6 +473,9 @@ final class OppiApp {
         // Draft files use `.completeUnlessOpen`: a locked background launch
         // cannot read them, so load only once protected data is available.
         await ProtectedDataAvailability.wait()
+        // A launch before first unlock read App Lock's timeout as off. Fix it
+        // before anything below (reconnect, ask notifications) reads it.
+        AppLockService.shared.refreshStoredTimeoutAfterProtectedData()
         await composerDraftStore.load()
         // Everything below reads paired servers or the timeline cache.
         await loadPairedServers()
