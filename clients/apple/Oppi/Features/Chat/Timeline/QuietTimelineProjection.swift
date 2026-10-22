@@ -32,13 +32,16 @@ enum TimelineDisplayRow: Equatable, Identifiable {
     }
 
     /// `rows` with each tail after the row that holds its tool call (a quiet work line folds
-    /// that row in). Tails whose row is not shown are left out.
+    /// that row in). An expanded work line is a header over its own item rows, so the tail follows
+    /// the tool call's item row instead. Tails whose row is not shown are left out.
+    /// Each tail appears once: duplicate row IDs trap the owned clock and the diffable snapshot.
     static func insertingChildTails(_ tails: [String: ConversationChildTail], into rows: [Self]) -> [Self] {
         guard !tails.isEmpty else { return rows }
         var result: [Self] = []
         result.reserveCapacity(rows.count + tails.count)
         for row in rows {
             result.append(row)
+            if case .quietWork(let line) = row, line.isExpanded { continue }
             let held = row.sourceItemIDs.compactMap { tails[$0] }
             for tail in held.sorted(by: { $0.reference.conversationId < $1.reference.conversationId }) {
                 result.append(.childTail(tail))

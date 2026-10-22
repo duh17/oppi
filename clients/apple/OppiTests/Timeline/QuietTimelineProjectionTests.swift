@@ -236,6 +236,27 @@ struct QuietTimelineProjectionTests {
         #expect(expanded.rows.map(\.id) == ["u1", "quiet-work-line:think-1", "think-1", "tool-1", "a1"])
     }
 
+    @Test func childTailAppearsOnceAfterItsWorkLineOrItsToolRowWhenExpanded() {
+        let items: [ChatItem] = [
+            .userMessage(id: "u1", text: "Run", timestamp: timestamp),
+            .toolCall(id: "sub-1", tool: "subagent", argsSummary: "spawn", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+            .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
+        ]
+        let tail = ConversationChildTail(
+            reference: ConversationChildReference(conversationId: 7, sessionId: "child", toolCallId: "sub-1", callIsRunning: true),
+            lines: [.init(kind: .text, text: "working")]
+        )
+        let tails = ["sub-1": tail]
+
+        func rowIDs(expanded: Set<String>) -> [String] {
+            let rows = projectFixture(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: expanded).rows
+            return TimelineDisplayRow.insertingChildTails(tails, into: rows).map(\.id)
+        }
+
+        #expect(rowIDs(expanded: []) == ["u1", "quiet-work-line:sub-1", "child-tail:7", "a1"])
+        #expect(rowIDs(expanded: ["sub-1"]) == ["u1", "quiet-work-line:sub-1", "sub-1", "child-tail:7", "a1"])
+    }
+
     @Test func expandedStripRetainsIdentityWhenOlderPageStartsInsideItsGroup() throws {
         let currentPage: [ChatItem] = [
             .toolCall(id: "tool-5", tool: "bash", argsSummary: "five", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
