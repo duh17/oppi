@@ -736,6 +736,63 @@ async function cmdSubmitBetaReview(buildNumber: string): Promise<void> {
   await submitForBetaReview(build.id);
 }
 
+/**
+ * What a verified archive was built from. Written next to the archive once the IPA export
+ * and entitlement checks pass, only when the checkout was clean and unchanged from before the
+ * archive started to after verification, so the commit names the exact source (and matches
+ * the commit stamp-git-commit.sh bakes into Info.plist).
+ * `localConfig` covers the one ignored build input, the optional Local.xcconfig.
+ */
+export type ArchiveIdentity = { build: number; commit: string; xcode: string; localConfig: string };
+
+const ARCHIVE_IDENTITY = "archive-identity.json";
+
+/**
+ * The newest `testflight-*` build directory whose verified archive matches `want` exactly
+ * (build number, source commit, Xcode, Local.xcconfig), or null. A retry after a failed upload, or an upload
+ * after `--build-only`, then skips the 4-5 minute archive and export.
+ */
+export function findReusableArchive(buildRoot: string, want: ArchiveIdentity): string | null {
+  if (!fs.existsSync(buildRoot)) return null;
+  const candidates = fs
+    .readdirSync(buildRoot)
+    .filter((name) => name.startsWith("testflight-"))
+    .sort()
+    .reverse();
+  for (const name of candidates) {
+    const dir = path.join(buildRoot, name);
+    try {
+      const have = JSON.parse(fs.readFileSync(path.join(dir, ARCHIVE_IDENTITY), "utf8")) as ArchiveIdentity;
+      if (
+        have.build === want.build &&
+        have.commit === want.commit &&
+        have.xcode === want.xcode &&
+        have.localConfig === want.localConfig &&
+        fs.existsSync(path.join(dir, "Oppi.xcarchive"))
+      ) {
+        return dir;
+      }
+    } catch {
+      // No identity: archived before this existed, or from a dirty tree.
+    }
+  }
+  return null;
+}
+
+/** sha256 of clients/apple/Local.xcconfig (gitignored, included by Base.xcconfig), or "absent". */
+function localConfigDigest(): string {
+  const file = path.join(APPLE_DIR, "Local.xcconfig");
+  return fs.existsSync(file) ? crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex") : "absent";
+}
+
+/** HEAD's commit when the checkout has no changes at all (untracked files included), else null. */
+function cleanSourceCommit(): string | null {
+  const status = spawnSync("git", ["-C", REPO_ROOT, "status", "--porcelain"], { encoding: "utf8" });
+  if (status.status !== 0 || status.stdout.trim() !== "") return null;
+  const head = spawnSync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], { encoding: "utf8" });
+  return head.status === 0 ? head.stdout.trim() : null;
+}
+
 async function cmdBuild(opts: {
   bump: boolean;
   buildOnly: boolean;
@@ -770,6 +827,25 @@ async function cmdBuild(opts: {
     return; // unreachable but satisfies TS
   }
 
+  const { keyPath, keyId, issuerId } = creds();
+  const sourceCommit = newBuild === currentBuild ? cleanSourceCommit() : null;
+  const reusable =
+    !buildOnly && sourceCommit
+      ? findReusableArchive(path.join(APPLE_DIR, "build"), {
+          build: newBuild,
+          commit: sourceCommit,
+          xcode: xcodeVersion,
+          localConfig: localConfigDigest(),
+        })
+      : null;
+  if (reusable) {
+    console.log("=== Oppi TestFlight Upload (verified archive reused) ===");
+    console.log(`Archive of build ${newBuild} at ${sourceCommit} with this Xcode: ${reusable}`);
+    await uploadArchive(reusable, path.join(reusable, "Oppi.xcarchive"), { keyPath, keyId, issuerId });
+    console.log(`=== TestFlight build ${newBuild} uploaded ===`);
+    return;
+  }
+
   const buildDir = path.join(APPLE_DIR, "build", `testflight-${timestamp()}`);
   const archivePath = path.join(buildDir, "Oppi.xcarchive");
   const exportPath = path.join(buildDir, "export");
@@ -795,6 +871,9 @@ async function cmdBuild(opts: {
   $.cwd(APPLE_DIR);
   await $`xcodegen generate`.quiet();
   console.log("Done.");
+  // The source this archive is built from; it must still be the checkout after verification.
+  const archiveSourceCommit = cleanSourceCommit();
+  const archiveLocalConfig = localConfigDigest();
 
   // Step 4: Archive
   console.log("--- Step 4: Archiving Oppi (Release, iOS device) ---");
@@ -856,7 +935,6 @@ async function cmdBuild(opts: {
 </plist>`,
   );
 
-  const { keyPath, keyId, issuerId } = creds();
   await runXcodebuild(
     [
       "-exportArchive",
@@ -895,32 +973,21 @@ async function cmdBuild(opts: {
     die(error instanceof Error ? error.message : String(error));
   }
 
-  if (!buildOnly) {
-    console.log("--- Step 7: Exporting + uploading to App Store Connect ---");
-    const uploadPath = path.join(buildDir, "upload");
-    const exportPlist = path.join(APPLE_DIR, "ExportOptions-AppStore.plist");
+  // Record what this verified archive is, if the source was clean after the bump and
+  // xcodegen and did not move while archiving (a landing can fast-forward the checkout), so a
+  // later upload of the same build from the same commit can reuse it.
+  if (archiveSourceCommit && cleanSourceCommit() === archiveSourceCommit && localConfigDigest() === archiveLocalConfig) {
+    const identity: ArchiveIdentity = {
+      build: newBuild,
+      commit: archiveSourceCommit,
+      xcode: xcodeVersion,
+      localConfig: archiveLocalConfig,
+    };
+    fs.writeFileSync(path.join(buildDir, ARCHIVE_IDENTITY), `${JSON.stringify(identity, null, 2)}\n`);
+  }
 
-    await runXcodebuild(
-      [
-        "-exportArchive",
-        "-archivePath",
-        archivePath,
-        "-exportPath",
-        uploadPath,
-        "-exportOptionsPlist",
-        exportPlist,
-        "-allowProvisioningUpdates",
-        "-authenticationKeyPath",
-        keyPath,
-        "-authenticationKeyID",
-        keyId,
-        "-authenticationKeyIssuerID",
-        issuerId,
-      ],
-      path.join(buildDir, "upload.log"),
-      20,
-    );
-    console.log("Upload complete.");
+  if (!buildOnly) {
+    await uploadArchive(buildDir, archivePath, { keyPath, keyId, issuerId });
   }
 
   // Summary
@@ -937,6 +1004,39 @@ async function cmdBuild(opts: {
       `Next: check TestFlight in App Store Connect for build ${newBuild}`,
     );
   }
+}
+
+async function uploadArchive(
+  buildDir: string,
+  archivePath: string,
+  key: { keyPath: string; keyId: string; issuerId: string },
+): Promise<void> {
+  console.log("--- Step 7: Exporting + uploading to App Store Connect ---");
+  // A reused archive's directory may hold an earlier attempt's upload output.
+  const attempt = fs.existsSync(path.join(buildDir, "upload")) ? `upload-${timestamp()}` : "upload";
+  const uploadPath = path.join(buildDir, attempt);
+  const exportPlist = path.join(APPLE_DIR, "ExportOptions-AppStore.plist");
+  await runXcodebuild(
+    [
+      "-exportArchive",
+      "-archivePath",
+      archivePath,
+      "-exportPath",
+      uploadPath,
+      "-exportOptionsPlist",
+      exportPlist,
+      "-allowProvisioningUpdates",
+      "-authenticationKeyPath",
+      key.keyPath,
+      "-authenticationKeyID",
+      key.keyId,
+      "-authenticationKeyIssuerID",
+      key.issuerId,
+    ],
+    path.join(buildDir, `${attempt}.log`),
+    20,
+  );
+  console.log("Upload complete.");
 }
 
 // ── Usage tracking commands ──

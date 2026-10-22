@@ -10,6 +10,7 @@ import {
 import { resolve } from "node:path";
 import {
   defaultRepoRoot as testflightRepoRoot,
+  findReusableArchive,
   isBetaReviewAlreadySubmittedState,
   runXcodebuild,
 } from "./testflight";
@@ -101,5 +102,29 @@ describe("TestFlight release policy", () => {
 
   test("does not retain nothrow pipelines", () => {
     expect(readFileSync(script, "utf8")).not.toContain(".nothrow()");
+  });
+
+  test("reuses only the newest verified archive of the same build, commit, and Xcode", () => {
+    const root = mkdtempSync("/tmp/oppi-archive-reuse-");
+    try {
+      const archive = (name: string, identity?: object) => {
+        mkdirSync(resolve(root, name, "Oppi.xcarchive"), { recursive: true });
+        if (identity) writeFileSync(resolve(root, name, "archive-identity.json"), JSON.stringify(identity));
+        return resolve(root, name);
+      };
+      const want = { build: 56, commit: "c1", xcode: "Xcode 27.1", localConfig: "absent" };
+      const older = archive("testflight-20261022-010000", want);
+      const newer = archive("testflight-20261022-020000", want);
+      archive("testflight-20261022-030000", { ...want, commit: "c2" });
+      archive("testflight-20261022-040000"); // archived from a dirty tree: no identity
+      expect(findReusableArchive(root, want)).toBe(newer);
+      rmSync(resolve(newer, "Oppi.xcarchive"), { recursive: true });
+      expect(findReusableArchive(root, want)).toBe(older);
+      expect(findReusableArchive(root, { ...want, build: 57 })).toBeNull();
+      expect(findReusableArchive(root, { ...want, xcode: "Xcode 27.2" })).toBeNull();
+      expect(findReusableArchive(root, { ...want, localConfig: "0f3a" })).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
