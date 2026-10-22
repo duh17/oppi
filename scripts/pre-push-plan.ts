@@ -18,6 +18,8 @@ const gatePolicyPaths = new Set([
   ".githooks/pre-push",
   "scripts/pre-push-plan.ts",
   "scripts/pre-push-plan.test.ts",
+  "scripts/heavy.sh",
+  "scripts/heavy.test.ts",
   "server/testing-policy.json",
   "server/scripts/testing-gates.ts",
   "server/tests/testing-policy-gate.test.ts",

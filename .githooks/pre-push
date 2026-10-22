@@ -10,6 +10,7 @@ set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 SIM_POOL="$REPO_ROOT/clients/apple/scripts/sim-pool.sh"
+HEAVY="$REPO_ROOT/scripts/heavy.sh"
 PLANNER="$REPO_ROOT/scripts/pre-push-plan.ts"
 GATE_VERSION="6"
 ZERO_OID="0000000000000000000000000000000000000000"
@@ -31,8 +32,8 @@ ensure_server_deps() {
 }
 
 run_self_test() {
-  bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL"
-  bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts"
+  bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL" "$HEAVY"
+  bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts" "$REPO_ROOT/scripts/heavy.test.ts"
   (cd "$REPO_ROOT/server" && npm exec --offline -- vitest run tests/testing-policy-gate.test.ts \
     --reporter=dot --silent=passed-only)
   "$SIM_POOL" self-test
@@ -339,8 +340,11 @@ run_server_gate() {
 
   set +e
   if [[ "$SERVER_MODE" == "full" ]]; then
+    # One full suite machine-wide. The log redirect lives inside the slot so heavy.sh's
+    # "slots busy; waiting" notice reaches the hook's stderr, not the log.
     (cd "$REPO_ROOT/server" && run_without_git_local_env \
-      npm test -- --reporter=dot --silent=passed-only) >"$test_log" 2>&1
+      "$HEAVY" server-full -- bash -c 'exec "$@" >"$0" 2>&1' "$test_log" \
+      npm test -- --reporter=dot --silent=passed-only)
   else
     (cd "$REPO_ROOT/server" && run_without_git_local_env \
       npm exec --offline -- vitest run --changed "$BASE_SHA" --passWithNoTests \
@@ -361,13 +365,13 @@ run_apple_gate() {
   if [[ "$APPLE_MODE" == "all" ]]; then
     scheme="Oppi"
   fi
-  (cd "$REPO_ROOT/clients/apple" && "$SIM_POOL" run -- \
+  (cd "$REPO_ROOT/clients/apple" && "$HEAVY" xcode-build -- "$SIM_POOL" run -- \
     xcodebuild -project Oppi.xcodeproj -scheme "$scheme" build-for-testing)
 }
 
 run_mac_gate() {
   (cd "$REPO_ROOT/server" && bun scripts/check-architecture-boundaries.ts --scope mac)
-  (cd "$REPO_ROOT/clients/apple" && xcodebuild \
+  (cd "$REPO_ROOT/clients/apple" && "$HEAVY" xcode-build -- xcodebuild \
     -project Oppi.xcodeproj -scheme OppiMac build-for-testing \
     -destination 'platform=macOS' \
     -derivedDataPath .build/pre-push-mac \
@@ -385,6 +389,15 @@ if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 ]]; then
   fi
 fi
 
+# The Mac compile (~50 s) follows the Apple lane instead of waiting for every lane:
+# the server suite is the longest lane, so the Mac build now overlaps it. A failed
+# Apple lane skips the Mac compile, as before.
+apple_then_mac() {
+  run_cached apple run_apple_gate || return $?
+  [[ "$MAC_CHANGED" -eq 1 ]] || return 0
+  run_cached mac run_mac_gate
+}
+
 PIDS=()
 LANES=()
 if [[ "$HARNESS_CHANGED" -eq 1 ]]; then
@@ -394,7 +407,10 @@ if [[ "$SERVER_MODE" != "none" ]]; then
   run_cached server run_server_gate & PIDS+=("$!"); LANES+=("server")
 fi
 if [[ "$APPLE_MODE" != "none" ]]; then
-  run_cached apple run_apple_gate & PIDS+=("$!"); LANES+=("apple")
+  apple_then_mac & PIDS+=("$!")
+  if [[ "$MAC_CHANGED" -eq 1 ]]; then LANES+=("apple+mac"); else LANES+=("apple"); fi
+elif [[ "$MAC_CHANGED" -eq 1 ]]; then
+  run_cached mac run_mac_gate & PIDS+=("$!"); LANES+=("mac")
 fi
 
 FAILED=0
@@ -404,13 +420,6 @@ for index in "${!PIDS[@]}"; do
     FAILED=1
   fi
 done
-
-if [[ "$FAILED" -eq 0 && "$MAC_CHANGED" -eq 1 ]]; then
-  if ! run_cached mac run_mac_gate; then
-    echo "[mac] FAILED" >&2
-    FAILED=1
-  fi
-fi
 
 if [[ "$FAILED" -ne 0 ]]; then
   echo "Pre-push gate FAILED." >&2
