@@ -240,6 +240,28 @@ struct SSHTerminalPasswordPromptTests {
         #expect(grid.textInputStorage.markedText == nil)
     }
 
+    @Test func aDifferentPromptLatchedAfterTheTapIsNotTheOneConfirmed() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(PasswordPromptStubConnection())
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedPasswordPromptGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+
+        #expect(grid.passwordFillPrompt() == nil, "no prompt, nothing to confirm")
+        channel.engine.receive(Data("Password: ".utf8))
+        try await Self.draw(grid)
+        let first = try #require(grid.passwordFillPrompt())
+        #expect(grid.passwordPromptIsLive(matching: first))
+
+        // Another program's prompt takes the same row while the check was up.
+        channel.engine.receive(Data("\u{1b}[2J\u{1b}[HEnter Password: ".utf8))
+        try await Self.draw(grid)
+        let second = try #require(grid.passwordFillPrompt())
+        #expect(second != first)
+        #expect(grid.passwordPromptIsLive(matching: second), "the new prompt is live, and is the new one")
+        #expect(!grid.passwordPromptIsLive(matching: first), "the prompt that was confirmed is gone")
+    }
+
     /// A frame with the terminal's newest output. `drawFrame` only snapshots
     /// when it can paint, and the renderer keeps three frames in flight, so a
     /// back-to-back burst is retried across display refreshes.

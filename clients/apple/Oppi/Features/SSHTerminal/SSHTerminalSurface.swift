@@ -105,7 +105,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// its text. A prompt that echoes one mark per key (`pwfeedback`) stops
     /// matching as soon as the secret is typed, so the latch, not a fresh
     /// match, keeps the keyboard secure until that row is left behind.
-    private struct SecurePrompt: Equatable {
+    struct SecurePrompt: Equatable {
         var row: Int
         var text: String
     }
@@ -1728,12 +1728,21 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         }
     }
 
-    /// Whether the prompt secure entry latched to is still on the live screen
-    /// right now. The secure entry latch cannot answer this: it moves with
-    /// painted frames, which stop while the app is inactive (under Face ID) and
-    /// debounce a prompt that ends, so this reads the terminal itself.
-    func passwordPromptIsLive() -> Bool {
-        guard secureEntry, let prompt = securePrompt, channel.connected else { return false }
+    /// The prompt secure entry is latched to, read when Fill Password is
+    /// tapped. Nil when secure entry is not on.
+    func passwordFillPrompt() -> SecurePrompt? {
+        secureEntry ? securePrompt : nil
+    }
+
+    /// Whether `prompt`, the one latched when Fill Password was tapped, is
+    /// still what the cursor sits at on the live screen right now. The secure
+    /// entry latch cannot answer this alone: it moves with painted frames,
+    /// which stop while the app is inactive (under Face ID) and debounce a
+    /// prompt that ends, so the terminal itself is read; and a different
+    /// prompt that replaced the first meanwhile (another program, another
+    /// pane) is never the one the person confirmed.
+    func passwordPromptIsLive(matching prompt: SecurePrompt) -> Bool {
+        guard secureEntry, securePrompt == prompt, channel.connected else { return false }
         return channel.engine.isShowingPasswordPrompt(row: prompt.row, text: prompt.text)
     }
 
@@ -1742,9 +1751,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// document it predicts from and edits dictation revisions against, so a
     /// secret typed at a prompt that ended without Return would stay in it.
     /// The document starts over, composition included, and the keyboard is told.
+    /// `reset` keeps guarding the echo of a commit just sent, which is not
+    /// typed text.
     private func discardTypedText() {
         var cleared = textInputStorage
-        cleared.discardAll()
+        cleared.reset()
         guard cleared != textInputStorage else { return }
         inputDelegate?.selectionWillChange(self)
         inputDelegate?.textWillChange(self)
