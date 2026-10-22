@@ -1977,6 +1977,82 @@ describe("durable-native threads", () => {
       await expectTwoReports(f, child, parentConversation);
     });
 
+    it("ends a wait on a child busy in its receipt turn with the parent's Stop, and leaves nothing waiting on the child", async () => {
+      const receiptTurn = gate();
+      let command = "";
+      const f = await fixture(
+        model(async ({ last, text, signal }) => {
+          if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+          if (last.role === "toolResult" && last.toolName === "background_job")
+            return fauxAssistantMessage("WAITING_ON_JOB");
+          if (last.role === "toolResult") return fauxAssistantMessage("PARENT_DONE");
+          if (text.includes("Delegate")) return spawnCall({ name: "Builder", task: "BUILD_TASK" });
+          if (text.includes("Wait for Builder"))
+            return subagentCall("wait", { names: ["Builder"] });
+          if (text.includes("BUILD_TASK"))
+            return toolCall("background_job", { action: "start", command });
+          // The job's receipt: the child's turn that the parent's wait then finds it in.
+          if (text.includes("Background job bash-1")) {
+            await receiptTurn.wait(signal);
+            return fauxAssistantMessage("BUILD_DONE");
+          }
+          return fauxAssistantMessage("OTHER");
+        }),
+      );
+      command = gated(join(f.dir, "job-gate"));
+      await f.manager.startSession(f.parent.id, f.workspace);
+      await f.manager.sendPrompt(f.parent.id, "Delegate the build");
+      const parentConversation = conversationOf(f.storage, f.parent);
+      const harness = await f.harness();
+      await until(
+        async () => (await reports(harness, parentConversation)).length === 1,
+        "the first report",
+      );
+      await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+      const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+      const childConversation = conversationOf(f.storage, child);
+      // The job ends and its receipt starts a turn of the child that stays open.
+      writeFileSync(join(f.dir, "job-gate"), "");
+      await until(
+        async () =>
+          (await harness.snapshot(LiveDoc, childConversation, context))?.run !== undefined,
+        "the child's receipt turn",
+      );
+
+      await f.manager.sendPrompt(f.parent.id, "Wait for Builder");
+      // The wait holds the store open while it waits for the child's turn to end.
+      await until(
+        async () => (await f.owner()).holdReasons.includes("use"),
+        "the wait for the child to be idle",
+      );
+      await f.manager.sendAbort(f.parent.id);
+      // Stop does not cascade to a background child, whose turn goes on: the parent's Stop must
+      // not wait for it, and its cut-off wait must let go of the store.
+      const idle = (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+      const outcome = await Promise.race([
+        idle.then(() => "idle"),
+        new Promise<string>((resolve) => setTimeout(() => resolve("still waiting"), 5_000)),
+      ]);
+      expect(outcome).toBe("idle");
+      expect((await harness.snapshot(LiveDoc, childConversation, context))?.run).toBeDefined();
+      await until(
+        async () => !(await f.owner()).holdReasons.includes("use"),
+        "the cut-off wait to release the store",
+      );
+      expect(
+        (await toolResults(harness, parentConversation)).filter((result) =>
+          result.text.includes("BUILD_"),
+        ),
+      ).toEqual([]);
+
+      // The child's turn is unaffected; its answer reaches the parent as a report.
+      receiptTurn.open();
+      await until(
+        async () => (await reports(harness, parentConversation)).length === 2,
+        "the report after the receipt turn",
+      );
+    });
+
     it("lets the parent idle when its follower cannot run", async () => {
       const { f, child, parentConversation } = await jobFixture();
       // Stored by a newer Oppi than this one: no installed definition takes it.

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import {
   InboxDoc,
   LiveDoc,
@@ -413,9 +413,14 @@ export class DurableAgentController {
     return { summary, firstKeptEntryId: String(entry?.head) };
   }
 
-  /** Resolves once the conversation has no run and no queued input. */
-  waitForPrompt(): Promise<void> {
-    return this.conversation.waitForIdle(BACKGROUND_CONTEXT);
+  /**
+   * Resolves once the conversation has no run and no queued input. Rejects with `signal`'s
+   * reason once it aborts, and then waits no longer.
+   */
+  waitForPrompt(signal?: AbortSignal): Promise<void> {
+    return this.conversation.waitForIdle(
+      signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT,
+    );
   }
 
   /** A new ownerless conversation branched at `entryId`; see `SessionHost.forkConversation`. */

@@ -100,7 +100,8 @@ export class DurableThreads {
           throw new Error(`Conversation ${child} is not a child of this session`);
         return host.pendingWakers(child);
       },
-      waitForIdle: async (sessionId) => (await refuse(sessionId)) ?? this.waitForIdle(sessionId),
+      waitForIdle: async (sessionId, signal) =>
+        (await refuse(sessionId)) ?? this.waitForIdle(sessionId, signal),
       activate: async (sessionId, submit) => {
         const refused = await refuse(sessionId);
         if (refused !== undefined) throw new Error(refused);
@@ -286,7 +287,7 @@ export class DurableThreads {
     return created;
   }
 
-  async waitForIdle(sessionId: string): Promise<string | undefined> {
+  async waitForIdle(sessionId: string, signal?: AbortSignal): Promise<string | undefined> {
     const session = this.deps.storage.getSession(sessionId);
     const conversationId = session?.serverDurable?.conversationId as ConversationId | undefined;
     if (!session || conversationId === undefined)
@@ -294,7 +295,7 @@ export class DurableThreads {
     return this.deps.runtime.withSession(session, async (harness, host) => {
       if (!(await harness.conversation(conversationId, BACKGROUND_CONTEXT)))
         return `Session ${sessionId} has no conversation.`;
-      await (await host.controller(conversationId)).waitForPrompt();
+      await (await host.controller(conversationId)).waitForPrompt(signal);
       return undefined;
     });
   }

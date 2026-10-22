@@ -148,6 +148,7 @@ Example:
 - **Server:** A retried prompt or steer with an attachment is no longer rejected as a conflict after its turn has landed.
 - **Client:** SSH Terminal: holding Delete on the on-screen keyboard repeats while typing in the terminal. A dictated phrase with a newline asks first, like a multi-line paste.
 - **Client:** Editing a staged review comment shows one Save and one Cancel.
+- **Server:** Stop on a durable session that is waiting for a busy child session now ends the wait at once, instead of holding the session until the child's turn ends.
 - **Server:** The local Grafana Server Health dashboard records ask round-trip time again; answered asks were dropping the sample. Its Push results table groups by push event and relay result, and the Release Preflight MetricKit CPU and GPU panel loads instead of failing on summarized payloads.
 
 ### Removed

@@ -656,7 +656,7 @@ export function createDurableSessions(
       api,
       conversationId,
       {
-        idle: () => sessions.waitForIdle(sessionId),
+        idle: () => sessions.waitForIdle(sessionId, context.abortSignal),
         wakers: () => sessions.pendingWakers(conversationId),
         decide: (check) =>
           api.commit(async (tx) => {

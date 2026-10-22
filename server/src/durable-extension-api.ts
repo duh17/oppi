@@ -166,8 +166,12 @@ export interface DurableSessionsHost {
    * which outlives a deleted Session. Rejects for a conversation the caller does not own.
    */
   pendingWakers(child: ConversationId): Promise<TaskId[]>;
-  /** Wait until a child's conversation is idle. Undefined on success, otherwise an error message. */
-  waitForIdle(sessionId: string): Promise<string | undefined>;
+  /**
+   * Wait until a child's conversation is idle. Undefined on success, otherwise an error message.
+   * Rejects with `signal`'s reason once it aborts, and then waits no longer: the child's run is
+   * not the caller's to wait out (Stop of the caller does not cascade to a background child).
+   */
+  waitForIdle(sessionId: string, signal?: AbortSignal): Promise<string | undefined>;
   /**
    * Attach a child's Session (or keep it attached) and run `submit`, the commit that delivers
    * a message to it. A child stops once it settles with no pending wake; until `submit`
