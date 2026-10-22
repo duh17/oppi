@@ -154,6 +154,10 @@ targets:
         # Relay push (protocol/push/spec.md). Distribution export rewrites this to
         # production; APNsEnvironment reads the signed value to pick the relay environment.
         aps-environment: development
+        # Needs-you alerts use .timeSensitive interruption level (PushAlertPresentation);
+        # without this entitlement they do not break through Focus. The app owns the
+        # notification content, so the notification service extension does not need it.
+        com.apple.developer.usernotifications.time-sensitive: true
     info:
       path: Oppi/Resources/Info.plist
       properties:
