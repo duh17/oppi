@@ -143,7 +143,8 @@ async function ascApi(
     `https://api.appstoreconnect.apple.com${urlPath}`,
     opts,
   );
-  if (method === "DELETE" && res.status === 204) return null;
+  // Relationship writes (adding a build to a beta group) and deletes answer 204 with no body.
+  if (res.status === 204) return null;
   const json = await res.json();
   if (!res.ok)
     throw new Error(`ASC API ${res.status}: ${JSON.stringify(json)}`);
