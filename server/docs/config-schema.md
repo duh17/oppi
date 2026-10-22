@@ -11,7 +11,7 @@ Oppi creates the file on the first `oppi serve`. You can also create it with `op
 
 ## All settings
 
-Settings appear in config-file order. Auth state is documented separately: it lives in the same file but CLI commands manage it, rather than hand edits.
+Settings appear in config-file order. Auth state is documented separately: it lives in the same file but CLI commands manage it, rather than hand edits. Pairing and opt-in keys (`auth`, `serverMetrics`, `providerQuotas`) are described in [server configuration](../../docs/server-configuration.md#common-operator-keys), and `push` in [Push notifications](../../docs/server-configuration.md#push-notifications).
 
 ### Server
 
@@ -158,6 +158,18 @@ Configures routing for server-side dictation to an external STT backend.
 | `asr.sttEndpoint` | string | -       | STT backend base URL. Required for Yuwp/`http`. Optional override for xAI (`https://api.x.ai`). A non-empty value with a valid provider, or `provider: xai`, enables server dictation. Oppi does not persist dictation audio locally. Leftover `asr.backend: pi-extension` and `asr.extension` values are ignored on load. |
 | `asr.sttModel`    | string | -       | HTTP/Yuwp model id; defaults to the bundled Qwen3 ASR id. xAI's official STT API does not take a model id.                                       |
 | `asr.liveVoiceBackend` | string | `yuwp` | Live Voice media for a call on a session. The session's agent answers with its `speak` tool. `yuwp` uses local ASR (`asr.sttEndpoint`), sends the session one message each time the user pauses, and speaks with the read-aloud `tts` engine and voice (silent without `tts`). `grok-voice` uses xAI realtime speech with the server's xAI sign-in or API key: Grok listens, passes what the user asks to the session, and says the agent's `speak` text. It speaks in `tts.voice` when `tts` uses xAI, else `eve`. Each new call reads `asr` and `tts` from disk, so Live Voice changes need no restart; server dictation and read aloud still do. |
+
+### Read aloud
+
+Text-to-speech for the speaker under an assistant reply, and the voice of a local Live Voice call. Setting `tts.provider` to `xai`, or a non-empty `tts.endpoint`, turns it on. Read-aloud changes need a server restart; Live Voice picks up `tts` on its next call. See [Read aloud](../../docs/server-configuration.md#read-aloud).
+
+| Setting        | Type   | Default | Description |
+| -------------- | ------ | ------- | ----------- |
+| `tts.provider` | string | -       | `yuwp` (Yuwp `POST /v1/audio/speech` with `stream: true`; audio streams while each passage is synthesized), `http` (OpenAI-compatible `POST /v1/audio/speech` returning WAV per passage), or `xai` (Grok voice). Omitted infers `xai` from an `api.x.ai` endpoint, else `http`. Any other value fails validation and leaves read aloud off. |
+| `tts.endpoint` | string | -       | Speech server base URL (`http` or `https`). Required for `http` and `yuwp`; `xai` defaults to `https://api.x.ai`. |
+| `tts.model`    | string | -       | Model id sent to an `http` or `yuwp` backend. Omitted lets the backend choose. |
+| `tts.voice`    | string | -       | Voice id, such as a saved Yuwp voice or a Grok voice like `eve`. Omitted uses the backend's default voice. |
+| `tts.language` | string | `auto`  | `xai` only: BCP-47 language code, or `auto`. |
 
 ### Images
 
