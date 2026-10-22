@@ -202,3 +202,14 @@ func makeAppRootWindow(_ root: AppRootEnvironment) -> UIWindow {
     window.isHidden = false
     return window
 }
+
+/// Where a test drops an evidence file (a screenshot). `OPPI_TEST_ARTIFACTS`
+/// when set, otherwise the temporary directory; never the source tree.
+func testArtifactURL(_ name: String, in subdirectory: String? = nil) throws -> URL {
+    var directory = ProcessInfo.processInfo.environment["OPPI_TEST_ARTIFACTS"]
+        .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        ?? FileManager.default.temporaryDirectory.appending(path: "oppi-test-artifacts", directoryHint: .isDirectory)
+    if let subdirectory { directory.append(path: subdirectory, directoryHint: .isDirectory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory.appending(path: name, directoryHint: .notDirectory)
+}

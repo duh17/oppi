@@ -1577,22 +1577,46 @@ struct VoiceInputManagerTests {
         let failure = try #require(ComposerShared.captureFailure(manager, owner: owner))
         #expect(failure.message.contains("discarded"))
         #expect(failure.message.contains("earlier draft was kept"))
-        let screenshot = UIGraphicsImageRenderer(bounds: hostView.bounds).image { _ in
-            hostView.drawHierarchy(in: hostView.bounds, afterScreenUpdates: true)
+        // Every kind ends in the same captureFailure state, so the view tree proves each one
+        // shows the notice. Pixels (OCR) are checked once per presentation: that the notice
+        // really paints, and stays legible at a large text size, does not depend on the kind.
+        func visibleNotice() -> ComposerDictationFailureView? {
+            hostView.layoutIfNeeded()
+            return captureFailureSubviews(hostView).compactMap { $0 as? ComposerDictationFailureView }.first { view in
+                var ancestor: UIView? = view
+                while let current = ancestor {
+                    if current.isHidden || current.alpha == 0 { return false }
+                    ancestor = current.superview
+                }
+                return view.window != nil && view.bounds.height > 0
+            }
         }
-        let artifact = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent(".build/logs/p1-\(failureKind)-failure-\(expanded ? "expanded" : "inline").png")
-        try screenshot.pngData()?.write(to: artifact)
-        let image = try #require(screenshot.cgImage)
-        let recognize = VNRecognizeTextRequest()
-        recognize.recognitionLevel = .accurate
-        try VNImageRequestHandler(cgImage: image).perform([recognize])
-        let visibleText = (recognize.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        #expect(visibleText.contains("Dictation stopped"), "Failure title must actually render: \(visibleText)")
-        #expect(visibleText.contains("take was discarded"), "Visible failure must explain transcript disposition")
-        #expect(visibleText.contains("earlier draft was kept"))
-        #expect(visibleText.contains("Retry dictation"), "Recovery action must actually render")
+        #expect(await waitForMainActorCondition { visibleNotice() != nil })
+        let notice = try #require(visibleNotice(), "The failure notice must be mounted and visible")
+        let noticeViews = captureFailureSubviews(notice)
+        let noticeLabels = noticeViews.compactMap { ($0 as? UILabel)?.text }
+        #expect(noticeLabels.contains("Dictation stopped"))
+        #expect(noticeLabels.contains { $0.contains("take was discarded") && $0.contains("earlier draft was kept") },
+                "Visible failure must explain transcript disposition")
+        #expect(noticeViews.contains { ($0 as? UIButton)?.accessibilityLabel == "Retry dictation" },
+                "Recovery action must be present")
+        if failureKind == "route" {
+            let screenshot = UIGraphicsImageRenderer(bounds: hostView.bounds).image { _ in
+                hostView.drawHierarchy(in: hostView.bounds, afterScreenUpdates: true)
+            }
+            try screenshot.pngData()?.write(
+                to: testArtifactURL("p1-\(failureKind)-failure-\(expanded ? "expanded" : "inline").png", in: "capture-failure")
+            )
+            let image = try #require(screenshot.cgImage)
+            let recognize = VNRecognizeTextRequest()
+            recognize.recognitionLevel = .accurate
+            try VNImageRequestHandler(cgImage: image).perform([recognize])
+            let visibleText = (recognize.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            #expect(visibleText.contains("Dictation stopped"), "Failure title must actually render: \(visibleText)")
+            #expect(visibleText.contains("take was discarded"), "Visible failure must explain transcript disposition")
+            #expect(visibleText.contains("earlier draft was kept"))
+            #expect(visibleText.contains("Retry dictation"), "Recovery action must actually render")
+        }
         #expect(ComposerShared.captureFailure(manager, owner: .askCard) == nil)
         // Later typing must not be rolled back by the other presentation.
         draft.text = "Keep draft and new typing"

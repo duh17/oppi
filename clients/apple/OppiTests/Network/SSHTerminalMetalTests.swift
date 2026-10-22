@@ -795,12 +795,6 @@ struct SSHTerminalMetalTests {
     }
 
     private func writeShot(_ shot: Shot, name: String) throws {
-        var dir = URL(fileURLWithPath: #filePath)
-        while dir.path != "/", !FileManager.default.fileExists(atPath: dir.appendingPathComponent("clients/apple").path) {
-            dir.deleteLastPathComponent()
-        }
-        let evidence = dir.appendingPathComponent(".pi/ui-validate/fallback-glyph-fit")
-        try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         var bytes = shot.bytes
         let image: CGImage = try bytes.withUnsafeMutableBytes { raw in
@@ -817,7 +811,7 @@ struct SSHTerminalMetalTests {
             }
             return image
         }
-        let url = evidence.appendingPathComponent(name)
+        let url = try testArtifactURL(name, in: "fallback-glyph-fit")
         guard let data = UIImage(cgImage: image).pngData() else { throw TestError.encodeFailed("png") }
         try data.write(to: url)
     }
