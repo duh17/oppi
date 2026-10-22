@@ -515,10 +515,15 @@ enum AppPreferences {
         static let didChangeNotification = Notification.Name("oppi.chatTopBar.didChange")
 
         /// The stored order and visibility. Both keys missing (a fresh install,
-        /// or one that never opened the setting) falls back to the default bar:
-        /// Files, Git, Outline, and Context in that order. A saved layout keeps
-        /// what it shows; an action added after it was saved (Git) joins its
-        /// … menu. A hidden-everything choice stores an empty list, not nothing.
+        /// or one that never changed the setting) falls back to the default bar:
+        /// the context ring alone, the rest in the menu. Only `setLayout` writes
+        /// the keys, and only the Top Bar page's switches and drags call it, so a
+        /// stored layout is always a choice someone made.
+        ///
+        /// A saved layout is used as saved, even one saved when the default
+        /// showed more. An action added after it was saved (Git) is appended to
+        /// its order and not shown, so it is offered in the … menu.
+        /// A hidden-everything choice stores an empty list, not nothing.
         static var layout: ChatTopBarLayout { layout(in: .standard) }
 
         static func layout(in defaults: UserDefaults) -> ChatTopBarLayout {
@@ -539,8 +544,8 @@ enum AppPreferences {
             NotificationCenter.default.post(name: didChangeNotification, object: nil)
         }
 
-        /// Forgets the saved layout, so the bar is back to Files, Git, Outline,
-        /// and Context. The screenshot harness calls this for
+        /// Forgets the saved layout, so the bar is back to the default (the
+        /// ring alone). The screenshot harness calls this for
         /// `SCREENSHOT_RESET_TOP_BAR=1`, which is how a UI test that writes the
         /// layout leaves the device as it found it.
         static func reset(in defaults: UserDefaults) {

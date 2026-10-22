@@ -46,7 +46,7 @@ Which host: Oppi matches the workspace's server host against the saved SSH hosts
 
 A folder terminal is its own terminal, kept while it is connected like any other: leaving the workspace or chat keeps it, tapping Terminal there again returns to the same shell. Oppi keeps one terminal per saved host and folder, so the same host can have its own terminal plus one per folder. In Herdr the folder opens in the host's own terminal rather than a second one, so there is one Herdr client per host and it shows whichever folder you last asked for. Editing or deleting the host ends them, and so does the background grace.
 
-In a chat, the top bar shows the buttons chosen in Settings → **Chat** → **Top Bar**: **Files**, **Git**, **Outline**, **Context** (the usage ring), and **Terminal**, each one on or off and in the chosen order, with **…** always last; **Customize Top Bar…** in that menu opens the same page. **Terminal** is one of the buttons you choose there, and it is offered in a chat whose workspace has a folder on the server; a button the chat cannot offer is not shown at all.
+In a chat, the top bar shows the buttons chosen in Settings → **Chat** → **Top Bar**: **Files**, **Git**, **Outline**, **Context** (the usage ring), and **Terminal**, each one on or off and in the chosen order, with **…** always last. The default shows only Context, with **Terminal** (like Files, Git, and Outline) in the **…** menu next to **Customize Top Bar…**. **Terminal** is one of the buttons you choose there, and it is offered in a chat whose workspace has a folder on the server; a button the chat cannot offer is not shown at all.
 
 ## Font and icons
 

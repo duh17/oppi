@@ -12,6 +12,9 @@ final class FeatureEducationTipsPreviewE2ETests: XCTestCase {
     private struct P0TipCase {
         let id: String
         let expectedMessage: String
+        /// The preview that shows the tip's surface: the P0 gallery, or for a
+        /// tip about the chat's own bar, the production chat.
+        var screen = "feature-tip-p0"
     }
 
     private static let p0TipCases = [
@@ -21,6 +24,11 @@ final class FeatureEducationTipsPreviewE2ETests: XCTestCase {
         P0TipCase(id: "prompt", expectedMessage: "Pick an option or type a response"),
         P0TipCase(id: "busy-send", expectedMessage: "Use Steer for this turn"),
         P0TipCase(id: "review-selection", expectedMessage: "Select text, then tap Comment"),
+        P0TipCase(
+            id: "top-bar-more",
+            expectedMessage: "Files, Git, and more are in the",
+            screen: "chat-top-bar-default"
+        ),
     ]
 
     private static let tipIDs = [
@@ -30,6 +38,7 @@ final class FeatureEducationTipsPreviewE2ETests: XCTestCase {
         "answer-inline-asks-and-extension-prompts",
         "steer-vs-follow-up-while-busy",
         "select-text-for-review-comments",
+        "chat-top-bar-more-tools",
         "context-bar-multi-select-and-drag-select",
         "message-queue-review-and-editing",
         "session-outline-tree",
@@ -59,10 +68,10 @@ final class FeatureEducationTipsPreviewE2ETests: XCTestCase {
     func testFeatureEducationTipsCatalogVideo() throws {
         launchPreview(screen: "feature-tips")
 
-        XCTAssertEqual(Self.tipIDs.count, 23, "The fixture should cover every app-behavior tip candidate")
+        XCTAssertEqual(Self.tipIDs.count, 24, "The fixture should cover every app-behavior tip candidate")
         XCTAssertTrue(app.staticTexts["Feature education tips"].waitForExistence(timeout: 5), "Feature tip catalogue title missing")
         XCTAssertTrue(app.staticTexts["feature-tips.total"].waitForExistence(timeout: 5), "Feature tip count missing")
-        XCTAssertEqual(app.staticTexts["feature-tips.total"].label, "23 tips covered")
+        XCTAssertEqual(app.staticTexts["feature-tips.total"].label, "24 tips covered")
 
         let catalog = app.scrollViews["feature-tips.catalog"]
         XCTAssertTrue(catalog.waitForExistence(timeout: 5), "Feature tip catalogue scroll view missing")
@@ -82,7 +91,7 @@ final class FeatureEducationTipsPreviewE2ETests: XCTestCase {
 
     func testP0FeatureEducationTipsAreWiredIntoHiddenGestureSurfaces() throws {
         for tipCase in Self.p0TipCases {
-            launchPreview(screen: "feature-tip-p0", p0Case: tipCase.id, forceTips: true)
+            launchPreview(screen: tipCase.screen, p0Case: tipCase.id, forceTips: true)
 
             XCTAssertTrue(
                 waitForTip(case: tipCase, timeout: 8),
@@ -108,8 +117,11 @@ final class FeatureEducationTipsPreviewE2ETests: XCTestCase {
         }
         app.launch()
 
-        let ready = app.descendants(matching: .any)["screenshot.ready"]
-        XCTAssertTrue(ready.waitForExistence(timeout: 8), "Feature tip preview did not become ready")
+        // The production chat has no `screenshot.ready` marker; its bar is.
+        let ready = screen == "chat-top-bar-default"
+            ? app.buttons["chat.toolbar.context"]
+            : app.descendants(matching: .any)["screenshot.ready"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 15), "Feature tip preview did not become ready")
     }
 
     private func waitForTip(case tipCase: P0TipCase, timeout: TimeInterval) -> Bool {

@@ -3,23 +3,45 @@ import Testing
 @testable import Oppi
 
 /// The chat top bar's buttons: which ones the bar shows, the order they and the
-/// … menu read in, and what happens when one cannot be offered right now.
+/// overflow menu read in, and what happens when one cannot be offered right now.
 @Suite("Chat top bar layout")
 struct ChatTopBarLayoutTests {
     private let everything = Set(ChatTopBarAction.allCases)
+    private let allShown = ChatTopBarLayout(order: ChatTopBarAction.allCases, shown: Set(ChatTopBarAction.allCases))
 
-    @Test func theDefaultBarShowsFilesGitOutlineAndContext() {
+    @Test func theDefaultBarShowsOnlyTheContextRing() {
         let layout = ChatTopBarLayout.defaultValue
         #expect(layout.order == [.files, .git, .outline, .context, .terminal])
-        #expect(layout.bar(available: everything) == [.files, .git, .outline, .context])
-        // Terminal is the one … menu item: it is offered, just not shown.
-        #expect(layout.menu(available: everything) == [.terminal])
+        #expect(layout.bar(available: everything) == [.context])
+        // Everything else is in the menu, in the order a pinned button takes.
+        #expect(layout.menu(available: everything) == [.files, .git, .outline, .terminal])
         #expect(layout.storedOrder == ["files", "git", "outline", "context", "terminal"])
-        #expect(layout.storedShown == ["files", "git", "outline", "context"])
+        #expect(layout.storedShown == ["context"])
+        #expect(layout.isDefault)
+        // Pinning Files puts it before the ring, where the order has it, and the
+        // bar is no longer the default one.
+        let pinned = layout.setting(.files, shown: true)
+        #expect(pinned.bar(available: everything) == [.files, .context])
+        #expect(!pinned.isDefault)
+    }
+
+    /// Nothing saved reads as the new default; a saved layout keeps exactly its
+    /// buttons, including the old default bar someone saved by using the Top
+    /// Bar page before the default changed.
+    @Test func aSavedLayoutKeepsItsButtonsWhileAnUnsavedOneGetsTheNewDefault() {
+        let defaults = UserDefaults(suiteName: "ChatTopBarLayoutTests.\(UUID().uuidString)")!
+        #expect(AppPreferences.ChatTopBar.layout(in: defaults).bar(available: everything) == [.context])
+
+        defaults.set(["files", "git", "outline", "context", "terminal"], forKey: AppPreferences.ChatTopBar.orderKey)
+        defaults.set(["files", "git", "outline", "context"], forKey: AppPreferences.ChatTopBar.shownKey)
+        let saved = AppPreferences.ChatTopBar.layout(in: defaults)
+        #expect(saved.bar(available: everything) == [.files, .git, .outline, .context])
+        #expect(saved.menu(available: everything) == [.terminal])
+        #expect(!saved.isDefault)
     }
 
     /// Someone who saved a layout before Git existed keeps the bar they chose;
-    /// Git joins the end of their order, hidden, so the … menu offers it.
+    /// Git joins the end of their order, hidden, so the menu offers it.
     @Test func aLayoutSavedBeforeGitKeepsItsBarAndOffersGitInTheMenu() {
         let saved = ChatTopBarLayout(
             storedOrder: ["terminal", "files", "outline", "context"],
@@ -32,18 +54,17 @@ struct ChatTopBarLayoutTests {
     }
 
     @Test func everyButtonCanBeHiddenAndShownAgain() {
-        let all = ChatTopBarLayout.defaultValue.setting(.terminal, shown: true)
-        #expect(all.bar(available: everything) == [.files, .git, .outline, .context, .terminal])
-        #expect(all.menu(available: everything) == [])
+        #expect(allShown.bar(available: everything) == [.files, .git, .outline, .context, .terminal])
+        #expect(allShown.menu(available: everything) == [])
 
         // Hiding one button moves it to the menu and leaves the bar's order.
-        let withoutOutline = all.setting(.outline, shown: false)
+        let withoutOutline = allShown.setting(.outline, shown: false)
         #expect(withoutOutline.bar(available: everything) == [.files, .git, .context, .terminal])
         #expect(withoutOutline.menu(available: everything) == [.outline])
         // Its place in the order survives, so showing it again restores the bar.
-        #expect(withoutOutline.setting(.outline, shown: true) == all)
+        #expect(withoutOutline.setting(.outline, shown: true) == allShown)
 
-        let none = all.setting(.files, shown: false)
+        let none = allShown.setting(.files, shown: false)
             .setting(.git, shown: false)
             .setting(.outline, shown: false)
             .setting(.context, shown: false)
@@ -72,10 +93,6 @@ struct ChatTopBarLayoutTests {
     @MainActor @Test func anActionTheChatCannotOfferLeavesTheBarShortRatherThanBorrowing() {
         // A chat with no workspace has no files, no Git, and no folder to open a
         // terminal in; its ring and its outline timeline are still there.
-        let allShown = ChatTopBarLayout(
-            order: ChatTopBarAction.allCases,
-            shown: Set(ChatTopBarAction.allCases)
-        )
         let available = ChatBarItems.availableActions(
             hasWorkspace: false, gitAvailable: true, showsOutline: true, hasTerminalFolder: true
         )
@@ -117,14 +134,32 @@ struct ChatTopBarLayoutTests {
         #expect(withoutGit == [.files, .context])
     }
 
+    /// A menu item keeps its details on the label's line, after it, so the
+    /// icon stays beside the label; Git's details are short enough not to
+    /// wrap on an iPhone and leave out what is zero.
+    @MainActor @Test func aMenuItemCarriesItsGlanceAfterTheLabel() {
+        #expect(ChatBarItems.menuTitle("Context", detail: "0.8%") == "Context  0.8%")
+        #expect(ChatBarItems.menuTitle("Outline", detail: nil) == "Outline")
+        #expect(
+            ChatBarItems.gitMenuDetail(changedFiles: 3, added: 12, removed: 4, ahead: 2, behind: 1)
+                == "+12 \u{2212}4  \u{2191}2 \u{2193}1"
+        )
+        #expect(ChatBarItems.gitMenuDetail(changedFiles: 0, added: 0, removed: 0, ahead: 2, behind: 0) == "\u{2191}2")
+        #expect(ChatBarItems.gitMenuDetail(changedFiles: 1, added: 0, removed: 5, ahead: nil, behind: nil) == "\u{2212}5")
+        // Changes without line counts (new binary files) still say how many.
+        #expect(ChatBarItems.gitMenuDetail(changedFiles: 2, added: 0, removed: 0, ahead: nil, behind: 3) == "2 changed  \u{2193}3")
+        // A clean branch even with its upstream has nothing to add.
+        #expect(ChatBarItems.gitMenuDetail(changedFiles: 0, added: 0, removed: 0, ahead: 0, behind: nil) == nil)
+    }
+
     @Test func aHiddenActionStaysOutOfTheMenuWhileItCannotBeOffered() {
         // Terminal hidden and no folder a shell can start in: not in the bar,
         // not in the menu, and back in the menu at its own place when the chat
         // has a usable folder again.
         let layout = ChatTopBarLayout.defaultValue
         let withoutTerminal: Set<ChatTopBarAction> = [.files, .git, .outline, .context]
-        #expect(layout.menu(available: withoutTerminal) == [])
-        #expect(layout.menu(available: everything) == [.terminal])
+        #expect(layout.menu(available: withoutTerminal) == [.files, .git, .outline])
+        #expect(layout.menu(available: everything) == [.files, .git, .outline, .terminal])
     }
 
     @Test func theLayoutIsStoredOnThisDeviceAndAnnouncesOneChange() {

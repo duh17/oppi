@@ -150,6 +150,12 @@ final class FeatureEducationTipBannerView: UIView {
         CGSize(width: UIView.noIntrinsicMetric, height: Self.preferredHeight)
     }
 
+    /// The most lines the message takes; 0 is as many as it needs (a host
+    /// that sizes the banner to its message).
+    var messageLineLimit = 2 {
+        didSet { messageLabel.numberOfLines = messageLineLimit }
+    }
+
     func configure(descriptor: FeatureEducationTipDescriptor, onClose: (() -> Void)?) {
         applyThemeColors()
         iconView.image = UIImage(systemName: descriptor.systemImageName)
@@ -381,20 +387,27 @@ final class FeatureEducationTipHostView: UIView {
     private var revisionObserver: AnyCancellable?
     private var shouldDisplay = false
     private var isPresented = false
+    private let fitsMessage: Bool
+    private var measuredWidth: CGFloat = 0
 
     /// `ownsHeight` pins this view's height to `reservedHeight`; a host whose
     /// container sizes the slot from `reservedHeight` passes false.
     /// `coordinator` is the shared one except in tests, which isolate their claims.
+    /// `fitsMessage` grows the banner past its standard height so a message
+    /// too long for one line at this width shows its second line instead of
+    /// being cut off (only a host that owns its height can use it).
     init<TipType: Tip>(
         tip: TipType,
         descriptor: FeatureEducationTipDescriptor,
         insets: NSDirectionalEdgeInsets,
         ownsHeight: Bool = true,
-        coordinator: FeatureEducationTipPresentationCoordinator = .shared
+        coordinator: FeatureEducationTipPresentationCoordinator = .shared,
+        fitsMessage: Bool = false
     ) {
         self.coordinator = coordinator
         self.descriptor = descriptor
         self.insets = insets
+        self.fitsMessage = fitsMessage && ownsHeight
         invalidateTip = { tip.invalidate(reason: .tipClosed) }
         observeTip = { update in
             Task { @MainActor in
@@ -407,13 +420,19 @@ final class FeatureEducationTipHostView: UIView {
         }
         super.init(frame: .zero)
         clipsToBounds = true
+        if self.fitsMessage {
+            // The banner grows with the message, so it never truncates it.
+            banner.messageLineLimit = 0
+        }
         banner.translatesAutoresizingMaskIntoConstraints = false
         addSubview(banner)
         NSLayoutConstraint.activate([
             banner.leadingAnchor.constraint(equalTo: leadingAnchor, constant: insets.leading),
             banner.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -insets.trailing),
             banner.topAnchor.constraint(equalTo: topAnchor, constant: insets.top),
-            banner.heightAnchor.constraint(equalToConstant: FeatureEducationTipBannerView.preferredHeight),
+            self.fitsMessage
+                ? banner.heightAnchor.constraint(greaterThanOrEqualToConstant: FeatureEducationTipBannerView.preferredHeight)
+                : banner.heightAnchor.constraint(equalToConstant: FeatureEducationTipBannerView.preferredHeight),
         ])
         if ownsHeight {
             let height = heightAnchor.constraint(equalToConstant: 0)
@@ -492,10 +511,33 @@ final class FeatureEducationTipHostView: UIView {
         applyHeight()
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // A fitted banner's height depends on the width it has.
+        guard fitsMessage, isPresented, abs(bounds.width - measuredWidth) > 0.5 else { return }
+        applyHeight()
+    }
+
+    /// The banner's height in a host `width` wide: the standard height, or
+    /// for `fitsMessage` whatever its message needs, never less.
+    private func fittedBannerHeight(width hostWidth: CGFloat) -> CGFloat {
+        let standard = FeatureEducationTipBannerView.preferredHeight
+        guard fitsMessage else { return standard }
+        let width = hostWidth - insets.leading - insets.trailing
+        guard width > 0 else { return standard }
+        let fitted = banner.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        return max(standard, ceil(fitted))
+    }
+
     private func applyHeight() {
         banner.isHidden = !isPresented
+        measuredWidth = bounds.width
         let next: CGFloat = isPresented
-            ? FeatureEducationTipBannerView.preferredHeight + insets.top + insets.bottom
+            ? fittedBannerHeight(width: bounds.width) + insets.top + insets.bottom
             : 0
         isHidden = next <= 0
         guard reservedHeight != next else { return }

@@ -9,7 +9,7 @@ import UIKit
 /// The choice is Settings → Chat → Top Bar (`ChatTopBarLayout`): one device-wide
 /// setting, the same for every chat, not a per-chat decision. An action this
 /// session cannot offer (Files, Git, and Terminal without a workspace, Outline on an
-/// empty timeline, Terminal while the experiment is off) leaves no control at
+/// empty timeline, Terminal without a folder a shell can start in) leaves no control at
 /// all, and no menu item either: what the user chose is what the bar shows, and
 /// the … menu never offers a button that could only fail.
 ///
@@ -324,7 +324,11 @@ final class ChatBarItems {
         let hidden = UIDeferredMenuElement.uncached { [weak self] completion in
             // The menu asks on the main thread; `assumeIsolated` keeps the call
             // to the bar's state a main-actor one either way.
-            MainActor.assumeIsolated { completion(self?.hiddenTopBarItems() ?? []) }
+            MainActor.assumeIsolated {
+                // Opening the menu is finding the tools the hint points at.
+                FeatureEducationTips.markTopBarMoreToolsFound()
+                completion(self?.hiddenTopBarItems() ?? [])
+            }
         }
         let customize = UIAction(
             title: String(localized: "Customize Top Bar…"),
@@ -345,20 +349,61 @@ final class ChatBarItems {
         let filesOpen = chat.model.isFilePanelVisible
         let items = AppPreferences.ChatTopBar.layout.menu(available: available).map { action in
             let item = UIAction(
-                title: action.menuTitle(filesOpen: filesOpen),
+                title: Self.menuTitle(action.menuTitle(filesOpen: filesOpen), detail: menuDetail(for: action, chat: chat)),
                 // The menu sizes unconfigured symbols itself; `nil` gives it
                 // those, and the Git logo at the size it draws them.
                 image: action.image(textStyle: nil)
             ) { [weak self] _ in self?.chat?.runTopBarAction(action) }
             item.accessibilityIdentifier = action.menuIdentifier
-            // The ring's number is the reason to open the panel; the menu keeps
-            // it visible without a bar position.
-            if action == .context {
-                item.subtitle = chat.contextUsageSnapshot.percentText
-            }
             return item
         }
         return items.isEmpty ? [] : [UIMenu(options: .displayInline, children: items)]
+    }
+
+    /// What a hidden action's button would have shown at a glance, for the
+    /// menu: the ring's usage, and Git's changes and upstream counts.
+    private func menuDetail(for action: ChatTopBarAction, chat: ChatViewController) -> String? {
+        switch action {
+        case .context:
+            chat.contextUsageSnapshot.progress == nil ? nil : chat.contextUsageSnapshot.percentText
+        case .git:
+            chat.gitMenuDetail
+        case .files, .outline, .terminal:
+            nil
+        }
+    }
+
+    /// A menu item's one line: the label, then its details after it. A
+    /// subtitle would put them on a second line, and the menu then centers
+    /// the icon between the two lines instead of beside the label.
+    static func menuTitle(_ label: String, detail: String?) -> String {
+        guard let detail, !detail.isEmpty else { return label }
+        return "\(label)  \(detail)"
+    }
+
+    /// The lines the changed files added and removed (or, for changes with no
+    /// line counts, how many files changed), then the commits ahead of and
+    /// behind the upstream (arrows, as in the panel's header), each left out
+    /// when it is zero or unknown. Nil when all are. Short on purpose: an
+    /// iPhone menu wraps a title past about 18 characters, and a wrapped title
+    /// leaves the icon between its lines instead of beside the label.
+    static func gitMenuDetail(changedFiles: Int, added: Int, removed: Int, ahead: Int?, behind: Int?) -> String? {
+        var parts: [String] = []
+        let lines = [
+            added > 0 ? "+\(SessionFormatting.compactCount(added))" : nil,
+            removed > 0 ? "\u{2212}\(SessionFormatting.compactCount(removed))" : nil,
+        ].compactMap { $0 }
+        if !lines.isEmpty {
+            parts.append(lines.joined(separator: " "))
+        } else if changedFiles > 0 {
+            parts.append(String(localized: "\(SessionFormatting.compactCount(changedFiles)) changed"))
+        }
+        let upstream = [
+            (ahead ?? 0) > 0 ? "\u{2191}\(SessionFormatting.compactCount(ahead ?? 0))" : nil,
+            (behind ?? 0) > 0 ? "\u{2193}\(SessionFormatting.compactCount(behind ?? 0))" : nil,
+        ].compactMap { $0 }
+        if !upstream.isEmpty { parts.append(upstream.joined(separator: " ")) }
+        return parts.isEmpty ? nil : parts.joined(separator: "  ")
     }
 
     private static func barButton(
@@ -756,6 +801,23 @@ extension ChatViewController {
     /// customized stays one Back away.
     func customizeTopBar() {
         Router.push(SettingsChatTopBarViewController(), from: self)
+    }
+
+    /// The one-time "Chat tools are in the menu" hint shows under the bar of a chat on screen
+    /// that is on the default bar (only the ring) and has a workspace, so the
+    /// tools it names are there to find. A bar someone customized does not
+    /// need it. The coordinator decides whether it is this hint's turn among
+    /// the chat's tips, and shows each tip once.
+    func updateTopBarTip() {
+        let eligible = hasAppeared
+            && viewIfLoaded?.window != nil
+            && session?.workspaceId != nil
+            && AppPreferences.ChatTopBar.layout.isDefault
+        if eligible {
+            topBarTip.start()
+        } else {
+            topBarTip.stop()
+        }
     }
 
     /// Whether this chat has a folder a folder terminal can start in: the

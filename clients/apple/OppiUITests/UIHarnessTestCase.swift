@@ -1,5 +1,15 @@
 import XCTest
 
+/// Launch arguments that pin the chat top bar to Files, Git, Outline, and
+/// Context, for tests about those panels rather than the default bar (which
+/// shows only Context). The argument domain holds them for that launch only.
+enum ChatTopBarTestLayout {
+    static let panelButtons = [
+        "-dev.chenda.Oppi.chatDisplay.topBarOrder", "(files, git, outline, context, terminal)",
+        "-dev.chenda.Oppi.chatDisplay.topBarShown", "(files, git, outline, context)",
+    ]
+}
+
 @MainActor
 class UIHarnessTestCase: XCTestCase {
     var app: XCUIApplication!

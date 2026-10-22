@@ -71,6 +71,15 @@ struct FeatureEducationTipsPreview: View {
             stories: "IOS-042, IOS-050"
         ),
         FeatureEducationTipPreviewItem(
+            id: "chat-top-bar-more-tools",
+            priority: "P0",
+            title: FeatureEducationTips.topBarMoreTools.title,
+            message: FeatureEducationTips.topBarMoreTools.message,
+            trigger: "A chat on the default top bar (the context ring alone) with a workspace",
+            completion: "The top bar's menu or Customize Top Bar opened",
+            stories: "Chat top bar"
+        ),
+        FeatureEducationTipPreviewItem(
             id: "context-bar-multi-select-and-drag-select",
             priority: "P1",
             title: "Select files quickly",

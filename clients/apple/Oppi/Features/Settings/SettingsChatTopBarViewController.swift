@@ -32,6 +32,9 @@ final class SettingsChatTopBarViewController: UIViewController, UICollectionView
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // The chat's "Chat tools are in the menu" hint points here; reaching
+        // the page is done.
+        FeatureEducationTips.markTopBarMoreToolsFound()
         collectionView.delegate = self
         collectionView.isEditing = true
         collectionView.accessibilityIdentifier = "settings.chat.topBar.list"

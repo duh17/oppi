@@ -94,7 +94,16 @@ extension ChatViewController {
         jump.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(jump)
 
+        // Under the bar, so it reads as being about the bar's menu. The
+        // timeline's top inset makes room for it while it shows.
+        topBarTip.translatesAutoresizingMaskIntoConstraints = false
+        topBarTip.onHeightChange = { [weak self] in self?.view.setNeedsLayout() }
+        view.addSubview(topBarTip)
+
         NSLayoutConstraint.activate([
+            topBarTip.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBarTip.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            topBarTip.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             jump.widthAnchor.constraint(equalToConstant: Self.jumpToBottomSlotSize),
             jump.heightAnchor.constraint(equalToConstant: Self.jumpToBottomSlotSize),
             jump.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -27),
@@ -147,6 +156,8 @@ extension ChatViewController {
         appearIfNeeded(animated: animated)
         // Modals asked for while the chat was off screen present now.
         modals.sync()
+        // In the window now, which `viewWillAppear` cannot promise.
+        updateTopBarTip()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -161,8 +172,11 @@ extension ChatViewController {
         super.viewDidLayoutSubviews()
         guard let timelineView else { return }
         // Measured in window coordinates from the two frames, never from an
-        // inset: it covers the bar down to the top of the safe area.
-        let headerFrame = CGRect(x: 0, y: view.safeAreaInsets.top, width: view.bounds.width, height: 0)
+        // inset: it covers the bar down to the top of the safe area, and the
+        // top bar hint under it while that shows.
+        let headerFrame = CGRect(
+            x: 0, y: view.safeAreaInsets.top, width: view.bounds.width, height: topBarTip.reservedHeight
+        )
         let top = ChatTimelineChromeOverlap.topInset(
             timelineFrame: timelineView.convert(timelineView.bounds, to: nil),
             headerFrame: view.convert(headerFrame, to: nil)
@@ -191,6 +205,7 @@ extension ChatViewController {
         updateTimelineChrome()
         composer.view.isHidden = isStopped
         barItems.update()
+        updateTopBarTip()
         updateSidePanels()
         updateModals()
         canvasAnchor.destination = canvasDestination
@@ -470,6 +485,9 @@ extension ChatViewController {
 
     private func handleDisappear() {
         hasAppeared = false
+        // Off screen, the hint gives its claim back; the next appearance
+        // decides again (`updateTopBarTip`).
+        topBarTip.stop()
         sessionEntryTask?.cancel()
         sessionEntryTask = nil
         let shellSwapRemount = mountedPresentation != appNavigation.workspaceNavigationPresentation

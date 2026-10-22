@@ -20,19 +20,20 @@ final class ChatRoutesUITests: XCTestCase {
 
     // MARK: - Top bar
 
-    /// The default bar: Files, Git, Outline, and the context ring, with Terminal
-    /// in the … menu. Customize Top Bar… opens the Top Bar page over the chat.
+    /// The default bar: the context ring alone, with Files, Git, Outline, and
+    /// Terminal (the harness workspace has a folder a shell can start in) in
+    /// the … menu. Customize Top
+    /// Bar… opens the Top Bar page over the chat.
     func testTopBarShowsTheDefaultButtonsAndTheRestInTheMenu() {
         // The default layout is pinned in the volatile domain, so this reads
         // the default and not whatever an earlier run saved on this simulator.
         launchScreen("chat-top-bar-default")
         dismissMicrophonePrompt()
-        let files = app.buttons["chat.toolbar.files"]
-        XCTAssertTrue(files.waitForExistence(timeout: 15), "Files is on by default")
-        XCTAssertTrue(app.buttons["chat.toolbar.git"].exists, "Git is on by default")
-        XCTAssertTrue(app.buttons["chat.toolbar.outline"].exists, "Outline is on by default")
-        XCTAssertTrue(app.buttons["chat.toolbar.context"].exists, "The context ring is on by default")
-        XCTAssertFalse(app.buttons["chat.toolbar.terminal"].exists, "Terminal is in the … menu by default")
+        let context = app.buttons["chat.toolbar.context"]
+        XCTAssertTrue(context.waitForExistence(timeout: 15), "The context ring is the default bar")
+        for id in ["files", "git", "outline", "terminal"] {
+            XCTAssertFalse(app.buttons["chat.toolbar.\(id)"].exists, "\(id) is in the menu by default, not the bar")
+        }
         attachScreenshot("chat-top-bar-default")
 
         let more = app.buttons["chat.toolbar.more"]
@@ -40,6 +41,9 @@ final class ChatRoutesUITests: XCTestCase {
         more.tap()
         let customize = app.buttons["Customize Top Bar…"]
         XCTAssertTrue(customize.waitForExistence(timeout: 5), "The … menu must offer Customize Top Bar…")
+        for id in ["files", "git", "outline", "terminal"] {
+            XCTAssertTrue(app.buttons["chat.toolbar.menu.\(id)"].exists, "The menu must offer \(id)")
+        }
         attachScreenshot("chat-top-bar-menu")
         customize.tap()
         XCTAssertTrue(app.navigationBars["Top Bar"].waitForExistence(timeout: 5), "Customize Top Bar must open the Top Bar page")
@@ -49,13 +53,63 @@ final class ChatRoutesUITests: XCTestCase {
                 "The Top Bar page must show the \(id) switch"
             )
         }
-        XCTAssertEqual(app.switches["settings.chat.topBar.files"].value as? String, "1", "Files starts on")
+        XCTAssertEqual(app.switches["settings.chat.topBar.context"].value as? String, "1", "Context starts on")
+        XCTAssertEqual(app.switches["settings.chat.topBar.files"].value as? String, "0", "Files starts in the menu")
         XCTAssertEqual(app.switches["settings.chat.topBar.terminal"].value as? String, "0", "Terminal starts off")
         XCTAssertTrue(
             app.switches["settings.chat.topBar.terminal"].isEnabled,
             "Terminal's switch works like the others"
         )
         attachScreenshot("chat-settings-top-bar")
+        assertRunning()
+    }
+
+    /// The default bar's one-time hint: it shows under the bar of a chat on the
+    /// default bar and says where the other tools went. Opening the menu is
+    /// finding them, so the hint goes and stays gone after a relaunch. The menu
+    /// keeps each item's glance on its label's line (Git's changes here).
+    func testDefaultBarHintPointsAtTheMenuUntilItIsOpened() {
+        launchScreen("chat-top-bar-default", arguments: ["--reset-feature-tips"])
+        dismissMicrophonePrompt()
+        let tip = app.descendants(matching: .any)["feature-tip.chat-top-bar-more.tip"]
+        XCTAssertTrue(tip.waitForExistence(timeout: 15), "A chat on the default bar must show the chat tools hint")
+        let message = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "Pin them to the top bar in Settings"))
+            .firstMatch
+        XCTAssertTrue(message.exists, "The hint must say where to pin the tools")
+        attachScreenshot("chat-top-bar-hint")
+
+        app.buttons["chat.toolbar.more"].tap()
+        let git = app.buttons["chat.toolbar.menu.git"]
+        XCTAssertTrue(git.waitForExistence(timeout: 5), "The menu must offer Git")
+        XCTAssertTrue(
+            git.label.hasPrefix("Git") && git.label.contains("+2"),
+            "Git's menu item must carry its changes on its line: \(git.label)"
+        )
+        attachScreenshot("chat-top-bar-menu-glance")
+        app.buttons["chat.toolbar.menu.outline"].tap()
+        let outline = app.buttons["chat.outline.close"]
+        XCTAssertTrue(outline.waitForExistence(timeout: 5), "Outline must open from the menu")
+        outline.tap()
+        XCTAssertTrue(waitForDisappearance(of: outline), "Close must close the outline")
+        XCTAssertFalse(tip.exists, "Opening the menu must retire the hint")
+
+        app.terminate()
+        launchScreen("chat-top-bar-default")
+        XCTAssertTrue(app.buttons["chat.toolbar.context"].waitForExistence(timeout: 15))
+        XCTAssertFalse(tip.waitForExistence(timeout: 3), "The hint shows once")
+        assertRunning()
+    }
+
+    /// A bar someone customized needs no hint about where its buttons went.
+    func testCustomizedBarShowsNoMenuHint() {
+        launchScreen("chat-top-bar-all", arguments: ["--reset-feature-tips"])
+        dismissMicrophonePrompt()
+        XCTAssertTrue(app.buttons["chat.toolbar.files"].waitForExistence(timeout: 15), "The all-on bar must load")
+        XCTAssertFalse(
+            app.descendants(matching: .any)["feature-tip.chat-top-bar-more.tip"].waitForExistence(timeout: 4),
+            "A customized bar must not show the chat tools hint"
+        )
         assertRunning()
     }
 
@@ -174,7 +228,7 @@ final class ChatRoutesUITests: XCTestCase {
         let row = app.buttons["settings.chat.topBar"]
         XCTAssertTrue(row.waitForExistence(timeout: 15), "The Chat settings page must show its Top Bar row")
         let summary = row.value as? String ?? ""
-        XCTAssertTrue(summary.contains("Files"), "The row must summarize the layout, not the label again: \(summary)")
+        XCTAssertTrue(summary.contains("Context"), "The row must summarize the layout, not the label again: \(summary)")
         row.tap()
         XCTAssertTrue(app.navigationBars["Top Bar"].waitForExistence(timeout: 5), "The Top Bar row must push its page")
         XCTAssertTrue(
@@ -207,13 +261,13 @@ final class ChatRoutesUITests: XCTestCase {
         }
         assertTopToBottom(rowIDs.map(row), "The Top Bar page's opening order")
         let outlineSwitch = app.switches["settings.chat.topBar.outline"]
-        XCTAssertEqual(outlineSwitch.value as? String, "1", "Outline starts on")
+        XCTAssertEqual(outlineSwitch.value as? String, "0", "Outline starts in the menu")
 
-        // A switch writes: Outline off.
+        // A switch writes: Outline pinned to the bar.
         outlineSwitch.tap()
         XCTAssertTrue(
-            waitFor((outlineSwitch.value as? String) == "0"),
-            "Turning Outline off must flip its switch"
+            waitFor((outlineSwitch.value as? String) == "1"),
+            "Pinning Outline must flip its switch"
         )
 
         // A drag writes: Terminal's handle to the top.
@@ -235,8 +289,8 @@ final class ChatRoutesUITests: XCTestCase {
         assertTopToBottom(["terminal", "files", "git", "outline", "context"].map(row), "The order after a relaunch")
         XCTAssertEqual(
             app.switches["settings.chat.topBar.outline"].value as? String,
-            "0",
-            "The hidden button must still be hidden after a relaunch"
+            "1",
+            "The pinned button must still be pinned after a relaunch"
         )
 
         // And the reset flag the test opened with is what puts the device back:
@@ -249,8 +303,8 @@ final class ChatRoutesUITests: XCTestCase {
         assertTopToBottom(rowIDs.map(row), "The order after a reset")
         XCTAssertEqual(
             app.switches["settings.chat.topBar.outline"].value as? String,
-            "1",
-            "The reset must show the hidden button again"
+            "0",
+            "The reset must put the pinned button back in the menu"
         )
         assertRunning()
     }
@@ -1135,9 +1189,9 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["chat.toolbar.context"].waitForExistence(timeout: 15), "Chat routes harness did not appear")
     }
 
-    private func launchScreen(_ screen: String, environment: [String: String] = [:]) {
+    private func launchScreen(_ screen: String, environment: [String: String] = [:], arguments: [String] = []) {
         app = XCUIApplication()
-        app.launchArguments += ["--screenshot-preview", "-ApplePersistenceIgnoreState", "YES"]
+        app.launchArguments += ["--screenshot-preview", "-ApplePersistenceIgnoreState", "YES"] + arguments
         app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
         for (key, value) in environment {
             app.launchEnvironment[key] = value

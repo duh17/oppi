@@ -132,12 +132,18 @@ struct ChatTopBarLayout: Hashable {
     /// The actions the bar draws. The rest are in the … menu.
     private(set) var shown: Set<ChatTopBarAction>
 
-    /// Files, Git, Outline, and Context, with Terminal one … menu away. A layout
-    /// saved before Git existed keeps the bar it shows: `init` appends Git to
-    /// its order, and because Git is not in the saved `shown`, it is offered in
-    /// the … menu.
-    static let defaultShown: Set<ChatTopBarAction> = [.files, .git, .outline, .context]
+    /// The bar without a saved choice: Context (the ring) alone, with Files,
+    /// Git, Outline, and Terminal in the menu (Terminal where the workspace has
+    /// a folder a shell can start in). The order is still every action, so a
+    /// button someone pins lands in a sensible place. A saved layout is used
+    /// exactly as saved; an action added after it was saved (Git) is appended
+    /// to its order and, not being in its `shown`, offered in the menu.
+    static let defaultShown: Set<ChatTopBarAction> = [.context]
     static let defaultValue = ChatTopBarLayout(order: ChatTopBarAction.allCases, shown: defaultShown)
+
+    /// The bar someone gets without choosing one, so the one-time "Chat tools
+    /// are in the menu" hint is for them and not for a bar they built.
+    var isDefault: Bool { self == Self.defaultValue }
 
     /// A stored order missing an action, or naming one twice, still covers every
     /// action exactly once: the rest follow in `ChatTopBarAction` order.

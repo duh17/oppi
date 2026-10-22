@@ -89,6 +89,26 @@ extension ChatViewController {
     /// files the panel lists when it opens (the session's own in the main
     /// checkout, every change in the session's worktree). Nil outside Git.
     var gitBarSummary: (branch: String?, changedFiles: Int)? {
+        gitGlance.map { ($0.status.branch, $0.changedFiles) }
+    }
+
+    /// The Git item's details in the menu, after its label: the changed-file
+    /// count the button shows, the lines those files changed, and the commits
+    /// the branch is ahead of and behind its upstream. Nil outside Git.
+    var gitMenuDetail: String? {
+        guard let glance = gitGlance else { return nil }
+        return ChatBarItems.gitMenuDetail(
+            changedFiles: glance.changedFiles,
+            added: glance.added,
+            removed: glance.removed,
+            ahead: glance.status.ahead,
+            behind: glance.status.behind
+        )
+    }
+
+    /// The Git status and the counts the panel opens with, scoped the way the
+    /// panel scopes them (`ContextBarScoping`, This session).
+    private var gitGlance: (status: GitStatus, changedFiles: Int, added: Int, removed: Int)? {
         guard let gitStatus = connection.gitStatusStore.gitStatus, gitStatus.isGitRepo else { return nil }
         let session = session
         let filters = ContextBarScoping.filtersToSession(
@@ -99,8 +119,12 @@ extension ChatViewController {
         let scope = filters
             ? ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: session?.changeStats?.changedFiles)
             : nil
-        let count = ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope)
-        return (gitStatus.branch, count)
+        return (
+            gitStatus,
+            ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope),
+            ContextBarScoping.displayAddedLines(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope),
+            ContextBarScoping.displayRemovedLines(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope)
+        )
     }
 
     /// The Files panel (UIKit), as a sheet or in the trailing column. It

@@ -1,5 +1,16 @@
 import XCTest
 
+/// Launch arguments that pin the chat top bar to Files, Git, Outline, and
+/// Context. These journeys open panels from the bar and use its Files button
+/// as the sign that a chat is on screen; the default bar shows only Context.
+/// The argument domain holds them for that launch only.
+enum ChatTopBarTestLayout {
+    static let panelButtons = [
+        "-dev.chenda.Oppi.chatDisplay.topBarOrder", "(files, git, outline, context, terminal)",
+        "-dev.chenda.Oppi.chatDisplay.topBarShown", "(files, git, outline, context)",
+    ]
+}
+
 struct E2ELifecycleDiagnosticSnapshot: Equatable {
     let sequence: Int
     let phase: String
@@ -191,7 +202,7 @@ class E2ETestCase: XCTestCase {
             "YES",
             "-dev.chenda.Oppi.browser.linkOpeningMode",
             "inApp",
-        ]
+        ] + ChatTopBarTestLayout.panelButtons
         application.launchEnvironment["PI_E2E_INVITE_URL"] = inviteURL
         // Beat a leftover runner/SIMCTL invite. Offline two-server tests already
         // documented that the UI runner does not inherit the host env.

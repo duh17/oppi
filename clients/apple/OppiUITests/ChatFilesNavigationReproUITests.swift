@@ -113,7 +113,7 @@ final class ChatFilesNavigationReproUITests: XCTestCase {
             "--nav-chrome-profile",
             "--nav-chrome-chat-files-repro",
             "--nav-chrome-chat-files-real-chat",
-        ] + extraArguments
+        ] + ChatTopBarTestLayout.panelButtons + extraArguments
         app.launchEnvironment["PI_NAV_CHROME_CHAT_FILES_REPRO"] = "1"
         app.launchEnvironment["PI_NAV_CHROME_CHAT_FILES_REAL_CHAT"] = "1"
         for (key, value) in extraEnvironment {

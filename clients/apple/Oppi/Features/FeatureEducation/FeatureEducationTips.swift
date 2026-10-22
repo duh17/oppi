@@ -74,6 +74,18 @@ enum FeatureEducationTips {
         systemImageName: "text.bubble"
     )
 
+    /// The chat's default bar shows only the context ring; this points at the
+    /// menu that holds the rest. It names Files, which every chat with a workspace
+    /// offers, and Git, offered in a Git workspace; Terminal is left out because it
+    /// needs a folder a shell can start in. It calls the button by its three dots and
+    /// never ends a line on an ellipsis.
+    static let topBarMoreTools = FeatureEducationTipDescriptor(
+        id: "chat-top-bar-more",
+        title: "Chat tools are in the menu",
+        message: "Files, Git, and more are in the \u{2022}\u{2022}\u{2022} menu. Pin them to the top bar in Settings \u{2192} Chat \u{2192} Top Bar.",
+        systemImageName: "ellipsis.circle"
+    )
+
 #if DEBUG
     static let p0TipTypes: [any Tip.Type] = [
         OpenToolDetailsTip.self,
@@ -82,6 +94,7 @@ enum FeatureEducationTips {
         AnswerPromptTip.self,
         BusySendModeTip.self,
         ReviewCommentSelectionTip.self,
+        TopBarMoreToolsTip.self,
     ]
 #endif
 
@@ -113,6 +126,13 @@ enum FeatureEducationTips {
     static func markBusySendModeUsed() {
         BusySendModeTip().invalidate(reason: .actionPerformed)
         FeatureEducationTipPresentationCoordinator.shared.markCompleted(tipID: busySendMode.id)
+    }
+
+    /// The top bar's menu opened, or Customize Top Bar: the person found the tools.
+    @MainActor
+    static func markTopBarMoreToolsFound() {
+        TopBarMoreToolsTip().invalidate(reason: .actionPerformed)
+        FeatureEducationTipPresentationCoordinator.shared.markCompleted(tipID: topBarMoreTools.id)
     }
 
     @MainActor
@@ -153,6 +173,13 @@ enum FeatureEducationTips {
         var title: Text { Text(FeatureEducationTips.busySendMode.title) }
         var message: Text? { Text(FeatureEducationTips.busySendMode.message) }
         var image: Image? { Image(systemName: FeatureEducationTips.busySendMode.systemImageName) }
+        var options: [any TipOption] { MaxDisplayCount(1) }
+    }
+
+    struct TopBarMoreToolsTip: Tip {
+        var title: Text { Text(FeatureEducationTips.topBarMoreTools.title) }
+        var message: Text? { Text(FeatureEducationTips.topBarMoreTools.message) }
+        var image: Image? { Image(systemName: FeatureEducationTips.topBarMoreTools.systemImageName) }
         var options: [any TipOption] { MaxDisplayCount(1) }
     }
 

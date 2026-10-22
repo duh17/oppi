@@ -125,6 +125,15 @@ final class ChatViewController: UIViewController {
     var timelineView: UICollectionView?
     let composer = ChatComposerOwner()
     let footerStack = UIStackView()
+    /// The one-time "Chat tools are in the menu" hint under the bar, for a chat on the
+    /// default bar (`updateTopBarTip`).
+    let topBarTip = FeatureEducationTipHostView(
+        tip: FeatureEducationTips.TopBarMoreToolsTip(),
+        descriptor: FeatureEducationTips.topBarMoreTools,
+        insets: NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12),
+        // The message names four tools and a settings path: two lines on a phone.
+        fitsMessage: true
+    )
     /// Set once the footer rows, title, and jump hint are installed.
     var footerAbove: ChatFooterAboveView?
     let canvasAnchor = ComposerCanvasDestinationAnchorController()

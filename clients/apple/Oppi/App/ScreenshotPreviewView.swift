@@ -733,14 +733,16 @@ private struct AudioFilePlayerScreenshotPreview: View {
 }
 
 /// `SCREENSHOT_SCREEN=chat-routes` / `chat-top-bar`: the production chat over
-/// the `chat-routes` fixtures with the default top bar pinned in the argument
-/// domain, so a layout saved on this simulator cannot change what these screens
-/// show.
+/// the `chat-routes` fixtures with Files, Git, Outline, and Context pinned in
+/// the argument domain. These screens are about the panels the bar opens, not
+/// the default bar (`chat-top-bar-default`), and a layout saved on this
+/// simulator cannot change what they show.
 private struct ChatRoutesHarnessPreview: View {
     init() {
+        let layout = ChatTopBarLayout(order: ChatTopBarAction.allCases, shown: [.files, .git, .outline, .context])
         ScreenshotVolatileDefaults.apply([
-            AppPreferences.ChatTopBar.orderKey: ChatTopBarLayout.defaultValue.storedOrder,
-            AppPreferences.ChatTopBar.shownKey: ChatTopBarLayout.defaultValue.storedShown,
+            AppPreferences.ChatTopBar.orderKey: layout.storedOrder,
+            AppPreferences.ChatTopBar.shownKey: layout.storedShown,
         ])
     }
 
