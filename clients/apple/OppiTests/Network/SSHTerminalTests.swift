@@ -1867,6 +1867,9 @@ struct SSHTerminalTests {
         // The keyboard below is posted by hand, so a real one must not be
         // moving the keyboard guide as well. A simulator without a hardware
         // keyboard raises one for any earlier test's leftover first responder.
+        // This is hygiene: the settled wait at the end is what makes the test
+        // independent of timing, since the screen corrects a missed keyboard
+        // prediction when it releases its held resize.
         #expect(await mounted.waitForNoRealKeyboard(), "a real keyboard is still up: \(mounted.keyboardDiagnostics())")
         #expect(try backPillTop() >= gridBottom(), "the bar starts below the grid")
 
@@ -2125,6 +2128,8 @@ private final class MountedTerminalTestController {
     func waitForNoRealKeyboard() async -> Bool {
         // Another test may have hidden its window with a field still focused;
         // that keeps the real keyboard up, and it is not in this window's chain.
+        // OppiTests runs serially (not parallelizable in project.yml); with
+        // parallel suites this would also unfocus a field another test is using.
         for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
             for window in scene.windows { window.endEditing(true) }
         }
