@@ -157,12 +157,19 @@ final class ReleaseGateE2ETests: E2ETestCase {
         )
 
         try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_start"])
-        defer { _ = try? sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_end"]) }
+        defer {
+            _ = try? sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_end"])
+            _ = try? sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_settled"])
+        }
 
         let stopButton = app.buttons["chat.stop"]
         XCTAssertTrue(waitForElementToExist(stopButton, timeout: 10), "Stop button never appeared after harness busy state")
         tap(stopButton, named: "stop response button", timeout: 1)
+        // The server ends a stopped run with agent_end, then agent_settled; the app
+        // leaves busy only on agent_settled. The harness busy state has no real run
+        // to stop, so it sends both, as the server would.
         try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_end"])
+        try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_settled"])
 
         let stopGone = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"),
