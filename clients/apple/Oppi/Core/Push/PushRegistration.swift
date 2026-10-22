@@ -41,6 +41,9 @@ final class PushRegistration {
     private var deviceToken: String?
     /// The relay registration being made, by `PushRelayRegistrationStore.account`.
     private var relayRegistrationTasks: [String: Task<PushRelayClient.Registration, any Error>] = [:]
+    /// Registrations running, by `PushRelayRegistrationStore.account`: each may still mint on
+    /// that relay's registration, so turning push off elsewhere must not delete it.
+    private var registrationsInFlight: [String: Int] = [:]
     private var tokenWaiters: [UUID: CheckedContinuation<String?, Never>] = [:]
 
     #if DEBUG
@@ -174,6 +177,12 @@ final class PushRegistration {
         mayReplaceRelayRegistration: Bool,
         mayRecoverGoneSendToken: Bool
     ) async throws {
+        let account = PushRelayRegistrationStore.account(relay: relay, environment: environment)
+        registrationsInFlight[account, default: 0] += 1
+        defer {
+            let remaining = (registrationsInFlight[account] ?? 1) - 1
+            registrationsInFlight[account] = remaining > 0 ? remaining : nil
+        }
         let registration = try await relayRegistration(
             relay: relay, environment: environment, apnsToken: apnsToken, client: client, replacing: refused
         )
@@ -240,17 +249,15 @@ final class PushRegistration {
     /// `PUT /me/push-registration` answers `410 send_token_gone` for a send token the relay
     /// has refused (spec §5).
     private static func isSendTokenGone(_ error: APIError) -> Bool {
-        switch error {
-        case .server(410, let message): message == "send_token_gone"
-        case .codedServer(410, _, let code): code == "send_token_gone"
-        default: false
-        }
+        if case .server(410, "send_token_gone") = error { return true }
+        return false
     }
 
     /// The stored registration at `relay` for `apnsToken`, or a new one. One registration at a
     /// time per relay and environment: the relay keeps one per APNs token, so a second made
     /// beside it would delete the first one's permissions. A caller waits for the one in
-    /// flight, then reads the store again.
+    /// flight, then reads the store again; when that one failed, so do its waiters, rather
+    /// than each attesting a key of its own against a relay that just refused.
     ///
     /// `refused`, the registration the relay just refused, is replaced only while it is still
     /// the stored one; a caller that waited uses the registration that replaced it.
@@ -263,7 +270,7 @@ final class PushRegistration {
     ) async throws -> PushRelayClient.Registration {
         let account = PushRelayRegistrationStore.account(relay: relay, environment: environment)
         while let inFlight = relayRegistrationTasks[account] {
-            _ = try? await inFlight.value
+            _ = try await inFlight.value
         }
         let stored = PushRelayRegistrationStore.load(relay: relay, environment: environment)
         if let stored, stored.apnsToken == apnsToken, stored.registrationId != refused?.registrationId {
@@ -354,9 +361,10 @@ final class PushRegistration {
 
     /// Turn push off for a server: the server forgets this device's key and token, the relay
     /// the permission, and this phone the keys and token, so the relay lists the server's
-    /// card no more. When no other server's token is on the same relay registration, the
-    /// relay forgets the registration too (push token, App Attest key, Live Activity tokens),
-    /// and so does this phone; turning push on again registers anew.
+    /// card no more. When no other server's token is on the same relay registration and none
+    /// is registering, the relay forgets the registration too (push token, App Attest key,
+    /// Live Activity tokens), and so does this phone; turning push on again registers anew.
+    /// A failed turn-on calls this too, so it leaves nothing at the relay.
     ///
     /// `relay` is the server's relay when its connection knows it; without it (an offline
     /// server, or one whose capabilities have not loaded) the permission's registration ID
@@ -375,20 +383,29 @@ final class PushRegistration {
         PushSendTokenStore.delete(serverId: serverId)
         LiveActivityRelaySync.shared.publish()
         try? await api?.deletePushRegistration()
-        if let permission,
-           let registration = Self.relayRegistration(holding: permission.registrationId, relay: relay),
-           let registrationRelay = URL(string: registration.relay) {
+        // The registration the server's token is on. Without a token (a turn-on whose mint
+        // failed), the one stored for its relay, which that turn-on may have made.
+        let registration: PushRelayClient.Registration? = if let permission {
+            Self.relayRegistration(holding: permission.registrationId, relay: relay)
+        } else if let relay, let environment = APNsEnvironment.current {
+            PushRelayRegistrationStore.load(relay: relay, environment: environment)
+        } else {
+            nil
+        }
+        if let registration, let registrationRelay = URL(string: registration.relay) {
             let client = relayClient(registrationRelay)
             if isUnused(registration, relay: registrationRelay) {
-                // Best effort: one the relay keeps is replaced when this phone registers
-                // again, and deleted when APNs retires its token.
+                // Forgotten first, so a registration that starts during the delete makes a
+                // new one instead of minting on this one. Best effort: one the relay keeps is
+                // replaced when this phone registers again, and deleted when APNs retires its
+                // token.
+                PushRelayRegistrationStore.delete(registration)
                 do {
                     try await client.deleteRegistration(registration)
                 } catch {
                     logger.error("Push relay registration not deleted: \(String(describing: error), privacy: .public)")
                 }
-                PushRelayRegistrationStore.delete(registration)
-            } else {
+            } else if let permission {
                 try? await client.deletePermission(permission.permissionId, registration: registration)
             }
         }
@@ -398,7 +415,7 @@ final class PushRegistration {
     /// No server holds a send token on `registration`, and none is registering at its relay.
     private func isUnused(_ registration: PushRelayClient.Registration, relay: URL) -> Bool {
         guard let environment = APNsEnvironment(rawValue: registration.environment),
-              relayRegistrationTasks[PushRelayRegistrationStore.account(relay: relay, environment: environment)] == nil
+              registrationsInFlight[PushRelayRegistrationStore.account(relay: relay, environment: environment)] == nil
         else { return false }
         return !PushSendTokenStore.all().contains {
             PushRelayClient.permission(ofSendToken: $0.sendToken)?.registrationId == registration.registrationId

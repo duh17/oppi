@@ -187,6 +187,7 @@ struct PushSendPermissionTests {
         private var _goneRegistrations: Set<String> = []
         private var _goneSendTokens: Set<String> = []
         private var _everySendTokenGone = false
+        private var _failures: [Call: (status: Int, error: String)] = [:]
         let serverPublicKey = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
         /// The server at `http://other-server`.
         let otherServerPublicKey = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
@@ -205,6 +206,13 @@ struct PushSendPermissionTests {
         func refuseSendToken(_ token: String) { lock.withLock { _ = _goneSendTokens.insert(token) } }
         func refuseEverySendToken() { lock.withLock { _everySendTokenGone = true } }
 
+        enum Call { case register, mint, serverPut }
+        /// Every later `call` answers `status` with `{"error": error}`.
+        func fail(_ call: Call, status: Int, error: String) {
+            lock.withLock { _failures[call] = (status, error) }
+        }
+        private func injectedFailure(_ call: Call) -> (status: Int, error: String)? { lock.withLock { _failures[call] } }
+
         func handle(_ request: URLRequest) throws -> (Data, HTTPURLResponse) {
             let path = request.url?.path ?? ""
             let parts = path.split(separator: "/")
@@ -213,6 +221,10 @@ struct PushSendPermissionTests {
             if parts.count >= 3, parts[1] == "registrations", lock.withLock({ _goneRegistrations.contains(String(parts[2])) }) {
                 status = 410
                 body = ["error": "gone"]
+            } else if request.httpMethod == "POST", parts.count == 4, parts[1] == "registrations", parts[3] == "permissions",
+                      let failure = injectedFailure(.mint) {
+                status = failure.status
+                body = ["error": failure.error]
             } else if request.httpMethod == "POST", parts.count == 4, parts[1] == "registrations", parts[3] == "permissions" {
                 let registrationId = String(parts[2])
                 let permissionId = lock.withLock {
@@ -225,8 +237,13 @@ struct PushSendPermissionTests {
                 body = ["challenge": "challenge"]
             } else if request.httpMethod == "POST", path == "/v1/registrations" {
                 lock.withLock { _registrations += 1 }
-                status = 201
-                body = ["registrationId": "r_NEW", "registrationSecret": "secret"]
+                if let failure = injectedFailure(.register) {
+                    status = failure.status
+                    body = ["error": failure.error]
+                } else {
+                    status = 201
+                    body = ["registrationId": "r_NEW", "registrationSecret": "secret"]
+                }
             } else if request.httpMethod == "PUT", parts.count == 4, parts[3] == "live-activity" {
                 // The relay forgot every registration but the new one.
                 status = parts[2] == "r_NEW" ? 204 : 410
@@ -249,6 +266,9 @@ struct PushSendPermissionTests {
                 if refused {
                     status = 410
                     body = ["error": "send_token_gone"]
+                } else if let failure = injectedFailure(.serverPut) {
+                    status = failure.status
+                    body = ["error": failure.error]
                 } else {
                     body = ["serverPublicKey": serverKey.base64URLEncodedString, "keyId": json?["keyId"] as? String ?? ""]
                 }
@@ -378,10 +398,22 @@ struct PushSendPermissionTests {
         )
     }
 
-    private func disable(_ serverId: String) async {
+    /// Push off for a server, with the relay its connection names (nil while it is offline).
+    private func disable(_ serverId: String, relay: URL? = nil) async {
         let configuration = configuration
-        await PushRegistration.shared.disable(serverId: serverId, api: nil, relay: nil) {
-            PushRelayClient(relay: $0, session: URLSession(configuration: configuration))
+        await PushRegistration.shared.disable(serverId: serverId, api: nil, relay: relay) {
+            PushRelayClient(relay: $0, session: URLSession(configuration: configuration), appAttest: ReinstalledAppAttest())
+        }
+    }
+
+    /// Turning push on for a server, as the settings screen does: a failure turns it off again.
+    private func turnOn(server: URL = URL(string: "http://localhost:7749")!) async -> PushRegistration.Failure? {
+        do {
+            try await connect(server: server)
+            return nil
+        } catch {
+            await disable(server == Self.otherServer ? otherServerId : serverId, relay: relay)
+            return PushRegistration.Failure(error)
         }
     }
 
@@ -606,6 +638,117 @@ struct PushSendPermissionTests {
 
             #expect(backend.sentTokens.count == 2)
             #expect(backend.registrations == 0)
+        }
+    }
+
+    /// The relay at capacity refuses the registration: the servers waiting on it fail with it
+    /// instead of each attesting another key against the same refusal.
+    @Test func serversRegisteringAtOnceShareTheRelaysRefusal() async throws {
+        try await withBackend {
+            backend.fail(.register, status: 503, error: "relay_capacity")
+            async let first = turnOn()
+            async let second = turnOn(server: Self.otherServer)
+            let failures = await [first, second]
+
+            #expect(failures == [.relayBusy, .relayBusy])
+            #expect(backend.registrations == 1)
+        }
+    }
+
+    /// A turn-on the server refuses after the relay registered this phone and minted its token.
+    @Test func aTurnOnTheServerRefusesLeavesNothingAtTheRelay() async throws {
+        try await withBackend {
+            backend.fail(.serverPut, status: 409, error: "relay_mismatch")
+            #expect(await turnOn() == .refused)
+
+            #expect(backend.mints == ["r_NEW"])
+            #expect(backend.deletedRegistrations == ["r_NEW"])
+            #expect(PushRelayRegistrationStore.load(relay: relay, environment: .sandbox) == nil)
+            #expect(PushSendTokenStore.load(serverId: serverId) == nil)
+        }
+    }
+
+    /// A turn-on whose mint the relay refuses after it registered this phone: no send token
+    /// names the registration, so turning push off finds it by its relay.
+    @Test func aTurnOnWhoseMintTheRelayRefusesLeavesNothingAtTheRelay() async throws {
+        try await withBackend {
+            backend.fail(.mint, status: 503, error: "relay_capacity")
+            #expect(await turnOn() == .relayBusy)
+
+            #expect(backend.registrations == 1)
+            #expect(backend.deletedRegistrations == ["r_NEW"])
+            #expect(PushRelayRegistrationStore.load(relay: relay, environment: .sandbox) == nil)
+            #expect(PushSendTokenStore.load(serverId: serverId) == nil)
+        }
+    }
+
+    /// App Attest whose assertions wait for `release()`: a registration held at its mint.
+    private final class HeldAssertionAppAttest: AppAttestProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var isHeld = false
+        private var isReleased = false
+        private var held: [CheckedContinuation<Void, Never>] = []
+        private var heldWaiters: [CheckedContinuation<Void, Never>] = []
+
+        var isSupported: Bool { true }
+        func generateKey() async throws -> String { ReinstalledAppAttest.newKey }
+        func attestKey(_ keyId: String, clientDataHash: Data) async throws -> Data { Data("attestation".utf8) }
+        func generateAssertion(_ keyId: String, clientDataHash: Data) async throws -> Data {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let (resumeNow, waiters) = lock.withLock { () -> (Bool, [CheckedContinuation<Void, Never>]) in
+                    isHeld = true
+                    let waiters = heldWaiters
+                    heldWaiters = []
+                    if isReleased { return (true, waiters) }
+                    held.append(continuation)
+                    return (false, waiters)
+                }
+                waiters.forEach { $0.resume() }
+                if resumeNow { continuation.resume() }
+            }
+            return Data("assertion".utf8)
+        }
+
+        /// Returns once an assertion is waiting.
+        func waitUntilHeld() async {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let now = lock.withLock { () -> Bool in
+                    if isHeld { return true }
+                    heldWaiters.append(continuation)
+                    return false
+                }
+                if now { continuation.resume() }
+            }
+        }
+
+        func release() {
+            let continuations = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+                isReleased = true
+                let continuations = held
+                held = []
+                return continuations
+            }
+            continuations.forEach { $0.resume() }
+        }
+    }
+
+    /// Another server is minting on the registration when the last server holding a token on
+    /// it turns push off: the registration stays for it.
+    @Test func turningPushOffWhileAnotherServerMintsKeepsTheRegistration() async throws {
+        try await withBackend {
+            try storeRelayRegistration("r_A", appAttestKeyId: ReinstalledAppAttest.newKey)
+            try await connect()
+            let held = HeldAssertionAppAttest()
+            let minting = Task { try await connect(server: Self.otherServer, appAttest: held) }
+            await held.waitUntilHeld()
+            await disable(serverId)
+            held.release()
+            try await minting.value
+
+            #expect(backend.deletedRegistrations.isEmpty)
+            #expect(backend.deletedPermissions == ["p_1"])
+            #expect(backend.sentTokens.last == "osp1.r_A.p_2.secret")
+            #expect(PushRelayRegistrationStore.load(relay: relay, environment: .sandbox)?.registrationId == "r_A")
         }
     }
 

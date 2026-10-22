@@ -236,11 +236,11 @@ struct ServerNotificationsSection: View {
         }
     }
 
-    /// `relay` is the one the consent named. If the server has moved to another relay since,
-    /// it refuses this one (`409 relay_mismatch`).
+    /// `relay` is the one the consent named. A connection that names another relay by now
+    /// fails before any relay hears from this phone.
     private func turnPushOn(relay: URL) {
         pushFailure = nil
-        guard let connection, let api = connection.apiClient,
+        guard let connection, connection.pushRelay == relay, let api = connection.apiClient,
               let deviceId = connection.credentials?.deviceCredential?.deviceId else {
             pushFailure = .refused
             return
@@ -256,7 +256,9 @@ struct ServerNotificationsSection: View {
                 relay: relay
             )
             if let failure {
-                PushRegistration.setEnabled(false, serverId: serverId)
+                // Nothing of a failed turn-on stays: the send token, and a relay registration
+                // no other server uses (`disable` turns the opt-in off too).
+                await PushRegistration.shared.disable(serverId: serverId, api: api, relay: relay)
                 pushEnabled = false
                 pushFailure = failure
             }
