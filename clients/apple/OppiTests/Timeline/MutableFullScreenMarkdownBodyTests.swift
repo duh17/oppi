@@ -789,13 +789,18 @@ struct MutableFullScreenMarkdownBodyTests {
 
     @Test("deferred large immutable render reapplies captured tail intent")
     func deferredImmutableRenderRestoresTail() async throws {
-        let large = String(repeating: "Large completed paragraph with stable Markdown text. ", count: 4_500)
-        #expect(large.utf8.count > 200 * 1024)
+        // The deferral threshold is shrunk so the document stays small; it is still several
+        // screens tall, so a tail restore is a real scroll.
+        let threshold = 2 * 1024
+        let large = Array(repeating: "Large completed paragraph with stable Markdown text. ", count: 80)
+            .joined(separator: "\n\n")
+        #expect(large.utf8.count > threshold)
         let body = NativeFullScreenMarkdownBody(
             content: large,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
-            reviewCommentSourceContext: nil
+            reviewCommentSourceContext: nil,
+            deferredInitialRenderByteThreshold: threshold
         )
         body.restoreViewportAfterMutableTransition(.tail)
         let fixture = attach(body)
@@ -810,6 +815,7 @@ struct MutableFullScreenMarkdownBodyTests {
         fixture.window.layoutIfNeeded()
         let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
         collection.layoutIfNeeded()
+        #expect(maximumOffsetY(collection) > 0, "the document must be taller than its viewport")
         #expect(abs(collection.contentOffset.y - maximumOffsetY(collection)) < 1)
     }
 
@@ -1110,8 +1116,9 @@ struct MutableFullScreenMarkdownBodyTests {
 
     @Test("large completed reader keeps the source checkout in workspace image URLs")
     func largeCompletedReaderKeepsCheckoutIdentity() async throws {
-        let filler = String(repeating: "Large completed paragraph with stable Markdown text. ", count: 4_500)
-        #expect(filler.utf8.count > 200 * 1024)
+        let threshold = 2 * 1024
+        let filler = String(repeating: "Large completed paragraph with stable Markdown text. ", count: 60)
+        #expect(filler.utf8.count > threshold)
         let body = NativeFullScreenMarkdownBody(
             content: filler + "\n\n![chart](images/chart.png)",
             palette: ThemeID.dark.palette,
@@ -1124,7 +1131,8 @@ struct MutableFullScreenMarkdownBodyTests {
                     serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 )
             ),
-            sourceFilePath: "docs/Draft.md"
+            sourceFilePath: "docs/Draft.md",
+            deferredInitialRenderByteThreshold: threshold
         )
         let fixture = attach(body)
         defer { fixture.window.isHidden = true }

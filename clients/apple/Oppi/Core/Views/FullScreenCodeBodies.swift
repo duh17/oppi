@@ -3189,7 +3189,9 @@ enum MarkdownReaderSourceFormat: Sendable {
 }
 
 final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching {
-    private static let deferredInitialRenderByteThreshold = 200 * 1024
+    /// Completed documents at least this large render after a visible shell, not inline.
+    static let defaultDeferredInitialRenderByteThreshold = 200 * 1024
+    private let deferredInitialRenderByteThreshold: Int
     private static let maxInitialSynchronousPreparationItems = 8
     private static let maxInitialSynchronousPreparationNs: UInt64 = 8_000_000
     // Give UIKit/XCUITest and real users a visible reader shell before the large
@@ -3336,9 +3338,11 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         perfSurface: MarkdownStreamingPerf.Surface? = nil,
         maximumViewportHeight: CGFloat? = nil,
         allowsVerticalBounce: Bool = true,
-        allowsVerticalScrolling: Bool = true
+        allowsVerticalScrolling: Bool = true,
+        deferredInitialRenderByteThreshold: Int = NativeFullScreenMarkdownBody.defaultDeferredInitialRenderByteThreshold
     ) {
         self.sourceFormat = sourceFormat
+        self.deferredInitialRenderByteThreshold = deferredInitialRenderByteThreshold
         self.themeID = themeID ?? ThemeRuntimeState.currentThemeID()
         self.perfSurface = perfSurface
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
@@ -3435,7 +3439,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         if sourceFormat == .orgMode {
             installDeferredRenderPlaceholder(palette: palette)
             scheduleOrgModeSourcePreparation(source: content)
-        } else if Self.shouldDeferInitialRender(snapshot: initialSnapshot) {
+        } else if shouldDeferInitialRender(snapshot: initialSnapshot) {
             installDeferredRenderPlaceholder(palette: palette)
             scheduleDeferredInitialRender(snapshot: initialSnapshot)
         } else {
@@ -3482,7 +3486,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         viewportOwner.scheduleFollowTail()
     }
 
-    private static func shouldDeferInitialRender(
+    private func shouldDeferInitialRender(
         snapshot: ThinkingTraceStream.Snapshot
     ) -> Bool {
         snapshot.text.utf8.count >= deferredInitialRenderByteThreshold
@@ -3775,7 +3779,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     ) -> Bool {
         !config.isStreaming
             && (sourceFormat == .orgMode || !shouldResolveFileLines)
-            && config.content.utf8.count >= Self.deferredInitialRenderByteThreshold
+            && config.content.utf8.count >= deferredInitialRenderByteThreshold
     }
 
     private func renderLargeCompletedSnapshotAsync(
