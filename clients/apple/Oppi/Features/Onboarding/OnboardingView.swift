@@ -456,7 +456,9 @@ enum InviteBootstrapService {
         },
         /// The approval wait's expiry while another device must approve, then `nil`
         /// once the server enrolled this device: the wait and its Cancel end there.
-        onWaitingForApproval: (@MainActor (Int64?) -> Void)? = nil
+        onWaitingForApproval: (@MainActor (Int64?) -> Void)? = nil,
+        /// The wait between approval polls; tests skip the real two-second interval.
+        sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) async throws -> InviteBootstrapResult {
         guard credentials.resolvedScheme == .https, let baseURL = credentials.baseURL else {
             throw InviteBootstrapError.message("HTTPS is required. Ask the server owner for an HTTPS/Tailscale invite.")
@@ -505,7 +507,8 @@ enum InviteBootstrapService {
                     },
                     onWaiting: { expiresAt in
                         onWaitingForApproval?(expiresAt)
-                    }
+                    },
+                    sleep: sleep
                 )
                 if Task.isCancelled {
                     if let deviceCredential = pairResult.deviceCredential {
@@ -665,7 +668,8 @@ enum InviteBootstrapService {
         },
         deviceKeyProvider: @MainActor () throws -> any DeviceKey = {
             try DeviceKeyProvider.shared.loadOrCreate()
-        }
+        },
+        sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) async throws -> InviteEnrollment {
         try await save(credentials: credentials, serverStore: serverStore, coordinator: coordinator) { existing in
             try await validateAndBootstrap(
@@ -674,7 +678,8 @@ enum InviteBootstrapService {
                 confirmTrust: confirmTrust,
                 apiFactory: apiFactory,
                 deviceKeyProvider: deviceKeyProvider,
-                onWaitingForApproval: onWaitingForApproval
+                onWaitingForApproval: onWaitingForApproval,
+                sleep: sleep
             )
         }
     }

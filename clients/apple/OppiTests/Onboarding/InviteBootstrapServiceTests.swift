@@ -197,7 +197,8 @@ struct InviteBootstrapServiceTests {
             deviceKeyProvider: { InMemoryP256DeviceKey() },
             onWaitingForApproval: { expiresAt in
                 events.append("waiting:\(expiresAt.map(String.init) ?? "ended")")
-            }
+            },
+            sleep: { _ in }
         )
 
         #expect(await log.snapshot().contains("poll:pa_test"))
@@ -227,7 +228,8 @@ struct InviteBootstrapServiceTests {
                         bearer: token
                     )
                 },
-                deviceKeyProvider: { InMemoryP256DeviceKey() }
+                deviceKeyProvider: { InMemoryP256DeviceKey() },
+                sleep: { _ in }
             )
         }
 
@@ -298,7 +300,8 @@ struct InviteBootstrapServiceTests {
                 coordinator: coordinator,
                 confirmTrust: { _ in true },
                 apiFactory: { _, _, _ in staleAPIs.removeFirst() },
-                deviceKeyProvider: { InMemoryP256DeviceKey() }
+                deviceKeyProvider: { InMemoryP256DeviceKey() },
+                sleep: { _ in }
             )
         }
         await approval.waitUntilHeld()
@@ -352,7 +355,8 @@ struct InviteBootstrapServiceTests {
                 coordinator: coordinator,
                 confirmTrust: { _ in true },
                 apiFactory: { _, _, _ in staleAPIs.removeFirst() },
-                deviceKeyProvider: { InMemoryP256DeviceKey() }
+                deviceKeyProvider: { InMemoryP256DeviceKey() },
+                sleep: { _ in }
             )
         }
         await approval.waitUntilHeld()
