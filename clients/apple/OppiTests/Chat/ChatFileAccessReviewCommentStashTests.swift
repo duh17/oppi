@@ -124,6 +124,32 @@ struct ChatFileAccessReviewCommentStashTests {
         #expect(button.accessibilityIdentifier == FullScreenReviewCommentStashControl.accessibilityIdentifier)
         #expect(button.accessibilityValue as? String == "1 staged comment")
     }
+
+    /// Ending an edit hides the editor and empties its sections; the collection view must
+    /// agree, or the next layout (keyboard dismissal, rotation) indexes an empty array.
+    @Test func endingEditReloadsTheEditorListSoLaterLayoutDoesNotTrap() throws {
+        let comments = try makeIsolatedReviewComments(stagedCount: 1)
+        let comment = try #require(comments.stagedComments.first)
+        let sheet = ReviewCommentStashViewController(stash: comments, editing: comment, onClose: {})
+        let host = UINavigationController(rootViewController: sheet)
+        host.traitOverrides.appRootEnvironment = makeTestAppRoot()
+        let window = present(host)
+        let editor = try #require(
+            timelineAllViews(in: sheet.view).compactMap { $0 as? UICollectionView }
+                .first { $0.dataSource === sheet && $0.numberOfSections > 0 }
+        )
+        #expect(editor.numberOfSections == 3)
+
+        let cancel = try #require(sheet.navigationItem.leftBarButtonItem?.primaryAction)
+        cancel.performWithSender(nil, target: nil)
+        host.view.layoutIfNeeded()
+        #expect(editor.numberOfSections == 0)
+
+        editor.frame.size.height += 120
+        editor.setNeedsLayout()
+        editor.layoutIfNeeded()
+        window.isHidden = true
+    }
 }
 
 @MainActor

@@ -342,6 +342,7 @@ final class ReviewCommentStashViewController: UIViewController, UITextViewDelega
     private func endEditing() {
         view.endEditing(true)
         editingComment = nil
+        editor.reloadData()
         setNeedsUpdateProperties()
     }
 
