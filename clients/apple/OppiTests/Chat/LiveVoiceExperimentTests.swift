@@ -97,7 +97,10 @@ struct LiveVoiceExperimentTests {
             await model.setUp(requestDictation: {}, focusComposer: {})
         }
 
-        #expect(model.error != Self.reason)
+        // Past the experiment gate the next gate is the workspace: this fixture has none, so
+        // that is where the start stops. Asserting it proves setUp got past the experiment check
+        // rather than never reaching a start at all.
+        #expect(model.error == "Choose a workspace for Live Voice.")
     }
 
     private func makeQuickSessionRoot(
@@ -106,7 +109,10 @@ struct LiveVoiceExperimentTests {
     ) throws -> AppRootEnvironment {
         let client = APIClient(baseURL: try #require(URL(string: "http://127.0.0.1:1")), token: "sk_test", configuration: .ephemeral)
         let ready = try makeTestAppRoot(readyServerId: "sha256:live-voice-\(UUID().uuidString)", apiClient: client)
-        try #require(ready.coordinator.activeConnection).setSplitStreamCapabilitiesForTesting(liveVoice: liveVoice)
+        let connection = try #require(ready.coordinator.activeConnection)
+        connection.setSplitStreamCapabilitiesForTesting(liveVoice: liveVoice)
+        // A cold launch waits for the workspace list; this server has loaded its (empty) one.
+        connection.workspaceStore.isLoaded = true
         guard let composerDraftStore else { return ready }
         return makeTestAppRoot(coordinator: ready.coordinator, composerDraftStore: composerDraftStore)
     }
