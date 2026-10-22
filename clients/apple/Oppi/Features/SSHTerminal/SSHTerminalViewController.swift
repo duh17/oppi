@@ -156,7 +156,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         let profileID = session?.connectedProfile?.id
         let choice = profileID.map { SSHTerminalColorStore().choice(for: $0) } ?? .host
         colorChoice = choice
-        colorLoader = SSHTerminalColorLoader(profileID: profileID, choice: choice)
+        colorLoader = SSHTerminalColorLoader(profileID: profileID, choice: choice, dark: ThemeRuntimeState.currentThemeID().preferredColorScheme != .light)
         super.init(nibName: nil, bundle: nil)
         attention.glyphFrame.rect = .zero
         statusGlyph.glyphFrame.rect = .zero
@@ -340,10 +340,13 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         _ = HostFactory.root(near: self)?.themeStore.appTheme
 
         let terminalColors = colorLoader.theme
+        // One palette for everything drawn over the grid: Oppi's theme when
+        // it is on the terminal's light/dark side, else the built-in that is.
+        let chromeID = SSHTerminalColorTheme.chromeTheme(themeID, colors: terminalColors)
         if lastThemeID != themeID || lastTerminalColors != terminalColors {
             lastThemeID = themeID
             lastTerminalColors = terminalColors
-            applyTheme(themeID, colors: terminalColors)
+            applyTheme(chromeID, colors: terminalColors)
         }
         if channel.copies != lastCopies {
             lastCopies = channel.copies
@@ -389,17 +392,17 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         navigationItem.title = channel.title.isEmpty ? "SSH Terminal" : channel.title
         updatePolling()
         refreshPairedHome()
-        updateFloatingControls(themeID: themeID)
-        updateBanners(connecting: connecting, connected: connected, networkChanged: networkChanged, themeID: themeID)
-        updateNotice(themeID: themeID)
-        updateCopyAndLive(themeID: themeID)
+        updateFloatingControls(themeID: chromeID)
+        updateBanners(connecting: connecting, connected: connected, networkChanged: networkChanged, themeID: chromeID)
+        updateNotice(themeID: chromeID)
+        updateCopyAndLive(themeID: chromeID)
         updateComposer()
         updatePasswordFill(connected: connected)
         if let gridView {
             gridView.tapTypesInTerminal = inputMode == .terminal
             gridView.setKeyActions(keymap.actions)
             gridView.showModifiers()
-            gridView.applyTheme(themeID, colors: terminalColors)
+            gridView.applyTheme(chromeID, colors: terminalColors)
             gridView.needsPaint = true
         }
         attentionFeedback.apply(
@@ -631,12 +634,22 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         overrideUserInterfaceStyle = dark ? .dark : .light
     }
 
+    /// Oppi's own appearance, which picks the side of a `light:`/`dark:` pair.
+    private var appIsDark: Bool {
+        (lastThemeID ?? ThemeRuntimeState.currentThemeID()).preferredColorScheme != .light
+    }
+
+    /// The theme for chrome over the grid; see `updateProperties`.
+    private var chromeTheme: ThemeID {
+        SSHTerminalColorTheme.chromeTheme(lastThemeID ?? ThemeRuntimeState.currentThemeID(), colors: lastTerminalColors)
+    }
+
     private func colorChoiceChanged() {
         guard let id = session?.connectedProfile?.id else { return }
         let choice = SSHTerminalColorStore().choice(for: id)
         guard choice != colorChoice else { return }
         colorChoice = choice
-        colorLoader.use(choice)
+        colorLoader.use(choice, dark: appIsDark)
         setNeedsUpdateProperties()
     }
 
@@ -999,12 +1012,12 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     }
 
     private func makeComposer() {
-        let themeID = lastThemeID ?? ThemeRuntimeState.currentThemeID()
         let session = SSHTerminalComposerHost(
             channel: channel,
             connection: serverConnection(),
             draftStore: HostFactory.root(near: self)?.composerDraftStore,
-            themeID: themeID,
+            themeID: chromeTheme,
+            terminalColors: lastTerminalColors,
             showRawKeyboard: { [weak self] in self?.showTerminalKeyboard() }
         )
         if let identity = terminalIdentity, let draft = composerDrafts[identity] { session.restore(draft) }
@@ -1165,17 +1178,16 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     }
 
     private func refreshComposerChrome() {
-        let themeID = lastThemeID ?? ThemeRuntimeState.currentThemeID()
+        let themeID = chromeTheme
         composerSession?.connection = serverConnection()
         composerSession?.draftStore = HostFactory.root(near: self)?.composerDraftStore
         composerSession?.refreshChrome(
             themeID: themeID,
+            terminalColors: lastTerminalColors,
             reduceMotion: reduceMotion,
             connected: channel.connected
         )
-        var colors = ComposerThemeColors(palette: themeID.palette)
-        if let background = lastTerminalColors?.background { colors.bg = UIColor(background) }
-        if let foreground = lastTerminalColors?.foreground { colors.fg = UIColor(foreground) }
+        let colors = ComposerThemeColors(palette: themeID.palette, terminal: lastTerminalColors)
         composerKeyStrip?.handlers.sendStrokes = { [weak self] strokes in self?.channel.keys(strokes) }
         composerKeyStrip?.handlers.sendKey = { [weak self] key in _ = self?.channel.key(key) }
         composerKeyStrip?.handlers.sendArrow = { [weak self] key in self?.channel.key(key) ?? false }
@@ -1196,8 +1208,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     private func applySendFailure(_ message: String?) {
         guard let label = sendFailureLabel else { return }
-        let themeID = lastThemeID ?? ThemeRuntimeState.currentThemeID()
-        let colors = ComposerThemeColors(palette: themeID.palette)
+        let colors = ComposerThemeColors(palette: chromeTheme.palette, terminal: lastTerminalColors)
         label.text = message
         label.textColor = colors.red
         let hidden = message == nil || message?.isEmpty == true
@@ -1208,8 +1219,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     private func applyDictationFailure() {
         guard let banner = dictationFailureView else { return }
-        let themeID = lastThemeID ?? ThemeRuntimeState.currentThemeID()
-        let colors = ComposerThemeColors(palette: themeID.palette)
+        let colors = ComposerThemeColors(palette: chromeTheme.palette, terminal: lastTerminalColors)
         if let failure = ComposerShared.captureFailure(composerSession?.voiceManager, owner: .inlineComposer) {
             banner.apply(message: failure.message, colors: colors)
             banner.isHidden = false
@@ -1487,7 +1497,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             SSHTerminalStatusDetailController(
                 hostLabel: hostLabel,
                 rows: programStatusRows,
-                themeID: lastThemeID ?? ThemeRuntimeState.currentThemeID()
+                themeID: chromeTheme
             ),
             presentation: .popover.keepsPopoverInCompactWidth(),
             from: self,
@@ -1868,7 +1878,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             herdrTask?.cancel()
             herdrTask = nil
         }
-        let dark = (lastThemeID ?? ThemeRuntimeState.currentThemeID()).preferredColorScheme != .light
+        let dark = appIsDark
         let colorKey = channel.connected && colorChoice != .oppi ? "\(colorChoice)|\(dark)" : nil
         if colorToken != colorKey {
             colorToken = colorKey

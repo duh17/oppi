@@ -104,6 +104,9 @@ struct SSHTerminalColorResolution: Codable, Equatable, Sendable {
     let theme: SSHTerminalColorTheme?
     /// A theme the config or the choice names that the host does not have.
     let missing: String?
+    /// The appearance this was read for: a `light:`/`dark:` pair resolves to
+    /// one side, so a read for the other side is not this one.
+    let dark: Bool
 
     /// What the host form shows next to the row.
     var summary: String {
@@ -145,16 +148,19 @@ struct SSHTerminalColorStore {
         }
     }
 
-    /// The last read for `choice`; a read made for another choice does not count.
-    func cached(for id: UUID, choice: SSHTerminalColorChoice) -> SSHTerminalColorResolution? {
+    /// The last read for `choice`; a read made for another choice does not
+    /// count. The host's own theme is also per appearance when `dark` is given
+    /// (`nil` takes the read whichever side it was for, as the host form does).
+    func cached(for id: UUID, choice: SSHTerminalColorChoice, dark: Bool? = nil) -> SSHTerminalColorResolution? {
         guard let data = defaults.data(forKey: Self.cacheKey(id)),
               let value = try? JSONDecoder().decode(SSHTerminalColorResolution.self, from: data),
               value.choice == choice else { return nil }
+        if choice == .host, let dark, value.dark != dark { return nil }
         return value
     }
 
     func cache(_ resolution: SSHTerminalColorResolution, for id: UUID) {
-        guard cached(for: id, choice: resolution.choice) != resolution,
+        guard cached(for: id, choice: resolution.choice, dark: resolution.dark) != resolution,
               let data = try? JSONEncoder().encode(resolution) else { return }
         defaults.set(data, forKey: Self.cacheKey(id))
     }

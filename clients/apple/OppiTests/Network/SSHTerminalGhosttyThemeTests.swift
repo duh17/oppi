@@ -306,7 +306,7 @@ struct SSHTerminalGhosttyThemeTests {
         let id = UUID()
         #expect(store.choice(for: id) == .host)
 
-        let loader = SSHTerminalColorLoader(profileID: id, choice: .host, store: store)
+        let loader = SSHTerminalColorLoader(profileID: id, choice: .host, dark: true, store: store)
         #expect(loader.theme == nil, "nothing is known before the first read")
         let host = Host(config: "theme = tokyonight\n", themes: ["tokyonight": "background = #1a1b26\n"])
         let box = Box(host)
@@ -314,15 +314,20 @@ struct SSHTerminalGhosttyThemeTests {
         #expect(loader.theme?.background == rgb("#1a1b26"))
 
         // A new terminal of the same host starts from that read, before any command.
-        let next = SSHTerminalColorLoader(profileID: id, choice: .host, store: store)
+        let next = SSHTerminalColorLoader(profileID: id, choice: .host, dark: true, store: store)
         #expect(next.theme?.background == rgb("#1a1b26"))
         #expect(store.cached(for: id, choice: .host)?.summary == "tokyonight")
+
+        // A light:/dark: pair caches the side it read, so the other side is not painted with it.
+        #expect(store.cached(for: id, choice: .host, dark: true)?.theme?.background == rgb("#1a1b26"))
+        #expect(store.cached(for: id, choice: .host, dark: false) == nil)
+        #expect(SSHTerminalColorLoader(profileID: id, choice: .host, dark: false, store: store).theme == nil)
 
         // A different choice never borrows the other choice's read.
         store.setChoice(.named("gruvbox"), for: id)
         #expect(store.choice(for: id) == .named("gruvbox"))
         #expect(store.cached(for: id, choice: .named("gruvbox")) == nil)
-        #expect(SSHTerminalColorLoader(profileID: id, choice: .oppi, store: store).theme == nil)
+        #expect(SSHTerminalColorLoader(profileID: id, choice: .oppi, dark: true, store: store).theme == nil)
 
         // A failed read leaves the colors as they were.
         var failing = Host(config: nil)
@@ -334,5 +339,17 @@ struct SSHTerminalGhosttyThemeTests {
         store.setChoice(.host, for: id)
         store.forget(id)
         #expect(store.cached(for: id, choice: .host) == nil)
+    }
+
+    // MARK: - Chrome palette
+
+    @Test func chromeFollowsTheTerminalsSideOfLightAndDark() {
+        let darkTerminal = SSHTerminalColorTheme(background: rgb("#1a1b26"))
+        let lightTerminal = SSHTerminalColorTheme(background: rgb("#fafafa"))
+        #expect(SSHTerminalColorTheme.chromeTheme(.light, colors: darkTerminal) == .dark)
+        #expect(SSHTerminalColorTheme.chromeTheme(.dark, colors: lightTerminal) == .light)
+        #expect(SSHTerminalColorTheme.chromeTheme(.oled, colors: darkTerminal) == .oled, "a matching theme stays")
+        #expect(SSHTerminalColorTheme.chromeTheme(.light, colors: nil) == .light)
+        #expect(SSHTerminalColorTheme.chromeTheme(.night, colors: SSHTerminalColorTheme(foreground: rgb("#ffffff"))) == .night)
     }
 }

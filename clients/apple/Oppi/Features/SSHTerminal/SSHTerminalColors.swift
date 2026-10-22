@@ -17,21 +17,21 @@ final class SSHTerminalColorLoader {
     @ObservationIgnored private let profileID: UUID?
     @ObservationIgnored private let store: SSHTerminalColorStore
 
-    init(profileID: UUID?, choice: SSHTerminalColorChoice, store: SSHTerminalColorStore = SSHTerminalColorStore()) {
+    init(profileID: UUID?, choice: SSHTerminalColorChoice, dark: Bool, store: SSHTerminalColorStore = SSHTerminalColorStore()) {
         self.profileID = profileID
         self.store = store
-        resolution = Self.starting(profileID: profileID, choice: choice, store: store)
+        resolution = Self.starting(profileID: profileID, choice: choice, dark: dark, store: store)
     }
 
     /// The choice changed: the cached read for the new one, or the app's theme.
-    func use(_ choice: SSHTerminalColorChoice) {
+    func use(_ choice: SSHTerminalColorChoice, dark: Bool) {
         guard resolution?.choice != choice else { return }
-        resolution = Self.starting(profileID: profileID, choice: choice, store: store)
+        resolution = Self.starting(profileID: profileID, choice: choice, dark: dark, store: store)
     }
 
-    private static func starting(profileID: UUID?, choice: SSHTerminalColorChoice, store: SSHTerminalColorStore) -> SSHTerminalColorResolution? {
-        if choice == .oppi { return SSHTerminalColorResolution(choice: .oppi, theme: nil, missing: nil) }
-        return profileID.flatMap { store.cached(for: $0, choice: choice) }
+    private static func starting(profileID: UUID?, choice: SSHTerminalColorChoice, dark: Bool, store: SSHTerminalColorStore) -> SSHTerminalColorResolution? {
+        if choice == .oppi { return SSHTerminalColorResolution(choice: .oppi, theme: nil, missing: nil, dark: dark) }
+        return profileID.flatMap { store.cached(for: $0, choice: choice, dark: dark) }
     }
 
     /// Reads the host once. A connection that fails mid-read leaves the colors as they were.
@@ -50,11 +50,11 @@ final class SSHTerminalColorLoader {
     /// Nil when the connection failed: nothing was learned.
     nonisolated static func read(choice: SSHTerminalColorChoice, dark: Bool, run: Run) async -> SSHTerminalColorResolution? {
         func resolution(_ theme: SSHTerminalColorTheme, missing: String?) -> SSHTerminalColorResolution {
-            SSHTerminalColorResolution(choice: choice, theme: theme.isEmpty ? nil : theme, missing: missing)
+            SSHTerminalColorResolution(choice: choice, theme: theme.isEmpty ? nil : theme, missing: missing, dark: dark)
         }
         switch choice {
         case .oppi:
-            return SSHTerminalColorResolution(choice: choice, theme: nil, missing: nil)
+            return SSHTerminalColorResolution(choice: choice, theme: nil, missing: nil, dark: dark)
         case let .named(name):
             switch await themeFile(name, run: run) {
             case .failed: return nil
@@ -96,5 +96,26 @@ final class SSHTerminalColorLoader {
 extension UIColor {
     convenience init(_ rgb: SSHTerminalRGB) {
         self.init(red: CGFloat(rgb.r) / 255, green: CGFloat(rgb.g) / 255, blue: CGFloat(rgb.b) / 255, alpha: 1)
+    }
+}
+
+/// Chrome over the grid (composer, banners, pills, notices) takes one palette:
+/// the one that reads on the terminal's background, not on Oppi's.
+extension SSHTerminalColorTheme {
+    /// The app theme when its light/dark side matches this terminal's
+    /// background, else the built-in theme for the terminal's side.
+    /// `nil` colors, or ones without a background, leave `themeID` as it is.
+    static func chromeTheme(_ themeID: ThemeID, colors: SSHTerminalColorTheme?) -> ThemeID {
+        let dark = isDark(background: colors?.background, fallback: themeID.preferredColorScheme != .light)
+        return themeID.matching(scheme: dark ? .dark : .light)
+    }
+}
+
+extension ComposerThemeColors {
+    /// `palette` with the terminal's own background and text where its theme sets them.
+    init(palette: ThemePalette, terminal: SSHTerminalColorTheme?) {
+        self.init(palette: palette)
+        if let background = terminal?.background { bg = UIColor(background) }
+        if let foreground = terminal?.foreground { fg = UIColor(foreground) }
     }
 }

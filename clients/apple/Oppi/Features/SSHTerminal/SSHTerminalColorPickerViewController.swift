@@ -166,10 +166,11 @@ final class SSHTerminalColorPickerViewController: UIViewController, UICollection
         case .choices:
             return "The host’s theme is read from its Ghostty config each time you connect. Oppi uses its own theme where the host has none."
         case .themes:
-            if case .offline = themes {
-                return "Connect to this host to choose from the themes it has."
+            switch themes {
+            case .offline: return "Connect to this host to choose from the themes it has."
+            case let .loaded(names) where names.isEmpty: return "This host has no Ghostty themes."
+            default: return nil
             }
-            return nil
         case nil: return nil
         }
     }

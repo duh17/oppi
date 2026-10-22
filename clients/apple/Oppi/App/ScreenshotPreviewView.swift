@@ -93,7 +93,13 @@ struct ScreenshotPreviewView: View {
         case "ssh-terminal-switcher":
             SSHTerminalScreenshotPreview(status: .switcher)
         case "ssh-terminal-ghostty-theme":
-            SSHTerminalScreenshotPreview(status: .idle, ghosttyTheme: true)
+            SSHTerminalScreenshotPreview(status: .idle, ghosttyTheme: .tokyonight)
+        case "ssh-terminal-ghostty-theme-light":
+            SSHTerminalScreenshotPreview(status: .idle, ghosttyTheme: .paper)
+        case "ssh-terminal-ghostty-theme-disconnected":
+            SSHTerminalScreenshotPreview(status: .idle, ghosttyTheme: .tokyonight, disconnected: true)
+        case "ssh-terminal-ghostty-theme-light-disconnected":
+            SSHTerminalScreenshotPreview(status: .idle, ghosttyTheme: .paper, disconnected: true)
         case "ssh-terminal-kitty":
             SSHTerminalScreenshotPreview(status: .kitty)
         case "ssh-terminal-password-fill":

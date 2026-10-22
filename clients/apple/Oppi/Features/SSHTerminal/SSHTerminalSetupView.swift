@@ -548,7 +548,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     }
 
     private func presentColorPicker() {
-        let live = SSHTerminalRegistry.shared.terminals(for: profile.id).first?.channel
+        let live = SSHTerminalRegistry.shared.terminals(for: profile.id).first { $0.channel.connected }?.channel
         let summary = SSHTerminalColorStore().cached(for: profile.id, choice: .host)?.summary ?? "Read when you connect"
         let picker = SSHTerminalColorPickerViewController(selected: colorChoice, hostSummary: summary, channel: live) { [weak self] choice in
             guard let self else { return }

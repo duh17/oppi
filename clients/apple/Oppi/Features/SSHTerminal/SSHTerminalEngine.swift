@@ -288,7 +288,7 @@ final class SSHTerminalEngine {
 
     /// The default colors. `palette` entries replace the built-in 256-color
     /// palette's, `cursor` the cursor's default; nil keeps libghostty's own.
-    /// A program's OSC 4, 10, 11 and 12 still change colors on top of these.
+    /// A program's OSC 4, 10 and 11 still change colors on top of these; the renderer does not read OSC 12.
     func setColors(
         foreground: GhosttyColorRgb,
         background: GhosttyColorRgb,

@@ -9,6 +9,8 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
     var connection: ServerConnection?
     var draftStore: ComposerDraftStore?
     var themeID: ThemeID
+    /// The host's Ghostty colors, folded into the composer's background and text.
+    var terminalColors: SSHTerminalColorTheme?
     var showRawKeyboard: () -> Void
     var onNeedsLayout: (() -> Void)?
     var onFailureChange: ((String?) -> Void)?
@@ -35,12 +37,14 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         connection: ServerConnection?,
         draftStore: ComposerDraftStore?,
         themeID: ThemeID,
+        terminalColors: SSHTerminalColorTheme? = nil,
         showRawKeyboard: @escaping () -> Void
     ) {
         self.channel = channel
         self.connection = connection
         self.draftStore = draftStore
         self.themeID = themeID
+        self.terminalColors = terminalColors
         self.showRawKeyboard = showRawKeyboard
     }
 
@@ -120,7 +124,7 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
             inputAccessibilityIdentifier: "chat.input",
             sendAccessibilityIdentifier: "chat.send",
             actionRow: .init(),
-            colors: ComposerThemeColors(palette: themeID.palette),
+            colors: ComposerThemeColors(palette: themeID.palette, terminal: terminalColors),
             reduceMotion: reduceMotion,
             suppressKeyboard: suppressKeyboard,
             focusRequestID: focusRequestID,
@@ -130,8 +134,9 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         )
     }
 
-    func refreshChrome(themeID: ThemeID, reduceMotion: Bool, connected: Bool) {
+    func refreshChrome(themeID: ThemeID, terminalColors: SSHTerminalColorTheme?, reduceMotion: Bool, connected: Bool) {
         self.themeID = themeID
+        self.terminalColors = terminalColors
         self.reduceMotion = reduceMotion
         self.connected = connected
         controller?.view.isUserInteractionEnabled = connected
