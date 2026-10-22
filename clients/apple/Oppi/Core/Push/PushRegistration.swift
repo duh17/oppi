@@ -39,6 +39,8 @@ final class PushRegistration {
     static let deviceTokenTimeout: Duration = .seconds(30)
 
     private var deviceToken: String?
+    /// The relay registration being made, by `PushRelayRegistrationStore.account`.
+    private var relayRegistrationTasks: [String: Task<PushRelayClient.Registration, any Error>] = [:]
     private var tokenWaiters: [UUID: CheckedContinuation<String?, Never>] = [:]
 
     #if DEBUG
@@ -103,8 +105,7 @@ final class PushRegistration {
                 relay: relay,
                 environment: environment,
                 apnsToken: token,
-                client: PushRelayClient(relay: relay),
-                retryWithNewRelayRegistration: true
+                client: PushRelayClient(relay: relay)
             )
             logger.info("Push registered with server \(server, privacy: .public) (\(environment.rawValue, privacy: .public))")
             return true
@@ -121,30 +122,32 @@ final class PushRegistration {
         relay: URL,
         environment: APNsEnvironment,
         apnsToken: String,
-        client: PushRelayClient,
-        retryWithNewRelayRegistration: Bool
+        client: PushRelayClient
     ) async throws {
-        var relayRegistration = PushRelayRegistrationStore.load(relay: relay, environment: environment)
-        if let existing = relayRegistration, existing.apnsToken != apnsToken {
-            // A new APNs token needs a new relay registration. The old one goes first, with
-            // its permissions.
-            do {
-                try await client.deleteRegistration(existing)
-            } catch PushRelayClient.RelayError.keyLost {
-                // Nothing can sign its delete any more. It stays at the relay until APNs
-                // retires its token; this phone must not keep it.
-                logger.error("Push relay registration lost its App Attest key; registering again")
-            }
-            PushRelayRegistrationStore.delete(relay: relay, environment: environment)
-            relayRegistration = nil
-        }
-        let registration: PushRelayClient.Registration
-        if let relayRegistration {
-            registration = relayRegistration
-        } else {
-            registration = try await client.register(apnsToken: apnsToken, environment: environment)
-            try PushRelayRegistrationStore.save(registration, relay: relay, environment: environment)
-        }
+        try await register(
+            api: api, serverId: serverId, deviceId: deviceId, relay: relay,
+            environment: environment, apnsToken: apnsToken, client: client,
+            replacing: nil, mayReplaceRelayRegistration: true, mayRecoverGoneSendToken: true
+        )
+    }
+
+    /// `replacing`: a relay registration the relay refused. Each `may…` recovery runs at most
+    /// once per registration.
+    private func register(
+        api: APIClient,
+        serverId: String,
+        deviceId: String,
+        relay: URL,
+        environment: APNsEnvironment,
+        apnsToken: String,
+        client: PushRelayClient,
+        replacing refused: PushRelayClient.Registration?,
+        mayReplaceRelayRegistration: Bool,
+        mayRecoverGoneSendToken: Bool
+    ) async throws {
+        let registration = try await relayRegistration(
+            relay: relay, environment: environment, apnsToken: apnsToken, client: client, replacing: refused
+        )
 
         // Each connection re-sends the permission this phone already gave the server: minting
         // on every connection would leak one permission each time, and a full registration
@@ -166,20 +169,16 @@ final class PushRegistration {
                 }
                 sendToken = try await client.mintSendToken(registration).sendToken
             } catch let error as PushRelayClient.RelayError
-                where retryWithNewRelayRegistration && [.gone, .tooManyPermissions, .keyLost].contains(error) {
+                where mayReplaceRelayRegistration && [.gone, .tooManyPermissions, .keyLost].contains(error) {
                 // The relay forgot this device (APNs retired the token), permissions leaked
                 // before this phone reused them filled it, or its App Attest key is gone (the
                 // app was reinstalled): start over with a fresh registration, once. Every
-                // server mints again on its next connection. A registration without its key
-                // cannot be deleted; the new one for the same APNs token replaces it.
-                if error != .keyLost {
-                    try await client.deleteRegistration(registration)
-                }
-                PushRelayRegistrationStore.delete(relay: relay, environment: environment)
+                // server mints again on its next connection.
                 try await register(
                     api: api, serverId: serverId, deviceId: deviceId, relay: relay,
                     environment: environment, apnsToken: apnsToken, client: client,
-                    retryWithNewRelayRegistration: false
+                    replacing: registration, mayReplaceRelayRegistration: false,
+                    mayRecoverGoneSendToken: mayRecoverGoneSendToken
                 )
                 return
             }
@@ -190,7 +189,82 @@ final class PushRegistration {
                 serverId: serverId
             )
         }
-        try await sendToServer(api: api, serverId: serverId, deviceId: deviceId, relay: relay, sendToken: sendToken)
+        do {
+            try await sendToServer(api: api, serverId: serverId, deviceId: deviceId, relay: relay, sendToken: sendToken)
+        } catch let error as APIError where mayRecoverGoneSendToken && Self.isSendTokenGone(error) {
+            // The relay refused this token when the server last pushed with it (410): its
+            // permission is gone, or the whole registration. Mint again, once: the mint
+            // replaces a registration the relay no longer holds (above), and only then, since
+            // a new registration for this APNs token takes every other server's permission
+            // with it.
+            logger.error("Push send token gone at the relay for server \(serverId.prefix(16), privacy: .public); minting again")
+            PushSendTokenStore.delete(serverId: serverId)
+            try await register(
+                api: api, serverId: serverId, deviceId: deviceId, relay: relay,
+                environment: environment, apnsToken: apnsToken, client: client,
+                replacing: nil, mayReplaceRelayRegistration: mayReplaceRelayRegistration,
+                mayRecoverGoneSendToken: false
+            )
+        }
+    }
+
+    /// `PUT /me/push-registration` answers `410 send_token_gone` for a send token the relay
+    /// has refused (spec §5).
+    private static func isSendTokenGone(_ error: APIError) -> Bool {
+        switch error {
+        case .server(410, let message): message == "send_token_gone"
+        case .codedServer(410, _, let code): code == "send_token_gone"
+        default: false
+        }
+    }
+
+    /// The stored registration at `relay` for `apnsToken`, or a new one. One registration at a
+    /// time per relay and environment: the relay keeps one per APNs token, so a second made
+    /// beside it would delete the first one's permissions. A caller waits for the one in
+    /// flight, then reads the store again.
+    ///
+    /// `refused`, the registration the relay just refused, is replaced only while it is still
+    /// the stored one; a caller that waited uses the registration that replaced it.
+    private func relayRegistration(
+        relay: URL,
+        environment: APNsEnvironment,
+        apnsToken: String,
+        client: PushRelayClient,
+        replacing refused: PushRelayClient.Registration?
+    ) async throws -> PushRelayClient.Registration {
+        let account = PushRelayRegistrationStore.account(relay: relay, environment: environment)
+        while let inFlight = relayRegistrationTasks[account] {
+            _ = try? await inFlight.value
+        }
+        let stored = PushRelayRegistrationStore.load(relay: relay, environment: environment)
+        if let stored, stored.apnsToken == apnsToken, stored.registrationId != refused?.registrationId {
+            return stored
+        }
+        // A registration for an old APNs token, or the refused one, goes first, with its
+        // permissions.
+        let stale = stored ?? refused
+        let task = Task { () throws -> PushRelayClient.Registration in
+            // Before any waiter resumes: a waiter that found this task still listed would
+            // await it again without suspending, forever.
+            defer { relayRegistrationTasks[account] = nil }
+            if let stale {
+                do {
+                    try await client.deleteRegistration(stale)
+                } catch PushRelayClient.RelayError.keyLost {
+                    // Nothing can sign its delete any more. It stays at the relay until APNs
+                    // retires its token, or the new registration for that token replaces it;
+                    // this phone must not keep it.
+                    logger.error("Push relay registration lost its App Attest key; registering again")
+                }
+                PushRelayRegistrationStore.delete(stale)
+            }
+            let registration = try await client.register(apnsToken: apnsToken, environment: environment)
+            try PushRelayRegistrationStore.save(registration, relay: relay, environment: environment)
+            return registration
+        }
+        // Listed before the task's body runs on this actor, so its `defer` clears it.
+        relayRegistrationTasks[account] = task
+        return try await task.value
     }
 
     /// Give the server this phone's push key for it, `sendToken`, and whether this phone shows
