@@ -32,6 +32,36 @@ struct RemotePushTests {
         #expect(APNsEnvironment.fromProvisioningProfile(Data("not a profile".utf8)) == nil)
     }
 
+    // MARK: - Turning push on
+
+    /// A phone that cannot reach APNs never hears back; turning push on must not spin forever.
+    @Test func aDeviceTokenAPNsNeverIssuesEndsTheWait() async {
+        let push = PushRegistration.shared
+        var requests = 0
+        push._registerForRemoteNotificationsForTesting = { requests += 1 }
+        defer { push._registerForRemoteNotificationsForTesting = nil }
+
+        #expect(await push.currentDeviceToken(timeout: .milliseconds(50)) == nil)
+        #expect(requests == 1)
+        // A later registration asks APNs again.
+        #expect(await push.currentDeviceToken(timeout: .milliseconds(50)) == nil)
+        #expect(requests == 2)
+    }
+
+    @Test func aCancelledWaitForTheDeviceTokenEndsAtOnce() async {
+        let push = PushRegistration.shared
+        push._registerForRemoteNotificationsForTesting = {}
+        defer { push._registerForRemoteNotificationsForTesting = nil }
+        let started = ContinuousClock.now
+
+        let wait = Task { await push.currentDeviceToken(timeout: .seconds(60)) }
+        try? await Task.sleep(for: .milliseconds(50))
+        wait.cancel()
+
+        #expect(await wait.value == nil)
+        #expect(ContinuousClock.now - started < .seconds(10))
+    }
+
     // MARK: - Foreground and local alerts
 
     @Test func failedRunsAndAgentMessagesShowInFrontUnlessTheirChatIsOnScreen() {

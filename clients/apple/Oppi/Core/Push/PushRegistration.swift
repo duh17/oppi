@@ -34,12 +34,18 @@ final class PushRegistration {
     /// Push keys rotate at the first registration after this age.
     static let keyRotationInterval: TimeInterval = 30 * 86_400
 
+    /// How long a registration waits for APNs to issue this device's token. A phone that
+    /// cannot reach APNs never hears back.
+    static let deviceTokenTimeout: Duration = .seconds(30)
+
     private var deviceToken: String?
-    private var tokenWaiters: [CheckedContinuation<String?, Never>] = []
+    private var tokenWaiters: [UUID: CheckedContinuation<String?, Never>] = [:]
 
     #if DEBUG
     /// Replaces the registration a server's push capability starts.
     var _onRegisterForTesting: ((String?) -> Void)?
+    /// Replaces `UIApplication.registerForRemoteNotifications()`.
+    var _registerForRemoteNotificationsForTesting: (() -> Void)?
     #endif
 
     private init() {}
@@ -353,21 +359,51 @@ final class PushRegistration {
     }
 
     /// APNs registration needs no notification permission; asking for it waits until a
-    /// token proves this build can receive pushes.
-    private func currentDeviceToken() async -> String? {
+    /// token proves this build can receive pushes. Nil when APNs refuses, when it has not
+    /// answered within `timeout`, or when the caller is cancelled; a later call asks again.
+    func currentDeviceToken(timeout: Duration = deviceTokenTimeout) async -> String? {
         if let deviceToken { return deviceToken }
-        return await withCheckedContinuation { continuation in
-            tokenWaiters.append(continuation)
-            if tokenWaiters.count == 1 {
-                UIApplication.shared.registerForRemoteNotifications()
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                tokenWaiters[id] = continuation
+                Task { [weak self] in
+                    try? await Task.sleep(for: timeout)
+                    self?.resumeTokenWaiter(id, with: nil)
+                }
+                if tokenWaiters.count == 1 {
+                    requestDeviceToken()
+                }
             }
+        } onCancel: {
+            // The hop to the main actor runs after the body has stored the continuation, or
+            // has seen the cancellation and resumed it itself.
+            Task { @MainActor [weak self] in self?.resumeTokenWaiter(id, with: nil) }
         }
+    }
+
+    private func requestDeviceToken() {
+        #if DEBUG
+        if let register = _registerForRemoteNotificationsForTesting {
+            register()
+            return
+        }
+        #endif
+        UIApplication.shared.registerForRemoteNotifications()
+    }
+
+    private func resumeTokenWaiter(_ id: UUID, with token: String?) {
+        tokenWaiters.removeValue(forKey: id)?.resume(returning: token)
     }
 
     private func resumeTokenWaiters(with token: String?) {
         let waiters = tokenWaiters
         tokenWaiters.removeAll()
-        for waiter in waiters {
+        for waiter in waiters.values {
             waiter.resume(returning: token)
         }
     }
