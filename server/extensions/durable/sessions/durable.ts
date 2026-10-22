@@ -36,7 +36,7 @@ import { DurableJobs } from "../background-jobs/contract.js";
 import { agentMessageEntry, type MessageOrigin } from "./agent-message.js";
 import { Subagents, ensureSubagentWidget, type Child } from "./contract.js";
 import { isLive, liveTasks } from "./wakers.js";
-import { defineSubagentWidget } from "./widget.js";
+import { SubagentWidget } from "./widget.js";
 
 type Sender = SessionSender;
 
@@ -632,7 +632,6 @@ export function createDurableSessions(
       ? Promise.resolve(child.sessionId)
       : bound(api.env).materialize({ conversationId: child.conversationId, name });
   const Reporter = defineReporter(bound);
-  const SubagentWidget = defineSubagentWidget(host);
   /**
    * Waits until child `name` (`conversationId`) of the caller is idle with no background work
    * of its own pending: idle alone may be an interim answer ("still waiting on the job"), and the

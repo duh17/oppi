@@ -9,6 +9,7 @@ import type {
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import type { TSchema } from "typebox";
+import type { Job } from "../extensions/durable/background-jobs/contract.js";
 import type { NotifyInput, NotifyOutcome } from "../extensions/durable/notify/contract.js";
 
 /**
@@ -107,6 +108,31 @@ export function bindOppiHost(host: OppiDurableHost): void {
 
 /** Registered name of the subagent reporter task; Stop aborts tasks of this kind. */
 export const SESSION_REPORTER_TASK = "oppi.session-reporter";
+
+/**
+ * The tasks that wake conversation `id` when they end: its subagent reporters among `tasks`
+ * (live task records, of any conversation) and its background jobs not yet delivered, from
+ * `jobs`, its `DurableJobs` document. Tickers that never end (pills, working words) are not
+ * among them. The one rule behind `SessionHost.pendingWakers` (`DurableSessionsHost`), which
+ * reads `tasks` from the scheduler and also drops blocked tasks, and the subagent pill, which
+ * reads them in a commit, where blocked is not known.
+ */
+export function wakingTasks(
+  id: ConversationId,
+  tasks: Iterable<{
+    readonly id: TaskId;
+    readonly conversationId?: ConversationId;
+    readonly kind: string;
+  }>,
+  jobs: { readonly jobs: readonly Job[] } | null | undefined,
+): TaskId[] {
+  const waking: TaskId[] = [];
+  for (const task of tasks)
+    if (task.conversationId === id && task.kind === SESSION_REPORTER_TASK) waking.push(task.id);
+  for (const job of jobs?.jobs ?? [])
+    if (job.decision === "background" && !job.delivered) waking.push(job.taskId);
+  return waking;
+}
 
 /** A session as the sender of an agent message. */
 export type SessionSender = { sessionId: string; name?: string };

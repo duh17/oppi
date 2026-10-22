@@ -39,6 +39,7 @@ import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import {
   SESSION_REPORTER_TASK,
   bindOppiHost,
+  wakingTasks,
   type OppiDurableHost,
 } from "./durable-extension-api.js";
 import type { DurableControlCli } from "./durable-control-cli.js";
@@ -463,16 +464,12 @@ export class SessionHost {
     const blocked = new Set<number>(
       live.tasks.flatMap(({ record, state }) => (state.kind === "blocked" ? [record.id] : [])),
     );
-    const reporters = live.tasks.flatMap(({ record }) =>
-      record.conversationId === id && record.kind === SESSION_REPORTER_TASK ? [record.id] : [],
-    );
     const jobs = await harness.snapshot(DurableJobs, id, BACKGROUND_CONTEXT);
-    return [
-      ...reporters,
-      ...(jobs?.jobs ?? [])
-        .filter((job) => job.decision === "background" && !job.delivered)
-        .map((job) => job.taskId),
-    ].filter((task) => !blocked.has(task));
+    return wakingTasks(
+      id,
+      live.tasks.map(({ record }) => record),
+      jobs,
+    ).filter((task) => !blocked.has(task));
   }
 
   /**

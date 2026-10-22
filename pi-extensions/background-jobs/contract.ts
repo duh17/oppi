@@ -3,7 +3,9 @@ import { defineDoc, type TaskId } from "@earendil-works/pi-durable";
 // What others read of this extension. The Oppi server reads the job list, to keep a sandbox VM
 // while a job still has undelivered output. `oppi.sessions` reads a child's jobs (`id`, `taskId`,
 // `command`, `status`) in `runningJobsOnly`, so `subagent wait` returns while only jobs still
-// `running` remain: a change here must keep that reader right. Shared by the server and the
+// `running` remain, and `wakingTasks` in `oppi/durable` reads `taskId`, `decision`, and
+// `delivered` for a conversation's pending wakers (the idle timeout, `subagent wait`, and the
+// subagent pill): a change here must keep those readers right. Shared by the server and the
 // durable entries, so it imports nothing from `oppi/durable`, which only the extension loader
 // resolves.
 

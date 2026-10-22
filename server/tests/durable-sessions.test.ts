@@ -24,7 +24,11 @@ import {
   type ToolExecutionApi,
 } from "@earendil-works/pi-durable";
 import { createDurableSessions } from "../extensions/durable/sessions/durable.js";
-import { Subagents } from "../extensions/durable/sessions/contract.js";
+import {
+  SUBAGENT_WIDGET_TASK,
+  Subagents,
+  ensureSubagentWidget,
+} from "../extensions/durable/sessions/contract.js";
 import { DurableJobs } from "../extensions/durable/background-jobs/contract.js";
 import { ACTIVITY_INTERVAL_MS, WAITING_ACTIVITY } from "../extensions/durable/sessions/widget.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
@@ -1951,6 +1955,51 @@ describe("durable-native threads", () => {
       await until(async () => (await row())?.state === "success", "a done row");
       expect((await pill())?.presentation).toMatchObject({ subtitle: "Done" });
       expect(String((await row())?.detail)).not.toContain(WAITING_ACTIVITY);
+      await expectTwoReports(f, child, parentConversation);
+    });
+
+    it("shows the child as working in a pill whose watcher starts while the parent has no execution env", async () => {
+      const { f, child, parentConversation, open } = await jobFixture();
+      const harness = await f.harness();
+      const row = async () =>
+        (
+          (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
+            "widget:subagents"
+          ]?.nativeSurface as
+            { blocks: Array<{ rows: Array<{ state: string; detail?: string }> }> } | undefined
+        )?.blocks[0]?.rows[0];
+      await until(
+        async () => String((await row())?.detail).includes(WAITING_ACTIVITY),
+        "the waiting row",
+      );
+      // A sandbox parent with no VM attached: the server refuses to build its env. The pill's
+      // slot is cleared so the new watcher's first pass is what it shows.
+      const setRuntime = (kind: "host" | "sandbox") =>
+        harness.commit(async (tx) => {
+          (await tx.doc(DurableRuntime, parentConversation)).kind = kind;
+        }, context);
+      await setRuntime("sandbox");
+      const retired = (await harness.snapshot(Subagents, parentConversation, context))?.widget;
+      await harness.abortTask(retired!, context);
+      await harness.waitForTask(retired!, context);
+      const host = await f.owner();
+      await harness.commit(async (tx) => {
+        delete (await tx.doc(DurableUI, parentConversation)).notifications["widget:subagents"];
+        await ensureSubagentWidget(
+          tx,
+          parentConversation,
+          host.runtime.installedTask(SUBAGENT_WIDGET_TASK),
+        );
+      }, context);
+
+      await until(async () => (await row()) !== undefined, "the new watcher's row");
+      expect(await row()).toMatchObject({ state: "running" });
+      expect(String((await row())?.detail)).toContain(WAITING_ACTIVITY);
+
+      // The parent's follower needs its env again after the job.
+      await setRuntime("host");
+      open();
+      await until(async () => (await row())?.state === "success", "a done row");
       await expectTwoReports(f, child, parentConversation);
     });
 
