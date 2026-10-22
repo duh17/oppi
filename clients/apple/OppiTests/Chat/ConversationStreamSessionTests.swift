@@ -1038,7 +1038,7 @@ struct ConversationChildTailPerfTests {
         ))
         // Unbatched, every one of the 64 frames would publish.
         #expect(publications >= 2)
-        #expect(Double(publications) <= seconds * 4 + 2)
+        #expect(Double(publications) <= seconds * 4 + 1)
         await harness.finish()
     }
 }

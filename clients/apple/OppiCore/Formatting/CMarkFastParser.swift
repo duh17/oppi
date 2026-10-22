@@ -7,7 +7,6 @@ import cmark_gfm_extensions
 /// CommonMark consumes the escape.
 struct MarkdownMathScannerDiagnostics: Equatable {
     var indexedBacktickRuns = 0
-    var suffixLineVisits = 0
 }
 
 private enum MarkdownMathDelimiterRewriter {
