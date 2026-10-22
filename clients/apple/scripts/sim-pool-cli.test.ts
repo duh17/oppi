@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readSlotState, releaseReusable, tryAcquireSlot } from "./sim-pool-lock";
+import { INTERRUPTED_NOTE, needsCleanBoot, readSlotState, releaseReusable, tryAcquireSlot } from "./sim-pool-lock";
 
 const cli = join(import.meta.dir, "sim-pool.ts");
 const temps: string[] = [];
@@ -738,6 +738,7 @@ describe("sim-pool CLI", () => {
       join(bin, "xcodebuild"),
       `#!/usr/bin/env bash
 set -euo pipefail
+${FAKE_BUILD_FOR_TESTING}
 cat <<'TEST_LOG'
 ${finished ? swiftTestPrelude + swiftPassed : ""}TEST_LOG
 printf 'started\n' > "${fake}/xcodebuild.started"
@@ -776,8 +777,22 @@ sleep 30
     const reuse = tryAcquireSlot({ lockDir: join(root, "locks"), slot: 0, argv: ["run"] });
     expect(reuse.ok).toBe(true);
     if (reuse.ok) {
-      releaseReusable(reuse.owned);
+      // The interrupted run left the slot owing a clean boot.
+      expect(needsCleanBoot(reuse.previous)).toBe(true);
+      releaseReusable(reuse.owned, undefined, INTERRUPTED_NOTE);
     }
+    // The next run boots the still-booted simulator fresh, then releases the slot clean.
+    writeFileSync(join(bin, "xcodebuild"), `#!/bin/sh\n${FAKE_BUILD_FOR_TESTING}\nexit 0\n`, { mode: 0o755 });
+    rmSync(join(fake, "simctl.log"), { force: true });
+    const next = spawnSync("bun", [cli, "run", "--", "xcodebuild", "-scheme", "Oppi", "test-without-building"], {
+      cwd: join(root, "clients", "apple"),
+      env,
+      encoding: "utf8",
+    });
+    expect(next.status).toBe(0);
+    expect(readFileSync(join(fake, "simctl.log"), "utf8")).toMatch(/shutdown UDID-POOL-0[\s\S]*boot UDID-POOL-0/);
+    const state = readSlotState(join(root, "locks"), 0);
+    expect(state !== "unreadable" && state?.note).toBeFalsy();
   });
 
   }

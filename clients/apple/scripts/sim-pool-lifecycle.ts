@@ -12,7 +12,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import {
   beginPublishing,
+  INTERRUPTED_NOTE,
   inspectSlot,
+  needsCleanBoot,
   readSlotState,
   recordOwnedPgid,
   releaseClaimed,
@@ -299,7 +301,8 @@ async function shutdownPoolSlot(
     } else if (previousClaim && (kind === "restore" || !endClaim)) {
       releaseClaimed(owned, previousClaim, previousStartedAt);
     } else if (kind === "restore") {
-      releaseReusable(owned, previousStartedAt);
+      // The simulator was not shut down, so a pending clean boot is still owed.
+      releaseReusable(owned, previousStartedAt, needsCleanBoot(acquired.previous) ? INTERRUPTED_NOTE : undefined);
     } else {
       releaseReusable(owned);
     }
@@ -721,7 +724,14 @@ export async function commandClaim(config: PoolConfig, args: string[]): Promise<
       recordOwnedPgid(owned, child.pgid);
     };
     const udid = await ensureSim(session, config, owned.slot);
-    await prepareSimulator(session, config, udid, "normal", () => ensureBootCapacity(config, udid));
+    await prepareSimulator(
+      session,
+      config,
+      udid,
+      "normal",
+      () => ensureBootCapacity(config, udid),
+      needsCleanBoot(acquired.previous),
+    );
     if (session.canceled) {
       return session.cancelExitCode();
     }
@@ -742,7 +752,11 @@ export async function commandClaim(config: PoolConfig, args: string[]): Promise<
       } else if (previousClaim) {
         releaseClaimed(acquired.owned, previousClaim, acquired.previous?.started_at);
       } else {
-        releaseReusable(acquired.owned, acquired.previous?.started_at);
+        releaseReusable(
+          acquired.owned,
+          acquired.previous?.started_at,
+          needsCleanBoot(acquired.previous) ? INTERRUPTED_NOTE : undefined,
+        );
       }
     }
   }

@@ -351,12 +351,23 @@ export function recordOwnedPgid(owned: OwnedSlot, pgid: number): void {
  * `startedAt` keeps an earlier timestamp when a lease that did not use the
  * simulator puts the state back, so the slot's idle clock does not restart.
  */
-export function releaseReusable(owned: OwnedSlot, startedAt?: string): void {
+export function releaseReusable(owned: OwnedSlot, startedAt?: string, note?: string): void {
   if (owned.closed || owned.fd < 0) {
     return;
   }
-  writeState(owned, "reusable", undefined, undefined, startedAt);
+  writeState(owned, "reusable", note, undefined, startedAt);
   closeOwned(owned);
+}
+
+/**
+ * A run that was canceled or stopped mid-test (or a holder that died without releasing)
+ * can leave the booted simulator half-broken, for example with dead audio. Such a slot is
+ * released with this note, and the next user boots it clean.
+ */
+export const INTERRUPTED_NOTE = "interrupted: clean-boot before the next run";
+
+export function needsCleanBoot(previous: SlotState | null | undefined): boolean {
+  return previous != null && (previous.status === "in-flight" || previous.status === "uncertain" || previous.note === INTERRUPTED_NOTE);
 }
 
 /** Hands the slot to `claim.owner` and drops the flock; the claim persists. */

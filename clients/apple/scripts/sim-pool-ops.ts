@@ -36,6 +36,8 @@ import {
 import {
   lockPath,
   beginPublishing,
+  INTERRUPTED_NOTE,
+  needsCleanBoot,
   recordOwnedPgid,
   releaseReusable,
   releaseUncertain,
@@ -999,13 +1001,15 @@ export async function prepareSimulator(
   udid: string,
   mode: "normal" | "recovery",
   beforeBoot?: () => Promise<void>,
+  /** The slot's last run was interrupted (see INTERRUPTED_NOTE): boot the device fresh. */
+  cleanBoot = false,
 ): Promise<void> {
   if (mode === "recovery") {
     log(`[sim-pool] Recovery: shutting down + erasing simulator ${udid}`);
     await runSimctl(session, ["shutdown", udid], "simctl shutdown");
     await runSimctl(session, ["erase", udid], "simctl erase");
-  } else if (config.forceCleanBoot) {
-    log(`[sim-pool] Preparing clean simulator boot for ${udid}`);
+  } else if (config.forceCleanBoot || cleanBoot) {
+    log(`[sim-pool] Preparing clean simulator boot for ${udid}${cleanBoot ? " (its last run was interrupted)" : ""}`);
     await runSimctl(session, ["shutdown", udid], "simctl shutdown");
   } else {
     const devices = await listDevices(session);
@@ -1053,7 +1057,7 @@ async function acquireRunSlot(
   config: PoolConfig,
   argv: string[],
   session: CommandSession,
-): Promise<OwnedSlot> {
+): Promise<{ owned: OwnedSlot; cleanBoot: boolean }> {
   const deadline = Date.now() + config.waitSeconds * 1000;
   let announced = false;
   const runtime = await resolveRuntime(session, config);
@@ -1068,7 +1072,7 @@ async function acquireRunSlot(
       }
       const result = tryAcquireSlot({ lockDir: config.lockDir, slot, argv });
       if (result.ok) {
-        return result.owned;
+        return { owned: result.owned, cleanBoot: needsCleanBoot(result.previous) };
       }
     }
     if (Date.now() >= deadline) {
@@ -1845,6 +1849,7 @@ export async function commandRun(
   const plan: RunPlan = isXcodebuild(split.command) ? planRun(split.argv) : { kind: "slot", readsDerivedData: true };
   const runStart = nowEpoch();
   let owned: OwnedSlot | undefined;
+  let cleanBootOwed = false;
   let build: BuildPhase | undefined;
   let sharedDerivedData: HeldLock | undefined;
   const slotWaitStartHolder = { value: runStart };
@@ -1931,7 +1936,9 @@ export async function commandRun(
       completionArgv = completionArgvForXctestrun(split.argv);
     }
     slotWaitStartHolder.value = nowEpoch();
-    owned = await acquireRunSlot(config, ["run", ...args], session);
+    const acquired = await acquireRunSlot(config, ["run", ...args], session);
+    owned = acquired.owned;
+    cleanBootOwed = acquired.cleanBoot;
     slotWaitEndHolder.value = nowEpoch();
     const slotOwner = owned;
     session.onBeforeSpawn = () => {
@@ -1952,7 +1959,8 @@ export async function commandRun(
     prepStart = nowEpoch();
     const bootUdid = simUdId;
     const beforeBoot = hooks.beforeBoot;
-    await prepareSimulator(session, config, bootUdid, "normal", beforeBoot && (() => beforeBoot(bootUdid)));
+    await prepareSimulator(session, config, bootUdid, "normal", beforeBoot && (() => beforeBoot(bootUdid)), cleanBootOwed);
+    cleanBootOwed = false;
     prepEnd = nowEpoch();
     const baseLog = join(logDir, `pool-${owned.slot}-${stamp}.log`);
     const baseArtifact = baseLog.replace(/\.log$/, ".json");
@@ -2273,7 +2281,10 @@ export async function commandRun(
       if (!stopped.quiescent) {
         releaseUncertain(owned, stopped.note ?? "run ended without proven quiescence");
       } else {
-        releaseReusable(owned);
+        // A canceled run or a stopped hung xcodebuild may leave the simulator half-broken
+        // (dead audio); the next run on this slot boots it clean.
+        const interrupted = cleanBootOwed || session.canceled || hangDetected;
+        releaseReusable(owned, undefined, interrupted ? INTERRUPTED_NOTE : undefined);
       }
     }
   }
