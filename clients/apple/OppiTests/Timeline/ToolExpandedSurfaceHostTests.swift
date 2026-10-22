@@ -731,7 +731,8 @@ struct ToolExpandedSurfaceHostTests {
         await Task.yield()
         #expect(recycledFirstSource == nil)
 
-        try? await Task.sleep(for: .seconds(5))
+        // Long enough to span several of the 250 ms capped recheck intervals while tracking.
+        try? await Task.sleep(for: .seconds(1))
         #expect(
             ToolTimelineRowPresentationHelpers.forcedInteractionInvalidationIsPendingForTesting(
                 collectionView
