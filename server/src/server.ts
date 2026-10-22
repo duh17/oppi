@@ -1191,6 +1191,7 @@ export class Server {
 
   async stop(): Promise<void> {
     this.stopUploadGcLoop();
+    this.voiceCallController.dispose();
     this.pairing.dispose();
     // A phone's card would show stale counts for hours once this server is gone. Only a stop
     // the person asked for (`oppi server stop`/`uninstall`, Ctrl-C) ends it. Any other SIGTERM,

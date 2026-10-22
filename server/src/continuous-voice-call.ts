@@ -22,6 +22,8 @@ const DEFAULT_DETACHED_CALL_TTL_MS = 10 * 60_000;
  * and an attach to a missing call makes it start a new one.
  */
 const ENDED_CALL_RETENTION_MS = 24 * 60 * 60_000;
+/** How often an idle server looks for ended calls past that retention. */
+const ENDED_CALL_SWEEP_INTERVAL_MS = 60 * 60_000;
 const MAX_REPLAY_EVENTS = 128;
 const MAX_RETAINED_CALLS = 256;
 const MAX_DELEGATIONS_PER_CALL = 256;
@@ -139,6 +141,7 @@ export class VoiceCallController {
   private readonly retentionGraceMs: number;
   private readonly detachedCallTtlMs: number;
   private readonly maxRetainedCalls: number;
+  private cancelSweep: (() => void) | undefined;
 
   constructor(
     private readonly deps: {
@@ -148,6 +151,8 @@ export class VoiceCallController {
       retentionGraceMs?: number;
       detachedCallTtlMs?: number;
       maxRetainedCalls?: number;
+      /** Runs `run` every `intervalMs` until the returned function is called. Default: an unref'd timer. */
+      schedule?: (run: () => void, intervalMs: number) => () => void;
       persistence?: VoiceCallPersistence;
       dispatchDelegation?: (controlSessionId: string, delegation: VoiceDelegation) => void;
     },
@@ -170,6 +175,19 @@ export class VoiceCallController {
       throw new Error("Voice call retention capacity must be a positive safe integer");
     }
     this.restorePersistedCalls();
+    if (deps.persistence) {
+      // Idle servers do not save, so without this an ended call outlives its retention on disk.
+      this.cancelSweep = (deps.schedule ?? scheduleUnrefInterval)(
+        () => this.sweepExpiredEndedCalls(),
+        ENDED_CALL_SWEEP_INTERVAL_MS,
+      );
+    }
+  }
+
+  /** Stops the retention sweep; call on server shutdown. */
+  dispose(): void {
+    this.cancelSweep?.();
+    this.cancelSweep = undefined;
   }
 
   startCall(
@@ -603,6 +621,16 @@ export class VoiceCallController {
     );
   }
 
+  /** Saves (which prunes) only when an ended call has aged out; an idle sweep writes nothing. */
+  private sweepExpiredEndedCalls(): void {
+    for (const call of this.calls.values()) {
+      if (this.isPastEndedRetention(call)) {
+        this.persist();
+        return;
+      }
+    }
+  }
+
   private isPastEndedRetention(call: MutableVoiceCall): boolean {
     return call.lifecycle === "ended" && call.updatedAt + ENDED_CALL_RETENTION_MS <= this.now();
   }
@@ -768,6 +796,12 @@ export class VoiceCallController {
     if (!call) throw new Error(`Unknown voice call: ${callId}`);
     return call;
   }
+}
+
+function scheduleUnrefInterval(run: () => void, intervalMs: number): () => void {
+  const timer = setInterval(run, intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
 }
 
 function delegationStateFor(kind: VoiceDelegationUpdate["kind"]): VoiceCallDelegationState {

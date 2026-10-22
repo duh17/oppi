@@ -475,6 +475,64 @@ describe("FileVoiceCallStore", () => {
       });
     });
 
+    it("sweeps an aged-out ended call while Live Voice is idle and writes nothing otherwise", () => {
+      withStoreDir((path) => {
+        let now = 1_000;
+        let sweep: (() => void) | undefined;
+        let cancelled = false;
+        const store = new FileVoiceCallStore(path);
+        let saves = 0;
+        const save = store.save.bind(store);
+        store.save = (calls) => {
+          saves += 1;
+          save(calls);
+        };
+        const controller = new VoiceCallController({
+          now: () => now,
+          nextCallId: () => "call-1",
+          persistence: store,
+          schedule: (run, intervalMs) => {
+            expect(intervalMs).toBeLessThanOrEqual(HOUR_MS);
+            sweep = run;
+            return () => {
+              cancelled = true;
+            };
+          },
+        });
+        const front = new DeterministicVoiceCallFrontend({
+          connectionId: "connection-1",
+          authenticatedDeviceId: "paired-device-a",
+        });
+        const state = startAndSay(controller, front, {
+          sessionId: "session-1",
+          clientCallId: "client-1",
+          callId: "call-1",
+          request: "SECRET idle request",
+        });
+        controller.endCall(
+          { callId: "call-1", controllerLeaseEpoch: state.controllerLeaseEpoch },
+          front.connection,
+        );
+
+        // Nothing has aged out: a sweep does not touch the file.
+        const savesBefore = saves;
+        now = 1_000 + 24 * HOUR_MS - 1;
+        sweep?.();
+        expect(saves).toBe(savesBefore);
+        expect(readFileSync(path, "utf8")).toContain("SECRET");
+
+        // No call, start or save happens; the sweep alone removes it once 24 hours have passed.
+        now = 1_000 + 24 * HOUR_MS;
+        sweep?.();
+        expect(saves).toBe(savesBefore + 1);
+        expect(storedCallIds(path)).toEqual([]);
+        expect(readFileSync(path, "utf8")).not.toContain("SECRET");
+
+        controller.dispose();
+        expect(cancelled).toBe(true);
+      });
+    });
+
     it("still writes the file when every stored call has aged out at load", () => {
       withStoreDir((path) => {
         let callSequence = 0;
