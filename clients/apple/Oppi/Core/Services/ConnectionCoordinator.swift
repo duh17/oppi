@@ -1106,6 +1106,12 @@ final class ConnectionCoordinator {
         retryPreparationAfterBoundaryServerIds.remove(id)
         // Remove identity before suspension so a re-pair cannot observe or reuse it.
         let removedConnection = connections.removeValue(forKey: id)
+        // End the server's card while this phone still drives it: once push is off below, no
+        // server can end it, and it would show its last counts until iOS ends it hours later.
+        if LiveActivitySettings.isEnabled(serverId: id) {
+            LiveActivitySettings.setEnabled(false, serverId: id)
+            LiveActivityManager.shared.settingsChanged(serverId: id)
+        }
         if let conn = removedConnection {
             conn.cancelListRefreshWork()
             conn.disconnectSession()

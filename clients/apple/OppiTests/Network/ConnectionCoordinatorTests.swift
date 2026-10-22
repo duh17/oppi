@@ -890,6 +890,19 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.activeServerId != "sha256:remove-test")
     }
 
+    /// Otherwise the card is adopted again at every launch, with counts nothing updates.
+    @Test func removingAServerTurnsItsLiveActivityOff() async {
+        let (coordinator, _) = makeCoordinator()
+        let server = makeServer(id: "sha256:remove-card", name: "Card")
+        coordinator.serverStore.addOrUpdate(server)
+        LiveActivitySettings.setEnabled(true, serverId: server.id)
+        defer { LiveActivitySettings.setEnabled(false, serverId: server.id) }
+
+        await coordinator.removeServer(id: server.id)
+
+        #expect(!LiveActivitySettings.isEnabled(serverId: server.id))
+    }
+
     @Test func removingSelectedHostSelectsOfflineRemainingShell() async {
         let (coordinator, _) = makeCoordinator()
         let removed = makeServer(id: "sha256:remove-offline-a", name: "Removed")
