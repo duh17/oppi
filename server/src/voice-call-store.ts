@@ -3,6 +3,9 @@ import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import type { PersistedVoiceCall, VoiceCallPersistence } from "./continuous-voice-call.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger({ base: { component: "voice_call_store" } });
 
 const STORE_VERSION = 1;
 const MAX_PERSISTED_CALLS = 256;
@@ -29,6 +32,25 @@ export class FileVoiceCallStore implements VoiceCallPersistence {
       throw new Error("Voice call store is unreadable");
     }
     return parsePersistedVoiceCallFile(parsed);
+  }
+
+  /**
+   * Keeps the unusable file as `voice-calls.json.corrupt-<ms>` for inspection. The next save
+   * writes a fresh store, so a failed rename cannot make the server keep tripping on it.
+   */
+  quarantine(reason: unknown): void {
+    const asidePath = `${this.path}.corrupt-${Date.now()}`;
+    const error = reason instanceof Error ? reason.message : String(reason);
+    try {
+      renameSync(this.path, asidePath);
+      log.error("voice_call_store.corrupt", { path: this.path, movedTo: asidePath, error });
+    } catch (renameError) {
+      log.error("voice_call_store.corrupt_not_moved", {
+        path: this.path,
+        error,
+        renameError: renameError instanceof Error ? renameError.message : String(renameError),
+      });
+    }
   }
 
   save(calls: readonly PersistedVoiceCall[]): void {

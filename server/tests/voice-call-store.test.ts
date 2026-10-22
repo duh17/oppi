@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -66,6 +66,64 @@ describe("FileVoiceCallStore", () => {
 
       writeFileSync(path, "{not-json", { mode: 0o600 });
       expect(() => new FileVoiceCallStore(path).load()).toThrow("Voice call store is unreadable");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["is not JSON", "{not-json"],
+    [
+      "holds a replay event this server does not know",
+      JSON.stringify({
+        version: 1,
+        calls: [
+          {
+            callId: "call-future",
+            controlSessionId: "voice-session-1",
+            clientCallId: "client-call-1",
+            ownerDeviceId: "paired-device-a",
+            lifecycle: "active",
+            controllerLeaseEpoch: 1,
+            controllerLeaseExpiresAt: 4_000,
+            eventSeq: 1,
+            startedAt: 1_000,
+            updatedAt: 2_000,
+            delegations: [],
+            events: [{ type: "voice_from_a_newer_server", callId: "call-future" }],
+          },
+        ],
+      }),
+    ],
+  ])("boots empty and sets the file aside when voice-calls.json %s", (_name, contents) => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-voice-call-store-corrupt-"));
+    try {
+      const path = voiceCallStorePath(dir);
+      writeFileSync(path, contents, { mode: 0o600 });
+
+      const controller = new VoiceCallController({
+        now: () => 1_000,
+        nextCallId: () => "call-fresh",
+        persistence: new FileVoiceCallStore(path),
+      });
+
+      // The bad file is kept for inspection under a timestamped name, not deleted.
+      const aside = readdirSync(dir).filter((name) => name.startsWith("voice-calls.json.corrupt-"));
+      expect(aside).toHaveLength(1);
+      expect(readFileSync(join(dir, aside[0] as string), "utf8")).toBe(contents);
+
+      // The controller starts empty and persists normally afterwards.
+      expect(() => controller.snapshot("call-future")).toThrow("Unknown voice call");
+      const frontend = new DeterministicVoiceCallFrontend({
+        connectionId: "connection-1",
+        authenticatedDeviceId: "paired-device-a",
+      });
+      controller.startCall(
+        { controlSessionId: "voice-session-1", clientCallId: "client-call-2" },
+        frontend.connection,
+      );
+      const raw = JSON.parse(readFileSync(path, "utf8")) as { calls: Array<{ callId: string }> };
+      expect(raw.calls.map((call) => call.callId)).toEqual(["call-fresh"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

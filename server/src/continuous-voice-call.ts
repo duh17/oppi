@@ -76,6 +76,11 @@ interface MutableVoiceCall {
   controlSessionId: string;
   clientCallId: string;
   ownerDeviceId: string;
+  /**
+   * The stored calls could not be read or restored. The store sets them aside so the
+   * controller can start empty instead of keeping the server from booting.
+   */
+  quarantine?(reason: unknown): void;
   lifecycle: "active" | "ended";
   frontendConnection?: VoiceCallFrontendConnection;
   detachedAt?: number;
@@ -519,12 +524,14 @@ export class VoiceCallController {
   private restorePersistedCalls(): void {
     const persistence = this.deps.persistence;
     if (!persistence) return;
-    const records = persistence.load();
-    if (records.length === 0) return;
-    for (const record of records) {
-      const call = hydratePersistedCall(record);
-      if (this.calls.has(call.callId)) {
-        throw new Error("Voice call identity must be unique and non-empty");
+    const restored = new Map<string, MutableVoiceCall>();
+    try {
+      for (const record of persistence.load()) {
+        const call = hydratePersistedCall(record);
+        if (restored.has(call.callId)) {
+          throw new Error("Voice call identity must be unique and non-empty");
+        }
+        restored.set(call.callId, call);
       }
       if (call.lifecycle === "active") {
         this.detach(call);
@@ -580,6 +587,14 @@ export class VoiceCallController {
     this.assertOwnerDevice(call, frontend.authenticatedDeviceId);
     if (
       !Number.isSafeInteger(controllerLeaseEpoch) ||
+    } catch (error) {
+      // Without a way to set the file aside, refuse to boot on it as before.
+      if (!persistence.quarantine) throw error;
+      persistence.quarantine(error);
+      return;
+    }
+    if (restored.size === 0) return;
+    for (const call of restored.values()) {
       controllerLeaseEpoch <= 0 ||
       controllerLeaseEpoch !== call.controllerLeaseEpoch ||
       call.frontendConnection?.connectionId !== frontend.connectionId ||
