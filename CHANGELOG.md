@@ -52,6 +52,12 @@ Example:
 
 ## [Unreleased]
 
+### Changed
+
+- **Mirror:** `oppi-mirror` uses `ws` 8.22.0, the version `oppi-server` pins.
+
+## [0.53.0] - 2026-10-22
+
 Target: iOS `1.1.2` Build `56`, `oppi-server@0.53.0`, and `oppi-mirror@0.53.0` (Pi 1.4.0).
 
 ### Added
