@@ -309,8 +309,9 @@ final class LiveVoiceCallController {
             if requestId != nil, requestId == rejoinRequestId {
                 rejoinRequestId = nil
                 if !success {
-                    // The call is gone (ended, or the server no longer has it): start a new
-                    // one instead of failing the call the user is on.
+                    // The call is gone (ended, or the server no longer has it). On a call the
+                    // user is on, start a new one instead of failing it; an unconfirmed
+                    // automatic rejoin (`rejoinOnly`) ends instead, so no mic opens untapped.
                     forgetStoredCall()
                     if rejoinOnly {
                         failClosed(Self.endedText, closeChannel: true)
@@ -540,6 +541,8 @@ final class LiveVoiceCallController {
 
     private func confirmStart(generation: UInt64) {
         didConfirmCall = true
+        // A confirmed rejoin is the user's ordinary call from here on: it recovers like one.
+        rejoinOnly = false
         // Every call state (each partial transcript while the user talks) confirms the call.
         // Restarting the timer here would starve the keepalive during long speech and let
         // the server's lease expire under a live call.

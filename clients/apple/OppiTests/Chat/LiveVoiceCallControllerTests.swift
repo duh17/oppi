@@ -752,6 +752,36 @@ struct LiveVoiceCallControllerTests {
         #expect(harness.memory.callIdentity(forServer: "server-1") == nil, "The dead call is forgotten")
     }
 
+    @Test("Once rejoined, a call recovers like a call the user started")
+    func rejoinedCallRecoversLikeATappedCall() async throws {
+        let harness = try await startedHarness()
+        let handoff = LiveVoiceRemountHandoff()
+        await handoff.leave(
+            call: harness.controller, serverId: "server-1", sessionId: "sess-1",
+            remountedUnder: .split
+        )
+        let chat = remountedChat(taking: harness, handoff: handoff, presentation: .split)
+        await expectRejoined(chat)
+
+        // Later the server loses the call: a refused keepalive, then a refused rejoin.
+        await chat.controller.sendKeepAliveNow()
+        let keepalive = chat.channel.sent.last { $0.typeLabel == "voice_call_keepalive" }
+        chat.channel.emit(.commandResult(
+            command: "voice_call_keepalive", requestId: requestId(of: keepalive),
+            success: false, data: nil, error: "Stale voice controller lease"
+        ))
+        await waitUntil { sentTypes(chat.channel.sent).filter { $0 == "voice_call_attach" }.count == 2 }
+        let attach = chat.channel.sent.last { $0.typeLabel == "voice_call_attach" }
+        chat.channel.emit(.commandResult(
+            command: "voice_call_attach", requestId: requestId(of: attach),
+            success: false, data: nil, error: "Voice call has ended"
+        ))
+        await waitUntil { sentTypes(chat.channel.sent).last == "voice_call_start" || chat.controller.lastError != nil }
+
+        #expect(sentTypes(chat.channel.sent).last == "voice_call_start", "The user is on this call: start a new one")
+        #expect(chat.controller.lastError == nil)
+    }
+
     @Test("A rejoin with no remembered call ends without starting one")
     func rejoinWithoutRememberedCallDoesNotStart() async throws {
         let channel = FakeLiveVoiceCallChannel()
