@@ -57,6 +57,23 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
 
     var draft: Draft { Draft(text: text, attachments: pendingAttachments, repoPointers: pendingRepoPointers) }
 
+    /// The draft for a swap to another terminal. Dictation cannot follow the
+    /// bar to the other terminal, so a take in progress ends here: the words
+    /// heard so far join the text (as they would when the take stops), and a
+    /// failed take rolls back to what was typed before it. The owner then
+    /// releases the voice session.
+    func draftEndingDictation() -> Draft {
+        if let prefix = textBeforeRecording {
+            if let manager = voiceInputManager, ComposerShared.ownsVoiceInput(manager, owner: .inlineComposer) {
+                text = ComposerShared.captureFailure(manager, owner: .inlineComposer) == nil
+                    ? prefix + manager.currentTranscript
+                    : prefix
+            }
+            textBeforeRecording = nil
+        }
+        return draft
+    }
+
     /// Before the bar is attached: sets the draft without a refresh.
     func restore(_ draft: Draft) {
         text = draft.text

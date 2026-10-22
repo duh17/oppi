@@ -1089,7 +1089,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     /// Keeps the chat bar's text and attachments for the terminal being left.
     private func stashComposerDraft() {
-        guard let identity = shownIdentity, let draft = composerSession?.draft else { return }
+        guard let identity = shownIdentity, let draft = composerSession?.draftEndingDictation() else { return }
         composerDrafts[identity] = draft.isEmpty ? nil : draft
     }
 

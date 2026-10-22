@@ -323,6 +323,25 @@ struct SSHTerminalSwitcherTests {
         #expect(result.saved.isEmpty, "the form for host A is not turned into host B's")
     }
 
+    @Test func aSwapKeepsWhatWasDictatedAndEndsTheTake() throws {
+        let host = SSHTerminalComposerHost(
+            channel: try SSHTerminalChannel(), connection: nil, draftStore: nil, themeID: .dark, showRawKeyboard: {}
+        )
+        // A take is on: the text holds what was typed, then what was heard.
+        host.setTextBeforeRecording("deploy ")
+        host.setText("deploy to staging")
+        let draft = host.draftEndingDictation()
+        #expect(draft.text == "deploy to staging", "the words heard so far are not lost")
+        #expect(host.content.textBeforeRecording == nil, "the take is over")
+        // The draft restores into the next bar for that terminal.
+        let next = SSHTerminalComposerHost(
+            channel: try SSHTerminalChannel(), connection: nil, draftStore: nil, themeID: .dark, showRawKeyboard: {}
+        )
+        next.restore(draft)
+        #expect(next.text == "deploy to staging")
+        #expect(!draft.isEmpty)
+    }
+
     @Test func theChatBarDraftOfEachTerminalSurvivesASwapAndBack() async throws {
         let registry = makeRegistry()
         let session = SSHTerminalConnectSession(registry: registry)
