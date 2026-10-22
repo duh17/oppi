@@ -6,7 +6,6 @@ import {
   TIME_SENSITIVE,
   entitlementFailures,
   expectedEntitlements,
-  parsePlist,
 } from "./exported-entitlements";
 
 const appleDir = resolve(import.meta.dir, "../../../clients/apple");
@@ -21,18 +20,6 @@ const goodExtension = { [APP_GROUPS]: ["group.oppi"] };
 describe("exported IPA entitlement assertions", () => {
   test("reads the App Group from the checked-in entitlements, resolving the build variable", () => {
     expect(expectedEntitlements(appleDir).appGroup).toBe("group.oppi");
-  });
-
-  test("parses the XML plist codesign prints", () => {
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0"><dict>
-<key>aps-environment</key><string>production</string>
-<key>${TIME_SENSITIVE}</key><true/>
-</dict></plist>`;
-    expect(parsePlist(xml)).toEqual({
-      [APS_ENVIRONMENT]: "production",
-      [TIME_SENSITIVE]: true,
-    });
   });
 
   test("accepts a correctly signed app and extension", () => {

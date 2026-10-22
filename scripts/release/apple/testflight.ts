@@ -835,14 +835,14 @@ async function cmdBuild(opts: {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>method</key>
-  <string>app-store-connect</string>
-  <key>teamID</key>
-  <string>${TEAM_ID}</string>
-  <key>signingStyle</key>
-  <string>automatic</string>
-  <key>uploadSymbols</key>
-  <true/>
+    <key>method</key>
+    <string>app-store-connect</string>
+    <key>teamID</key>
+    <string>${TEAM_ID}</string>
+    <key>signingStyle</key>
+    <string>automatic</string>
+    <key>uploadSymbols</key>
+    <true/>
 </dict>
 </plist>`,
   );

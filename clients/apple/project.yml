@@ -155,8 +155,12 @@ targets:
         # production; APNsEnvironment reads the signed value to pick the relay environment.
         aps-environment: development
         # Needs-you alerts use .timeSensitive interruption level (PushAlertPresentation);
-        # without this entitlement they do not break through Focus. The app owns the
-        # notification content, so the notification service extension does not need it.
+        # without this entitlement they likely do not break through Focus. The
+        # notification service extension also sets .timeSensitive, and we infer the
+        # app-level entitlement covers it (the setting is per app), so the extension
+        # does not declare it. Unconfirmed: check on device that Settings > Oppi >
+        # Notifications shows "Time Sensitive Notifications" and a blocked push
+        # breaks through Focus.
         com.apple.developer.usernotifications.time-sensitive: true
     info:
       path: Oppi/Resources/Info.plist

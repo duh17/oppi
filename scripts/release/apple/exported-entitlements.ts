@@ -85,13 +85,14 @@ export function entitlementFailures(
 
 function signedEntitlements(bundlePath: string): Entitlements {
   if (!fs.existsSync(bundlePath)) throw new Error(`${bundlePath} not found in the exported IPA`);
-  const result = spawnSync("codesign", ["-d", "--entitlements", ":-", bundlePath], {
+  const result = spawnSync("codesign", ["-d", "--entitlements", "-", "--xml", bundlePath], {
     encoding: "buffer",
   });
   if (result.status !== 0) {
     throw new Error(`codesign failed for ${bundlePath}: ${result.stderr.toString().trim()}`);
   }
-  // Entitlements go to stdout; codesign's "Executable=..." chatter goes to stderr.
+  // `--entitlements -` writes to stdout; `--xml` forces the XML plist (the `:-` form is
+  // deprecated). codesign's "Executable=..." chatter goes to stderr.
   return parsePlist(result.stdout);
 }
 
