@@ -424,13 +424,63 @@ describe("PushSender", () => {
       }
       expect(calls).toHaveLength(LIVE_ACTIVITY_DEVICE_BUDGET.perDay);
       expect(await status("start")).toBe("throttled");
-      // An end goes even with the budget full.
-      expect(await status("end")).toBe("delivered");
+      // An end goes past the day's 40, up to its overdraft, then stops.
+      for (let index = 0; index < LIVE_ACTIVITY_DEVICE_BUDGET.endOverdraft; index += 1) {
+        expect(await status("end")).toBe("delivered");
+      }
+      expect(await status("end")).toBe("throttled");
+      expect(calls).toHaveLength(
+        LIVE_ACTIVITY_DEVICE_BUDGET.perDay + LIVE_ACTIVITY_DEVICE_BUDGET.endOverdraft,
+      );
 
       // Alerts keep their whole budget.
       expect((await push.send(registration, notification))?.status).toBe("delivered");
       clock = Date.parse("2026-10-18T00:00:00Z");
       expect((await push.sendLiveActivity(registration, update))?.status).toBe("delivered");
+    });
+
+    it("pauses starts and updates and ends apart: each waits out only its own 429", async () => {
+      let refuse: "update" | "end" | undefined;
+      const { fetchImpl } = relayFetch({
+        [PRIMARY]: async () => new Response("{}", { status: 200 }),
+      });
+      const limited = (async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        const event = (JSON.parse(String(init?.body)) as { event: string }).event;
+        if (event === refuse) {
+          return new Response(JSON.stringify({ error: "quota_exceeded" }), {
+            status: 429,
+            headers: { "retry-after": "36000" },
+          });
+        }
+        return fetchImpl(url, init);
+      }) as typeof fetch;
+      const push = liveActivitySender(limited);
+      const [registration] = push.registrations();
+      if (!registration) throw new Error("missing registration");
+      const status = async (event: "start" | "update" | "end") =>
+        (
+          await push.sendLiveActivity(
+            registration,
+            event === "end" ? { event, running: 0, needsYou: 0 } : { ...update, event },
+          )
+        )?.status;
+
+      // The full day's quota refuses an update for hours; the end still goes.
+      refuse = "update";
+      expect(await status("update")).toBe("rejected");
+      expect(await status("update")).toBe("throttled");
+      expect(await status("start")).toBe("throttled");
+      expect(await status("end")).toBe("delivered");
+
+      // An end refused for hours holds back ends only, until its Retry-After passes.
+      refuse = "end";
+      clock += 11 * 3_600_000;
+      expect(await status("end")).toBe("rejected");
+      expect(await status("end")).toBe("throttled");
+      expect(await status("update")).toBe("delivered");
+      clock += 36_000_000;
+      refuse = undefined;
+      expect(await status("end")).toBe("delivered");
     });
   });
 });

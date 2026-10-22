@@ -85,37 +85,52 @@ class DeviceBudget {
  * Live Activity pushes one device may get from this server a UTC day, apart from alerts
  * (spec "Live Activity"), matching the relay's per-phone Live Activity quota. Updates stop
  * at the lower number, and a start needs two free slots (its own and its end's), so a busy
- * day still leaves room to end every card it started. An end is never refused by this
- * budget, as the relay never refuses one for its daily quota; a card left up after its
- * work finished stays wrong until Apple's 8 h limit.
+ * day still leaves room to end every card it started. An end is never refused for the day's
+ * `perDay` but has an overdraft of `endOverdraft` more, as at the relay, so a failing end
+ * cannot repeat all day; a card left up after its work finished stays wrong until Apple's
+ * 8 h limit.
  */
 export const LIVE_ACTIVITY_DEVICE_BUDGET = {
   perDay: 40,
   updatesPerDay: 32,
+  endOverdraft: 8,
 } as const;
+
+interface LiveActivityUsage {
+  day: string;
+  dayCount: number;
+  /** A relay `429`'s Retry-After for a start or update. */
+  pausedUntil: number;
+  /** The same for an end, which the relay holds to a more generous daily limit. */
+  endPausedUntil: number;
+}
 
 /**
  * In memory, like `DeviceBudget`; the relay enforces its own quota as well. A send counts
  * only once the relay has counted it (it reached APNs, or the relay says the quota is full),
  * so a relay that was unreachable or refused before APNs costs nothing. The notifier sends one
  * Live Activity push per device at a time, so checking before and counting after cannot race.
+ * A `429` pauses only its own kind: an update refused for the full day must not hold back the
+ * end that removes the finished card.
  */
 class LiveActivityBudget {
-  private readonly usage = new Map<
-    string,
-    { day: string; dayCount: number; pausedUntil: number }
-  >();
+  private readonly usage = new Map<string, LiveActivityUsage>();
 
   allows(deviceId: string, event: LiveActivityPush["event"], now: number): boolean {
     const usage = this.current(deviceId, now);
-    if (now < usage.pausedUntil) return false;
     switch (event) {
       case "update":
-        return usage.dayCount < LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay;
+        return (
+          now >= usage.pausedUntil && usage.dayCount < LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay
+        );
       case "start":
-        return usage.dayCount <= LIVE_ACTIVITY_DEVICE_BUDGET.perDay - 2;
+        return now >= usage.pausedUntil && usage.dayCount <= LIVE_ACTIVITY_DEVICE_BUDGET.perDay - 2;
       case "end":
-        return true;
+        return (
+          now >= usage.endPausedUntil &&
+          usage.dayCount <
+            LIVE_ACTIVITY_DEVICE_BUDGET.perDay + LIVE_ACTIVITY_DEVICE_BUDGET.endOverdraft
+        );
     }
   }
 
@@ -123,19 +138,18 @@ class LiveActivityBudget {
     this.current(deviceId, now).dayCount += 1;
   }
 
-  pause(deviceId: string, until: number): void {
+  pause(deviceId: string, event: LiveActivityPush["event"], until: number): void {
     const usage = this.usage.get(deviceId);
-    if (usage) usage.pausedUntil = Math.max(usage.pausedUntil, until);
+    if (!usage) return;
+    if (event === "end") usage.endPausedUntil = Math.max(usage.endPausedUntil, until);
+    else usage.pausedUntil = Math.max(usage.pausedUntil, until);
   }
 
-  private current(
-    deviceId: string,
-    now: number,
-  ): { day: string; dayCount: number; pausedUntil: number } {
+  private current(deviceId: string, now: number): LiveActivityUsage {
     const day = new Date(now).toISOString().slice(0, 10);
     let usage = this.usage.get(deviceId);
     if (!usage) {
-      usage = { day, dayCount: 0, pausedUntil: 0 };
+      usage = { day, dayCount: 0, pausedUntil: 0, endPausedUntil: 0 };
       this.usage.set(deviceId, usage);
     }
     if (usage.day !== day) {
@@ -375,6 +389,7 @@ export class PushSender {
     if (result.status === "rejected" && result.retryAfterSeconds !== undefined) {
       this.liveActivityBudget.pause(
         registration.deviceId,
+        push.event,
         this.now() + result.retryAfterSeconds * 1000,
       );
     }

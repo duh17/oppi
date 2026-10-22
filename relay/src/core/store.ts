@@ -84,6 +84,12 @@ export interface QuotaLimits {
   liveActivityAttestedPerDay: number;
   liveActivityUnattestedPerDay: number;
   liveActivityPerMinute: number;
+  /**
+   * Live Activity `end`s allowed beyond the daily limit. A full daily quota must not leave a
+   * card showing finished work, but an end the relay counted and APNs failed keeps its token,
+   * so the server may repeat it: the overdraft bounds that loop.
+   */
+  liveActivityEndOverdraft: number;
 }
 
 /**
@@ -101,6 +107,7 @@ export const DEFAULT_QUOTA_LIMITS: QuotaLimits = {
   liveActivityAttestedPerDay: 40,
   liveActivityUnattestedPerDay: 20,
   liveActivityPerMinute: 3,
+  liveActivityEndOverdraft: 8,
 };
 
 export const MAX_PERMISSIONS_PER_REGISTRATION = 16;
@@ -244,15 +251,14 @@ export function applyAuthorizePush(
 }
 
 /**
- * Count one push against `quota`, or say when the next one fits. `exemptFromDay` still
- * counts the push but never refuses it for the daily limit; the per-minute limit applies.
+ * Count one push against `quota`, or say when the next one fits. `perDay` is the day's
+ * refusal point: callers allowing an overdraft pass the limit plus the overdraft.
  */
 function chargeQuota(
   quota: QuotaState,
   now: number,
   perDay: number,
   perMinute: number,
-  exemptFromDay = false,
 ): { ok: true } | { ok: false; reason: "quota"; retryAfterSeconds: number } {
   const day = new Date(now).toISOString().slice(0, 10);
   if (quota.day !== day) {
@@ -263,7 +269,7 @@ function chargeQuota(
     quota.minuteStart = now;
     quota.minuteCount = 0;
   }
-  if (!exemptFromDay && quota.dayCount >= perDay) {
+  if (quota.dayCount >= perDay) {
     const nextDay = Date.parse(`${day}T00:00:00Z`) + 86_400_000;
     return { ok: false, reason: "quota", retryAfterSeconds: Math.ceil((nextDay - now) / 1000) };
   }
@@ -362,11 +368,11 @@ export function applyAuthorizeLiveActivity(
   const charged = chargeQuota(
     record.liveActivityQuota,
     now,
-    record.attested ? limits.liveActivityAttestedPerDay : limits.liveActivityUnattestedPerDay,
+    // An `end` is never refused for the day's limit, so a full quota cannot leave a card
+    // showing finished work; its overdraft on top (so 48 for 40) bounds a failing-end loop.
+    (record.attested ? limits.liveActivityAttestedPerDay : limits.liveActivityUnattestedPerDay) +
+      (event === "end" ? limits.liveActivityEndOverdraft : 0),
     limits.liveActivityPerMinute,
-    // An `end` needs a live update token and a delivered end clears it, so ends cannot
-    // repeat. A full daily quota must not leave a card showing work that has finished.
-    event === "end",
   );
   if (!charged.ok) return { authorization: charged, changed };
   const timestamp = Math.max(Math.floor(now / 1000), (record.liveActivityTimestamp ?? 0) + 1);

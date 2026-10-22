@@ -318,9 +318,10 @@ Unattested registrations: at most 5 per client address per hour (in memory). Pus
 Live Activity pushes (3.6) have their own counters: 40 per registration and UTC day when
 attested, 20 when not, and 3 a minute. They never spend the alert quota and alerts never
 spend theirs; registering again keeps both. A Live Activity push refused before APNs
-(`409 no_activity`) is not counted. An `end` is counted but never refused for the daily
-limit (so a full quota cannot leave a card showing finished work); the per-minute limit still
-applies. An `end` needs a live update token and a delivered one clears it, so ends cannot repeat.
+(`409 no_activity`) is not counted. An `end` is counted but never refused for the day's
+40 (so a full quota cannot leave a card showing finished work) and has an overdraft of 8 more,
+so 48 a day; the per-minute limit still applies. A delivered `end` clears the card's update
+token, but one APNs failed (`502`) keeps it and may be sent again, which the overdraft bounds.
 
 ### 3.4 Relay storage
 
@@ -573,9 +574,11 @@ removes them from Notification Center when it becomes active: they open nothing.
   before a restart is restarted at the reconcile). When a device leaves, the server assumes its card shows the current counts, unless they changed in
   the 2 minutes before (a suspended app may have missed that), and then sends. A minute after
   startup it reconciles each device once. Network failures retry after 5 minutes; a `429`
-  waits out `Retry-After`. Budget: 40 per device and UTC day, apart from alerts; `update`
+  waits out `Retry-After`, apart for an `end` and for a `start` or `update`: a day's quota
+  that stops updates does not hold back the `end`. Budget: 40 per device and UTC day, apart from alerts; `update`
   stops at 32, and a `start` needs two free slots (its own and its `end`'s). An `end` is
-  never refused by the budget, only by a `429` pause. Only sends the relay counted use it: delivered,
+  never refused for the day's 40 but has an overdraft of 8 (so 48), and waits out only its
+  own `429`. Only sends the relay counted use it: delivered,
   `502 apns_unavailable` (APNs failed after the relay charged it), and `429`; a network
   failure, a timeout, another `5xx`, or a `409 no_activity` does not count.
 

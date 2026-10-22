@@ -266,7 +266,7 @@ describe("node adapter", () => {
     expect((await start()).status).toBe(200);
   });
 
-  it("delivers a Live Activity end after the daily Live Activity quota is full", async () => {
+  it("delivers a Live Activity end after the daily Live Activity quota is full, refusing start and update", async () => {
     harness = await startHarness({ now: Date.parse("2026-10-10T08:00:00Z") });
     const { registration, sendToken } = await liveActivityPhone(harness);
     const activities = [card(sendToken, { token: ACTIVITY_TOKEN })];
@@ -293,6 +293,45 @@ describe("node adapter", () => {
     expect(JSON.parse(harness.apnsRequests[delivered]!.payload)).toMatchObject({ aps: { event: "end" } });
     // The delivered end cleared the card's token, so it cannot repeat.
     expect((await send("end")).json.error).toBe("no_activity");
+  });
+
+  it("bounds failing Live Activity ends to an overdraft past the daily quota", async () => {
+    harness = await startHarness({ now: Date.parse("2026-10-10T08:00:00Z") });
+    const { registration, sendToken } = await liveActivityPhone(harness);
+    const activities = [card(sendToken, { token: ACTIVITY_TOKEN })];
+    expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities })).toBe(204);
+    const send = (event: "update" | "end") =>
+      liveActivity(
+        harness,
+        sendToken,
+        event === "end" ? { event, running: 0, needsYou: 0 } : { event, running: 1, needsYou: 0 },
+      );
+    const { liveActivityUnattestedPerDay: perDay, liveActivityEndOverdraft: overdraft } = DEFAULT_QUOTA_LIMITS;
+    let sentToday = 0;
+    const tick = () => {
+      if (sentToday % DEFAULT_QUOTA_LIMITS.liveActivityPerMinute === 0) harness.advance(61_000);
+      sentToday += 1;
+    };
+    for (let index = 0; index < perDay; index += 1) {
+      tick();
+      expect((await send("update")).status).toBe(200);
+    }
+    // APNs fails every end: the relay counts each and keeps the card's token, so the server may
+    // send it again, but only as far as the overdraft.
+    harness.respondApns(() => ({ status: 500 }));
+    for (let index = 0; index < overdraft; index += 1) {
+      tick();
+      expect((await send("end")).status, `end ${index + 1}`).toBe(502);
+    }
+    harness.advance(61_000);
+    const refused = await send("end");
+    expect(refused).toMatchObject({ status: 429, json: { error: "quota_exceeded" } });
+    expect(Number(refused.headers.get("retry-after"))).toBeGreaterThan(3600);
+    // Nothing reached APNs for the refused end, and the next UTC day starts the count again.
+    expect(harness.apnsRequests).toHaveLength(perDay + overdraft);
+    harness.respondApns(() => ({ status: 200 }));
+    harness.advance(24 * 3_600_000);
+    expect((await send("end")).status).toBe(200);
   });
 
   it("refuses updates to an activity Apple has ended after 8 hours, but still ends it", async () => {

@@ -104,8 +104,14 @@ interface DeviceState {
   /** Updates in a row that found no update token. */
   missedUpdates: number;
   lastSentAt: number;
-  /** No send before this: a failure or a relay `429`. */
+  /**
+   * No start or update before this: a failure or a relay `429`. Kept apart from `endRetryAt`:
+   * the relay's daily limit that stops an update leaves room for the end, so a long wait on
+   * an update must not hold the card's end back.
+   */
   retryAt: number;
+  /** No end before this: a failure or a relay `429` of an end. */
+  endRetryAt: number;
   timer?: ReturnType<typeof setTimeout>;
   sending: boolean;
   /** Something changed while a send was in flight. */
@@ -235,6 +241,7 @@ export class LiveActivityNotifier {
         missedUpdates: 0,
         lastSentAt: Number.NEGATIVE_INFINITY,
         retryAt: 0,
+        endRetryAt: 0,
         sending: false,
         dirty: false,
       };
@@ -295,6 +302,11 @@ export class LiveActivityNotifier {
     }
   }
 
+  /** Whether the send due now is an `end`: the counts are zero, or the 8-hour restart's end. */
+  private sendsEnd(device: DeviceState, counts: LiveActivityCounts, now: number): boolean {
+    return isEmpty(counts) || this.dueForRestart(device, now);
+  }
+
   /** Arm the device's one timer for its next send, or for its card's 8-hour restart. */
   private schedule(deviceId: string): void {
     if (this.stopped) return;
@@ -308,7 +320,9 @@ export class LiveActivityNotifier {
     const now = this.now();
     let at: number | undefined;
     if (this.needsSend(device, this.options.counts(), now)) {
-      at = Math.max(now, device.lastSentAt + LIVE_ACTIVITY_MIN_INTERVAL_MS, device.retryAt);
+      const counts = this.options.counts();
+      const retryAt = this.sendsEnd(device, counts, now) ? device.endRetryAt : device.retryAt;
+      at = Math.max(now, device.lastSentAt + LIVE_ACTIVITY_MIN_INTERVAL_MS, retryAt);
     } else if (
       (device.activity === "live" || device.activity === "unknown") &&
       device.startedAt !== undefined
@@ -420,7 +434,10 @@ export class LiveActivityNotifier {
     }
   }
 
-  /** Send one event. Failures set the device's retry time. The relay stamps its time. */
+  /**
+   * Send one event. Failures set the retry time of its kind (end, or start and update). The
+   * relay stamps its time.
+   */
   private async send(
     registration: PushRegistration,
     device: DeviceState,
@@ -432,25 +449,30 @@ export class LiveActivityNotifier {
       running: counts.running,
       needsYou: counts.needsYou,
     });
+    const retry = (ms: number): void => {
+      const at = this.now() + ms;
+      if (event === "end") device.endRetryAt = at;
+      else device.retryAt = at;
+    };
     switch (result?.status) {
       case "delivered":
         return "delivered";
       case "no_activity":
         return "no_activity";
       case "rejected":
-        device.retryAt =
-          this.now() +
-          (result.retryAfterSeconds !== undefined
+        retry(
+          result.retryAfterSeconds !== undefined
             ? result.retryAfterSeconds * 1000
-            : RETRY_AFTER_FAILURE_MS);
+            : RETRY_AFTER_FAILURE_MS,
+        );
         return "failed";
       case "unavailable":
       case "failed":
-        device.retryAt = this.now() + RETRY_AFTER_FAILURE_MS;
+        retry(RETRY_AFTER_FAILURE_MS);
         return "failed";
       case "throttled":
         // Out of today's budget: the next change after the budget resets tries again.
-        device.retryAt = this.now() + RETRY_AFTER_FAILURE_MS;
+        retry(RETRY_AFTER_FAILURE_MS);
         return "failed";
       default:
         // Gone or no longer current: the registration is pruned or replaced.

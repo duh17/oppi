@@ -311,6 +311,41 @@ describe("LiveActivityNotifier", () => {
     expect(events()).toEqual(["start 1/0", "start 1/0", "start 1/0"]);
   });
 
+  it("ends the card within a minute of zero though an update's 429 asked for hours", async () => {
+    leave();
+    change({ running: 1, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events()).toEqual(["start 1/0"]);
+    // The day's quota is full: updates wait until midnight.
+    answer = () => ({ status: "rejected", httpStatus: 429, retryAfterSeconds: 15 * 3600 });
+    change({ running: 2, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events()).toEqual(["start 1/0", "update 2/0"]);
+    change({ running: 3, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(sent).toHaveLength(2);
+
+    answer = () => ({ status: "delivered" });
+    change({ running: 0, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events()).toEqual(["start 1/0", "update 2/0", "end 0/0"]);
+  });
+
+  it("does not retry an end before the Retry-After of its own 429", async () => {
+    leave();
+    change({ running: 1, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    answer = () => ({ status: "rejected", httpStatus: 429, retryAfterSeconds: 3 * 3600 });
+    change({ running: 0, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events()).toEqual(["start 1/0", "end 0/0"]);
+    await vi.advanceTimersByTimeAsync(3 * 3600_000 - 1_000);
+    expect(sent).toHaveLength(2);
+    answer = () => ({ status: "delivered" });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(events()).toEqual(["start 1/0", "end 0/0", "end 0/0"]);
+  });
+
   it("ignores devices that do not accept Live Activities", async () => {
     registrations = [{ ...phone, liveActivity: undefined }];
     leave();
