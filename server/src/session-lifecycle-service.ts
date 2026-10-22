@@ -37,7 +37,7 @@ import {
   readSessionJsonlMeta,
 } from "./session-jsonl-meta.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
-import { requireDurableStoreId } from "./session-runtime-capabilities.js";
+import { durableStoreId, requireDurableStoreId } from "./session-runtime-capabilities.js";
 import type { Storage } from "./storage.js";
 import type {
   ChatAttachmentRef,
@@ -168,6 +168,7 @@ export interface SessionLifecycleServiceDeps {
     ): Promise<void>;
     runCommand(sessionId: string, command: Record<string, unknown>): Promise<unknown>;
     forkServerDurableConversation(sessionId: string, entryId: string): Promise<number | undefined>;
+    deleteUnusedServerDurableStore(storeId: string): Promise<boolean>;
     stopSession(sessionId: string): Promise<void>;
   };
   sessionRuntimes: Pick<
@@ -911,6 +912,21 @@ export class SessionLifecycleService {
       this.deps.storage.getDataDir(),
       session.id,
     );
+    // A durable store holds a whole session tree, so it goes with the tree's last session.
+    // Removed after the row, so a failure leaves only an unreferenced store behind.
+    const storeId = durableStoreId(session);
+    if (storeId !== undefined) {
+      try {
+        if (await this.deps.sessions.deleteUnusedServerDurableStore(storeId))
+          log.info("sessions.delete.durable_store_deleted", { sessionId: session.id, storeId });
+      } catch (error: unknown) {
+        log.error("sessions.delete.durable_store_delete_failed", {
+          sessionId: session.id,
+          storeId,
+          error: safeErrorMessage(error),
+        });
+      }
+    }
 
     return {
       session,

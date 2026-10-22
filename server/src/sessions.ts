@@ -848,6 +848,23 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   }
 
   /**
+   * Delete durable store `storeId` once no session names it. One store holds a whole session
+   * tree (its root, the children it spawned, and forks), so it goes with the tree's last
+   * session. Resolves whether the store was deleted.
+   */
+  async deleteUnusedServerDurableStore(storeId: string): Promise<boolean> {
+    if (this.storage.hasDurableStoreSessions(storeId)) return false;
+    const runtime = await this.durableHarness;
+    if (runtime) await runtime.deleteStore(storeId);
+    // No runtime: no session was bound at startup, so nothing has this store open.
+    else
+      await (
+        await import("./durable-harness.js")
+      ).removeDurableStore(this.storage.getDataDir(), storeId);
+    return true;
+  }
+
+  /**
    * Run a SDK command against an active session and await response.
    * Used by HTTP workflows (e.g. server-orchestrated fork/session operations).
    */

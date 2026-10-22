@@ -419,6 +419,11 @@ export class Storage {
     return this.sessionStore.listDurableStoreConversations(storeId);
   }
 
+  /** Whether any session names durable store `storeId`, bound to a conversation yet or not. */
+  hasDurableStoreSessions(storeId: string): boolean {
+    return this.sessionStore.hasDurableStoreSessions(storeId);
+  }
+
   claimSessionLaunchRecovery(
     session: Session,
     leaseOwner: string,

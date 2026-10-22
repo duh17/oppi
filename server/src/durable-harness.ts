@@ -31,6 +31,7 @@ import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { DurableJobs } from "../extensions/durable/background-jobs/contract.js";
@@ -127,6 +128,12 @@ export function durableStoreSqlitePath(dataDir: string, storeId: string): string
 
 export function assertDurableStoreId(storeId: string): void {
   if (!STORE_ID.test(storeId)) throw new Error(`Invalid durable store id: ${storeId}`);
+}
+
+/** Remove closed store `storeId`: its SQLite file, with every conversation in it, and meta.json. */
+export async function removeDurableStore(dataDir: string, storeId: string): Promise<void> {
+  assertDurableStoreId(storeId);
+  await rm(durableStoreDir(dataDir, storeId), { recursive: true, force: true });
 }
 
 export interface DurableStoreMeta {
@@ -1662,6 +1669,17 @@ export class DurableHarness {
 
   forgetHost(host: SessionHost): void {
     if (this.hosts.get(host.storeId) === host) this.hosts.delete(host.storeId);
+  }
+
+  /**
+   * Close store `storeId` if it is open, then remove it. The caller has made sure no Session
+   * names it any more; a close that fails leaves the store in place.
+   */
+  async deleteStore(storeId: string): Promise<void> {
+    assertDurableStoreId(storeId);
+    await this.openingHosts.get(storeId)?.catch(() => undefined);
+    await this.hosts.get(storeId)?.close();
+    await removeDurableStore(this.dataDir, storeId);
   }
 
   async withSession<T>(

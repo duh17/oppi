@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,6 +45,8 @@ import { createAgentRoutes } from "../src/routes/agents.js";
 import { createAgentScheduleDispatchHooks } from "../src/agent-schedule-dispatch.js";
 import type { NewSessionDispatchInput } from "../src/agent-schedules.js";
 import { SessionManager } from "../src/sessions.js";
+import { durableStoreId } from "../src/session-runtime-capabilities.js";
+import { SessionRuntimes } from "../src/runtime-router.js";
 import { readDurableTrace } from "../src/durable-history.js";
 import { serverResourceId } from "../src/server-resource-id.js";
 import { Storage } from "../src/storage.js";
@@ -2357,6 +2359,72 @@ describe("durable-native threads", () => {
         children.map((child) => child.id).sort(),
       );
     }
+  });
+
+  it("deletes a session tree's store with its last Session and leaves other stores alone", async () => {
+    const f = await fixture(
+      model(({ last, text }) => {
+        if (last.role === "toolResult") return fauxAssistantMessage("PARENT_DONE");
+        if (text.includes("Delegate"))
+          return spawnCall({ task: "CHILD_TASK scout", name: "Scout", wait: true });
+        if (text.includes("CHILD_TASK")) return fauxAssistantMessage("CHILD_ANSWER");
+        return fauxAssistantMessage("SIBLING_ANSWER");
+      }),
+    );
+    const sibling = f.session("Sibling");
+    const ask = async (sessionId: string, prompt: string) => {
+      await f.manager.startSession(sessionId, f.workspace);
+      const end = observe(f.manager, sessionId).next((message) => message.type === "agent_end");
+      await f.manager.sendPrompt(sessionId, prompt);
+      await end;
+    };
+    await ask(f.parent.id, "Delegate the scouting");
+    await ask(sibling.id, "Hello sibling");
+    const child = f.storage
+      .listSessions()
+      .find((session) => session.launch?.parentSessionId === f.parent.id)!;
+    expect(durableStoreId(child)).toBe(f.parent.id);
+    const treeStore = durableStoreDir(f.dir, f.parent.id);
+    const siblingStore = durableStoreSqlitePath(f.dir, sibling.id);
+    expect(existsSync(durableStoreSqlitePath(f.dir, f.parent.id))).toBe(true);
+    expect(existsSync(siblingStore)).toBe(true);
+
+    const dispatch = createSessionRoutes(
+      {
+        storage: f.storage,
+        sessions: f.manager,
+        sessionRuntimes: new SessionRuntimes(f.storage, f.manager, {} as never),
+        ensureSessionContextWindow: (session: Session) => session,
+      } as unknown as RouteContext,
+      createRouteHelpers(),
+    );
+    const remove = async (sessionId: string) => {
+      const path = `/workspaces/${f.workspace.id}/sessions/${sessionId}`;
+      const res = makeResponse();
+      await dispatch({
+        method: "DELETE",
+        path,
+        url: new URL(path, "http://localhost"),
+        req: makeRequest() as never,
+        res: res as never,
+      });
+      expect(res.statusCode).toBe(200);
+    };
+    const transcript = async (sessionId: string) =>
+      ((await f.manager.getServerDurableTrace(sessionId, "full")) ?? [])
+        .filter((event) => event.type === "assistant")
+        .map((event) => event.text);
+
+    // The child's conversation lives in its parent's store: deleting the parent keeps it.
+    await remove(f.parent.id);
+    expect(existsSync(treeStore)).toBe(true);
+    expect(await transcript(child.id)).toEqual(["CHILD_ANSWER"]);
+
+    // The tree's last Session takes the store with it; another tree's store stays.
+    await remove(child.id);
+    expect(existsSync(treeStore)).toBe(false);
+    expect(existsSync(siblingStore)).toBe(true);
+    expect(await transcript(sibling.id)).toEqual(["SIBLING_ANSWER"]);
   });
 });
 

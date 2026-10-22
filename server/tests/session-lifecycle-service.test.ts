@@ -243,7 +243,14 @@ function makeService(
       claimSessionLaunchRecovery,
       clearRestartResume: vi.fn(),
     },
-    sessions: { runCommand, forkServerDurableConversation, sendPrompt, startSession, stopSession },
+    sessions: {
+      runCommand,
+      forkServerDurableConversation,
+      deleteUnusedServerDurableStore: vi.fn(async () => false),
+      sendPrompt,
+      startSession,
+      stopSession,
+    },
     sessionRuntimes: {
       isSessionConnected,
       getSessionSnapshot,

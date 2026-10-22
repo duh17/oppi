@@ -231,6 +231,15 @@ export class SessionSqliteStore {
     return rows.map((row) => ({ sessionId: row.id, conversationId: row.durable_conversation_id }));
   }
 
+  /** Whether any session names durable store `storeId`, bound to a conversation yet or not. */
+  hasDurableStoreSessions(storeId: string): boolean {
+    return (
+      this.db
+        .prepare("SELECT 1 FROM session_state_sessions WHERE durable_store_id = ? LIMIT 1")
+        .get(storeId) !== undefined
+    );
+  }
+
   /**
    * Scans launch metadata without full Session decoding, so a row that fails to decode cannot
    * hide a valid tagged Genmoji reference.
