@@ -18,7 +18,10 @@ import {
   acquireHeavyBuildSlot,
   checkoutDerivedData,
   cloneProducts,
+  compilationCache,
   completionArgvForXctestrun,
+  markPackagesResolved,
+  packagesResolvedMarker,
   findXctestrun,
   isXcodebuild,
   planRun,
@@ -1596,9 +1599,24 @@ async function runBuildPhase(input: {
     phase.code = session.cancelExitCode();
     return phase;
   }
+  let packagesLock: HeldLock | undefined;
   try {
     phase.lockWaitSeconds = nowEpoch() - lockStart;
     dropBuildDescriptionsMissingVendor(process.cwd(), derivedData);
+    const cache = compilationCache(process.env, config.appleDir, derivedData, input.argv);
+    if (cache?.packages) {
+      const scheme = extractFlagValue("-scheme", input.argv) ?? "Oppi";
+      const shared = await sharedPackages(session, config, cache.packages, scheme, input.logFile);
+      if ("code" in shared) {
+        phase.code = shared.code;
+        phase.uncertain = shared.uncertain;
+        return phase;
+      }
+      packagesLock = shared.lock;
+    }
+    if (cache) {
+      log(`[sim-pool] Compilation cache: ${cache.root}`);
+    }
     const heavy = await acquireHeavyBuildSlot(process.env, session, log);
     if (!heavy) {
       phase.uncertain = true;
@@ -1614,11 +1632,11 @@ async function runBuildPhase(input: {
         session,
         config,
         command: input.command,
-        argv: input.argv,
+        argv: [...input.argv, ...(cache?.args ?? [])],
         logFile: input.logFile,
         derivedData,
         destination: SLOTLESS_BUILD_DESTINATION,
-        extraSettings: [...input.extraSettings, ...slotlessBuildSettings(input.argv)],
+        extraSettings: [...input.extraSettings, ...slotlessBuildSettings(input.argv), ...(cache?.settings ?? [])],
         env: { ...process.env, OPPI_HEAVY_HELD: heavy.heldEnv },
       });
       phase.endedAt = nowEpoch();
@@ -1639,9 +1657,57 @@ async function runBuildPhase(input: {
       }
     }
   } finally {
+    packagesLock?.release();
     checkoutLock.release();
   }
   return phase;
+}
+
+/**
+ * The shared SwiftPM checkouts for this Package.resolved, resolved once under an exclusive
+ * lock; returns a shared lock to hold while building against them, or the failed exit code.
+ */
+async function sharedPackages(
+  session: CommandSession,
+  config: PoolConfig,
+  packages: string,
+  scheme: string,
+  buildLog: string,
+): Promise<{ lock: HeldLock } | { code: number; uncertain: boolean }> {
+  const lockFile = `${packages}.lock`;
+  if (!existsSync(packagesResolvedMarker(packages))) {
+    const exclusive = await waitForFlock(lockFile, "exclusive", session, () =>
+      log(`[sim-pool] another build is resolving Swift packages into ${packages}; waiting`),
+    );
+    if (!exclusive) return { code: session.cancelExitCode(), uncertain: true };
+    try {
+      if (!existsSync(packagesResolvedMarker(packages))) {
+        mkdirSync(packages, { recursive: true });
+        const logFile = buildLog.replace(/\.log$/, ".packages.log");
+        log(`[sim-pool] Resolving Swift packages into ${packages} (log: ${logFile})`);
+        const result = await runXcodebuildAttempt({
+          session,
+          config,
+          command: "xcodebuild",
+          // xcodebuild requires a scheme alongside -derivedDataPath.
+          argv: ["-resolvePackageDependencies", "-project", "Oppi.xcodeproj", "-scheme", scheme, "-clonedSourcePackagesDirPath", packages],
+          logFile,
+          derivedData: checkoutDerivedData(config.buildBase),
+          destination: SLOTLESS_BUILD_DESTINATION,
+          extraSettings: [],
+        });
+        if (result.code !== 0 || !result.stop.quiescent || session.canceled) {
+          log(`[sim-pool] Swift package resolution failed; see ${logFile}`);
+          return { code: result.code || 1, uncertain: !result.stop.quiescent || session.canceled };
+        }
+        markPackagesResolved(packages);
+      }
+    } finally {
+      exclusive.release();
+    }
+  }
+  const shared = await waitForFlock(lockFile, "shared", session);
+  return shared ? { lock: shared } : { code: session.cancelExitCode(), uncertain: true };
 }
 
 function pruneOldLogs(logDir: string): void {
@@ -1904,6 +1970,8 @@ export async function commandRun(
         destination: `platform=iOS Simulator,id=${simUdId}`,
         // The test phase runs prebuilt products; build settings went to the build phase.
         extraSettings: build ? [] : extraSettings,
+        // Tests that need a checkout file read OPPI_SOURCE_ROOT: #filePath is a mapped path.
+        env: { TEST_RUNNER_OPPI_SOURCE_ROOT: config.oppiRoot, ...process.env },
       });
       exitCode = result.code;
       hangDetected = hangDetected || result.hung;

@@ -14,9 +14,10 @@
 //   2. a machine-wide `xcode-build` slot from scripts/heavy.sh (same slot files,
 //      same counting semaphore), only around the xcodebuild build itself.
 //   3. the simulator slot, taken after 1 and 2 are released.
-import { existsSync, mkdirSync, openSync, closeSync, readdirSync, rmSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, openSync, closeSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { flockFd, LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN } from "./sim-pool-lock";
 
@@ -134,6 +135,79 @@ export function slotlessBuildSettings(argv: string[]): string[] {
   if (!argv.some((arg) => arg.startsWith("ARCHS="))) settings.push("ARCHS=arm64");
   if (!argv.some((arg) => arg.startsWith("ONLY_ACTIVE_ARCH="))) settings.push("ONLY_ACTIVE_ARCH=YES");
   return settings;
+}
+
+/**
+ * Shared compilation cache for slotless builds. Only pool builds get it; project.yml and
+ * Xcode.app builds keep real paths for debugging.
+ *
+ * - One content-addressed cache (CAS) per Xcode for every checkout, with prefix mapping so
+ *   a compile keyed in one worktree hits in another. Measured: a fresh worktree at an
+ *   already-built commit built in 51 s instead of 109 s (153 instead of 1,249 CPU-s). A
+ *   change anywhere in the Oppi module recompiles that module in full; landing-gate builds
+ *   of main's tip keep the common case warm.
+ * - SwiftPM checkouts shared by Package.resolved hash, resolved once under an exclusive
+ *   lock, read by builds under a shared lock with resolution and updates off.
+ * Prefix mapping compiles #filePath to /^src/...; the architecture rule
+ * ios-test-no-source-paths keeps tests from opening files through it.
+ * OPPI_SIM_POOL_COMPILATION_CACHE=0 turns it off; OPPI_XCODE_CACHE_DIR moves it.
+ */
+export type CompilationCache = { root: string; args: string[]; settings: string[]; packages?: string };
+
+export function compilationCache(
+  env: NodeJS.ProcessEnv,
+  appleDir: string,
+  derivedData: string,
+  argv: string[],
+): CompilationCache | undefined {
+  if (env.OPPI_SIM_POOL_COMPILATION_CACHE === "0") return undefined;
+  // DEVELOPER_DIR is <Xcode>.app/Contents/Developer; a new Xcode gets a fresh cache.
+  const xcode = basename(dirname(dirname(env.DEVELOPER_DIR ?? "/Applications/Xcode.app/Contents/Developer"))).replace(/[^\w.-]/g, "_");
+  const root = env.OPPI_XCODE_CACHE_DIR ?? join(env.HOME ?? homedir(), "Library", "Caches", "oppi-xcode", xcode);
+  const settings = [
+    "COMPILATION_CACHE_ENABLE_CACHING=YES",
+    `COMPILATION_CACHE_CAS_PATH=${join(root, "cas")}`,
+    "COMPILATION_CACHE_LIMIT_SIZE=40G",
+    "SWIFT_ENABLE_PREFIX_MAPPING=YES",
+    "CLANG_ENABLE_PREFIX_MAPPING=YES",
+    "SWIFT_ENABLE_PROJECT_PREFIX_MAPPING=YES",
+    "CLANG_ENABLE_PROJECT_PREFIX_MAPPING=YES",
+    `MODULE_CACHE_DIR=${join(root, "modulecache")}`,
+  ];
+  // Map a path and its real path (/tmp is /private/tmp): the compiler sees either.
+  const mapped = (path: string, to: string) => [...new Set([path, realpathOrSelf(path)])].map((p) => `${p}=${to}`);
+  // The checkout is the compiler's working directory for package targets too; project
+  // prefix mapping covers it only for this project's own targets.
+  // (Its own token: /^src is each package's own source root.)
+  const mappings = [...mapped(derivedData, "/^dd"), ...mapped(appleDir, "/^checkout")];
+  const args: string[] = [];
+  let packages: string | undefined;
+  const resolved = join(appleDir, "Oppi.xcodeproj", "project.xcworkspace", "xcshareddata", "swiftpm", "Package.resolved");
+  if (existsSync(resolved) && !argv.includes("-clonedSourcePackagesDirPath")) {
+    const hash = createHash("sha256").update(readFileSync(resolved)).digest("hex").slice(0, 16);
+    packages = join(root, "spm", hash);
+    args.push("-clonedSourcePackagesDirPath", packages, "-disableAutomaticPackageResolution", "-skipPackageUpdates");
+    mappings.push(...mapped(packages, "/^spm"));
+  }
+  settings.push(`SWIFT_OTHER_PREFIX_MAPPINGS=${mappings.join(" ")}`, `CLANG_OTHER_PREFIX_MAPPINGS=${mappings.join(" ")}`);
+  return { root, args, settings, packages };
+}
+
+function realpathOrSelf(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return path;
+  }
+}
+
+/** Marker written once the shared package directory resolved. */
+export function packagesResolvedMarker(packages: string): string {
+  return join(packages, ".oppi-resolved");
+}
+
+export function markPackagesResolved(packages: string): void {
+  writeFileSync(packagesResolvedMarker(packages), `${new Date().toISOString()}\n`);
 }
 
 export function checkoutDerivedData(buildBase: string): string {

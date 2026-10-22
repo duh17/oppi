@@ -28,13 +28,11 @@ struct OrgModePerfBench {
     private static func loadFixture(_ name: String) -> String {
         let bundle = Bundle(for: BundleAnchor.self)
         // Swift Testing: fixtures are in the test bundle resource directory
+        // Group resources are copied flat into the bundle.
         let candidates = [
+            bundle.resourceURL?.appendingPathComponent(name),
             bundle.resourceURL?.appendingPathComponent("Fixtures/\(name)"),
             bundle.bundleURL.appendingPathComponent("Fixtures/\(name)"),
-            // Fallback: walk up from bundle to find OppiTests/Perf/Fixtures
-            URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()
-                .appendingPathComponent("Fixtures/\(name)"),
         ]
         for url in candidates {
             if let url, let data = try? Data(contentsOf: url),

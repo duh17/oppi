@@ -687,6 +687,8 @@ targets:
     sources:
       - path: OppiE2ETests
         type: group
+      - path: OppiTests/Fixtures/known-good-h264.mp4
+        buildPhase: resources
       - path: QAVerificationSupport
         type: group
     dependencies:

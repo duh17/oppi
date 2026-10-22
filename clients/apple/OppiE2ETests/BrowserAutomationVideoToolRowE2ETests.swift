@@ -146,13 +146,12 @@ final class BrowserAutomationVideoToolRowE2ETests: E2ETestCase {
             return URL(fileURLWithPath: path)
         }
 
-        let sourceFile = URL(fileURLWithPath: #filePath)
-        let repoRoot = sourceFile
-            .deletingLastPathComponent() // OppiE2ETests
-            .deletingLastPathComponent() // apple
-            .deletingLastPathComponent() // clients
-            .deletingLastPathComponent() // repo root
-        let fallback = repoRoot.appendingPathComponent(".internal/browser-automation-video/google-hn-small/google-hacker-news-small2.mp4")
+        // sim-pool passes the checkout as TEST_RUNNER_OPPI_SOURCE_ROOT; #filePath is a mapped path.
+        guard let sourceRoot = env["OPPI_SOURCE_ROOT"], !sourceRoot.isEmpty else {
+            throw XCTSkip("Set OPPI_BROWSER_VIDEO_FIXTURE_PATH, or run through sim-pool so OPPI_SOURCE_ROOT is set")
+        }
+        let fallback = URL(fileURLWithPath: sourceRoot)
+            .appendingPathComponent(".internal/browser-automation-video/google-hn-small/google-hacker-news-small2.mp4")
         guard FileManager.default.fileExists(atPath: fallback.path) else {
             throw XCTSkip("Run browser_automation_video first or set OPPI_BROWSER_VIDEO_FIXTURE_PATH")
         }

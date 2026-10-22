@@ -86,6 +86,15 @@ const IOS_RUNTIME_UI_FREE_FILES = [
 
 // Feature UI starts and ends dictation only through ComposerShared, which keeps keyboard
 // restore, rollback, and ownership identity in one place.
+const IOS_TEST_TARGET_ROOTS = [
+  "clients/apple/OppiTests/",
+  "clients/apple/OppiUITests/",
+  "clients/apple/OppiE2ETests/",
+  "clients/apple/OppiPerfTests/",
+];
+const IOS_TEST_SOURCE_PATH_READ =
+  /\b(?:fileURLWithPath|contentsOfFile|atPath)\s*:\s*#file(?:Path)?\b|\bURL\s*\(\s*filePath\s*:\s*#file(?:Path)?\b/;
+
 const IOS_VOICE_LIFECYCLE_GUARDED_PREFIXES = [
   "clients/apple/Oppi/App/",
   "clients/apple/Oppi/Features/",
@@ -1241,6 +1250,35 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
         }),
       );
     }
+  }
+
+  // Pool builds use a shared compilation cache with prefix mapping, which compiles #filePath
+  // to /^src/...; a test that opens a file through it finds nothing.
+  const testFiles = files
+    ? files.map(normalizeRepoPath).filter((file) => IOS_TEST_TARGET_ROOTS.some((root) => file.startsWith(root)) && file.endsWith(".swift"))
+    : IOS_TEST_TARGET_ROOTS.flatMap((root) =>
+        listFilesRecursively(path.join(repoRoot, root), ".swift").map((absolutePath) =>
+          normalizeRepoPath(path.relative(repoRoot, absolutePath)),
+        ),
+      );
+  for (const file of testFiles.sort()) {
+    const parsed = readSwiftSource(repoRoot, file);
+    const match = parsed && findFirstMatch(parsed.stripped, IOS_TEST_SOURCE_PATH_READ);
+    if (!match) {
+      continue;
+    }
+    const location = lineAndColumnForIndex(parsed.stripped, match.index);
+    violations.push(
+      makeIosViolation({
+        rule: "ios-test-no-source-paths",
+        file,
+        line: location.line,
+        column: location.column,
+        reason: "Tests must not open files through #filePath; pool builds compile it to a mapped /^src path.",
+        remediation:
+          "Load the file from the test bundle (add it as a resource of the test target; see TestFixtures/ProtocolFixtures in OppiTests).",
+      }),
+    );
   }
 
   if (!files || candidateSet.has(IOS_SPEECH_CONTEXT_ORDER.file)) {

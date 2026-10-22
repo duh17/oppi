@@ -292,10 +292,6 @@ final class HostVideoCaptionsE2ETests: E2ETestCase {
     """
 
     nonisolated private static func videoFixtureBase64() throws -> String {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("OppiTests/Fixtures/known-good-h264.mp4")
-        return try Data(contentsOf: url).base64EncodedString()
+        try E2EFixtures.data("known-good-h264", "mp4").base64EncodedString()
     }
 }

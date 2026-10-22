@@ -1086,4 +1086,28 @@ describe("Mac architecture layer rules", () => {
       rmSync(repoRoot, { recursive: true, force: true });
     }
   });
+
+  it("keeps iOS tests from opening files through #filePath", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-filepath-"));
+    try {
+      const readers = [
+        "clients/apple/OppiTests/A.swift",
+        "clients/apple/OppiE2ETests/B.swift",
+        "clients/apple/OppiPerfTests/C.swift",
+      ];
+      write(join(repoRoot, readers[0]), "let u = URL(fileURLWithPath: #filePath).deletingLastPathComponent()\n");
+      write(join(repoRoot, readers[1]), "let d = FileManager.default.contents(atPath: #file)\n");
+      write(join(repoRoot, readers[2]), "let u = URL(filePath: #filePath)\n");
+      // Failure locations and comments are fine; so is #filePath outside the test targets.
+      write(
+        join(repoRoot, "clients/apple/OppiUITests/D.swift"),
+        "func check(file: StaticString = #filePath, line: UInt = #line) {}\n// URL(fileURLWithPath: #filePath)\n",
+      );
+      write(join(repoRoot, "clients/apple/OppiMacTests/E.swift"), "let u = URL(fileURLWithPath: #filePath)\n");
+      const violations = findIosLayerViolations(repoRoot).filter((v) => v.rule === "ios-test-no-source-paths");
+      expect(violations.map((v) => v.file).sort()).toEqual(readers.sort());
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
 });
