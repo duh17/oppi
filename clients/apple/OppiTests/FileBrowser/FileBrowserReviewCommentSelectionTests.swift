@@ -531,13 +531,17 @@ struct FileBrowserReviewCommentSelectionTests {
     }
 
     /// Exercise the real re-show read, not just status classification.
-    @Test(arguments: [401, 403, 404], [false, true])
+    ///
+    /// The re-show read has one status branch, `isHTTPError(_, [401, 403, 404])`, so the rows are
+    /// one per branch outcome: a coded 404 and an uncoded 403 for "definitive", then unchanged
+    /// text (200), a server error (503), and a transport error for "keep the reader".
+    @Test(arguments: zip([404, 403], [true, false]))
     func textReaderReplacesStaleTextAfterDefinitiveFailure(status: Int, coded: Bool) async throws {
         let message = status == 404 ? "File no longer exists" : "File access denied"
         try await checkReaderAfterReShow(status: status, message: message, keepsReader: false, coded: coded)
     }
 
-    @Test(arguments: [200, 408, 500, 503, URLError.notConnectedToInternet.rawValue, URLError.timedOut.rawValue])
+    @Test(arguments: [200, 503, URLError.notConnectedToInternet.rawValue])
     func textReaderKeepsIdentityAfterUnchangedTextOrTransientFailure(status: Int) async throws {
         try await checkReaderAfterReShow(status: status, message: "Temporary failure", keepsReader: true)
     }
