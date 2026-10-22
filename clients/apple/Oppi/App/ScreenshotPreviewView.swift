@@ -45,6 +45,14 @@ enum ScreenshotVolatileDefaults {
     }
 
     /// Call before `ThemeStore()`: its setters would persist the theme.
+    static func applyTheme(_ themeID: ThemeID) {
+        apply([
+            "\(AppIdentifiers.subsystem).theme.mode": ThemeMode.manual.rawValue,
+            ThemeID.storageKey: themeID.rawValue,
+        ])
+    }
+
+    /// Call before `ThemeStore()`: its setters would persist the theme.
     static func applyDarkTheme(_ enabled: Bool) {
         guard enabled else { return }
         apply([
@@ -77,6 +85,9 @@ struct ScreenshotPreviewView: View {
                 .ignoresSafeArea()
         case "whats-new-build56-light", "whats-new-build55-light", "whats-new-build54-light", "whats-new-build53-light", "whats-new-build52-light", "whats-new-build51-light", "whats-new-build50-light", "whats-new-build49-light":
             WhatsNewScreenshotPreview(themeID: .light)
+                .ignoresSafeArea()
+        case "whats-new-build56-light-bottom":
+            WhatsNewScreenshotPreview(themeID: .light, scrollsToBottom: true)
                 .ignoresSafeArea()
         case "whats-new-build56-dark", "whats-new-build55-dark", "whats-new-build54-dark", "whats-new-build53-dark", "whats-new-build52-dark", "whats-new-build51-dark", "whats-new-build50-dark", "whats-new-build49-dark":
             WhatsNewScreenshotPreview(themeID: .dark)

@@ -67,6 +67,8 @@ private struct WhatsNewFeature {
         case symbol(String)
         /// The Git logo, the one the chat's Git top-bar button draws.
         case gitLogo
+        /// The Pi mark the chat's Pi avatar draws, in the row's color.
+        case piMark
     }
 
     let id: String
@@ -105,60 +107,60 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
     /// Build 56 · Changes since Build 55
     private static let features: [WhatsNewFeature] = [
         WhatsNewFeature(
+            id: "uikit",
+            icon: .symbol("bolt"),
+            iconColor: \.blue,
+            title: String(localized: "Rebuilt in UIKit"),
+            description: String(localized: "We moved chats, the composer, session lists, Files, and many settings pages from SwiftUI to UIKit. Opening chats, scrolling, and moving between screens are much faster. If anything works differently than before, please report it through TestFlight feedback.")
+        ),
+        WhatsNewFeature(
             id: "ssh-terminal",
             icon: .symbol("terminal"),
             iconColor: \.green,
             title: String(localized: "SSH Terminal"),
-            description: String(localized: "The SSH Terminal is no longer an experiment. Open Terminal here starts a shell in the folder a chat works in, password prompts switch to secure entry, images from kitten icat and agents draw in the grid, and the shell survives short trips out of Oppi.")
+            description: String(localized: "The terminal is out of Experiments and much more polished. We rewrote its rendering on the GPU, so it is a lot faster and scrolls smoothly, and added support for the Kitty image protocol. With an SSH host set up, a chat can open a terminal in its own folder.")
         ),
         WhatsNewFeature(
-            id: "uikit-speed",
-            icon: .symbol("bolt"),
-            iconColor: \.blue,
-            title: String(localized: "Rebuilt and faster"),
-            description: String(localized: "Chats, the composer, session lists, Files, and every settings page are rebuilt in UIKit, so opening chats, scrolling, and moving between screens is faster. Scrolling up loads earlier messages before you reach the top.")
-        ),
-        WhatsNewFeature(
-            id: "push-live-activities",
-            icon: .symbol("bell.badge"),
-            iconColor: \.orange,
-            title: String(localized: "Notifications and Live Activities"),
-            description: String(localized: "Server Settings → Notifications turns on end-to-end-encrypted push through Oppi's relay: an alert when a session needs your answer or approval, or when an agent notifies you. Live Activities show running and waiting sessions on the Lock Screen and in the Dynamic Island.")
+            id: "live-voice",
+            icon: .symbol("waveform"),
+            iconColor: \.cyan,
+            title: String(localized: "Live Voice (experimental)"),
+            description: String(localized: "Talk with a session hands-free from the composer mic, Control Center, or the Action Button. Turn it on in Settings → Experiments. It needs a voice backend on your server: Grok Voice with an xAI key works; our local reference implementation works but is still rough.")
         ),
         WhatsNewFeature(
             id: "code-editor",
             icon: .symbol("chevron.left.forwardslash.chevron.right"),
             iconColor: \.purple,
             title: String(localized: "Code editor"),
-            description: String(localized: "Workspace files open in a code editor with syntax color, line numbers, auto-indent, and optional Vim keys. Skill files can be edited in place, or handed to an Oppi session.")
+            description: String(localized: "Workspace files open in a real code editor with tree-sitter syntax highlighting, line numbers, auto-indent, and optional Vim keybindings in Settings → Editor. Skill files can be edited in place too.")
         ),
         WhatsNewFeature(
-            id: "git-panel",
-            icon: .gitLogo,
+            id: "push",
+            icon: .symbol("bell.badge"),
+            iconColor: \.orange,
+            title: String(localized: "Push and Live Activities (experimental)"),
+            description: String(localized: "Opt in for each server in Server Settings → Notifications to get end-to-end-encrypted alerts through Oppi's free relay when a session needs your answer or approval, a run fails, or an agent notifies you. Live Activities show running and waiting counts on the Lock Screen. Both are off by default, and the privacy policy lists what the relay can see. Limits are preliminary: up to 100 alerts and 40 Live Activity updates per phone a day.")
+        ),
+        WhatsNewFeature(
+            id: "diff-engine",
+            icon: .symbol("plus.forwardslash.minus"),
             iconColor: \.red,
-            title: String(localized: "Git and a tidier top bar"),
-            description: String(localized: "The chat's top bar shows Context; Files, Outline, Git, and Terminal sit in its … menu, and Settings → Chat → Top Bar pins the ones you use. Git shows the session's changes and diffs, which now show the fewest changed lines and highlight only edited words.")
+            title: String(localized: "Our own diff engine"),
+            description: String(localized: "We wrote our own diff engine and dropped Google's diff-match-patch. Diffs show the fewest changed lines, highlight only the words that changed, and scroll smoothly on long files.")
         ),
         WhatsNewFeature(
-            id: "read-aloud",
-            icon: .symbol("speaker.wave.2"),
-            iconColor: \.cyan,
-            title: String(localized: "Read aloud"),
-            description: String(localized: "A speaker under a finished reply reads it with your server's text-to-speech. Live Voice, an experiment under Settings → Experiments, talks with a session hands-free.")
-        ),
-        WhatsNewFeature(
-            id: "context-metrics",
-            icon: .symbol("chart.bar"),
+            id: "top-bar",
+            icon: .gitLogo,
             iconColor: \.yellow,
-            title: String(localized: "Context and Server Metrics"),
-            description: String(localized: "The chat's Context panel shows what fills the context window, from system prompt to tools. Server Metrics in the host menu charts the server's CPU, memory, and disk over 30 days while sampling is on.")
+            title: String(localized: "Reorganized top bar"),
+            description: String(localized: "The chat's top-right bar now holds Files, Git, Context, Terminal, and Outline, and Settings → Chat → Top Bar lets you choose which ones show.")
         ),
         WhatsNewFeature(
-            id: "incognito",
-            icon: .symbol("eye.slash"),
+            id: "pi",
+            icon: .piMark,
             iconColor: \.comment,
-            title: String(localized: "Incognito Quick Session"),
-            description: String(localized: "Quick Session's Incognito pill starts a chat that ends and deletes itself when you leave it.")
+            title: String(localized: "Pi 1.4"),
+            description: String(localized: "Oppi now runs the latest Pi, 1.4.0. Needs server 0.53.0.")
         ),
     ]
 
@@ -206,7 +208,8 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
             overrideUserInterfaceStyle = root.themeStore.userInterfaceStyle
         }
         let themeID = root?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
-        let colors = ComposerThemeColors(palette: themeID.palette)
+        let palette = themeID.palette
+        let colors = ComposerThemeColors(palette: palette)
         view.backgroundColor = colors.bg
         bottomBar.backgroundColor = colors.bgDark
 
@@ -218,12 +221,21 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
             row.apply(colors: colors)
         }
 
+        // SwiftUI's `.borderedProminent` with a `.headline` label: a capsule in
+        // the theme blue, a semibold label. The label color is the better of
+        // fg and bg against the blue (the rule behind `ThemeUIKitPalette.onBlue`),
+        // so it keeps its contrast on light blues too.
         var configuration = doneButton.configuration ?? .borderedProminent()
         configuration.cornerStyle = .capsule
         configuration.baseBackgroundColor = colors.blue
+        configuration.baseForegroundColor = UIColor(ThemeColorContrast.contrastingForeground(
+            on: palette.blue,
+            candidates: [palette.fg, palette.bg]
+        ))
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 7, leading: 20, bottom: 7, trailing: 20)
         configuration.attributedTitle = AttributedString(
             String(localized: "Done"),
-            attributes: AttributeContainer([.font: UIFont.scaled(.headline)])
+            attributes: AttributeContainer([.font: UIFont.scaled(.headline, .semibold)])
         )
         doneButton.configuration = configuration
     }
@@ -297,7 +309,8 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
             doneButton.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 24),
             doneButton.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -24),
             doneButton.bottomAnchor.constraint(equalTo: safe.bottomAnchor, constant: -8),
-            doneButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            // The old label's 44 pt minimum plus the style's 7 pt above and below.
+            doneButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 58),
         ])
     }
 
@@ -400,6 +413,19 @@ private final class FeatureRow: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// The Pi avatar's mark, whose artwork covers about 60% of its canvas,
+    /// enlarged to about the size of the symbols (24 pt) in the 28 pt icon slot.
+    private static func piMarkImage(color: UIColor) -> UIImage {
+        let slot: CGFloat = 28
+        let canvas: CGFloat = 41
+        let mark = PiAvatarRenderer.render(size: canvas)
+            .withRenderingMode(.alwaysTemplate)
+            .withTintColor(color, renderingMode: .alwaysOriginal)
+        return UIGraphicsImageRenderer(size: CGSize(width: slot, height: slot)).image { _ in
+            mark.draw(in: CGRect(x: (slot - canvas) / 2, y: (slot - canvas) / 2, width: canvas, height: canvas))
+        }
+    }
+
     func apply(colors: ComposerThemeColors) {
         let color = colors[keyPath: feature.iconColor]
         icon.image = switch feature.icon {
@@ -407,6 +433,8 @@ private final class FeatureRow: UIView {
             UIImage.scaledSymbol(name, style: .title3, weight: .semibold, color: color)
         case .gitLogo:
             GitLogoImage.image(textStyle: .title3)?.withTintColor(color, renderingMode: .alwaysOriginal)
+        case .piMark:
+            Self.piMarkImage(color: color)
         }
         titleLabel.font = .scaled(.headline, .semibold)
         titleLabel.textColor = colors.fg
