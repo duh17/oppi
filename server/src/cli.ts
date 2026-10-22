@@ -745,8 +745,10 @@ function cmdDoctor(storage: CliConnectionConfig): void {
 
   // ── LaunchAgent checks ──
 
-  const svcStatus = getServiceStatus();
-  if (svcStatus.installed) {
+  // launchd is macOS-only; elsewhere `launchctl` does not exist and probing it would abort
+  // doctor. Off macOS, `oppi serve` runs under the host's own supervisor, so skip the check.
+  const svcStatus = process.platform === "darwin" ? getServiceStatus() : undefined;
+  if (svcStatus?.installed) {
     checks.push({ level: "pass", message: "LaunchAgent installed" });
     if (svcStatus.running) {
       checks.push({
@@ -777,7 +779,7 @@ function cmdDoctor(storage: CliConnectionConfig): void {
       const migration = launchAgentRuntimeMigrationWarning(paths);
       if (migration) checks.push({ level: "warn", message: migration });
     }
-  } else {
+  } else if (svcStatus) {
     checks.push({
       level: "warn",
       message: "LaunchAgent not installed (oppi server install for background service)",
@@ -1034,6 +1036,13 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
 
 function cmdServer(action: string | undefined, flags: Record<string, string>): void {
   const mode = action || "status";
+  if (process.platform !== "darwin") {
+    console.error(
+      "  oppi server manages the macOS LaunchAgent. On this platform, run `oppi serve` under your service manager (systemd, Docker).",
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   if (mode === "install") {
     const dataDir = flags["data-dir"] || undefined;

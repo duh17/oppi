@@ -42,6 +42,7 @@ Example:
 
 ### Fixed
 
+- **Server:** `oppi doctor` on Linux no longer aborts with `Command failed: launchctl print …`; it skips the macOS LaunchAgent check. `oppi server` commands on Linux say to run `oppi serve` under systemd or Docker instead of crashing.
 - **Client:** Tapping a notification while another chat is open shows the tapped session instead of an empty timeline.
 
 ### Migration notes

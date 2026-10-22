@@ -3337,6 +3337,28 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
     }
   }, 90_000);
 
+  it("doctor on Linux skips the LaunchAgent check instead of aborting on a missing launchctl", () => {
+    const linuxDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-linux-"));
+    try {
+      // A Linux host: no launchd, and any launchctl on PATH fails as "command not found" (127).
+      const bin = join(linuxDir, "bin");
+      mkdirSync(bin);
+      writeFileSync(join(bin, "launchctl"), "#!/bin/sh\nexit 127\n", { mode: 0o755 });
+      const { stdout, stderr } = run(["doctor"], {
+        OPPI_DATA_DIR: join(linuxDir, "data"),
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        NODE_OPTIONS:
+          "--import=data:text/javascript,Object.defineProperty(process,'platform',{value:'linux'})",
+      });
+      const out = stripAnsi(stdout + stderr);
+      expect(out).toContain("Oppi CLI:");
+      expect(out).not.toContain("Fatal error");
+      expect(out).not.toContain("LaunchAgent");
+    } finally {
+      rmSync(linuxDir, { recursive: true, force: true });
+    }
+  });
+
   it("doctor on a never-served host reports TLS as not chosen, not as disabled", () => {
     const freshDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-fresh-"));
     try {
