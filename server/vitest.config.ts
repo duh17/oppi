@@ -1,6 +1,23 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+const MAX_FILE_WORKERS = 8;
+
+/**
+ * File-worker cap. OPPI_VITEST_MAX_WORKERS may only lower it: Vitest treats 0 and NaN as
+ * unset (one worker per core), so a typo must fail instead of silently removing the cap.
+ */
+export function resolveMaxWorkers(raw: string | undefined): number {
+  if (raw === undefined) return MAX_FILE_WORKERS;
+  const workers = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (!Number.isInteger(workers) || workers < 1 || workers > MAX_FILE_WORKERS) {
+    throw new Error(
+      `OPPI_VITEST_MAX_WORKERS must be an integer from 1 to ${MAX_FILE_WORKERS}, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return workers;
+}
+
 export default defineConfig({
   test: {
     testTimeout: 10_000,
@@ -9,7 +26,7 @@ export default defineConfig({
     // 8 because the CLI suite is split into several files that overlap: at 4 workers the
     // full suite took 192 s (cli.test.ts alone 181 s); the 4-file split at 8 workers took
     // 108 s with 5838/5838 passing. Set OPPI_VITEST_MAX_WORKERS to lower it on a busy host.
-    maxWorkers: Number(process.env.OPPI_VITEST_MAX_WORKERS ?? 8),
+    maxWorkers: resolveMaxWorkers(process.env.OPPI_VITEST_MAX_WORKERS),
     // Build the CLI once in an invocation-local directory so parallel test files or
     // external release builds cannot mutate the executable and docs under test.
     globalSetup: ["./vitest.global-setup.ts"],

@@ -12,7 +12,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { checkTestingPolicy } from "../scripts/check-testing-policy.ts";
-import vitestConfig from "../vitest.config.ts";
+import vitestConfig, { resolveMaxWorkers } from "../vitest.config.ts";
 
 function explicitVitestFileExclusions(source: string): string[] {
   return [...source.matchAll(/(?:^|\s)--exclude\s+([A-Za-z0-9_./-]+)/g)].map(
@@ -108,11 +108,14 @@ describe("testing policy gate coherence", () => {
   });
 
   it("caps server test worker fan-out for nested subprocesses", () => {
-    // Default 8; OPPI_VITEST_MAX_WORKERS may only lower it on a busy host.
-    const workers = Number(vitestConfig.test?.maxWorkers);
-    expect(Number.isInteger(workers)).toBe(true);
-    expect(workers).toBeGreaterThanOrEqual(1);
-    expect(workers).toBeLessThanOrEqual(8);
+    // OPPI_VITEST_MAX_WORKERS may only lower the default of 8; anything else is an error.
+    expect(resolveMaxWorkers(undefined)).toBe(8);
+    expect(resolveMaxWorkers("1")).toBe(1);
+    expect(resolveMaxWorkers("8")).toBe(8);
+    for (const bad of ["", "0", "9", "16", "abc", "-1", "1.5", " 4"]) {
+      expect(() => resolveMaxWorkers(bad), bad).toThrow(/OPPI_VITEST_MAX_WORKERS/);
+    }
+    expect(vitestConfig.test?.maxWorkers).toBe(resolveMaxWorkers(process.env.OPPI_VITEST_MAX_WORKERS));
   });
 
   it("keeps explicit Vitest exclusions pointed at existing test files", () => {

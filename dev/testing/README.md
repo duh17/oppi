@@ -51,9 +51,12 @@ npm run check
 npm test
 ```
 
-The server Vitest configuration caps file workers at four. CLI tests launch
+The server Vitest configuration caps file workers at eight. CLI tests launch
 child processes, so allowing worker count to scale with host cores can starve
 nested subprocesses and contend with the concurrent Apple pre-push lane.
+Set `OPPI_VITEST_MAX_WORKERS` (an integer 1 to 8; anything else is an error) to
+lower the cap on a busy host. Vitest's own `VITEST_MAX_WORKERS` overrides the
+config and bypasses that bound, so do not use it.
 
 ### One-shot Linux validation on macOS
 
