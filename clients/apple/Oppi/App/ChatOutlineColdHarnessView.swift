@@ -847,7 +847,9 @@ private enum ChatRoutesFixture {
     /// Where the timeline sits under its top chrome, for outline-jump tests:
     /// `top=<row id>@<y>`, the first row reaching below the top inset and its
     /// top edge relative to that inset; `arrived=<row id>/<open|covered>`, the
-    /// last row seen arriving after a jump.
+    /// last row seen arriving after a jump; `end=<0|1>`, whether the timeline
+    /// sits at its scroll limit, where a row near the tail cannot reach the top
+    /// edge because less than a viewport of content follows it.
     @MainActor static func landingProbe() -> String {
         guard let collection = timelineCollectionInWindows(),
               let controller = collection.delegate as? ChatTimelineController else { return "" }
@@ -872,7 +874,8 @@ private enum ChatRoutesFixture {
             lastArrival = "\(lit)/\(covered ? "covered" : "open")"
         }
         let y = top.isEmpty ? "-" : String(Int(topY.rounded()))
-        return "top=\(top)@\(y) arrived=\(lastArrival) inset=\(Int(insetTop))"
+        let atEnd = collection.contentOffset.y >= TimelineOffsetController.clampedOffsetY(.greatestFiniteMagnitude, in: collection) - 1
+        return "top=\(top)@\(y) arrived=\(lastArrival) inset=\(Int(insetTop)) end=\(atEnd ? 1 : 0)"
     }
 
     private static func traceEvent(id: String, type: TraceEventType, text: String) -> TraceEvent {

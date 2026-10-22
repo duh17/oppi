@@ -523,8 +523,13 @@ final class ChatRoutesUITests: XCTestCase {
                 "The landed row must light up after the outline closes: \(text(of: landing))"
             )
             let settled = text(of: landing)
+            // A row near the tail cannot reach the top edge when less than a
+            // viewport of content follows it (a tall iPad): the timeline then
+            // rests at its scroll limit with the row visible and lit. Only the
+            // last turn is near enough the tail for that.
             XCTAssertTrue(
-                ["@0 ", "@1 ", "@-1 "].contains { settled.contains("top=\(target)\($0)") },
+                (turn == 171 && settled.contains(" end=1"))
+                    || ["@0 ", "@1 ", "@-1 "].contains { settled.contains("top=\(target)\($0)") },
                 "Outline jump to \(target) must land its top edge under the chrome: \(settled)"
             )
         }
