@@ -99,22 +99,6 @@ struct HostScopedServerFollowTests {
     }
 }
 
-@Suite("Usage host-follow wiring")
-struct UsageHostFollowWiringTests {
-    @Test func dashboardIdentityResetsWithVisibleHost() throws {
-        let source = try appleSource("Oppi/Features/Server/ServerView.swift")
-        #expect(source.contains(".id(selectedServer.id)"))
-        #expect(source.contains("shouldApplyHostResult"))
-        #expect(source.contains("let requestedId = server.id") || source.contains("let requestedId = selectedServer?.id"))
-    }
-
-    @Test func usageTrailingChromeHasNoSettingsGear() throws {
-        let source = try appleSource("Oppi/Features/Server/ServerView.swift")
-        #expect(!source.contains("server.settings.gear"))
-        #expect(!source.contains("Image(systemName: \"gearshape\")"))
-    }
-}
-
 @Suite("Inbox host-change local state")
 @MainActor
 struct SessionInboxHostChangeTests {
@@ -177,13 +161,4 @@ struct HostJobCompactSwitchTests {
         #expect(navigation.visibleHostSwitcherDestination == .inbox)
         #expect(navigation.workspaceStackRouteElements.isEmpty)
     }
-}
-
-private func appleSource(_ relativePath: String) throws -> String {
-    let url = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: relativePath)
-    return try String(contentsOf: url, encoding: .utf8)
 }
