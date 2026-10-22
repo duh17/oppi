@@ -366,6 +366,8 @@ struct IntentSessionOpenTriggerTests {
         #expect(consumed?.workspaceId == "ws-1")
         #expect(consumed?.sessionId == "session-1")
         #expect(consumed?.unsentPrompt == "Ship it")
+        // A later launch needs its age to decide whether it still opens.
+        #expect(consumed?.queuedAt != nil)
         #expect(second.take(requestID: requestID) == nil)
     }
 

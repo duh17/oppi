@@ -1066,6 +1066,147 @@ struct AppOpenerTests {
         harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
     }
 
+    // MARK: - Repair 3: dropped unlocks, stale choices, loaded scope, old receipts
+
+    @Test func aCancelledUnlockKeepsTheDeferredSiriReceiptAndPrompt() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            appLockTimeout: .immediately,
+            authOutcomes: [.cancelled],
+            launch: false
+        )
+        harness.addSession("created", workspaceId: "w1", to: "server-a")
+        harness.opener._browserLinkPreferenceForTesting = .inApp
+        harness.intentTrigger.enqueue(IntentSessionOpenTrigger.Receipt(
+            requestID: harness.intentTrigger.issueRequestID(),
+            serverId: "server-a",
+            sessionId: "created",
+            workspaceId: "w1",
+            unsentPrompt: "Write the release notes",
+            session: nil
+        ))
+
+        // Cold + locked: the leftover receipt's open waits behind App Lock.
+        harness.opener.launchDidFinish()
+        await harness.settle()
+        // Cancelling Face ID drops that open; the receipt was never superseded.
+        #expect(!(await harness.appLock.unlock()))
+
+        harness.opener.open(.webLink(try #require(URL(string: "https://example.com/later"))))
+        await harness.settle()
+
+        #expect(harness.intentTrigger.peek()?.unsentPrompt == "Write the release notes")
+    }
+
+    @Test func aStaleResourceChoiceCannotCancelANewerOpen() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
+        harness.addSession("shared-id", workspaceId: "w1", to: "server-a")
+        harness.addSession("shared-id", workspaceId: "w2", to: "server-b")
+        harness.addSession("child", workspaceId: "w1", to: "server-a")
+        harness.opener.open(.resourceReference(ambiguousSessionReference("shared-id")))
+        await harness.settle()
+        #expect(harness.opener.pendingResourceReferenceChoice?.matches.count == 2)
+
+        // A notification tap opens a session while the choice sheet is up,
+        // and the stale sheet's Cancel lands before that open finishes.
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "child",
+            origin: .externalURL
+        )))
+        harness.opener.cancelResourceReferenceRequest()
+        await harness.settle()
+
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
+        #expect(harness.opener.pendingResourceReferenceChoice == nil)
+    }
+
+    @Test func aChosenMatchOnAnUnreachableServerParksForTheNextForeground() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
+        harness.addSession("shared-id", workspaceId: "w1", to: "server-a")
+        harness.addSession("shared-id", workspaceId: "w2", to: "server-b")
+        let reference = ambiguousSessionReference("shared-id")
+        harness.opener.open(.resourceReference(reference))
+        await harness.settle()
+        let choice = try #require(harness.opener.pendingResourceReferenceChoice)
+        let serverBMatch = try #require(choice.matches.first {
+            if case .session(let session) = $0 { return session.serverID == "server-b" }
+            return false
+        })
+
+        harness.unreachableServers = ["server-b"]
+        harness.opener.startOpeningResourceReferenceMatch(serverBMatch)
+        await harness.settle()
+
+        #expect(harness.connection("server-a").extensionToast == "Could not reach server-b")
+        #expect(harness.opener._parkedRequestForTesting == .resourceReference(reference))
+    }
+
+    @Test func cancellingTheLoadedWorkspaceLockRestoresTheServerAndActiveSession() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a"), makeServer("server-b")],
+            authOutcomes: [.cancelled]
+        )
+        harness.addSession("current", workspaceId: "w1", to: "server-a")
+        harness.navigation.openWorkspaceSession(.init(
+            serverId: "server-a",
+            sessionId: "current",
+            workspaceId: "w1"
+        ))
+        // The session is not cached: only its loaded record names the locked
+        // workspace, so the gate before the switch cannot know it.
+        let target = harness.connection("server-b")
+        target._getSessionRecordForTesting = { id in
+            makeTestSession(id: id, workspaceId: "w2", status: .busy)
+        }
+        harness.scopedLock.sessionLookup = { [weak harness] serverId, sessionId in
+            harness?.connection(serverId).sessionStore.session(id: sessionId)
+        }
+        harness.scopedLock.lock(.workspace(serverId: "server-b", workspaceId: "w2"))
+
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-b",
+            sessionId: "locked",
+            origin: .externalURL
+        )))
+        await harness.settle()
+
+        #expect(harness.coordinator.activeServerId == "server-a")
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "current")
+        #expect(target.sessionStore.activeSessionId == nil)
+        // The abandoned open no longer refuses another session's focus.
+        #expect(!target.externalSessionOpenClaimBlocks("other"))
+    }
+
+    @Test func aSiriReceiptOlderThanAParkedRequestKeepsItsPromptButDoesNotOpen() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")], launch: false)
+        harness.addSession("created", workspaceId: "w1", to: "server-a")
+        harness.intentTrigger.enqueue(IntentSessionOpenTrigger.Receipt(
+            requestID: harness.intentTrigger.issueRequestID(),
+            serverId: "server-a",
+            sessionId: "created",
+            workspaceId: "w1",
+            unsentPrompt: "Write the release notes",
+            session: nil
+        ))
+
+        // The receipt lost its launch slot; a launch 10 minutes later is not
+        // the moment the person asked Siri.
+        let later = Date().addingTimeInterval(601)
+        harness.opener._nowForTesting = { later }
+        harness.opener.launchDidFinish()
+        await harness.settle()
+
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+        #expect(harness.intentTrigger.peek() == nil)
+        let key = try #require(ComposerDraftKey(
+            serverID: "server-a",
+            workspaceID: "w1",
+            sessionID: "created"
+        ))
+        #expect(harness.composerDraftStore.record(for: key)?.payload.text == "Write the release notes")
+    }
+
     @Test func destinationWorkspaceComesFromLoadedDataNotTheRequestHint() async throws {
         let harness = OpenerHarness(
             servers: [makeServer("server-a")],
@@ -1133,6 +1274,18 @@ struct AppOpenerTests {
         #expect(harness.recorder.systemURLs == [web, mail])
         #expect(harness.opener._parkedRequestForTesting == nil)
     }
+}
+
+/// `[[id]]` from outside any chat: every paired server's session with that id
+/// matches.
+private func ambiguousSessionReference(_ sessionId: String) -> ResourceReference {
+    ResourceReference(
+        target: sessionId,
+        sourceServerID: nil,
+        workspaceID: nil,
+        sourceSessionID: nil,
+        fileCandidatePath: nil
+    )
 }
 
 enum AppLockUnlockOutcome: String, Sendable, CaseIterable {

@@ -20,6 +20,8 @@ final class IntentSessionOpenTrigger {
         var workspaceId: String?
         var unsentPrompt: String?
         var session: Session?
+        /// When `enqueue` accepted it. Nil for a receipt an older build wrote.
+        var queuedAt: Date?
     }
 
     private struct PersistedReceipt: Codable, Equatable {
@@ -27,6 +29,7 @@ final class IntentSessionOpenTrigger {
         var serverId: String
         var sessionId: String
         var workspaceId: String?
+        var queuedAt: Date?
     }
 
     private struct LegacyPrompt: Decodable {
@@ -93,7 +96,8 @@ final class IntentSessionOpenTrigger {
                 sessionId: persisted.sessionId,
                 workspaceId: persisted.workspaceId,
                 unsentPrompt: prompt,
-                session: nil
+                session: nil,
+                queuedAt: persisted.queuedAt
             )
             lastAcceptedRequestID = max(lastAcceptedRequestID, persisted.requestID)
             if persisted.requestID > defaults.integer(forKey: issuedRequestIDKey) {
@@ -113,6 +117,8 @@ final class IntentSessionOpenTrigger {
     }
 
     func enqueue(_ receipt: Receipt) {
+        var receipt = receipt
+        receipt.queuedAt = Date()
         let acceptedID = max(pending?.requestID ?? 0, lastAcceptedRequestID)
         guard receipt.requestID >= acceptedID else {
             logger.debug(
@@ -204,7 +210,8 @@ final class IntentSessionOpenTrigger {
             requestID: receipt.requestID,
             serverId: receipt.serverId,
             sessionId: receipt.sessionId,
-            workspaceId: receipt.workspaceId
+            workspaceId: receipt.workspaceId,
+            queuedAt: receipt.queuedAt
         )
         if let data = try? JSONEncoder().encode(persisted) {
             defaults.set(data, forKey: pendingKey)

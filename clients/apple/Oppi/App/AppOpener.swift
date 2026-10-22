@@ -337,9 +337,20 @@ final class AppOpener {
         supersede()
         let generation = generation
         deferredRequest = request
-        appLock.performWhenUnlocked { [weak self] in
+        appLock.performWhenUnlocked({ [weak self] in
             self?.accept(request, generation: generation)
-        }
+        }, onDropped: { [weak self] in
+            self?.deferredRequestWasDropped(generation: generation)
+        })
+    }
+
+    /// App Lock dropped the deferred open (cancelled or failed unlock, or the
+    /// app went to the background). Nothing superseded it, so a Siri receipt
+    /// it carried stays for a later launch; only the tracking ends, so it
+    /// cannot block later drains or be abandoned by a later open.
+    private func deferredRequestWasDropped(generation: UInt64) {
+        guard generation == self.generation else { return }
+        deferredRequest = nil
     }
 
     /// Launch is over: parked work can run, and so can web and system links
@@ -350,14 +361,17 @@ final class AppOpener {
         // now. It is an open like any other: a locked app defers it. A parked
         // request is the newer one: it wins the slot.
         if parked == nil, deferredRequest == nil, let receipt = intentSessionOpenTrigger.peek() {
-            open(.session(SessionOpen(
-                serverId: receipt.serverId,
-                sessionId: receipt.sessionId,
-                workspaceId: receipt.workspaceId,
-                origin: .externalURL,
-                startedSessionRequestID: receipt.requestID
-            )))
-            return
+            if intentReceiptIsFresh(receipt) {
+                open(.session(SessionOpen(
+                    serverId: receipt.serverId,
+                    sessionId: receipt.sessionId,
+                    workspaceId: receipt.workspaceId,
+                    origin: .externalURL,
+                    startedSessionRequestID: receipt.requestID
+                )))
+                return
+            }
+            retireExpiredIntentReceipt(receipt)
         }
         drainParkedIfPossible()
     }
@@ -392,6 +406,9 @@ final class AppOpener {
         clearParked()
         activeRequest = nil
         deferredRequest = nil
+        // The older `[[link]]` choice is over; its sheet must not answer for
+        // (or cancel) this request.
+        pendingResourceReferenceChoice = nil
         currentTask?.cancel()
         currentTask = nil
     }
@@ -453,9 +470,6 @@ final class AppOpener {
             appLock.performWhenUnlocked { [weak self] in self?.drainParkedIfPossible() }
             return
         }
-        // Unlocked with a tracked deferred request means App Lock dropped its
-        // action (cancelled unlock): forget it so it cannot block later opens.
-        deferredRequest = nil
         guard canRunNow(request) else { return }
         // Keep `parkedAt`: a retry of the same request must not restart its
         // 10-minute lifetime.
@@ -576,6 +590,12 @@ final class AppOpener {
             // perform with one.
             return
         }
+        finish(request, outcome: outcome, generation: generation)
+    }
+
+    /// An unreachable server keeps `request` in the parked slot for the next
+    /// foreground; anything else ends it.
+    func finish(_ request: AppOpenRequest, outcome: AppOpenOutcome, generation: UInt64) {
         guard isCurrent(generation) else { return }
         if outcome == .unreachable {
             park(request)
@@ -640,6 +660,7 @@ final class AppOpener {
             sessionId: open.sessionId
         )), isCurrent(generation) else { return .finished }
 
+        let previousServerId = coordinator.activeServerId
         let switched = await openServer(serverId, generation: generation)
         guard isCurrent(generation) else { return .finished }
         guard switched, let connection = coordinator.connection(for: serverId) else {
@@ -654,6 +675,7 @@ final class AppOpener {
             workspaceIdHint: open.workspaceId,
             connection: connection,
             origin: open.origin,
+            previousServerId: previousServerId,
             generation: generation
         )
     }
@@ -661,13 +683,15 @@ final class AppOpener {
     /// The tail every session open shares: dismiss a covering viewer, prepare
     /// the target (claim, refresh, prefetch, hydrate dialogs), then route it,
     /// whichever entry point asked. Ask cards have to appear on a push tap as
-    /// on a link tap.
+    /// on a link tap. `previousServerId` is the server that was active before
+    /// this open switched; a cancelled lock prompt goes back to it.
     func openPreparedSession(
         serverId: String,
         sessionId: String,
         workspaceIdHint: String?,
         connection: ServerConnection,
         origin: SessionNavigationSource,
+        previousServerId: String?,
         generation: UInt64
     ) async -> AppOpenOutcome {
         await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
@@ -676,6 +700,7 @@ final class AppOpener {
         )
         guard isCurrent(generation) else { return .finished }
 
+        let previousActiveSessionId = connection.sessionStore.activeSessionId
         await connection.prepareExternalSessionOpen(
             sessionId: sessionId,
             workspaceIdHint: workspaceIdHint
@@ -689,11 +714,24 @@ final class AppOpener {
         // hint). The route gate uses the same value; asking here covers a
         // record that only became readable after the pre-switch gate, and an
         // unknown workspace still checks the session and server scopes.
-        guard await scopedLock.authorize(scopedLock.sessionTarget(
+        let unlocked = await scopedLock.authorize(scopedLock.sessionTarget(
             serverId: serverId,
             sessionId: sessionId,
             workspaceId: workspaceId
-        )), isCurrent(generation) else { return .finished }
+        ))
+        guard isCurrent(generation) else { return .finished }
+        guard unlocked else {
+            // Cancel leaves everything where it was: the server this open
+            // switched away from, and the target's active session and claim.
+            connection.abandonExternalSessionOpen(
+                sessionId: sessionId,
+                restoringActiveSessionId: previousActiveSessionId
+            )
+            if let previousServerId, previousServerId != serverId {
+                coordinator.restoreActiveServer(previousServerId)
+            }
+            return .finished
+        }
         navigation.selectedTab = .workspaces
         navigation.openSession(
             WorkspaceSessionNavTarget(
@@ -734,20 +772,62 @@ final class AppOpener {
         if let session = receipt.session {
             connection.sessionStore.upsert(session)
         }
+        keepUnsentPromptAsDraft(
+            receipt,
+            serverId: serverId,
+            sessionId: open.sessionId,
+            workspaceIdHint: open.workspaceId
+        )
+    }
+
+    private func keepUnsentPromptAsDraft(
+        _ receipt: IntentSessionOpenTrigger.Receipt,
+        serverId: String,
+        sessionId: String,
+        workspaceIdHint: String?
+    ) {
         guard let prompt = receipt.unsentPrompt?
             .trimmingCharacters(in: .whitespacesAndNewlines),
               !prompt.isEmpty,
-              let workspaceId = receipt.workspaceId ?? open.workspaceId,
+              let workspaceId = receipt.workspaceId ?? workspaceIdHint,
               let key = ComposerDraftKey(
                   serverID: serverId,
                   workspaceID: workspaceId,
-                  sessionID: open.sessionId
+                  sessionID: sessionId
               ) else {
             return
         }
         composerDraftStore.setDraft(
             ComposerDraftPayload(text: prompt, repoPointers: [], attachments: []),
             for: key
+        )
+    }
+
+    /// A receipt opens at launch only within a parked request's lifetime. An
+    /// older one lost its launch slot to another open; opening it now would
+    /// jump to a Siri session the person asked for long ago. A receipt with
+    /// no time (written by an older build) is treated as old.
+    private func intentReceiptIsFresh(_ receipt: IntentSessionOpenTrigger.Receipt) -> Bool {
+        guard let queuedAt = receipt.queuedAt else { return false }
+        return now.timeIntervalSince(queuedAt) <= Self.parkedRequestLifetime
+    }
+
+    /// An expired receipt does not navigate, and its unsent prompt is not
+    /// lost: it becomes the created session's draft. A receipt for an unpaired
+    /// server is forgotten, as an open of it would be.
+    private func retireExpiredIntentReceipt(_ receipt: IntentSessionOpenTrigger.Receipt) {
+        openerLog.notice("Not opening a start-session receipt that waited too long")
+        guard serverStore.server(for: receipt.serverId) != nil else {
+            intentSessionOpenTrigger.abandon(requestID: receipt.requestID)
+            return
+        }
+        // An unreadable prompt keeps the receipt for the next launch.
+        guard let taken = intentSessionOpenTrigger.take(requestID: receipt.requestID) else { return }
+        keepUnsentPromptAsDraft(
+            taken,
+            serverId: taken.serverId,
+            sessionId: taken.sessionId,
+            workspaceIdHint: nil
         )
     }
 

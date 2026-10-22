@@ -165,8 +165,14 @@ final class AppLockService {
     @ObservationIgnored var onLockStateChange: (() -> Void)?
     /// The latest deep link, notification tap, or Quick Session request that
     /// arrived while locked. Runs after the next successful unlock; dropped
-    /// on a cancelled or failed unlock and when the app goes to the background.
-    @ObservationIgnored private var deferredUntilUnlock: (@MainActor () -> Void)?
+    /// on a cancelled or failed unlock, when a newer request replaces it, and
+    /// when the app goes to the background.
+    @ObservationIgnored private var deferredUntilUnlock: DeferredAction?
+
+    private struct DeferredAction {
+        let run: @MainActor () -> Void
+        let dropped: (@MainActor () -> Void)?
+    }
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let monotonicNow: @MainActor () -> TimeInterval
@@ -229,12 +235,25 @@ final class AppLockService {
     /// next successful unlock. Deep links, notification taps, and Quick
     /// Session requests go through this so nothing navigates, pairs, or
     /// switches servers behind the cover. Only the latest request is kept.
-    func performWhenUnlocked(_ action: @escaping @MainActor () -> Void) {
+    /// `onDropped` runs when the action will never run, so the caller can
+    /// forget it.
+    func performWhenUnlocked(
+        _ action: @escaping @MainActor () -> Void,
+        onDropped: (@MainActor () -> Void)? = nil
+    ) {
         guard requiresUnlock() else {
             action()
             return
         }
-        deferredUntilUnlock = action
+        let replaced = deferredUntilUnlock
+        deferredUntilUnlock = DeferredAction(run: action, dropped: onDropped)
+        replaced?.dropped?()
+    }
+
+    private func dropDeferredAction() {
+        let dropped = deferredUntilUnlock
+        deferredUntilUnlock = nil
+        dropped?.dropped?()
     }
 
     /// Turning App Lock on: content shown while it was off (ask notifications
@@ -292,7 +311,7 @@ final class AppLockService {
 
     /// The last foreground scene entered the background.
     func appDidEnterBackground() {
-        deferredUntilUnlock = nil
+        dropDeferredAction()
         update { $0.didEnterBackground(at: now()) }
     }
 
@@ -338,7 +357,7 @@ final class AppLockService {
             self.update { $0.finishUnlock(outcome) }
             if self.machine.isLocked {
                 // Cancelled or failed: the waiting link does not survive.
-                self.deferredUntilUnlock = nil
+                self.dropDeferredAction()
             }
             return !self.machine.isLocked
         }
@@ -394,7 +413,7 @@ final class AppLockService {
         onLockStateChange?()
         if let deferred = deferredUntilUnlock, !requiresUnlock() {
             deferredUntilUnlock = nil
-            deferred()
+            deferred.run()
         }
     }
 }

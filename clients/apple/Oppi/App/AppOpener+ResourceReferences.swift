@@ -77,15 +77,21 @@ extension AppOpener {
         currentTask?.cancel()
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            _ = await self.openResourceReferenceMatch(
+            let outcome = await self.openResourceReferenceMatch(
                 match,
                 reference: reference,
                 generation: generation
             )
+            // An unreachable choice parks like an unreachable single match:
+            // the next foreground resolves the link again.
+            self.finish(.resourceReference(reference), outcome: outcome, generation: generation)
         }
     }
 
     func cancelResourceReferenceRequest() {
+        // A newer open already ended this choice; a late Cancel from its
+        // sheet must not cancel that open.
+        guard pendingResourceReferenceChoice != nil else { return }
         generation &+= 1
         currentTask?.cancel()
         currentTask = nil
@@ -447,6 +453,7 @@ extension AppOpener {
             guard await scopedLock.authorize(
                 scopedLock.sessionTarget(serverId: session.serverID, sessionId: session.sessionID)
             ), isCurrent(generation) else { return .finished }
+            let previousServerId = coordinator.activeServerId
             let switched = await openServer(session.serverID, generation: generation)
             guard isCurrent(generation) else { return .finished }
             guard switched else {
@@ -460,6 +467,7 @@ extension AppOpener {
                 workspaceIdHint: nil,
                 connection: connection,
                 origin: .inAppHyperlink,
+                previousServerId: previousServerId,
                 generation: generation
             )
 

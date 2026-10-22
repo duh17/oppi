@@ -1984,6 +1984,16 @@ final class ServerConnection {
         externalSessionOpenClaim = nil
     }
 
+    /// A scoped-lock prompt was cancelled after `prepareExternalSessionOpen`:
+    /// the open never navigates. Its claim must not keep refusing other
+    /// sessions, and the active-session pointer goes back to what it was.
+    func abandonExternalSessionOpen(sessionId: String, restoringActiveSessionId previous: String?) {
+        resolveExternalSessionOpenClaim(for: sessionId)
+        if sessionStore.activeSessionId == sessionId {
+            sessionStore.activeSessionId = previous
+        }
+    }
+
     private func recordExternalSessionOpenClaimRefusal(_ sessionId: String, context: String) {
         recordFocusArbitration(
             outcome: "refused",
