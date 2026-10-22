@@ -96,3 +96,70 @@ struct SettingsRootThemeRepaintTests {
         return nil
     }
 }
+
+/// The Settings index draws every row's separator from the row's title in, so
+/// the grouped card reads as one list. A row whose guide the layout positions
+/// itself leaves a full-width line under it.
+@Suite("Settings root separators", .serialized)
+@MainActor
+struct SettingsRootSeparatorTests {
+    @Test func everyRowsSeparatorStartsAtItsTitle() async throws {
+        let screen = SettingsRootViewController(root: AppRootEnvironment(
+            coordinator: ConnectionCoordinator(serverStore: ServerStore()),
+            navigation: AppNavigation(),
+            themeStore: ThemeStore(),
+            quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
+            composerDraftStore: ComposerDraftStore(),
+            chatReaderPayloadStore: ChatReaderPayloadStore(),
+            sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
+        ))
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 1200)
+        window.rootViewController = screen
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let list = try #require(await Self.settingsList(on: screen))
+        var checked = 0
+        for case let cell as UICollectionViewListCell in list.visibleCells {
+            guard let title = Self.title(in: cell) else { continue }
+            checked += 1
+            let guide = cell.separatorLayoutGuide.layoutFrame
+            let name = title.text ?? ""
+            #expect(
+                abs(guide.minX - title.frame.minX) < 0.5,
+                "\(name) separator starts at \(guide.minX), title at \(title.frame.minX)"
+            )
+        }
+        #expect(checked >= 8, "Only \(checked) rows laid out")
+    }
+
+    private static func settingsList(on screen: SettingsRootViewController) async -> UICollectionView? {
+        for _ in 0..<100 {
+            screen.updateProperties()
+            screen.view.layoutIfNeeded()
+            if let list = collectionView(in: screen.view) { return list }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return nil
+    }
+
+    /// The row's title label: the widest plain label the cell paints first.
+    private static func title(in cell: UICollectionViewCell) -> UILabel? {
+        cell.contentView.subviews
+            .compactMap { $0 as? UILabel }
+            .first { $0.text?.isEmpty == false }
+    }
+
+    private static func collectionView(in view: UIView) -> UICollectionView? {
+        if let list = view as? UICollectionView { return list }
+        for subview in view.subviews {
+            if let found = collectionView(in: subview) { return found }
+        }
+        return nil
+    }
+}

@@ -305,10 +305,40 @@ final class RouterModalSitesUITests: XCTestCase {
             glyph.tap()
             XCTAssertTrue(detail.waitForExistence(timeout: 5), "Program status popover did not open")
             attachScreenshot("program-status-popover")
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)).tap()
-            XCTAssertTrue(waitForDisappearance(of: detail), "A tap outside must close the popover")
+            // The glyph sits in the bottom bar, so the popover opens upward from
+            // the bottom of the screen and reaches where a fixed low point used
+            // to be. Tap the grid above where it actually opened.
+            let popover = detail.frame
+            let point = outsidePoint(above: popover)
+            let tap = CGPoint(
+                x: app.frame.minX + point.dx * app.frame.width,
+                y: app.frame.minY + point.dy * app.frame.height
+            )
+            XCTAssertFalse(
+                popover.contains(tap),
+                "The outside tap \(tap) must not land inside the popover \(popover)"
+            )
+            app.coordinate(withNormalizedOffset: point).tap()
+            // A popover still presenting swallows the first tap, and the
+            // system's top band does too: one more tap on the grid closes it.
+            if !waitForDisappearance(of: detail, timeout: 3) {
+                app.coordinate(withNormalizedOffset: point).tap()
+            }
+            XCTAssertTrue(
+                waitForDisappearance(of: detail),
+                "A tap outside must close the popover (popover \(popover), tapped at \(tap))"
+            )
             assertRunning()
         }
+    }
+
+    /// A normalized point inside the app but above `popover`, so a tap there is
+    /// provably outside it and clear of the status bar and the top inset.
+    private func outsidePoint(above popover: CGRect) -> CGVector {
+        let app = app.frame
+        let y = min(app.maxY - 120, max(app.minY + 140, popover.minY - 100))
+        let x = app.midX
+        return CGVector(dx: (x - app.minX) / app.width, dy: (y - app.minY) / app.height)
     }
 
     /// The Save Password toggle edits the host list's profile through the

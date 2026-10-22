@@ -437,7 +437,9 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
             view.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(view)
         }
-        button.onHighlight = { [weak self] in self?.setPressed($0) }
+        // The system highlight is the cell's own: it fills the whole row and
+        // keeps the card's corners, which a content-view fill cannot.
+        button.onHighlight = { [weak self] in self?.isHighlighted = $0 }
         iconView.contentMode = .scaleAspectFit
         iconView.setContentHuggingPriority(.required, for: .horizontal)
         iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -473,11 +475,6 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
             // A grouped list's separator starts where the row's title does.
             separatorLayoutGuide.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
         ])
-    }
-
-    /// The theme's highlight fill, the same one a pressed row uses elsewhere.
-    private func setPressed(_ pressed: Bool) {
-        contentView.backgroundColor = pressed ? .themeBgHighlight : nil
     }
 
     @available(*, unavailable)
@@ -522,7 +519,7 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         iconView.image = nil
         titleLabel.text = nil
         valueLabel.text = nil
-        setPressed(false)
+        isHighlighted = false
     }
 }
 
@@ -557,7 +554,9 @@ final class SettingsServerRowCell: UICollectionViewListCell {
             view.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(view)
         }
-        button.onHighlight = { [weak self] in self?.setPressed($0) }
+        // The system highlight is the cell's own: it fills the whole row and
+        // keeps the card's corners, which a content-view fill cannot.
+        button.onHighlight = { [weak self] in self?.isHighlighted = $0 }
         // A server row pushes Server Settings, so it carries the same
         // disclosure chevron as every other row that pushes.
         accessories = [.disclosureIndicator()]
@@ -599,11 +598,6 @@ final class SettingsServerRowCell: UICollectionViewListCell {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    /// The theme's highlight fill, the same one a pressed row uses elsewhere.
-    private func setPressed(_ pressed: Bool) {
-        contentView.backgroundColor = pressed ? .themeBgHighlight : nil
-    }
 
     func configure(
         name: String,
@@ -654,7 +648,7 @@ final class SettingsServerRowCell: UICollectionViewListCell {
         nameLabel.text = nil
         stateLabel.text = nil
         lockView.image = nil
-        setPressed(false)
+        isHighlighted = false
     }
 }
 
