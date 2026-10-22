@@ -38,6 +38,17 @@ final class AppRootViewController: UIViewController {
         return nil
     }
 
+    /// The screen the status bar follows is the content showing, so a screen
+    /// that paints its own background (the SSH terminal) can choose the clock's
+    /// color. Quick Session covers the content with the app's own surface.
+    override var childForStatusBarStyle: UIViewController? {
+        Self.statusBarChild(content: content, showsQuickSession: navigation.showQuickSession)
+    }
+
+    static func statusBarChild(content: UIViewController?, showsQuickSession: Bool) -> UIViewController? {
+        showsQuickSession ? nil : content
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         layer.view.backgroundColor = .clear
@@ -64,6 +75,7 @@ final class AppRootViewController: UIViewController {
         if let quickSessionView = quickSession.controller?.view {
             view.bringSubviewToFront(quickSessionView)
         }
+        setNeedsStatusBarAppearanceUpdate()
         content?.view.isUserInteractionEnabled = !showsQuickSession
         content?.view.accessibilityElementsHidden = showsQuickSession
 
@@ -108,6 +120,7 @@ final class AppRootViewController: UIViewController {
         }
         content = next
         embed(next, above: layer)
+        setNeedsStatusBarAppearanceUpdate()
     }
 
     /// The saved servers could not be read with the device unlocked. The

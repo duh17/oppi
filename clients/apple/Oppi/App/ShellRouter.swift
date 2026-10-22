@@ -149,6 +149,9 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         return nil
     }
 
+    /// The screen in front chooses the status bar, as in a stack with no bar.
+    override var childForStatusBarStyle: UIViewController? { topViewController }
+
     override func updateProperties() {
         super.updateProperties()
         // Observation tracking re-runs this when the theme store changes.

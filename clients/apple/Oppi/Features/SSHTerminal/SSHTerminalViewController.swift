@@ -625,13 +625,24 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         installGrid(makeGrid())
     }
 
+    /// The clock and battery read against the terminal's background, which can
+    /// be on the other side of light/dark from the app's theme. The default is
+    /// today's: follow the app's appearance until the first theme is applied.
+    private var terminalStatusBarStyle = UIStatusBarStyle.default
+    override var preferredStatusBarStyle: UIStatusBarStyle { terminalStatusBarStyle }
+
     /// The terminal's own background when the host's theme sets one, so the
     /// screen, its bars and its pills read as one surface with the grid.
-    private func applyTheme(_ themeID: ThemeID, colors: SSHTerminalColorTheme?) {
+    func applyTheme(_ themeID: ThemeID, colors: SSHTerminalColorTheme?) {
         let theme = themeID.appTheme
         view.backgroundColor = colors?.background.map(UIColor.init) ?? UIColor(theme.bg.primary)
         let dark = SSHTerminalColorTheme.isDark(background: colors?.background, fallback: themeID.preferredColorScheme != .light)
         overrideUserInterfaceStyle = dark ? .dark : .light
+        let style: UIStatusBarStyle = dark ? .lightContent : .darkContent
+        if terminalStatusBarStyle != style {
+            terminalStatusBarStyle = style
+            setNeedsStatusBarAppearanceUpdate()
+        }
     }
 
     /// Oppi's own appearance, which picks the side of a `light:`/`dark:` pair.

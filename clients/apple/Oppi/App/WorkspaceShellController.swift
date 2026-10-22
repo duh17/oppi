@@ -30,6 +30,9 @@ final class WorkspaceShellController: UIViewController {
         return nil
     }
 
+    /// The lock cover while it covers the layout, else the mounted layout.
+    override var childForStatusBarStyle: UIViewController? { lockCover ?? layout }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitVerticalSizeClass.self]) {
@@ -122,6 +125,7 @@ final class WorkspaceShellController: UIViewController {
         next.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.insertSubview(next.view, at: 0)
         next.didMove(toParent: self)
+        setNeedsStatusBarAppearanceUpdate()
     }
 
     private func showLockCover(serverId: String) {
@@ -135,6 +139,7 @@ final class WorkspaceShellController: UIViewController {
             cover.didMove(toParent: self)
             lockCover = cover
             lockedServerId = serverId
+            setNeedsStatusBarAppearanceUpdate()
         }
         replaceLayout(with: nil)
         layoutPresentation = nil
@@ -145,6 +150,7 @@ final class WorkspaceShellController: UIViewController {
         removeChild(lockCover)
         self.lockCover = nil
         lockedServerId = nil
+        setNeedsStatusBarAppearanceUpdate()
     }
 
     private func removeChild(_ child: UIViewController) {
@@ -194,6 +200,9 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
     required init?(coder: NSCoder) {
         return nil
     }
+
+    /// The detail column is the screen in front; the sidebar is the list beside it.
+    override var childForStatusBarStyle: UIViewController? { detailStack }
 
     override func updateProperties() {
         super.updateProperties()
@@ -286,6 +295,10 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
     required init?(coder: NSCoder) {
         return nil
     }
+
+    /// The session stack in front of the drawer; the sidebar owns the status
+    /// bar while the drawer is open over it.
+    override var childForStatusBarStyle: UIViewController? { isOpen ? nil : stack }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -385,6 +398,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
             AppHaptics.impact(style: .light, intensity: 0.65)
         }
         isOpen = open
+        setNeedsStatusBarAppearanceUpdate()
         sidebar.view.isUserInteractionEnabled = open
         sidebar.view.accessibilityElementsHidden = !open
         sidebar.view.accessibilityViewIsModal = open
