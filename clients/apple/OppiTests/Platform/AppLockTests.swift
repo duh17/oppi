@@ -320,6 +320,44 @@ struct AppLockServiceTests {
         #expect(SSHApprovalCache.shared.context(for: purpose) == nil)
     }
 
+    @Test func launchBeforeFirstUnlockStartsLockedOnceTheStoredTimeoutIsReadable() async {
+        // The App Group value was unreadable at launch and read as off.
+        let harness = Harness(timeout: .off, outcomes: [.success], protectedDataAvailable: false)
+        #expect(!harness.service.isEnabled)
+        AppLockSettings.setTimeout(.fiveMinutes, in: harness.defaults)
+        harness.protectedData.available = true
+
+        let prompt = harness.service.sceneDidBecomeActive()
+
+        #expect(harness.service.timeout == .fiveMinutes)
+        #expect(harness.service.isLocked)
+        #expect(harness.service.requiresUnlock())
+        #expect(prompt != nil, "starts locked with the automatic unlock prompt, like a cold launch")
+        #expect(await prompt?.value == true)
+        #expect(harness.authenticator.calls == 1)
+    }
+
+    @Test func intentGateSeesAppLockBeforeAnySceneBecomesActive() {
+        let harness = Harness(timeout: .off, outcomes: [], protectedDataAvailable: false)
+        AppLockSettings.setTimeout(.immediately, in: harness.defaults)
+        #expect(!harness.service.requiresUnlock(), "protected data is still unavailable")
+
+        harness.protectedData.available = true
+
+        #expect(harness.service.requiresUnlock())
+        #expect(harness.service.isLocked)
+    }
+
+    @Test func normalLaunchDoesNotReadTheStoredTimeoutAgain() {
+        let harness = Harness(timeout: .off, outcomes: [])
+        AppLockSettings.setTimeout(.fiveMinutes, in: harness.defaults)
+
+        _ = harness.service.sceneDidBecomeActive()
+
+        #expect(!harness.service.isEnabled)
+        #expect(!harness.service.requiresUnlock())
+    }
+
     @Test func timeoutPersistsInTheStoreTheShareExtensionReads() {
         let harness = Harness(timeout: .off, outcomes: [])
         harness.service.setTimeout(.fifteenMinutes)
@@ -560,6 +598,7 @@ private struct Harness {
     let authenticator: StubAuthenticator
     let defaults: UserDefaults
     let service: AppLockService
+    let protectedData: ProtectedDataFlag
     private let hooks: HookCounts
 
     var turnedOn: Int { hooks.turnedOn }
@@ -567,7 +606,8 @@ private struct Harness {
     init(
         timeout: AppLockTimeout,
         outcomes: [DeviceOwnerAuthentication.Outcome],
-        availability: DeviceOwnerAuthentication.Availability = .available
+        availability: DeviceOwnerAuthentication.Availability = .available,
+        protectedDataAvailable: Bool = true
     ) {
         guard let defaults = UserDefaults(suiteName: "AppLockTests-\(UUID().uuidString)") else {
             preconditionFailure("isolated UserDefaults suite")
@@ -580,13 +620,22 @@ private struct Harness {
         self.defaults = defaults
         let hooks = HookCounts()
         self.hooks = hooks
+        let protectedData = ProtectedDataFlag(available: protectedDataAvailable)
+        self.protectedData = protectedData
         service = AppLockService(
             defaults: defaults,
             monotonicNow: { clock.monotonic },
             availability: { availability },
             method: { .faceID },
             authenticator: { _ in await authenticator.authenticate() },
-            didTurnOn: { hooks.turnedOn += 1 }
+            didTurnOn: { hooks.turnedOn += 1 },
+            isProtectedDataAvailable: { protectedData.available }
         )
     }
+}
+
+@MainActor
+private final class ProtectedDataFlag {
+    var available: Bool
+    init(available: Bool) { self.available = available }
 }

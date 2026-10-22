@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import os.log
+import UIKit
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "AppLock")
 
@@ -164,6 +165,12 @@ final class AppLockService {
     @ObservationIgnored private let authenticator: @MainActor (String) async -> DeviceOwnerAuthentication.Outcome
     @ObservationIgnored private let methodProvider: @MainActor () -> DeviceOwnerAuthentication.Method
     @ObservationIgnored private let didTurnOn: @MainActor () -> Void
+    @ObservationIgnored private let isProtectedDataAvailable: @MainActor () -> Bool
+    /// The service started before the first unlock after a reboot (a
+    /// background launch): the stored timeout may have been unreadable and
+    /// read as `.off`. Cleared by the first read made with protected data
+    /// available, or by the user choosing a timeout.
+    @ObservationIgnored private var timeoutMayBeUnread: Bool
     @ObservationIgnored private var unlockTask: Task<Bool, Never>?
     /// Protected-action prompts in flight; their auth sheet must not obscure.
     /// Observed so controls disabled during a prompt re-enable after it.
@@ -175,7 +182,8 @@ final class AppLockService {
         availability: @escaping @MainActor () -> DeviceOwnerAuthentication.Availability = { DeviceOwnerAuthentication.availability() },
         method: @escaping @MainActor () -> DeviceOwnerAuthentication.Method = { DeviceOwnerAuthentication.method() },
         authenticator: @escaping @MainActor (String) async -> DeviceOwnerAuthentication.Outcome = { await DeviceOwnerAuthentication.authenticate(reason: $0) },
-        didTurnOn: @escaping @MainActor () -> Void = { AppLockService.clearContentShownBeforeAppLock() }
+        didTurnOn: @escaping @MainActor () -> Void = { AppLockService.clearContentShownBeforeAppLock() },
+        isProtectedDataAvailable: @escaping @MainActor () -> Bool = { UIApplication.shared.isProtectedDataAvailable }
     ) {
         self.defaults = defaults
         self.monotonicNow = monotonicNow
@@ -183,6 +191,8 @@ final class AppLockService {
         self.authenticator = authenticator
         self.methodProvider = method
         self.didTurnOn = didTurnOn
+        self.isProtectedDataAvailable = isProtectedDataAvailable
+        timeoutMayBeUnread = !isProtectedDataAvailable()
         self.method = method()
         machine = AppLockMachine(
             timeout: AppLockSettings.timeout(in: defaults),
@@ -191,6 +201,19 @@ final class AppLockService {
     }
 
     private func now() -> TimeInterval { monotonicNow() }
+
+    /// Fails closed after a launch before the first unlock: once protected
+    /// data is available, reads the stored timeout again. When App Lock is on,
+    /// the machine restarts exactly as a cold launch with App Lock on does
+    /// (locked, auto-prompt pending).
+    private func rereadTimeoutIfStartedBeforeFirstUnlock() {
+        guard timeoutMayBeUnread, isProtectedDataAvailable() else { return }
+        timeoutMayBeUnread = false
+        let stored = AppLockSettings.timeout(in: defaults)
+        guard stored.isEnabled, stored != machine.timeout else { return }
+        let available = machine.isAvailable
+        update { $0 = AppLockMachine(timeout: stored, isAvailable: available) }
+    }
 
     /// Runs `action` now when Oppi does not need unlocking, otherwise after the
     /// next successful unlock. Deep links, notification taps, and Quick
@@ -227,12 +250,14 @@ final class AppLockService {
 
     /// Whether external entry points (intents) must unlock before work.
     func requiresUnlock() -> Bool {
-        machine.requiresUnlock(at: now())
+        rereadTimeoutIfStartedBeforeFirstUnlock()
+        return machine.requiresUnlock(at: now())
     }
 
     // MARK: - Preferences
 
     func setTimeout(_ timeout: AppLockTimeout) {
+        timeoutMayBeUnread = false
         let wasEnabled = machine.isEnabled
         AppLockSettings.setTimeout(timeout, in: defaults)
         update { $0.setTimeout(timeout) }
@@ -265,6 +290,7 @@ final class AppLockService {
     /// automatic unlock prompt for this lock.
     @discardableResult
     func sceneDidBecomeActive() -> Task<Bool, Never>? {
+        rereadTimeoutIfStartedBeforeFirstUnlock()
         refreshAvailability()
         update { $0.didBecomeActive(at: now()) }
         var autoPrompt = false
