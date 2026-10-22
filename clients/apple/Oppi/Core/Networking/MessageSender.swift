@@ -501,7 +501,7 @@ final class MessageSender {
     ) async throws {
         let requestId = UUID().uuidString
         let clientTurnId = providedClientTurnId ?? UUID().uuidString
-        let queueMetricCommand: String? = switch streamingBehavior {
+        let queueMetricIntent: String? = switch streamingBehavior {
         case .steer: "steer"
         case .followUp: "follow_up"
         case nil: nil
@@ -527,18 +527,18 @@ final class MessageSender {
                 )
             }
         } catch {
-            if let queueMetricCommand {
+            if let queueMetricIntent {
                 Self.recordQueueAckMetric(
-                    command: queueMetricCommand, startedAt: startedAt, status: "error",
+                    intent: queueMetricIntent, startedAt: startedAt, status: "error",
                     transport: metricTransport,
                     errorKind: Self.telemetryErrorKind(from: error), sessionId: metricSessionId
                 )
             }
             throw error
         }
-        if let queueMetricCommand {
+        if let queueMetricIntent {
             Self.recordQueueAckMetric(
-                command: queueMetricCommand, startedAt: startedAt, status: "ok",
+                intent: queueMetricIntent, startedAt: startedAt, status: "ok",
                 transport: metricTransport, sessionId: metricSessionId
             )
         }
@@ -988,8 +988,10 @@ final class MessageSender {
         return tags
     }
 
+    /// `intent` is what the composer asked for (`steer` or `follow_up`). The server
+    /// still prompts the send normally when the turn already ended.
     static func recordQueueAckMetric(
-        command: String,
+        intent: String,
         startedAt: ContinuousClock.Instant,
         status: String,
         transport: String,
@@ -999,7 +1001,7 @@ final class MessageSender {
         let elapsedMs = Int((ContinuousClock.now - startedAt) / .milliseconds(1))
         Task.detached(priority: .utility) {
             var tags: [String: String] = [
-                "command": command,
+                "intent": intent,
                 "status": status,
                 "transport": transport,
             ]

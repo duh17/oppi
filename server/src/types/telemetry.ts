@@ -160,7 +160,8 @@ export const CHAT_METRIC_REGISTRY = {
   },
   "chat.message_queue_ack_ms": {
     unit: "ms",
-    description: "Latency from message queue send to server acknowledgement.",
+    description:
+      "Latency from a busy send to server acknowledgement. Tags: intent (the composer's steer or follow_up; a turn that already ended prompts it normally), transport, status, error_kind.",
   },
   "chat.message_queue_stale_drop": {
     unit: "count",

@@ -150,7 +150,7 @@ The front page should focus on metrics that directly map to user experience. Kee
 | `server.ws_handshake_ms`                              | Server-side WebSocket upgrade latency.                                                            |
 | `server.session_subscribe_ms`                         | Server session subscribe/catch-up path latency.                                                   |
 | `chat.queue_sync_ms`                                  | Time to refresh queued steer/follow-up state.                                                     |
-| `chat.message_queue_ack_ms`                           | Time from queue command send to server acknowledgement.                                           |
+| `chat.message_queue_ack_ms`                           | Time from a busy send to server acknowledgement. `intent` is the composer's steer or follow_up; a turn that already ended prompts it normally. |
 | `chat.message_queue_stale_drop`                       | User input was dropped because the client had stale session state.                                |
 | `chat.app_event_stream_connect_ms`                    | Time until global app updates, attention cards, and session list events are live.                 |
 | `chat.app_event_stream_reconnect`                     | Global app-event stream reconnect attempts and exhaustion.                                        |
