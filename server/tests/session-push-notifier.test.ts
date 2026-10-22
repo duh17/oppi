@@ -5,7 +5,7 @@ import { SessionPushNotifier } from "../src/session-push-notifier.js";
 import { encodePushPlaintextJSON } from "../src/push/envelope.js";
 import type { PushNotification, PushSender } from "../src/push/push-sender.js";
 import type { Storage } from "../src/storage.js";
-import type { ProgramStatus, PushRegistration, Session } from "../src/types.js";
+import type { ProgramStatus, ProgramStatusKind, PushRegistration, Session } from "../src/types.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   const now = Date.now();
@@ -222,17 +222,17 @@ describe("SessionPushNotifier", () => {
     const T0 = Date.parse("2026-10-17T12:00:00Z");
     const toBlocked = (since: number) =>
       change({ state: "working" }, { state: "blocked", kind: "permission", since });
-    const blockedSession = (since: number) =>
+    const blockedSession = (since: number, kind: ProgramStatusKind = "permission") =>
       makeSession({
-        programStatus: { state: "blocked", kind: "permission", message: "Push to main?", since },
+        programStatus: { state: "blocked", kind, message: "Push to main?", since },
       });
 
     afterEach(() => vi.useRealTimers());
 
-    function setup(devices: string[], present: string[]) {
+    function setup(devices: string[], present: string[], kind: ProgramStatusKind = "permission") {
       vi.useFakeTimers({ now: T0 });
       const push = makePush(devices);
-      const session = blockedSession(T0);
+      const session = blockedSession(T0, kind);
       const live = [session];
       const presentSet = new Set(present);
       const notifier = new SessionPushNotifier(push, makeStorage(session), {
@@ -249,7 +249,7 @@ describe("SessionPushNotifier", () => {
 
       vi.setSystemTime(T0 + 30_000);
       presentSet.delete("dev-phone");
-      notifier.deviceLeft("dev-phone", T0 - 1);
+      notifier.deviceLeft("dev-phone", { heardAt: T0 - 1, dropped: true });
 
       expect(push.send.mock.calls.map(([sent]) => sent.deviceId)).toEqual([
         "dev-ipad",
@@ -267,7 +267,7 @@ describe("SessionPushNotifier", () => {
       expect(push.send).toHaveBeenCalledTimes(1);
 
       vi.setSystemTime(T0 + 90_000);
-      notifier.deviceLeft("dev-phone", T0 - 1);
+      notifier.deviceLeft("dev-phone", { heardAt: T0 - 1, dropped: true });
       expect(push.send).toHaveBeenCalledTimes(1);
     });
 
@@ -275,26 +275,55 @@ describe("SessionPushNotifier", () => {
       const { push, session, notifier } = setup(["phone"], []);
 
       vi.setSystemTime(T0 + 121_000);
-      notifier.deviceLeft("dev-phone", T0 - 1);
+      notifier.deviceLeft("dev-phone", { heardAt: T0 - 1, dropped: true });
       expect(push.send).not.toHaveBeenCalled();
 
       vi.setSystemTime(T0 + 119_000);
       session.programStatus = { state: "working", since: T0 + 100_000 };
-      notifier.deviceLeft("dev-phone", T0 - 1);
+      notifier.deviceLeft("dev-phone", { heardAt: T0 - 1, dropped: true });
       expect(push.send).not.toHaveBeenCalled();
     });
 
     it("sends nothing to a device that did not list blocked", () => {
       const { push, notifier } = setup([], []);
-      notifier.deviceLeft("dev-phone", T0 - 1);
+      notifier.deviceLeft("dev-phone", { heardAt: T0 - 1, dropped: true });
       expect(push.send).not.toHaveBeenCalled();
     });
 
-    it("skips a session that blocked before the device's last frame: the app saw it", () => {
-      const { push, notifier } = setup(["phone"], []);
-      notifier.deviceLeft("dev-phone", T0);
+    it("pushes a question only after a drop, and only if it blocked after the last frame", () => {
+      const { push, notifier } = setup(["phone"], [], "question");
+      // The app closed the stream: its own alert covers a question.
+      notifier.deviceLeft("dev-phone", { heardAt: T0 - 1, dropped: false });
+      // The stream dropped, but the app had already seen the question.
+      notifier.deviceLeft("dev-phone", { heardAt: T0, dropped: true });
       expect(push.send).not.toHaveBeenCalled();
-      notifier.deviceLeft("dev-phone", T0 - 1);
+
+      notifier.deviceLeft("dev-phone", { heardAt: T0 - 1, dropped: true });
+      expect(push.send).toHaveBeenCalledTimes(1);
+    });
+
+    it("pushes an approval or sign-in on any leave: the app has no local alert for them", () => {
+      for (const kind of ["permission", "auth"] as const) {
+        const { push, notifier } = setup(["phone"], [], kind);
+        notifier.deviceLeft("dev-phone", { heardAt: T0 + 5_000, dropped: false });
+        expect(push.send).toHaveBeenCalledTimes(1);
+        expect(push.send).toHaveBeenCalledWith(
+          target("phone"),
+          expect.objectContaining({ event: "blocked", kind }),
+        );
+      }
+    });
+
+    it("does not push an approval again within a minute of the last alert", () => {
+      const { push, session, notifier } = setup(["phone"], []);
+      vi.setSystemTime(T0 + 30_000);
+      notifier.deviceLeft("dev-phone", { heardAt: T0, dropped: false });
+      expect(push.send).toHaveBeenCalledTimes(1);
+
+      // The app reopens and the session blocks anew; the phone leaves again 5 s later.
+      session.programStatus = { state: "blocked", kind: "permission", since: T0 + 35_000 };
+      vi.setSystemTime(T0 + 40_000);
+      notifier.deviceLeft("dev-phone", { heardAt: T0 + 36_000, dropped: false });
       expect(push.send).toHaveBeenCalledTimes(1);
     });
 
@@ -302,7 +331,7 @@ describe("SessionPushNotifier", () => {
       const { push, session, notifier, presentSet } = setup(["phone", "ipad"], ["dev-phone"]);
       vi.setSystemTime(T0 + 30_000);
       presentSet.delete("dev-phone");
-      notifier.deviceLeft("dev-phone", T0 - 1);
+      notifier.deviceLeft("dev-phone", { heardAt: T0 - 1, dropped: true });
       expect(push.send).toHaveBeenCalledTimes(1);
 
       // Unblocked at +35 s, blocked again at +40 s: the phone was told 10 s ago.
@@ -332,13 +361,13 @@ describe("SessionPushNotifier", () => {
         liveSessions: () => [session],
       });
       // A send in flight when the server stops: its failure must not schedule a retry.
-      notifier.deviceLeft("dev-phone", T0 - 1);
+      notifier.deviceLeft("dev-phone", { heardAt: T0 - 1, dropped: true });
       notifier.stop();
       finish(unavailable);
       await vi.advanceTimersByTimeAsync(120_000);
       expect(push.send).toHaveBeenCalledTimes(1);
 
-      notifier.deviceLeft("dev-phone", T0 - 2);
+      notifier.deviceLeft("dev-phone", { heardAt: T0 - 2, dropped: true });
       expect(push.send).toHaveBeenCalledTimes(1);
     });
   });

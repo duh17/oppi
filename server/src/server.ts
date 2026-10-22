@@ -1479,6 +1479,7 @@ export class Server {
         this.presenceHeardAt.set(deviceId, Date.now());
       };
       heard();
+      ws.on("ping", heard);
       ws.on("pong", heard);
       ws.on("message", heard);
     }
@@ -1487,10 +1488,10 @@ export class Server {
   }
 
   /**
-   * `closeCode` is the WebSocket close code. Only 1006 (no close frame: the ping timeout
-   * terminates the socket, or the network broke) can have left a Needs you unannounced. Any
-   * close the app sent (1000, 1001, or 1005 with no status) is it leaving on purpose, and while
-   * it runs in the background it posts its own alert for a question.
+   * `closeCode` is the WebSocket close code. 1006 (no close frame: the ping timeout
+   * terminates the socket, or the network broke) is a drop; 1000, 1001 and 1005 (no status) are
+   * the app closing the stream. While it runs in the background the app posts its own alert for
+   * a question only, so the notifier decides per blocked kind what each kind of leave pushes.
    */
   private forgetPresenceSocket(ws: WebSocket, closeCode: number): void {
     const deviceId = this.presenceSocketDevices.get(ws);
@@ -1499,7 +1500,7 @@ export class Server {
     const heardAt = this.presenceHeardAt.get(deviceId) ?? Date.now();
     this.presenceHeardAt.delete(deviceId);
     this.liveActivityNotifier.presenceChanged(deviceId);
-    if (closeCode === 1006) this.sessionPushNotifier.deviceLeft(deviceId, heardAt);
+    this.sessionPushNotifier.deviceLeft(deviceId, { heardAt, dropped: closeCode === 1006 });
   }
 
   private isDevicePresent(deviceId: string): boolean {
