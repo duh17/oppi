@@ -17,7 +17,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
 
     // MARK: - Full-Screen Expand Tests
 
-    func testThinkingRowExpandToFullScreen() throws {
+    func testMarkdownToolRowExpandToFullScreen() throws {
         launchHarness(noStream: true, includeVisualFixtures: true)
 
         let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 7, timeout: 6)
@@ -25,27 +25,28 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
 
         let perfGuardrailBefore = pollDiagnostic("diag.perfGuardrail", timeout: 4)
 
-        // Focus the extension markdown tool — it has long rich content that
-        // supports full-screen expansion via double-tap, exercising the same
-        // full-screen presentation path as thinking rows.
-        let extensionFocus = app.descendants(matching: .any)["harness.extension.focus"]
-        XCTAssertTrue(extensionFocus.waitForExistence(timeout: 4))
-        extensionFocus.tap()
+        // Focus the read of a Markdown file: it paints the inline Markdown
+        // viewport, and a double-tap on it opens the full-screen Markdown reader.
+        // A generic extension call (`extensions.notes`) paints as a notebook cell
+        // instead, so it cannot stand in for this surface.
+        let readFocus = app.descendants(matching: .any)["harness.readMarkdown.focus"]
+        XCTAssertTrue(readFocus.waitForExistence(timeout: 4))
+        readFocus.tap()
 
-        XCTAssertEqual(waitForDiagnostic("diag.extensionExpanded", equals: 1, timeout: 4), 1)
+        XCTAssertEqual(waitForDiagnostic("diag.readMarkdownExpanded", equals: 1, timeout: 4), 1)
 
         openFullScreenFromExpandedTool(
-            rowIdentifier: "chat.timeline.row.alpha-visual-tool-extension-b",
-            contentIdentifier: "chat.timeline.row.alpha-visual-tool-extension-b.markdownViewport",
+            rowIdentifier: "chat.timeline.row.alpha-visual-tool-read",
+            contentIdentifier: "chat.timeline.row.alpha-visual-tool-read.markdownViewport",
             expectedFullscreenContentIdentifier: "full-screen.markdown.body",
-            expectedContentSnippet: "Extension harness notes"
+            expectedContentSnippet: "network diagnosis"
         )
         dismissFullScreenAndReturnToTimeline(
             expectedFullscreenContentIdentifier: "full-screen.markdown.body"
         )
 
         XCTAssertTrue(
-            assertHarnessStillRunning(context: "extension markdown full-screen expand/dismiss")
+            assertHarnessStillRunning(context: "markdown read full-screen expand/dismiss")
         )
 
         let perfGuardrailAfter = pollDiagnostic("diag.perfGuardrail", timeout: 4)
