@@ -341,7 +341,8 @@ targets:
               echo "error: server dependencies missing; run: node server/scripts/ensure-installed-deps.mjs"
               exit 1
             fi
-            bun "$CHECK_SCRIPT" --scope ios --format xcode
+            # A violation must not leave a fresh stamp, or the next build skips the check.
+            bun "$CHECK_SCRIPT" --scope ios --format xcode || exit $?
             touch "$STAMP_FILE"
           else
             echo "note: Bun is unavailable — skipping architecture boundary checks (run server npm test in CI to enforce them)"
