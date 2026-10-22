@@ -132,11 +132,16 @@ enum LocalDataProtection {
         return roots
     }
 
-    /// Shared `UserDefaults` plists belong to cfprefsd, not to Oppi's stores.
-    private static func excludedPaths(fileManager: FileManager) -> Set<String> {
+    /// Shared `UserDefaults` plists belong to cfprefsd, not to Oppi's stores. Push state stays
+    /// `completeUntilFirstUserAuthentication` by design: the Notification Service Extension
+    /// opens it while the phone is locked (`PushSharedStore`).
+    static func excludedPaths(fileManager: FileManager) -> Set<String> {
         guard let group = fileManager.containerURL(forSecurityApplicationGroupIdentifier: SharedConstants.appGroupIdentifier) else {
             return []
         }
-        return [group.appending(path: "Library/Preferences", directoryHint: .isDirectory).standardizedFileURL.path]
+        return [
+            group.appending(path: "Library/Preferences", directoryHint: .isDirectory).standardizedFileURL.path,
+            group.appending(path: PushSharedStore.stateDirectoryName, directoryHint: .isDirectory).standardizedFileURL.path,
+        ]
     }
 }

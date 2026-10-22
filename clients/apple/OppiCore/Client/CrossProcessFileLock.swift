@@ -70,4 +70,69 @@ enum CrossProcessFileLock {
         }
         return try body()
     }
+
+    /// Run `body` while holding an exclusive advisory lock on the file at `url`, in a
+    /// directory that already exists, for state a process may need while the phone is locked.
+    ///
+    /// A new file inherits its directory's protection class, and a file whose class has
+    /// been made stronger than `protection` cannot be opened again while the phone is locked.
+    /// So the process that creates the lock file sets `protection` on it, and a process that
+    /// opens one reporting another class sets it again. Either way the class changes in place:
+    /// the file is never replaced, since a process holding the old file would no longer
+    /// exclude one locking the new one.
+    ///
+    /// Throws `POSIXError` with the `open` or `flock` errno.
+    static func withLock<T>(
+        fileAt url: URL,
+        protection: URLFileProtection,
+        _ body: () throws -> T
+    ) throws -> T {
+        let fd = try openLockFile(at: url, protection: protection)
+        guard flock(fd, LOCK_EX) == 0 else {
+            let error = POSIXError.current
+            close(fd)
+            throw error
+        }
+        defer {
+            flock(fd, LOCK_UN)
+            close(fd)
+        }
+        return try body()
+    }
+
+    private static func openLockFile(at url: URL, protection: URLFileProtection) throws -> Int32 {
+        // Two tries: another process may create the file between the two opens.
+        for _ in 0..<2 {
+            let created = open(url.path, O_CREAT | O_EXCL | O_RDWR, 0o600)
+            if created >= 0 {
+                setProtection(protection, at: url)
+                return created
+            }
+            guard errno == EEXIST else { throw POSIXError.current }
+            let existing = open(url.path, O_RDWR)
+            if existing >= 0 {
+                // Nil where the file system has no data protection (the Simulator, macOS).
+                if let current = try? url.resourceValues(forKeys: [.fileProtectionKey]).fileProtection,
+                   current != protection {
+                    setProtection(protection, at: url)
+                }
+                return existing
+            }
+            guard errno == ENOENT else { throw POSIXError.current }
+        }
+        throw POSIXError(.ENOENT)
+    }
+
+    /// Best effort, through the documented way to change an existing file's class. It can
+    /// fail while the phone is locked; the next open while unlocked sets it again.
+    private static func setProtection(_ protection: URLFileProtection, at url: URL) {
+        try? (url as NSURL).setResourceValue(protection, forKey: .fileProtectionKey)
+    }
+}
+
+private extension POSIXError {
+    /// The error for the current `errno`.
+    static var current: POSIXError {
+        POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
 }

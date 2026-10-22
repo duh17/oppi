@@ -97,9 +97,14 @@ enum PushSharedStore {
 
     // MARK: - App Group files
 
+    /// The App Group directory of every push file and lock. The app's stronger at-rest class
+    /// must never reach it (`LocalDataProtection`): the extension opens these files while the
+    /// phone is locked.
+    static let stateDirectoryName = "push-state"
+
     private static func stateDirectory() throws -> URL {
         let container = try CrossProcessFileLock.appGroupContainer(identifier: SharedConstants.appGroupIdentifier)
-        let directory = container.appendingPathComponent("push-state", isDirectory: true)
+        let directory = container.appendingPathComponent(stateDirectoryName, isDirectory: true)
         try FileManager.default.createDirectory(
             at: directory,
             withIntermediateDirectories: true,
@@ -108,11 +113,40 @@ enum PushSharedStore {
                 .protectionKey: FileProtectionType.completeUntilFirstUserAuthentication,
             ]
         )
+        // Builds before `LocalDataProtection` skipped this directory could have made it
+        // stronger, and a file created in it takes its class. Nil where the file system has
+        // no data protection.
+        if let current = try? directory.resourceValues(forKeys: [.fileProtectionKey]).fileProtection,
+           current != .completeUntilFirstUserAuthentication {
+            try? (directory as NSURL).setResourceValue(
+                URLFileProtection.completeUntilFirstUserAuthentication,
+                forKey: .fileProtectionKey
+            )
+        }
         return directory
     }
 
     private static func write(_ data: Data, to url: URL) throws {
         try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+
+    /// Run `body` holding the cross-process lock `name` in `directory`. The lock file has the
+    /// same class as the files it guards, so the extension can take it while the phone is
+    /// locked. Nil, logged with the errno, when the lock cannot be taken.
+    private static func withLock<T>(_ name: String, in directory: URL, _ body: () -> T) -> T? {
+        do {
+            return try CrossProcessFileLock.withLock(
+                fileAt: directory.appendingPathComponent("\(name).lock"),
+                protection: .completeUntilFirstUserAuthentication,
+                body
+            )
+        } catch {
+            let nsError = error as NSError
+            logger.error(
+                "Push \(name, privacy: .public) lock failed (\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public))"
+            )
+            return nil
+        }
     }
 
     // MARK: Redaction snapshot
@@ -137,14 +171,11 @@ enum PushSharedStore {
     /// Record a push's message id for `keyId` (spec §2.5 step 7). False for a replay, or when
     /// the ledger cannot be locked or saved.
     static func acceptMessage(_ messageId: Data, keyId: Data, now: Date) -> Bool {
-        guard let directory = try? stateDirectory(),
-              let container = try? CrossProcessFileLock.appGroupContainer(
-                identifier: SharedConstants.appGroupIdentifier
-              ) else {
+        guard let directory = try? stateDirectory() else {
             logger.error("Push replay ledger unavailable; showing the fallback")
             return false
         }
-        let accepted = try? CrossProcessFileLock.withLock(serverId: "push-replay", container: container) {
+        let accepted = withLock("replay", in: directory) {
             acceptMessage(
                 messageId,
                 keyId: keyId,
@@ -199,17 +230,14 @@ enum PushSharedStore {
     /// cross-process lock the app and the extension share. Nil when the set cannot be
     /// locked or saved.
     static func updateSessionBadge(_ change: (inout SessionBadge) -> Void) -> SessionBadge? {
-        guard let directory = try? stateDirectory(),
-              let container = try? CrossProcessFileLock.appGroupContainer(
-                identifier: SharedConstants.appGroupIdentifier
-              ) else {
+        guard let directory = try? stateDirectory() else {
             logger.error("Session badge unavailable")
             return nil
         }
-        let updated = try? CrossProcessFileLock.withLock(serverId: "push-badge", container: container) {
+        let updated = withLock("badge", in: directory) {
             updateSessionBadge(at: directory.appendingPathComponent("badge.json"), change)
         }
-        return updated ?? nil
+        return updated.flatMap { $0 }
     }
 
     /// The badge read-modify-write; the caller holds the cross-process lock. A missing or

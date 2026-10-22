@@ -235,6 +235,48 @@ struct PushEnvelopeTests {
         #expect(!accepted)
     }
 
+    // MARK: - Push state lock
+
+    /// The class as the file system reports it now, past any cached resource value.
+    private static func protection(of url: URL) throws -> URLFileProtection? {
+        try URL(fileURLWithPath: url.path).resourceValues(forKeys: [.fileProtectionKey]).fileProtection
+    }
+
+    /// A file created in a directory the app's at-rest upgrade made Class B would be Class B,
+    /// which the extension cannot open again while the phone is locked.
+    @Test func aNewLockFileGetsTheClassTheExtensionCanOpenWhileLocked() throws {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try (directory as NSURL).setResourceValue(URLFileProtection.completeUnlessOpen, forKey: .fileProtectionKey)
+        let url = directory.appendingPathComponent("replay.lock")
+
+        try CrossProcessFileLock.withLock(fileAt: url, protection: .completeUntilFirstUserAuthentication) {}
+
+        #expect(try Self.protection(of: url) == .completeUntilFirstUserAuthentication)
+    }
+
+    /// The app and the extension each open the lock file on their own: replacing it would let
+    /// a process holding the old file run beside one locking the new file.
+    @Test func aLockFileWithAStrongerClassIsFixedInPlaceAndStillExcludesAnotherOpen() throws {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("replay.lock")
+        try CrossProcessFileLock.withLock(fileAt: url, protection: .completeUntilFirstUserAuthentication) {}
+        let inode = try #require(FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? Int)
+        try (url as NSURL).setResourceValue(URLFileProtection.completeUnlessOpen, forKey: .fileProtectionKey)
+        #expect(try Self.protection(of: url) == .completeUnlessOpen)
+
+        let blocked = try CrossProcessFileLock.withLock(fileAt: url, protection: .completeUntilFirstUserAuthentication) {
+            let other = open(url.path, O_RDWR)
+            defer { close(other) }
+            return other >= 0 && flock(other, LOCK_EX | LOCK_NB) != 0 && errno == EWOULDBLOCK
+        }
+
+        #expect(blocked)
+        #expect(try FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? Int == inode)
+        #expect(try Self.protection(of: url) == .completeUntilFirstUserAuthentication)
+    }
+
     // MARK: - App icon badge
 
     /// The extension's badge for a push, against a stored badge file.
