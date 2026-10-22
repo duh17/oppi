@@ -112,7 +112,10 @@ final class SessionExtensionContextViewController: UIViewController, UICollectio
             snapshot.appendItems([.viewSource, .edit], toSection: .actions)
         }
         snapshot.appendSections([.tools])
-        snapshot.appendItems(tools.isEmpty ? [.noTools] : tools.map { .tool($0.name) }, toSection: .tools)
+        // A diffable list traps on a repeated item; a repeated tool name shows once.
+        var seenTools = Set<String>()
+        let toolItems = tools.filter { seenTools.insert($0.name).inserted }.map { Item.tool($0.name) }
+        snapshot.appendItems(tools.isEmpty ? [.noTools] : toolItems, toSection: .tools)
         dataSource.apply(snapshot, animatingDifferences: false)
     }
 

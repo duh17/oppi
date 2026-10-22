@@ -189,7 +189,10 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
             snapshot.appendItems([.prompt], toSection: .instructions)
             snapshot.appendItems(runWithItems(schedule.action), toSection: .runWith)
             snapshot.appendItems([.runNow, schedule.status == .archived ? .restore : .enabled], toSection: .actions)
-            snapshot.appendItems(runs.isEmpty ? [.noRuns] : runs.map { .run($0.id) }, toSection: .history)
+            // A diffable list traps on a repeated item; a repeated run id shows once.
+            var seenRuns = Set<String>()
+            let runItems = runs.filter { seenRuns.insert($0.id).inserted }.map { Item.run($0.id) }
+            snapshot.appendItems(runs.isEmpty ? [.noRuns] : runItems, toSection: .history)
         } else {
             snapshot.appendSections([.state])
             snapshot.appendItems([isLoading ? .loading : .notFound], toSection: .state)

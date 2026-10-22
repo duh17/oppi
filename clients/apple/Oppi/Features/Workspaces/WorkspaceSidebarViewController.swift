@@ -254,7 +254,9 @@ final class WorkspaceSidebarViewController: UIViewController {
                     || workspaceStore?.lastSyncFailed == true {
                     model.mainItems.append(.stale)
                 }
-                for workspace in workspaces {
+                // A diffable list traps on a repeated item; a repeated workspace id shows once.
+                var seenWorkspaceIds = Set<String>()
+                for workspace in workspaces where seenWorkspaceIds.insert(workspace.id).inserted {
                     let target = WorkspaceNavTarget(serverId: serverId, workspace: workspace)
                     model.workspaces[workspace.id] = WorkspaceRow(
                         target: target,

@@ -140,7 +140,9 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         } else if visible.isEmpty {
             snapshot.appendItems([.empty])
         } else {
-            snapshot.appendItems(visible.map { .schedule($0.id) })
+            // A diffable list traps on a repeated item; a repeated schedule id shows once.
+            var seen = Set<String>()
+            snapshot.appendItems(visible.filter { seen.insert($0.id).inserted }.map { .schedule($0.id) })
         }
         snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { dataSource.snapshot().indexOfItem($0) != nil })
         dataSource.apply(snapshot, animatingDifferences: false)

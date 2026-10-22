@@ -124,12 +124,14 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
         guard let dataSource else { return }
         var snapshot = NSDiffableDataSourceSnapshot<Int, Item>()
         snapshot.appendSections([0])
+        // A diffable list traps on a repeated item; a repeated agent id shows once.
+        var shown = Set<Item>()
         snapshot.appendItems(AgentManagementPresentation.rows(savedAgents: agents).map { row in
             switch row {
-            case .pi: .pi
-            case .saved(let agent): .saved(agent.id)
+            case .pi: Item.pi
+            case .saved(let agent): Item.saved(agent.id)
             }
-        })
+        }.filter { shown.insert($0).inserted })
         if isLoading && agents.isEmpty {
             snapshot.appendItems([.loading])
         }
