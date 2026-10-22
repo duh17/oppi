@@ -219,19 +219,22 @@ enum SSHTerminalKittyPNGDecoder {
             bytesNoCopy: UnsafeMutableRawPointer(mutating: data), count: length, deallocator: .none
         )
         // `f=100` means PNG, and the bytes come from whatever the terminal shows
-        // (`cat` of a hostile file reaches here too). ImageIO sniffs the format,
-        // so without these checks a payload would reach its JPEG, HEIC, TIFF, PSD,
-        // GIF, and BMP decoders as well. Only a PNG signature, decoded as PNG, is
+        // (`cat` of a hostile file reaches here too). The size is read from the
+        // IHDR bytes themselves and checked first: ImageIO's property copy would
+        // parse every metadata chunk (eXIf through its TIFF/EXIF parser, iTXt XMP
+        // through an XML parser) before any size check could run. ImageIO also
+        // sniffs the format, so without the signature and type checks a payload
+        // would reach its JPEG, HEIC, TIFF, PSD, GIF, and BMP decoders as well.
+        // Only a well-formed PNG header that fits the budget, decoded as PNG, is
         // accepted.
-        guard encoded.starts(with: pngSignature),
+        guard let declared = declaredPixelSize(encoded),
+              Self.allowedByteCount(width: declared.width, height: declared.height) != nil,
               let source = CGImageSourceCreateWithData(
                   encoded as CFData, [kCGImageSourceTypeIdentifierHint: pngType] as CFDictionary
               ),
-              CGImageSourceGetType(source) as String? == pngType,
-              let declared = declaredPixelSize(source),
-              Self.allowedByteCount(width: declared.width, height: declared.height) != nil else {
-            // Refused from the header alone: ImageIO has decoded nothing, so a
-            // PNG that merely declares a huge canvas costs no memory.
+              CGImageSourceGetType(source) as String? == pngType else {
+            // Refused from the header alone: ImageIO has parsed and decoded
+            // nothing, so a PNG that merely declares a huge canvas costs no memory.
             return false
         }
         guard let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return false }
@@ -281,14 +284,23 @@ enum SSHTerminalKittyPNGDecoder {
         return bytes
     }
 
-    /// Pixel size from the image header, before any pixel is decoded.
-    private static func declaredPixelSize(_ source: CGImageSource) -> (width: Int, height: Int)? {
-        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
-            as? [CFString: Any],
-            let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
-            let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
-            width > 0, height > 0 else { return nil }
-        return (width, height)
+    /// Pixel size from the PNG IHDR chunk, read without ImageIO. The PNG spec
+    /// fixes the layout: signature (8 bytes), then the first chunk with length 13
+    /// and type "IHDR", then width and height as big-endian `UInt32`s at offsets
+    /// 16 and 20, each 1...2^31-1. Anything else is malformed and refused.
+    static func declaredPixelSize(_ encoded: Data) -> (width: Int, height: Int)? {
+        let headerEnd = 24
+        guard encoded.count >= headerEnd, encoded.starts(with: pngSignature) else { return nil }
+        let bytes = encoded.prefix(headerEnd)
+        let base = bytes.startIndex
+        func bigEndian(_ offset: Int) -> UInt32 {
+            (0..<4).reduce(UInt32(0)) { ($0 << 8) | UInt32(bytes[base + offset + $1]) }
+        }
+        guard bigEndian(8) == 13, bigEndian(12) == 0x4948_4452 else { return nil } // "IHDR"
+        let width = bigEndian(16)
+        let height = bigEndian(20)
+        guard (1...0x7FFF_FFFF).contains(width), (1...0x7FFF_FFFF).contains(height) else { return nil }
+        return (Int(width), Int(height))
     }
 
     /// CGContext only writes premultiplied RGBA; the protocol, and therefore the

@@ -770,6 +770,65 @@ struct SSHTerminalKittyGraphicsTests {
         )
     }
 
+    /// The size gate reads IHDR bytes directly, so ImageIO parses no metadata
+    /// chunk of a payload that is malformed or too big. Each case below changes one
+    /// thing about an otherwise valid PNG.
+    @Test func pngSizeIsReadFromIHDRAndMalformedHeadersAreRefused() throws {
+        let valid = Self.solidPNG(width: 3, height: 2)
+        let size = SSHTerminalKittyPNGDecoder.declaredPixelSize(valid)
+        #expect(size?.width == 3 && size?.height == 2)
+
+        func patched(_ edit: (inout [UInt8]) -> Void) -> Data {
+            var bytes = [UInt8](valid)
+            edit(&bytes)
+            return Data(bytes)
+        }
+        func setField(_ offset: Int, _ value: UInt32) -> Data {
+            patched { bytes in
+                for index in 0..<4 { bytes[offset + index] = UInt8((value >> (24 - 8 * UInt32(index))) & 0xFF) }
+            }
+        }
+        let refused: [(String, Data)] = [
+            ("empty", Data()),
+            ("signature only", valid.prefix(8)),
+            ("truncated inside the chunk length", valid.prefix(10)),
+            ("truncated inside the type", valid.prefix(14)),
+            ("truncated before the height", valid.prefix(22)),
+            ("chunk length is not 13", setField(8, 12)),
+            ("first chunk is not IHDR", patched { $0[12] = UInt8(ascii: "X") }),
+            ("zero width", setField(16, 0)),
+            ("zero height", setField(20, 0)),
+            ("width past 2^31-1", setField(16, 0x8000_0000)),
+            ("height past 2^31-1", setField(20, 0xFFFF_FFFF)),
+            ("bad signature", patched { $0[0] = 0x88 }),
+        ]
+        for (name, payload) in refused {
+            #expect(SSHTerminalKittyPNGDecoder.declaredPixelSize(payload) == nil, "\(name)")
+        }
+
+        // 2^31-1 is a legal IHDR value, so the byte budget is what refuses it.
+        let widest = setField(16, 0x7FFF_FFFF)
+        #expect(SSHTerminalKittyPNGDecoder.declaredPixelSize(widest)?.width == 0x7FFF_FFFF)
+
+        var replies = [Data]()
+        let refusing = try engine { replies.append($0) }
+        let rejected = refused.map(\.1).filter { !$0.isEmpty } + [widest]
+        for (offset, payload) in rejected.enumerated() {
+            refusing.receive(kitty("a=T,f=100,i=\(100 + offset),c=1,r=1", payload: payload.base64EncodedString()))
+        }
+        #expect(refusing.frame().kitty == nil, "nothing is stored")
+        #expect(replies.map { String(decoding: $0, as: UTF8.self) } == rejected.indices.map {
+            "\u{1b}_Gi=\(100 + $0);EINVAL: invalid data\u{1b}\\"
+        })
+
+        // A well-formed header still decodes.
+        var accepted = [Data]()
+        let accepting = try engine { accepted.append($0) }
+        accepting.receive(kitty("a=T,f=100,i=200,c=1,r=1", payload: valid.base64EncodedString()))
+        #expect(accepting.frame().kitty != nil, "a valid small PNG is stored")
+        #expect(accepted.map { String(decoding: $0, as: UTF8.self) } == ["\u{1b}_Gi=200;OK\u{1b}\\"])
+    }
+
     /// CGContext writes premultiplied pixels; the protocol's RGBA is straight, so
     /// the renderer's blending needs the alpha divided back out.
     @Test func semiTransparentPNGDecodesToStraightAlpha() throws {
