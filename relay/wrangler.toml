@@ -1,5 +1,6 @@
 # Cloudflare Worker for the Oppi push relay. No account ID and no secrets live here.
 # Secrets: wrangler secret put APNS_KEY_P8 | APNS_KEY_ID | APNS_TEAM_ID (see README.md).
+# APNS_KEY_P8 also keys registration challenges (HKDF, its own label); no other secret.
 name = "oppi-push-relay"
 main = "src/cloudflare/worker.ts"
 compatibility_date = "2026-10-01"
@@ -24,10 +25,6 @@ name = "REGISTRATIONS"
 class_name = "RegistrationObject"
 
 [[durable_objects.bindings]]
-name = "CHALLENGES"
-class_name = "ChallengeObject"
-
-[[durable_objects.bindings]]
 name = "APNS_TOKENS"
 class_name = "ApnsTokenObject"
 
@@ -38,6 +35,12 @@ new_sqlite_classes = ["RegistrationObject", "ChallengeObject"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["ApnsTokenObject"]
+
+# Challenges became stateless (src/core/challenge.ts); this deletes every ChallengeObject
+# and its storage.
+[[migrations]]
+tag = "v3"
+deleted_classes = ["ChallengeObject"]
 
 [vars]
 APP_ID = "AZAQMY4SPZ.dev.chenda.Oppi"

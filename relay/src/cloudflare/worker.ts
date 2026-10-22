@@ -1,10 +1,11 @@
 /**
  * Cloudflare adapter: a Worker in front of the relay core, one SQLite-backed Durable Object
- * per registration (atomic quotas, counters, and revocation), one per APNs token naming that
- * phone's current registration, and one per outstanding challenge (single use). APNs is
- * reached with `fetch`.
+ * per registration (atomic quotas, counters, revocation, and its idle-expiry alarm) and one
+ * per APNs token naming that phone's current registration. Challenges need no storage
+ * (core/challenge.ts). APNs is reached with `fetch`.
  *
- * Secrets (`wrangler secret put`): APNS_KEY_P8, APNS_KEY_ID, APNS_TEAM_ID.
+ * Secrets (`wrangler secret put`): APNS_KEY_P8, APNS_KEY_ID, APNS_TEAM_ID. APNS_KEY_P8 also
+ * keys the challenges, through HKDF with its own label.
  * Vars (wrangler.toml): APP_ID, BUNDLE_ID.
  */
 
@@ -16,6 +17,7 @@ import {
   type ApnsResult,
   type ApnsSender,
 } from "../core/apns.js";
+import { utf8 } from "../core/bytes.js";
 import { createRelayHandler } from "../core/relay.js";
 import {
   applyAddPermission,
@@ -40,7 +42,6 @@ import {
 
 export interface Env {
   REGISTRATIONS: DurableObjectNamespace<RegistrationObject>;
-  CHALLENGES: DurableObjectNamespace<ChallengeObject>;
   APNS_TOKENS: DurableObjectNamespace<ApnsTokenObject>;
   APP_ID: string;
   BUNDLE_ID: string;
@@ -205,24 +206,6 @@ export class ApnsTokenObject extends DurableObject<Env> {
   }
 }
 
-export class ChallengeObject extends DurableObject<Env> {
-  async put(expiresAt: number): Promise<void> {
-    await this.ctx.storage.put("expiresAt", expiresAt);
-    // Unused challenges delete themselves.
-    await this.ctx.storage.setAlarm(expiresAt);
-  }
-
-  async consume(now: number): Promise<boolean> {
-    const expiresAt = await this.ctx.storage.get<number>("expiresAt");
-    await this.ctx.storage.deleteAll();
-    return expiresAt !== undefined && expiresAt >= now;
-  }
-
-  async alarm(): Promise<void> {
-    await this.ctx.storage.deleteAll();
-  }
-}
-
 class DurableObjectRelayStore implements RelayStore {
   /** Bindings of the request being served. */
   constructor(private readonly env: () => Env) {}
@@ -235,19 +218,6 @@ class DurableObjectRelayStore implements RelayStore {
   private apnsToken(apnsToken: string) {
     const { APNS_TOKENS } = this.env();
     return APNS_TOKENS.get(APNS_TOKENS.idFromName(apnsToken));
-  }
-
-  private challenge(challenge: string) {
-    const { CHALLENGES } = this.env();
-    return CHALLENGES.get(CHALLENGES.idFromName(challenge));
-  }
-
-  putChallenge(challenge: string, expiresAt: number): Promise<void> {
-    return this.challenge(challenge).put(expiresAt);
-  }
-
-  consumeChallenge(challenge: string, now: number): Promise<boolean> {
-    return this.challenge(challenge).consume(now);
   }
 
   createRegistration(record: RegistrationRecord): Promise<void> {
@@ -374,7 +344,12 @@ function handlerFor(env: Env): ReturnType<typeof createRelayHandler> {
           return currentEnv;
         }),
         apns: new FetchApnsSender(providerToken),
-        config: { appId: env.APP_ID, bundleId: env.BUNDLE_ID },
+        // Throws without APNS_KEY_P8, so the relay answers nothing rather than run unkeyed.
+        config: {
+          appId: env.APP_ID,
+          bundleId: env.BUNDLE_ID,
+          challengeSecret: utf8(env.APNS_KEY_P8 ?? ""),
+        },
         // Event names and status codes only. Workers Logs are off in wrangler.toml.
         log: (event, fields) => console.log(JSON.stringify({ event, ...fields })),
       }),

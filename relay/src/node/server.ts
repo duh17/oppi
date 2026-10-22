@@ -3,6 +3,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { ApnsSender } from "../core/apns.js";
+import { randomBytes } from "../core/bytes.js";
 import { createRelayHandler, type RelayConfig, type RelayLog } from "../core/relay.js";
 import type { RelayStore } from "../core/store.js";
 
@@ -11,7 +12,11 @@ const MAX_REQUEST_BYTES = 16 * 1024;
 export interface NodeRelayOptions {
   store: RelayStore;
   apns: ApnsSender;
-  config: RelayConfig;
+  /**
+   * Challenges are keyed by a secret drawn at start: one process serves every request, and a
+   * restart voids only challenges under 5 minutes old, as an in-memory challenge list would.
+   */
+  config: Omit<RelayConfig, "challengeSecret">;
   log?: RelayLog;
   now?: () => number;
   host?: string;
@@ -58,7 +63,7 @@ export async function startNodeRelay(options: NodeRelayOptions): Promise<NodeRel
   const handle = createRelayHandler({
     store: options.store,
     apns: options.apns,
-    config: options.config,
+    config: { ...options.config, challengeSecret: randomBytes(32) },
     ...(options.log ? { log: options.log } : {}),
     ...(options.now ? { now: options.now } : {}),
   });

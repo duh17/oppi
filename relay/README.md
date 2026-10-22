@@ -28,7 +28,8 @@ A registration is deleted when APNs reports its token retired (`410`, `400 BadDe
 `400 DeviceTokenNotForTopic`), when the app deletes it, or after 90 days without a push (from
 its creation or last counted push, read from the quota counters it already keeps). On a relay
 deployed before this change, a registration made earlier starts that 90-day count at its next
-push, when it gets its alarm; one that never pushes again is not deleted.
+push, when it gets its alarm; one that never pushes again is not deleted. Challenges
+are not stored: each one carries its own expiry and a keyed tag (spec §3.1).
 
 The APNs request is fixed: `apns-push-type: alert`, priority 10, the configured topic, an
 expiration of at most an hour, and the payload
@@ -94,10 +95,9 @@ per stub call or alarm) and rows written (each `put`, `setAlarm`, and deleted ke
 
 | Request | Durable Object requests | Rows written |
 | --- | --- | --- |
-| `POST /v1/challenge` | 1 (2 when never used: its cleanup alarm) | 2 (3 when never used) |
-| Register, new APNs token | 3 (challenge, bind, create) | 4 (challenge, bind, registration, its expiry alarm) |
-| Register again, same APNs token | 5 (adds reading and deleting the old one) | about 5 |
-| Register without App Attest | 1 or 2 more (reading the token's current registration) | the same |
+| `POST /v1/challenge` | 0 (challenges are not stored) | 0 |
+| Register, new APNs token | 3 (token lookup, bind, create) | 3 (bind, registration, its expiry alarm) |
+| Register again, same APNs token | 5 (adds reading and deleting the old one) | about 4 |
 | Mint a permission | 3 with App Attest (read, counter, add), 2 without | 2, or 1 |
 | `POST /v1/push` | 1 | 1 (0 when refused) |
 | `POST /v1/push` that APNs answers with a retired token | 3 | 3 |
@@ -122,7 +122,7 @@ revisited, and this section and the [privacy policy](../docs/privacy.md) updated
 | --- | --- |
 | `src/core/` | Request handling, validation, App Attest (CBOR, X.509 and ECDSA on WebCrypto), quotas, the APNs template and provider token. Runs on Workers and Node. |
 | `src/node/` | `node:http` adapter, in-memory or JSON-file store, HTTP/2 APNs sender, capture mode. |
-| `src/cloudflare/` | Worker entry, one SQLite-backed Durable Object per registration and per challenge, `fetch` APNs sender. |
+| `src/cloudflare/` | Worker entry, one SQLite-backed Durable Object per registration and per APNs token, `fetch` APNs sender. |
 | `tests/` | One suite run against both adapters (Cloudflare in the local Workers runtime), plus Node-only clock and App Attest cases with a test CA. |
 
 `relay/` imports nothing from `server/` or `clients/` and no HPKE or KEM package;
@@ -165,7 +165,8 @@ Not automated yet. The steps, for whoever owns the account:
    address per 10 seconds is plenty.
 2. An APNs auth key (`.p8`) from the Apple Developer account of the team that signs the app.
 3. `npx wrangler login`, then set secrets: `wrangler secret put APNS_KEY_P8` (the file's
-   contents), `APNS_KEY_ID`, `APNS_TEAM_ID`.
+   contents), `APNS_KEY_ID`, `APNS_TEAM_ID`. `APNS_KEY_P8` also keys registration challenges,
+   through HKDF with its own label; without it the Worker refuses every request.
 4. Check `APP_ID` (`<Team ID>.<bundle ID>`), `BUNDLE_ID`, and the `routes` hostname in
    `wrangler.toml` (Oppi's own relay is `push.oppi.chaosdonkey.dev`), then `npx wrangler deploy`.
 
@@ -215,6 +216,8 @@ as the most sensitive parts of the deployment.
 Revoking first closes the leak at the cost of a few minutes without pushes. For routine
 rotation with no suspected leak, create the new key and deploy before revoking the old one.
 Registrations, permissions, and send tokens are independent of the APNs key and keep working.
+Challenges handed out under the old key in the last 5 minutes stop working: a phone that was
+registering gets `400 challenge_invalid` and registers on its next attempt.
 
 ## Test
 

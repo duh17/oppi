@@ -172,20 +172,28 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       expect(await call(harness, "GET", "/v1/version")).toMatchObject({ status: 200, json: { api: 1 } });
     });
 
-    it("accepts each challenge once and rejects unknown ones", async () => {
-      const address = nextAddress();
-      const challenge = (await call(harness, "POST", "/v1/challenge", { address })).json.challenge;
+    it("accepts a challenge it made until it expires, and no altered or made-up one", async () => {
+      const issued = await call(harness, "POST", "/v1/challenge");
+      const challenge = issued.json.challenge as string;
       expect(challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
-      const body = { challenge, apnsToken: APNS_TOKEN, environment: "sandbox", attestation: null };
-      expect((await call(harness, "POST", "/v1/registrations", { body, address })).status).toBe(201);
-      expect(await call(harness, "POST", "/v1/registrations", { body })).toMatchObject({
-        status: 400,
-        json: { error: "challenge_invalid" },
-      });
-      expect(
-        (await call(harness, "POST", "/v1/registrations", { body: { ...body, challenge: "x".repeat(43) } }))
-          .json.error,
-      ).toBe("challenge_invalid");
+      expect(issued.json.expiresAt).toBeGreaterThan(Date.now() + 290_000);
+      const register = (value: string, apnsToken = APNS_TOKEN) =>
+        call(harness, "POST", "/v1/registrations", {
+          body: { challenge: value, apnsToken, environment: "sandbox", attestation: null },
+        });
+      expect((await register(challenge)).status).toBe(201);
+      // Not single use: the relay keeps no record of it (spec \u00a73.1).
+      expect((await register(challenge, "b".repeat(64))).status).toBe(201);
+
+      const altered = (index: number) => {
+        const bytes = Buffer.from(challenge, "base64url");
+        bytes[index]! ^= 0x01;
+        return bytes.toString("base64url");
+      };
+      // Expiry (a later one), nonce, and tag each count.
+      for (const value of [altered(0), altered(5), altered(10), altered(31), "x".repeat(43), challenge.slice(0, 42), `${challenge}AA`]) {
+        expect(await register(value), value).toMatchObject({ status: 400, json: { error: "challenge_invalid" } });
+      }
     });
 
     it("refuses a production registration without App Attest", async () => {

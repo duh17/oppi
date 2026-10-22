@@ -64,7 +64,6 @@ async function startHarness(): Promise<RelayHarness> {
     compatibilityDate: "2025-07-01",
     durableObjects: {
       REGISTRATIONS: { className: "RegistrationObject", useSQLite: true },
-      CHALLENGES: { className: "ChallengeObject", useSQLite: true },
       APNS_TOKENS: { className: "ApnsTokenObject", useSQLite: true },
     },
     bindings: {

@@ -7,6 +7,7 @@
 
 import { APPLE_APP_ATTESTATION_ROOT_CA_PEM } from "./apple-app-attestation-root.js";
 import { verifyAssertion, verifyAttestation } from "./app-attest.js";
+import { ChallengeIssuer } from "./challenge.js";
 import {
   buildApnsRequest,
   buildLiveActivityRequest,
@@ -41,7 +42,6 @@ export const ENVELOPE_BASE64URL_LENGTH = 855;
 const ENVELOPE_VERSION = 0x01;
 const MAX_BODY_BYTES = 8 * 1024;
 const MAX_TTL_SECONDS = 3600;
-const CHALLENGE_TTL_MS = 300_000;
 /** Pushes one client address may send a minute, before any send token is looked up. */
 export const PUSHES_PER_ADDRESS_PER_MINUTE = 60;
 
@@ -61,6 +61,11 @@ export interface RelayConfig {
   bundleId: string;
   /** App Attest trust root; Apple's App Attestation Root CA unless a test replaces it. */
   trustRootPem?: string;
+  /**
+   * Keying material for registration challenges (`challenge.ts`), at least 32 bytes, the same
+   * in every instance that serves the relay. Missing or short: the handler refuses to start.
+   */
+  challengeSecret: Uint8Array;
 }
 
 export type RelayLog = (event: string, fields?: Record<string, string | number | boolean>) => void;
@@ -275,6 +280,7 @@ export function createRelayHandler(deps: RelayDeps): (
   const trustRoot: Certificate = parseCertificate(
     pemToDer(deps.config.trustRootPem ?? APPLE_APP_ATTESTATION_ROOT_CA_PEM),
   );
+  const challenges = new ChallengeIssuer(deps.config.challengeSecret);
   const challengeLimiter = new AddressLimiter(20, 10 * 60_000);
   const unattestedLimiter = new AddressLimiter(5, 60 * 60_000);
   // Checked before the send token reaches storage, so a flood of made-up tokens from one
@@ -285,10 +291,7 @@ export function createRelayHandler(deps: RelayDeps): (
 
   async function postChallenge(clientAddress: string | null): Promise<Response> {
     if (!challengeLimiter.allow(clientAddress, now())) throw new HttpError(429, "rate_limited");
-    const challenge = base64urlEncode(randomBytes(32));
-    const expiresAt = now() + CHALLENGE_TTL_MS;
-    await store.putChallenge(challenge, expiresAt);
-    return json(200, { challenge, expiresAt });
+    return json(200, await challenges.issue(now()));
   }
 
   async function postRegistration(body: Uint8Array, clientAddress: string | null): Promise<Response> {
@@ -327,7 +330,8 @@ export function createRelayHandler(deps: RelayDeps): (
       throw new HttpError(429, "rate_limited");
     }
 
-    if (!(await store.consumeChallenge(challenge, now()))) {
+    // Before any attestation work or storage call. Not single use: see challenge.ts.
+    if (!(await challenges.verify(challenge, now()))) {
       throw new HttpError(400, "challenge_invalid");
     }
 
@@ -365,20 +369,25 @@ export function createRelayHandler(deps: RelayDeps): (
       permissions: [],
       quota: emptyQuota(),
     };
+    const holderId = await store.apnsTokenRegistration(apnsToken);
+    const holder = holderId ? await store.getRegistration(holderId) : null;
     // Anyone who learns a phone's APNs token can register it unattested in sandbox. That must
     // not delete the phone's attested registration and cut off its pushes.
-    if (!record.attested) {
-      const holderId = await store.apnsTokenRegistration(apnsToken);
-      if (holderId && (await store.getRegistration(holderId))?.attested) {
-        log("relay.registration_refused", { reason: "attested_holder" });
-        throw new HttpError(409, "registration_conflict");
-      }
+    if (!record.attested && holder?.attested) {
+      log("relay.registration_refused", { reason: "attested_holder" });
+      throw new HttpError(409, "registration_conflict");
+    }
+    // The token's registration already has this App Attest key: Apple attests a key once and
+    // the app makes a new one per registration, so this is the same body again (challenge.ts).
+    if (appAttestPublicKey && holder?.appAttestPublicKey === appAttestPublicKey) {
+      log("relay.registration_refused", { reason: "replay" });
+      throw new HttpError(400, "challenge_invalid");
     }
     // Registering again replaces the phone's earlier registration and keeps its counts, so
     // a new registration never brings a fresh daily quota.
     const replacedId = await store.bindApnsToken(apnsToken, record.id);
     if (replacedId) {
-      const replaced = await store.getRegistration(replacedId);
+      const replaced = replacedId === holderId ? holder : await store.getRegistration(replacedId);
       if (replaced) {
         record.quota = replaced.quota;
         if (replaced.liveActivityQuota) record.liveActivityQuota = replaced.liveActivityQuota;

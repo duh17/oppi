@@ -215,8 +215,32 @@ requests for the day never runs, and Cloudflare answers with its own error page.
 ### 3.1 App calls
 
 **`POST /v1/challenge`** → `200 {"challenge": "<base64url 32 bytes>", "expiresAt": <ms>}`.
-Single use, valid 300 s. Rate-limited per client address in memory (`429 rate_limited`);
-the relay stores no addresses.
+Valid until `expiresAt`, 300 s. Rate-limited per client address in memory (`429
+rate_limited`); the relay stores no addresses. The app treats the challenge as opaque.
+
+The relay stores no challenge. It is the 32 bytes `expiresAt || nonce || tag`: `expiresAt`
+in 6 bytes (Unix ms, big-endian), a 10-byte random nonce, and `tag`, the first 16 bytes of
+HMAC-SHA256 over the first 16 bytes. The HMAC key is derived with HKDF-SHA256 (`info`
+`oppi-relay-challenge-v1`) from a relay secret. The Cloudflare adapter uses its APNs key
+(`APNS_KEY_P8`), so rotating that key voids only challenges under 300 s old; the Node adapter
+draws a secret at start. Registration checks the tag in constant time, then the expiry, before
+any attestation work or storage call.
+
+A challenge is not single use. Within its 300 s it can carry more than one registration:
+
+- Unattested (sandbox only): this adds nothing. Anyone can fetch a fresh challenge and
+  register any APNs token without App Attest.
+- Attested: `clientDataHash` binds the challenge, APNs token, and environment, so only the
+  exact body can be sent again. Apple attests an App Attest key once, and the app makes a new
+  key per registration. A registration whose APNs token already belongs to a registration with
+  the same App Attest key is therefore a repeat, and the relay refuses it (`400
+  challenge_invalid`) without changing anything. A repeat arriving after the phone registered
+  again with a newer key in the same 300 s replaces that registration with one only the
+  phone's App Attest key can use: it mints no send token, and the phone's next call gets `410`
+  and registers again. Only the phone, the relay's TLS endpoint, or a TLS interceptor the phone
+  trusts holds the body.
+- Registration-authenticated calls (below) use no challenge. Their App Attest counter must
+  rise on every call.
 
 **`POST /v1/registrations`**
 
@@ -257,10 +281,11 @@ One registration per APNs token: registering a token again deletes the earlier
 registration, its permissions, and their send tokens, and the new registration keeps the
 earlier one's quota counts. An unattested registration never replaces an attested one.
 
-Errors: `400 bad_request`, `400 unknown_field`, `400 challenge_invalid` (unknown, used, or
-expired), `401 attestation_required` (production without an attestation; the challenge
-stays unused), `401 attestation_invalid`, `409 registration_conflict` (unattested, and the
-token belongs to an attested registration), `429 rate_limited`.
+Errors: `400 bad_request`, `400 unknown_field`, `400 challenge_invalid` (not made by this
+relay, altered, expired, or a repeated attested registration), `401 attestation_required`
+(production without an attestation; the challenge stays usable), `401 attestation_invalid`,
+`409 registration_conflict` (unattested, and the token belongs to an attested registration),
+`429 rate_limited`.
 
 **Registration-authenticated calls** carry `Authorization: Bearer <registrationSecret>`.
 Attested registrations also carry `X-Oppi-Assertion: <base64 CBOR assertion>` whose
@@ -322,8 +347,8 @@ server it is paired with. They fit normal use within the Cloudflare Workers Free
 (100,000 Worker requests, Durable Object requests, and rows written a day each). An alert or
 Live Activity update costs one Worker request, one Durable Object request, and one row; a
 delivered Live Activity `end`, or a `start` that replaces a card's token, two Durable Object
-requests and two rows; each Live Activity upload from the phone two requests and one row
-(`relay/README.md`, "What each request costs"). A
+requests and two rows; each Live Activity upload from the phone two requests and one row;
+a challenge no Durable Object work at all (`relay/README.md`, "What each request costs"). A
 phone at the cap uses about 130 Durable Object requests a day (100 pushes, a few card
 starts and ends, its uploads), so about 750 such phones fill the plan. A refused push writes
 nothing. Unattested
@@ -352,8 +377,8 @@ person dismissed it (and whether a server has ended it since); the last Live Act
 `aps.timestamp` it sent; and the Live Activity quota counters (counted with the alert ones
 toward the day's limit). Per
 APNs token, the id of its current registration (the Cloudflare adapter keys this by the
-token and stores only the id). Challenges until used or expired. No envelopes, no Live
-Activity counts, no client addresses, no request logs.
+token and stores only the id). No challenges (3.1), no envelopes, no Live Activity counts, no
+client addresses, no request logs.
 
 A registration that carries no push, alert or Live Activity, for 90 days is deleted with its
 permissions and its APNs-token entry. The relay counts from its creation or the last counted

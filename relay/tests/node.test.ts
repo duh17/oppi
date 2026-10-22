@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApnsProviderToken } from "../src/core/apns.js";
 import {
+  createRelayHandler,
   PUSHES_PER_ADDRESS_PER_MINUTE,
   requestClientData,
   registrationClientData,
@@ -489,6 +490,30 @@ describe("node adapter", () => {
     expect(stamps()).toEqual([second, second + 61, second + 62, second + 63]);
   });
 
+  it("refuses a challenge another relay made", async () => {
+    harness = await startHarness();
+    const other = await startHarness();
+    try {
+      const challenge = (await call(other, "POST", "/v1/challenge")).json.challenge;
+      const response = await call(harness, "POST", "/v1/registrations", {
+        body: { challenge, apnsToken: APNS_TOKEN, environment: "sandbox", attestation: null },
+      });
+      expect(response.json.error).toBe("challenge_invalid");
+    } finally {
+      await other.close();
+    }
+  });
+
+  it("will not start without a challenge secret", () => {
+    expect(() =>
+      createRelayHandler({
+        store: new MemoryRelayStore(),
+        apns: new CaptureApnsSender("/dev/null"),
+        config: { appId: APP_ID, bundleId: BUNDLE_ID, challengeSecret: new Uint8Array(0) },
+      }),
+    ).toThrow(/challenge secret/);
+  });
+
   it("answers 503 relay_capacity until 00:00 UTC only for a daily Cloudflare limit", async () => {
     class FailingStore extends MemoryRelayStore {
       error: Error | null = null;
@@ -618,16 +643,14 @@ describe("App Attest (node adapter with a test root)", () => {
       aaguid: environment === "sandbox" ? "development" : "production",
       ...options,
     });
-    const response = await call(harness, "POST", "/v1/registrations", {
-      address,
-      body: {
-        challenge,
-        apnsToken: APNS_TOKEN,
-        environment,
-        attestation: { keyId: attestation.keyId, object: attestation.object },
-      },
-    });
-    return { response, attestation };
+    const body = {
+      challenge,
+      apnsToken: APNS_TOKEN,
+      environment,
+      attestation: { keyId: attestation.keyId, object: attestation.object },
+    };
+    const response = await call(harness, "POST", "/v1/registrations", { address, body });
+    return { response, attestation, body };
   }
 
   async function assertionHeader(
@@ -672,6 +695,24 @@ describe("App Attest (node adapter with a test root)", () => {
     });
     expect(pushed.status).toBe(200);
     expect(harness.apnsRequests.at(-1)?.host).toBe("api.push.apple.com");
+  });
+
+  it("refuses the same attested registration again, keeping the one it made", async () => {
+    const { response, attestation, body } = await attest("production", { aaguid: "production" });
+    expect(response.status).toBe(201);
+    // Within the challenge's 300 s, from anyone who holds the exact body.
+    expect(await call(harness, "POST", "/v1/registrations", { body })).toMatchObject({
+      status: 400,
+      json: { error: "challenge_invalid" },
+    });
+    const { registrationId, registrationSecret } = response.json as { registrationId: string; registrationSecret: string };
+    const path = `/v1/registrations/${registrationId}/permissions`;
+    const minted = await call(harness, "POST", path, {
+      bearer: registrationSecret,
+      rawBody: "{}",
+      headers: { "x-oppi-assertion": await assertionHeader(attestation.credential, "POST", path, "{}", 1) },
+    });
+    expect(minted.status).toBe(201);
   });
 
   it("refuses an unattested registration for a token an attested registration holds", async () => {

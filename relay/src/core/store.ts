@@ -191,9 +191,6 @@ export type SetLiveActivityResult = "ok" | "stale" | "gone";
  * Cloudflare with one Durable Object alarm per registration, Node with a sweep.
  */
 export interface RelayStore {
-  putChallenge(challenge: string, expiresAt: number): Promise<void>;
-  /** True only the first time, before expiry; the challenge is gone afterwards. */
-  consumeChallenge(challenge: string, now: number): Promise<boolean>;
   createRegistration(record: RegistrationRecord): Promise<void>;
   /**
    * Make `registrationId` the only registration for `apnsToken` and return the one it

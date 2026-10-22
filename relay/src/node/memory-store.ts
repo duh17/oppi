@@ -36,7 +36,6 @@ interface Snapshot {
 }
 
 export class MemoryRelayStore implements RelayStore {
-  private readonly challenges = new Map<string, number>();
   private readonly registrations = new Map<string, RegistrationRecord>();
   private sweptAt = -Infinity;
 
@@ -56,7 +55,6 @@ export class MemoryRelayStore implements RelayStore {
   /** Everything the store holds, for inspection: what a relay operator could read. */
   dump(): string {
     return JSON.stringify({
-      challenges: [...this.challenges.entries()],
       registrations: [...this.registrations.values()],
     });
   }
@@ -67,19 +65,6 @@ export class MemoryRelayStore implements RelayStore {
     const temp = `${this.options.persistPath}.tmp`;
     writeFileSync(temp, JSON.stringify(snapshot), { mode: 0o600 });
     renameSync(temp, this.options.persistPath);
-  }
-
-  async putChallenge(challenge: string, expiresAt: number): Promise<void> {
-    this.challenges.set(challenge, expiresAt);
-  }
-
-  async consumeChallenge(challenge: string, now: number): Promise<boolean> {
-    for (const [key, expiresAt] of this.challenges) {
-      if (expiresAt < now) this.challenges.delete(key);
-    }
-    const expiresAt = this.challenges.get(challenge);
-    this.challenges.delete(challenge);
-    return expiresAt !== undefined && expiresAt >= now;
   }
 
   /** Delete registrations idle past `registrationExpiresAt`. */
