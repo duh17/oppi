@@ -812,7 +812,15 @@ async function cmdBuild(opts: {
       "Release",
       "-destination",
       "generic/platform=iOS",
+      // The archive signs too: a new capability (Time Sensitive) needs the App Store Connect key
+      // to update the App ID and profile, since this Mac has no Xcode account.
       "-allowProvisioningUpdates",
+      "-authenticationKeyPath",
+      credentialKeyPath,
+      "-authenticationKeyID",
+      creds().keyId,
+      "-authenticationKeyIssuerID",
+      credentialIssuerId,
       `CURRENT_PROJECT_VERSION=${newBuild}`,
     ],
     path.join(buildDir, "archive.log"),
