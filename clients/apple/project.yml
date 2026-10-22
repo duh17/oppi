@@ -299,6 +299,7 @@ targets:
           mkdir -p "$DERIVED_FILE_DIR"
           STAMP_FILE="$DERIVED_FILE_DIR/architecture-boundaries.stamp"
           CHECK_SCRIPT="$SRCROOT/../../server/scripts/check-architecture-boundaries.ts"
+          LAYER_RULES="$SRCROOT/../../server/scripts/architecture-layer-rules.mjs"
           ARCH_RULES="$SRCROOT/../../dev/architecture-client.md"
           WATCH_DIRS=(
             "$SRCROOT/Oppi"
@@ -313,6 +314,8 @@ targets:
           if [ ! -f "$STAMP_FILE" ]; then
             needs_check=1
           elif [ -f "$CHECK_SCRIPT" ] && [ "$CHECK_SCRIPT" -nt "$STAMP_FILE" ]; then
+            needs_check=1
+          elif [ -f "$LAYER_RULES" ] && [ "$LAYER_RULES" -nt "$STAMP_FILE" ]; then
             needs_check=1
           elif [ -f "$ARCH_RULES" ] && [ "$ARCH_RULES" -nt "$STAMP_FILE" ]; then
             needs_check=1
@@ -331,6 +334,13 @@ targets:
           fi
 
           if command -v bun >/dev/null 2>&1; then
+            # The rules import server dependencies (typescript). A fresh worktree has none; fail with
+            # the fix instead of bun's module-resolution error. Not installed here: npm ci is a
+            # network install that does not belong in a build phase.
+            if [ ! -d "$SRCROOT/../../server/node_modules/typescript" ]; then
+              echo "error: server dependencies missing; run: node server/scripts/ensure-installed-deps.mjs"
+              exit 1
+            fi
             bun "$CHECK_SCRIPT" --scope ios --format xcode
             touch "$STAMP_FILE"
           else
