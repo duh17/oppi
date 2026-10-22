@@ -11,7 +11,8 @@ You choose the server, workspace, model providers, speech-to-text service, and t
 - Pairing credentials and connection preferences stay on your Apple device. Server credentials are stored in the iOS Keychain.
 - Prompts, session history, workspace metadata, tool results, and attachments can be stored by the paired server and by Pi in the server's configured data and workspace locations.
 - A selected photo or file is read by the app and uploaded to the paired server with the session turn. The app does not collect photos or files in the background.
-- Dictation can use Apple's on-device speech APIs or audio sent through the paired server to its configured speech-to-text backend.
+- Dictation uses Apple's on-device speech by default. If you choose **Server** in Settings, dictation audio goes through the paired server to its configured speech-to-text backend.
+- Live Voice (an experiment, off by default) streams your voice during a call through the paired server to the voice backend the server sets: speech services the server operator chooses, or xAI's Grok Voice, which also receives the text of what the agent says aloud. See [Live Voice](#live-voice).
 - Model, speech, and voice providers can receive the content needed for the operation you choose. Their privacy policies and retention rules apply.
 - Public builds upload diagnostics only after you enable **Settings → Privacy & Security → Send Diagnostics**. Diagnostics go to your paired server, not to a hosted Oppi service.
 - Push notifications are off unless both the server operator and you turn them on. Live Activities are off by default too. When on, alert content is encrypted on your server to a key that only your device holds; a push relay and Apple carry it without being able to read it. See [Push notifications](#push-notifications).
@@ -35,7 +36,7 @@ Oppi can process the following when you use the corresponding feature:
 - Prompts, replies, tool calls, tool output, approval responses, and session metadata.
 - Files selected through the Files picker and files referenced from a paired workspace.
 - Photos and videos selected from the photo library, images captured with the camera, and images or files shared through the Share extension.
-- Microphone audio while dictation is active.
+- Microphone audio while dictation or a Live Voice call is active.
 - Model-provider credentials that you enter or authorize through the paired server's provider setup.
 - Optional voice-reply text and audio produced by a server-side voice extension.
 
@@ -76,7 +77,9 @@ The server's data directory defaults to `~/.config/oppi/` and can be changed wit
 - Pi session JSONL files referenced by Oppi sessions and local-session imports.
 - Workspace files and files created or changed by server-side tools.
 - Session attachment copies under the workspace's `.pi/attachments/` directory.
-- Generated media under the server's `session-attachments/` directory.
+- Generated media, and stored copies of photos you send, under the server's `session-attachments/` directory.
+- Durable-session conversations (Durable Sessions experiment) under `durable/`.
+- Live Voice call records in `voice-calls.json`.
 - Upload records and blobs under the configured upload-store directory.
 - Optional diagnostics under `diagnostics/telemetry/`.
 
@@ -84,13 +87,19 @@ Oppi server-side tools run on the paired server. A server-side tool can read or 
 
 ### Session and workspace deletion
 
-Deleting a session from the app asks the server to stop it and remove the Oppi session metadata, search-index entry, referenced local Pi session JSONL files, generated media attachments, and session-scoped copies in the workspace attachment directory. It does not undo changes that an agent made to ordinary workspace files. It does not delete data already sent to a model, speech, or voice provider, or data in backups.
+Deleting a session from the app asks the server to stop it and remove the Oppi session metadata, search-index entry, referenced local Pi session JSONL files, generated media attachments, stored copies of photos you sent, session-scoped copies in the workspace attachment directory, and the session's Live Voice call records. It does not undo changes that an agent made to ordinary workspace files. It does not delete data already sent to a model, speech, or voice provider, or data in backups.
+
+A durable session (Durable Sessions experiment) keeps its conversation in a store under `durable/` that it shares with the subagents it spawned and with its forks. The server deletes that store, and every conversation in it, when you delete the last of those sessions. Until then, a deleted session's conversation stays in the store, because the remaining sessions still read from it.
 
 Deleting a workspace removes the Oppi workspace record. It does not remove the host directory or the files in that directory.
 
 Uploaded chat attachments use a separate local upload store. The default unused and retained upload TTLs are 24 hours and can be changed by the server operator. The current server marks a consumed upload as used and keeps its staged record/blob available to the upload-store garbage collector; session deletion does not remove that separate staged blob. The server operator controls this directory and any manual cleanup.
 
 These are implementation boundaries, not promises that every copy disappears at the same instant. Filesystem snapshots, backups, Pi session paths, and provider-side copies follow their own controls.
+
+### Incognito sessions
+
+An Incognito session is left out of server search, and the app asks the server to delete it when you leave its chat. That delete removes what deleting any session removes, Live Voice call records included. Its prompts still go to the model provider like any other session's. If the delete fails, for example because the server can't be reached, the session stays on the server and shows in your list again at the next sync.
 
 ## Prompts, files, and photos
 
@@ -114,7 +123,7 @@ Server-side Skills, Extensions, tools, and voice features run on the paired serv
 
 ## Dictation and voice
 
-In **Settings → Voice & Dictation → Dictation Engine**, you can choose **On-device** or **Server**.
+In **Settings → Voice & Dictation → Dictation Engine**, you can choose **On-device** or **Server**. **On-device** is the default. Dictation audio goes to the paired server only after you choose **Server**. With **Server** chosen, while the paired server offers no speech-to-text backend, the mic records on-device instead.
 
 ### On-device dictation
 
@@ -131,6 +140,15 @@ The endpoint can be local to the server host or remote. For a remote endpoint, t
 Voice replies are generated by the paired server and its configured extensions/providers. Generated audio can be streamed to the app or stored as a session attachment for later playback.
 
 Read aloud sends the text of the reply you choose, without code blocks or URLs, from the server to the text-to-speech service set in its `tts` config. The audio streams to the app and is not stored.
+
+### Live Voice
+
+Live Voice is an experiment and is off until you turn on **Settings → Experiments → Live Voice**. During a call, the app streams 16 kHz microphone audio to the paired server until the call ends. The server's `asr.liveVoiceBackend` setting decides where it goes:
+
+- `yuwp` (the default): the server sends the audio to `asr.sttEndpoint` for transcription. When the server has a `tts` config, the text-to-speech service read aloud uses speaks the agent's replies. If the agent does not speak during a reply, the server has that service read the start of its written reply, or its error.
+- `grok-voice`: the server sends the audio to xAI (`wss://api.x.ai/v1/realtime`) with the server's xAI sign-in or API key. xAI transcribes it, decides which of your words to pass to the agent, and receives the text of everything the agent says aloud. xAI's privacy policy and retention apply.
+
+What you ask during a call becomes a message in the session, like a typed prompt, and follows the same model-provider flow. The Oppi server does not store call audio. It keeps a record of each call in `voice-calls.json` (your requests and the agent's progress and replies) so a call can continue after a server restart. A call's record is removed 24 hours after the call ends, or when you delete its session.
 
 ## Push notifications
 
