@@ -762,15 +762,26 @@ struct LiveVoiceCallControllerTests {
         )
         let chat = remountedChat(taking: harness, handoff: handoff, presentation: .split)
         await expectRejoined(chat)
+        // The server answers the rejoin attach, as it does after the state above.
+        let firstAttach = chat.channel.sent.first { $0.typeLabel == "voice_call_attach" }
+        chat.channel.emit(.commandResult(
+            command: "voice_call_attach", requestId: requestId(of: firstAttach),
+            success: true, data: nil, error: nil
+        ))
+        // A later state shows the attach answer above has been handled (events run in order).
+        chat.channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 3, leaseEpoch: 3)))
+        await waitUntil { chat.controller.callState?.controllerLeaseEpoch == 3 }
 
         // Later the server loses the call: a refused keepalive, then a refused rejoin.
         await chat.controller.sendKeepAliveNow()
         let keepalive = chat.channel.sent.last { $0.typeLabel == "voice_call_keepalive" }
+        #expect(keepalive != nil, "The rejoined call sends keepalives")
         chat.channel.emit(.commandResult(
             command: "voice_call_keepalive", requestId: requestId(of: keepalive),
             success: false, data: nil, error: "Stale voice controller lease"
         ))
         await waitUntil { sentTypes(chat.channel.sent).filter { $0 == "voice_call_attach" }.count == 2 }
+        #expect(sentTypes(chat.channel.sent).filter { $0 == "voice_call_attach" }.count == 2, "The refused keepalive rejoins")
         let attach = chat.channel.sent.last { $0.typeLabel == "voice_call_attach" }
         chat.channel.emit(.commandResult(
             command: "voice_call_attach", requestId: requestId(of: attach),
