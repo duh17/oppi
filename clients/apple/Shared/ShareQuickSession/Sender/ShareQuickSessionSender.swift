@@ -125,8 +125,9 @@ enum ShareQuickSessionCredentialStore {
     /// The paired servers named by the app's shared id index, one Keychain
     /// query per id. The app owns the index; sharing never writes it.
     ///
-    /// Throws `PairedServerKeychain.ReadFailed` when a record cannot be read
-    /// (the device is locked), which is not "no paired servers".
+    /// Throws `PairedServerKeychain.ReadFailed` when the device is locked or no
+    /// record can be read, which is not "no paired servers". One unreadable
+    /// record only drops that server.
     static func loadServers() throws -> [ShareQuickSessionServer] {
         let ids = SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey) ?? []
         return try PairedServerKeychain.records(ShareQuickSessionServer.self, ids: ids)

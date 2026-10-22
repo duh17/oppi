@@ -1202,7 +1202,7 @@ private final class OpenerHarness {
 
         // The Keychain may hold servers other suites paired; this fixture's
         // list is read from memory.
-        let serverStore = ServerStore(loadServers: { servers })
+        let serverStore = ServerStore(loadServers: { .init(records: servers, unreadableIds: []) })
         if loadsServers {
             serverStore.load()
         }

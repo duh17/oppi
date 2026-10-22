@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import Security
 
 /// Reads paired-server records from the shared Keychain group by id. The app
@@ -7,6 +8,8 @@ import Security
 /// `WhenUnlockedThisDeviceOnly`, so a read while the device is locked fails,
 /// and that must never read as "no paired servers".
 enum PairedServerKeychain {
+    private static let logger = Logger(subsystem: "dev.chenda.Oppi", category: "PairedServerKeychain")
+
     /// A paired-server record could not be read (for example, the device is locked).
     struct ReadFailed: LocalizedError, Equatable {
         let status: OSStatus
@@ -16,9 +19,54 @@ enum PairedServerKeychain {
         }
     }
 
+    /// The readable records, and the ids whose stored record could not be
+    /// read. Those ids are still paired: an index write must keep them.
+    struct Read<Record> {
+        var records: [Record]
+        var unreadableIds: [String]
+    }
+
     /// The records for `ids`, in order. An id that is not stored is skipped.
     static func records<Record: Decodable>(_ type: Record.Type, ids: [String]) throws -> [Record] {
-        try ids.compactMap { try record(type, id: $0) }
+        try read(type, ids: ids).records
+    }
+
+    /// The records for `ids`, in order, with the ids that could not be read.
+    static func read<Record: Decodable>(_ type: Record.Type, ids: [String]) throws -> Read<Record> {
+        try read(ids: ids) { try record(type, id: $0) }
+    }
+
+    /// `lookup` reads one id: nil when it is not stored.
+    ///
+    /// A locked device (`errSecInteractionNotAllowed`) fails the whole read:
+    /// every record is unreadable then. Any other failure is that one
+    /// record's: it is skipped and reported in `unreadableIds`, so one bad
+    /// item cannot hide every other server. When nothing is readable and
+    /// something failed, the read fails: an unreadable list is never "no
+    /// paired servers".
+    static func read<Record>(
+        ids: [String],
+        lookup: (String) throws -> Record?
+    ) throws -> Read<Record> {
+        var result = Read<Record>(records: [], unreadableIds: [])
+        var firstFailure: ReadFailed?
+        for id in ids {
+            do {
+                if let record = try lookup(id) {
+                    result.records.append(record)
+                }
+            } catch let failure as ReadFailed where failure.status != errSecInteractionNotAllowed {
+                logger.error(
+                    "Skipping unreadable paired server \(id.prefix(16), privacy: .public): \(failure.status, privacy: .public)"
+                )
+                firstFailure = firstFailure ?? failure
+                result.unreadableIds.append(id)
+            }
+        }
+        if result.records.isEmpty, let firstFailure {
+            throw firstFailure
+        }
+        return result
     }
 
     /// The record for one server id, or nil when it is not stored.

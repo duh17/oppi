@@ -32,7 +32,7 @@ enum IntentPairedServers {
 
     static func load() throws(Unavailable) -> [PairedServer] {
         do {
-            return try KeychainService.loadServers()
+            return try KeychainService.loadServers().records
         } catch {
             pairedServersLogger.error(
                 "Paired servers unavailable to intent: \(error.localizedDescription, privacy: .public)"

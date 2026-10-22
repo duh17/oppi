@@ -116,14 +116,16 @@ enum KeychainService {
     /// scanned for servers the index does not name, so a reinstall (index
     /// wiped, Keychain kept) pairs again.
     ///
-    /// Throws `PairedServerKeychain.ReadFailed` when any item cannot be read.
-    static func loadServers() throws -> [PairedServer] {
+    /// Throws `PairedServerKeychain.ReadFailed` when the device is locked or
+    /// no item can be read. Another item's read failure skips that item and
+    /// names it in `unreadableIds`.
+    static func loadServers() throws -> PairedServerKeychain.Read<PairedServer> {
         syncUserDefaultsIndex()
 
         let ids = SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey)
             ?? UserDefaults.standard.stringArray(forKey: SharedConstants.pairedServerIdsKey)
             ?? []
-        return try PairedServerKeychain.records(PairedServer.self, ids: ids)
+        return try PairedServerKeychain.read(PairedServer.self, ids: ids)
     }
 
     /// Load a single server by fingerprint ID; nil only when it is not stored.

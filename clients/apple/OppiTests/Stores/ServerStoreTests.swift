@@ -224,7 +224,7 @@ struct ServerStoreTests {
             guard keychainReadable else {
                 throw PairedServerKeychain.ReadFailed(status: errSecInteractionNotAllowed)
             }
-            return [server]
+            return .init(records: [server], unreadableIds: [])
         })
 
         store.load()
@@ -234,6 +234,39 @@ struct ServerStoreTests {
         store.load()
         #expect(store.loadState == .loaded)
         #expect(store.servers.map(\.id) == [server.id])
+    }
+
+    /// A server whose record could not be read is still paired. Writes for
+    /// the readable servers keep it in the index, so it loads again once its
+    /// record reads.
+    @Test func unreadableRecordStaysInTheIndexAcrossWrites() throws {
+        let unreadableId = "sha256:unreadable-kept"
+        let readable = try #require(PairedServer(from: makeTestCredentials(
+            host: "readable-host", name: "readable-host", fingerprint: "sha256:readable-kept"
+        )))
+        let added = try #require(PairedServer(from: makeTestCredentials(
+            host: "added-host", name: "added-host", fingerprint: "sha256:added-later"
+        )))
+        let restoreIndex = replacePairedServerIndex(with: [unreadableId, readable.id])
+        defer {
+            KeychainService.deleteServer(id: added.id)
+            restoreIndex()
+        }
+
+        let store = ServerStore(loadServers: {
+            .init(records: [readable], unreadableIds: [unreadableId])
+        })
+        store.load()
+        #expect(store.loadState == .loaded)
+        #expect(store.servers.map(\.id) == [readable.id])
+
+        try store.persistServer(added)
+
+        let expected: Set = [readable.id, added.id, unreadableId]
+        let shared = SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey)
+        let standard = UserDefaults.standard.stringArray(forKey: SharedConstants.pairedServerIdsKey)
+        #expect(Set(shared ?? []) == expected)
+        #expect(Set(standard ?? []) == expected)
     }
 
     // MARK: - Helpers

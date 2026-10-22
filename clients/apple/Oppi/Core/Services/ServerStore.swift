@@ -32,9 +32,13 @@ final class ServerStore {
 
     private(set) var servers: [PairedServer] = []
     private(set) var loadState: LoadState = .unloaded
-    @ObservationIgnored private let loadServers: () throws -> [PairedServer]
+    /// Indexed servers whose Keychain record could not be read. They are
+    /// still paired: index writes keep them, so a transient read failure
+    /// cannot unpair them.
+    @ObservationIgnored private var unreadableServerIds: [String] = []
+    @ObservationIgnored private let loadServers: () throws -> PairedServerKeychain.Read<PairedServer>
 
-    init(loadServers: @escaping () throws -> [PairedServer] = KeychainService.loadServers) {
+    init(loadServers: @escaping () throws -> PairedServerKeychain.Read<PairedServer> = KeychainService.loadServers) {
         self.loadServers = loadServers
     }
 
@@ -47,9 +51,12 @@ final class ServerStore {
 
     /// Read the pairing list. A read failure leaves `servers` as it was and
     /// marks the store `.unavailable`; it never stands in for "no servers".
+    /// One unreadable record is skipped; the others load.
     func load() {
         do {
-            servers = try loadServers().sorted { $0.sortOrder < $1.sortOrder }
+            let read = try loadServers()
+            servers = read.records.sorted { $0.sortOrder < $1.sortOrder }
+            unreadableServerIds = read.unreadableIds
             loadState = .loaded
         } catch {
             loadState = .unavailable
@@ -135,6 +142,7 @@ final class ServerStore {
             return
         }
         servers.removeAll { $0.id == id }
+        unreadableServerIds.removeAll { $0 == id }
         KeychainService.deleteServer(id: id)
         saveIndex()
         logger.warning("Removed server \(id.prefix(16), privacy: .public)")
@@ -212,7 +220,8 @@ final class ServerStore {
     /// Standard: backward-compatible fallback.
     private func saveIndex() {
         guard loadState == .loaded else { return }
-        let ids = servers.map(\.id)
+        let loadedIds = servers.map(\.id)
+        let ids = loadedIds + unreadableServerIds.filter { !loadedIds.contains($0) }
         SharedConstants.sharedDefaults.set(ids, forKey: SharedConstants.pairedServerIdsKey)
         UserDefaults.standard.set(ids, forKey: SharedConstants.pairedServerIdsKey)
     }

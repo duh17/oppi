@@ -86,7 +86,7 @@ struct KeychainServiceTests {
         // The indexed load returns exactly one server for this account.
         let restoreIndex = replacePairedServerIndex(with: [id])
         defer { restoreIndex() }
-        let matches = try KeychainService.loadServers().filter { $0.id == id }
+        let matches = try KeychainService.loadServers().records.filter { $0.id == id }
         #expect(matches.count == 1)
     }
 
@@ -102,7 +102,7 @@ struct KeychainServiceTests {
         let restoreIndex = replacePairedServerIndex(with: [missingId])
         defer { restoreIndex() }
 
-        let loaded = try KeychainService.loadServers()
+        let loaded = try KeychainService.loadServers().records
 
         #expect(!loaded.contains { $0.id == unindexed.id })
         #expect(SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey) == [missingId])
@@ -122,6 +122,34 @@ struct KeychainServiceTests {
         let server = try #require(makeServer(fingerprint: "lookup-success"))
         let data = try JSONEncoder().encode(server) as NSData
         #expect(try PairedServerKeychain.decode(PairedServer.self, status: errSecSuccess, result: data)?.id == server.id)
+    }
+
+    /// One record that cannot be read with the device unlocked skips that
+    /// server only. A locked device, or nothing readable at all, still fails
+    /// the read so it never looks like "no paired servers".
+    @Test func oneUnreadableRecordSkipsOnlyThatServer() throws {
+        let readable = try #require(makeServer(fingerprint: "readable"))
+        let broken = PairedServerKeychain.ReadFailed(status: errSecMissingEntitlement)
+        let locked = PairedServerKeychain.ReadFailed(status: errSecInteractionNotAllowed)
+
+        let read = try PairedServerKeychain.read(ids: ["broken", readable.id]) { id in
+            guard id == readable.id else { throw broken }
+            return readable
+        }
+        #expect(read.records.map(\.id) == [readable.id])
+        #expect(read.unreadableIds == ["broken"])
+
+        #expect(throws: locked) {
+            try PairedServerKeychain.read(ids: ["locked", readable.id]) { id in
+                guard id == readable.id else { throw locked }
+                return readable
+            }
+        }
+        #expect(throws: broken) {
+            try PairedServerKeychain.read(ids: ["broken"]) { (_: String) -> PairedServer? in
+                throw broken
+            }
+        }
     }
 
     @Test func leftoverDtPersistAfterMigrateKeepsReplacementAccessToken() throws {
