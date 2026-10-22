@@ -265,7 +265,7 @@ struct TimelineReducerBasicTests {
         reducer.appendUserMessage(live)
 
         #expect(UserMessageTextProjection.comparableText(live) == UserMessageTextProjection.comparableText(reloaded))
-        #expect(reducer.hasUserMessage(matching: reloaded))
+        #expect(reducer.hasOpenUserTurn(matching: reloaded))
     }
 
     @Test func userMessageProjectionKeepsOrdinaryMultilineTextDistinctFromSingleLine() {
@@ -274,7 +274,7 @@ struct TimelineReducerBasicTests {
 
         #expect(UserMessageTextProjection.comparableText("alpha\nbeta") == "alpha\nbeta")
         #expect(UserMessageTextProjection.comparableText("alpha beta") == "alpha beta")
-        #expect(!reducer.hasUserMessage(matching: "alpha beta"))
+        #expect(!reducer.hasOpenUserTurn(matching: "alpha beta"))
     }
 
     @Test func userMessageProjectionPreservesReservedHeadersUsedAsProse() {
@@ -319,9 +319,9 @@ struct TimelineReducerBasicTests {
         let reducer = TimelineReducer()
         let image = ImageAttachment(data: "AAAA", mimeType: "image/png")
         let optimisticID = reducer.appendUserMessage(typed, images: [image])
-        #expect(reducer.hasUserMessage(matching: echo))
+        #expect(reducer.hasOpenUserTurn(matching: echo))
 
-        if !reducer.hasUserMessage(matching: echo) {
+        if !reducer.hasOpenUserTurn(matching: echo) {
             reducer.appendUserMessage(echo)
         }
 
@@ -399,8 +399,8 @@ struct TimelineReducerBasicTests {
 
         #expect(UserMessageTextProjection.comparableText(optimistic) == typed)
         #expect(UserMessageTextProjection.comparableText(echo) == typed)
-        #expect(reducer.hasUserMessage(matching: echo))
-        #expect(!reducer.hasUserMessage(matching: "ship the fix"))
+        #expect(reducer.hasOpenUserTurn(matching: echo))
+        #expect(!reducer.hasOpenUserTurn(matching: "ship the fix"))
     }
 
     @Test func imageOnlyHintEchoKeepsOptimisticImageRow() {
@@ -416,10 +416,10 @@ struct TimelineReducerBasicTests {
         """
         let reducer = TimelineReducer()
         let optimisticID = reducer.appendUserMessage(optimistic, images: [image])
-        #expect(reducer.hasUserMessage(matching: echo))
+        #expect(reducer.hasOpenUserTurn(matching: echo))
         #expect(reducer.hasLatestImageUserMessage(matchingEcho: echo))
 
-        if !reducer.hasUserMessage(matching: echo),
+        if !reducer.hasOpenUserTurn(matching: echo),
            !reducer.hasLatestImageUserMessage(matchingEcho: echo) {
             reducer.appendUserMessage(echo)
         }
@@ -517,7 +517,7 @@ struct TimelineReducerBasicTests {
             "[[oppi-attachments:b:photos=3]]\n\(typed)",
             images: images
         )
-        #expect(reducer.hasUserMessage(matching: echo))
+        #expect(reducer.hasOpenUserTurn(matching: echo))
         #expect(reducer.hasLatestImageUserMessage(matchingEcho: echo))
         #expect(reducer.items.count == 1)
         guard case .userMessage(let id, _, let keptImages, _) = reducer.items[0] else {
@@ -586,7 +586,7 @@ struct TimelineReducerBasicTests {
         look at both
         """
         reducer.appendUserMessage(composer, images: images)
-        #expect(!reducer.hasUserMessage(matching: echo))
+        #expect(!reducer.hasOpenUserTurn(matching: echo))
         #expect(reducer.hasLatestImageUserMessage(matchingEcho: echo))
         #expect(reducer.items.count == 1)
     }

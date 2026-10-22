@@ -21,7 +21,7 @@ struct InteractiveMediaInspectionTests {
         reducer.process(end)
         reducer.process(end)
         #expect(reducer.items.map(\.id) == ["q", "ask-answer-q"])
-        #expect(reducer.hasUserMessage(matching: "**Q:** Continue?\n**A:** yes"))
+        #expect(reducer.hasOpenUserTurn(matching: "**Q:** Continue?\n**A:** yes"))
         reducer.loadSession([
             .init(id: "q", type: .toolCall, timestamp: timestamp, tool: tool, args: args, outputPresentation: interaction),
             .init(id: "r", type: .toolResult, timestamp: timestamp, toolCallId: "q", details: answers, outputPresentation: interaction)

@@ -1559,8 +1559,14 @@ final class ChatSessionManager {
                 reducer.appendAgentMessage(id: entryId ?? UUID().uuidString, text: content, origin: origin)
             } else if role == "user", !content.isEmpty,
                !suppressTimelineMutationWhilePaused(),
-               !reducer.hasUserMessage(matching: content),
+               !(entryId.map { reducer.hasItem(id: $0) } ?? false),
+               !reducer.hasOpenUserTurn(matching: content),
                !reducer.hasLatestImageUserMessage(matchingEcho: content) {
+                // Skip only this message's own row: the trace entry it was loaded
+                // as (a catch-up can replay it after a fresh trace landed), or the
+                // optimistic prompt still waiting for its turn. An earlier message
+                // with the same words is a different message; a busy send the server
+                // prompted after its turn ended has only this echo for a row.
                 reducer.appendUserMessage(content)
             }
 

@@ -110,7 +110,10 @@ final class TestEventPipeline {
                     assistantContent: assistantContent,
                     entryId: entryId
                 ))
-            } else if role == "user", !content.isEmpty, !reducer.hasUserMessage(matching: content) {
+            } else if role == "user", !content.isEmpty,
+                      !(entryId.map { reducer.hasItem(id: $0) } ?? false),
+                      !reducer.hasOpenUserTurn(matching: content),
+                      !reducer.hasLatestImageUserMessage(matchingEcho: content) {
                 reducer.appendUserMessage(content)
             }
         case .error(let msg, _, let fatal):

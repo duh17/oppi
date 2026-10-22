@@ -2540,6 +2540,73 @@ struct ChatSessionManagerTests {
         manager.cleanup()
     }
 
+    /// A user `message_end` paints its own row unless that row is already there: the
+    /// optimistic prompt still waiting for its turn, or the trace entry it was loaded as.
+    /// Earlier messages with the same words are other messages.
+    @Test func userEchoSkipsOnlyItsOwnRow() async {
+        let sessionId = "user-echo-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { _, _ in nil }
+
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, status: .busy))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .busy)))
+        #expect(await waitForMainActorCondition { manager.entryState == .streaming })
+
+        // An earlier "continue" and its answer.
+        streams.yield(index: 0, message: .messageEnd(role: "user", content: "continue", entryId: "e1"))
+        streams.yield(index: 0, message: .messageEnd(role: "assistant", content: "Done."))
+        #expect(await waitForMainActorCondition {
+            manager.reducer.items.contains { item in
+                if case .assistantMessage(_, let text, _) = item { return text == "Done." }
+                return false
+            }
+        })
+
+        // A busy send the server prompted after its turn ended: no optimistic row, only this echo.
+        streams.yield(index: 0, message: .messageEnd(role: "user", content: "continue", entryId: "e2"))
+        #expect(await waitForMainActorCondition {
+            Self.userMessageTexts(manager) == ["continue", "continue"]
+        })
+
+        // An idle send's optimistic row takes its own echo.
+        manager.reducer.appendUserMessage("ship it")
+        streams.yield(index: 0, message: .messageEnd(role: "user", content: "ship it", entryId: "e3"))
+        streams.yield(index: 0, message: .messageEnd(role: "assistant", content: "Shipping."))
+        #expect(await waitForMainActorCondition {
+            manager.reducer.items.contains { item in
+                if case .assistantMessage(_, let text, _) = item { return text == "Shipping." }
+                return false
+            }
+        })
+        #expect(Self.userMessageTexts(manager) == ["continue", "continue", "ship it"])
+
+        // A fresh trace already holds entry e4 and its answer; its replayed echo adds nothing.
+        manager.reducer.loadSession([
+            TraceEvent(id: "e4", type: .user, timestamp: "2026-01-01T00:00:00.000Z", text: "again"),
+            TraceEvent(id: "a4", type: .assistant, timestamp: "2026-01-01T00:00:01.000Z", text: "Again done."),
+        ])
+        streams.yield(index: 0, message: .messageEnd(role: "user", content: "again", entryId: "e4"))
+        streams.yield(index: 0, message: .messageEnd(role: "user", content: "after", entryId: "e5"))
+        #expect(await waitForMainActorCondition {
+            Self.userMessageTexts(manager).last == "after"
+        })
+        #expect(Self.userMessageTexts(manager).filter { $0 == "again" }.count == 1)
+
+        streams.finish(index: 0)
+        await connectTask.value
+        manager.cleanup()
+    }
+
     private static func userMessageTexts(_ manager: ChatSessionManager) -> [String] {
         manager.reducer.items.compactMap { item in
             guard case .userMessage(_, let text, _, _) = item else { return nil }

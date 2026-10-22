@@ -2222,25 +2222,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         )
     }
 
-    /// Check if a user message with the given text already exists in the timeline.
-    /// Used to avoid duplicating the user bubble when a server-side prompt is echoed back.
-    func hasUserMessage(matching text: String) -> Bool {
-        let comparable = UserMessageTextProjection.comparableText(text)
-        if comparable.isEmpty {
-            guard let lastUserText = items.reversed().lazy.compactMap({ item -> String? in
-                guard case .userMessage(_, let existingText, _, _) = item else { return nil }
-                return existingText
-            }).first else {
-                return false
-            }
-            return UserMessageTextProjection.comparableText(lastUserText).isEmpty
-        }
-        return items.contains { item in
-            if case .userMessage(_, let existingText, _, _) = item {
-                return UserMessageTextProjection.comparableText(existingText) == comparable
-            }
-            return false
-        }
+    /// The timeline already holds a row with this id (a trace entry id, for example).
+    func hasItem(id: String) -> Bool {
+        indexForID(id) != nil
     }
 
     /// The matching user row is still the open turn: nothing assistant, thinking,
