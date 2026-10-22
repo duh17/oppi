@@ -1984,13 +1984,25 @@ final class ServerConnection {
         externalSessionOpenClaim = nil
     }
 
-    /// A scoped-lock prompt was cancelled after `prepareExternalSessionOpen`:
-    /// the open never navigates. Its claim must not keep refusing other
-    /// sessions, and the active-session pointer goes back to what it was.
-    func abandonExternalSessionOpen(sessionId: String, restoringActiveSessionId previous: String?) {
+    /// A scoped-lock prompt was cancelled after `prepareExternalSessionOpen`
+    /// (only pending dialogs named the locked workspace): the open never
+    /// navigates. Its claim must not keep refusing other sessions, the
+    /// active-session pointer goes back, and focus and the stream return to
+    /// the session this connection had before, or close.
+    func abandonExternalSessionOpen(
+        sessionId: String,
+        restoringActiveSessionId previousActive: String?,
+        restoringFocusedSessionId previousFocused: String?
+    ) {
         resolveExternalSessionOpenClaim(for: sessionId)
         if sessionStore.activeSessionId == sessionId {
-            sessionStore.activeSessionId = previous
+            sessionStore.activeSessionId = previousActive
+        }
+        guard focusedSessionId == sessionId else { return }
+        if let previousFocused, previousFocused != sessionId {
+            prepareForSessionReentry(previousFocused)
+        } else {
+            disconnectSession(sessionId: sessionId)
         }
     }
 
@@ -2648,16 +2660,21 @@ final class ServerConnection {
     ///
     /// If `/dialogs` is the first place we learn the workspace, re-enter so a
     /// live session can bind its stream after the ask card is restored.
+    /// `recordRefreshed`: the caller already ran `refreshSessionRecordIfPossible`
+    /// (to learn the lock scope before anything focuses the session).
     func prepareExternalSessionOpen(
         sessionId: String,
-        workspaceIdHint: String? = nil
+        workspaceIdHint: String? = nil,
+        recordRefreshed: Bool = false
     ) async {
         // Claim before the first await: the session record fetch and dialog
         // hydration below are exactly the window in which a still-mounted
         // ChatViewController for another session re-enters and steals the transport.
         beginExternalSessionOpenClaim(for: sessionId)
         sessionStore.activeSessionId = sessionId
-        await refreshSessionRecordIfPossible(sessionId: sessionId)
+        if !recordRefreshed {
+            await refreshSessionRecordIfPossible(sessionId: sessionId)
+        }
         await prefetchSessionTimelineIfPossible(sessionId: sessionId)
         let initialWorkspaceId = sessionReentryWorkspaceId(
             for: sessionId,

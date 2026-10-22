@@ -1207,6 +1207,42 @@ struct AppOpenerTests {
         #expect(harness.composerDraftStore.record(for: key)?.payload.text == "Write the release notes")
     }
 
+    @Test func cancellingTheWorkspaceLockOnTheSameServerKeepsTheVisibleChatFocused() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            authOutcomes: [.cancelled]
+        )
+        harness.addSession("current", workspaceId: "w1", to: "server-a")
+        harness.navigation.openWorkspaceSession(.init(
+            serverId: "server-a",
+            sessionId: "current",
+            workspaceId: "w1"
+        ))
+        let connection = harness.connection("server-a")
+        connection.focusSession("current")
+        // Not cached: only the loaded record names the locked workspace.
+        connection._getSessionRecordForTesting = { id in
+            makeTestSession(id: id, workspaceId: "w2", status: .busy)
+        }
+        harness.scopedLock.sessionLookup = { [weak harness] serverId, sessionId in
+            harness?.connection(serverId).sessionStore.session(id: sessionId)
+        }
+        harness.scopedLock.lock(.workspace(serverId: "server-a", workspaceId: "w2"))
+
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "locked",
+            origin: .externalURL
+        )))
+        await harness.settle()
+
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "current")
+        // Focus (command routing and the stream) stays on the chat on screen,
+        // and the locked session never becomes the viewed (seen) one.
+        #expect(connection.focusedSessionId == "current")
+        #expect(connection.sessionStore.viewingSessionId == "current")
+    }
+
     @Test func destinationWorkspaceComesFromLoadedDataNotTheRequestHint() async throws {
         let harness = OpenerHarness(
             servers: [makeServer("server-a")],

@@ -680,8 +680,9 @@ final class AppOpener {
         )
     }
 
-    /// The tail every session open shares: dismiss a covering viewer, prepare
-    /// the target (claim, refresh, prefetch, hydrate dialogs), then route it,
+    /// The tail every session open shares: dismiss a covering viewer, read the
+    /// target's record and ask for its lock, prepare it (claim, prefetch,
+    /// hydrate dialogs), then route it,
     /// whichever entry point asked. Ask cards have to appear on a push tap as
     /// on a link tap. `previousServerId` is the server that was active before
     /// this open switched; a cancelled lock prompt goes back to it.
@@ -700,20 +701,37 @@ final class AppOpener {
         )
         guard isCurrent(generation) else { return .finished }
 
+        // The lock scope comes from loaded session data (the record, a pending
+        // ask, or a dialog), never from a URL hint. Read the record and ask
+        // before anything focuses the session: a cancel then leaves focus, the
+        // stream, and seen state alone. This covers a record that only became
+        // readable after the pre-switch gate; an unknown workspace still
+        // checks the session and server scopes.
+        await connection.refreshSessionRecordIfPossible(sessionId: sessionId)
+        guard isCurrent(generation) else { return .finished }
+        let recordUnlocked = await scopedLock.authorize(scopedLock.sessionTarget(
+            serverId: serverId,
+            sessionId: sessionId,
+            workspaceId: connection.sessionReentryWorkspaceId(for: sessionId)
+        ))
+        guard isCurrent(generation) else { return .finished }
+        guard recordUnlocked else {
+            restoreServer(previousServerId, after: serverId)
+            return .finished
+        }
+
         let previousActiveSessionId = connection.sessionStore.activeSessionId
+        let previousFocusedSessionId = connection.focusedSessionId
         await connection.prepareExternalSessionOpen(
             sessionId: sessionId,
-            workspaceIdHint: workspaceIdHint
+            workspaceIdHint: workspaceIdHint,
+            recordRefreshed: true
         )
         guard isCurrent(generation) else { return .finished }
 
-        // The route and its lock scope come from loaded session data (the
-        // record, a pending ask, or a dialog), never from a URL hint.
+        // Hydrated dialogs can name a workspace the record did not; the route
+        // gate uses the same value.
         let workspaceId = connection.sessionReentryWorkspaceId(for: sessionId)
-        // The destination lock target is the loaded workspace (never a URL
-        // hint). The route gate uses the same value; asking here covers a
-        // record that only became readable after the pre-switch gate, and an
-        // unknown workspace still checks the session and server scopes.
         let unlocked = await scopedLock.authorize(scopedLock.sessionTarget(
             serverId: serverId,
             sessionId: sessionId,
@@ -721,15 +739,15 @@ final class AppOpener {
         ))
         guard isCurrent(generation) else { return .finished }
         guard unlocked else {
-            // Cancel leaves everything where it was: the server this open
-            // switched away from, and the target's active session and claim.
+            // Cancel leaves everything where it was: the target's active
+            // session, claim, and focus, and the server this open switched
+            // away from.
             connection.abandonExternalSessionOpen(
                 sessionId: sessionId,
-                restoringActiveSessionId: previousActiveSessionId
+                restoringActiveSessionId: previousActiveSessionId,
+                restoringFocusedSessionId: previousFocusedSessionId
             )
-            if let previousServerId, previousServerId != serverId {
-                coordinator.restoreActiveServer(previousServerId)
-            }
+            restoreServer(previousServerId, after: serverId)
             return .finished
         }
         navigation.selectedTab = .workspaces
@@ -743,6 +761,12 @@ final class AppOpener {
             source: origin
         )
         return .finished
+    }
+
+    /// A cancelled lock prompt goes back to the server this open switched away from.
+    private func restoreServer(_ previousServerId: String?, after serverId: String) {
+        guard let previousServerId, previousServerId != serverId else { return }
+        coordinator.restoreActiveServer(previousServerId)
     }
 
     private func inAppSessionServerId(for open: SessionOpen) -> String? {
