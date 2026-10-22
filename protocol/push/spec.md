@@ -354,7 +354,9 @@ A registration that carries no push, alert or Live Activity, for 90 days is dele
 permissions and its APNs-token entry. The relay counts from its creation or the last counted
 push, whichever is later, using the quota counters above, so this keeps no extra data. The
 Cloudflare adapter sets one alarm per registration, which moves itself to the last push + 90
-days; the Node adapter sweeps on its next call. A phone whose registration went this way gets
+days; a registration made before the adapter had this alarm gets it at its next counted push,
+so on a relay deployed before this change such a registration starts its 90-day count then.
+The Node adapter sweeps on its next call. A phone whose registration went this way gets
 `410` on its next relay call and registers again.
 
 ### 3.5 APNs request (fixed template)
