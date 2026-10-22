@@ -273,9 +273,10 @@ ignores it and re-resolves ranges; verify a published version with
 `npm pack --ignore-scripts=false` or the lifecycle checks and the shrinkwrap are
 skipped.
 
-The source-checkout bootstrapper is currently an exception. Root `install.sh`
-delegates to `server/setup.sh`, which prefers Bun when installed and runs `bun install --ignore-scripts`. That documented flow consumes `bun.lock`, so the Bun lockfile cannot be removed until the bootstrapper installs dependencies with
-npm. In the meantime, its dependency tree can diverge from the npm/CI tree.
+The source-checkout bootstrapper uses the same tree. Root `install.sh` delegates to
+`server/setup.sh`, which runs `npm ci --ignore-scripts`, `npm run build`, and then
+starts the server (or source-links it with `--install`) on Node.js 22.19+. There
+is no Bun lockfile.
 
 ```bash
 npm test                            # vitest unit tests

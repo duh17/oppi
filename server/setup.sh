@@ -10,54 +10,37 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-# Pick runtime: bun > node
-if command -v bun &>/dev/null; then
-  RT=bun
-  echo "Using Bun $(bun --version)"
-elif command -v node &>/dev/null; then
-  NODE_VERSION="$(node --version)"
-  NODE_SEMVER="${NODE_VERSION#v}"
-  NODE_MAJOR="${NODE_SEMVER%%.*}"
-  NODE_REST="${NODE_SEMVER#*.}"
-  NODE_MINOR="${NODE_REST%%.*}"
-
-  if [[ "$NODE_MAJOR" -lt 22 || ( "$NODE_MAJOR" -eq 22 && "$NODE_MINOR" -lt 19 ) ]]; then
-    echo "Error: Node.js 22.19+ required (found $NODE_VERSION)."
-    echo "Install Node.js 22.19+ or Bun (https://bun.sh)."
-    exit 1
-  fi
-
-  RT=node
-  echo "Using Node.js $NODE_VERSION"
-else
-  echo "Error: Install Bun (https://bun.sh) or Node.js 22.19+"
+# Node.js 22.19+ and npm run the server and install its dependencies from
+# package-lock.json (the same tree CI and the published package use).
+if ! command -v node &>/dev/null || ! command -v npm &>/dev/null; then
+  echo "Error: Install Node.js 22.19+ (includes npm)."
   exit 1
 fi
 
-# Install + build
-echo "Installing dependencies..."
-if [[ "$RT" == "bun" ]]; then
-  bun install --ignore-scripts
-else
-  npm install --ignore-scripts
+NODE_VERSION="$(node --version)"
+NODE_SEMVER="${NODE_VERSION#v}"
+NODE_MAJOR="${NODE_SEMVER%%.*}"
+NODE_REST="${NODE_SEMVER#*.}"
+NODE_MINOR="${NODE_REST%%.*}"
+
+if [[ "$NODE_MAJOR" -lt 22 || ( "$NODE_MAJOR" -eq 22 && "$NODE_MINOR" -lt 19 ) ]]; then
+  echo "Error: Node.js 22.19+ required (found $NODE_VERSION)."
+  exit 1
 fi
+echo "Using Node.js $NODE_VERSION"
+
+# Install + build. --ignore-scripts skips dependency install scripts (supply-chain
+# hardening, also set in .npmrc); the build below runs the package's own steps.
+echo "Installing dependencies..."
+npm ci --ignore-scripts
 
 # The package build also copies the bundled docs and durable package manifests;
 # the server refuses to open its durable runtime without them.
 echo "Building..."
-if [[ "$RT" == "bun" ]]; then
-  bun run build
-else
-  npm run build
-fi
+npm run build
 
 # Start
 if [[ "${1:-}" == "--install" ]]; then
-  if ! command -v npm &>/dev/null; then
-    echo "Error: npm is required to source-link the Oppi development CLI."
-    exit 1
-  fi
-
   echo "Linking the machine-wide oppi CLI to this source checkout..."
   npm link --ignore-scripts --no-audit --no-fund
 
@@ -71,5 +54,5 @@ if [[ "${1:-}" == "--install" ]]; then
   oppi server install
 else
   echo ""
-  "$RT" dist/src/cli.js serve "$@"
+  node dist/src/cli.js serve "$@"
 fi
