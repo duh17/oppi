@@ -10,7 +10,13 @@
 #   ui-suite     2   XCUITest / E2E runs                   (OPPI_HEAVY_UI_SUITE)
 #
 # Other env: OPPI_HEAVY_DIR (slot files, default ~/Library/Caches/oppi-heavy),
-# OPPI_HEAVY_POLL (seconds between retries while every slot is busy, default 5).
+# OPPI_HEAVY_POLL (seconds between retries while every slot is busy, default 5),
+# OPPI_HEAVY_PARENT_PID (a waiting job gives up with status 143 once this process is gone, so
+# a killed pre-push hook does not leave queued jobs that later run for nobody; a waiting job
+# also gives up when it has been orphaned to init).
+#
+# Fairness: there is no queue. A waiter retries every OPPI_HEAVY_POLL seconds and a newcomer
+# tries at once, so a newcomer can take a slot that freed between a waiter's polls.
 #
 # The kernel holds each slot through lockf(1) exactly as long as the command runs; a crashed
 # holder frees its slot at once, so there is no stale-lock takeover logic. The command's exit
@@ -34,7 +40,12 @@ export OPPI_HEAVY_HELD="${OPPI_HEAVY_HELD:-:}$class:"
 announced=0
 started="$(mktemp -u -t oppi-heavy)"
 trap 'rm -f "$started"' EXIT
+parent_gone() {
+  if [[ -n "${OPPI_HEAVY_PARENT_PID:-}" ]]; then ! kill -0 "$OPPI_HEAVY_PARENT_PID" 2>/dev/null; return; fi
+  [[ "$(ps -o ppid= -p $$ | tr -d ' ')" == "1" ]]
+}
 while true; do
+  if parent_gone; then echo "[heavy] caller is gone; not starting '$class' job" >&2; exit 143; fi
   for ((i = 0; i < slots; i++)); do
     # -t 0: try without waiting. lockf exits 75 when the slot is busy, but the command may
     # also exit 75, so the command marks that it started before running.

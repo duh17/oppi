@@ -61,9 +61,67 @@ run_self_test() {
     exit 1
   }
   if grep -nE '^[[:space:]]*\"\$@\" \|\| status=\$\?' "$REPO_ROOT/.githooks/pre-push" >/dev/null; then
-    echo "pre-push self-test: run_cached must not use \"\$@\" || status=\$?" >&2
+    echo "pre-push self-test: the lane runner must not capture status with \"\$@\" || status=\$?" >&2
     exit 1
   fi
+  # Callers must not put run_cached in an ||, &&, or if-test either: that disables set -e
+  # inside its nested shell and a lane's early failure is lost. (Bracketed operators keep
+  # this check from matching its own source; comment lines are ignored.)
+  if grep -vE '^[[:space:]]*#' "$REPO_ROOT/.githooks/pre-push" \
+    | grep -E -e 'run_cached.*[|][|]' -e 'run_cached.*[&][&]' -e '![[:space:]]*run_cached' >/dev/null; then
+    echo "pre-push self-test: the lane runner must not be called from a logical list or if-test" >&2
+    exit 1
+  fi
+
+  # Regression for the real run_cached/apple_then_mac: a lane whose first step fails and
+  # whose last step succeeds must fail the lane, and Mac must not start after it.
+  local lane_fixture lane_src lane_status
+  lane_fixture="$(mktemp -d -t oppi-pre-push-lane.XXXXXX)"
+  lane_src="$(awk '/^(run_cached|apple_then_mac)\(\) \{/,/^\}/' "$REPO_ROOT/.githooks/pre-push")"
+  case "$lane_src" in
+    *'run_cached() {'*'apple_then_mac() {'*) ;;
+    *)
+      echo "pre-push self-test: could not extract the lane runner and apple_then_mac" >&2
+      exit 1
+      ;;
+  esac
+  # The fixture subshell must not sit in an || / && list: that would disable the very
+  # set -e behavior under test. Capture its status with the set +e pattern used above.
+  set +e
+  (
+    set -euo pipefail
+    eval "$lane_src"
+    ensure_lane_clean() { return 0; }
+    cache_path() { echo "$lane_fixture/$1.pass"; }
+    MAC_CHANGED=1
+    run_apple_gate() { false; echo apple-continued >> "$lane_fixture/trace"; }
+    run_mac_gate() { echo mac-ran >> "$lane_fixture/trace"; }
+    apple_then_mac & wait "$!"
+  ) >/dev/null 2>&1
+  lane_status=$?
+  set -e
+  [[ "$lane_status" -ne 0 && ! -e "$lane_fixture/trace" && ! -e "$lane_fixture/apple.pass" ]] || {
+    echo "pre-push self-test: a failing Apple lane must fail apple_then_mac before Mac and without a cache marker" >&2
+    exit 1
+  }
+  set +e
+  (
+    set -euo pipefail
+    eval "$lane_src"
+    ensure_lane_clean() { return 0; }
+    cache_path() { echo "$lane_fixture/$1.pass"; }
+    MAC_CHANGED=1
+    run_apple_gate() { true; }
+    run_mac_gate() { echo mac-ran >> "$lane_fixture/trace"; }
+    apple_then_mac & wait "$!"
+  ) >/dev/null 2>&1
+  lane_status=$?
+  set -e
+  [[ "$lane_status" -eq 0 && "$(cat "$lane_fixture/trace")" == "mac-ran" && -e "$lane_fixture/mac.pass" ]] || {
+    echo "pre-push self-test: a passing Apple lane must run Mac and record both markers" >&2
+    exit 1
+  }
+  rm -rf "$lane_fixture"
 
   # Git exports repository-local variables to hooks. Those variables are required
   # above for planning and cache checks, but they must not escape into tests that
@@ -116,6 +174,8 @@ if [[ "${1:-}" == "--plan" ]]; then
   exec bun "$PLANNER" "$@"
 fi
 
+# Queued heavy.sh jobs give up when this hook is gone (e.g. killed by a timeout).
+export OPPI_HEAVY_PARENT_PID="$$"
 REMOTE_NAME="${1:-origin}"
 PATHS_FILE="$(mktemp -t oppi-pre-push-paths.XXXXXX)"
 trap 'rm -f "$PATHS_FILE"' EXIT
@@ -365,6 +425,10 @@ run_apple_gate() {
   if [[ "$APPLE_MODE" == "all" ]]; then
     scheme="Oppi"
   fi
+  # Lock order: the heavy.sh xcode-build slot is the OUTER lock and sim-pool's simulator
+  # slot is the INNER one. The slot is therefore held while sim-pool waits for or prepares a
+  # simulator. A later sim-pool change that takes heavy slots itself must keep this order
+  # (heavy outside, sim-pool inside); re-entrancy via OPPI_HEAVY_HELD covers the nesting.
   (cd "$REPO_ROOT/clients/apple" && "$HEAVY" xcode-build -- "$SIM_POOL" run -- \
     xcodebuild -project Oppi.xcodeproj -scheme "$scheme" build-for-testing)
 }
@@ -392,8 +456,11 @@ fi
 # The Mac compile (~50 s) follows the Apple lane instead of waiting for every lane:
 # the server suite is the longest lane, so the Mac build now overlaps it. A failed
 # Apple lane skips the Mac compile, as before.
+# Keep run_cached out of || / && / if-tests here: they disable set -e inside its nested
+# shell (see run_cached). The background subshell inherits set -e, so a failed Apple lane
+# ends this function with that status before Mac starts.
 apple_then_mac() {
-  run_cached apple run_apple_gate || return $?
+  run_cached apple run_apple_gate
   [[ "$MAC_CHANGED" -eq 1 ]] || return 0
   run_cached mac run_mac_gate
 }

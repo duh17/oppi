@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { Subprocess } from "bun";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,16 +9,19 @@ const heavy = join(import.meta.dir, "heavy.sh");
 const hasLockf = existsSync("/usr/bin/lockf");
 
 let dir: string;
-const children: Array<{ kill(): void }> = [];
+const children: Array<Subprocess<"ignore" | "pipe", "pipe", "pipe">> = [];
+const parents: Array<Subprocess> = [];
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "oppi-heavy-test-"));
 });
 
-afterEach(() => {
-  // Releasing every holder lets queued children and their lockf wrappers exit.
+afterEach(async () => {
+  // Releasing every holder lets queued jobs run and every heavy.sh/lockf process exit.
+  // Only then is the directory removed, so no process races the cleanup.
   writeFileSync(join(dir, "release"), "");
-  for (const child of children.splice(0)) child.kill();
+  for (const parent of parents.splice(0)) parent.kill();
+  await Promise.all(children.splice(0).map((child) => child.exited));
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -90,6 +94,30 @@ describe.skipIf(!hasLockf)("heavy.sh", () => {
     expect(second.exitCode).toBeNull();
     writeFileSync(join(dir, "release"), "");
     expect(await second.exited).toBe(75);
+    expect(await a.exited).toBe(0);
+  });
+
+  test("a queued job gives up with 143 once its parent process is gone", async () => {
+    const parent = Bun.spawn(["sleep", "600"]);
+    parents.push(parent);
+    const alive = { OPPI_HEAVY_PARENT_PID: String(parent.pid) };
+
+    // A live parent does not get in the way of a free slot.
+    expect(await run(["server-full", "--", "true"], alive).exited).toBe(0);
+
+    const a = holder("a", "server-full");
+    await waitFor(() => existsSync(join(dir, "a.started")), "holder");
+    const waiter = run(["server-full", "--", "bash", "-c", `echo ran > "${join(dir, "ran")}"`], alive);
+    const stderr = new Response(waiter.stderr).text();
+    await Bun.sleep(200);
+    expect(waiter.exitCode).toBeNull();
+
+    parent.kill();
+    expect(await waiter.exited).toBe(143);
+    expect(existsSync(join(dir, "ran"))).toBe(false);
+    expect(await stderr).toContain("caller is gone");
+
+    writeFileSync(join(dir, "release"), "");
     expect(await a.exited).toBe(0);
   });
 
