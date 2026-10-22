@@ -127,3 +127,56 @@ struct VoiceInputRoutingTests {
         #expect(probeCount == 0)
     }
 }
+
+/// The stored dictation engine decides whether audio leaves the phone. A new install has
+/// no stored value and must stay on-device; an existing choice must survive.
+@Suite("AppPreferences.Voice engine mode", .serialized)
+@MainActor
+struct VoiceEngineModePreferenceTests {
+    private let key = AppPreferenceStore.Voice.engineModeKey
+
+    private func withStoredValue(_ value: String?, _ body: () -> Void) {
+        let original = UserDefaults.standard.object(forKey: key)
+        defer {
+            if let original {
+                UserDefaults.standard.set(original, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        if let value {
+            UserDefaults.standard.set(value, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+        body()
+    }
+
+    @Test func newInstallDictatesOnDevice() {
+        withStoredValue(nil) {
+            #expect(AppPreferences.Voice.engineMode == .onDevice)
+            #expect(VoiceInputManager().engineMode == .onDevice)
+        }
+    }
+
+    @Test func storedServerChoiceIsKept() {
+        withStoredValue("remote") {
+            #expect(AppPreferences.Voice.engineMode == .remote)
+            #expect(VoiceInputManager().engineMode == .remote)
+        }
+    }
+
+    @Test func storedOnDeviceChoiceIsKept() {
+        withStoredValue("onDevice") {
+            #expect(AppPreferences.Voice.engineMode == .onDevice)
+        }
+    }
+
+    /// `auto` was only written when someone picked "Automatic" (server when connected,
+    /// else on-device), so it stays Server rather than becoming the new-install default.
+    @Test func storedAutomaticChoiceStaysServer() {
+        withStoredValue("auto") {
+            #expect(AppPreferences.Voice.engineMode == .remote)
+        }
+    }
+}

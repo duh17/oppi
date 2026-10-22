@@ -302,13 +302,13 @@ struct VoiceEnginePreferenceStoreTests {
         #expect(AppPreferenceStore.Voice.supportedModes == [.remote, .onDevice])
     }
 
-    @Test func defaultsEngineModeToRemote() {
+    @Test func defaultsEngineModeToOnDevice() {
         let key = AppPreferenceStore.Voice.engineModeKey
         let original = UserDefaults.standard.object(forKey: key)
         UserDefaults.standard.removeObject(forKey: key)
         defer { restoreObject(original, forKey: key) }
 
-        #expect(AppPreferenceStore.Voice.engineMode == .remote)
+        #expect(AppPreferenceStore.Voice.engineMode == .onDevice)
     }
 
     @Test func migratesStoredAutoEngineModeToRemote() {

@@ -100,11 +100,15 @@ enum AppPreferenceStore {
         static let replyModeKey = "\(AppIdentifiers.subsystem).voice.replyMode"
         static let sessionReplyModeOverridesKey = "\(AppIdentifiers.subsystem).voice.sessionReplyModeOverrides"
 
+        /// Unset (new install) is On-device, so audio leaves the phone only after the
+        /// user picks Server. A stored `auto` was only ever written by an explicit
+        /// "Automatic" pick in the old three-way picker (server when connected, else
+        /// on-device), so it keeps the nearest current meaning: Server.
         static var engineMode: EngineMode {
             guard let raw = UserDefaults.standard.string(forKey: engineModeKey),
                   let mode = EngineMode(rawValue: raw)
             else {
-                return .remote
+                return .onDevice
             }
             return mode == .auto ? .remote : mode
         }
