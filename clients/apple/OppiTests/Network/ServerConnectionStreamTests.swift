@@ -1000,17 +1000,16 @@ struct ServerConnectionStreamTests {
         var emittedBoundPaths: [String] = []
         conn._sendMessageForTesting = { message in
             emittedBoundPaths.append(conn.focusedSessionStreamURLForTesting?.path ?? "none")
-            guard case .steer(_, _, let requestId, _) = message,
-                  let requestId else { return }
+            guard case .prompt(_, _, .steer?, let requestId?, _) = message else { return }
             _ = conn.commands.resolveTurnCommandResult(
-                command: "steer",
+                command: "prompt",
                 requestId: requestId,
                 success: true,
                 error: nil
             )
         }
 
-        try await conn.sendSteer("redirect safely", sessionIdOverride: "session-a")
+        try await conn.sendPrompt("redirect safely", streamingBehavior: .steer, sessionIdOverride: "session-a")
 
         #expect(emittedBoundPaths == ["/workspaces/w1/sessions/session-a/stream"])
         #expect(conn.focusedSessionId == "session-a")
@@ -1027,17 +1026,16 @@ struct ServerConnectionStreamTests {
         var prepareCount = 0
         conn._onPrepareForSessionReentryForTesting = { _ in prepareCount += 1 }
         conn._sendMessageForTesting = { message in
-            guard case .steer(_, _, let requestId, _) = message,
-                  let requestId else { return }
+            guard case .prompt(_, _, .steer?, let requestId?, _) = message else { return }
             _ = conn.commands.resolveTurnCommandResult(
-                command: "steer",
+                command: "prompt",
                 requestId: requestId,
                 success: true,
                 error: nil
             )
         }
 
-        try await conn.sendSteer("already safe", sessionIdOverride: "session-a")
+        try await conn.sendPrompt("already safe", streamingBehavior: .steer, sessionIdOverride: "session-a")
 
         #expect(prepareCount == 0)
         #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/session-a/stream")
@@ -1053,7 +1051,7 @@ struct ServerConnectionStreamTests {
         conn._sendMessageForTesting = { _ in emittedCount += 1 }
 
         do {
-            try await conn.sendSteer("must not cross streams", sessionIdOverride: "session-a")
+            try await conn.sendPrompt("must not cross streams", streamingBehavior: .steer, sessionIdOverride: "session-a")
             Issue.record("A mismatched send without route scope should fail")
         } catch {
             #expect(error.localizedDescription.contains("session-a"))
@@ -1080,18 +1078,6 @@ struct ServerConnectionStreamTests {
                     if let requestId {
                         _ = conn.commands.resolveTurnCommandResult(
                             command: "prompt", requestId: requestId, success: true, error: nil
-                        )
-                    }
-                case .steer(_, _, let requestId, _):
-                    if let requestId {
-                        _ = conn.commands.resolveTurnCommandResult(
-                            command: "steer", requestId: requestId, success: true, error: nil
-                        )
-                    }
-                case .followUp(_, _, let requestId, _):
-                    if let requestId {
-                        _ = conn.commands.resolveTurnCommandResult(
-                            command: "follow_up", requestId: requestId, success: true, error: nil
                         )
                     }
                 case .stop(let requestId):
@@ -1317,8 +1303,6 @@ struct ServerConnectionStreamTests {
 
 private enum BindingGuardCommand: CaseIterable {
     case prompt
-    case steer
-    case followUp
     case stop
     case stopSession
 
@@ -1327,10 +1311,6 @@ private enum BindingGuardCommand: CaseIterable {
         switch self {
         case .prompt:
             try await connection.sendPrompt("prompt", sessionIdOverride: sessionId)
-        case .steer:
-            try await connection.sendSteer("steer", sessionIdOverride: sessionId)
-        case .followUp:
-            try await connection.sendFollowUp("follow up", sessionIdOverride: sessionId)
         case .stop:
             try await connection.sendStop(sessionIdOverride: sessionId)
         case .stopSession:

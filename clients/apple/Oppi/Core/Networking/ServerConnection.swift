@@ -2845,19 +2845,9 @@ final class ServerConnection {
         }
     }
 
-    func sendPrompt(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, sessionIdOverride: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
+    func sendPrompt(_ text: String, attachments: [ChatAttachmentRef]? = nil, streamingBehavior: StreamingBehavior? = nil, clientTurnId: String? = nil, sessionIdOverride: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
         try prepareFocusedSessionBindingForSendIfNeeded(sessionIdOverride: sessionIdOverride)
-        try await sender.sendPrompt(text, attachments: attachments, clientTurnId: clientTurnId, sessionIdOverride: sessionIdOverride, onAckStage: onAckStage)
-    }
-
-    func sendSteer(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, sessionIdOverride: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
-        try prepareFocusedSessionBindingForSendIfNeeded(sessionIdOverride: sessionIdOverride)
-        try await sender.sendSteer(text, attachments: attachments, clientTurnId: clientTurnId, sessionIdOverride: sessionIdOverride, onAckStage: onAckStage)
-    }
-
-    func sendFollowUp(_ text: String, attachments: [ChatAttachmentRef]? = nil, clientTurnId: String? = nil, sessionIdOverride: String? = nil, onAckStage: ((TurnAckStage) -> Void)? = nil) async throws {
-        try prepareFocusedSessionBindingForSendIfNeeded(sessionIdOverride: sessionIdOverride)
-        try await sender.sendFollowUp(text, attachments: attachments, clientTurnId: clientTurnId, sessionIdOverride: sessionIdOverride, onAckStage: onAckStage)
+        try await sender.sendPrompt(text, attachments: attachments, streamingBehavior: streamingBehavior, clientTurnId: clientTurnId, sessionIdOverride: sessionIdOverride, onAckStage: onAckStage)
     }
 
     func sendStop(sessionIdOverride: String? = nil) async throws {

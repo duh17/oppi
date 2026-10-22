@@ -487,35 +487,25 @@ final class MessageSender {
 
     // MARK: - Convenience: Turn Messages
 
+    /// Send a prompt. A busy-time send passes `streamingBehavior`: the server
+    /// steers or queues it while a turn streams and prompts it normally when the
+    /// turn already ended, so a send that races the turn end is never refused.
+    /// Either way the server acknowledges a `prompt`.
     func sendPrompt(
         _ text: String,
         attachments: [ChatAttachmentRef]? = nil,
+        streamingBehavior: StreamingBehavior? = nil,
         clientTurnId providedClientTurnId: String? = nil,
         sessionIdOverride: String? = nil,
         onAckStage: ((TurnAckStage) -> Void)? = nil
     ) async throws {
         let requestId = UUID().uuidString
         let clientTurnId = providedClientTurnId ?? UUID().uuidString
-        try await sendTurnWithAck(
-            requestId: requestId,
-            clientTurnId: clientTurnId,
-            command: "prompt",
-            sessionIdOverride: sessionIdOverride,
-            onAckStage: onAckStage
-        ) {
-            .prompt(message: text, attachments: attachments, requestId: requestId, clientTurnId: clientTurnId)
+        let queueMetricCommand: String? = switch streamingBehavior {
+        case .steer: "steer"
+        case .followUp: "follow_up"
+        case nil: nil
         }
-    }
-
-    func sendSteer(
-        _ text: String,
-        attachments: [ChatAttachmentRef]? = nil,
-        clientTurnId providedClientTurnId: String? = nil,
-        sessionIdOverride: String? = nil,
-        onAckStage: ((TurnAckStage) -> Void)? = nil
-    ) async throws {
-        let requestId = UUID().uuidString
-        let clientTurnId = providedClientTurnId ?? UUID().uuidString
         let metricSessionId = sessionIdOverride ?? targetSessionId
         let metricTransport = transportPathProvider?().rawValue ?? "unknown"
         let startedAt = ContinuousClock.now
@@ -524,60 +514,33 @@ final class MessageSender {
             try await sendTurnWithAck(
                 requestId: requestId,
                 clientTurnId: clientTurnId,
-                command: "steer",
+                command: "prompt",
                 sessionIdOverride: sessionIdOverride,
                 onAckStage: onAckStage
             ) {
-                .steer(message: text, attachments: attachments, requestId: requestId, clientTurnId: clientTurnId)
+                .prompt(
+                    message: text,
+                    attachments: attachments,
+                    streamingBehavior: streamingBehavior,
+                    requestId: requestId,
+                    clientTurnId: clientTurnId
+                )
             }
-            Self.recordQueueAckMetric(
-                command: "steer", startedAt: startedAt, status: "ok",
-                transport: metricTransport, sessionId: metricSessionId
-            )
         } catch {
-            Self.recordQueueAckMetric(
-                command: "steer", startedAt: startedAt, status: "error",
-                transport: metricTransport,
-                errorKind: Self.telemetryErrorKind(from: error), sessionId: metricSessionId
-            )
+            if let queueMetricCommand {
+                Self.recordQueueAckMetric(
+                    command: queueMetricCommand, startedAt: startedAt, status: "error",
+                    transport: metricTransport,
+                    errorKind: Self.telemetryErrorKind(from: error), sessionId: metricSessionId
+                )
+            }
             throw error
         }
-    }
-
-    func sendFollowUp(
-        _ text: String,
-        attachments: [ChatAttachmentRef]? = nil,
-        clientTurnId providedClientTurnId: String? = nil,
-        sessionIdOverride: String? = nil,
-        onAckStage: ((TurnAckStage) -> Void)? = nil
-    ) async throws {
-        let requestId = UUID().uuidString
-        let clientTurnId = providedClientTurnId ?? UUID().uuidString
-        let metricSessionId = sessionIdOverride ?? targetSessionId
-        let metricTransport = transportPathProvider?().rawValue ?? "unknown"
-        let startedAt = ContinuousClock.now
-
-        do {
-            try await sendTurnWithAck(
-                requestId: requestId,
-                clientTurnId: clientTurnId,
-                command: "follow_up",
-                sessionIdOverride: sessionIdOverride,
-                onAckStage: onAckStage
-            ) {
-                .followUp(message: text, attachments: attachments, requestId: requestId, clientTurnId: clientTurnId)
-            }
+        if let queueMetricCommand {
             Self.recordQueueAckMetric(
-                command: "follow_up", startedAt: startedAt, status: "ok",
+                command: queueMetricCommand, startedAt: startedAt, status: "ok",
                 transport: metricTransport, sessionId: metricSessionId
             )
-        } catch {
-            Self.recordQueueAckMetric(
-                command: "follow_up", startedAt: startedAt, status: "error",
-                transport: metricTransport,
-                errorKind: Self.telemetryErrorKind(from: error), sessionId: metricSessionId
-            )
-            throw error
         }
     }
 

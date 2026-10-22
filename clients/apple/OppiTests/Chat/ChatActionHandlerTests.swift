@@ -430,117 +430,107 @@ struct ChatActionHandlerTests {
         #expect(handler.sendProgressText == nil)
     }
 
-    @Test func sendPromptInBusyModeDefaultsToSteerWithoutTimelineQueueNoise() async {
+    /// The chat still reads busy, and the turn really is streaming: the send is
+    /// queued as the chosen behavior, shows as one queue item and no row, and
+    /// becomes one user row when the agent takes it.
+    @Test(arguments: [StreamingBehavior.steer, .followUp])
+    func busySendWhileTurnStreamsIsQueued(behavior: StreamingBehavior) async {
         let handler = ChatActionHandler()
-        let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
         let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
-
-        var sawSteer = false
-
-        connection._sendMessageForTesting = { message in
-            guard case .steer(_, _, let requestId, let clientTurnId) = message,
-                  let requestId,
-                  let clientTurnId else {
-                return
-            }
-
-            sawSteer = true
-            pipe.handle(
-                .turnAck(
-                    command: "steer",
-                    clientTurnId: clientTurnId,
-                    stage: .dispatched,
-                    requestId: requestId,
-                    duplicate: false
-                ),
-                sessionId: "s1"
-            )
-        }
+        let server = FakeTurnServer(pipe: pipe, sessionId: "s1", isTurnStreaming: true)
+        connection._sendMessageForTesting = { server.receive($0) }
+        let callbacks = SendCallbacks()
 
         _ = handler.sendPrompt(
             text: "steer this way",
             attachments: [],
             isBusy: true,
+            busyStreamingBehavior: behavior,
             connection: connection,
-            reducer: reducer,
-            sessionId: "s1"
+            reducer: pipe.reducer,
+            sessionId: "s1",
+            onSendSucceeded: { callbacks.succeeded += 1 },
+            onAsyncFailure: { _, _ in callbacks.failed += 1 }
         )
 
-        _ = await waitForTestCondition(timeoutMs: 600) {
-            await MainActor.run { !handler.isSending }
-        }
-        #expect(sawSteer)
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { !handler.isSending && server.queueReads > 0 }
+        })
+        #expect(callbacks.succeeded == 1)
+        #expect(callbacks.failed == 0)
+        #expect(server.queued.map(\.kind) == [behavior == .steer ? .steer : .followUp])
+        #expect(server.promptedTexts.isEmpty)
 
-        let hasUserRow = reducer.items.contains {
-            if case .userMessage = $0 { return true }
-            return false
-        }
-        #expect(!hasUserRow)
+        let queue = connection.messageQueueStore.queue(for: "s1")
+        let shown = behavior == .steer ? queue.steering : queue.followUp
+        let other = behavior == .steer ? queue.followUp : queue.steering
+        #expect(queue.version == server.queueVersion)
+        #expect(shown.map(\.message) == ["steer this way"])
+        #expect(other.isEmpty)
+        #expect(Self.userRowTexts(pipe.reducer).isEmpty)
+        #expect(Self.errorRowTexts(pipe.reducer).isEmpty)
 
-        let hasQueueSystemEvent = reducer.items.contains { item in
-            guard case .systemEvent(_, let text) = item else { return false }
-            return text.contains("Message Queue")
-        }
-        #expect(!hasQueueSystemEvent)
+        server.agentTakesQueuedInput()
+
+        let after = connection.messageQueueStore.queue(for: "s1")
+        #expect(after.steering.isEmpty && after.followUp.isEmpty)
+        #expect(Self.userRowTexts(pipe.reducer) == ["steer this way"])
     }
 
-    @Test func sendPromptInBusyModeCanQueueFollowUpWithoutTimelineQueueNoise() async {
+    /// The chat still reads busy, but the turn ended before the server saw the
+    /// send. The server prompts it; the chat shows no failure, keeps the draft
+    /// cleared, and ends with one user row and no queue item.
+    @Test(arguments: [StreamingBehavior.steer, .followUp])
+    func busySendAfterTurnEndedIsPromptedWithoutFailure(behavior: StreamingBehavior) async {
         let handler = ChatActionHandler()
-        let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
         let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
-
-        var sawFollowUp = false
-
-        connection._sendMessageForTesting = { message in
-            guard case .followUp(_, _, let requestId, let clientTurnId) = message,
-                  let requestId,
-                  let clientTurnId else {
-                return
-            }
-
-            sawFollowUp = true
-            pipe.handle(
-                .turnAck(
-                    command: "follow_up",
-                    clientTurnId: clientTurnId,
-                    stage: .dispatched,
-                    requestId: requestId,
-                    duplicate: false
-                ),
-                sessionId: "s1"
-            )
-        }
+        let server = FakeTurnServer(pipe: pipe, sessionId: "s1", isTurnStreaming: false)
+        connection._sendMessageForTesting = { server.receive($0) }
+        let callbacks = SendCallbacks()
 
         _ = handler.sendPrompt(
-            text: "continue this",
+            text: "one more thing",
             attachments: [],
             isBusy: true,
-            busyStreamingBehavior: .followUp,
+            busyStreamingBehavior: behavior,
             connection: connection,
-            reducer: reducer,
-            sessionId: "s1"
+            reducer: pipe.reducer,
+            sessionId: "s1",
+            onSendSucceeded: { callbacks.succeeded += 1 },
+            onAsyncFailure: { _, _ in callbacks.failed += 1 }
         )
 
-        _ = await waitForTestCondition(timeoutMs: 600) {
-            await MainActor.run { !handler.isSending }
-        }
-        #expect(sawFollowUp)
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { !handler.isSending && (server.queueReads > 0 || callbacks.failed > 0) }
+        })
+        pipe.flushNow()
 
-        let hasUserRow = reducer.items.contains {
-            if case .userMessage = $0 { return true }
-            return false
-        }
-        #expect(!hasUserRow)
+        #expect(Self.errorRowTexts(pipe.reducer).isEmpty)
+        #expect(callbacks.failed == 0)
+        #expect(callbacks.succeeded == 1)
+        #expect(server.promptedTexts == ["one more thing"])
+        #expect(server.queued.isEmpty)
+        let queue = connection.messageQueueStore.queue(for: "s1")
+        #expect(queue.steering.isEmpty && queue.followUp.isEmpty)
+        #expect(Self.userRowTexts(pipe.reducer) == ["one more thing"])
+    }
 
-        let hasQueueSystemEvent = reducer.items.contains { item in
-            guard case .systemEvent(_, let text) = item else { return false }
-            return text.contains("Message Queue")
+    private static func userRowTexts(_ reducer: TimelineReducer) -> [String] {
+        reducer.items.compactMap { item in
+            guard case .userMessage(_, let text, _, _) = item else { return nil }
+            return text
         }
-        #expect(!hasQueueSystemEvent)
+    }
+
+    private static func errorRowTexts(_ reducer: TimelineReducer) -> [String] {
+        reducer.items.compactMap { item in
+            guard case .error(_, let message) = item else { return nil }
+            return message
+        }
     }
 
     @Test func sendPromptInBusyModeQueuesOptimisticallyBeforeTaskRuns() {
@@ -598,78 +588,6 @@ struct ChatActionHandlerTests {
 
         let queue = connection.messageQueueStore.queue(for: "s1")
         #expect(queue.steering.isEmpty)
-    }
-
-    @Test func sendPromptInBusyModeRefreshesQueueAfterSteer() async {
-        let handler = ChatActionHandler()
-        let reducer = TimelineReducer()
-        let connection = ServerConnection()
-        connection._setActiveSessionIdForTesting("s1")
-        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
-
-        var sawSteer = false
-        var sawQueueRefresh = false
-
-        connection._sendMessageForTesting = { message in
-            switch message {
-            case .steer(_, _, let requestId, let clientTurnId):
-                guard let requestId, let clientTurnId else { return }
-                sawSteer = true
-                pipe.handle(
-                    .turnAck(
-                        command: "steer",
-                        clientTurnId: clientTurnId,
-                        stage: .dispatched,
-                        requestId: requestId,
-                        duplicate: false
-                    ),
-                    sessionId: "s1"
-                )
-
-            case .getQueue(let requestId):
-                sawQueueRefresh = true
-                pipe.handle(
-                    .commandResult(
-                        command: "get_queue",
-                        requestId: requestId,
-                        success: true,
-                        data: [
-                            "version": 3,
-                            "steering": [
-                                [
-                                    "id": "q1",
-                                    "message": "steer this way",
-                                    "createdAt": 1,
-                                ],
-                            ],
-                            "followUp": [],
-                        ],
-                        error: nil
-                    ),
-                    sessionId: "s1"
-                )
-
-            default:
-                break
-            }
-        }
-
-        _ = handler.sendPrompt(
-            text: "steer this way",
-            attachments: [],
-            isBusy: true,
-            connection: connection,
-            reducer: reducer,
-            sessionId: "s1"
-        )
-
-        #expect(await waitForTestCondition(timeoutMs: 1_000) {
-            await MainActor.run { sawSteer && sawQueueRefresh }
-        })
-
-        let queue = connection.messageQueueStore.queue(for: "s1")
-        #expect(queue.version == 3)
-        #expect(queue.steering.count == 1)
     }
 
     @Test func sendPromptFailureTriggersReconnectCallbackOnce() async {
@@ -1749,4 +1667,129 @@ struct ChatActionHandlerTests {
 @MainActor
 private final class SendOutcome {
     var value: String?
+}
+
+@MainActor
+private final class SendCallbacks {
+    var succeeded = 0
+    var failed = 0
+}
+
+/// Answers turn frames as the server's `SessionInput` does
+/// (`server/src/session-input.ts`): a bare steer or follow_up needs a streaming
+/// turn, a plain prompt needs an idle session, and a prompt with
+/// `streamingBehavior` is queued while a turn streams and prompted when idle.
+/// A rejection is a failed `command_result`, like `handleTurnCommand`.
+@MainActor
+private final class FakeTurnServer {
+    struct Queued {
+        let kind: MessageQueueKind
+        let item: MessageQueueItem
+    }
+
+    private let pipe: TestEventPipeline
+    private let sessionId: String
+    private(set) var isTurnStreaming: Bool
+    private(set) var queued: [Queued] = []
+    private(set) var queueVersion = 7
+    private(set) var queueReads = 0
+    private(set) var promptedTexts: [String] = []
+
+    init(pipe: TestEventPipeline, sessionId: String, isTurnStreaming: Bool) {
+        self.pipe = pipe
+        self.sessionId = sessionId
+        self.isTurnStreaming = isTurnStreaming
+    }
+
+    func receive(_ message: ClientMessage) {
+        switch message {
+        case .prompt(let text, _, let behavior, let requestId?, let clientTurnId?):
+            if isTurnStreaming {
+                guard let behavior else {
+                    reject("prompt", requestId, "Prompt requires an idle session; use steer or follow_up while a turn is streaming")
+                    return
+                }
+                enqueue(behavior == .steer ? .steer : .followUp, text, clientTurnId)
+                accept("prompt", requestId, clientTurnId)
+            } else {
+                accept("prompt", requestId, clientTurnId)
+                promptedTexts.append(text)
+                isTurnStreaming = true
+                pipe.handle(.messageEnd(role: "user", content: text), sessionId: sessionId)
+            }
+        case .steer(let text, _, let requestId?, let clientTurnId?):
+            guard isTurnStreaming else {
+                reject("steer", requestId, "Steer requires an active streaming turn")
+                return
+            }
+            enqueue(.steer, text, clientTurnId)
+            accept("steer", requestId, clientTurnId)
+        case .followUp(let text, _, let requestId?, let clientTurnId?):
+            guard isTurnStreaming else {
+                reject("follow_up", requestId, "Follow-up requires an active streaming turn")
+                return
+            }
+            enqueue(.followUp, text, clientTurnId)
+            accept("follow_up", requestId, clientTurnId)
+        case .getQueue(let requestId?):
+            queueReads += 1
+            pipe.handle(
+                .commandResult(command: "get_queue", requestId: requestId, success: true, data: queueJSON(), error: nil),
+                sessionId: sessionId
+            )
+        default:
+            break
+        }
+    }
+
+    /// The agent takes the oldest queued input into its run.
+    func agentTakesQueuedInput() {
+        guard !queued.isEmpty else { return }
+        let taken = queued.removeFirst()
+        queueVersion += 1
+        pipe.handle(
+            .queueItemStarted(kind: taken.kind, item: taken.item, queueVersion: queueVersion),
+            sessionId: sessionId
+        )
+    }
+
+    private func enqueue(_ kind: MessageQueueKind, _ text: String, _ clientTurnId: String) {
+        queueVersion += 1
+        queued.append(Queued(kind: kind, item: MessageQueueItem(id: clientTurnId, message: text, createdAt: 1)))
+    }
+
+    private func accept(_ command: String, _ requestId: String, _ clientTurnId: String) {
+        pipe.handle(
+            .turnAck(command: command, clientTurnId: clientTurnId, stage: .dispatched, requestId: requestId, duplicate: false),
+            sessionId: sessionId
+        )
+        pipe.handle(
+            .commandResult(command: command, requestId: requestId, success: true, data: nil, error: nil),
+            sessionId: sessionId
+        )
+    }
+
+    private func reject(_ command: String, _ requestId: String, _ error: String) {
+        pipe.handle(
+            .commandResult(command: command, requestId: requestId, success: false, data: nil, error: error),
+            sessionId: sessionId
+        )
+    }
+
+    private func queueJSON() -> JSONValue {
+        func items(_ kind: MessageQueueKind) -> JSONValue {
+            .array(queued.filter { $0.kind == kind }.map { queued in
+                .object([
+                    "id": .string(queued.item.id),
+                    "message": .string(queued.item.message),
+                    "createdAt": .number(Double(queued.item.createdAt)),
+                ])
+            })
+        }
+        return .object([
+            "version": .number(Double(queueVersion)),
+            "steering": items(.steer),
+            "followUp": items(.followUp),
+        ])
+    }
 }

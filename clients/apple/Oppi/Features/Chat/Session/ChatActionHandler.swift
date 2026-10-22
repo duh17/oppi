@@ -179,16 +179,18 @@ final class ChatActionHandler {
                 onDispatchStarted?()
 
                 do {
-                    switch busyStreamingBehavior {
-                    case .steer:
-                        try await connection.sendSteer(trimmed, attachments: queuedAttachments, clientTurnId: queueTurnId, sessionIdOverride: sessionId, onAckStage: { stage in
-                            self.updateSendAckStage(stage)
-                        })
-                    case .followUp:
-                        try await connection.sendFollowUp(trimmed, attachments: queuedAttachments, clientTurnId: queueTurnId, sessionIdOverride: sessionId, onAckStage: { stage in
-                            self.updateSendAckStage(stage)
-                        })
-                    }
+                    // `isBusy` is this chat's cached status, so the turn may end
+                    // before the server sees this send. A prompt with a streaming
+                    // behavior is steered or queued while the turn streams and
+                    // prompted normally once it ended, where a bare steer or
+                    // follow_up would be refused. Either way the queue update below replaces
+                    // the optimistic item with the server's queue, which holds it
+                    // only when queued, and the server paints the user row (classic:
+                    // `queue_item_started` when queued, `message_end` when prompted;
+                    // durable: the replica's committed user entry).
+                    try await connection.sendPrompt(trimmed, attachments: queuedAttachments, streamingBehavior: busyStreamingBehavior, clientTurnId: queueTurnId, sessionIdOverride: sessionId, onAckStage: { stage in
+                        self.updateSendAckStage(stage)
+                    })
                     self.clearUnconfirmedTurn(clientTurnId: queueTurnId)
                     onSendSucceeded?()
                     let queueStore = connection.messageQueueStore

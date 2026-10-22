@@ -889,6 +889,8 @@ enum EventFlowTimelineItemKind {
     case toolCall
 }
 
+/// An idle prompt or a busy steer / follow-up. All three go out as `prompt`
+/// frames; the busy ones carry their streaming behavior.
 enum EventFlowAckCommand: CaseIterable {
     case prompt
     case steer
@@ -902,15 +904,16 @@ enum EventFlowAckCommand: CaseIterable {
         }
     }
 
-    func send(using connection: ServerConnection, text: String) async throws {
+    var behavior: StreamingBehavior? {
         switch self {
-        case .prompt:
-            try await connection.sendPrompt(text)
-        case .steer:
-            try await connection.sendSteer(text)
-        case .followUp:
-            try await connection.sendFollowUp(text)
+        case .prompt: return nil
+        case .steer: return .steer
+        case .followUp: return .followUp
         }
+    }
+
+    func send(using connection: ServerConnection, text: String) async throws {
+        try await connection.sendPrompt(text, streamingBehavior: behavior)
     }
 }
 
@@ -919,19 +922,17 @@ struct EventFlowAckRequest {
     let command: String
     let requestId: String?
     let clientTurnId: String?
+    let streamingBehavior: StreamingBehavior?
 }
 
 func extractEventFlowAckRequest(from message: ClientMessage) -> EventFlowAckRequest? {
-    switch message {
-    case .prompt(_, _, _, let requestId, let clientTurnId):
-        return EventFlowAckRequest(command: "prompt", requestId: requestId, clientTurnId: clientTurnId)
-    case .steer(_, _, let requestId, let clientTurnId):
-        return EventFlowAckRequest(command: "steer", requestId: requestId, clientTurnId: clientTurnId)
-    case .followUp(_, _, let requestId, let clientTurnId):
-        return EventFlowAckRequest(command: "follow_up", requestId: requestId, clientTurnId: clientTurnId)
-    default:
-        return nil
-    }
+    guard case .prompt(_, _, let behavior, let requestId, let clientTurnId) = message else { return nil }
+    return EventFlowAckRequest(
+        command: "prompt",
+        requestId: requestId,
+        clientTurnId: clientTurnId,
+        streamingBehavior: behavior
+    )
 }
 
 @MainActor

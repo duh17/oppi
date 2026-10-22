@@ -1063,7 +1063,8 @@ struct ServerConnectionTests {
                     Issue.record("Expected prompt/steer/follow_up message")
                     return
                 }
-                #expect(sent.command == command.rawValue)
+                #expect(sent.command == "prompt")
+                #expect(sent.streamingBehavior == command.behavior)
                 #expect(sent.clientTurnId != nil)
                 sentRequestId = sent.requestId
 
@@ -1360,7 +1361,7 @@ struct ServerConnectionTests {
             } catch let error as SendAckError {
                 switch error {
                 case .rejected(let rejectedCommand, let reason):
-                    #expect(rejectedCommand == command.rawValue)
+                    #expect(rejectedCommand == "prompt")
                     #expect(reason == "rejected-by-test")
                 default:
                     Issue.record("Expected rejected error, got \(error)")
@@ -1655,6 +1656,8 @@ struct ServerConnectionTests {
     }
 }
 
+/// An idle prompt or a busy steer / follow-up. All three go out as `prompt`
+/// frames; the busy ones carry their streaming behavior.
 private enum AckCommand: CaseIterable {
     case prompt
     case steer
@@ -1668,29 +1671,22 @@ private enum AckCommand: CaseIterable {
         }
     }
 
-    func send(using connection: ServerConnection, text: String) async throws {
+    var behavior: StreamingBehavior? {
         switch self {
-        case .prompt:
-            try await connection.sendPrompt(text)
-        case .steer:
-            try await connection.sendSteer(text)
-        case .followUp:
-            try await connection.sendFollowUp(text)
+        case .prompt: return nil
+        case .steer: return .steer
+        case .followUp: return .followUp
         }
+    }
+
+    func send(using connection: ServerConnection, text: String) async throws {
+        try await connection.sendPrompt(text, streamingBehavior: behavior)
     }
 }
 
-private func extractAckRequest(from message: ClientMessage) -> (command: String, requestId: String?, clientTurnId: String?)? {
-    switch message {
-    case .prompt(_, _, _, let requestId, let clientTurnId):
-        return ("prompt", requestId, clientTurnId)
-    case .steer(_, _, let requestId, let clientTurnId):
-        return ("steer", requestId, clientTurnId)
-    case .followUp(_, _, let requestId, let clientTurnId):
-        return ("follow_up", requestId, clientTurnId)
-    default:
-        return nil
-    }
+private func extractAckRequest(from message: ClientMessage) -> (command: String, requestId: String?, clientTurnId: String?, streamingBehavior: StreamingBehavior?)? {
+    guard case .prompt(_, _, let behavior, let requestId, let clientTurnId) = message else { return nil }
+    return ("prompt", requestId, clientTurnId, behavior)
 }
 
 private func makeGetCommandsPayload(

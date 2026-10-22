@@ -218,11 +218,10 @@ struct ChatActionHandlerReconnectTests {
         let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         connection._sendMessageForTesting = { message in
-            if case .steer(_, _, let requestId, let clientTurnId) = message,
-               let requestId, let clientTurnId {
+            if case .prompt(_, _, .steer?, let requestId?, let clientTurnId?) = message {
                 pipe.handle(
                     .turnAck(
-                        command: "steer",
+                        command: "prompt",
                         clientTurnId: clientTurnId,
                         stage: .dispatched,
                         requestId: requestId,

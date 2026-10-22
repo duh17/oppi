@@ -16,7 +16,8 @@ struct ServerConnectionSendAckTests {
                     Issue.record("Expected prompt/steer/follow_up message")
                     return
                 }
-                #expect(sent.command == command.rawValue)
+                #expect(sent.command == "prompt")
+                #expect(sent.streamingBehavior == command.behavior)
                 #expect(sent.clientTurnId != nil)
                 sentRequestId = sent.requestId
 
@@ -296,7 +297,7 @@ struct ServerConnectionSendAckTests {
             } catch let error as SendAckError {
                 switch error {
                 case .rejected(let rejectedCommand, let reason):
-                    #expect(rejectedCommand == command.rawValue)
+                    #expect(rejectedCommand == "prompt")
                     #expect(reason == "rejected-by-test")
                 default:
                     Issue.record("Expected rejected error, got \(error)")
@@ -324,10 +325,10 @@ struct ServerConnectionSendAckTests {
                 try await command.send(using: conn, text: "hello")
                 Issue.record("Expected \(command.rawValue) timeout")
             } catch let error as TurnSendUnconfirmedError {
-                #expect(error.command == command.rawValue)
+                #expect(error.command == "prompt")
                 #expect(sentTurnIds == [error.clientTurnId])
                 if case .timeout(let timedOutCommand)? = error.underlying as? SendAckError {
-                    #expect(timedOutCommand == command.rawValue)
+                    #expect(timedOutCommand == "prompt")
                 } else {
                     Issue.record("Expected underlying ack timeout, got \(error.underlying)")
                 }
