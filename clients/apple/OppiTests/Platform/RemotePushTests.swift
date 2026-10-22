@@ -376,8 +376,8 @@ struct PushSendPermissionTests {
         )
     }
 
-    /// One connection's registration with a server, as `register()` runs it: the one at
-    /// localhost, or `otherServer`.
+    /// One connection's registration with a server whose push is on, as `register()` runs
+    /// it: the one at localhost, or `otherServer`.
     private func connect(
         deviceId: String = "d_phone",
         server: URL = URL(string: "http://localhost:7749")!,
@@ -387,9 +387,11 @@ struct PushSendPermissionTests {
             environment: OppiClientEnvironment(baseURL: server, bearerToken: "sk_test"),
             configuration: configuration
         )
+        let id = server == Self.otherServer ? otherServerId : serverId
+        PushRegistration.setEnabled(true, serverId: id)
         try await PushRegistration.shared.register(
             api: api,
-            serverId: server == Self.otherServer ? otherServerId : serverId,
+            serverId: id,
             deviceId: deviceId,
             relay: relay,
             environment: .sandbox,
@@ -423,6 +425,7 @@ struct PushSendPermissionTests {
             BackendProtocol.backend = nil
             PushRelayRegistrationStore.delete(relay: relay, environment: .sandbox)
             for server in [serverId, otherServerId] {
+                PushRegistration.setEnabled(false, serverId: server)
                 PushSendTokenStore.delete(serverId: server)
                 for record in PushSharedStore.allKeys() where record.serverId == server {
                     if let keyId = try? record.keyId { PushSharedStore.deleteKey(keyId: keyId) }
@@ -734,7 +737,8 @@ struct PushSendPermissionTests {
 
     /// Another server is minting on the registration when the last server holding a token on
     /// it turns push off: the registration stays for it.
-    @Test func turningPushOffWhileAnotherServerMintsKeepsTheRegistration() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func turningPushOffWhileAnotherServerMintsKeepsTheRegistration() async throws {
         try await withBackend {
             try storeRelayRegistration("r_A", appAttestKeyId: ReinstalledAppAttest.newKey)
             try await connect()
@@ -749,6 +753,27 @@ struct PushSendPermissionTests {
             #expect(backend.deletedPermissions == ["p_1"])
             #expect(backend.sentTokens.last == "osp1.r_A.p_2.secret")
             #expect(PushRelayRegistrationStore.load(relay: relay, environment: .sandbox)?.registrationId == "r_A")
+        }
+    }
+
+    /// A connection's registration is still minting when the person turns push off: it must
+    /// not go on to give the server a token the toggle says it does not have.
+    @Test(.timeLimit(.minutes(1)))
+    func aRegistrationStillRunningWhenPushTurnsOffLeavesNothingOn() async throws {
+        try await withBackend {
+            try storeRelayRegistration("r_A", appAttestKeyId: ReinstalledAppAttest.newKey)
+            let held = HeldAssertionAppAttest()
+            let registering = Task { try await connect(appAttest: held) }
+            await held.waitUntilHeld()
+            await disable(serverId)
+            held.release()
+            await #expect(throws: PushRegistrationError.self) { try await registering.value }
+
+            #expect(backend.sentTokens.isEmpty)
+            #expect(backend.deletedPermissions == ["p_1"])
+            #expect(!PushRegistration.isEnabled(serverId: serverId))
+            #expect(PushSendTokenStore.load(serverId: serverId) == nil)
+            #expect(PushSharedStore.allKeys().allSatisfy { $0.serverId != serverId })
         }
     }
 

@@ -220,6 +220,14 @@ final class PushRegistration {
                 )
                 return
             }
+            // Push turned off while this registration ran (a reconnect's, say): `disable`
+            // found no token to release, so this one goes too.
+            guard Self.isEnabled(serverId: serverId) else {
+                if let minted = PushRelayClient.permission(ofSendToken: sendToken) {
+                    try? await client.deletePermission(minted.permissionId, registration: registration)
+                }
+                throw PushRegistrationError.turnedOff
+            }
             // Kept before the server hears it, so a failed call below reuses it next time
             // instead of leaking it.
             try PushSendTokenStore.save(
@@ -227,6 +235,7 @@ final class PushRegistration {
                 serverId: serverId
             )
         }
+        guard Self.isEnabled(serverId: serverId) else { throw PushRegistrationError.turnedOff }
         do {
             try await sendToServer(api: api, serverId: serverId, deviceId: deviceId, relay: relay, sendToken: sendToken)
         } catch let error as APIError where mayRecoverGoneSendToken && Self.isSendTokenGone(error) {
@@ -338,6 +347,13 @@ final class PushRegistration {
             liveActivity: liveActivity,
             events: PushPlaintext.Event.allCases.map(\.rawValue)
         ))
+        guard Self.isEnabled(serverId: serverId) else {
+            // Turned off while the server heard this, maybe after `disable` told it to forget:
+            // it forgets again, and this phone keeps no key for it.
+            try? await api.deletePushRegistration()
+            PushSendTokenStore.delete(serverId: serverId)
+            throw PushRegistrationError.turnedOff
+        }
 
         // Pin: only the server whose identity this phone paired with may sign its pushes.
         guard let serverPublicKey = Data(base64URLEncoded: response.serverPublicKey),
@@ -556,6 +572,8 @@ final class PushRegistration {
 enum PushRegistrationError: Error {
     /// The server answered with an identity key other than the one pinned at pairing.
     case serverKeyMismatch
+    /// Push was turned off for the server while the registration ran.
+    case turnedOff
 }
 
 /// Body of `PUT /me/push-registration` (spec §5).
