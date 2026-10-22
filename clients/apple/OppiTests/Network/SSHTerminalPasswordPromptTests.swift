@@ -279,6 +279,27 @@ struct SSHTerminalPasswordPromptTests {
         #expect(reported == [true])
     }
 
+    @Test func aHeldRedrawParkingTheCursorAfterAnotherPanesPromptTurnsNothingOn() throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(PasswordPromptStubConnection())
+        // Never in a window, so every paint bails and only the live line could answer.
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        defer { channel.close(reason: "done") }
+        var reported: [Bool] = []
+        grid.secureInputChanged = { reported.append($0) }
+
+        channel.engine.receive(Data("$ ls\r\n".utf8))
+        grid.drawFrame()
+        #expect(!grid.isSecureTextEntry)
+
+        // Mid-update, the cursor stops right after another pane's prompt text.
+        channel.engine.receive(Data("\u{1b}[?2026h\u{1b}[5;1HPassword: ".utf8))
+        #expect(channel.engine.renderHeld)
+        grid.drawFrame()
+        #expect(!grid.isSecureTextEntry, "a held, half-drawn screen does not turn secure entry on")
+        #expect(reported.isEmpty)
+    }
+
     @Test func aSecretTypedAtAPromptDoesNotOutliveItWhenThePromptEndsWithoutReturn() async throws {
         let channel = try SSHTerminalChannel()
         channel.opened(PasswordPromptStubConnection())
