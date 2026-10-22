@@ -151,6 +151,9 @@ describe("buildSessionSummary", () => {
       filesChanged: 1,
       changedFiles: ["src/app.ts"],
       changedFilesOverflow: 3,
+      // Build 55 cannot decode a session list without these keys.
+      addedLines: 0,
+      removedLines: 0,
     });
   });
 });

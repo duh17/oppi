@@ -49,6 +49,8 @@ const TEST_SESSION: Session = {
     filesChanged: 6,
     changedFiles: ["src/main.ts", "README.md"],
     changedFilesOverflow: 4,
+    addedLines: 0,
+    removedLines: 0,
   },
   contextTokens: 2300,
   contextWindow: 200000,

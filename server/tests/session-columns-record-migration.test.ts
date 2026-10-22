@@ -380,12 +380,18 @@ describe("session_state_sessions columns-only migration", () => {
   });
 });
 
-/** What a full read returned before, minus the stored workspace name and pre-0.53 line counts. */
+/**
+ * What a full read returned before, minus the stored workspace name. Pre-0.53 line counts
+ * read back as 0, the value kept for Build 55.
+ */
 function expectedAfterMigration(legacy: Session): Session {
   const { workspaceName: _, ...session } = legacy;
   if (!session.changeStats) return session;
   const { mutatingToolCalls, filesChanged, changedFiles } = session.changeStats;
-  return { ...session, changeStats: { mutatingToolCalls, filesChanged, changedFiles } };
+  return {
+    ...session,
+    changeStats: { mutatingToolCalls, filesChanged, changedFiles, addedLines: 0, removedLines: 0 },
+  };
 }
 
 /** The table as the previous server wrote it, after the dead-schema cleanup. */

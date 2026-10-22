@@ -73,6 +73,9 @@ function buildSessionSummaryChangeStats(
     filesChanged: stats.filesChanged,
     changedFiles,
     ...(changedFilesOverflow > 0 ? { changedFilesOverflow } : {}),
+    // Build 55 requires both keys to decode a session list; see SessionChangeStats.
+    addedLines: 0,
+    removedLines: 0,
   };
 }
 

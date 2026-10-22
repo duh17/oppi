@@ -24,6 +24,13 @@ export interface SessionChangeStats {
   changedFiles: string[];
   /** Count of additional changed files not included in changedFiles sample. */
   changedFilesOverflow?: number;
+  /**
+   * Always 0, sent only for old apps. Build 55 and older decode `addedLines` and
+   * `removedLines` as required, so a session without them fails to decode and takes the
+   * whole session list with it. Remove both once Build 55 is no longer supported.
+   */
+  addedLines: 0;
+  removedLines: 0;
 }
 
 /**

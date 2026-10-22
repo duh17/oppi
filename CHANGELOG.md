@@ -157,7 +157,7 @@ Example:
 - **Client/Server:** The Live Remote Screen experiment and the Mac app's Capture window.
 - **Client:** Recovering pairings from the Keychain when Oppi's list of paired servers is missing, in the app and the share sheet, including the move of pairings saved before the shared Keychain group. After you delete and reinstall Oppi, pair your servers again.
 - **Client:** The Git bar's "touched in another session" marker. It saw another session's files only if you had opened that chat since launching Oppi, and it never saw changes made through `bash`.
-- **Protocol:** `changeStats.addedLines` and `changeStats.removedLines` on sessions, and the `chat.session_added_lines` and `chat.session_removed_lines` metrics. They were estimated from `edit` and `write` arguments and missed every other change; line counts come from Git.
+- **Protocol:** Estimated session line counts: `changeStats.addedLines` and `changeStats.removedLines` are always `0`, kept only so Build 55 can still load sessions, and the `chat.session_added_lines` and `chat.session_removed_lines` metrics are gone. They were estimated from `edit` and `write` arguments and missed every other change; line counts come from Git.
 
 ### Migration notes
 
@@ -165,7 +165,6 @@ Example:
 - **Server:** The first start opens each durable store (`$OPPI_DATA_DIR/durable/`) with pi-durable 1.4.0, which migrates its SQLite file for good: an `oppi-server` built on Pi 1.3.0 or earlier cannot open it afterwards, so durable sessions do not survive a downgrade past this release. Classic sessions are unaffected.
 - **Compatibility:** Build 55 and older show no images in chat history for user messages once the server updates, because history now refers to stored attachments; update the app together with the server.
 - **Compatibility:** Build 56 requires `oppi-server@0.53.0` and `oppi-mirror@0.53.0`; update the app and the server together. Against 0.52.0, Live Voice fails to start, read aloud and Server Metrics are hidden, push alerts can show only "You have a new notification", durable chats miss streamed cards and older pages, and **Edit with Oppi** on an extension fails.
-- **Compatibility:** Against `oppi-server@0.53.0`, Build 55 and older cannot load any session that has ever edited a file or compacted: workspace session lists and the inbox that include one fail to load, and the chat fails to open. Those builds require the removed `changeStats` line counts. Update the app and the server together.
 - **Compatibility:** After an extension has had an **Edit with Oppi** session in the last 3 days, Builds 53 and 54 cannot load that server's session list or finish pairing from an invite.
 - **Server:** Durable extensions found only by the file name `durable.ts`, or exported with `defineDurableExtension`, no longer load. Declare the entry in `package.json` and default-export the extension.
 - **Relay:** Deploy the push relay before shipping an app build with Live Activities: the app's Live Activity state upload and the server's Live Activity sends use endpoints an older relay does not have.

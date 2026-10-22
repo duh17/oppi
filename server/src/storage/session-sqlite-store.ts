@@ -998,8 +998,9 @@ function normalizeDeclaredSession(session: Session): Session {
     normalized.model = session.model;
   }
   if (session.changeStats !== undefined && session.changeStats !== null) {
-    // Known fields only: rows saved before 0.53 also hold estimated line counts
-    // and a per-file line-count map that must not reach clients.
+    // Known fields only: rows saved before 0.53 also hold estimated line counts and a
+    // per-file line-count map that must not reach clients. The line counts go out as 0
+    // for Build 55 (see `SessionChangeStats.addedLines`).
     const stats = session.changeStats;
     normalized.changeStats = {
       mutatingToolCalls: stats.mutatingToolCalls,
@@ -1009,6 +1010,8 @@ function normalizeDeclaredSession(session: Session): Session {
       ...(stats.changedFilesOverflow !== undefined
         ? { changedFilesOverflow: stats.changedFilesOverflow }
         : {}),
+      addedLines: 0,
+      removedLines: 0,
     };
   }
   if (session.contextTokens !== undefined && session.contextTokens !== null) {
