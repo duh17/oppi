@@ -570,7 +570,7 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
             schedule = loadedSchedule
             runs = loadedRuns
             if let agents {
-                agentNamesById = Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0.name) })
+                agentNamesById = Dictionary(agents.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
             }
             error = nil
         } catch {

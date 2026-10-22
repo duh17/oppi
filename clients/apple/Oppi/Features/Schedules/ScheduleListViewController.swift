@@ -176,7 +176,7 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
                 palette: palette
             )
         case .schedule(let id):
-            guard let schedule = schedules.first(where: { $0.id == id }) else { return }
+            guard let schedule = visibleSchedules.first(where: { $0.id == id }) else { return }
             let timing = schedule.trigger.scheduleScreenTiming()
             ControlScreenList.buttonRow(
                 cell,
@@ -193,7 +193,7 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
 
     private func swipeActions(at indexPath: IndexPath) -> UISwipeActionsConfiguration? {
         guard case .schedule(let id) = dataSource?.itemIdentifier(for: indexPath),
-              let schedule = schedules.first(where: { $0.id == id }) else { return nil }
+              let schedule = visibleSchedules.first(where: { $0.id == id }) else { return nil }
         let palette = palette
         let action: UIContextualAction
         switch schedule.status {
