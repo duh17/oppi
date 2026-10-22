@@ -184,16 +184,6 @@ struct TimelineReducerInvariantTests {
         #expect(itemSignatures(chunked.items) == itemSignatures(sequential.items))
         #expect(snapshot(of: chunked).toolOutputsByVisibleToolID == snapshot(of: sequential).toolOutputsByVisibleToolID)
     }
-
-    @Test func timelineHotPathCyclomaticDisableBudgets() throws {
-        for budget in timelineComplexityBudgets {
-            let cyclomaticDisableCount = try cyclomaticDisableCount(for: budget.path)
-            #expect(
-                cyclomaticDisableCount <= budget.maxCyclomaticDisables,
-                "\(budget.path) has \(cyclomaticDisableCount) cyclomatic disables (budget \(budget.maxCyclomaticDisables))"
-            )
-        }
-    }
 }
 
 private struct ReducerSnapshot: Equatable {
@@ -376,54 +366,6 @@ private func deterministicTerminalEvents() -> [AgentEvent] {
         .agentEnd(sessionId: "s1"),
         .sessionEnded(sessionId: "s1", reason: "disconnect"),
     ]
-}
-
-private struct TimelineComplexityBudget {
-    let path: String
-    let maxCyclomaticDisables: Int
-}
-
-private let timelineComplexityBudgets: [TimelineComplexityBudget] = [
-    .init(
-        path: "clients/apple/OppiCore/Runtime/TimelineReducer.swift",
-        maxCyclomaticDisables: 1
-    ),
-    .init(
-        path: "clients/apple/Oppi/Features/Chat/Output/ToolPresentationBuilder.swift",
-        maxCyclomaticDisables: 0
-    ),
-    .init(
-        path: "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift",
-        maxCyclomaticDisables: 0
-    ),
-]
-
-private func cyclomaticDisableCount(for relativePath: String) throws -> Int {
-    let projectRoot = try findProjectRoot(startingFrom: URL(filePath: #filePath))
-    let fileURL = projectRoot.appending(path: relativePath)
-    let text = try String(contentsOf: fileURL, encoding: .utf8)
-
-    return text
-        .components(separatedBy: "cyclomatic_complexity")
-        .count - 1
-}
-
-private func findProjectRoot(startingFrom url: URL) throws -> URL {
-    var candidate = url.deletingLastPathComponent()
-
-    while candidate.path != "/" {
-        let probe = candidate.appending(path: "clients/apple/OppiCore/Runtime/TimelineReducer.swift")
-        if FileManager.default.fileExists(atPath: probe.path) {
-            return candidate
-        }
-        candidate.deleteLastPathComponent()
-    }
-
-    throw NSError(
-        domain: "TimelineReducerInvariantTests",
-        code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "Could not locate project root"]
-    )
 }
 
 private func chunkEvents(_ events: [AgentEvent], widths: [Int]) -> [[AgentEvent]] {

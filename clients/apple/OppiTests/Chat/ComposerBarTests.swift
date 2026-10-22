@@ -407,53 +407,6 @@ struct ComposerBarTests {
         #expect(session.stopCallCount == 1)
     }
 
-    @Test("Feature UI code routes voice lifecycle through ComposerShared")
-    func featureUICodeRoutesVoiceLifecycleThroughComposerShared() throws {
-        let appleRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let scannedRoots = [
-            appleRoot.appending(path: "Oppi/App"),
-            appleRoot.appending(path: "Oppi/Features"),
-        ]
-        let allowedDirectCallFiles: Set<String> = [
-            "Oppi/Features/Chat/Composer/ComposerShared.swift",
-        ]
-        let bannedCalls = [".stopRecording(", ".cancelRecording("]
-        let rootPath = appleRoot.standardizedFileURL.path
-        var violations: [String] = []
-
-        for root in scannedRoots {
-            guard let enumerator = FileManager.default.enumerator(
-                at: root,
-                includingPropertiesForKeys: [.isRegularFileKey],
-                options: [.skipsHiddenFiles]
-            ) else { continue }
-
-            for case let fileURL as URL in enumerator where fileURL.pathExtension == "swift" {
-                let standardized = fileURL.standardizedFileURL
-                let fullPath = standardized.path
-                let relativePath = if fullPath.hasPrefix(rootPath + "/") {
-                    String(fullPath.dropFirst(rootPath.count + 1))
-                } else {
-                    fullPath
-                }
-                guard !allowedDirectCallFiles.contains(relativePath) else { continue }
-
-                let contents = try String(contentsOf: standardized, encoding: .utf8)
-                for bannedCall in bannedCalls where contents.contains(bannedCall) {
-                    violations.append("\(relativePath) uses \(bannedCall)")
-                }
-            }
-        }
-
-        #expect(
-            violations.isEmpty,
-            "UI code must use ComposerShared.finishOwnedVoiceInputBeforeSubmit/cancelOwnedVoiceInput: \(violations.joined(separator: ", "))"
-        )
-    }
-
     @Test("ComposerShared prefers live transcript over stale stored text during dictation")
     func currentComposerTextPrefersLiveTranscript() {
         let displayText = ComposerShared.currentComposerText(

@@ -84,6 +84,31 @@ const IOS_RUNTIME_UI_FREE_FILES = [
   "clients/apple/OppiCore/Runtime/DeltaCoalescer.swift",
 ];
 
+// Feature UI starts and ends dictation only through ComposerShared, which keeps keyboard
+// restore, rollback, and ownership identity in one place.
+const IOS_VOICE_LIFECYCLE_GUARDED_PREFIXES = [
+  "clients/apple/Oppi/App/",
+  "clients/apple/Oppi/Features/",
+];
+const IOS_VOICE_LIFECYCLE_ALLOWED_FILES = new Set([
+  "clients/apple/Oppi/Features/Chat/Composer/ComposerShared.swift",
+]);
+
+// Cyclomatic-complexity lint disables in the timeline hot path are budgeted, not free.
+const IOS_CYCLOMATIC_DISABLE_BUDGETS = [
+  { file: "clients/apple/OppiCore/Runtime/TimelineReducer.swift", max: 1 },
+  { file: "clients/apple/Oppi/Features/Chat/Output/ToolPresentationBuilder.swift", max: 0 },
+  { file: "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift", max: 0 },
+];
+
+// Apple's SpeechAnalyzer takes its contextual-strings hint before analysis starts: setContext
+// must come before start(inputSequence:) in the on-device session's start().
+const IOS_SPEECH_CONTEXT_ORDER = {
+  file: "clients/apple/Oppi/Core/Services/AppleOnDeviceVoiceProvider.swift",
+  sliceStart: "func start() async throws -> VoiceSessionStartTimings {",
+  sliceEnd: "func stop() async {",
+};
+
 const IOS_VIEW_LAYER_PATH_PREFIXES = [
   "clients/apple/Oppi/Core/Views/",
   "clients/apple/Oppi/Features/Chat/Timeline/",
@@ -1072,6 +1097,17 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
     }
     const checks = [
       {
+        rule: "ios-voice-lifecycle-owner",
+        pattern: /\.\s*(?:stopRecording|cancelRecording)\s*\(/,
+        allowed:
+          !IOS_VOICE_LIFECYCLE_GUARDED_PREFIXES.some((prefix) => file.startsWith(prefix)) ||
+          IOS_VOICE_LIFECYCLE_ALLOWED_FILES.has(file),
+        reason:
+          "Feature UI must not call stopRecording/cancelRecording on the voice manager directly.",
+        remediation:
+          "Route the lifecycle call through ComposerShared (for example cancelVoiceInputOnDismiss or handleKeyboardRestore).",
+      },
+      {
         rule: "ios-browser-system-open-owner",
         pattern: /\bUIApplication\s*\.\s*shared\s*\.\s*open\s*\(/,
         allowed: IOS_SYSTEM_URL_OPEN_ALLOWED_FILES.has(file),
@@ -1167,6 +1203,65 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
           reason: `OppiCore non-adapter files must not import ${framework}.`,
           remediation:
             "Move UI, device, trust-delegate, notification, audio, or rendering code into OppiCore/PlatformAdapters/** or an app-specific adapter under Oppi/** or OppiMac/**.",
+        }),
+      );
+    }
+  }
+
+  for (const { file, max } of IOS_CYCLOMATIC_DISABLE_BUDGETS) {
+    if (!candidateSet.has(file) && files) {
+      continue;
+    }
+    const parsed = readSwiftSource(repoRoot, file);
+    if (!parsed) {
+      violations.push(
+        makeIosViolation({
+          rule: "ios-cyclomatic-disable-budget",
+          file,
+          line: 1,
+          column: 1,
+          reason: "A budgeted timeline hot-path file is missing.",
+          remediation:
+            "Update IOS_CYCLOMATIC_DISABLE_BUDGETS in server/scripts/architecture-layer-rules.mjs for the moved or renamed file.",
+        }),
+      );
+      continue;
+    }
+    const disables = parsed.source.split("cyclomatic_complexity").length - 1;
+    if (disables > max) {
+      violations.push(
+        makeIosViolation({
+          rule: "ios-cyclomatic-disable-budget",
+          file,
+          line: 1,
+          column: 1,
+          reason: `${file} has ${disables} cyclomatic_complexity disables (budget ${max}).`,
+          remediation:
+            "Split the function instead of disabling the complexity lint, or raise the budget deliberately in IOS_CYCLOMATIC_DISABLE_BUDGETS.",
+        }),
+      );
+    }
+  }
+
+  if (!files || candidateSet.has(IOS_SPEECH_CONTEXT_ORDER.file)) {
+    const parsed = readSwiftSource(repoRoot, IOS_SPEECH_CONTEXT_ORDER.file);
+    const startIndex = parsed?.stripped.indexOf(IOS_SPEECH_CONTEXT_ORDER.sliceStart) ?? -1;
+    const endIndex =
+      startIndex < 0 ? -1 : parsed.stripped.indexOf(IOS_SPEECH_CONTEXT_ORDER.sliceEnd, startIndex);
+    const body = endIndex < 0 ? null : parsed.stripped.slice(startIndex, endIndex);
+    const setContextAt = body?.indexOf("setContext(") ?? -1;
+    const analysisStartAt = body?.indexOf("start(inputSequence:") ?? -1;
+    if (setContextAt < 0 || analysisStartAt < 0 || setContextAt > analysisStartAt) {
+      violations.push(
+        makeIosViolation({
+          rule: "ios-speech-context-before-start",
+          file: IOS_SPEECH_CONTEXT_ORDER.file,
+          line: 1,
+          column: 1,
+          reason:
+            "The on-device dictation session must call SpeechAnalyzer.setContext before start(inputSequence:), or the hint phrases are not used.",
+          remediation:
+            "Keep setContext ahead of start(inputSequence:) inside AppleOnDeviceVoiceProvider's start(); if the function was renamed, update IOS_SPEECH_CONTEXT_ORDER.",
         }),
       );
     }

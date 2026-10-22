@@ -1000,4 +1000,90 @@ describe("Mac architecture layer rules", () => {
     }
   });
 
+  it("keeps dictation lifecycle calls in ComposerShared", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-voice-lifecycle-"));
+    try {
+      const forbidden = [
+        "clients/apple/Oppi/Features/QuickSession/QuickSessionModel.swift",
+        "clients/apple/Oppi/App/OppiApp.swift",
+      ];
+      for (const file of forbidden) {
+        write(join(repoRoot, file), "func end() async { await manager.cancelRecording() }\n");
+      }
+      write(
+        join(repoRoot, "clients/apple/Oppi/Features/Chat/Composer/ComposerShared.swift"),
+        "func end() async { _ = await manager.stopRecording() }\n",
+      );
+      write(
+        join(repoRoot, "clients/apple/Oppi/Core/Services/VoiceInputManager.swift"),
+        "func cancelRecording() async {}\n// manager.stopRecording()\n",
+      );
+      const violations = findIosLayerViolations(repoRoot).filter(
+        (v) => v.rule === "ios-voice-lifecycle-owner",
+      );
+      expect(violations.map((v) => v.file).sort()).toEqual(forbidden.sort());
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("budgets cyclomatic-complexity disables in the timeline hot path", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-cyclomatic-"));
+    try {
+      const disable = "// swiftlint:disable cyclomatic_complexity\n";
+      write(
+        join(repoRoot, "clients/apple/OppiCore/Runtime/TimelineReducer.swift"),
+        disable.repeat(2),
+      );
+      write(
+        join(repoRoot, "clients/apple/Oppi/Features/Chat/Output/ToolPresentationBuilder.swift"),
+        disable,
+      );
+      write(
+        join(repoRoot, "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift"),
+        "struct Row {}\n",
+      );
+      const violations = findIosLayerViolations(repoRoot).filter(
+        (v) => v.rule === "ios-cyclomatic-disable-budget",
+      );
+      expect(violations.map((v) => v.file).sort()).toEqual([
+        "clients/apple/Oppi/Features/Chat/Output/ToolPresentationBuilder.swift",
+        "clients/apple/OppiCore/Runtime/TimelineReducer.swift",
+      ]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("requires the on-device dictation session to set its context before starting analysis", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-speech-context-"));
+    const file = "clients/apple/Oppi/Core/Services/AppleOnDeviceVoiceProvider.swift";
+    const session = (body: string) =>
+      `final class Session {\n  func start() async throws -> VoiceSessionStartTimings {\n${body}\n  }\n  func stop() async {}\n}\n`;
+    try {
+      write(
+        join(repoRoot, file),
+        session(
+          "    try await analyzer.setContext(context)\n    try await analyzer.start(inputSequence: inputs)",
+        ),
+      );
+      const ordered = findIosLayerViolations(repoRoot).filter(
+        (v) => v.rule === "ios-speech-context-before-start",
+      );
+      expect(ordered).toEqual([]);
+
+      write(
+        join(repoRoot, file),
+        session(
+          "    try await analyzer.start(inputSequence: inputs)\n    try await analyzer.setContext(context)",
+        ),
+      );
+      const reversed = findIosLayerViolations(repoRoot).filter(
+        (v) => v.rule === "ios-speech-context-before-start",
+      );
+      expect(reversed.map((v) => v.file)).toEqual([file]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
 });

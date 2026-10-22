@@ -16,20 +16,6 @@ struct DictationHintWiringTests {
         #expect(phrases.last == "Hint99")
     }
 
-    @Test func onDeviceSessionSetsContextBeforeStart() throws {
-        let source = try appleSource("Oppi/Core/Services/AppleOnDeviceVoiceProvider.swift")
-        let body = try sourceSlice(
-            source,
-            start: "func start() async throws -> VoiceSessionStartTimings {",
-            end: "func stop() async {"
-        )
-        #expect(body.contains("setContext("))
-        #expect(body.contains("start(inputSequence:"))
-        let setContext = try #require(body.range(of: "setContext(")?.lowerBound)
-        let start = try #require(body.range(of: "start(inputSequence:")?.lowerBound)
-        #expect(setContext < start)
-    }
-
     @Test func onDeviceClassicTakeGetsDictionaryHintsWithoutServerConsent() async throws {
         resetHintPreferences()
         defer {
@@ -855,29 +841,4 @@ private func dismissQuickSessionComposer(
         manager: manager,
         matching: takeIdentity
     )
-}
-
-private func appleSource(_ relativePath: String) throws -> String {
-    let sourceURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: relativePath)
-    return try String(contentsOf: sourceURL, encoding: .utf8)
-}
-
-private func sourceSlice(_ source: String, start: String, end: String) throws -> String {
-    guard let startRange = source.range(of: start) else {
-        Issue.record("Missing source start \(start)")
-        throw SourceSliceError.missingMarker(start)
-    }
-    guard let endRange = source.range(of: end, range: startRange.upperBound..<source.endIndex) else {
-        Issue.record("Missing source end \(end)")
-        throw SourceSliceError.missingMarker(end)
-    }
-    return String(source[startRange.lowerBound..<endRange.lowerBound])
-}
-
-private enum SourceSliceError: Error {
-    case missingMarker(String)
 }
