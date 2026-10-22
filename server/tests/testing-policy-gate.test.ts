@@ -108,7 +108,11 @@ describe("testing policy gate coherence", () => {
   });
 
   it("caps server test worker fan-out for nested subprocesses", () => {
-    expect(vitestConfig.test?.maxWorkers).toBe(4);
+    // Default 8; OPPI_VITEST_MAX_WORKERS may only lower it on a busy host.
+    const workers = Number(vitestConfig.test?.maxWorkers);
+    expect(Number.isInteger(workers)).toBe(true);
+    expect(workers).toBeGreaterThanOrEqual(1);
+    expect(workers).toBeLessThanOrEqual(8);
   });
 
   it("keeps explicit Vitest exclusions pointed at existing test files", () => {

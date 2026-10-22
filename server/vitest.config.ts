@@ -6,7 +6,10 @@ export default defineConfig({
     testTimeout: 10_000,
     // CLI tests launch child processes; cap file workers so host-core fan-out does
     // not starve nested subprocesses or the concurrent Apple pre-push lane.
-    maxWorkers: 4,
+    // 8 because the CLI suite is split into several files that overlap: at 4 workers the
+    // full suite took 192 s (cli.test.ts alone 181 s); the 4-file split at 8 workers took
+    // 108 s with 5838/5838 passing. Set OPPI_VITEST_MAX_WORKERS to lower it on a busy host.
+    maxWorkers: Number(process.env.OPPI_VITEST_MAX_WORKERS ?? 8),
     // Build the CLI once in an invocation-local directory so parallel test files or
     // external release builds cannot mutate the executable and docs under test.
     globalSetup: ["./vitest.global-setup.ts"],
