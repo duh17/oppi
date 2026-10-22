@@ -201,8 +201,25 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         return nil
     }
 
-    /// The detail column is the screen in front; the sidebar is the list beside it.
-    override var childForStatusBarStyle: UIViewController? { detailStack }
+    /// The detail column chooses the status bar only while it is the whole
+    /// screen; with the sidebar showing, the bar sits over the app's own list.
+    override var childForStatusBarStyle: UIViewController? {
+        shownDisplayMode == .secondaryOnly ? detailStack : nil
+    }
+
+    /// The columns showing, as of the last change UIKit reported.
+    private var shownDisplayMode = UISplitViewController.DisplayMode.automatic
+
+    private func columnsShown(_ mode: UISplitViewController.DisplayMode) {
+        guard mode != shownDisplayMode else { return }
+        shownDisplayMode = mode
+        setNeedsStatusBarAppearanceUpdate()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        columnsShown(displayMode)
+    }
 
     override func updateProperties() {
         super.updateProperties()
@@ -239,6 +256,7 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         _ svc: UISplitViewController,
         willChangeTo displayMode: UISplitViewController.DisplayMode
     ) {
+        columnsShown(displayMode)
         let visibility: SplitColumnVisibility = displayMode == .secondaryOnly ? .detailOnly : .all
         guard visibility != appliedVisibility, visibility != navigation.splitColumnVisibility else { return }
         appliedVisibility = visibility

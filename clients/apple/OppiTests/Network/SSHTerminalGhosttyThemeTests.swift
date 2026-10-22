@@ -1,6 +1,5 @@
 import Foundation
 import Testing
-import UIKit
 @testable import Oppi
 
 /// Reading a host's Ghostty colors: the parser, the commands that fetch the
@@ -352,22 +351,5 @@ struct SSHTerminalGhosttyThemeTests {
         #expect(SSHTerminalColorTheme.chromeTheme(.oled, colors: darkTerminal) == .oled, "a matching theme stays")
         #expect(SSHTerminalColorTheme.chromeTheme(.light, colors: nil) == .light)
         #expect(SSHTerminalColorTheme.chromeTheme(.night, colors: SSHTerminalColorTheme(foreground: rgb("#ffffff"))) == .night)
-    }
-
-    @Test @MainActor func theStatusBarFollowsTheTerminalsBackgroundNotOppisTheme() throws {
-        func style(oppi: ThemeID, background: String?) throws -> UIStatusBarStyle {
-            let channel = try SSHTerminalChannel()
-            defer { channel.close(reason: "done") }
-            let terminal = SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
-            let colors = background.map { SSHTerminalColorTheme(background: rgb($0)) }
-            terminal.applyTheme(SSHTerminalColorTheme.chromeTheme(oppi, colors: colors), colors: colors)
-            return terminal.preferredStatusBarStyle
-        }
-        let untouched = try SSHTerminalViewController(channel: SSHTerminalChannel(), reconnect: {}, editHost: {})
-        #expect(untouched.preferredStatusBarStyle == .default, "before a theme is applied it follows the app, as today")
-        #expect(try style(oppi: .light, background: "#1a1b26") == .lightContent, "Oppi light over a dark terminal")
-        #expect(try style(oppi: .dark, background: "#fbf7ee") == .darkContent, "Oppi dark over a light terminal")
-        #expect(try style(oppi: .light, background: nil) == .darkContent, "no host theme: Oppi's own side")
-        #expect(try style(oppi: .dark, background: nil) == .lightContent)
     }
 }

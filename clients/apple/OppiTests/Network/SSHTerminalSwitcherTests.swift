@@ -15,6 +15,30 @@ private final class QuietConnection: SSHTerminalConnection {
     func cancel() async {}
 }
 
+/// A host that answers the Ghostty reads with one theme, or fails them all.
+private final class ThemedConnection: SSHTerminalConnection {
+    let themeName: String?
+    let background: String
+    init(themeName: String? = nil, background: String = "#000000") {
+        self.themeName = themeName
+        self.background = background
+    }
+    func close() {}
+    func send(_ bytes: Data) async throws {}
+    func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {}
+    func run(_ command: String, input: Data) async throws -> SSHExecResult {
+        if let themeName, command == SSHTerminalGhosttyRemote.configCommand() {
+            return SSHExecResult(output: Data("theme = \(themeName)\n".utf8), errorOutput: Data(), exitStatus: 0)
+        }
+        if let themeName, command == SSHTerminalGhosttyRemote.themeCommand(themeName) {
+            return SSHExecResult(output: Data("background = \(background)\n".utf8), errorOutput: Data(), exitStatus: 0)
+        }
+        throw SSHConnectionError.commandRequestRejected
+    }
+    func checkAlive() async throws {}
+    func cancel() async {}
+}
+
 /// Saved hosts and passwords for a test: its own defaults suite and an
 /// in-memory keychain, so nothing reaches the app's real store.
 private struct IsolatedProfiles {
@@ -516,5 +540,111 @@ struct SSHTerminalSwitcherTests {
         terminal.updatePropertiesIfNeeded()
         window.layoutIfNeeded()
         #expect(switcher.isHidden)
+    }
+
+    // MARK: Host colors follow the terminal shown
+
+    private func rgb(_ hex: String) -> SSHTerminalRGB { SSHTerminalRGB(hex: hex)! }
+
+    /// What a past connect to `id` left behind, for the appearance the app has now.
+    private func seedColors(_ id: UUID, background: String) {
+        let dark = ThemeRuntimeState.currentThemeID().preferredColorScheme != .light
+        SSHTerminalColorStore().cache(
+            SSHTerminalColorResolution(
+                choice: .host, theme: SSHTerminalColorTheme(name: "seeded", background: rgb(background)), missing: nil, dark: dark
+            ),
+            for: id
+        )
+    }
+
+    private func cachedBackground(_ id: UUID) -> SSHTerminalRGB? {
+        SSHTerminalColorStore().cached(for: id, choice: .host)?.theme?.background
+    }
+
+    @discardableResult
+    private func adopt(_ registry: SSHTerminalRegistry, _ profile: SSHTerminalProfile, _ connection: ThemedConnection) throws -> SSHTerminalChannel {
+        let channel = try SSHTerminalChannel()
+        channel.opened(connection)
+        registry.adopt(channel, profile: profile, folder: nil, folderCommand: nil, queue: SSHTerminalEventQueue())
+        return channel
+    }
+
+    private func settle(_ terminal: SSHTerminalViewController) async throws {
+        for _ in 0..<4 {
+            await Task.yield()
+            terminal.view.setNeedsLayout()
+            terminal.updatePropertiesIfNeeded()
+            terminal.view.layoutIfNeeded()
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        terminal.updatePropertiesIfNeeded()
+    }
+
+    @Test func switchingToAnotherHostPaintsThatHostsColorsAndLeavesTheFirstHostsCacheAlone() async throws {
+        let registry = makeRegistry()
+        let session = SSHTerminalConnectSession(registry: registry)
+        let hostA = SSHTerminalProfile(host: "colors-a.invalid", username: "alice")
+        let hostB = SSHTerminalProfile(host: "colors-b.invalid", username: "bob")
+        seedColors(hostA.id, background: "#112233")
+        seedColors(hostB.id, background: "#223344")
+        let channelA = try adopt(registry, hostA, ThemedConnection())
+        // Host B answers a re-read with a third theme, so each stage is told apart.
+        try adopt(registry, hostB, ThemedConnection(themeName: "fresh", background: "#334455"))
+        session.show(try #require(registry.terminal(for: hostA.id)))
+        let terminal = SSHTerminalViewController(
+            channel: channelA, reconnect: {}, editHost: {}, hostLabel: "alice@colors-a", session: session
+        )
+        let window = try mount(terminal)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            closeEverything(registry)
+            SSHTerminalColorStore().forget(hostA.id)
+            SSHTerminalColorStore().forget(hostB.id)
+        }
+        try await settle(terminal)
+        #expect(terminal.view.backgroundColor == UIColor(rgb("#112233")), "the opening host paints its own cached theme")
+
+        session.show(try #require(registry.terminal(for: hostB.id)))
+        terminal.setNeedsUpdateProperties()
+        terminal.updatePropertiesIfNeeded()
+        #expect(terminal.view.backgroundColor == UIColor(rgb("#223344")), "host B starts from B's cache, not A's")
+        #expect(cachedBackground(hostA.id) == rgb("#112233"))
+
+        // B's re-read lands under B's id, and A's cache is still A's.
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { cachedBackground(hostB.id) == rgb("#334455") })
+        try await settle(terminal)
+        #expect(terminal.view.backgroundColor == UIColor(rgb("#334455")))
+        #expect(cachedBackground(hostA.id) == rgb("#112233"))
+    }
+
+    @Test func theStatusBarFollowsTheTerminalsBackgroundNotOppisTheme() async throws {
+        let original = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(original) }
+        let cases: [(oppi: ThemeID, background: String, style: UIStatusBarStyle)] = [
+            (.light, "#1a1b26", .lightContent), // Oppi light over a dark terminal
+            (.dark, "#fbf7ee", .darkContent), // Oppi dark over a light terminal
+            (.dark, "#1a1b26", .lightContent),
+            (.light, "#fbf7ee", .darkContent),
+        ]
+        for (oppi, background, style) in cases {
+            ThemeRuntimeState.setThemeID(oppi)
+            let registry = makeRegistry()
+            let session = SSHTerminalConnectSession(registry: registry)
+            let host = SSHTerminalProfile(host: "statusbar.invalid", username: "alice")
+            seedColors(host.id, background: background)
+            let channel = try adopt(registry, host, ThemedConnection())
+            session.show(try #require(registry.terminal(for: host.id)))
+            let terminal = SSHTerminalViewController(
+                channel: channel, reconnect: {}, editHost: {}, hostLabel: "alice@statusbar", session: session
+            )
+            let window = try mount(terminal)
+            try await settle(terminal)
+            #expect(terminal.preferredStatusBarStyle == style, "Oppi \(oppi) over \(background)")
+            window.isHidden = true
+            window.rootViewController = nil
+            closeEverything(registry)
+            SSHTerminalColorStore().forget(host.id)
+        }
     }
 }

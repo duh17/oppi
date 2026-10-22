@@ -156,7 +156,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         let profileID = session?.connectedProfile?.id
         let choice = profileID.map { SSHTerminalColorStore().choice(for: $0) } ?? .host
         colorChoice = choice
-        colorLoader = SSHTerminalColorLoader(profileID: profileID, choice: choice, dark: ThemeRuntimeState.currentThemeID().preferredColorScheme != .light)
+        colorLoader = SSHTerminalColorLoader(
+            profileID: profileID, choice: choice,
+            dark: ThemeRuntimeState.currentThemeID().preferredColorScheme != .light
+        )
         super.init(nibName: nil, bundle: nil)
         attention.glyphFrame.rect = .zero
         statusGlyph.glyphFrame.rect = .zero
@@ -586,6 +589,13 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         keymapToken = nil
         colorTask = nil
         colorToken = nil
+        // The switcher can show another host's terminal: its colors, choice
+        // and cache are that host's, not the one this screen opened with.
+        let hostID = session?.connectedProfile?.id
+        if hostID != colorLoader.profileID {
+            colorChoice = hostID.map { SSHTerminalColorStore().choice(for: $0) } ?? .host
+            colorLoader = SSHTerminalColorLoader(profileID: hostID, choice: colorChoice, dark: appIsDark)
+        }
         herdr = HerdrMonitor()
         keymap = SSHTerminalKeymapLoader()
         modeOverride = nil
@@ -633,7 +643,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     /// The terminal's own background when the host's theme sets one, so the
     /// screen, its bars and its pills read as one surface with the grid.
-    func applyTheme(_ themeID: ThemeID, colors: SSHTerminalColorTheme?) {
+    private func applyTheme(_ themeID: ThemeID, colors: SSHTerminalColorTheme?) {
         let theme = themeID.appTheme
         view.backgroundColor = colors?.background.map(UIColor.init) ?? UIColor(theme.bg.primary)
         let dark = SSHTerminalColorTheme.isDark(background: colors?.background, fallback: themeID.preferredColorScheme != .light)

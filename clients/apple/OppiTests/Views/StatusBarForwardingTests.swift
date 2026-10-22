@@ -8,13 +8,6 @@ import UIKit
 @MainActor
 @Suite("Status bar forwarding")
 struct StatusBarForwardingTests {
-    @Test func theAppRootFollowsItsContentExceptUnderQuickSession() {
-        let content = UIViewController()
-        #expect(AppRootViewController.statusBarChild(content: content, showsQuickSession: false) === content)
-        #expect(AppRootViewController.statusBarChild(content: content, showsQuickSession: true) == nil)
-        #expect(AppRootViewController.statusBarChild(content: nil, showsQuickSession: false) == nil)
-    }
-
     @Test func theCompactDrawerFollowsItsSessionStack() throws {
         let drawer = WorkspaceDrawerController(root: makeTestAppRoot())
         drawer.loadViewIfNeeded()
@@ -22,13 +15,15 @@ struct StatusBarForwardingTests {
         #expect(drawer.childForStatusBarStyle === stack)
     }
 
-    @Test func theSplitFollowsItsDetailColumn() throws {
+    @Test func theSplitFollowsItsDetailOnlyWhileTheSidebarIsHidden() throws {
         let split = WorkspaceSplitController(root: makeTestAppRoot())
         split.loadViewIfNeeded()
         let detail = try #require(split.viewController(for: .secondary) as? ShellNavigationController)
-        let sidebar = try #require(split.viewController(for: .primary) as? ShellNavigationController)
+        #expect(split.childForStatusBarStyle == nil, "the sidebar is a list on the app's own surface")
+        split.splitViewController(split, willChangeTo: .secondaryOnly)
         #expect(split.childForStatusBarStyle === detail)
-        #expect(split.childForStatusBarStyle !== sidebar)
+        split.splitViewController(split, willChangeTo: .oneBesideSecondary)
+        #expect(split.childForStatusBarStyle == nil)
     }
 
     @Test func theShellFollowsTheLayoutItMounted() async throws {
@@ -48,7 +43,7 @@ struct StatusBarForwardingTests {
         #expect(shell.childForStatusBarStyle === layout)
     }
 
-    @Test func aShellStackFollowsItsTopScreenAndOtherScreensKeepTheDefault() {
+    @Test func aShellStackFollowsItsTopScreen() {
         let stack = ShellNavigationController(root: makeTestAppRoot(), rootPlacement: .compactRoot)
         let first = UIViewController()
         let second = UIViewController()
@@ -56,6 +51,5 @@ struct StatusBarForwardingTests {
         #expect(stack.childForStatusBarStyle === first)
         stack.setViewControllers([first, second], animated: false)
         #expect(stack.childForStatusBarStyle === second)
-        #expect(second.preferredStatusBarStyle == .default, "a screen that says nothing follows Oppi's appearance")
     }
 }

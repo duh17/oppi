@@ -42,11 +42,7 @@ final class AppRootViewController: UIViewController {
     /// that paints its own background (the SSH terminal) can choose the clock's
     /// color. Quick Session covers the content with the app's own surface.
     override var childForStatusBarStyle: UIViewController? {
-        Self.statusBarChild(content: content, showsQuickSession: navigation.showQuickSession)
-    }
-
-    static func statusBarChild(content: UIViewController?, showsQuickSession: Bool) -> UIViewController? {
-        showsQuickSession ? nil : content
+        navigation.showQuickSession ? nil : content
     }
 
     override func viewDidLoad() {

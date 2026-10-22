@@ -14,7 +14,8 @@ final class SSHTerminalColorLoader {
     /// What the terminal paints with; nil is the app's own theme.
     var theme: SSHTerminalColorTheme? { resolution?.theme }
 
-    @ObservationIgnored private let profileID: UUID?
+    /// The host this loader reads and caches for.
+    @ObservationIgnored let profileID: UUID?
     @ObservationIgnored private let store: SSHTerminalColorStore
 
     init(profileID: UUID?, choice: SSHTerminalColorChoice, dark: Bool, store: SSHTerminalColorStore = SSHTerminalColorStore()) {
