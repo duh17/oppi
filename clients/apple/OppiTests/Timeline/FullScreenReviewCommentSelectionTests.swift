@@ -1305,7 +1305,7 @@ struct FullScreenReviewCommentSelectionTests {
         let body = NativeFullScreenDiffBody(
             document: ToolDiffDocument(
                 lines: lines,
-                filePath: "/Users/chenda/workspace/oppi/.internal/release-notes/build-51-findings.md",
+                filePath: "/Users/example/workspace/oppi/.internal/release-notes/build-51-findings.md",
                 copyText: DiffEngine.formatUnified(lines)
             ),
             palette: ThemeID.dark.palette,

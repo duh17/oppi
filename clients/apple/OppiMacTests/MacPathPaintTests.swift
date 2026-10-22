@@ -4,7 +4,7 @@ import Testing
 @Suite("Mac path paint")
 struct MacPathPaintTests {
     @Test func inspectorPathKeepsTheFilenameWhenTheDirectoryIsLong() {
-        let path = "/Users/chenda/.config/oppi/worktrees/zs1JP9sA/wt_feat-mac-app-PRz1_RnV/clients/apple/OppiMac/Session/MacChatSessionRuntimeAdapter.swift"
+        let path = "/Users/example/.config/oppi/worktrees/zs1JP9sA/wt_feat-mac-app-PRz1_RnV/clients/apple/OppiMac/Session/MacChatSessionRuntimeAdapter.swift"
         let painted = MacPathPaint.truncatedKeepingFileName(path, maxCharacters: 40)
 
         #expect(painted.hasSuffix("MacChatSessionRuntimeAdapter.swift"))

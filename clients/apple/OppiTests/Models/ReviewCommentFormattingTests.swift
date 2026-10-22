@@ -97,7 +97,7 @@ struct ReviewCommentFormattingTests {
             reference: ReviewCommentReference(
                 source: .gitDiff,
                 label: nil,
-                path: "patch: *** Begin Patch\n*** Update File: /Users/chenda/workspace/oppi/clients/apple/Oppi/Features/Chat/ChatView.swift",
+                path: "patch: *** Begin Patch\n*** Update File: /Users/example/workspace/oppi/clients/apple/Oppi/Features/Chat/ChatView.swift",
                 side: nil,
                 startLine: 612,
                 endLine: 616,
@@ -119,7 +119,7 @@ struct ReviewCommentFormattingTests {
     }
 
     @Test func reviewBlockKeepsOrdinaryWorkspacePathNormalizationUnlessVerbatimIsRequested() {
-        let absolutePath = "/Users/chenda/workspace/oppi/.pi/skills/review/references/checklist.md"
+        let absolutePath = "/Users/example/workspace/oppi/.pi/skills/review/references/checklist.md"
         let comment = ReviewComment(
             id: "c1",
             workspaceId: "w1",

@@ -220,8 +220,8 @@ struct ReviewableControlMarkdownTests {
             domain: .skills,
             targetId: "skill-review"
         )
-        let launchPath = "/Users/chenda/workspace/oppi/.pi/skills/review/SKILL.md"
-        let checklistPath = "/Users/chenda/workspace/oppi/.pi/skills/review/references/checklist.md"
+        let launchPath = "/Users/example/workspace/oppi/.pi/skills/review/SKILL.md"
+        let checklistPath = "/Users/example/workspace/oppi/.pi/skills/review/references/checklist.md"
         store.load(workspaceId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
         for (path, body) in [
             (launchPath, "Clarify the entry point."),
@@ -643,13 +643,13 @@ struct ReviewableControlMarkdownTests {
             intent: .revise,
             targetId: "skill-1",
             targetName: "codex",
-            targetPath: "/Users/chenda/workspace/agent-skills/skills/codex/SKILL.md",
+            targetPath: "/Users/example/workspace/agent-skills/skills/codex/SKILL.md",
             workspaceId: "workspace-1",
             workspaceName: "Oppi",
             userRequest: "Tighten the instructions."
         )
 
-        #expect(prompt.contains("Selected existing host file: /Users/chenda/workspace/agent-skills/skills/codex/SKILL.md"))
+        #expect(prompt.contains("Selected existing host file: /Users/example/workspace/agent-skills/skills/codex/SKILL.md"))
         #expect(prompt.contains("Canonical workspace ID: workspace-1"))
         #expect(prompt.contains("User request:\nTighten the instructions."))
         #expect(prompt.contains("stock `read`"))
@@ -685,7 +685,7 @@ struct ReviewableControlMarkdownTests {
         )
         let draftSessionId = "server-1:skills:skill-1"
         comments.load(localScopeId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
-        let path = "/Users/chenda/.pi/agent/skills/review/SKILL.md"
+        let path = "/Users/example/.pi/agent/skills/review/SKILL.md"
         #expect(comments.save(
             body: "Keep this constraint explicit.",
             request: ReviewCommentSelectionRequest(

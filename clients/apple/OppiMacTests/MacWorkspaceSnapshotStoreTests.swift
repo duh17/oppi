@@ -834,7 +834,7 @@ struct MacWorkspaceSnapshotStoreTests {
             description: nil,
             icon: .symbol("folder"),
             systemPrompt: nil,
-            hostMount: "/Users/chenda/workspace/\(id)",
+            hostMount: "/Users/example/workspace/\(id)",
             tools: nil,
             gitStatusEnabled: nil,
             runtime: .host,

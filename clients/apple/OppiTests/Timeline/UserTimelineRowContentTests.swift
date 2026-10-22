@@ -233,8 +233,8 @@ struct UserTimelineRowContentTests {
     @Test("user row keeps reloaded skill-only turns visible as /skill:name")
     func userRowKeepsReloadedSkillOnlyTurnsVisibleAsSlashCommand() throws {
         let raw = """
-        <skill name="zwift-coros-sync" location="/Users/chenda/.pi/agent/skills/zwift-coros-sync/SKILL.md">
-        References are relative to /Users/chenda/.pi/agent/skills/zwift-coros-sync.
+        <skill name="zwift-coros-sync" location="/Users/example/.pi/agent/skills/zwift-coros-sync/SKILL.md">
+        References are relative to /Users/example/.pi/agent/skills/zwift-coros-sync.
 
         # Zwift–COROS Sync
 

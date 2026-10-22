@@ -20,7 +20,7 @@ Owner wiki links can also name a real host file the Oppi server process can alre
 ```text
 [[/tmp/oppi-debug.log]]
 [[~/workspace/kypu/README.md]]
-[[/Users/chenda/workspace/kypu/src/main.go#L12-L18]]
+[[/Users/example/workspace/kypu/src/main.go#L12-L18]]
 [[file:///tmp/foo.md]]
 ```
 

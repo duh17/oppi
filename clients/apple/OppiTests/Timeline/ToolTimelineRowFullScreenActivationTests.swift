@@ -479,7 +479,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             configuration: makeTimelineToolConfiguration(
                 expandedContent: .diff(
                     lines: lines,
-                    path: "/Users/chenda/workspace/oppi/clients/apple/scripts/sim-slim.sh"
+                    path: "/Users/example/workspace/oppi/clients/apple/scripts/sim-slim.sh"
                 ),
                 copyOutputText: DiffEngine.formatUnified(lines),
                 toolNamePrefix: "edit",

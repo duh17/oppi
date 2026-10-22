@@ -14,7 +14,7 @@ struct MacWorkspaceClientTests {
               "name": "Oppi",
               "description": "Main repo",
               "icon": "folder.badge.gearshape",
-              "hostMount": "/Users/chenda/workspace/oppi",
+              "hostMount": "/Users/example/workspace/oppi",
               "createdAt": 1760000000000,
               "updatedAt": 1760000001000
             }
@@ -48,7 +48,7 @@ struct MacWorkspaceClientTests {
             "id": "ws-new",
             "name": "New Workspace",
             "description": "Created on Mac",
-            "hostMount": "/Users/chenda/workspace/new",
+            "hostMount": "/Users/example/workspace/new",
             "runtime": "host",
             "gitStatusEnabled": true,
             "createdAt": 1760000000000,
@@ -61,7 +61,7 @@ struct MacWorkspaceClientTests {
 
         #expect(response.workspace.id == "ws-new")
         #expect(response.workspace.name == "New Workspace")
-        #expect(response.workspace.hostMount == "/Users/chenda/workspace/new")
+        #expect(response.workspace.hostMount == "/Users/example/workspace/new")
     }
 
     @Test func decodesModelList() throws {
@@ -406,7 +406,7 @@ struct MacWorkspaceClientTests {
               "source": "tui",
               "path": "/tmp/pi-session.jsonl",
               "piSessionId": "pi-1",
-              "cwd": "/Users/chenda/workspace/oppi",
+              "cwd": "/Users/example/workspace/oppi",
               "name": "Import me",
               "firstMessage": "hello",
               "model": "anthropic/claude-sonnet-4-5",

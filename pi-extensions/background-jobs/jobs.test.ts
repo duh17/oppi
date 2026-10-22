@@ -241,7 +241,7 @@ describe("background pill", () => {
 		const pill = backgroundPill([
 			{
 				id: "bash-52",
-				command: "prompt_file=/Users/chenda/workspace/oppi/.pi/cursor-consults/review.prompt.md",
+				command: "prompt_file=/Users/example/workspace/oppi/.pi/cursor-consults/review.prompt.md",
 				status: "running",
 				backgrounded: true,
 				output: "line one\nline two\n",

@@ -134,7 +134,7 @@ describe("SessionEventProcessor", () => {
     processor.updateSessionFromEvent("sess-1", active, {
       type: "agent_end",
       messages: [
-        { stopReason: "error", errorMessage: "provider overloaded at /Users/chenda/secret" },
+        { stopReason: "error", errorMessage: "provider overloaded at /Users/example/secret" },
       ],
     } as never);
 
@@ -150,7 +150,7 @@ describe("SessionEventProcessor", () => {
         }),
       ]),
     );
-    expect(JSON.stringify(metrics.samples)).not.toContain("/Users/chenda/secret");
+    expect(JSON.stringify(metrics.samples)).not.toContain("/Users/example/secret");
     for (const sample of metrics.samples) {
       expect(sample.tags).not.toHaveProperty("provider");
       expect(sample.tags).not.toHaveProperty("model");
@@ -309,7 +309,7 @@ describe("SessionEventProcessor", () => {
         type: "tool_execution_start",
         toolCallId: "orphan-start",
         toolName: "read",
-        args: { path: "/Users/chenda/secret.ts" },
+        args: { path: "/Users/example/secret.ts" },
       } as never);
       processor.updateSessionFromEvent("sess-1", active, {
         type: "tool_execution_end",
@@ -363,7 +363,7 @@ describe("SessionEventProcessor", () => {
       );
       expect(toolSamples.some((sample) => sample.metric === "server.tool_duration_ms")).toBe(false);
       const serialized = JSON.stringify(toolSamples);
-      expect(serialized).not.toContain("/Users/chenda/secret.ts");
+      expect(serialized).not.toContain("/Users/example/secret.ts");
       expect(serialized).not.toContain("patched");
       expect(serialized).not.toContain("leak-me");
       expect(serialized).not.toContain("/tmp/custom-tool");

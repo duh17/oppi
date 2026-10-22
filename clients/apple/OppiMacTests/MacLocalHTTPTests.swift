@@ -5,8 +5,8 @@ import Testing
 @Suite("Mac local HTTP")
 struct MacLocalHTTPTests {
     @Test func preferredSocketPathStaysUnderDataDir() {
-        let dataDir = "/Users/chenda/.config/oppi"
-        #expect(MacLocalAPISocket.path(dataDir: dataDir) == "/Users/chenda/.config/oppi/run/oppi.sock")
+        let dataDir = "/Users/example/.config/oppi"
+        #expect(MacLocalAPISocket.path(dataDir: dataDir) == "/Users/example/.config/oppi/run/oppi.sock")
     }
 
     @Test func deepDataDirUsesBoundedTmpFallback() {

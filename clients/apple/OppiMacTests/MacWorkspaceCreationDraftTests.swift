@@ -14,7 +14,7 @@ struct MacWorkspaceCreationDraftTests {
     @Test func trimsOptionalFieldsIntoCreateRequest() throws {
         let draft = MacWorkspaceCreationDraft(
             name: "  Oppi  ",
-            hostMount: "  /Users/chenda/workspace/oppi  ",
+            hostMount: "  /Users/example/workspace/oppi  ",
             description: "  Main repo  ",
             gitStatusEnabled: false,
             runtime: .host
@@ -22,7 +22,7 @@ struct MacWorkspaceCreationDraftTests {
 
         let request = try #require(draft.request)
         #expect(request.name == "Oppi")
-        #expect(request.hostMount == "/Users/chenda/workspace/oppi")
+        #expect(request.hostMount == "/Users/example/workspace/oppi")
         #expect(request.description == "Main repo")
         #expect(request.gitStatusEnabled == false)
         #expect(request.runtime == .host)
@@ -44,7 +44,7 @@ struct MacWorkspaceCreationDraftTests {
             description: "Main repo",
             icon: .defaultValue,
             systemPrompt: nil,
-            hostMount: "/Users/chenda/workspace/oppi",
+            hostMount: "/Users/example/workspace/oppi",
             tools: nil,
             gitStatusEnabled: false,
             runtime: .host,
@@ -56,7 +56,7 @@ struct MacWorkspaceCreationDraftTests {
         let draft = MacWorkspaceCreationDraft(workspace: workspace)
 
         #expect(draft.name == "Oppi")
-        #expect(draft.hostMount == "/Users/chenda/workspace/oppi")
+        #expect(draft.hostMount == "/Users/example/workspace/oppi")
         #expect(draft.description == "Main repo")
         #expect(draft.gitStatusEnabled == false)
     }

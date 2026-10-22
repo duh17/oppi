@@ -24,7 +24,7 @@ describe("schedule run metrics", () => {
       kind: "due",
       status: "failed",
       error: new Error(
-        'Required model "ds4/deepseek-v4-flash" is not available at /Users/chenda/secret',
+        'Required model "ds4/deepseek-v4-flash" is not available at /Users/example/secret',
       ),
     });
     expect(samples).toEqual([
@@ -35,7 +35,7 @@ describe("schedule run metrics", () => {
       },
     ]);
     expect(JSON.stringify(samples)).not.toContain("deepseek");
-    expect(JSON.stringify(samples)).not.toContain("/Users/chenda/secret");
+    expect(JSON.stringify(samples)).not.toContain("/Users/example/secret");
   });
 
   it("maps a promptError that mentions release or not found to other", () => {
@@ -47,7 +47,7 @@ describe("schedule run metrics", () => {
       status: "failed",
       error: new ScheduleDispatchError(
         "other",
-        "please release the workspace; model not found at /Users/chenda/secret",
+        "please release the workspace; model not found at /Users/example/secret",
       ),
     });
     expect(samples[0]?.tags).toEqual({ status: "failed", kind: "due", reason: "other" });
@@ -61,7 +61,7 @@ describe("schedule run metrics", () => {
     expect(samples[1]?.tags?.reason).toBe("other");
     expect(JSON.stringify(samples)).not.toContain("release");
     expect(JSON.stringify(samples)).not.toContain("not found");
-    expect(JSON.stringify(samples)).not.toContain("/Users/chenda/secret");
+    expect(JSON.stringify(samples)).not.toContain("/Users/example/secret");
   });
 
   it("classifies lease loss without keeping the run id", () => {

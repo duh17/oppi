@@ -1097,14 +1097,14 @@ struct WorkspaceWikiLinkRenderingTests {
 
     @Test func givenAbsoluteHostWikiLinkWithLineAnchorThenFileCandidateDropsFragment() throws {
         let attributed = try textSegment(from: FlatSegment.build(
-            from: parseCommonMark("Open [[/Users/chenda/workspace/kypu/src/main.go#L12-L18]]"),
+            from: parseCommonMark("Open [[/Users/example/workspace/kypu/src/main.go#L12-L18]]"),
             themeID: .dark,
             workspaceID: "workspace-1"
         ))
         let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
 
         #expect(parsed.kind == .hostFile)
-        #expect(parsed.fileCandidatePath == "/Users/chenda/workspace/kypu/src/main.go")
+        #expect(parsed.fileCandidatePath == "/Users/example/workspace/kypu/src/main.go")
         #expect(parsed.lineAnchor?.range == 12...18)
     }
 

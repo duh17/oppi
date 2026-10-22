@@ -5,7 +5,7 @@ import Testing
 @Suite("Mac tool timeline chrome")
 struct MacToolTimelineChromeTests {
     private let readArgs =
-        "path: /Users/chenda/.config/oppi/worktrees/zs1JP9sA/wt_feat-mac-app-PRz1_RnV/clients/apple/OppiMac/Session/MacChatSessionRuntimeAdapter.swift, limit: 80"
+        "path: /Users/example/.config/oppi/worktrees/zs1JP9sA/wt_feat-mac-app-PRz1_RnV/clients/apple/OppiMac/Session/MacChatSessionRuntimeAdapter.swift, limit: 80"
 
     @Test func readHeaderKeepsAUsefulPathInsteadOfTheRawArgumentDump() {
         let title = MacToolTimelineChrome.collapsedHeaderDetail(
@@ -43,7 +43,7 @@ struct MacToolTimelineChromeTests {
     }
 
     @Test func skillReadUsesCompactTitle() {
-        let args = "path: /Users/chenda/.pi/agent/skills/oppi-dev/SKILL.md"
+        let args = "path: /Users/example/.pi/agent/skills/oppi-dev/SKILL.md"
         #expect(
             MacToolTimelineChrome.collapsedHeaderDetail(tool: "read", argsSummary: args)
                 == "[skill] oppi-dev"

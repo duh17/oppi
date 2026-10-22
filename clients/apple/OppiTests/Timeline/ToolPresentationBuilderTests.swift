@@ -2401,7 +2401,7 @@ struct ToolPresentationBuilderTests {
 
     @Test("expanded image read does not repeat the header path as input")
     func readImageExpandedOmitsRedundantPathInput() {
-        let path = "/Users/chenda/workspace/oppi/.internal/release-notes/artifacts/build-53-whats-new-light-v2.png"
+        let path = "/Users/example/workspace/oppi/.internal/release-notes/artifacts/build-53-whats-new-light-v2.png"
         let config = ToolPresentationBuilder.build(
             itemID: "t1", tool: "read",
             argsSummary: "path: \(path)",

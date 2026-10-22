@@ -80,7 +80,7 @@ struct InteractiveMediaInspectionTests {
     }
 
     @Test func imageReadDoesNotRepeatHeaderPath() {
-        let path = "/Users/chenda/workspace/oppi/.internal/release-notes/artifacts/build-53-whats-new-light-v2.png"
+        let path = "/Users/example/workspace/oppi/.internal/release-notes/artifacts/build-53-whats-new-light-v2.png"
         let result = ToolContentDescriptorBuilder.build(tool: "read", argsSummary: "", outputPreview: "Read image file [image/png]",
             isError: false, isDone: true,
             context: .init(args: ["path": .string(path)], fullOutput: "Read image file [image/png]"))
