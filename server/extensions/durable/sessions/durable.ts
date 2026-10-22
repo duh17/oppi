@@ -21,6 +21,7 @@ import {
   type LiveState,
   type Task,
   type TaskId,
+  type TaskRecord,
   type ToolExecutionApi,
   type ToolExecutionResult,
   type Tx,
@@ -31,6 +32,7 @@ import {
   type DurableSessionsHost,
   type SessionSender,
 } from "oppi/durable";
+import { DurableJobs } from "../background-jobs/contract.js";
 import { agentMessageEntry, type MessageOrigin } from "./agent-message.js";
 import { Subagents, ensureSubagentWidget, type Child } from "./contract.js";
 import { isLive, liveTasks } from "./wakers.js";
@@ -154,8 +156,8 @@ type Follower = {
 
 /**
  * Follows child `conversationId` round by round until it is idle with no pending wakers (its
- * background jobs not yet delivered, its own reporters), as `decide` judges. Each round waits
- * for the child to be idle (`idle`, whose error ends the follow and is returned), marks its
+ * background jobs not yet delivered, its own reporters), or with none `decide` waits for. Each
+ * round waits for the child to be idle (`idle`, whose error ends the follow and is returned), marks its
  * newest entry, reads its pending wakers, and calls `decide`, which runs its own commit and
  * calls `check` in it: "again" when the child runs or committed since the mark (a run that
  * started a job or answered, so the wakers read may be stale), else the wakers still live.
@@ -248,6 +250,49 @@ async function followChild(
   }
 }
 
+/** A background job of a child whose command still runs. */
+type RunningJob = { id: string; command: string };
+
+/**
+ * The jobs behind `wakers`, a child's live pending wakers, when every one is a background job of
+ * its own whose command still runs; else undefined. Such a job may never end (a dev server, a
+ * watcher), so `wait` returns the child's answer rather than wait for it. A reporter of the
+ * child (a subagent of its own) and a finished job whose receipt is not delivered yet each wake
+ * the child soon to answer again, so `wait` keeps following those.
+ */
+async function runningJobsOnly(
+  tx: Tx,
+  conversationId: ConversationId,
+  wakers: readonly TaskId[],
+): Promise<RunningJob[] | undefined> {
+  // Reporters first: a child without jobs has no jobs document, and a read must not create it.
+  for (const id of wakers) if ((await tx.task(id))?.kind === SESSION_REPORTER_TASK) return;
+  const jobs = (await tx.doc(DurableJobs, conversationId)).jobs;
+  const running: RunningJob[] = [];
+  for (const id of wakers) {
+    const job = jobs.find((candidate) => candidate.taskId === id);
+    if (job?.status !== "running") return undefined;
+    running.push({ id: job.id, command: job.command });
+  }
+  return running;
+}
+
+/** What `wait` and `spawn` with `wait: true` add to the answer of a child whose jobs still run. */
+function stillRunning(name: string, jobs: readonly RunningJob[], followed: boolean): string {
+  const named = jobs
+    .map(({ id, command }) => {
+      const line = command.trimStart().split("\n", 1)[0]?.trimEnd() ?? "";
+      return `job ${id} \`${line.length > 80 ? `${line.slice(0, 79)}…` : line}\``;
+    })
+    .join(", ");
+  return (
+    `[still running: ${named}. ${name} keeps running and answers again when its job ` +
+    (followed
+      ? "ends; that answer arrives as a follow-up message, so do not poll.]"
+      : "ends; wait for it again to read that answer.]")
+  );
+}
+
 const COMPLETED = { status: "terminal", outcome: { status: "completed", result: null } } as const;
 
 const SUBAGENT_TOOL = "subagent";
@@ -289,34 +334,46 @@ function aborted(signal: AbortSignal | undefined): Promise<never> {
   });
 }
 
+/** The live (pending or running) reporters of `parent` for its child `child`. */
+async function liveReporters(
+  tx: Tx,
+  parent: ConversationId,
+  child: ConversationId,
+): Promise<Array<TaskRecord<JsonValue, JsonValue, JsonValue>>> {
+  const found: Array<TaskRecord<JsonValue, JsonValue, JsonValue>> = [];
+  for (const status of ["pending", "running"] as const) {
+    let cursor;
+    do {
+      const page = await tx.scanTasks(
+        { conversationId: parent, kind: SESSION_REPORTER_TASK, status },
+        50,
+        cursor,
+      );
+      for (const task of page.items)
+        if ((task.input as ReporterInput).conversationId === child) found.push(task);
+      cursor = page.next;
+    } while (cursor);
+  }
+  return found;
+}
+
 /** The calling conversation's live reporters for `child` that have not delivered their message. */
 async function undelivered(
   api: ToolExecutionApi,
   child: ConversationId,
   context: Context,
 ): Promise<Array<{ id: TaskId; input: ReporterInput }>> {
-  return api.commit(async (tx) => {
-    const found: Array<{ id: TaskId; input: ReporterInput }> = [];
-    for (const status of ["pending", "running"] as const) {
-      let cursor;
-      do {
-        const page = await tx.scanTasks(
-          { conversationId: api.conversationId, kind: SESSION_REPORTER_TASK, status },
-          50,
-          cursor,
-        );
-        for (const task of page.items) {
-          const input = task.input as ReporterInput;
-          const phase = (task.state.checkpoint as { phase?: string } | undefined)?.phase;
-          // A reporter Stop aborted must not have its message delivered after all.
-          if (input.conversationId === child && phase === "deliver" && !task.abortRequested)
-            found.push({ id: task.id, input });
-        }
-        cursor = page.next;
-      } while (cursor);
-    }
-    return found;
-  }, context);
+  return api.commit(
+    async (tx) =>
+      (await liveReporters(tx, api.conversationId, child)).flatMap((task) => {
+        const phase = (task.state.checkpoint as { phase?: string } | undefined)?.phase;
+        // A reporter Stop aborted must not have its message delivered after all.
+        return phase === "deliver" && !task.abortRequested
+          ? [{ id: task.id, input: task.input as ReporterInput }]
+          : [];
+      }),
+    context,
+  );
 }
 
 /**
@@ -516,13 +573,15 @@ const GUIDANCE =
   "subagent manages child sessions you address by name. spawn starts one for a self-contained " +
   "task; by default it runs in the background and its answer arrives later as a follow-up " +
   "message, so do not poll. wait: true makes spawn return the answer instead, once the child " +
-  "has no background work of its own pending. agent picks a " +
+  "has no background work of its own pending other than jobs still running. agent picks a " +
   "saved Agent; model and thinking override it. send messages a child (steer by default, " +
   "followUp: true after its current answer); its answer also arrives later as a follow-up " +
   "message, as does any later answer of a child that finishes background work of its own. " +
   "wait blocks until children answered your messages and are idle with no background work of " +
   "their own pending, and returns their latest answers instead; an answer wait returns does " +
-  "not also arrive as a follow-up. stop aborts " +
+  "not also arrive as a follow-up. A child idle with only background jobs of its own still " +
+  "running (a dev server, a watcher) does not hold wait or spawn: its answer comes back with a " +
+  "note naming those jobs, and it answers again when one ends. stop aborts " +
   "a child's current work (it stays usable), list shows them. A child can spawn its own " +
   "children only when you pass allowNestedDelegation.";
 
@@ -561,29 +620,49 @@ export function createDurableSessions(
   const Reporter = defineReporter(bound);
   const SubagentWidget = defineSubagentWidget(host);
   /**
-   * Waits until `conversationId`, a child of the caller, is idle with no background work of its
-   * own pending: idle alone may be an interim answer ("still waiting on the job"), and the
-   * waker's receipt wakes it to answer again. Undefined once it is, else why not. The call's
-   * abort (the parent's Stop) ends the wait.
+   * Waits until child `name` (`conversationId`) of the caller is idle with no background work
+   * of its own pending: idle alone may be an interim answer ("still waiting on the job"), and the
+   * waker's receipt wakes it to answer again. Its `error` when it failed. Idle with only jobs of
+   * its own still running is enough, as such a job may never end: then `note` names them, for
+   * the answer the caller returns. The call's abort (the parent's Stop) ends the wait.
    */
-  const finished = (
+  const finished = async (
     api: ToolExecutionApi,
     sessions: DurableSessionsHost,
-    conversationId: ConversationId,
-    sessionId: string,
+    {
+      name,
+      conversationId,
+      sessionId,
+    }: { name: string; conversationId: ConversationId; sessionId: string },
     context: Context,
-  ): Promise<string | undefined> =>
-    followChild(
+  ): Promise<{ error?: string; note?: string }> => {
+    let note: string | undefined;
+    const error = await followChild(
       api,
       conversationId,
       {
         idle: () => sessions.waitForIdle(sessionId),
         wakers: () => sessions.pendingWakers(conversationId),
-        decide: (check) => api.commit(check, context),
+        decide: (check) =>
+          api.commit(async (tx) => {
+            note = undefined;
+            const live = await check(tx);
+            if (live === "again" || live.length === 0) return live;
+            const jobs = await runningJobsOnly(tx, conversationId, live);
+            if (!jobs) return live;
+            // A reporter that follows the child reports its next answer to the caller.
+            const followed = (await liveReporters(tx, api.conversationId, conversationId)).some(
+              (task) => !task.abortRequested,
+            );
+            note = stillRunning(name, jobs, followed);
+            return [];
+          }, context),
         signal: context.abortSignal,
       },
       context,
     );
+    return error !== undefined ? { error } : note !== undefined ? { note } : {};
+  };
   const background = { ownership: { kind: "conversation" }, background: true } as const;
 
   const subagent = defineTool({
@@ -597,7 +676,9 @@ export function createDurableSessions(
       "answer arrives later as a follow-up message too, as do a child's later answers after " +
       "background work of its own. wait (names) blocks until they answered your messages and " +
       "are idle with no background work of their own pending, and returns their latest " +
-      "answers. stop (name) aborts its current work; it stays usable. list shows every child.",
+      "answers. Neither waits for a child's own background jobs that still run once it is " +
+      "idle: its answer then ends with a note naming them. stop (name) aborts its current " +
+      "work; it stays usable. list shows every child.",
     parameters: Type.Object({
       action: Type.Union([
         Type.Literal("spawn"),
@@ -718,11 +799,7 @@ export function createDurableSessions(
                 }
                 await delivered.submitted.wait(context);
               }
-              return {
-                ids,
-                name,
-                error: await finished(api, sessions, child.conversationId, sessionId, context),
-              };
+              return { ids, name, ...(await finished(api, sessions, ids, context)) };
             }),
           );
           // Only once every child is done: an answer taken (and its report withdrawn) is in
@@ -735,7 +812,8 @@ export function createDurableSessions(
           );
           const lines = waited.map((result) =>
             result.error === undefined
-              ? `${result.name}: ${answers[idle.indexOf(result)]}`
+              ? `${result.name}: ${answers[idle.indexOf(result)]}` +
+                ("note" in result ? `\n\n${result.note}` : "")
               : `${result.name}: ${result.error}`,
           );
           const failed = waited.some((result) => result.error !== undefined);
@@ -908,10 +986,20 @@ export function createDurableSessions(
     if (settled.status !== "done" || settled.type !== "input")
       throw new Error(`Subagent ${name} (${sessionId}) did not answer: ${settled.status}`);
     // Its answer to the task may be interim, given while a job of its own runs: as `wait`.
-    const error = await finished(api, sessions, conversationId, sessionId, context);
+    const { error, note } = await finished(
+      api,
+      sessions,
+      { name, conversationId, sessionId },
+      context,
+    );
     if (error !== undefined) throw new Error(`Subagent ${name} (${sessionId}): ${error}`);
     const latest = await api.commit((tx) => latestText(tx, conversationId), context);
-    return reply(latest?.text ?? "(no answer yet)", { name, conversationId, sessionId });
+    const text = latest?.text ?? "(no answer yet)";
+    return reply(note === undefined ? text : `${text}\n\n${note}`, {
+      name,
+      conversationId,
+      sessionId,
+    });
   }
 
   return defineExtension({
@@ -948,27 +1036,10 @@ async function reportDecided(
   child: ConversationId,
   answer: EntryId,
 ): Promise<boolean> {
-  for (const status of ["pending", "running"] as const) {
-    let cursor;
-    do {
-      const page = await tx.scanTasks(
-        { conversationId: parent, kind: SESSION_REPORTER_TASK, status },
-        50,
-        cursor,
-      );
-      for (const task of page.items) {
-        const checkpoint = task.state.checkpoint as { phase?: string; answer?: EntryId };
-        if (
-          (task.input as ReporterInput).conversationId === child &&
-          checkpoint.phase === "report" &&
-          checkpoint.answer === answer
-        )
-          return true;
-      }
-      cursor = page.next;
-    } while (cursor);
-  }
-  return false;
+  return (await liveReporters(tx, parent, child)).some((task) => {
+    const checkpoint = task.state.checkpoint as { phase?: string; answer?: EntryId };
+    return checkpoint.phase === "report" && checkpoint.answer === answer;
+  });
 }
 
 /**
