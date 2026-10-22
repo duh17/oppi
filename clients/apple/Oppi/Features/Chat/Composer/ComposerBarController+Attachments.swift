@@ -28,7 +28,10 @@ extension ComposerBarController {
         let replacing = canvasReplacingAttachmentID
         // The host puts Cancel and Add to Chat on its navigation item, so the
         // bar's controller has to come with it. `.overFullScreen` keeps this
-        // bar rendering while the canvas writes its attachment back.
+        // bar rendering while the canvas writes its attachment back. The canvas
+        // dismisses itself; these closures only reset state, because a second
+        // `dismiss` here would close this bar's own presenter once the canvas
+        // is gone.
         let controller = PaperMarkupCanvasHostController.makeNavigationController(
             background: background,
             onAddToChat: { [weak self] attachment, recognizedText in
@@ -39,7 +42,6 @@ extension ComposerBarController {
                     replacingAttachmentID: replacing
                 ) ?? false
                 if accepted {
-                    self.dismiss(animated: true)
                     self.canvasBackgroundImage = nil
                     self.canvasReplacingAttachmentID = nil
                     self.applyChrome()
@@ -47,7 +49,6 @@ extension ComposerBarController {
                 return accepted
             },
             onCancel: { [weak self] in
-                self?.dismiss(animated: true)
                 self?.canvasBackgroundImage = nil
                 self?.canvasReplacingAttachmentID = nil
             }

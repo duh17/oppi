@@ -764,7 +764,9 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
         let replacing = canvasReplacingAttachmentID
         // The host puts Cancel and Add to Chat on its navigation item, so the
         // bar's controller has to come with it. `.overFullScreen` keeps this
-        // composer rendering while the canvas writes its attachment back.
+        // composer rendering while the canvas writes its attachment back. The
+        // canvas dismisses itself; these closures only reset state, because a
+        // second `dismiss` here would close this composer once the canvas is gone.
         let controller = PaperMarkupCanvasHostController.makeNavigationController(
             background: background,
             onAddToChat: { [weak self] attachment, recognizedText in
@@ -779,14 +781,12 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
                     replacingAttachmentID: replacing
                 )
                 if accepted {
-                    self.dismiss(animated: true)
                     self.canvasBackgroundImage = nil
                     self.canvasReplacingAttachmentID = nil
                 }
                 return accepted
             },
             onCancel: { [weak self] in
-                self?.dismiss(animated: true)
                 self?.canvasBackgroundImage = nil
                 self?.canvasReplacingAttachmentID = nil
             }
