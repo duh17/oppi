@@ -50,8 +50,8 @@ struct TmuxMultiplexer: SSHTerminalMultiplexer {
     /// literal one. Control characters become `-`; spaces and non-ASCII stay,
     /// because the name is a label someone reads.
     ///
-    /// tmux stores a doubled backslash for one it is given (0.9.5 and 3.8 both
-    /// do), which is only cosmetic: the same label is looked up the same way, so
+    /// tmux stores a doubled backslash for one it is given (tmux 3.8 does),
+    /// which is only cosmetic: the same label is looked up the same way, so
     /// a session is still found again after a disconnect.
     static func sanitized(_ name: String) -> String {
         var scalars = String.UnicodeScalarView()

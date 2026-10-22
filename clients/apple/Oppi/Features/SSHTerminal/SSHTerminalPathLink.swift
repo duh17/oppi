@@ -284,6 +284,18 @@ enum SSHTerminalHostFilesError: Error {
 enum SSHTerminalMenuHeader {
     static let maximumLength = 80
 
+    /// The screen's name: the title the shell set, else the host. The host
+    /// label of a folder terminal ends with the folder it was asked to open;
+    /// once the shell reports its own folder (OSC 7) that one is shown after
+    /// the name, so the requested one is dropped instead of appearing twice.
+    static func name(shellTitle: String, hostLabel: String, hostName: String?, shellFolder: String) -> String {
+        let shell = shellTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !shell.isEmpty { return shell }
+        let reportsFolder = !shellFolder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let host = reportsFolder ? (hostName ?? hostLabel) : hostLabel
+        return host.isEmpty ? "SSH Terminal" : host
+    }
+
     static func text(title: String, folder: String) -> String {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let folder = folder.trimmingCharacters(in: .whitespacesAndNewlines)

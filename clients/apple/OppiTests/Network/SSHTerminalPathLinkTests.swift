@@ -272,6 +272,26 @@ struct SSHTerminalMenuHeaderTests {
         #expect(SSHTerminalMenuHeader.text(title: "  pi  ", folder: "  /tmp  ") == "pi — /tmp")
     }
 
+    @Test func theHostLabelsRequestedFolderIsDroppedOnceTheShellReportsItsOwn() {
+        let label = "chen@mac-studio \u{00B7} ~/workspace/oppi"
+        // Before the shell reports a folder, the label's own folder is all there is.
+        #expect(SSHTerminalMenuHeader.name(shellTitle: "", hostLabel: label, hostName: "chen@mac-studio", shellFolder: "") == label)
+        // After, the OSC 7 folder follows the name, so the requested one must not repeat.
+        let name = SSHTerminalMenuHeader.name(
+            shellTitle: "", hostLabel: label, hostName: "chen@mac-studio", shellFolder: "/Users/chen/workspace/oppi"
+        )
+        #expect(name == "chen@mac-studio")
+        #expect(
+            SSHTerminalMenuHeader.text(title: name, folder: "/Users/chen/workspace/oppi")
+                == "chen@mac-studio — /Users/chen/workspace/oppi"
+        )
+        // A title the shell set wins, and no host at all keeps the generic name.
+        #expect(SSHTerminalMenuHeader.name(shellTitle: " pi ", hostLabel: label, hostName: nil, shellFolder: "/tmp") == "pi")
+        #expect(SSHTerminalMenuHeader.name(shellTitle: "", hostLabel: "", hostName: nil, shellFolder: "") == "SSH Terminal")
+        // Without a profile name (a preview), the label stays.
+        #expect(SSHTerminalMenuHeader.name(shellTitle: "", hostLabel: "host", hostName: nil, shellFolder: "/tmp") == "host")
+    }
+
     @Test func aLongFolderKeepsItsTail() {
         let long = "/Users/duh/" + Array(repeating: "a-very-long-folder", count: 8).joined(separator: "/")
         let header = SSHTerminalMenuHeader.text(title: "pi", folder: long)

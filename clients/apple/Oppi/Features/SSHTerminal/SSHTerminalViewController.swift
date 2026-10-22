@@ -685,9 +685,11 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         )
         installSwitcherMenu()
         backPill.apply(themeID: themeID, attentionPending: attentionPending())
-        let shellTitle = channel.title.trimmingCharacters(in: .whitespacesAndNewlines)
         installMenu(
-            title: shellTitle.isEmpty ? (hostLabel.isEmpty ? "SSH Terminal" : hostLabel) : shellTitle,
+            title: SSHTerminalMenuHeader.name(
+                shellTitle: channel.title, hostLabel: hostLabel,
+                hostName: session?.connectedProfile?.endpointLabel, shellFolder: channel.workingDirectory
+            ),
             folder: channel.workingDirectory
         )
         applyControlsVisibility(animation: .init(duration: 0.2, options: [.curveEaseInOut, .beginFromCurrentState]))
