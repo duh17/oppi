@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { partition, recordWeights, scanTestTypes, shardFlags, type TestType } from "./unit-shards";
+import { failedTestIds, partition, recordWeights, scanTestTypes, shardFlags, splitQuarantine, type TestType } from "./unit-shards";
 
 const source = `import Testing
 
@@ -45,6 +45,31 @@ describe("unit shards", () => {
       "-skip-testing:OppiTests/B",
       "-skip-testing:OppiTests/E",
     ]);
+  });
+
+  test("quarantine entries block once their decision date has passed", () => {
+    const entry = (id: string, expires: string) => ({ id, owner: "o", reason: "r", addedAt: "2026-10-01", expires });
+    const { active, expired } = splitQuarantine([entry("A", "2026-10-22"), entry("B", "2026-10-21")], "2026-10-22");
+    expect(active.map((e) => e.id)).toEqual(["A"]);
+    expect(expired.map((e) => e.id)).toEqual(["B"]);
+  });
+
+  test("failed tests come from the xcresult tree, nested suites included", () => {
+    const tree = JSON.stringify({
+      testNodes: [{
+        nodeType: "Test Plan", children: [{
+          nodeType: "Unit test bundle", children: [
+            { nodeType: "Test Suite", children: [
+              { nodeType: "Test Case", result: "Failed", nodeIdentifier: "SSHTerminalTests/aPasswordPrompt()" },
+              { nodeType: "Test Case", result: "Passed", nodeIdentifier: "SSHTerminalTests/ok()" },
+              { nodeType: "Test Suite", children: [{ nodeType: "Test Case", result: "Failed", nodeIdentifier: "Outer/Inner/x()" }] },
+            ] },
+          ],
+        }],
+      }],
+    });
+    expect(failedTestIds(tree)).toEqual(["SSHTerminalTests/aPasswordPrompt()", "Outer/Inner/x()"]);
+    expect(failedTestIds("Error: bundle is incomplete")).toBeUndefined();
   });
 
   test("recorded seconds map suite display names to types and skip ambiguous names", () => {

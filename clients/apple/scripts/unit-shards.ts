@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Run the whole OppiUnitTests suite as N parallel shards from one build.
 //
-//   bun clients/apple/scripts/unit-shards.ts [--shards N]
+//   bun clients/apple/scripts/unit-shards.ts [--shards N] [--strict]
 //   bun clients/apple/scripts/unit-shards.ts --record <sim-pool log of a full run>
 //
 // 1. Build once without a simulator slot (`sim-pool.sh run -- ... build-for-testing`).
@@ -13,8 +13,8 @@
 // 4. Run every shard in its own pool slot with `test-without-building -xctestrun` at once.
 // Fails when any shard fails or runs zero tests. Default N: OPPI_UNIT_SHARDS or 3.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, closeSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, closeSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { checkoutDerivedData, cloneProducts, findXctestrun, runDirectory, waitForFlock } from "./sim-pool-build";
@@ -25,6 +25,7 @@ const TEST_SECONDS = 0.05;
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appleDir = dirname(scriptDir);
 const weightsPath = join(scriptDir, "unit-shard-seconds.json");
+const quarantinePath = join(appleDir, "..", "..", "dev", "testing", "quarantine.json");
 
 export type TestType = { name: string; display: string; tests: number };
 
@@ -100,10 +101,38 @@ function loadTypes(): TestType[] {
   return scanTestTypes(swiftFiles(join(appleDir, BUNDLE)).map((path) => ({ path, text: readFileSync(path, "utf8") })));
 }
 
-type ShardResult = { index: number; code: number; tests: number; seconds: number; output: string; summary?: string };
+/** A known-flaky test the gate runs without blocking until its owner decides by `expires`. */
+export type QuarantineEntry = { id: string; owner: string; reason: string; addedAt: string; expires: string };
 
-async function runShard(index: number, xctestrun: string, flags: string[], outDir: string): Promise<ShardResult> {
-  const output = join(outDir, `shard-${index + 1}.out`);
+/** Entries still in force on `today` (YYYY-MM-DD), and the ones whose decision is overdue. */
+export function splitQuarantine(entries: QuarantineEntry[], today: string): { active: QuarantineEntry[]; expired: QuarantineEntry[] } {
+  return {
+    active: entries.filter((entry) => entry.expires >= today),
+    expired: entries.filter((entry) => entry.expires < today),
+  };
+}
+
+/** Failed test identifiers (`Suite/test()`) in an xcresult, or undefined when it cannot be read. */
+export function failedTestIds(xcresultTestsJson: string): string[] | undefined {
+  try {
+    const failed: string[] = [];
+    const walk = (node: { nodeType?: string; result?: string; nodeIdentifier?: string; children?: unknown[] }) => {
+      if (node.nodeType === "Test Case" && node.result === "Failed" && node.nodeIdentifier) failed.push(node.nodeIdentifier);
+      for (const child of node.children ?? []) walk(child as typeof node);
+    };
+    for (const node of JSON.parse(xcresultTestsJson).testNodes ?? []) walk(node);
+    return failed;
+  } catch {
+    return undefined;
+  }
+}
+
+const RERUN_LIMIT = 20;
+
+type ShardResult = { index: number; label: string; code: number; tests: number; seconds: number; output: string; summary?: string };
+
+async function runShard(index: number, xctestrun: string, flags: string[], outDir: string, label = `shard-${index + 1}`): Promise<ShardResult> {
+  const output = join(outDir, `${label}.out`);
   const fd = openSync(output, "w");
   const started = Date.now();
   const child = spawn(join(scriptDir, "sim-pool.sh"), ["run", "--", "xcodebuild", "test-without-building", "-xctestrun", xctestrun, ...flags], {
@@ -113,7 +142,34 @@ async function runShard(index: number, xctestrun: string, flags: string[], outDi
   closeSync(fd);
   const code = await new Promise<number>((resolve) => child.on("exit", (status, signal) => resolve(status ?? (signal ? 128 : 1))));
   const summary = /^Artifact: (.+)$/m.exec(readFileSync(output, "utf8"))?.[1];
-  return { index, code, tests: executedTests(summary), seconds: Math.round((Date.now() - started) / 1000), output, summary };
+  return { index, label, code, tests: executedTests(summary), seconds: Math.round((Date.now() - started) / 1000), output, summary };
+}
+
+/** Failed tests of a finished run, read from the xcresult in its run directory. */
+function runFailures(summary: string | undefined): string[] | undefined {
+  if (!summary || !existsSync(summary)) return undefined;
+  const derivedData = JSON.parse(readFileSync(summary, "utf8")).derived_data_path as string | undefined;
+  const testLogs = derivedData ? join(derivedData, "Logs", "Test") : "";
+  if (!testLogs || !existsSync(testLogs)) return undefined;
+  const bundle = readdirSync(testLogs).filter((name) => name.endsWith(".xcresult")).sort().at(-1);
+  if (!bundle) return undefined;
+  const tool = spawnSync("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", join(testLogs, bundle)], { encoding: "utf8", timeout: 60_000 });
+  return tool.status === 0 ? failedTestIds(tool.stdout) : undefined;
+}
+
+/** Append a pass-on-rerun to the repository's flake log; returns how many gates saw this test flake. */
+function recordFlake(id: string): number {
+  const commonDir = spawnSync("git", ["rev-parse", "--git-common-dir"], { cwd: appleDir, encoding: "utf8" }).stdout.trim();
+  const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: appleDir, encoding: "utf8" }).stdout.trim();
+  const dir = join(resolve(appleDir, commonDir), "oppi");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "test-flakes.jsonl");
+  appendFileSync(path, `${JSON.stringify({ id, head, at: new Date().toISOString() })}\n`);
+  const heads = new Set(
+    readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { id: string; head: string })
+      .filter((entry) => entry.id === id).map((entry) => entry.head),
+  );
+  return heads.size;
 }
 
 /** Tests the shard's xcodebuild ran, from the Swift Testing result line in its log. */
@@ -160,25 +216,67 @@ async function main(argv: string[]): Promise<number> {
     lock?.release();
   }
 
+  // --strict (release): every test blocks; no quarantine, no pass-on-rerun.
+  const strict = argv.includes("--strict");
+  const quarantine = !strict && existsSync(quarantinePath)
+    ? splitQuarantine(JSON.parse(readFileSync(quarantinePath, "utf8")) as QuarantineEntry[], new Date().toISOString().slice(0, 10))
+    : { active: [], expired: [] };
+  if (quarantine.expired.length > 0) {
+    for (const entry of quarantine.expired) {
+      console.error(`[unit-shards] quarantine expired ${entry.expires}: ${entry.id} (owner ${entry.owner}); fix it, extend it, or delete it in dev/testing/quarantine.json`);
+    }
+    return 1;
+  }
+  const skipQuarantined = quarantine.active.map((entry) => `-skip-testing:${entry.id}`);
+
   const weights: Record<string, number> = existsSync(weightsPath) ? JSON.parse(readFileSync(weightsPath, "utf8")) : {};
   const parts = partition(loadTypes(), weights, shards);
   const outDir = join(runDir, "shards");
   mkdirSync(outDir, { recursive: true });
   console.log(`[unit-shards] ${shards} shards from ${relative(appleDir, xctestrun)}; outputs in ${outDir}`);
-  const results = await Promise.all(parts.map((_, index) => runShard(index, xctestrun, shardFlags(parts, index), outDir)));
+  const results = await Promise.all(parts.map((_, index) => runShard(index, xctestrun, [...shardFlags(parts, index), ...skipQuarantined], outDir)));
   let failed = false;
   for (const result of results) {
-    const ok = result.code === 0 && result.tests > 0;
-    failed ||= !ok;
+    let ok = result.code === 0 && result.tests > 0;
     console.log(`[unit-shards] shard ${result.index + 1}/${shards}: ${ok ? "PASS" : "FAIL"} exit=${result.code} tests=${result.tests} ${result.seconds}s output=${result.output}${result.summary ? ` summary=${result.summary}` : ""}`);
     if (!ok) {
       // sim-pool's own summary (failures, log path) ends the shard output.
       process.stdout.write(`${readFileSync(result.output, "utf8").trimEnd().split("\n").slice(-40).join("\n")}\n`);
+      if (!strict) ok = await rerunFailures(result, xctestrun, outDir);
     }
+    failed ||= !ok;
+  }
+  if (quarantine.active.length > 0) {
+    // Quarantined tests still run, on the same products, but never block.
+    const watch = await runShard(shards, xctestrun, quarantine.active.map((entry) => `-only-testing:${entry.id}`), outDir, "quarantined");
+    console.log(`[unit-shards] quarantined (non-blocking): ${watch.code === 0 ? "passed" : "failed"} ${quarantine.active.map((entry) => entry.id).join(", ")} output=${watch.output}`);
   }
   const total = results.reduce((sum, result) => sum + result.tests, 0);
   console.log(`[unit-shards] ${failed ? "FAILED" : "PASSED"}: ${total} tests in ${shards} shards, longest ${Math.max(...results.map((r) => r.seconds))}s`);
   return failed ? 1 : 0;
+}
+
+/**
+ * Rerun a failed shard's failing tests once on the same products. A test that passes on the
+ * rerun is a flake: it does not block, and the flake log counts the gates it flaked in. Crashes,
+ * unreadable results, zero tests, or more than RERUN_LIMIT failures stay red.
+ */
+async function rerunFailures(result: ShardResult, xctestrun: string, outDir: string): Promise<boolean> {
+  const ids = result.tests > 0 ? runFailures(result.summary) : undefined;
+  if (!ids || ids.length === 0 || ids.length > RERUN_LIMIT) {
+    console.log(`[unit-shards] ${result.label}: no rerun (${ids ? `${ids.length} failed tests` : "failures unreadable"})`);
+    return false;
+  }
+  const rerun = await runShard(result.index, xctestrun, ids.map((id) => `-only-testing:${BUNDLE}/${id}`), outDir, `${result.label}-rerun`);
+  const ok = rerun.code === 0 && rerun.tests >= ids.length;
+  console.log(`[unit-shards] ${result.label} rerun of ${ids.length} failed tests: ${ok ? "PASS" : "FAIL"} output=${rerun.output}`);
+  if (ok) {
+    for (const id of ids) {
+      const gates = recordFlake(`${BUNDLE}/${id}`);
+      console.log(`[unit-shards] FLAKY ${BUNDLE}/${id}: failed, then passed on rerun (flaked in ${gates} gate${gates === 1 ? "" : "s"})${gates >= 2 ? "; quarantine it in dev/testing/quarantine.json with an owner and an expiry" : ""}`);
+    }
+  }
+  return ok;
 }
 
 if (import.meta.main) {
