@@ -16,7 +16,8 @@ export type RelaySendResult =
   | { status: "gone"; prune: boolean }
   /**
    * A deterministic refusal (bad request, quota, relay at capacity): no failover.
-   * `retryAfterSeconds` on a `429` quota or a `503` with `Retry-After`.
+   * `retryAfterSeconds` on a `429` quota, or on a `503 relay_capacity` with a whole-second
+   * `Retry-After` of at most a day.
    */
   | { status: "rejected"; httpStatus: number; error?: string; retryAfterSeconds?: number }
   /** No relay accepted the push (network, timeout, 5xx). */
@@ -80,8 +81,9 @@ export class RelayClient {
     for (const [index, origin] of this.origins.entries()) {
       const response = await this.request(origin, "/v1/push", "POST", sendToken, body);
       if (!response) continue;
-      const retryAfterSeconds = pauseSeconds(response);
-      if (response.status >= 500 && retryAfterSeconds === undefined) {
+      const capacity = response.status === 503 ? await capacityPause(response) : undefined;
+      if (capacity) return { status: "rejected", httpStatus: 503, ...capacity };
+      if (response.status >= 500) {
         await discard(response);
         continue;
       }
@@ -93,6 +95,7 @@ export class RelayClient {
         await discard(response);
         return { status: "gone", prune: index === 0 };
       }
+      const retryAfterSeconds = quotaPause(response);
       return {
         status: "rejected",
         httpStatus: response.status,
@@ -114,8 +117,9 @@ export class RelayClient {
     for (const [index, origin] of this.origins.entries()) {
       const response = await this.request(origin, "/v1/live-activity", "POST", sendToken, body);
       if (!response) continue;
-      const retryAfterSeconds = pauseSeconds(response);
-      if (response.status >= 500 && retryAfterSeconds === undefined) {
+      const capacity = response.status === 503 ? await capacityPause(response) : undefined;
+      if (capacity) return { status: "rejected", httpStatus: 503, ...capacity };
+      if (response.status >= 500) {
         if (response.status === 502 && (await errorCode(response)) === "apns_unavailable") {
           charged = true;
         } else {
@@ -133,6 +137,7 @@ export class RelayClient {
       }
       const error = await errorCode(response);
       if (response.status === 409 && error === "no_activity") return { status: "no_activity" };
+      const retryAfterSeconds = quotaPause(response);
       return {
         status: "rejected",
         httpStatus: response.status,
@@ -178,14 +183,32 @@ export class RelayClient {
   }
 }
 
-/**
- * The pause a relay asks for: a `429` quota or a `503` at capacity, each with a positive whole
- * `Retry-After`. A `503` without one is an outage and fails over.
- */
-function pauseSeconds(response: Response): number | undefined {
-  if (response.status !== 429 && response.status !== 503) return undefined;
+/** A `429` quota's pause: a positive whole `Retry-After`. */
+function quotaPause(response: Response): number | undefined {
+  if (response.status !== 429) return undefined;
   const seconds = Number(response.headers.get("retry-after") ?? "");
   return Number.isInteger(seconds) && seconds > 0 ? seconds : undefined;
+}
+
+/** The longest pause a relay at capacity may ask for: it answers with the next UTC midnight. */
+const CAPACITY_PAUSE_MAX_SECONDS = 24 * 60 * 60;
+
+/**
+ * A relay's own capacity limit: `503 {"error":"relay_capacity"}` with `Retry-After` in whole
+ * seconds, at most a day. Any other `503` (a proxy, an HTTP-date, a huge value) is an outage:
+ * the caller fails over. Reads the body, so the caller must not read it again.
+ */
+async function capacityPause(
+  response: Response,
+): Promise<{ error: string; retryAfterSeconds: number } | undefined> {
+  const header = response.headers.get("retry-after") ?? "";
+  const retryAfterSeconds = /^\d{1,6}$/.test(header) ? Number(header) : 0;
+  if (retryAfterSeconds < 1 || retryAfterSeconds > CAPACITY_PAUSE_MAX_SECONDS) {
+    await discard(response);
+    return undefined;
+  }
+  const error = await errorCode(response);
+  return error === "relay_capacity" ? { error, retryAfterSeconds } : undefined;
 }
 
 /** Frees the connection of a response whose body is not read. */

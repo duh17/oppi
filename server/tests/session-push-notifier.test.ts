@@ -249,7 +249,7 @@ describe("SessionPushNotifier", () => {
 
       vi.setSystemTime(T0 + 30_000);
       presentSet.delete("dev-phone");
-      notifier.deviceLeft("dev-phone");
+      notifier.deviceLeft("dev-phone", T0 - 1);
 
       expect(push.send.mock.calls.map(([sent]) => sent.deviceId)).toEqual([
         "dev-ipad",
@@ -267,7 +267,7 @@ describe("SessionPushNotifier", () => {
       expect(push.send).toHaveBeenCalledTimes(1);
 
       vi.setSystemTime(T0 + 90_000);
-      notifier.deviceLeft("dev-phone");
+      notifier.deviceLeft("dev-phone", T0 - 1);
       expect(push.send).toHaveBeenCalledTimes(1);
     });
 
@@ -275,19 +275,71 @@ describe("SessionPushNotifier", () => {
       const { push, session, notifier } = setup(["phone"], []);
 
       vi.setSystemTime(T0 + 121_000);
-      notifier.deviceLeft("dev-phone");
+      notifier.deviceLeft("dev-phone", T0 - 1);
       expect(push.send).not.toHaveBeenCalled();
 
       vi.setSystemTime(T0 + 119_000);
       session.programStatus = { state: "working", since: T0 + 100_000 };
-      notifier.deviceLeft("dev-phone");
+      notifier.deviceLeft("dev-phone", T0 - 1);
       expect(push.send).not.toHaveBeenCalled();
     });
 
     it("sends nothing to a device that did not list blocked", () => {
       const { push, notifier } = setup([], []);
-      notifier.deviceLeft("dev-phone");
+      notifier.deviceLeft("dev-phone", T0 - 1);
       expect(push.send).not.toHaveBeenCalled();
+    });
+
+    it("skips a session that blocked before the device's last frame: the app saw it", () => {
+      const { push, notifier } = setup(["phone"], []);
+      notifier.deviceLeft("dev-phone", T0);
+      expect(push.send).not.toHaveBeenCalled();
+      notifier.deviceLeft("dev-phone", T0 - 1);
+      expect(push.send).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not alert again when it blocks anew within a minute of the earlier alert", () => {
+      const { push, session, notifier, presentSet } = setup(["phone", "ipad"], ["dev-phone"]);
+      vi.setSystemTime(T0 + 30_000);
+      presentSet.delete("dev-phone");
+      notifier.deviceLeft("dev-phone", T0 - 1);
+      expect(push.send).toHaveBeenCalledTimes(1);
+
+      // Unblocked at +35 s, blocked again at +40 s: the phone was told 10 s ago.
+      session.programStatus = { state: "blocked", kind: "permission", since: T0 + 40_000 };
+      vi.setSystemTime(T0 + 40_000);
+      notifier.handleProgramStatusChange(
+        session,
+        change({ state: "working" }, { state: "blocked", kind: "permission", since: T0 + 40_000 }),
+      );
+      expect(push.send.mock.calls.map(([sent]) => sent.deviceId)).toEqual([
+        "dev-phone",
+        "dev-ipad",
+      ]);
+    });
+
+    it("sends nothing, and schedules no retry, after stop", async () => {
+      const unavailable = { status: "unavailable" } as SendResult;
+      vi.useFakeTimers({ now: T0 });
+      let finish: (value: SendResult) => void = () => {};
+      const push = makePush(["phone"]);
+      push.send.mockImplementationOnce(
+        () => new Promise<SendResult>((resolve) => (finish = resolve)),
+      );
+      const session = blockedSession(T0);
+      const notifier = new SessionPushNotifier(push, makeStorage(session), {
+        isDevicePresent: () => false,
+        liveSessions: () => [session],
+      });
+      // A send in flight when the server stops: its failure must not schedule a retry.
+      notifier.deviceLeft("dev-phone", T0 - 1);
+      notifier.stop();
+      finish(unavailable);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(push.send).toHaveBeenCalledTimes(1);
+
+      notifier.deviceLeft("dev-phone", T0 - 2);
+      expect(push.send).toHaveBeenCalledTimes(1);
     });
   });
 

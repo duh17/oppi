@@ -366,6 +366,43 @@ describe("PushSender", () => {
       }
     });
 
+    it("accepts a pause of a full day, and nothing longer", async () => {
+      const day = relayFetch({ [PRIMARY]: capacity("86400"), [STANDBY]: ok });
+      const [registration] = timed(day.fetchImpl).registrations();
+      if (!registration) throw new Error("missing registration");
+      expect(await timed(day.fetchImpl).send(registration, notification)).toMatchObject({
+        status: "rejected",
+        retryAfterSeconds: 86_400,
+      });
+
+      const tooLong = relayFetch({ [PRIMARY]: capacity("86401"), [STANDBY]: ok });
+      expect(await timed(tooLong.fetchImpl).send(registration, notification)).toEqual({
+        status: "delivered",
+      });
+    });
+
+    it.each([
+      ["a proxy's 503 that names no capacity", "30", JSON.stringify({ error: "bad_gateway" })],
+      ["a Retry-After that is an HTTP date", "Wed, 21 Oct 2026 07:28:00 GMT", undefined],
+      ["a fractional Retry-After", "1.5", undefined],
+      ["a Retry-After of zero", "0", undefined],
+    ])("stays an outage for %s", async (_name, retryAfter, body) => {
+      const refused = () =>
+        new Response(body ?? JSON.stringify({ error: "relay_capacity" }), {
+          status: 503,
+          headers: { "retry-after": retryAfter },
+        });
+      const { fetchImpl, calls } = relayFetch({ [PRIMARY]: refused, [STANDBY]: ok });
+      const push = timed(fetchImpl);
+      const [registration] = push.registrations();
+      if (!registration) throw new Error("missing registration");
+
+      expect(await push.send(registration, notification)).toEqual({ status: "delivered" });
+      expect(calls.map((call) => new URL(call.url).origin)).toEqual([PRIMARY, STANDBY]);
+      // No pause was recorded: the next send goes out at once.
+      expect((await push.send(registration, notification))?.status).toBe("delivered");
+    });
+
     it("stays an outage, failing over to the standby, without Retry-After", async () => {
       const { fetchImpl, calls } = relayFetch({ [PRIMARY]: capacity(), [STANDBY]: ok });
       const push = timed(fetchImpl);

@@ -496,6 +496,8 @@ export class Server {
   private socketPrincipals: Map<WebSocket, SocketPrincipal> = new Map();
   /** Paired device behind each open app-event or focused session stream: its push presence. */
   private presenceSocketDevices: Map<WebSocket, string> = new Map();
+  /** When each present device last sent a frame (message or pong) on any presence socket. */
+  private presenceHeardAt: Map<string, number> = new Map();
   private accessExpiryTimers: Map<WebSocket, ReturnType<typeof setTimeout>> = new Map();
 
   // Server resource utilization sampler (CPU, memory, sessions)
@@ -1471,16 +1473,33 @@ export class Server {
     const principal = this.socketPrincipals.get(ws);
     if (principal?.kind !== "device") return;
     const wasPresent = this.isDevicePresent(principal.deviceId);
+    const deviceId = principal.deviceId;
+    if (!this.presenceSocketDevices.has(ws)) {
+      const heard = (): void => {
+        this.presenceHeardAt.set(deviceId, Date.now());
+      };
+      heard();
+      ws.on("pong", heard);
+      ws.on("message", heard);
+    }
     this.presenceSocketDevices.set(ws, principal.deviceId);
     if (!wasPresent) this.liveActivityNotifier.presenceChanged(principal.deviceId);
   }
 
-  private forgetPresenceSocket(ws: WebSocket): void {
+  /**
+   * `closeCode` is the WebSocket close code. Only 1006 (no close frame: the ping timeout
+   * terminates the socket, or the network broke) can have left a Needs you unannounced. Any
+   * close the app sent (1000, 1001, or 1005 with no status) is it leaving on purpose, and while
+   * it runs in the background it posts its own alert for a question.
+   */
+  private forgetPresenceSocket(ws: WebSocket, closeCode: number): void {
     const deviceId = this.presenceSocketDevices.get(ws);
     if (!this.presenceSocketDevices.delete(ws) || deviceId === undefined) return;
     if (this.isDevicePresent(deviceId)) return;
+    const heardAt = this.presenceHeardAt.get(deviceId) ?? Date.now();
+    this.presenceHeardAt.delete(deviceId);
     this.liveActivityNotifier.presenceChanged(deviceId);
-    this.sessionPushNotifier.deviceLeft(deviceId);
+    if (closeCode === 1006) this.sessionPushNotifier.deviceLeft(deviceId, heardAt);
   }
 
   private isDevicePresent(deviceId: string): boolean {
@@ -1944,10 +1963,10 @@ export class Server {
     wss.handleUpgrade(req, socket, head, (ws) => {
       markLegacyControlDomains(ws, req);
       this.socketPrincipals.set(ws, principal);
-      ws.on("close", () => {
+      ws.on("close", (code) => {
         this.clearAccessExpiryTimer(ws);
         this.socketPrincipals.delete(ws);
-        this.forgetPresenceSocket(ws);
+        this.forgetPresenceSocket(ws, code);
       });
       if (principal.kind === "device" && principal.tokenClass === "at_" && principal.expiresAt) {
         this.scheduleAccessTokenExpiry(ws, principal.expiresAt);

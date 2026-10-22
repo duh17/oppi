@@ -6,7 +6,7 @@
  *
  * Does NOT spawn pi or containers — just the HTTP/WS layer.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import {
   existsSync,
@@ -1524,6 +1524,64 @@ describe("split session WebSocket", () => {
     ws.close();
 
     expect(firstMessage.type).toBe("stream_connected");
+  });
+});
+
+describe("Needs you after the app's stream ends", () => {
+  type PushNotifier = { deviceLeft: (deviceId: string, heardAt: number) => void };
+
+  async function openAppEvents(): Promise<WebSocket> {
+    const ws = new WebSocket(`${baseUrl.replace("http", "ws")}/app/events/stream`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    await new Promise<void>((resolve, reject) => {
+      ws.once("error", reject);
+      ws.once("message", () => resolve());
+    });
+    return ws;
+  }
+
+  function watchDeviceLeft() {
+    const notifier = (server as unknown as { sessionPushNotifier: PushNotifier })
+      .sessionPushNotifier;
+    return vi.spyOn(notifier, "deviceLeft").mockImplementation(() => {});
+  }
+
+  it.each([
+    ["going away (1001)", 1001],
+    ["normal (1000)", 1000],
+    ["no status code", undefined],
+  ])("does not push after the app closes the stream, %s", async (_name, code) => {
+    const deviceLeft = watchDeviceLeft();
+    try {
+      const ws = await openAppEvents();
+      await new Promise<void>((resolve) => {
+        ws.once("close", () => resolve());
+        ws.close(code);
+      });
+      // The server's close handler runs after the client sees the close; let it finish.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(deviceLeft).not.toHaveBeenCalled();
+    } finally {
+      deviceLeft.mockRestore();
+    }
+  });
+
+  it("pushes after a dropped connection, with when the device last sent a frame", async () => {
+    const deviceLeft = watchDeviceLeft();
+    try {
+      const ws = await openAppEvents();
+      const sentAt = Date.now();
+      ws.send(JSON.stringify({ type: "ping" }));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      ws.terminate();
+      await vi.waitFor(() => expect(deviceLeft).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+      const [leftDeviceId, heardAt] = deviceLeft.mock.calls[0] ?? [];
+      expect(leftDeviceId).toBe(deviceId);
+      expect(heardAt).toBeGreaterThanOrEqual(sentAt);
+    } finally {
+      deviceLeft.mockRestore();
+    }
   });
 });
 

@@ -77,10 +77,10 @@ export interface SessionPushNotifierOptions {
  * Deliberate, from the agent (`notify` tool): a top-level session tells the user there is
  * something to read. Offered only while some device can receive it.
  *
- * A device that stops being present (`deviceLeft`) gets the Needs you of each session that
- * became blocked in the last two minutes, unless it was already told: an app suspended with
- * its sockets still open stays present until the ping timeout, and a session that blocked in
- * that window would otherwise wait unannounced. If no relay accepted a Needs you, it is tried
+ * A device whose connection dropped (`deviceLeft`) gets the Needs you of each session that
+ * became blocked in the last two minutes and after the last frame the device sent, unless it
+ * was already told: an app suspended with its sockets still open stays present until the ping
+ * timeout, and a session that blocked in that window would otherwise wait unannounced. If no relay accepted a Needs you, it is tried
  * once more after a minute while the session is still blocked in the same stretch.
  *
  * Failed and agent alerts go to every registered device, present or not: the app hides one
@@ -98,6 +98,7 @@ export class SessionPushNotifier implements SessionNotifyPort {
    */
   private readonly blockedAlerts = new Map<string, { at: number; since: number }>();
   private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private stopped = false;
   private readonly now: () => number;
 
   constructor(
@@ -118,7 +119,11 @@ export class SessionPushNotifier implements SessionNotifyPort {
       content = blockedContent(current);
       registrations = this.push
         .registrations("blocked")
-        .filter((entry) => !this.options.isDevicePresent(entry.deviceId));
+        .filter(
+          (entry) =>
+            !this.options.isDevicePresent(entry.deviceId) &&
+            !this.alertedRecently(session.id, entry.deviceId),
+        );
     } else if (
       current.state === "error" &&
       (previous.state === "working" || previous.state === "blocked") &&
@@ -140,21 +145,26 @@ export class SessionPushNotifier implements SessionNotifyPort {
   }
 
   /**
-   * `deviceId` no longer holds a stream. Tell it about each live session that became blocked
-   * within the last two minutes, unless it already got that stretch's alert or any Needs you
-   * for the session in the last minute (the per-session throttle's interval, kept per device).
+   * `deviceId`'s last stream dropped without the app closing it (the caller skips a clean
+   * close, after which the app shows its own alert). `heardAt` is when it last sent a frame:
+   * a session that blocked before that was shown to the app. Tell it about each live session
+   * that became blocked within the last two minutes and after `heardAt`, unless it already
+   * got that stretch's alert or any Needs you for the session in the last minute (the
+   * per-session throttle's interval, kept per device).
    */
-  deviceLeft(deviceId: string): void {
+  deviceLeft(deviceId: string, heardAt: number): void {
+    if (this.stopped) return;
     const registration = this.push.registrations("blocked").find((r) => r.deviceId === deviceId);
     if (!registration) return;
     const now = this.now();
     for (const session of this.options.liveSessions()) {
       const status = session.programStatus;
       if (status?.state !== "blocked" || now - status.since > BLOCKED_CATCH_UP_MS) continue;
+      if (status.since <= heardAt) continue;
       const alerted = this.blockedAlerts.get(`${session.id}:${deviceId}`);
       if (
         alerted &&
-        (alerted.since === status.since || now - alerted.at < SESSION_PUSH_MIN_INTERVAL_MS)
+        (alerted.since === status.since || this.alertedRecently(session.id, deviceId))
       ) {
         continue;
       }
@@ -163,8 +173,15 @@ export class SessionPushNotifier implements SessionNotifyPort {
     }
   }
 
-  /** Clears pending retries; nothing sends after this. */
+  /** True when a Needs you for this session reached the device in the last minute. */
+  private alertedRecently(sessionId: string, deviceId: string): boolean {
+    const alerted = this.blockedAlerts.get(`${sessionId}:${deviceId}`);
+    return alerted !== undefined && this.now() - alerted.at < SESSION_PUSH_MIN_INTERVAL_MS;
+  }
+
+  /** Clears pending retries. After this, `deviceLeft` and retries send nothing. */
   stop(): void {
+    this.stopped = true;
     for (const timer of this.retryTimers.values()) clearTimeout(timer);
     this.retryTimers.clear();
   }
@@ -205,7 +222,8 @@ export class SessionPushNotifier implements SessionNotifyPort {
       this.blockedAlerts.set(`${sessionId}:${deviceId}`, { at, since });
     }
     const results = await this.deliver(sessionId, notification, registrations);
-    if (!mayRetry || !results.every((result) => result?.status === "unavailable")) return;
+    if (this.stopped || !mayRetry || !results.every((result) => result?.status === "unavailable"))
+      return;
     for (const { deviceId } of registrations) this.scheduleBlockedRetry(sessionId, since, deviceId);
   }
 
@@ -215,6 +233,7 @@ export class SessionPushNotifier implements SessionNotifyPort {
     clearTimeout(this.retryTimers.get(key));
     const timer = setTimeout(() => {
       this.retryTimers.delete(key);
+      if (this.stopped) return;
       const status = this.options.liveSessions().find((s) => s.id === sessionId)?.programStatus;
       if (status?.state !== "blocked" || status.since !== since) return;
       if (this.options.isDevicePresent(deviceId)) return;
