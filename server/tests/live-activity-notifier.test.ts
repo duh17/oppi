@@ -489,6 +489,29 @@ describe("LiveActivityNotifier", () => {
       expect(events()).toEqual(["update 2/1", "end 0/0", "start 2/1"]);
     });
 
+    it("keeps a restored card's real start when work resumes and the app comes and goes", async () => {
+      await startCardAndRestart(60 * 60_000);
+      // Sessions resume: the new process sees the counts rise from zero, which is not a card
+      // starting. The app opens and leaves again.
+      notifier.countsChanged();
+      present = true;
+      notifier.presenceChanged(phone.deviceId);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      leave();
+      // The card started 1 hour before the restart: its 8 hours run out 7 hours after it.
+      await vi.advanceTimersByTimeAsync(7 * 60 * 60_000 - 10 * 60_000 - 1);
+      expect(events()).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(events()).toEqual(["end 0/0", "start 2/1"]);
+    });
+
+    it("ends a card the last process started when the server is stopped before the reconcile", async () => {
+      await startCardAndRestart(60 * 60_000);
+      await notifier.endLiveCards(3_000);
+      expect(events()).toEqual(["end 0/0"]);
+      expect([...saved.keys()]).toEqual([]);
+    });
+
     it("ends the card when nothing runs after the restart", async () => {
       await startCardAndRestart(60 * 60_000);
       counts = { running: 0, needsYou: 0 };

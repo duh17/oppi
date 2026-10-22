@@ -366,6 +366,51 @@ describe("identity module", () => {
     });
   });
 
+  it("rotating the owner token ends every device's card before it removes the registrations, then releases each permission", async () => {
+    const registrations = [
+      { deviceId: "dev_a", sendToken: "osp1.r.p.a", liveActivity: true },
+      { deviceId: "dev_b", sendToken: "osp1.r.p.b", liveActivity: true },
+    ];
+    const order: string[] = [];
+    const finish = new Map<string, () => void>();
+    const releasePermission = vi.fn((registration: { deviceId: string }) =>
+      order.push(`release ${registration.deviceId}`),
+    );
+    const ctx = {
+      storage: {
+        getPushRegistrations: () => registrations,
+        rotateToken: () => order.push("rotate"),
+      },
+      push: { sender: { releasePermission } },
+      endLiveActivityCard: (deviceId: string) => {
+        order.push(`end ${deviceId}`);
+        // dev_a's relay call fails; dev_b's is slow.
+        if (deviceId === "dev_a") return Promise.reject(new Error("relay down"));
+        return new Promise<void>((resolve) => finish.set(deviceId, resolve));
+      },
+    } as unknown as RouteContext;
+    const req = makeRequest();
+    markLocalRequest(req);
+    const res = makeResponse();
+    await createIdentityRoutes(
+      ctx,
+      createRouteHelpers(),
+    )({
+      method: "POST",
+      path: "/auth/rotate",
+      url: new URL("http://localhost/auth/rotate"),
+      req: req as never,
+      res: res as never,
+    });
+    // Answered without waiting for the ends; both ends started before the rotation.
+    expect(res.statusCode).toBe(200);
+    expect(order.slice(0, 3)).toEqual(["end dev_a", "end dev_b", "rotate"]);
+    await vi.waitFor(() => expect(order).toContain("release dev_a"));
+    expect(order).not.toContain("release dev_b");
+    finish.get("dev_b")?.();
+    await vi.waitFor(() => expect(order).toContain("release dev_b"));
+  });
+
   it.each(["/auth/migrate", "/auth/finalize", "/auth/compat"])(
     "does not dispatch deleted %s",
     async (path) => {

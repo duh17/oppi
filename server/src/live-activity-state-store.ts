@@ -8,8 +8,6 @@ import { safeErrorMessage } from "./log-utils.js";
 const log = createLogger({ base: { component: "live_activity" } });
 
 const STORE_VERSION = 1;
-/** One entry per paired device; a file with more is not ours. */
-const MAX_CARDS = 1024;
 
 /** A card this server believes is up on a device. */
 export interface PersistedCard {
@@ -60,7 +58,7 @@ export class FileLiveActivityStateStore implements LiveActivityStateStore {
       log.warn("live_activity.state_unreadable", { error: "unexpected shape" });
       return cards;
     }
-    for (const [deviceId, value] of Object.entries(record.cards).slice(0, MAX_CARDS)) {
+    for (const [deviceId, value] of Object.entries(record.cards)) {
       const card = value as Partial<PersistedCard> | null;
       if (
         card &&

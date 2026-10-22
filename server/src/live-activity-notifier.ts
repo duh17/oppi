@@ -184,6 +184,13 @@ export class LiveActivityNotifier {
    * zero, so no card shown now started before this. Undefined until seen.
    */
   private countsRoseAt: number | undefined;
+  /**
+   * Whether a rise from zero is work starting. False after `start` restored a card: the new
+   * process sees the counts rise from its own empty start as sessions resume, which says
+   * nothing about the restored card, so it must not re-date it. True again once the counts
+   * have fallen to zero here, as the card then ended.
+   */
+  private countsRiseTrusted = true;
   private stopped = false;
   /** False until `start` has read the saved cards; nothing is written before that. */
   private stateLoaded = false;
@@ -212,6 +219,7 @@ export class LiveActivityNotifier {
     const now = this.now();
     const saved = this.options.state?.load() ?? new Map<string, PersistedCard>();
     this.stateLoaded = true;
+    let restored = false;
     for (const registration of this.registrations()) {
       const device = this.device(registration.deviceId);
       const card = saved.get(registration.deviceId);
@@ -222,10 +230,13 @@ export class LiveActivityNotifier {
         now - card.startedAt < LIVE_ACTIVITY_RESTORE_MAX_AGE_MS
       ) {
         device.startedAt = card.startedAt;
+        device.activity = card.activity;
+        restored = true;
       }
       device.lastSentAt = now;
       this.schedule(registration.deviceId);
     }
+    if (restored) this.countsRiseTrusted = false;
     this.persistSoon();
   }
 
@@ -334,7 +345,8 @@ export class LiveActivityNotifier {
     const counts = this.options.counts();
     const previous = this.lastCounts;
     if (!sameCounts(previous, counts)) {
-      if (isEmpty(previous)) this.countsRoseAt = this.now();
+      if (isEmpty(previous) && this.countsRiseTrusted) this.countsRoseAt = this.now();
+      if (isEmpty(counts)) this.countsRiseTrusted = true;
       this.lastCounts = counts;
       this.lastCountsChangeAt = this.now();
     }

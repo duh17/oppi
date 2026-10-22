@@ -752,9 +752,18 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return;
     }
     const pushRegistrations = ctx.push ? ctx.storage.getPushRegistrations() : [];
+    // As on revoke: every card's end starts now, in parallel and bounded, while the
+    // registrations still exist; each permission is released once its end has settled.
+    const cardsEnded = pushRegistrations.map((registration) =>
+      (ctx.endLiveActivityCard?.(registration.deviceId) ?? Promise.resolve()).catch(
+        () => undefined,
+      ),
+    );
     // Revokes every device and removes their push registrations.
     ctx.storage.rotateToken();
-    for (const registration of pushRegistrations) ctx.push?.sender.releasePermission(registration);
+    pushRegistrations.forEach((registration, index) => {
+      void cardsEnded[index]?.then(() => ctx.push?.sender.releasePermission(registration));
+    });
     // An emergency owner rotation must immediately sever every already-open
     // remote device socket; the cleared device/access-token state alone only
     // affects future upgrades.

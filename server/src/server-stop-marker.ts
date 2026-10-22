@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -8,9 +8,6 @@ import { join } from "node:path";
  * this marker before it stops the service; the serving process ends away phones' Live Activity
  * cards only when it finds the marker at shutdown. A stop without one is a restart, which
  * keeps the cards.
- *
- * Only `existsSync`, `mkdirSync`, `writeFileSync` and `unlinkSync`: the launchd tests mock
- * those.
  */
 export function stopRequestedPath(dataDir: string): string {
   return join(dataDir, "server-stop-requested");
@@ -19,7 +16,6 @@ export function stopRequestedPath(dataDir: string): string {
 /** Best effort: a missing marker only means the cards stay up, as after a restart. */
 export function requestServerStop(dataDir: string): void {
   try {
-    mkdirSync(dataDir, { recursive: true });
     writeFileSync(stopRequestedPath(dataDir), `${Date.now()}\n`, { mode: 0o600 });
   } catch {
     // The stop goes ahead without it.
