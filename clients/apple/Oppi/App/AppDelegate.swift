@@ -43,14 +43,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         (UIApplication.shared.delegate as? AppDelegate)?.app?.root.opener
     }
 
-    /// A scene session saved by a build whose scene SwiftUI ran keeps that
-    /// configuration: it reconnects with SwiftUI's scene delegate and the
-    /// window stayed black. UIKit asks `configurationForConnecting` only for
-    /// new sessions, a session's configuration cannot change, and a
-    /// single-scene app cannot destroy the session. Such a scene gets
-    /// `SceneDelegate` as it connects, which builds the window right away;
-    /// SwiftUI's delegate already took the connection, so a URL or intent
-    /// that cold-launched it is not opened.
+    /// A scene session saved by a build whose scene SwiftUI ran (Build 55 and
+    /// earlier) keeps that configuration: it reconnects with SwiftUI's scene
+    /// delegate and the window stayed black. Such a scene gets `SceneDelegate`
+    /// as it connects, which builds the window right away.
+    ///
+    /// UIKit posts this notification after SwiftUI's delegate took the
+    /// connection, so a URL or App Intent that cold-launched the scene is not
+    /// opened, and nothing else carries it (`launchOptions` is nil). That
+    /// repeats on every cold launch through the old session until the user
+    /// swipes Oppi away in the app switcher, which discards it; the next
+    /// launch gets a `SceneDelegate` session. Warm opens and notification taps
+    /// are unaffected. The app cannot retire the session itself:
+    /// `configurationForConnecting` runs only for new sessions,
+    /// `session.configuration` is a copy, and `requestSceneSessionDestruction`
+    /// fails without multiple-scene support.
     private func adoptScenesSavedBySwiftUI() {
         sceneAdoption = NotificationCenter.default.addObserver(
             forName: UIScene.willConnectNotification,
