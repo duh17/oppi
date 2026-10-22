@@ -68,7 +68,7 @@ struct PushPairingPlaintextTests {
             body: "iPad wants to pair (invite, 100.64.0.7).",
             approvalId: "pa_1"
         )
-        let alert = PushAlertPresentation.make(serverId: serverId, plaintext: plaintext, redacted: false)
+        let alert = PushAlertPresentation.make(serverId: serverId, plaintext: plaintext, redacted: false, actionTag: nil)
         #expect(alert.categoryIdentifier == SessionNotificationCategory.pairingApproval)
         #expect(alert.interruption == .timeSensitive)
         #expect(alert.playsSound)
@@ -90,7 +90,7 @@ struct PushPairingPlaintextTests {
             body: "iPad paired (invite, 100.64.0.7).",
             deviceId: "dev_new"
         )
-        let alert = PushAlertPresentation.make(serverId: serverId, plaintext: plaintext, redacted: false)
+        let alert = PushAlertPresentation.make(serverId: serverId, plaintext: plaintext, redacted: false, actionTag: nil)
         #expect(alert.categoryIdentifier == SessionNotificationCategory.deviceEnrolled)
         #expect(alert.interruption == .active)
         #expect(!alert.playsSound)
@@ -119,7 +119,7 @@ struct PushPairingPlaintextTests {
         )
         #expect(serverLock.redacts(serverId: serverId, plaintext: plaintext))
 
-        let redacted = PushAlertPresentation.make(serverId: serverId, plaintext: plaintext, redacted: true)
+        let redacted = PushAlertPresentation.make(serverId: serverId, plaintext: plaintext, redacted: true, actionTag: nil)
         #expect(redacted.title == String(localized: "Approve New Device?"))
         #expect(redacted.body == String(localized: "A new device is waiting for your approval."))
         #expect(redacted.subtitle.isEmpty)
@@ -153,7 +153,7 @@ struct PushPairingPlaintextTests {
         #expect(!snapshot.redacts(serverId: serverId, plaintext: approval))
         #expect(!snapshot.redacts(serverId: serverId, plaintext: enrolled))
 
-        let enrolledRedacted = PushAlertPresentation.make(serverId: serverId, plaintext: enrolled, redacted: true)
+        let enrolledRedacted = PushAlertPresentation.make(serverId: serverId, plaintext: enrolled, redacted: true, actionTag: nil)
         #expect(enrolledRedacted.title == String(localized: "New Device Paired"))
         #expect(enrolledRedacted.body == String(localized: "A new device was paired with your server."))
     }

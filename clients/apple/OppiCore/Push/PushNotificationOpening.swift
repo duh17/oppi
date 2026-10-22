@@ -10,7 +10,12 @@ enum PushNotificationOpening {
         switch result {
         case .success(let opened):
             let redacted = redaction().redacts(serverId: opened.serverId, plaintext: opened.plaintext)
-            return PushAlertPresentation.make(serverId: opened.serverId, plaintext: opened.plaintext, redacted: redacted)
+            return PushAlertPresentation.make(
+                serverId: opened.serverId,
+                plaintext: opened.plaintext,
+                redacted: redacted,
+                actionTag: opened.actionTag
+            )
         case .failure:
             return .fallback
         }

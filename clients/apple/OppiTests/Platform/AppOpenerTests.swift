@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import LocalAuthentication
 import Testing
@@ -50,11 +51,29 @@ struct AppOpenerTests {
         )))
     }
 
-    @Test func pairingNotificationMapsOpenApproveAndDeny() throws {
-        let base = [
+    /// Deny acts without opening Oppi, so only on an alert the push extension tagged: APNs shows
+    /// a forged push that skips the extension with whatever category and fields it names.
+    @Test func pairingNotificationMapsOpenApproveAndOnlyAnExtensionTaggedDeny() throws {
+        let pushKey = Curve25519.KeyAgreement.PrivateKey().rawRepresentation
+        let keyId = Data(repeating: 7, count: PushEnvelope.keyIdLength)
+        let keys = { (id: Data) -> PushKeyMaterial? in
+            id == keyId ? PushKeyMaterial(privateKey: pushKey, serverPublicKey: Data(), serverId: "server-a") : nil
+        }
+        let forged = [
             "serverId": "server-a",
             "approvalId": "approval-1",
         ]
+        let base = forged.merging(
+            PushActionTag(keyId: keyId, privateKey: pushKey).userInfo(serverId: "server-a", approvalId: "approval-1")
+        ) { _, tag in tag }
+        func request(_ action: String, _ userInfo: [String: String]) -> AppOpenRequest? {
+            AttentionNotificationService.openRequest(
+                categoryIdentifier: AttentionNotificationService.pairingApprovalCategoryId,
+                actionIdentifier: action,
+                userInfo: userInfo,
+                pushKey: keys
+            )
+        }
         let open = try #require(AttentionNotificationService.openRequest(
             categoryIdentifier: AttentionNotificationService.pairingApprovalCategoryId,
             actionIdentifier: "com.apple.UNNotificationDefaultActionIdentifier",
@@ -65,15 +84,28 @@ struct AppOpenerTests {
             actionIdentifier: AttentionNotificationService.pairingApproveActionId,
             userInfo: base
         ))
-        let deny = try #require(AttentionNotificationService.openRequest(
-            categoryIdentifier: AttentionNotificationService.pairingApprovalCategoryId,
-            actionIdentifier: AttentionNotificationService.pairingDenyActionId,
-            userInfo: base
-        ))
+        let deny = try #require(request(AttentionNotificationService.pairingDenyActionId, base))
 
         #expect(open == .pairing(serverId: "server-a", approvalId: "approval-1", action: .open))
         #expect(approve == .pairing(serverId: "server-a", approvalId: "approval-1", action: .approve))
         #expect(deny == .pairing(serverId: "server-a", approvalId: "approval-1", action: .deny))
+
+        // Opening Oppi is all an untagged alert can do; the approval sheet shows what the server lists.
+        #expect(request(AttentionNotificationService.pairingApproveActionId, forged)
+            == .pairing(serverId: "server-a", approvalId: "approval-1", action: .approve))
+        #expect(request(AttentionNotificationService.pairingDenyActionId, forged) == nil)
+        // A tag binds its server and approval, and only this device's key for that server makes one.
+        var otherApproval = base
+        otherApproval["approvalId"] = "approval-2"
+        #expect(request(AttentionNotificationService.pairingDenyActionId, otherApproval) == nil)
+        var otherServer = base
+        otherServer["serverId"] = "server-b"
+        #expect(request(AttentionNotificationService.pairingDenyActionId, otherServer) == nil)
+        let foreignKey = forged.merging(
+            PushActionTag(keyId: keyId, privateKey: Curve25519.KeyAgreement.PrivateKey().rawRepresentation)
+                .userInfo(serverId: "server-a", approvalId: "approval-1")
+        ) { _, tag in tag }
+        #expect(request(AttentionNotificationService.pairingDenyActionId, foreignKey) == nil)
         #expect(AttentionNotificationService.openRequest(
             categoryIdentifier: AttentionNotificationService.deviceEnrolledCategoryId,
             actionIdentifier: "com.apple.UNNotificationDefaultActionIdentifier",

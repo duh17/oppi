@@ -191,6 +191,62 @@ struct OpenedPushEnvelope: Sendable {
     let messageId: Data
     let serverId: String
     let plaintext: PushPlaintext
+    /// Tags this push's alert actions with the key that opened it.
+    let actionTag: PushActionTag
+}
+
+/// Proof, in a delivered alert's `userInfo`, that this device's extension opened the push it
+/// shows (spec §6.1). A push sent to APNs without `mutable-content` never reaches the
+/// extension, so iOS shows its category and `userInfo` as sent, and its actions with them.
+/// Only the extension holds a push key, so only it can tag an alert; an action that acts
+/// without opening Oppi (a pairing Deny) checks the tag first.
+struct PushActionTag: Sendable {
+    static let keyIdField = "actionKeyId"
+    static let tagField = "actionTag"
+
+    let keyId: Data
+    private let key: SymmetricKey
+
+    /// `privateKey`: the raw X25519 push key `keyId` names.
+    init(keyId: Data, privateKey: Data) {
+        self.keyId = keyId
+        key = HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: privateKey),
+            info: Data("oppi-push-action-v1".utf8),
+            outputByteCount: 32
+        )
+    }
+
+    /// The fields a pairing alert carries for `approvalId` on `serverId`.
+    func userInfo(serverId: String, approvalId: String) -> [String: String] {
+        let code = HMAC<SHA256>.authenticationCode(for: Self.message(serverId, approvalId), using: key)
+        return [
+            Self.keyIdField: keyId.base64URLEncodedString,
+            Self.tagField: Data(code).base64URLEncodedString,
+        ]
+    }
+
+    /// True when `userInfo` carries a tag for `approvalId` on `serverId`, made with a push key
+    /// of that server that this device still holds.
+    static func verifies(
+        _ userInfo: [String: String],
+        serverId: String,
+        approvalId: String,
+        key: (Data) -> PushKeyMaterial?
+    ) -> Bool {
+        guard let keyId = userInfo[keyIdField].flatMap({ Data(base64URLEncoded: $0) }),
+              let tag = userInfo[tagField].flatMap({ Data(base64URLEncoded: $0) }),
+              let material = key(keyId), material.serverId == serverId else { return false }
+        return HMAC<SHA256>.isValidAuthenticationCode(
+            tag,
+            authenticating: message(serverId, approvalId),
+            using: PushActionTag(keyId: keyId, privateKey: material.privateKey).key
+        )
+    }
+
+    private static func message(_ serverId: String, _ approvalId: String) -> Data {
+        Data("\(serverId)\n\(approvalId)".utf8)
+    }
 }
 
 enum PushEnvelopeOpener {
@@ -244,7 +300,8 @@ enum PushEnvelopeOpener {
             keyId: keyId,
             messageId: encapsulatedKey,
             serverId: material.serverId,
-            plaintext: plaintext
+            plaintext: plaintext,
+            actionTag: PushActionTag(keyId: keyId, privateKey: material.privateKey)
         )
     }
 

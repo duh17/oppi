@@ -422,6 +422,22 @@ struct PushEnvelopeTests {
         #expect(alert.body == String(localized: "Open Oppi to read it."))
     }
 
+    /// The extension tags the pairing alert it opened, so its Deny acts on that approval, with
+    /// App Lock on as well.
+    @Test func aPairingAlertTheExtensionOpenedCanBeDenied() throws {
+        let approvalId = try #require(try Self.expectedPlaintext("pairing-approval").approvalId)
+        for appLock in [false, true] {
+            let alert = try present("pairing-approval", redaction: PushRedactionSnapshot(appLockEnabled: appLock, lockedScopes: []))
+            let request = AttentionNotificationService.openRequest(
+                categoryIdentifier: alert.categoryIdentifier,
+                actionIdentifier: AttentionNotificationService.pairingDenyActionId,
+                userInfo: alert.userInfo,
+                pushKey: try Self.keyLookup(Self.vectors())
+            )
+            #expect(request == .pairing(serverId: Self.serverId, approvalId: approvalId, action: .deny))
+        }
+    }
+
     @Test func aPushWithoutAnEnvelopeShowsOnlyTheFixedText() {
         let alert = PushNotificationOpening.presentation(
             for: PushNotificationOpening.open(

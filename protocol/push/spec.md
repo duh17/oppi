@@ -637,11 +637,20 @@ practice.
    signature check applies. The text can say anything, for example "Approve the deploy now".
    Encryption cannot prevent this. Mitigations:
    - key and account hygiene for the relay operator (`relay/README.md`, "Operator security");
-   - **app invariant: a notification tap only opens Oppi to a session. It never approves,
-     denies, answers, or replies.** Session notification categories register no actions, and
-     the tap handler only navigates. A forged alert can mislead a person, but tapping it cannot
-     act on anyone's behalf. Any future notification action breaks this invariant and needs its
-     own authentication design.
+   - **app invariant: nothing in an alert the extension did not open can act.** Session
+     notification categories register no actions, and a tap only opens Oppi to the session;
+     it never approves, answers, or replies. A forged alert can mislead a person, but tapping
+     it cannot act on anyone's behalf.
+   - The new-device pairing alert has two actions, both needing the device unlocked.
+     **Approve** only opens Oppi, whose approval sheet shows the requests the server lists and
+     approves one only after device authentication. **Deny** acts without opening Oppi, so
+     it acts only on an alert that carries the extension's tag: `userInfo` `actionKeyId` (the
+     push key's `kid`, base64url) and `actionTag` = base64url `HMAC-SHA256(key, UTF-8
+     serverId + "\n" + approvalId)`, where `key` = HKDF-SHA256 (no salt, info
+     `oppi-push-action-v1`, 32 bytes) of the raw X25519 push private key that opened the push.
+     The app checks it with the push key it holds for that `kid` and server; without a valid
+     tag, Deny does nothing. The relay and APNs never hold a push key, so they cannot tag an
+     alert. Any new notification action that acts needs the same check.
 2. **Fallback spam.** A leaked send token or a hostile relay can push the fixed fallback alert
    ("Oppi: You have a new notification.") to one device. It carries no attacker text. Relay
    quotas bound a leaked token (§3.3: daily and per-minute limits per registration); revoking

@@ -518,16 +518,28 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
 
     /// The one open a notification response asks for, or nil when it opens
     /// nothing. Pure, so every payload shape is testable.
+    ///
+    /// A pairing Deny acts without opening Oppi, so it acts only on an alert the
+    /// extension opened, which tags it with that server's push key (`PushActionTag`,
+    /// spec §6.1): APNs shows a push that skips the extension as sent, actions and
+    /// all. Open and Approve only open Oppi, whose approval sheet shows only what the
+    /// server lists.
     nonisolated static func openRequest(
         categoryIdentifier: String,
         actionIdentifier: String,
-        userInfo: [String: String]
+        userInfo: [String: String],
+        pushKey: (Data) -> PushKeyMaterial? = { PushSharedStore.loadKey(keyId: $0)?.material }
     ) -> AppOpenRequest? {
         if let pairing = pairingNotificationPayload(
             categoryIdentifier: categoryIdentifier,
             actionIdentifier: actionIdentifier,
             userInfo: userInfo as [AnyHashable: Any]
         ) {
+            if pairing.action == .deny {
+                guard let approvalId = pairing.approvalId,
+                      PushActionTag.verifies(userInfo, serverId: pairing.serverId, approvalId: approvalId, key: pushKey)
+                else { return nil }
+            }
             return .pairing(
                 serverId: pairing.serverId,
                 approvalId: pairing.approvalId,
@@ -577,6 +589,9 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             userInfo: Self.stringUserInfo(content.userInfo)
         )
         guard let request else {
+            if response.actionIdentifier == Self.pairingDenyActionId {
+                notificationLogger.error("Pairing Deny ignored: the alert did not come through the push extension")
+            }
             completionHandler()
             return
         }

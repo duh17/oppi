@@ -68,7 +68,8 @@ struct PushAlertPresentation: Equatable, Sendable {
         playsSound: false
     )
 
-    static func make(serverId: String, plaintext: PushPlaintext, redacted: Bool) -> Self {
+    /// `actionTag`: the key that opened the push, which tags a pairing alert so its Deny may act.
+    static func make(serverId: String, plaintext: PushPlaintext, redacted: Bool, actionTag: PushActionTag?) -> Self {
         let fixed = fixedText(event: plaintext.event, kind: plaintext.kind)
         var userInfo = [
             "event": plaintext.event.rawValue,
@@ -77,7 +78,12 @@ struct PushAlertPresentation: Equatable, Sendable {
         if let sessionId = plaintext.sessionId { userInfo["sessionId"] = sessionId }
         if let kind = plaintext.kind { userInfo["kind"] = kind.rawValue }
         if let workspaceId = plaintext.workspaceId { userInfo["workspaceId"] = workspaceId }
-        if let approvalId = plaintext.approvalId { userInfo["approvalId"] = approvalId }
+        if let approvalId = plaintext.approvalId {
+            userInfo["approvalId"] = approvalId
+            if plaintext.event == .pairingApproval, let actionTag {
+                userInfo.merge(actionTag.userInfo(serverId: serverId, approvalId: approvalId)) { _, tag in tag }
+            }
+        }
         if let deviceId = plaintext.deviceId { userInfo["deviceId"] = deviceId }
         let thread = threadIdentifier(for: plaintext)
         return Self(
