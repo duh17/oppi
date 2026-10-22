@@ -89,12 +89,22 @@ final class LiveVoiceAudioOwner: LiveVoiceAudioOwning {
     }
 
     func stop() {
+        let wasStarted = started
         started = false
         muted = false
         playback?.teardown()
         engine.stopCapture()
         isCapturing = false
-        AudioPlayerService.endProcessCaptureInterruption(owner: self)
+        let playbackRestored = AudioPlayerService.endProcessCaptureInterruption(owner: self)
+        // Mirrors VoiceInputManager.releaseAudioSessionAfterCapture: free the session
+        // (Music resumes, Bluetooth leaves HFP) only after a real call, and only when
+        // no other capture or restored playback took it over. A stop with no call
+        // running must not cut off read-aloud or audio replies.
+        #if os(iOS)
+        if wasStarted, !playbackRestored {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+        #endif
     }
 
     private func beginCapture() throws {
@@ -362,10 +372,6 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
         scheduler = LiveVoicePlaybackScheduler()
         echoCancellation = false
         recoveries = 0
-        // Call end only: lets Music resume and Bluetooth leave HFP (same as dictation).
-        #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        #endif
     }
 
     func play(_ pcm: Data) {
