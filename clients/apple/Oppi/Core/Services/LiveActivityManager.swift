@@ -31,6 +31,10 @@ final class LiveActivityManager {
     private(set) var countsByServer: [String: Counts] = [:]
     /// The card for each slot.
     private var activities: [String: Activity<OppiActivityAttributes>] = [:]
+    /// The counts this manager last sent each slot's card. ActivityKit's `content` is a
+    /// synchronous call into the system, so `apply` compares against this instead. A card with
+    /// no entry (adopted, or after a return to the foreground) gets one update.
+    private var sentCounts: [String: Counts] = [:]
     /// Token and state watchers, by activity ID.
     private var watchers: [String: Task<Void, Never>] = [:]
     private var systemObservers: [Task<Void, Never>] = []
@@ -198,12 +202,24 @@ final class LiveActivityManager {
     /// the relay any state it has not accepted.
     func recoverIfNeeded() {
         adoptExisting()
-        for serverId in countsByServer.keys { apply(serverId: serverId) }
+        // A relay may have moved the cards while away: send each card the counts once more.
+        // This runs inside the scene's activation update, where ActivityKit's blocking calls
+        // can trip the scene-update watchdog, so the sends run after that update finishes, when
+        // `AppScenePhase` has seen the activation. A scene that deactivated meanwhile starts no card.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            sentCounts.removeAll()
+            for serverId in countsByServer.keys { apply(serverId: serverId) }
+        }
         relaySync.publish()
     }
 
     // MARK: - ActivityKit
 
+    /// ActivityKit's authorization check and `Activity.request` block on a system queue, which
+    /// deadlocks the launch scene update (watchdog 0x8BADF00D) while the scene is inactive, and a
+    /// card cannot start in the background anyway. Until the scene is active, `apply` does not
+    /// start a card; `recoverIfNeeded` applies every server then.
     private func apply(serverId: String) {
         guard let counts = countsByServer[serverId] else { return }
         let slot = LiveActivitySettings.slot(serverId: serverId, defaults: defaults)
@@ -213,12 +229,14 @@ final class LiveActivityManager {
             return
         }
         if let activity = activities[slot] {
-            guard activity.content.state != counts else { return }
+            guard sentCounts[slot] != counts else { return }
+            sentCounts[slot] = counts
             nonisolated(unsafe) let detached = activity
             Task { await detached.update(ActivityContent(state: counts, staleDate: nil)) }
             return
         }
-        guard !dismissals.slots.contains(slot), ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        guard AppScenePhase.shared.phase == .active, !dismissals.slots.contains(slot),
+              ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         do {
             let activity = try Activity.request(
                 attributes: OppiActivityAttributes(slot: slot),
@@ -226,6 +244,7 @@ final class LiveActivityManager {
                 pushType: .token
             )
             adopt(activity)
+            sentCounts[slot] = counts
         } catch {
             logger.error("Live Activity request failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -233,6 +252,7 @@ final class LiveActivityManager {
 
     private func endCard(serverId: String) {
         let slot = LiveActivitySettings.slot(serverId: serverId, defaults: defaults)
+        sentCounts.removeValue(forKey: slot)
         guard let activity = activities.removeValue(forKey: slot) else { return }
         end(activity, dismissal: .after(Date().addingTimeInterval(Self.dismissalDelay)))
         relaySync.removeActivity(slot: slot)
@@ -286,6 +306,7 @@ final class LiveActivityManager {
             dismissals.slots.remove(slot)
         }
         if let held { end(held, dismissal: .immediate) }
+        sentCounts.removeValue(forKey: slot)
         activities[slot] = activity
         watch(activity, slot: slot)
     }
@@ -299,7 +320,18 @@ final class LiveActivityManager {
                     relaySync.setActivityToken(token, slot: slot)
                 }
             }
-            defer { tokens.cancel() }
+            // Track what the card shows (relay pushes move it too) so `sentCounts` never goes
+            // stale against the card without a synchronous read of `activity.content`.
+            let contents = Task { [weak self] in
+                for await content in activity.contentUpdates {
+                    guard let self, activities[slot]?.id == activity.id else { continue }
+                    sentCounts[slot] = content.state
+                }
+            }
+            defer {
+                tokens.cancel()
+                contents.cancel()
+            }
             for await state in activity.activityStateUpdates where state == .ended || state == .dismissed {
                 self?.cardEnded(activity, slot: slot, state: state)
                 return
@@ -312,6 +344,7 @@ final class LiveActivityManager {
         watchers.removeValue(forKey: activity.id)
         guard activities[slot]?.id == activity.id else { return }
         activities.removeValue(forKey: slot)
+        sentCounts.removeValue(forKey: slot)
         relaySync.removeActivity(slot: slot)
         logger.info("Live Activity ended (state=\(String(describing: state), privacy: .public))")
         // Apple's 8 hours ran out while work goes on: start a new card. A dismissed card
