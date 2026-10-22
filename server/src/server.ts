@@ -584,6 +584,7 @@ export class Server {
     this.authModule = new AuthModule(config.auth?.module);
     this.sessionPushNotifier = new SessionPushNotifier(this.push, this.storage, {
       isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),
+      liveSessions: () => this.liveSessions(),
     });
     this.liveActivityNotifier = new LiveActivityNotifier(this.push, {
       isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),
@@ -1189,6 +1190,7 @@ export class Server {
       await this.liveActivityNotifier.endLiveCards(LIVE_ACTIVITY_STOP_END_MS);
     }
     this.liveActivityNotifier.stop();
+    this.sessionPushNotifier.stop();
     await this.scheduleRunner.stop();
     this.opsMetrics.stop();
     this.resourceSampler.stop();
@@ -1476,7 +1478,9 @@ export class Server {
   private forgetPresenceSocket(ws: WebSocket): void {
     const deviceId = this.presenceSocketDevices.get(ws);
     if (!this.presenceSocketDevices.delete(ws) || deviceId === undefined) return;
-    if (!this.isDevicePresent(deviceId)) this.liveActivityNotifier.presenceChanged(deviceId);
+    if (this.isDevicePresent(deviceId)) return;
+    this.liveActivityNotifier.presenceChanged(deviceId);
+    this.sessionPushNotifier.deviceLeft(deviceId);
   }
 
   private isDevicePresent(deviceId: string): boolean {

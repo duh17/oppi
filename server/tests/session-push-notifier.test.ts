@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProgramStatusSync } from "../src/program-status.js";
 import { SessionPushNotifier } from "../src/session-push-notifier.js";
@@ -68,11 +68,16 @@ function makeStorage(...sessions: Session[]): MockStorage {
 function makeNotifier(
   push: PushSender,
   storage: Storage,
-  options: { presentDevices?: Iterable<string>; now?: () => number } = {},
+  options: {
+    presentDevices?: Iterable<string>;
+    liveSessions?: () => Session[];
+    now?: () => number;
+  } = {},
 ) {
   const present = new Set(options.presentDevices ?? []);
   return new SessionPushNotifier(push, storage, {
     isDevicePresent: (deviceId) => present.has(deviceId),
+    liveSessions: options.liveSessions ?? (() => []),
     ...(options.now ? { now: options.now } : {}),
   });
 }
@@ -199,6 +204,7 @@ describe("SessionPushNotifier", () => {
       const present = new Set(["dev-phone", "dev-ipad"]);
       const notifier = new SessionPushNotifier(push, makeStorage(), {
         isDevicePresent: (deviceId) => present.has(deviceId),
+        liveSessions: () => [],
       });
       const toBlocked = change({ state: "working" }, { state: "blocked", kind: "question" });
 
@@ -209,6 +215,157 @@ describe("SessionPushNotifier", () => {
       present.delete("dev-phone");
       notifier.handleProgramStatusChange(makeSession(), toBlocked);
       expect(push.send.mock.calls.map(([sent]) => sent.deviceId)).toEqual(["dev-phone"]);
+    });
+  });
+
+  describe("a device that stops being present", () => {
+    const T0 = Date.parse("2026-10-17T12:00:00Z");
+    const toBlocked = (since: number) =>
+      change({ state: "working" }, { state: "blocked", kind: "permission", since });
+    const blockedSession = (since: number) =>
+      makeSession({
+        programStatus: { state: "blocked", kind: "permission", message: "Push to main?", since },
+      });
+
+    afterEach(() => vi.useRealTimers());
+
+    function setup(devices: string[], present: string[]) {
+      vi.useFakeTimers({ now: T0 });
+      const push = makePush(devices);
+      const session = blockedSession(T0);
+      const live = [session];
+      const presentSet = new Set(present);
+      const notifier = new SessionPushNotifier(push, makeStorage(session), {
+        isDevicePresent: (id) => presentSet.has(id),
+        liveSessions: () => live,
+      });
+      return { push, session, notifier, presentSet };
+    }
+
+    it("tells that device alone about a session that blocked while it was present", () => {
+      const { push, session, notifier, presentSet } = setup(["phone", "ipad"], ["dev-phone"]);
+      notifier.handleProgramStatusChange(session, toBlocked(T0));
+      expect(push.send.mock.calls.map(([sent]) => sent.deviceId)).toEqual(["dev-ipad"]);
+
+      vi.setSystemTime(T0 + 30_000);
+      presentSet.delete("dev-phone");
+      notifier.deviceLeft("dev-phone");
+
+      expect(push.send.mock.calls.map(([sent]) => sent.deviceId)).toEqual([
+        "dev-ipad",
+        "dev-phone",
+      ]);
+      expect(push.send).toHaveBeenLastCalledWith(
+        target("phone"),
+        expect.objectContaining({ event: "blocked", kind: "permission", body: "Push to main?" }),
+      );
+    });
+
+    it("does not alert a device twice for one blocked stretch", () => {
+      const { push, session, notifier } = setup(["phone"], []);
+      notifier.handleProgramStatusChange(session, toBlocked(T0));
+      expect(push.send).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(T0 + 90_000);
+      notifier.deviceLeft("dev-phone");
+      expect(push.send).toHaveBeenCalledTimes(1);
+    });
+
+    it("skips a session blocked longer than two minutes ago, or no longer blocked", () => {
+      const { push, session, notifier } = setup(["phone"], []);
+
+      vi.setSystemTime(T0 + 121_000);
+      notifier.deviceLeft("dev-phone");
+      expect(push.send).not.toHaveBeenCalled();
+
+      vi.setSystemTime(T0 + 119_000);
+      session.programStatus = { state: "working", since: T0 + 100_000 };
+      notifier.deviceLeft("dev-phone");
+      expect(push.send).not.toHaveBeenCalled();
+    });
+
+    it("sends nothing to a device that did not list blocked", () => {
+      const { push, notifier } = setup([], []);
+      notifier.deviceLeft("dev-phone");
+      expect(push.send).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("a Needs you no relay accepted", () => {
+    const T0 = Date.parse("2026-10-17T12:00:00Z");
+    const unavailable = () => ({ status: "unavailable" }) as SendResult;
+
+    afterEach(() => vi.useRealTimers());
+
+    function setup(result: (deviceId: string) => SendResult) {
+      vi.useFakeTimers({ now: T0 });
+      const push = makePush(["phone", "ipad"], result);
+      const session = makeSession({ programStatus: { state: "blocked", since: T0 } });
+      const present = new Set<string>();
+      const notifier = new SessionPushNotifier(push, makeStorage(session), {
+        isDevicePresent: (id) => present.has(id),
+        liveSessions: () => [session],
+      });
+      notifier.handleProgramStatusChange(
+        session,
+        change({ state: "working" }, { state: "blocked", since: T0 }),
+      );
+      return { push, session, notifier, present };
+    }
+
+    it("is tried once more after a minute while still blocked", async () => {
+      const { push } = setup(unavailable);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(push.send).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(push.send).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(push.send).toHaveBeenCalledTimes(4);
+
+      // Only once: the retry failing too schedules nothing further.
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(push.send).toHaveBeenCalledTimes(4);
+    });
+
+    it("is not retried once the session left blocked, or blocked again later", async () => {
+      const resolved = setup(unavailable);
+      await vi.advanceTimersByTimeAsync(0);
+      resolved.session.programStatus = { state: "working", since: T0 + 10_000 };
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(resolved.push.send).toHaveBeenCalledTimes(2);
+
+      const reblocked = setup(unavailable);
+      await vi.advanceTimersByTimeAsync(0);
+      reblocked.session.programStatus = { state: "blocked", since: T0 + 20_000 };
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(reblocked.push.send).toHaveBeenCalledTimes(2);
+    });
+
+    it("is not retried when some device was reached", async () => {
+      const { push } = setup((id) =>
+        id === "dev-phone" ? ({ status: "delivered" } as SendResult) : unavailable(),
+      );
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(push.send).toHaveBeenCalledTimes(2);
+    });
+
+    it("is not retried to a device that became present, or after stop", async () => {
+      const present = setup(unavailable);
+      await vi.advanceTimersByTimeAsync(0);
+      present.present.add("dev-phone");
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(present.push.send.mock.calls.map(([sent]) => sent.deviceId)).toEqual([
+        "dev-phone",
+        "dev-ipad",
+        "dev-ipad",
+      ]);
+
+      const stopped = setup(unavailable);
+      await vi.advanceTimersByTimeAsync(0);
+      stopped.notifier.stop();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(stopped.push.send).toHaveBeenCalledTimes(2);
     });
   });
 

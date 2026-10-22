@@ -10,12 +10,24 @@ import { fitPushBody } from "./push/envelope.js";
 import type { PushNotification, PushSender } from "./push/push-sender.js";
 import type { ProgramStatusSync } from "./program-status.js";
 import type { Storage } from "./storage.js";
-import type { ProgramStatusKind, PushRegistration, Session, SessionPushEvent } from "./types.js";
+import type {
+  ProgramStatus,
+  ProgramStatusKind,
+  PushRegistration,
+  Session,
+  SessionPushEvent,
+} from "./types.js";
 
 const log = createLogger({ base: { component: "session_push_notifier" } });
 
 /** Shortest gap between two pushes of the same alert for one session. */
 const SESSION_PUSH_MIN_INTERVAL_MS = 60_000;
+
+/** A session blocked this recently still waits on the user: a device that just left is told. */
+const BLOCKED_CATCH_UP_MS = 120_000;
+
+/** A Needs you that no relay accepted is tried once more after this long. */
+const BLOCKED_RETRY_DELAY_MS = 60_000;
 
 /** Titles, and the body when the status names nothing to show. */
 const BLOCKED_PRESENTATION = {
@@ -44,6 +56,8 @@ export interface SessionNotifyPort {
 export interface SessionPushNotifierOptions {
   /** True while this paired device holds a live app-event or focused session stream. */
   isDevicePresent: (deviceId: string) => boolean;
+  /** Sessions with a live runtime; their `programStatus` is current. */
+  liveSessions: () => Session[];
   now?: () => number;
 }
 
@@ -63,6 +77,12 @@ export interface SessionPushNotifierOptions {
  * Deliberate, from the agent (`notify` tool): a top-level session tells the user there is
  * something to read. Offered only while some device can receive it.
  *
+ * A device that stops being present (`deviceLeft`) gets the Needs you of each session that
+ * became blocked in the last two minutes, unless it was already told: an app suspended with
+ * its sockets still open stays present until the ping timeout, and a session that blocked in
+ * that window would otherwise wait unannounced. If no relay accepted a Needs you, it is tried
+ * once more after a minute while the session is still blocked in the same stretch.
+ *
  * Failed and agent alerts go to every registered device, present or not: the app hides one
  * only while that session's chat is on screen. Each alert pushes at most once a minute per
  * session. Each device gets its own sealed envelope; a device without a push key, or that did
@@ -71,6 +91,13 @@ export interface SessionPushNotifierOptions {
  */
 export class SessionPushNotifier implements SessionNotifyPort {
   private readonly lastPushAt = new Map<string, number>();
+  /**
+   * The last Needs you sent to each device, per session (`sessionId:deviceId`), with the
+   * `since` of the blocked stretch it announced. The per-session throttle cannot say which
+   * devices it let through; this is what keeps `deviceLeft` from alerting twice.
+   */
+  private readonly blockedAlerts = new Map<string, { at: number; since: number }>();
+  private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly now: () => number;
 
   constructor(
@@ -88,9 +115,7 @@ export class SessionPushNotifier implements SessionNotifyPort {
     let content: PushEventContent;
     let registrations: PushRegistration[];
     if (current.state === "blocked") {
-      const kind = current.kind ?? "question";
-      const fixed = BLOCKED_PRESENTATION[kind];
-      content = { event: "blocked", kind, title: fixed.title, body: current.message ?? fixed.body };
+      content = blockedContent(current);
       registrations = this.push
         .registrations("blocked")
         .filter((entry) => !this.options.isDevicePresent(entry.deviceId));
@@ -107,15 +132,99 @@ export class SessionPushNotifier implements SessionNotifyPort {
     if (registrations.length === 0 || this.throttledFor(session.id, content.event) > 0) return;
     this.startThrottle(session.id, content.event);
     const notification = this.notification(session.id, content);
-    for (const registration of registrations) {
-      void this.push.send(registration, notification).catch((err) => {
-        log.warn("session_push.send_failed", {
-          sessionId: session.id,
-          event: content.event,
-          error: safeErrorMessage(err),
-        });
-      });
+    if (content.event === "blocked") {
+      void this.sendBlocked(session.id, current.since, notification, registrations, true);
+    } else {
+      void this.deliver(session.id, notification, registrations);
     }
+  }
+
+  /**
+   * `deviceId` no longer holds a stream. Tell it about each live session that became blocked
+   * within the last two minutes, unless it already got that stretch's alert or any Needs you
+   * for the session in the last minute (the per-session throttle's interval, kept per device).
+   */
+  deviceLeft(deviceId: string): void {
+    const registration = this.push.registrations("blocked").find((r) => r.deviceId === deviceId);
+    if (!registration) return;
+    const now = this.now();
+    for (const session of this.options.liveSessions()) {
+      const status = session.programStatus;
+      if (status?.state !== "blocked" || now - status.since > BLOCKED_CATCH_UP_MS) continue;
+      const alerted = this.blockedAlerts.get(`${session.id}:${deviceId}`);
+      if (
+        alerted &&
+        (alerted.since === status.since || now - alerted.at < SESSION_PUSH_MIN_INTERVAL_MS)
+      ) {
+        continue;
+      }
+      const notification = this.notification(session.id, blockedContent(status));
+      void this.sendBlocked(session.id, status.since, notification, [registration], true);
+    }
+  }
+
+  /** Clears pending retries; nothing sends after this. */
+  stop(): void {
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    this.retryTimers.clear();
+  }
+
+  /** Never rejects: a failed send is logged and counts as no result. */
+  private deliver(
+    sessionId: string,
+    notification: PushNotification,
+    registrations: PushRegistration[],
+  ): Promise<Awaited<ReturnType<PushSender["send"]>>[]> {
+    return Promise.all(
+      registrations.map((registration) =>
+        this.push.send(registration, notification).catch((err: unknown) => {
+          log.warn("session_push.send_failed", {
+            sessionId,
+            event: notification.event,
+            error: safeErrorMessage(err),
+          });
+          return null;
+        }),
+      ),
+    );
+  }
+
+  /** Sends Needs you and notes who got it. When no relay took any, retries once (`mayRetry`). */
+  private async sendBlocked(
+    sessionId: string,
+    since: number,
+    notification: PushNotification,
+    registrations: PushRegistration[],
+    mayRetry: boolean,
+  ): Promise<void> {
+    const at = this.now();
+    for (const [key, entry] of this.blockedAlerts) {
+      if (at - entry.at > BLOCKED_CATCH_UP_MS) this.blockedAlerts.delete(key);
+    }
+    for (const { deviceId } of registrations) {
+      this.blockedAlerts.set(`${sessionId}:${deviceId}`, { at, since });
+    }
+    const results = await this.deliver(sessionId, notification, registrations);
+    if (!mayRetry || !results.every((result) => result?.status === "unavailable")) return;
+    for (const { deviceId } of registrations) this.scheduleBlockedRetry(sessionId, since, deviceId);
+  }
+
+  /** One retry per device and session; never keeps the process alive. */
+  private scheduleBlockedRetry(sessionId: string, since: number, deviceId: string): void {
+    const key = `${sessionId}:${deviceId}`;
+    clearTimeout(this.retryTimers.get(key));
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(key);
+      const status = this.options.liveSessions().find((s) => s.id === sessionId)?.programStatus;
+      if (status?.state !== "blocked" || status.since !== since) return;
+      if (this.options.isDevicePresent(deviceId)) return;
+      const registration = this.push.registrations("blocked").find((r) => r.deviceId === deviceId);
+      if (!registration) return;
+      const notification = this.notification(sessionId, blockedContent(status));
+      void this.sendBlocked(sessionId, since, notification, [registration], false);
+    }, BLOCKED_RETRY_DELAY_MS);
+    timer.unref();
+    this.retryTimers.set(key, timer);
   }
 
   /** Top-level sessions, while some device registered for agent messages. */
@@ -137,18 +246,7 @@ export class SessionPushNotifier implements SessionNotifyPort {
     const notification = this.notification(sessionId, { event: "notify", title, body: written });
     // Held while sending so a parallel call waits its turn; given back when nothing went out.
     const started = this.startThrottle(sessionId, "notify");
-    const results = await Promise.all(
-      this.push.registrations("notify").map((registration) =>
-        this.push.send(registration, notification).catch((err: unknown) => {
-          log.warn("session_push.send_failed", {
-            sessionId,
-            event: "notify",
-            error: safeErrorMessage(err),
-          });
-          return null;
-        }),
-      ),
-    );
+    const results = await this.deliver(sessionId, notification, this.push.registrations("notify"));
     const devices = results.filter((result) => result?.status === "delivered").length;
     if (devices === 0) {
       // Only this call's hold: a later call may have taken a new one meanwhile.
@@ -198,6 +296,12 @@ export class SessionPushNotifier implements SessionNotifyPort {
     const whole = fitPushBody(fields, body, "");
     return { ...fields, body: whole === body ? body : fitPushBody(fields, body, "\u2026") };
   }
+}
+
+function blockedContent(status: ProgramStatus): PushEventContent {
+  const kind = status.kind ?? "question";
+  const fixed = BLOCKED_PRESENTATION[kind];
+  return { event: "blocked", kind, title: fixed.title, body: status.message ?? fixed.body };
 }
 
 /** Control characters other than tab and newline; JSON would escape each into six bytes. */
