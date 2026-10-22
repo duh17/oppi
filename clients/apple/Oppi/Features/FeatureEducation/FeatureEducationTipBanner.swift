@@ -373,7 +373,7 @@ final class FeatureEducationTipHostView: UIView {
     private let descriptor: FeatureEducationTipDescriptor
     private let insets: NSDirectionalEdgeInsets
     private let ownerID = UUID()
-    private let coordinator = FeatureEducationTipPresentationCoordinator.shared
+    private let coordinator: FeatureEducationTipPresentationCoordinator
     private let invalidateTip: () -> Void
     private let observeTip: (@escaping @MainActor (Bool) -> Void) -> Task<Void, Never>
     private var heightConstraint: NSLayoutConstraint?
@@ -384,12 +384,15 @@ final class FeatureEducationTipHostView: UIView {
 
     /// `ownsHeight` pins this view's height to `reservedHeight`; a host whose
     /// container sizes the slot from `reservedHeight` passes false.
+    /// `coordinator` is the shared one except in tests, which isolate their claims.
     init<TipType: Tip>(
         tip: TipType,
         descriptor: FeatureEducationTipDescriptor,
         insets: NSDirectionalEdgeInsets,
-        ownsHeight: Bool = true
+        ownsHeight: Bool = true,
+        coordinator: FeatureEducationTipPresentationCoordinator = .shared
     ) {
+        self.coordinator = coordinator
         self.descriptor = descriptor
         self.insets = insets
         invalidateTip = { tip.invalidate(reason: .tipClosed) }

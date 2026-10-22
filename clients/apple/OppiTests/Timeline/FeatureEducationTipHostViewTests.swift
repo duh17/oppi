@@ -11,6 +11,8 @@ struct FeatureEducationTipHostViewTests {
         var title: Text { Text("Hosted tip") }
     }
 
+    private static let defaultsSuiteName = "FeatureEducationTipHostViewTests"
+
     private static let hostedDescriptor = FeatureEducationTipDescriptor(
         id: "tip-host-test",
         title: "Hosted tip",
@@ -21,14 +23,20 @@ struct FeatureEducationTipHostViewTests {
     /// Leaving a chat while its tip is shown destroys the host without a
     /// `stop()`. The claim must go with it, or no other tip shows until relaunch.
     @Test func destroyedHostGivesBackItsClaimSoAnotherTipCanShow() async throws {
-        let coordinator = FeatureEducationTipPresentationCoordinator.shared
-        coordinator.resetForTesting()
-        defer { coordinator.resetForTesting() }
+        // A private coordinator: other suites claim the shared one while this
+        // test awaits TipKit.
+        let defaults = try #require(UserDefaults(suiteName: Self.defaultsSuiteName))
+        defaults.removePersistentDomain(forName: Self.defaultsSuiteName)
+        defer { defaults.removePersistentDomain(forName: Self.defaultsSuiteName) }
+        let coordinator = FeatureEducationTipPresentationCoordinator(
+            store: FeatureEducationTipPresentationStore(defaults: defaults, namespace: UUID().uuidString)
+        )
 
         var host: FeatureEducationTipHostView? = FeatureEducationTipHostView(
             tip: HostedTip(),
             descriptor: Self.hostedDescriptor,
-            insets: .zero
+            insets: .zero,
+            coordinator: coordinator
         )
         host?.start()
         // TipKit reports eligibility asynchronously; a loaded machine can take a while.
