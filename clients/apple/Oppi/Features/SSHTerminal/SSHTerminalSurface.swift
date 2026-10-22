@@ -332,6 +332,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         needsPaint = true
         needsFullPaint = true
         requestDisplayLink()
+        // Nothing painted while the scene was inactive (Face ID, Control Center,
+        // the notification pull-down), so a password prompt that arrived then
+        // has not turned secure entry on. Look at the screen now, not on the
+        // next display-link tick, so no key can land on the ordinary keyboard.
+        drawFrame()
     }
 
     @objc private func sceneResignedActive() {

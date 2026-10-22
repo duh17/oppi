@@ -2098,6 +2098,11 @@ private final class MountedTerminalTestController {
         window.rootViewController = nav
         window.makeKeyAndVisible()
         nav.view.layoutIfNeeded()
+        // The grid only paints while its scene is foreground-active, and a system
+        // alert on the simulator (the notification permission prompt) leaves the
+        // test host inactive. These tests exercise the screen, not scene
+        // activation, so say the app is active, as OrbMetalTests does.
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
     }
 
     func dismiss() {

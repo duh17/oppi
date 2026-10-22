@@ -189,6 +189,29 @@ struct SSHTerminalPasswordPromptTests {
         #expect(reported == [true, false])
     }
 
+    @Test func aPromptThatArrivedWhileTheSceneWasInactiveIsSecureBeforeAnyKeyCanLand() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(PasswordPromptStubConnection())
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedPasswordPromptGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        var reported: [Bool] = []
+        grid.secureInputChanged = { reported.append($0) }
+
+        // Face ID, Control Center, the notification pull-down: the scene goes
+        // inactive, the display link stops, and the prompt arrives unseen.
+        NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+        channel.engine.receive(Data("$ sudo ls\r\nPassword: ".utf8))
+        try await Self.draw(grid)
+        #expect(!grid.isSecureTextEntry, "nothing paints while the scene is inactive")
+
+        // Coming back, the very next thing the grid does is look at the screen:
+        // no display-link tick, no run-loop turn, before a key can be typed.
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        #expect(grid.isSecureTextEntry, "the keyboard is secure before the first key after reactivation")
+        #expect(reported == [true])
+    }
+
     /// A frame with the terminal's newest output. `drawFrame` only snapshots
     /// when it can paint, and the renderer keeps three frames in flight, so a
     /// back-to-back burst is retried across display refreshes.
@@ -289,6 +312,11 @@ private final class MountedPasswordPromptGrid {
         window.rootViewController = host
         window.makeKeyAndVisible()
         host.view.layoutIfNeeded()
+        // The grid only paints while its scene is foreground-active, and a system
+        // alert on the simulator (the notification permission prompt) leaves the
+        // test host inactive. These tests exercise the screen, not scene
+        // activation, so say the app is active, as OrbMetalTests does.
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
     }
 
     func dismiss() {
