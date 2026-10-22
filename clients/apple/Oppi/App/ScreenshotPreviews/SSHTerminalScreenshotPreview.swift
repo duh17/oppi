@@ -11,6 +11,9 @@ enum SSHTerminalScreenshotStatus: String {
     case kitty
     /// Real OSC 9;4 progress reports, with and without an OSC 7501 status.
     case progressSet, progressIndeterminate, progressError, progressPause, progressWithStatus
+    /// Three open terminals in a private registry, so the bottom bar's
+    /// switcher shows and its menu lists them. Tap `sshTerminal.switcher`.
+    case switcher
 
     var progressReport: String? {
         switch self {
@@ -32,6 +35,8 @@ struct SSHTerminalScreenshotPreview: View {
     var hostLabel: String = "chen@mac-studio"
     private let themeID: ThemeID
     @State private var channel = try? SSHTerminalChannel()
+    /// The switcher variant's registry and the session standing for the terminal on screen.
+    @State private var fixture: SSHTerminalSwitcherPreviewFixture?
     /// A server-scoped connection, as the app root injects, so the input bar
     /// claims the shared dictation manager and shows its mic.
     @State private var connection: ServerConnection = {
@@ -46,6 +51,7 @@ struct SSHTerminalScreenshotPreview: View {
         let themeID: ThemeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light"
             ? .light : .dark
         self.themeID = themeID
+        _fixture = State(initialValue: status == .switcher ? SSHTerminalSwitcherPreviewFixture() : nil)
         ThemeRuntimeState.setThemeID(themeID)
     }
 
@@ -58,7 +64,8 @@ struct SSHTerminalScreenshotPreview: View {
                     status: status,
                     hostLabel: hostLabel,
                     themeID: themeID,
-                    connection: connection
+                    connection: connection,
+                    session: fixture?.session
                 )
                 .task { await play(on: channel) }
             }
@@ -74,6 +81,10 @@ struct SSHTerminalScreenshotPreview: View {
     }
 
     private func play(on channel: SSHTerminalChannel) async {
+        if status == .switcher, let fixture {
+            fixture.open(current: channel)
+            return
+        }
         if status == .sequence {
             await playSequence(on: channel)
             return
@@ -141,6 +152,7 @@ struct SSHTerminalScreenshotPreview: View {
     private func statusScreen(_ esc: String, step: SSHTerminalScreenshotStatus? = nil) -> String {
         let line: String = switch step ?? status {
         case .none, .sequence: ""
+        case .switcher: "chen@mac-studio: login shell"
         case .progressSet, .progressIndeterminate, .progressError, .progressPause, .progressWithStatus:
             "$ cargo build --release"
         case .kitty: "$ kitten icat gradient.png"
@@ -172,7 +184,7 @@ struct SSHTerminalScreenshotPreview: View {
         case .tree, .detail:
             return osc("state=working:app=deploy:msg=\(b64("Deploying v2.4.1"))")
                 + osc("state=blocked:kind=permission:id=eu-west:title=\(b64("EU West")):msg=\(b64("Approve deploy to eu-west?"))")
-        case .sequence, .kitty, .progressSet, .progressIndeterminate, .progressError, .progressPause:
+        case .sequence, .kitty, .switcher, .progressSet, .progressIndeterminate, .progressError, .progressPause:
             return Data()
         case .progressWithStatus:
             return osc("state=working:app=pi:msg=\(b64("Building"))")
@@ -258,6 +270,7 @@ private struct SSHTerminalPreviewHost: UIViewControllerRepresentable {
     let hostLabel: String
     let themeID: ThemeID
     let connection: ServerConnection
+    var session: SSHTerminalConnectSession?
 
     func makeUIViewController(context: Context) -> RouterNavigationController {
         let terminal = SSHTerminalViewController(
@@ -265,6 +278,7 @@ private struct SSHTerminalPreviewHost: UIViewControllerRepresentable {
             reconnect: {},
             editHost: {},
             hostLabel: hostLabel,
+            session: session,
             composerConnection: connection
         )
         terminal.presentsStatusDetailOnAppear = status == .detail
@@ -276,6 +290,45 @@ private struct SSHTerminalPreviewHost: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: RouterNavigationController, context: Context) {}
+}
+
+/// Three real terminals in a registry of their own: the studio's login shell
+/// (on screen), a folder terminal on the same host, and a second host whose
+/// program is blocked.
+@MainActor
+final class SSHTerminalSwitcherPreviewFixture {
+    let registry = SSHTerminalRegistry(experimentEnabled: { true })
+    let session: SSHTerminalConnectSession
+    private var channels = [SSHTerminalChannel]()
+
+    init() {
+        // The screen closes a session's terminal when the experiment is off.
+        ScreenshotVolatileDefaults.apply([AppPreferences.Experiments.sshTerminalKey: true])
+        session = SSHTerminalConnectSession(registry: registry)
+        session.showsTerminal = true
+    }
+
+    func open(current: SSHTerminalChannel) {
+        guard channels.isEmpty else { return }
+        let studio = SSHTerminalProfile(host: "mac-studio", username: "chen")
+        let mini = SSHTerminalProfile(host: "mac-mini", username: "chen")
+        func adopt(_ channel: SSHTerminalChannel, _ profile: SSHTerminalProfile, folder: String? = nil, line: String, extra: Data = Data()) {
+            channel.opened(PreviewConnection { _ in })
+            registry.adopt(channel, profile: profile, folder: folder, queue: SSHTerminalEventQueue())
+            channel.event(.data(Data("\u{1b}[2J\u{1b}[H \(line)\r\n".utf8) + extra))
+            channels.append(channel)
+        }
+        adopt(current, studio, line: "chen@mac-studio: login shell")
+        if let folder = try? SSHTerminalChannel() {
+            adopt(folder, studio, folder: "~/workspace/oppi", line: "chen@mac-studio ~/workspace/oppi")
+        }
+        if let blocked = try? SSHTerminalChannel() {
+            let report = "\u{1b}]7501;state=blocked:kind=permission:app=pi:msg=\(Data("Allow running rg?".utf8).base64EncodedString())\u{1b}\\"
+            adopt(blocked, mini, line: "chen@mac-mini: pi", extra: Data(report.utf8))
+        }
+        session.connectedProfile = studio
+        session.channel = current
+    }
 }
 
 private actor PreviewConnection: SSHTerminalConnection {

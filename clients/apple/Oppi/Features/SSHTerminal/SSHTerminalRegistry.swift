@@ -39,6 +39,15 @@ struct SSHTerminalIdentity: Hashable {
     let folder: String?
 }
 
+extension SSHTerminalProfile {
+    /// The terminal screen's name for the host: `user@host`, then the folder
+    /// of a folder terminal as stored (`~` is the host's home, not this one's).
+    func terminalLabel(folder: String?) -> String {
+        guard let folder else { return endpointLabel }
+        return endpointLabel + " \u{00B7} " + folder
+    }
+}
+
 @MainActor @Observable
 final class SSHTerminalRegistry {
     static let shared = SSHTerminalRegistry()
@@ -49,6 +58,10 @@ final class SSHTerminalRegistry {
         let profile: SSHTerminalProfile
         /// The folder this shell started in, or nil for the host's plain terminal.
         let folder: String?
+        /// What the folder terminal runs instead of the plain login shell
+        /// (the tmux attach command), so a Reconnect from any screen showing
+        /// this terminal starts the same thing. Nil for the plain shell.
+        let folderCommand: String?
         let channel: SSHTerminalChannel
         fileprivate let tasks: [Task<Void, Never>]
     }
@@ -120,6 +133,23 @@ final class SSHTerminalRegistry {
             }
     }
 
+    /// Every connected terminal, for the switcher: hosts in label order, each
+    /// host's own terminal first, then its folders in folder order.
+    func openTerminals() -> [Terminal] {
+        terminals.values
+            .filter { $0.channel.connected }
+            .sorted { lhs, rhs in
+                let left = lhs.profile.endpointLabel, right = rhs.profile.endpointLabel
+                if left != right { return left < right }
+                if lhs.profile.id != rhs.profile.id { return lhs.profile.id.uuidString < rhs.profile.id.uuidString }
+                switch (lhs.folder, rhs.folder) {
+                case (nil, _): return rhs.folder != nil
+                case (_, nil): return false
+                case let (a?, b?): return a < b
+                }
+            }
+    }
+
     func isLive(_ profileID: UUID) -> Bool { terminal(for: profileID) != nil }
 
     /// Whether the registry holds this channel, connected or not yet dropped.
@@ -138,6 +168,7 @@ final class SSHTerminalRegistry {
         _ channel: SSHTerminalChannel,
         profile: SSHTerminalProfile,
         folder: String? = nil,
+        folderCommand: String? = nil,
         queue: SSHTerminalEventQueue
     ) -> Bool {
         guard !inBackground || grace != nil else {
@@ -153,7 +184,9 @@ final class SSHTerminalRegistry {
         }
         // The screen's network watch ends with the screen; this one lasts as long as the terminal.
         let watcher = Task { await channel.watchNetwork() }
-        terminals[identity] = Terminal(profile: profile, folder: folder, channel: channel, tasks: [consumer, watcher])
+        terminals[identity] = Terminal(
+            profile: profile, folder: folder, folderCommand: folderCommand, channel: channel, tasks: [consumer, watcher]
+        )
         return true
     }
 

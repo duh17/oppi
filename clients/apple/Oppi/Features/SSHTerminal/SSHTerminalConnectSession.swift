@@ -51,12 +51,7 @@ final class SSHTerminalConnectSession {
         guard value.isConfigured else { return }
         // Same host, same folder, same settings, shell still open: show it. No dial, no sign-in.
         if let live = registry.terminal(for: value.id, folder: folder), live.profile == value {
-            cancel()
-            failure = nil
-            hostFailure = nil
-            connectedProfile = value
-            channel = live.channel
-            showsTerminal = true
+            show(live)
             return
         }
         // A lock that is due but not applied yet covers Oppi as well.
@@ -119,7 +114,7 @@ final class SSHTerminalConnectSession {
                 // registry's byte consumer owns no authentication material.
                 // It refuses (and closes `owner`) when Oppi is in the background
                 // with no grace left to close the session.
-                let adopted = registry.adopt(owner, profile: value, folder: folder, queue: queue)
+                let adopted = registry.adopt(owner, profile: value, folder: folder, folderCommand: folderCommand, queue: queue)
                 task = nil
                 connecting = false
                 if adopted {
@@ -139,6 +134,24 @@ final class SSHTerminalConnectSession {
                 self?.handleBackground()
             }
         }
+    }
+
+    /// The terminals the switcher lists: every connected one.
+    func openTerminals() -> [SSHTerminalRegistry.Terminal] { registry.openTerminals() }
+
+    /// Shows a terminal the registry already holds: no dial, no sign-in. This
+    /// session then stands for that terminal, so Reconnect and Edit Host act
+    /// on it. Nothing happens when it has ended since the caller read it.
+    func show(_ terminal: SSHTerminalRegistry.Terminal) {
+        guard registry.terminal(for: terminal.profile.id, folder: terminal.folder)?.channel === terminal.channel else { return }
+        cancel()
+        failure = nil
+        hostFailure = nil
+        folder = terminal.folder
+        folderTerminalCommand = terminal.folderCommand
+        connectedProfile = terminal.profile
+        channel = terminal.channel
+        showsTerminal = true
     }
 
     func saveHost(

@@ -88,6 +88,8 @@ struct ScreenshotPreviewView: View {
             SSHTerminalScreenshotPreview(status: .progressPause)
         case "ssh-terminal-progress-with-status":
             SSHTerminalScreenshotPreview(status: .progressWithStatus)
+        case "ssh-terminal-switcher":
+            SSHTerminalScreenshotPreview(status: .switcher)
         case "ssh-terminal-kitty":
             SSHTerminalScreenshotPreview(status: .kitty)
         case "review-comment-inline-draft":

@@ -10,7 +10,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private(set) var channel: SSHTerminalChannel
     private let reconnect: () -> Void
     private let editHost: () -> Void
-    private let hostLabel: String
+    /// Follows the terminal shown: the switcher changes it.
+    private var hostLabel: String
     private weak var session: SSHTerminalConnectSession?
     /// Screenshot preview only: a server-scoped connection so the hosted
     /// composer can claim dictation. The live app uses the window's root.
@@ -258,6 +259,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     override func updateProperties() {
         super.updateProperties()
         if let session, let next = session.channel, next !== channel {
+            if let profile = session.connectedProfile {
+                hostLabel = profile.terminalLabel(folder: session.folder)
+            }
             replaceChannel(next)
         }
         let connected = channel.connected
@@ -516,6 +520,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     }
 
     private func replaceChannel(_ next: SSHTerminalChannel) {
+        // A terminal switched away from stays open in the registry; it is no
+        // longer in front, so its remote clipboard writes are dropped.
+        channel.isViewed = false
+        channel.cancelPendingResize()
         herdrTask?.cancel()
         keymapTask?.cancel()
         herdrTask = nil
@@ -572,6 +580,24 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
                 completion(self?.overflowElements() ?? [])
             }]
         )
+    }
+
+    /// The switcher's menu is built when it opens, so it lists the terminals
+    /// open then, with the one on screen checked. Installed once.
+    private func installSwitcherMenu() {
+        guard morePill.switcher.menu == nil else { return }
+        morePill.switcher.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
+            guard let self, let session = self.session else { return completion([]) }
+            let terminals = session.openTerminals()
+            let items = SSHTerminalSwitcher.items(terminals: terminals, current: self.channel)
+            completion(SSHTerminalSwitcher.menuElements(
+                items: items,
+                themeID: self.lastThemeID ?? ThemeRuntimeState.currentThemeID()
+            ) { [weak self] index in
+                guard terminals.indices.contains(index) else { return }
+                self?.session?.show(terminals[index])
+            })
+        }])
     }
 
     private func overflowElements() -> [UIMenuElement] {
@@ -634,8 +660,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             themeID: themeID,
             herdrAvailable: herdr.available,
             herdrWaiting: herdr.snapshot?.needsAttention,
-            showsStatus: showsStatus
+            showsStatus: showsStatus,
+            openTerminals: session?.openTerminals().count ?? 0
         )
+        installSwitcherMenu()
         backPill.apply(themeID: themeID, attentionPending: attentionPending())
         let shellTitle = channel.title.trimmingCharacters(in: .whitespacesAndNewlines)
         installMenu(

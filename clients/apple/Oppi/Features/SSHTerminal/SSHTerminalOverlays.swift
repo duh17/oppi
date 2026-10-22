@@ -164,30 +164,41 @@ final class SSHTerminalBackPill: UIView {
 }
 
 /// Bottom trailing: the program-status symbol (while a program has reported),
-/// Herdr (when the host has it), and the … menu. Leading to trailing in
+/// Herdr (when the host has it), the terminal switcher (with more than one
+/// terminal open), and the … menu. Leading to trailing in
 /// that order, as the bar items were.
 final class SSHTerminalMorePill: SSHTerminalGlassPill {
     let status: SSHTerminalStatusGlyphButton
     let herdr = SSHTerminalPillButton(systemName: "square.grid.2x2", label: "Herdr agents", identifier: "sshTerminal.herdr")
+    /// Opens a menu of every open terminal; shown only when more than one is open.
+    let switcher = SSHTerminalPillButton(
+        systemName: "rectangle.stack", label: "Switch terminal", identifier: "sshTerminal.switcher"
+    )
     let more = SSHTerminalPillButton(systemName: "ellipsis", label: "More", identifier: "sshTerminal.more")
 
     init(status: SSHTerminalStatusGlyphButton) {
         self.status = status
         super.init(frame: .zero)
         more.showsMenuAsPrimaryAction = true
+        switcher.showsMenuAsPrimaryAction = true
         status.isHidden = true
         herdr.isHidden = true
+        switcher.isHidden = true
         stack.addArrangedSubview(status)
         stack.addArrangedSubview(herdr)
+        stack.addArrangedSubview(switcher)
         stack.addArrangedSubview(more)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func apply(themeID: ThemeID, herdrAvailable: Bool, herdrWaiting: Int?, showsStatus: Bool) {
+    func apply(themeID: ThemeID, herdrAvailable: Bool, herdrWaiting: Int?, showsStatus: Bool, openTerminals: Int = 0) {
         let fg = UIColor(themeID.palette.fg)
         status.isHidden = !showsStatus
+        switcher.isHidden = openTerminals < 2
+        switcher.accessibilityValue = "\(openTerminals) open"
+        switcher.apply(tint: fg)
         herdr.isHidden = !herdrAvailable
         let waiting = herdrWaiting ?? 0
         herdr.apply(tint: waiting > 0 ? UIColor(themeID.palette.orange) : fg)
