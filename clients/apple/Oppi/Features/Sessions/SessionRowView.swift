@@ -410,13 +410,18 @@ final class SessionRowView: UIView {
     private func updateTime() {
         guard let session = content?.presentation.session else { return }
         let now = Date()
+        let font: UIFont
+        let text: String
         if let started = currentTurnStartedAt {
-            timeLabel.font = UIFont.scaled(.caption2, monospacedDigits: true)
-            timeLabel.text = SessionFormatting.durationString(since: started, now: now)
+            font = UIFont.scaled(.caption2, monospacedDigits: true)
+            text = SessionFormatting.durationString(since: started, now: now)
         } else {
-            timeLabel.font = UIFont.scaled(.caption2)
-            timeLabel.text = (session.lastAgentReplyAt ?? session.lastActivity).relativeString(relativeTo: now)
+            font = UIFont.scaled(.caption2)
+            text = (session.lastAgentReplyAt ?? session.lastActivity).relativeString(relativeTo: now)
         }
+        // Skip sets that change nothing.
+        if timeLabel.font != font { timeLabel.font = font }
+        if timeLabel.text != text { timeLabel.text = text }
     }
 
     // MARK: Accessibility
