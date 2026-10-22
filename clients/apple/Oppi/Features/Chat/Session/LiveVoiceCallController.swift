@@ -1,3 +1,4 @@
+@preconcurrency import AVFoundation
 import Foundation
 import Observation
 
@@ -128,6 +129,14 @@ final class LiveVoiceCallController {
     var isActive: Bool { isLive }
 
     func start(sessionId: String, routeScope: SessionRouteScope, using connection: ServerConnection) async {
+        // Without the microphone the call would start and send silence while showing "Listening".
+        guard await Self.hasMicrophoneAccess() else {
+            failClosed(
+                "Oppi needs microphone access for Live Voice. Turn it on in Settings.",
+                closeChannel: false
+            )
+            return
+        }
         bind(connection, sessionId: sessionId)
         // A reply being read aloud would talk over the call.
         connection.audioPlayer.stop()
@@ -203,6 +212,18 @@ final class LiveVoiceCallController {
     private enum FinishAction {
         case end
         case detach
+    }
+
+    // nonisolated: the permission callback runs off the main actor (as in VoiceInputSystemAccess).
+    nonisolated private static func hasMicrophoneAccess() async -> Bool {
+        if AVAudioApplication.shared.recordPermission == .undetermined {
+            return await withCheckedContinuation { continuation in
+                AVAudioApplication.requestRecordPermission { granted in
+                    continuation.resume(returning: granted)
+                }
+            }
+        }
+        return AVAudioApplication.shared.recordPermission == .granted
     }
 
     private func bind(_ connection: ServerConnection, sessionId: String) {
