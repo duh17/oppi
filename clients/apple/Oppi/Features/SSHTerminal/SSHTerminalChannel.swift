@@ -148,13 +148,12 @@ enum SSHTerminalUpload {
     ///
     /// Uploads stay in the temp directory the OS cleans: `$TMPDIR`, which
     /// macOS sshd points at the user's own private folder, or `/tmp` on hosts
-    /// that set none. The folder is named for the user either way, so another
-    /// local user can neither pre-create it nor own it, and a shared
-    /// `TMPDIR=/tmp` cannot leave the save blocked by someone else's folder.
-    /// It is refused unless it is a real directory owned by this user: a
-    /// symlink, or a folder another user owns, could be swapped between this
-    /// check and the agent reading the file. The folder is owner-only (700)
-    /// either way.
+    /// that set none. The folder is named for the user's uid, so users do not
+    /// share one. It is refused unless it is a real directory owned by this
+    /// user: a symlink, or a folder another user owns, could be swapped between
+    /// this check and the agent reading the file. The folder is owner-only (700)
+    /// either way. Another local user can still pre-create the name on a shared
+    /// `/tmp` to block uploads; they then fail closed with the reason.
     static func command(fileName: String) -> String {
         let script = "umask 077; "
             + "if [ -n \"${TMPDIR:-}\" ]; then d=\"${TMPDIR%/}/oppi-ssh-$(id -u)\"; else d=\"/tmp/oppi-ssh-$(id -u)\"; fi; "

@@ -322,6 +322,7 @@ struct SSHTerminalHoldMenuTitleTests {
             canPaste: true,
             open: { _ in },
             copy: {},
+            copyLink: {},
             paste: {}
         ))
         #expect(menu.children.map(\.title) == ["Open x.swift", "Copy", "Paste"])
@@ -336,27 +337,48 @@ struct SSHTerminalHoldMenuTitleTests {
             held: word,
             target: nil,
             canPaste: true,
-            open: { _ in }, copy: {}, paste: {}
+            open: { _ in }, copy: {}, copyLink: {}, paste: {}
         ))
         #expect(menu.children.map(\.title) == ["Copy", "Paste"])
         let noClipboard = try #require(SSHTerminalGridView.holdMenu(
-            held: word, target: nil, canPaste: false, open: { _ in }, copy: {}, paste: {}
+            held: word, target: nil, canPaste: false, open: { _ in }, copy: {}, copyLink: {}, paste: {}
         ))
         #expect(noClipboard.children.map(\.title) == ["Copy"])
     }
 
-    @Test func aLinkOnABlankCellCopiesTheLink() throws {
-        let held = SSHTerminalHeldCell(text: "", spans: [], hyperlink: "https://example.com/a")
-        #expect(SSHTerminalGridView.copyText(for: held) == "https://example.com/a")
+    @Test func aHiddenLinkAddressIsCopyLinkAndTheVisibleTextIsCopy() throws {
+        // OSC 8: the text says "docs", the address is somewhere else.
+        let held = SSHTerminalHeldCell(text: "docs", spans: [], hyperlink: "https://example.com/a")
+        #expect(SSHTerminalGridView.copyText(for: held) == "docs", "Copy is what the person sees")
+        #expect(SSHTerminalGridView.linkText(for: held) == "https://example.com/a")
+        #expect(SSHTerminalGridView.copyLinkTitle(for: "https://example.com/a") == "Copy Link to example.com")
         let menu = try #require(SSHTerminalGridView.holdMenu(
             held: held,
             target: .web(url: URL(string: "https://example.com/a")!, hostLabel: "example.com"),
             canPaste: false,
-            open: { _ in }, copy: {}, paste: {}
+            open: { _ in }, copy: {}, copyLink: {}, paste: {}
         ))
-        #expect(menu.children.map(\.title) == ["Open example.com", "Copy"])
+        #expect(menu.children.map(\.title) == ["Open example.com", "Copy Link to example.com", "Copy"])
+    }
+
+    @Test func aLinkOnABlankCellOffersOnlyCopyLinkAndLinkTextIsNotCopiedTwice() throws {
+        let blank = SSHTerminalHeldCell(text: "", spans: [], hyperlink: "https://example.com/a")
+        #expect(SSHTerminalGridView.copyText(for: blank) == nil)
+        let menu = try #require(SSHTerminalGridView.holdMenu(
+            held: blank, target: nil, canPaste: false, open: { _ in }, copy: {}, copyLink: {}, paste: {}
+        ))
+        #expect(menu.children.map(\.title) == ["Copy Link to example.com"])
+
+        // The text is the address itself: one item says it.
+        let bare = SSHTerminalHeldCell(text: "https://example.com/a", spans: [], hyperlink: "https://example.com/a")
+        let bareMenu = try #require(SSHTerminalGridView.holdMenu(
+            held: bare, target: nil, canPaste: false, open: { _ in }, copy: {}, copyLink: {}, paste: {}
+        ))
+        #expect(bareMenu.children.map(\.title) == ["Copy Link to example.com"])
+
+        #expect(SSHTerminalGridView.copyLinkTitle(for: "not a url") == "Copy Link")
         #expect(SSHTerminalGridView.copyText(for: SSHTerminalHeldCell(text: "notes.md", spans: [], hyperlink: nil)) == "notes.md")
-        #expect(SSHTerminalGridView.copyText(for: SSHTerminalHeldCell(text: "", spans: [], hyperlink: nil)) == nil)
+        #expect(SSHTerminalGridView.linkText(for: SSHTerminalHeldCell(text: "notes.md", spans: [], hyperlink: nil)) == nil)
     }
 
     @Test func aPlainCellKeepsTheSystemMenu() {
@@ -365,7 +387,7 @@ struct SSHTerminalHoldMenuTitleTests {
                 held: SSHTerminalHeldCell(text: "", spans: [], hyperlink: nil),
                 target: nil,
                 canPaste: true,
-                open: { _ in }, copy: {}, paste: {}
+                open: { _ in }, copy: {}, copyLink: {}, paste: {}
             ) == nil,
             "nothing to open and nothing to copy keeps the system's Paste menu"
         )

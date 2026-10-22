@@ -179,6 +179,14 @@ struct SSHTerminalTextInputStorage: Equatable {
         selectedUTF16 = end..<end
     }
 
+    /// Drops everything the keyboard typed or is composing, and a commit echo
+    /// still pending: a secret that was partly typed must not outlive the
+    /// prompt as text the keyboard can predict from or a revision can resend.
+    mutating func discardAll() {
+        reset()
+        unmarkedCommit = nil
+    }
+
     /// Starts over after input that bypassed this document, keeping an
     /// input method's composition and its caret: the composition is not in
     /// the shell yet, and the input method is still editing it.

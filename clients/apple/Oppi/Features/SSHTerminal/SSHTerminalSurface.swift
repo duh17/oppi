@@ -803,12 +803,14 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             canPaste: canPerformAction(#selector(paste(_:)), withSender: nil),
             open: { [weak self] target in self?.open(target) },
             copy: { [weak self] in self?.copyHeldWord() },
+            copyLink: { [weak self] in self?.copyHeldLink() },
             paste: { [weak self] in self?.paste(nil) }
         )
     }
 
     /// The items a hold menu shows, in order: Open when the cell can open
-    /// something, Copy when there is a word or a link to copy, then Paste. A
+    /// something, Copy Link for an OSC 8 link's address, Copy for the text the
+    /// cell shows (not repeated when the text is the address), then Paste. A
     /// cell with nothing to open and nothing to copy keeps the system's menu.
     static func holdMenu(
         held: SSHTerminalHeldCell?,
@@ -816,6 +818,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         canPaste: Bool,
         open: @escaping (SSHTerminalOpenTarget) -> Void,
         copy: @escaping () -> Void,
+        copyLink: @escaping () -> Void,
         paste: @escaping () -> Void
     ) -> UIMenu? {
         var items: [UIMenuElement] = []
@@ -825,7 +828,10 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
                 image: UIImage(systemName: "arrow.up.forward.app")
             ) { _ in open(target) })
         }
-        if let held, copyText(for: held) != nil {
+        if let held, let link = linkText(for: held) {
+            items.append(UIAction(title: copyLinkTitle(for: link), image: UIImage(systemName: "link")) { _ in copyLink() })
+        }
+        if let held, let text = copyText(for: held), text != held.hyperlink {
             items.append(UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in copy() })
         }
         guard !items.isEmpty else { return nil }
@@ -1040,21 +1046,35 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         editMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))
     }
     /// Copy in the hold menu: the same local copy the double tap makes, never
-    /// a remote clipboard write. A cell on an OSC 8 link copies the link, so a
-    /// blank or punctuation cell under a link still copies something.
+    /// a remote clipboard write. It copies the text the person sees.
     private func copyHeldWord() {
         guard let held = heldCell, let text = Self.copyText(for: held) else { return }
-        let snapshot = SSHTerminalSelectionSnapshot(text: text, spans: held.text == text ? held.spans : [])
         channel.copyLocalSelection(text)
-        showHighlight(snapshot, lingering: true)
+        showHighlight(SSHTerminalSelectionSnapshot(text: text, spans: held.spans), lingering: true)
         needsPaint = true
     }
 
-    /// What Copy puts on this device's clipboard: the link the cell carries,
-    /// else its word.
+    /// Copy Link: the address an OSC 8 link carries, which the text may not show.
+    private func copyHeldLink() {
+        guard let held = heldCell, let link = Self.linkText(for: held) else { return }
+        channel.copyLocalSelection(link)
+    }
+
+    /// What Copy puts on this device's clipboard: the word the cell shows.
     static func copyText(for held: SSHTerminalHeldCell) -> String? {
-        if let hyperlink = held.hyperlink, !hyperlink.isEmpty { return hyperlink }
-        return held.text.isEmpty ? nil : held.text
+        held.text.isEmpty ? nil : held.text
+    }
+
+    /// What Copy Link puts there: the OSC 8 address the cell carries.
+    static func linkText(for held: SSHTerminalHeldCell) -> String? {
+        guard let hyperlink = held.hyperlink, !hyperlink.isEmpty else { return nil }
+        return hyperlink
+    }
+
+    /// The item names the link's site, like Open, so what is copied is visible.
+    static func copyLinkTitle(for link: String) -> String {
+        guard let host = URL(string: link)?.host, !host.isEmpty else { return "Copy Link" }
+        return "Copy Link to \(host)"
     }
 
     /// Starts the selection, or the mouse press in an app that asked for
@@ -1717,9 +1737,26 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         return channel.engine.isShowingPasswordPrompt(row: prompt.row, text: prompt.text)
     }
 
+    /// Secure entry turned on or off: nothing typed so far may carry over.
+    /// What the keyboard typed since the last arrow, paste, or Return is the
+    /// document it predicts from and edits dictation revisions against, so a
+    /// secret typed at a prompt that ended without Return would stay in it.
+    /// The document starts over, composition included, and the keyboard is told.
+    private func discardTypedText() {
+        var cleared = textInputStorage
+        cleared.discardAll()
+        guard cleared != textInputStorage else { return }
+        inputDelegate?.selectionWillChange(self)
+        inputDelegate?.textWillChange(self)
+        textInputStorage = cleared
+        inputDelegate?.textDidChange(self)
+        inputDelegate?.selectionDidChange(self)
+    }
+
     private func applySecureEntry(_ secure: Bool) {
         guard secure != secureEntry else { return }
         secureEntry = secure
+        discardTypedText()
         keyStrip?.setSecureInput(secure)
         reloadInputViews()
         secureInputChanged(secure)

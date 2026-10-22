@@ -212,6 +212,34 @@ struct SSHTerminalPasswordPromptTests {
         #expect(reported == [true])
     }
 
+    @Test func aSecretTypedAtAPromptDoesNotOutliveItWhenThePromptEndsWithoutReturn() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(PasswordPromptStubConnection())
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedPasswordPromptGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let blank = SSHTerminalTextInputStorage()
+
+        // Text typed before the prompt does not carry into it.
+        grid.insertText("ls")
+        #expect(grid.textInputStorage != blank)
+        channel.engine.receive(Data("Password: ".utf8))
+        try await Self.draw(grid)
+        #expect(grid.isSecureTextEntry)
+        #expect(grid.textInputStorage == blank)
+
+        // Part of a secret, then the prompt ends (Ctrl-C, timeout) with no Return.
+        grid.insertText("hunt")
+        #expect(grid.textInputStorage.text.contains("hunt"))
+        channel.engine.receive(Data("\r\n$ ".utf8))
+        try await Self.draw(grid)
+        channel.engine.receive(Data("\r\n".utf8))
+        try await Self.draw(grid)
+        #expect(!grid.isSecureTextEntry)
+        #expect(grid.textInputStorage == blank, "no secret characters stay for prediction or a revision")
+        #expect(grid.textInputStorage.markedText == nil)
+    }
+
     /// A frame with the terminal's newest output. `drawFrame` only snapshots
     /// when it can paint, and the renderer keeps three frames in flight, so a
     /// back-to-back burst is retried across display refreshes.
