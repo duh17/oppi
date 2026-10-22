@@ -576,6 +576,69 @@ struct LiveVoiceCallControllerTests {
         #expect(!harness.controller.isLive)
     }
 
+    @Test("End pressed while connecting, then a socket drop: the start is re-sent and its call ended")
+    func orphanReconnectResendsStartAndEndsTheCall() async throws {
+        let harness = try await connectingHarness()
+        let endTask = Task { await harness.controller.end() }
+        await waitUntil { !harness.controller.isLive }
+
+        // The socket dropped and reconnected; the start's reply went down with the old one.
+        harness.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
+        await waitUntil { sentTypes(harness.channel.sent) == ["voice_call_start", "voice_call_start"] }
+        #expect(sentTypes(harness.channel.sent) == ["voice_call_start", "voice_call_start"])
+        #expect(startPayload(harness.channel.sent.last) == "client-call-1")
+
+        harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-orphan", eventSeq: 1, leaseEpoch: 1)))
+        await waitUntil { sentTypes(harness.channel.sent).contains("voice_call_end") }
+        await endTask.value
+        await harness.startTask.value
+
+        #expect(sentTypes(harness.channel.sent) == ["voice_call_start", "voice_call_start", "voice_call_end"])
+        #expect(leasePayload(harness.channel.sent.last)?.0 == "call-orphan")
+        #expect(!harness.controller.isLive)
+    }
+
+    @Test("Leave pressed while connecting, then a socket drop: the call is detached, not left running")
+    func orphanReconnectDetachesTheCallOnLeave() async throws {
+        let harness = try await connectingHarness()
+        let leaveTask = Task { await harness.controller.leave() }
+        await waitUntil { !harness.controller.isLive }
+
+        harness.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
+        await waitUntil { sentTypes(harness.channel.sent).count == 2 }
+        harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-orphan", eventSeq: 1, leaseEpoch: 1)))
+        await waitUntil { sentTypes(harness.channel.sent).contains("voice_call_detach") }
+        await leaveTask.value
+        await harness.startTask.value
+
+        #expect(sentTypes(harness.channel.sent) == ["voice_call_start", "voice_call_start", "voice_call_detach"])
+        #expect(leasePayload(harness.channel.sent.last)?.0 == "call-orphan")
+    }
+
+    @Test("End pressed while a rejoin attach is unanswered, then a socket drop: the attach is re-sent and the call ended")
+    func orphanAttachReconnectReattachesAndEnds() async throws {
+        let harness = try await startedHarness()
+        await harness.controller.leave()
+        let restart = Task { await harness.controller.start(sessionId: "sess-1", routeScope: .workspace("ws-1")) }
+        await waitUntil { harness.channel.opened.count == 2 }
+        harness.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
+        await waitUntil { sentTypes(harness.channel.sent).last == "voice_call_attach" }
+        let endTask = Task { await harness.controller.end() }
+        await waitUntil { !harness.controller.isLive }
+
+        harness.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
+        await waitUntil { Array(sentTypes(harness.channel.sent).suffix(2)) == ["voice_call_attach", "voice_call_attach"] }
+        #expect(Array(sentTypes(harness.channel.sent).suffix(2)) == ["voice_call_attach", "voice_call_attach"])
+        harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 5, leaseEpoch: 3)))
+        await waitUntil { sentTypes(harness.channel.sent).last == "voice_call_end" }
+        await endTask.value
+        await restart.value
+
+        #expect(leasePayload(harness.channel.sent.last)?.0 == "call-1")
+        #expect(!sentTypes(harness.channel.sent.suffix(3)).contains("voice_call_start"))
+        #expect(!harness.controller.isLive)
+    }
+
     // MARK: - Shell-swap remount
 
     /// The chat that takes over a session after an iPad rotation: its own controller on the
@@ -864,30 +927,6 @@ struct LiveVoiceCallControllerTests {
 
         #expect(!harness.controller.isLive)
         #expect(harness.controller.lastError == "Voice call identity already belongs to an ended call")
-    }
-
-    @Test("A rejoin whose socket drops before its attach is answered attaches again, never starts")
-    func rejoinReconnectReattachesWithoutStart() async throws {
-        let harness = try await startedHarness()
-        let handoff = LiveVoiceRemountHandoff()
-        await handoff.leave(
-            call: harness.controller, serverId: "server-1", sessionId: "sess-1",
-            remountedUnder: .split
-        )
-        let chat = remountedChat(taking: harness, handoff: handoff, presentation: .split)
-        await waitUntil { !chat.channel.opened.isEmpty }
-        chat.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
-        await waitUntil { sentTypes(chat.channel.sent) == ["voice_call_attach"] }
-
-        // The reply was lost with the old socket.
-        chat.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
-        await waitUntil { sentTypes(chat.channel.sent).count == 2 }
-        #expect(sentTypes(chat.channel.sent) == ["voice_call_attach", "voice_call_attach"])
-
-        chat.channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 2, leaseEpoch: 2)))
-        await waitUntil { chat.controller.isLive }
-        #expect(chat.controller.isLive)
-        #expect(!sentTypes(chat.channel.sent).contains("voice_call_start"))
     }
 
     private func connectingHarness(keepAliveInterval: Duration = .seconds(10)) async throws -> Harness {

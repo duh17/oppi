@@ -522,6 +522,16 @@ final class LiveVoiceCallController {
 
     private func handleOrphan(_ message: ServerMessage) async {
         switch message {
+        case .streamConnected:
+            // The socket dropped after the start (or attach) went out, so its snapshot will
+            // never come. Ask again: the same clientCallId re-enters the call the first start
+            // made, and the snapshot reaches the end or detach this orphan is waiting to send.
+            rejoinRequestId = nil
+            if startSent {
+                await sendStart()
+            } else if let identity = memory.callIdentity(forServer: serverKey) {
+                await sendAttach(callId: identity.callId, lastEventSeq: identity.eventSeq)
+            }
         case .voiceCallState(let snapshot):
             guard snapshot.lifecycle == .active, let action = orphanFinishAction else { return }
             orphanFinishAction = nil
