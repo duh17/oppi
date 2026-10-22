@@ -48,6 +48,8 @@ final class TerminalLogEngine {
             } else {
                 try check(ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES, nil), "history lines")
             }
+            // Tool output never draws images; untrusted bytes must not reach zlib or ImageIO.
+            try check(ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, nil), "kitty graphics")
             var options = GhosttyFormatterTerminalOptions()
             options.size = MemoryLayout<GhosttyFormatterTerminalOptions>.size
             options.emit = GHOSTTY_FORMATTER_FORMAT_VT

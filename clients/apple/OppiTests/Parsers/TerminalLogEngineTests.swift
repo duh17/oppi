@@ -60,6 +60,22 @@ struct TerminalLogEngineTests {
         #expect(ANSIParser.strip(try TerminalLogEngine.render(input)) == "beforeafter")
     }
 
+    @Test("Kitty graphics commands are ignored, not displayed or stored")
+    func kittyGraphicsDisabled() throws {
+        // Transmit-and-display of a 1x1 RGB image over 3 cells. With the
+        // protocol on, the cursor advances past the placement and the
+        // following text lands after the gap; tool output must render as if
+        // the APC were absent. Chunked (m=1) and query forms are dropped too.
+        let display = "\u{1B}_Ga=T,f=24,s=1,v=1,c=3,r=1,i=7;AAAA\u{1B}\\"
+        let query = "\u{1B}_Ga=q,i=1,s=1,v=1,f=24;AAAA\u{1B}\\"
+        let chunked = "\u{1B}_Ga=T,f=24,s=1,v=1,c=3,r=1,i=8,m=1;AAAA\u{1B}\\\u{1B}_Gm=0;\u{1B}\\"
+        for source in ["A\(display)B\n", "A\(query)B\n", "A\(chunked)B\n"] {
+            #expect(ANSIParser.strip(try TerminalLogEngine.render(source)) == "AB\n", "\(source.debugDescription)")
+        }
+        let engine = try TerminalLogEngine()
+        #expect(ANSIParser.strip(try engine.update("one\(display)\ntwo\n")) == "one\ntwo\n")
+    }
+
     @Test("byte chunks preserve CR, cursor, SGR and split UTF-8", arguments: [
         "before\r\u{1B}[2Kafter\n",
         "first\nStep: pending\n\u{1B}[1A\r\u{1B}[2KStep: complete\n",
