@@ -10,6 +10,7 @@ struct PushRelayClient: Sendable {
     let relay: URL
     var session: URLSession = .shared
     var appAttest: AppAttestProviding = DeviceAppAttest()
+    var pendingAttestKey: PendingAppAttestKey = .standard
 
     enum RelayError: Error, Equatable {
         /// The relay no longer holds this registration: register again.
@@ -43,8 +44,7 @@ struct PushRelayClient: Sendable {
         var attestKeyId: String?
         if appAttest.isSupported {
             let clientData = "oppi-relay-registration-v1\n\(challenge.challenge)\n\(apnsToken)\n\(environment.rawValue)"
-            let keyId = try await appAttest.generateKey()
-            let object = try await appAttest.attestKey(keyId, clientDataHash: Data(SHA256.hash(data: Data(clientData.utf8))))
+            let (keyId, object) = try await attest(clientDataHash: Data(SHA256.hash(data: Data(clientData.utf8))))
             attestation = ["keyId": keyId, "object": object.base64EncodedString()]
             attestKeyId = keyId
         }
@@ -66,6 +66,34 @@ struct PushRelayClient: Sendable {
             registrationSecret: response.registrationSecret,
             appAttestKeyId: attestKeyId
         )
+    }
+
+    /// Attests a new key, or the key whose attestation could not reach Apple last time: Apple
+    /// asks for a retry with the same key, since every new key counts toward this device's risk
+    /// metric. A kept key Apple no longer knows is dropped for a new one.
+    private func attest(clientDataHash: Data) async throws -> (keyId: String, object: Data) {
+        if let kept = pendingAttestKey.load() {
+            do {
+                return try await attest(keyId: kept, clientDataHash: clientDataHash)
+            } catch let error as DCError where error.code == .invalidKey {
+                // Falls through to a new key.
+            }
+        }
+        return try await attest(keyId: appAttest.generateKey(), clientDataHash: clientDataHash)
+    }
+
+    private func attest(keyId: String, clientDataHash: Data) async throws -> (keyId: String, object: Data) {
+        do {
+            let object = try await appAttest.attestKey(keyId, clientDataHash: clientDataHash)
+            pendingAttestKey.save(nil)
+            return (keyId, object)
+        } catch let error as DCError where error.code == .serverUnavailable {
+            pendingAttestKey.save(keyId)
+            throw error
+        } catch {
+            pendingAttestKey.save(nil)
+            throw error
+        }
     }
 
     func mintSendToken(_ registration: Registration) async throws -> (permissionId: String, sendToken: String) {
@@ -197,6 +225,20 @@ struct PushRelayClient: Sendable {
     private func decode<T: Decodable>(_ data: Data) throws -> T {
         do { return try JSONDecoder().decode(T.self, from: data) } catch { throw RelayError.invalidResponse }
     }
+}
+
+/// The App Attest key whose attestation could not reach Apple (`serverUnavailable`), kept to
+/// try again. In `UserDefaults`, which a reinstall clears along with the key itself.
+struct PendingAppAttestKey: Sendable {
+    var load: @Sendable () -> String?
+    var save: @Sendable (String?) -> Void
+
+    private static let defaultsKey = "\(AppIdentifiers.subsystem).push.pendingAppAttestKey"
+
+    static let standard = PendingAppAttestKey(
+        load: { UserDefaults.standard.string(forKey: defaultsKey) },
+        save: { UserDefaults.standard.set($0, forKey: defaultsKey) }
+    )
 }
 
 /// App Attest, behind a seam so tests and the simulator (unsupported) take the same path.

@@ -294,6 +294,8 @@ struct PushSendPermissionTests {
     private var serverId: String { backend.serverPublicKey.sha256Fingerprint }
     private var otherServerId: String { backend.otherServerPublicKey.sha256Fingerprint }
     private static let otherServer = URL(string: "http://other-server")!
+    /// The App Attest key kept to retry, for this test only.
+    private let pendingAttestKey = PendingKeyBox()
 
     private func storeRelayRegistration(
         _ registrationId: String,
@@ -322,15 +324,33 @@ struct PushSendPermissionTests {
         }
     }
 
-    private func relayClient() -> PushRelayClient {
-        PushRelayClient(relay: relay, session: URLSession(configuration: configuration), appAttest: ReinstalledAppAttest())
+    fileprivate final class PendingKeyBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var keyId: String?
+
+        var store: PendingAppAttestKey {
+            PendingAppAttestKey(
+                load: { self.lock.withLock { self.keyId } },
+                save: { keyId in self.lock.withLock { self.keyId = keyId } }
+            )
+        }
+    }
+
+    private func relayClient(appAttest: AppAttestProviding = ReinstalledAppAttest()) -> PushRelayClient {
+        PushRelayClient(
+            relay: relay,
+            session: URLSession(configuration: configuration),
+            appAttest: appAttest,
+            pendingAttestKey: pendingAttestKey.store
+        )
     }
 
     /// One connection's registration with a server, as `register()` runs it: the one at
     /// localhost, or `otherServer`.
     private func connect(
         deviceId: String = "d_phone",
-        server: URL = URL(string: "http://localhost:7749")!
+        server: URL = URL(string: "http://localhost:7749")!,
+        appAttest: AppAttestProviding = ReinstalledAppAttest()
     ) async throws {
         let api = APIClient(
             environment: OppiClientEnvironment(baseURL: server, bearerToken: "sk_test"),
@@ -343,7 +363,7 @@ struct PushSendPermissionTests {
             relay: relay,
             environment: .sandbox,
             apnsToken: String(repeating: "a", count: 64),
-            client: relayClient()
+            client: relayClient(appAttest: appAttest)
         )
     }
 
@@ -543,6 +563,47 @@ struct PushSendPermissionTests {
 
             #expect(backend.sentTokens.count == 2)
             #expect(backend.registrations == 0)
+        }
+    }
+
+    /// App Attest that could not reach Apple the first time.
+    private final class UnreachableOnceAppAttest: AppAttestProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _generated: [String] = []
+        private var _attested: [String] = []
+        var generated: [String] { lock.withLock { _generated } }
+        var attested: [String] { lock.withLock { _attested } }
+
+        var isSupported: Bool { true }
+        func generateKey() async throws -> String {
+            lock.withLock {
+                _generated.append("k_\(_generated.count + 1)")
+                return _generated.last!
+            }
+        }
+        func attestKey(_ keyId: String, clientDataHash: Data) async throws -> Data {
+            let first = lock.withLock {
+                _attested.append(keyId)
+                return _attested.count == 1
+            }
+            if first { throw DCError(.serverUnavailable) }
+            return Data("attestation".utf8)
+        }
+        func generateAssertion(_ keyId: String, clientDataHash: Data) async throws -> Data { Data("assertion".utf8) }
+    }
+
+    /// Apple asks for a retry with the same key: each new key counts against the device.
+    @Test func anAttestationThatCouldNotReachAppleIsRetriedWithTheSameKey() async throws {
+        try await withBackend {
+            let appAttest = UnreachableOnceAppAttest()
+            await #expect(throws: DCError.self) { try await connect(appAttest: appAttest) }
+            try await connect(appAttest: appAttest)
+
+            #expect(appAttest.generated == ["k_1"])
+            #expect(appAttest.attested == ["k_1", "k_1"])
+            #expect(PushRelayRegistrationStore.load(relay: relay, environment: .sandbox)?.appAttestKeyId == "k_1")
+            // The next registration attests a new key.
+            #expect(pendingAttestKey.store.load() == nil)
         }
     }
 
