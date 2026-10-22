@@ -103,6 +103,7 @@ extension ComposerBarController {
     }
 
     func applyMicChrome() {
+        micButton.colors = micColors
         if let call = host?.content.liveVoiceCall, let colors = host?.content.colors {
             applyCallMicChrome(call, colors: colors)
             return

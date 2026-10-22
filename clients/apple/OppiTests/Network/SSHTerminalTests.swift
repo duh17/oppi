@@ -986,6 +986,45 @@ struct SSHTerminalTests {
         await manager.cancelRecording()
     }
 
+    @Test func theTerminalComposersMicDiscUsesTheColorsItIsGiven() throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        defer { channel.close(reason: "done") }
+        let host = SSHTerminalComposerHost(
+            channel: channel, connection: nil, draftStore: nil,
+            themeID: .dark, showRawKeyboard: {}
+        )
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        host.installVoiceManager(manager)
+        let bar = ComposerBarController()
+        host.attach(bar)
+        _ = bar.view
+        func disc() throws -> UIColor {
+            let fill = try #require(bar.micButton.subviews.first {
+                !($0 is OrbMetalView) && !($0 is UIImageView) && !($0 is UILabel) && !($0 is UIActivityIndicatorView)
+            })
+            return try #require(fill.backgroundColor)
+        }
+        func components(_ color: UIColor) -> [CGFloat] {
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            color.getRed(&r, green: &g, blue: &b, alpha: &a)
+            return [r, g, b, a]
+        }
+
+        var given = ComposerThemeColors(palette: ThemeID.dark.palette)
+        given.bgHighlight = UIColor(red: 0.10, green: 0.25, blue: 0.75, alpha: 1)
+        bar.micColors = given
+        bar.apply()
+        #expect(components(try disc()) == components(given.bgHighlight), "a terminal over a Ghostty theme paints the disc with the composer's colors")
+
+        bar.micColors = nil
+        bar.apply()
+        #expect(components(try disc()) == components(UIColor(ThemeRuntimeState.currentPalette().bgHighlight)), "everywhere else it keeps the app theme's")
+    }
+
     @Test func terminalDictationFailureRestoresThePrefixAndShowsTheRetryBanner() async throws {
         let channel = try SSHTerminalChannel()
         channel.opened(TerminalConnectionFixture())

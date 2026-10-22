@@ -1213,6 +1213,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         )
         applySendFailure(composerSession?.sendFailure)
         applyDictationFailure()
+        composerBar?.micColors = colors
         composerBar?.apply()
         updateComposerHeight()
     }

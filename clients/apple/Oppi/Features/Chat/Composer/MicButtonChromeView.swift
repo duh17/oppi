@@ -32,6 +32,8 @@ final class MicButtonChromeView: UIControl {
     nonisolated(unsafe) private var liveLink: CADisplayLink?
     private var languageLabel: String?
     private var accentColor = UIColor(ThemeRuntimeState.currentPalette().blue)
+    /// The disc's colors; nil is the app theme's palette. Takes effect on the next `apply`.
+    var colors: ComposerThemeColors?
     private var engineBadge: MicButtonLabel.EngineBadge = .auto
     private var dictationStyle: DictationIndicatorStyle = .current
     nonisolated(unsafe) private var dictationStyleObserver: NSObjectProtocol?
@@ -267,22 +269,22 @@ final class MicButtonChromeView: UIControl {
     }
 
     private func updateAppearance(animated: Bool) {
-        let palette = ThemeRuntimeState.currentPalette()
+        let palette = colors ?? ComposerThemeColors(palette: ThemeRuntimeState.currentPalette())
         let indicator = indicatorColor(palette: palette)
         let listeningChrome = isRecording || isPreparing
         var bgR: CGFloat = 0, bgG: CGFloat = 0, bgB: CGFloat = 0, bgA: CGFloat = 0
-        UIColor(palette.bg).getRed(&bgR, green: &bgG, blue: &bgB, alpha: &bgA)
+        palette.bg.getRed(&bgR, green: &bgG, blue: &bgB, alpha: &bgA)
 
         showsOrb = listeningChrome && !isProcessing && dictationStyle.orbStyle != nil
         fillView.isHidden = showsOrb
-        fillView.backgroundColor = showsOrb ? .clear : UIColor(palette.bgHighlight)
+        fillView.backgroundColor = showsOrb ? .clear : palette.bgHighlight
         ringLayer.isHidden = showsOrb
         orbView.isHidden = !showsOrb
         orbView.isAnimationEnabled = showsOrb
         if let orbStyle = dictationStyle.orbStyle {
             orbView.style = orbStyle
             orbView.sizeClass = .dictation(side: Double(diameter))
-            orbView.accentUIColors = [palette.blue, palette.cyan, palette.purple, palette.orange].map { UIColor($0) }
+            orbView.accentUIColors = [palette.blue, palette.cyan, palette.purple, palette.orange]
             if !orbView.tintUIColor.isEqual(indicator) {
                 orbView.tintUIColor = indicator
             }
@@ -352,7 +354,7 @@ final class MicButtonChromeView: UIControl {
                 withConfiguration: UIImage.SymbolConfiguration(pointSize: diameter * 0.47, weight: .bold)
             )
             imageView.tintColor = isMuted
-                ? UIColor(palette.fg)
+                ? palette.fg
                 : indicator.withAlphaComponent(engineBadge == .auto ? 0.75 : 1)
             textLabel.isHidden = true
         }
@@ -378,18 +380,18 @@ final class MicButtonChromeView: UIControl {
         setNeedsLayout()
     }
 
-    private func indicatorColor(palette: ThemePalette) -> UIColor {
+    private func indicatorColor(palette: ComposerThemeColors) -> UIColor {
         if !isRecording && !isPreparing && !isProcessing {
-            return UIColor(palette.comment)
+            return palette.comment
         }
 
         switch engineBadge {
         case .auto:
-            return UIColor(palette.comment)
+            return palette.comment
         case .onDevice:
             return accentColor
         case .remote:
-            return UIColor(palette.cyan)
+            return palette.cyan
         }
     }
 }

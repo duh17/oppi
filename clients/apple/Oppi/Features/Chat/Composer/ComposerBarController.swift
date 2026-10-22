@@ -707,6 +707,10 @@ private extension UIFont {
 final class ComposerBarController: UIViewController, UITextViewDelegate, PHPickerViewControllerDelegate,
     UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate {
     weak var host: ComposerBarHosting?
+    /// The mic disc's colors when its owner paints the bar over something other
+    /// than the app's theme (the SSH terminal over a Ghostty theme). Nil keeps
+    /// the app theme's palette.
+    var micColors: ComposerThemeColors?
 
     var askClearing = AskComposerClearingState()
     var inlineVisualLineCount = 1
