@@ -1,7 +1,8 @@
+import { spawnSync } from "node:child_process";
 import { createPrivateKey } from "node:crypto";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -70,6 +71,24 @@ describe("e2e pre-create pair helper", () => {
       ok: false,
       error: "status=202 status=approval_required",
     });
+  });
+});
+
+describe("e2e helpers run from a symlinked checkout", () => {
+  // macOS /tmp is a symlink to /private/tmp. A checkout there once made both
+  // helpers skip main() and exit 0 silently, so e2e.sh paired with an empty token.
+  it.each(["e2e-precreate-pair.mjs", "e2e-pairing-approver.mjs"])("%s runs main()", (script) => {
+    const link = join(mkdtempSync(join(tmpdir(), "oppi-e2e-link-")), "scripts");
+    symlinkSync(resolve(import.meta.dirname, "../scripts"), link);
+    const env = { ...process.env };
+    delete env.E2E_BASE_URL;
+    delete env.PAIRING_TOKEN;
+    delete env.E2E_BOOTSTRAP_CREDENTIAL_FILE;
+
+    const result = spawnSync(process.execPath, [join(link, script)], { env, encoding: "utf8" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/E2E_BASE_URL .*required/);
   });
 });
 

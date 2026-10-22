@@ -11,8 +11,7 @@
  * can approve the app's pairing as this already-paired device.
  */
 import { generateKeyPairSync } from "node:crypto";
-import { writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { realpathSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export function makeDeviceKeyPair() {
@@ -115,8 +114,12 @@ async function main() {
   console.log(result.accessToken);
 }
 
+// Compare real paths: Node resolves import.meta.url through symlinks, but argv[1]
+// keeps the caller's spelling, so a checkout under macOS /tmp (-> /private/tmp)
+// would otherwise skip main() and exit 0 with no token.
 const isMain =
-  process.argv[1] != null && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+  process.argv[1] != null &&
+  realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
 if (isMain) {
   await main();
 }

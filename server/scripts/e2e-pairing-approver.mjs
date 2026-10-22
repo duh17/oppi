@@ -13,7 +13,7 @@
  * Env: E2E_BASE_URL, E2E_BOOTSTRAP_CREDENTIAL_FILE (from e2e-precreate-pair.mjs).
  */
 import { createPrivateKey, sign } from "node:crypto";
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -197,8 +197,12 @@ async function main() {
   console.log("[e2e-approver] parent exited; stopping");
 }
 
+// Compare real paths: Node resolves import.meta.url through symlinks, but argv[1]
+// keeps the caller's spelling, so a checkout under macOS /tmp (-> /private/tmp)
+// would otherwise skip main() and never approve the app's pairing.
 const isMain =
-  process.argv[1] != null && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+  process.argv[1] != null &&
+  realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
 if (isMain) {
   await main();
 }
