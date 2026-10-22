@@ -243,12 +243,16 @@ export function applyAuthorizePush(
   return { ok: true, apnsToken: record.apnsToken, environment: record.environment };
 }
 
-/** Count one push against `quota`, or say when the next one fits. */
+/**
+ * Count one push against `quota`, or say when the next one fits. `exemptFromDay` still
+ * counts the push but never refuses it for the daily limit; the per-minute limit applies.
+ */
 function chargeQuota(
   quota: QuotaState,
   now: number,
   perDay: number,
   perMinute: number,
+  exemptFromDay = false,
 ): { ok: true } | { ok: false; reason: "quota"; retryAfterSeconds: number } {
   const day = new Date(now).toISOString().slice(0, 10);
   if (quota.day !== day) {
@@ -259,7 +263,7 @@ function chargeQuota(
     quota.minuteStart = now;
     quota.minuteCount = 0;
   }
-  if (quota.dayCount >= perDay) {
+  if (!exemptFromDay && quota.dayCount >= perDay) {
     const nextDay = Date.parse(`${day}T00:00:00Z`) + 86_400_000;
     return { ok: false, reason: "quota", retryAfterSeconds: Math.ceil((nextDay - now) / 1000) };
   }
@@ -360,6 +364,9 @@ export function applyAuthorizeLiveActivity(
     now,
     record.attested ? limits.liveActivityAttestedPerDay : limits.liveActivityUnattestedPerDay,
     limits.liveActivityPerMinute,
+    // An `end` needs a live update token and a delivered end clears it, so ends cannot
+    // repeat. A full daily quota must not leave a card showing work that has finished.
+    event === "end",
   );
   if (!charged.ok) return { authorization: charged, changed };
   const timestamp = Math.max(Math.floor(now / 1000), (record.liveActivityTimestamp ?? 0) + 1);

@@ -266,6 +266,35 @@ describe("node adapter", () => {
     expect((await start()).status).toBe(200);
   });
 
+  it("delivers a Live Activity end after the daily Live Activity quota is full", async () => {
+    harness = await startHarness({ now: Date.parse("2026-10-10T08:00:00Z") });
+    const { registration, sendToken } = await liveActivityPhone(harness);
+    const activities = [card(sendToken, { token: ACTIVITY_TOKEN })];
+    expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities })).toBe(204);
+    const send = (event: "start" | "update" | "end") =>
+      liveActivity(
+        harness,
+        sendToken,
+        event === "end" ? { event, running: 0, needsYou: 0 } : { event, running: 1, needsYou: 0 },
+      );
+    for (let index = 0; index < DEFAULT_QUOTA_LIMITS.liveActivityUnattestedPerDay; index += 1) {
+      if (index % DEFAULT_QUOTA_LIMITS.liveActivityPerMinute === 0) harness.advance(61_000);
+      expect((await send("update")).status).toBe(200);
+    }
+    harness.advance(61_000);
+    for (const event of ["update", "start"] as const) {
+      const limited = await send(event);
+      expect(limited, event).toMatchObject({ status: 429, json: { error: "quota_exceeded" } });
+      expect(Number(limited.headers.get("retry-after")), event).toBeGreaterThan(3600);
+    }
+    const delivered = harness.apnsRequests.length;
+    expect((await send("end")).status).toBe(200);
+    expect(harness.apnsRequests).toHaveLength(delivered + 1);
+    expect(JSON.parse(harness.apnsRequests[delivered]!.payload)).toMatchObject({ aps: { event: "end" } });
+    // The delivered end cleared the card's token, so it cannot repeat.
+    expect((await send("end")).json.error).toBe("no_activity");
+  });
+
   it("refuses updates to an activity Apple has ended after 8 hours, but still ends it", async () => {
     const base = Date.parse("2026-10-10T08:00:00Z");
     harness = await startHarness({ now: base });

@@ -318,7 +318,9 @@ Unattested registrations: at most 5 per client address per hour (in memory). Pus
 Live Activity pushes (3.6) have their own counters: 40 per registration and UTC day when
 attested, 20 when not, and 3 a minute. They never spend the alert quota and alerts never
 spend theirs; registering again keeps both. A Live Activity push refused before APNs
-(`409 no_activity`) is not counted.
+(`409 no_activity`) is not counted. An `end` is counted but never refused for the daily
+limit (so a full quota cannot leave a card showing finished work); the per-minute limit still
+applies. An `end` needs a live update token and a delivered one clears it, so ends cannot repeat.
 
 ### 3.4 Relay storage
 

@@ -57,8 +57,8 @@ stays inside the free plan:
 | Pushes per phone per UTC day | 100 with App Attest; 20 for sandbox registrations without it |
 | Pushes per phone per minute | 10 |
 | Registrations per phone | 1 per APNs token; registering again keeps the day's counts |
-| Live Activity updates per phone per UTC day | 40 with App Attest; 20 for sandbox registrations without it, counted apart from alerts |
-| Live Activity updates per phone per minute | 3 |
+| Live Activity pushes per phone per UTC day | 40 with App Attest; 20 for sandbox registrations without it, counted apart from alerts. An `end` is counted but never refused for this limit |
+| Live Activity pushes per phone per minute | 3, `end` included |
 | Pushes and Live Activity updates per client address per minute | 60 together, checked before any send token is looked up |
 | Registrations without App Attest | sandbox only, 5 per client address per hour |
 | Challenge and registration requests | 3 per client address per 10 seconds (Cloudflare rate limiting rule) |
