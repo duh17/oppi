@@ -6,7 +6,7 @@
  * patterns as git-status.ts.
  */
 
-import { execGit, type GitTrust } from "./git-safe.js";
+import { execGit, SandboxGitRefusedError, type GitTrust } from "./git-safe.js";
 import { resolveHomePath } from "./git-utils.js";
 import { computeDiffLines, computeLineDiffStatsFromLines } from "./diff-core.js";
 import { applyWordSpansToNumberedHunks, buildDiffHunks } from "./workspace-review-diff.js";
@@ -14,6 +14,8 @@ import type {
   GitCommitDetail,
   GitCommitFileInfo,
   GitCommitSummary,
+  GitGraphCommit,
+  GitGraphRef,
   WorkspaceReviewDiffHunk,
   WorkspaceReviewDiffLine,
   WorkspaceReviewDiffResponse,
@@ -164,6 +166,103 @@ export async function getCommitLog(
     total,
     hasMore: offset + commits.length < total,
   };
+}
+
+// ─── Commit graph ───
+
+const UNIT_SEP = "\x1f";
+const RECORD_SEP = "\x1e";
+
+/**
+ * One page of the commit graph: HEAD and every local branch in topological
+ * order. One `git log` per page, and no count: a page asks for one commit more
+ * than it returns to learn whether another follows. Full SHAs, because an
+ * abbreviation can grow between pages and parents must match their commits.
+ * A repository with no commits has an empty graph; any other git failure
+ * throws, so the app can offer a retry instead of showing no history.
+ */
+export async function getCommitGraph(
+  dir: string,
+  trust: GitTrust,
+  offset: number,
+  limit: number,
+): Promise<{ commits: GitGraphCommit[]; hasMore: boolean }> {
+  const cwd = resolveHomePath(dir);
+  const { error, stdout } = await execGit(
+    trust,
+    cwd,
+    [
+      "log",
+      "--branches",
+      "HEAD",
+      "--topo-order",
+      "--decorate=full",
+      `--skip=${offset}`,
+      `--max-count=${limit + 1}`,
+      `--format=%H${UNIT_SEP}%h${UNIT_SEP}%P${UNIT_SEP}%D${UNIT_SEP}%s${UNIT_SEP}%aI${RECORD_SEP}`,
+    ],
+    { timeout: GIT_TIMEOUT_MS },
+  );
+  if (error) {
+    // A repository whose HEAD resolves to nothing has no commits yet.
+    const [repo, head] = await Promise.all([
+      execGit(trust, cwd, ["rev-parse", "--git-dir"], { timeout: GIT_TIMEOUT_MS }),
+      execGit(trust, cwd, ["rev-parse", "--verify", "--quiet", "HEAD"], {
+        timeout: GIT_TIMEOUT_MS,
+      }),
+    ]);
+    if (!repo.error && head.error && !(head.error instanceof SandboxGitRefusedError)) {
+      return { commits: [], hasMore: false };
+    }
+    throw new Error("Commit graph unavailable");
+  }
+
+  const commits: GitGraphCommit[] = [];
+  for (const record of String(stdout).split(RECORD_SEP)) {
+    const fields = record.replace(/^\n/, "").split(UNIT_SEP);
+    if (fields.length < 6) continue;
+    const [sha, shortSha, parents, decoration, message, date] = fields;
+    commits.push({
+      sha,
+      shortSha,
+      parents: parents ? parents.split(" ") : [],
+      message,
+      date,
+      refs: parseDecoration(decoration),
+    });
+  }
+  const hasMore = commits.length > limit;
+  return { commits: hasMore ? commits.slice(0, limit) : commits, hasMore };
+}
+
+/**
+ * `%D` with full names (`HEAD -> refs/heads/main, refs/remotes/origin/main,
+ * tag: refs/tags/v1`), so a remote branch and a local branch with a slash
+ * stay apart. A remote's symbolic HEAD (`origin/HEAD`) only repeats its
+ * default branch, and other refs (stash, notes) are not branches.
+ */
+export function parseDecoration(decoration: string): GitGraphRef[] {
+  const refs: GitGraphRef[] = [];
+  for (const part of decoration.split(", ")) {
+    let ref = part.trim();
+    if (!ref) continue;
+    if (ref === "HEAD") {
+      refs.push({ kind: "head", name: ref });
+      continue;
+    }
+    const isHead = ref.startsWith("HEAD -> ");
+    if (isHead) ref = ref.slice("HEAD -> ".length);
+    if (ref.startsWith("tag: ")) ref = ref.slice("tag: ".length);
+    if (ref.startsWith("refs/heads/")) {
+      const name = ref.slice("refs/heads/".length);
+      refs.push(isHead ? { kind: "branch", name, isHead } : { kind: "branch", name });
+    } else if (ref.startsWith("refs/remotes/") && !ref.endsWith("/HEAD")) {
+      refs.push({ kind: "remote", name: ref.slice("refs/remotes/".length) });
+    } else if (ref.startsWith("refs/tags/")) {
+      refs.push({ kind: "tag", name: ref.slice("refs/tags/".length) });
+    }
+  }
+  return refs;
 }
 
 // ─── Commit detail ───

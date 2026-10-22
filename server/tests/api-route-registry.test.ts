@@ -103,6 +103,7 @@ const sessionOperationIds = [
   "getWorkspaceGitStatus",
   "getWorkspaceGitDiff",
   "listWorkspaceCommits",
+  "getWorkspaceGitGraph",
   "getWorkspaceCommit",
   "getWorkspaceCommitDiff",
   "listWorkspaceQuickActions",

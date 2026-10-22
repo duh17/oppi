@@ -5,7 +5,12 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { CommitDiffError, getCommitDetail, getCommitFileDiff } from "../src/git-commits.js";
+import {
+  CommitDiffError,
+  getCommitDetail,
+  getCommitFileDiff,
+  getCommitGraph,
+} from "../src/git-commits.js";
 import { HOST_GIT_TRUST } from "../src/git-safe.js";
 
 function git(cwd: string, args: string[]): string {
@@ -43,6 +48,88 @@ describe("getCommitDetail", () => {
 
     expect(detail.message).toBe(
       "docs: explain contributor workflow\n\nAsk contributors to open an issue before submitting a pull request.",
+    );
+  });
+});
+
+describe("getCommitGraph", () => {
+  async function commit(dir: string, message: string): Promise<string> {
+    // A file per commit, so branches merge without conflicts.
+    const file = `${message.replaceAll(" ", "-")}.txt`;
+    await writeFile(join(dir, file), `${message}\n`);
+    git(dir, ["add", file]);
+    git(dir, ["commit", "-m", message]);
+    return git(dir, ["rev-parse", "HEAD"]).trim();
+  }
+
+  it("lists every local branch with parents and refs, paged without a count", async () => {
+    const dir = await createRepo();
+    git(dir, ["checkout", "-b", "main"]);
+    const base = await commit(dir, "base");
+    git(dir, ["tag", "v1"]);
+    git(dir, ["checkout", "-b", "feat/side"]);
+    const side = await commit(dir, "side");
+    git(dir, ["checkout", "main"]);
+    const tip = await commit(dir, "main tip");
+    // A remote-tracking ref shows as a remote, never as a local branch.
+    git(dir, ["update-ref", "refs/remotes/origin/main", base]);
+
+    const first = await getCommitGraph(dir, HOST_GIT_TRUST, 0, 2);
+    const rest = await getCommitGraph(dir, HOST_GIT_TRUST, 2, 2);
+    const all = [...first.commits, ...rest.commits];
+
+    expect(first.hasMore).toBe(true);
+    expect(rest.hasMore).toBe(false);
+    expect(all.map((entry) => entry.sha).sort()).toEqual([base, side, tip].sort());
+    // Topological: both children come before the base they share.
+    expect(all[2].sha).toBe(base);
+    expect(base.startsWith(all[2].shortSha)).toBe(true);
+    const byMessage = new Map(all.map((entry) => [entry.message, entry]));
+    expect(byMessage.get("main tip")?.parents).toEqual([base]);
+    expect(byMessage.get("main tip")?.refs).toEqual([
+      { kind: "branch", name: "main", isHead: true },
+    ]);
+    expect(byMessage.get("side")?.refs).toEqual([{ kind: "branch", name: "feat/side" }]);
+    expect(byMessage.get("base")?.parents).toEqual([]);
+    expect(byMessage.get("base")?.refs).toEqual(
+      expect.arrayContaining([
+        { kind: "tag", name: "v1" },
+        { kind: "remote", name: "origin/main" },
+      ]),
+    );
+  });
+
+  it("marks a detached HEAD and gives a merge both parents", async () => {
+    const dir = await createRepo();
+    git(dir, ["checkout", "-b", "main"]);
+    await commit(dir, "base");
+    git(dir, ["checkout", "-b", "feat"]);
+    const side = await commit(dir, "side");
+    git(dir, ["checkout", "main"]);
+    const mainTip = await commit(dir, "main tip");
+    git(dir, ["merge", "--no-ff", "feat", "-m", "merge feat"]);
+    git(dir, ["checkout", "--detach", "HEAD"]);
+
+    const { commits } = await getCommitGraph(dir, HOST_GIT_TRUST, 0, 10);
+
+    expect(commits[0].message).toBe("merge feat");
+    expect(commits[0].parents).toEqual([mainTip, side]);
+    expect(commits[0].refs).toEqual([
+      { kind: "head", name: "HEAD" },
+      { kind: "branch", name: "main" },
+    ]);
+  });
+
+  it("is empty before the first commit and fails outside a repository", async () => {
+    const empty = await createRepo();
+    await expect(getCommitGraph(empty, HOST_GIT_TRUST, 0, 10)).resolves.toEqual({
+      commits: [],
+      hasMore: false,
+    });
+
+    const notRepo = await mkdtemp(join(tmpdir(), "oppi-git-commits-plain-"));
+    await expect(getCommitGraph(notRepo, HOST_GIT_TRUST, 0, 10)).rejects.toThrow(
+      "Commit graph unavailable",
     );
   });
 });

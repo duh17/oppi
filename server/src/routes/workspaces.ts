@@ -4,6 +4,7 @@ import {
   CommitDiffError,
   getCommitDetail,
   getCommitFileDiff,
+  getCommitGraph,
   getCommitLog,
 } from "../git-commits.js";
 import { gitTrustForWorkspace } from "../git-safe.js";
@@ -33,6 +34,7 @@ import type {
   Session,
   UpdateWorkspaceRequest,
   Workspace,
+  GitGraphResponse,
   WorkspaceGitSummary,
   WorkspaceListSummary,
   WorkspaceQuickActionsResponse,
@@ -641,6 +643,43 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     helpers.json(res, result);
   }
 
+  /**
+   * A page of the commit graph of the queried checkout (`worktreeId`, or the
+   * selected session's). The first page also lists the repository's
+   * checkouts, so the graph can mark the branches they have out.
+   */
+  async function handleGetWorkspaceGitGraph(
+    wsId: string,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(wsId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+    const checkout = await workspaceCheckoutFromQuery(workspace, wsId, url, res);
+    if (!checkout) return;
+
+    const offset = Math.max(0, parseInt(url.searchParams.get("offset") ?? "0", 10) || 0);
+    const limit = Math.min(
+      200,
+      Math.max(1, parseInt(url.searchParams.get("limit") ?? "50", 10) || 50),
+    );
+    try {
+      const [page, worktrees] = await Promise.all([
+        getCommitGraph(checkout.path, gitTrustForWorkspace(workspace), offset, limit),
+        offset === 0
+          ? listWorkspaceWorktrees(workspace, { dataDir: ctx.storage.getDataDir() })
+          : undefined,
+      ]);
+      const response: GitGraphResponse = worktrees ? { ...page, worktrees } : page;
+      helpers.json(res, response);
+    } catch (error) {
+      helpers.error(res, 500, safeErrorMessage(error));
+    }
+  }
+
   async function handleGetWorkspaceCommitDetail(
     wsId: string,
     sha: string,
@@ -1056,6 +1095,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const wsGitCommitsMatch = path.match(/^\/workspaces\/([^/]+)\/git\/commits$/);
     if (wsGitCommitsMatch && method === "GET") {
       await handleGetWorkspaceCommitLog(wsGitCommitsMatch[1], url, res);
+      return true;
+    }
+
+    const wsGitGraphMatch = path.match(/^\/workspaces\/([^/]+)\/git\/graph$/);
+    if (wsGitGraphMatch && method === "GET") {
+      await handleGetWorkspaceGitGraph(wsGitGraphMatch[1], url, res);
       return true;
     }
 

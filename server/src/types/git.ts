@@ -1,3 +1,5 @@
+import type { WorkspaceWorktree } from "./worktree.js";
+
 // ─── Git status ───
 
 export interface GitFileChange {
@@ -23,6 +25,44 @@ export interface GitCommitSummary {
   message: string;
   /** ISO timestamp */
   date: string;
+}
+
+/** A ref that points at a commit in the graph, from `git log --format=%D`. */
+export interface GitGraphRef {
+  /**
+   * `branch` a local branch, `remote` a remote-tracking branch, `tag` a tag,
+   * `head` a detached HEAD.
+   */
+  kind: "branch" | "remote" | "tag" | "head";
+  /** Short ref name (`main`, `origin/main`, `v1.0`, `HEAD`). */
+  name: string;
+  /** The branch the queried checkout has checked out (`HEAD -> name`). */
+  isHead?: boolean;
+}
+
+export interface GitGraphCommit {
+  /** Full SHA. */
+  sha: string;
+  /** Abbreviated SHA, for display and commit detail requests. */
+  shortSha: string;
+  /** Full parent SHAs, first parent first. */
+  parents: string[];
+  /** Commit subject line */
+  message: string;
+  /** ISO timestamp */
+  date: string;
+  refs: GitGraphRef[];
+}
+
+/**
+ * One page of the commit graph: HEAD and every local branch, newest first in
+ * topological order, so a commit always comes before its parents.
+ */
+export interface GitGraphResponse {
+  commits: GitGraphCommit[];
+  hasMore: boolean;
+  /** The repository's checkouts, on the first page only. */
+  worktrees?: WorkspaceWorktree[];
 }
 
 export interface GitCommitFileInfo extends GitFileChange {

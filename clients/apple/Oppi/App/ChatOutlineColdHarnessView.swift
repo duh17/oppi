@@ -937,8 +937,8 @@ private enum ChatRoutesFixture {
     }()
 }
 
-/// The chat's server, for the requests the routes make: Git status, a commit
-/// and its diff, a review diff, file text, the workspace root listing, a
+/// The chat's server, for the requests the routes make: Git status, the
+/// commit graph, a commit and its diff, a review diff, file text, the workspace root listing, a
 /// skill and its file, models, session changes, and a new session (counted).
 /// Everything else is a 404.
 private final class ChatRoutesURLProtocol: URLProtocol {
@@ -963,6 +963,8 @@ private final class ChatRoutesURLProtocol: URLProtocol {
         switch (request.httpMethod ?? "GET", url.path) {
         case ("GET", "\(workspace)/git/status"):
             body = try? JSONEncoder().encode(ChatRoutesFixture.gitStatus)
+        case ("GET", "\(workspace)/git/graph"):
+            body = Self.json(Self.graph)
         case ("GET", "\(workspace)/git/commits/abc1234"):
             body = Self.json([
                 "sha": "abc1234",
@@ -1034,6 +1036,42 @@ private final class ChatRoutesURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+
+    /// The Git panel's graph: the session's commit on main, a branch another
+    /// worktree has out, and the tagged base both grew from.
+    private static var graph: [String: Any] { [
+        "commits": [
+            [
+                "sha": "abc1234" + String(repeating: "0", count: 33), "shortSha": "abc1234",
+                "parents": ["def5678" + String(repeating: "0", count: 33)], "message": "Route commit",
+                "date": "2026-10-15T18:00:00Z",
+                "refs": [["kind": "branch", "name": "main", "isHead": true]],
+            ],
+            [
+                "sha": "9a8b7c6" + String(repeating: "0", count: 33), "shortSha": "9a8b7c6",
+                "parents": ["def5678" + String(repeating: "0", count: 33)], "message": "Side branch work",
+                "date": "2026-10-15T17:00:00Z",
+                "refs": [["kind": "branch", "name": "feat/routes"]],
+            ],
+            [
+                "sha": "def5678" + String(repeating: "0", count: 33), "shortSha": "def5678",
+                "parents": [String](), "message": "Base commit",
+                "date": "2026-10-14T18:00:00Z",
+                "refs": [["kind": "tag", "name": "v1"], ["kind": "remote", "name": "origin/main"]],
+            ],
+        ],
+        "hasMore": false,
+        "worktrees": [
+            [
+                "id": "main", "name": "oppi", "path": "/tmp/oppi-chat-routes", "branch": "main",
+                "headSha": "abc1234", "isMain": true, "isGitRepo": true,
+            ],
+            [
+                "id": "wt_routes", "name": "wt_routes", "path": "/tmp/oppi-chat-routes-wt", "branch": "feat/routes",
+                "headSha": "9a8b7c6", "isMain": false, "isGitRepo": true,
+            ],
+        ],
+    ] }
 
     private static var diff: [String: Any] { [
         "workspaceId": "chat-routes-ws",

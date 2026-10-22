@@ -1000,6 +1000,26 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(GitCommitLogResponse.self, from: data)
     }
 
+    /// Fetch a page of a checkout's commit graph: HEAD and every local branch,
+    /// with the repository's worktrees on the first page.
+    func getGitGraph(
+        workspaceId: String,
+        worktreeId: String?,
+        offset: Int = 0,
+        limit: Int = 50
+    ) async throws -> CommitGraphResponse {
+        var queryItems = [
+            URLQueryItem(name: "offset", value: String(offset)),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        if let worktreeId, !worktreeId.isEmpty {
+            queryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
+        }
+        let query = try makePercentEncodedQuery(queryItems).map { "?\($0)" } ?? ""
+        let data = try await get("/workspaces/\(workspaceId)/git/graph\(query)")
+        return try JSONDecoder().decode(CommitGraphResponse.self, from: data)
+    }
+
     /// Fetch detailed info for a single commit (metadata + changed files).
     func getCommitDetail(workspaceId: String, sha: String) async throws -> GitCommitDetail {
         let data = try await get("/workspaces/\(workspaceId)/git/commits/\(sha)")

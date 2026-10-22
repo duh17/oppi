@@ -868,6 +868,10 @@ final class ChatRoutesUITests: XCTestCase {
         openGitPanel()
         let panel = app.navigationBars["Git"]
         XCTAssertTrue(panel.exists, "The Git panel must be titled Git")
+        let worktreeBranch = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "branch feat/routes, checked out in feat/routes")
+        ).firstMatch
+        XCTAssertTrue(worktreeBranch.exists, "The graph must list every branch and mark one another worktree has out")
         let otherChange = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "README.md")).firstMatch
         XCTAssertFalse(otherChange.exists, "This session must not list a change the session did not make")
         let scope = app.segmentedControls["workspace-context-bar.scope"]

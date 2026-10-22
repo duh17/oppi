@@ -19,6 +19,7 @@ import { createRouteHelpers } from "../src/routes/http.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { createWorkspaceRoutes } from "../src/routes/workspaces.js";
 import type {
+  GitGraphResponse,
   Session,
   Workspace,
   WorkspaceReviewDiffResponse,
@@ -909,6 +910,74 @@ describe("workspaces module", () => {
       expect(diffRes.statusCode).toBe(200);
       const diff = JSON.parse(diffRes.body) as WorkspaceReviewDiffResponse;
       expect(diff.currentText).toBe("let value = worktree\n");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("graphs the queried worktree's HEAD and lists the worktrees on the first page only", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-worktree-route-graph-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktree-route-graph-data-"));
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "README.md"), "main checkout\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-m", "initial"]);
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const worktree = await createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/graph" },
+        { dataDir },
+      );
+      writeFileSync(join(worktree.path, "feature.txt"), "feature\n");
+      git(worktree.path, ["add", "feature.txt"]);
+      git(worktree.path, ["commit", "-m", "feature work"]);
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
+        },
+      } as unknown as RouteContext;
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const graph = async (query: string): Promise<GitGraphResponse> => {
+        const res = makeResponse();
+        await dispatch({
+          method: "GET",
+          path: "/workspaces/ws-1/git/graph",
+          url: new URL(`http://localhost/workspaces/ws-1/git/graph?${query}`),
+          req: {} as never,
+          res: res as never,
+        });
+        expect(res.statusCode).toBe(200);
+        return JSON.parse(res.body) as GitGraphResponse;
+      };
+
+      const first = await graph(`worktreeId=${worktree.id}&limit=1`);
+      expect(first.commits.map((commit) => commit.message)).toEqual(["feature work"]);
+      expect(first.commits[0].refs).toEqual([
+        { kind: "branch", name: "feature/graph", isHead: true },
+      ]);
+      expect(first.hasMore).toBe(true);
+      expect(first.worktrees?.map((entry) => entry.branch).sort()).toEqual([
+        "feature/graph",
+        "main",
+      ]);
+
+      const second = await graph(`worktreeId=${worktree.id}&offset=1&limit=1`);
+      expect(second.commits.map((commit) => commit.message)).toEqual(["initial"]);
+      expect(second.commits[0].refs).toEqual([{ kind: "branch", name: "main" }]);
+      expect(second.hasMore).toBe(false);
+      expect(second.worktrees).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(dataDir, { recursive: true, force: true });
