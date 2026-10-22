@@ -162,7 +162,10 @@ Not automated yet. The steps, for whoever owns the account:
    Free plan fits the per-phone quotas (see [Limits](#limits-and-why-they-are-set-this-way));
    move to Workers Paid if you need more. Add a rate limiting rule for `/v1/challenge` and
    `/v1/registrations`: a phone registers about once per install, so 3 requests per client
-   address per 10 seconds is plenty.
+   address per 10 seconds is plenty. Then harden TLS at the edge on the zone, not in the
+   Worker: minimum TLS 1.2 (Oppi's relay uses 1.3) and a WAF custom rule that blocks this
+   hostname when `not ssl`, so plain HTTP is refused rather than redirected. `wrangler.toml`
+   cannot express either; see "Edge TLS" under [Operator security](#operator-security).
 2. An APNs auth key (`.p8`) from the Apple Developer account of the team that signs the app.
 3. `npx wrangler login`, then set secrets: `wrangler secret put APNS_KEY_P8` (the file's
    contents), `APNS_KEY_ID`, `APNS_TEAM_ID`. `APNS_KEY_P8` also keys registration challenges,
@@ -203,6 +206,25 @@ as the most sensitive parts of the deployment.
 - Use API tokens limited to this account's Workers scripts and the relay hostname's zone
   routes, not the Global API Key. Delete tokens a CI or laptop no longer needs.
 - Turn on usage and billing notifications so unexpected request volume is visible.
+
+**Edge TLS.** Registration secrets, send tokens, and APNs tokens reach the edge in cleartext
+inside TLS, so the zone must not offer a weaker handshake than the clients require. These are
+zone and ruleset settings, not Worker configuration:
+
+- Minimum TLS Version **1.3** on the zone (1.2 is the floor for a relay that cannot use 1.3;
+  TLS 1.0 and 1.1 are always refused). Pair it with a WAF custom rule so a later change to
+  the zone minimum cannot weaken the relay hostname:
+  `http.host eq "push.oppi.chaosdonkey.dev" and (not ssl or cf.tls_version in {"TLSv1"
+  "TLSv1.1" "TLSv1.2"})` → Block.
+- **Refuse plain HTTP; do not redirect it.** A client that sent a send token or a
+  registration secret over `http://` has already leaked it: a `301`/`308` hides that, and a
+  redirected `POST` often reaches the Worker as a `GET`. Leave Cloudflare's zone-wide
+  "Always Use HTTPS" off and let the WAF rule answer `403`.
+- **HSTS** for the relay hostname alone, through a Response Header Transform Rule
+  (`max-age=300`, no `includeSubDomains`, no preload; raise `max-age` once it has been quiet
+  for a day or so). The relay has no browser users, so this is hygiene for a person pasting
+  the URL, not protection for Oppi clients.
+- **0-RTT stays off**, because `/v1/push` is not idempotent. TLS 1.3 and HTTP/3 stay on.
 
 **Rotating the APNs key** (after a suspected leak, or a departing account holder):
 

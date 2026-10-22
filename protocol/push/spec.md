@@ -201,9 +201,12 @@ session, so narrower scoped locks do not cover them.
 
 ## 3. Relay API v1
 
-JSON over HTTPS. Request bodies are at most 8 KiB (`413 body_too_large`). Unknown request
-fields fail with `400 unknown_field`. Errors are `{"error": "<code>"}`. Secrets travel only
-in the `Authorization` header, never in a URL.
+JSON over HTTPS. A relay refuses a plaintext request rather than redirecting it, and refuses
+TLS below 1.2 on its hostname: a redirected client has already sent its secret in cleartext.
+Oppi's own relay requires TLS 1.3 and sends `Strict-Transport-Security`. Request bodies are
+at most 8 KiB (`413 body_too_large`). Unknown request fields fail with `400 unknown_field`.
+Errors are `{"error": "<code>"}`. Secrets travel only in the `Authorization` header, never in
+a URL.
 
 Any call may answer `503 {"error": "relay_capacity"}` with `Retry-After` set to the seconds
 until the next 00:00 UTC. The relay sends it only when its host refuses work for the rest of
