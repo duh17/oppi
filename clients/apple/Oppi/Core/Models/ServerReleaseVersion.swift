@@ -2,11 +2,12 @@ import Foundation
 
 /// Client-side floor for a paired Oppi server.
 ///
-/// Build 55 requires `oppi-server` 0.52.0: catch-up decodes the `live` field of
-/// the session events response, which 0.51.0 omits. Compare against
-/// `GET /server/info` `version`. Unparseable versions are treated as unknown, not old.
+/// Build 56 requires `oppi-server` 0.53.0: against 0.52.0, read aloud and Server
+/// Metrics are hidden, push alerts carry no readable text, and Edit with Oppi on an
+/// extension fails. Compare against `GET /server/info` `version`. Unparseable
+/// versions are treated as unknown, not old.
 enum ServerReleaseVersion {
-    static let minimumSupported = "0.52.0"
+    static let minimumSupported = "0.53.0"
 
     static func isBelowMinimum(_ version: String?, minimum: String = minimumSupported) -> Bool {
         guard let version else { return false }

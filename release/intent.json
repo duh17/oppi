@@ -3,21 +3,21 @@
   "components": {
     "server": {
       "release": true,
-      "version": "0.52.0"
+      "version": "0.53.0"
     },
     "mirror": {
       "release": true,
-      "version": "0.52.0"
+      "version": "0.53.0"
     },
     "ios": {
       "release": true,
       "target": "Oppi",
       "marketingVersion": "1.1.2",
-      "build": 55,
-      "whatsNewFromBuild": 55
+      "build": 56,
+      "whatsNewFromBuild": 56
     }
   },
   "candidateTTLHours": 336,
-  "whatToTestPath": ".internal/release-notes/testflight-build-55-what-to-test.md",
-  "changelogPath": ".internal/release-notes/testflight-build-55-changelog.md"
+  "whatToTestPath": ".internal/release-notes/testflight-build-56-what-to-test.md",
+  "changelogPath": ".internal/release-notes/testflight-build-56-changelog.md"
 }
