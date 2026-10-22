@@ -85,17 +85,36 @@ final class PushRegistration {
         Task { await register(api: api, serverId: serverId, deviceId: deviceId, relay: relay) }
     }
 
+    /// Why a registration failed, in the terms the person can act on.
+    enum Failure: Equatable, Sendable {
+        /// Notifications are not allowed for Oppi.
+        case notificationsOff
+        /// The relay is at a limit (`429`, or `503 relay_capacity` at its daily capacity): try
+        /// again later.
+        case relayBusy
+        /// Anything else: the server or the relay refused, or could not be reached.
+        case refused
+
+        init(_ error: any Error) {
+            switch error as? PushRelayClient.RelayError {
+            case .rejected(429, _), .rejected(503, "relay_capacity"): self = .relayBusy
+            default: self = .refused
+            }
+        }
+    }
+
+    /// Nil once the server has this device's push key and send token.
     @discardableResult
-    func register(api: APIClient, serverId: String, deviceId: String, relay: URL) async -> Bool {
+    func register(api: APIClient, serverId: String, deviceId: String, relay: URL) async -> Failure? {
         let server = serverId.prefix(16)
         guard let environment = APNsEnvironment.current else {
             logger.error("Push registration skipped for server \(server, privacy: .public): no aps-environment")
-            return false
+            return .refused
         }
+        guard let token = await currentDeviceToken() else { return .refused }
         // A denied permission keeps the token off the relay: it could only deliver alerts iOS
         // would not show.
-        guard let token = await currentDeviceToken(),
-              await AttentionNotificationService.shared.notificationsAuthorized() else { return false }
+        guard await AttentionNotificationService.shared.notificationsAuthorized() else { return .notificationsOff }
         Self.publishRedactionSnapshot()
         do {
             try await register(
@@ -108,11 +127,21 @@ final class PushRegistration {
                 client: PushRelayClient(relay: relay)
             )
             logger.info("Push registered with server \(server, privacy: .public) (\(environment.rawValue, privacy: .public))")
-            return true
+            return nil
         } catch {
             logger.error("Push registration failed for server \(server, privacy: .public): \(String(describing: error), privacy: .public)")
-            return false
+            return Failure(error)
         }
+    }
+
+    /// The relay this phone registered with for `serverId`, from the send token it gave the
+    /// server; known while the server is offline.
+    static func savedRelay(serverId: String) -> URL? {
+        guard let sendToken = PushSendTokenStore.load(serverId: serverId)?.sendToken,
+              let registrationId = PushRelayClient.permission(ofSendToken: sendToken)?.registrationId,
+              let registration = PushRelayRegistrationStore.all().first(where: { $0.registrationId == registrationId })
+        else { return nil }
+        return URL(string: registration.relay)
     }
 
     func register(

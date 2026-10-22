@@ -62,6 +62,17 @@ struct RemotePushTests {
         #expect(ContinuousClock.now - started < .seconds(10))
     }
 
+    @Test func aFailedRegistrationSaysWhetherToWaitOrToCheckTheServer() {
+        typealias RelayError = PushRelayClient.RelayError
+        #expect(PushRegistration.Failure(RelayError.rejected(429, "rate_limited")) == .relayBusy)
+        #expect(PushRegistration.Failure(RelayError.rejected(503, "relay_capacity")) == .relayBusy)
+        #expect(PushRegistration.Failure(RelayError.rejected(503, nil)) == .refused)
+        #expect(PushRegistration.Failure(RelayError.rejected(401, "attestation_invalid")) == .refused)
+        #expect(PushRegistration.Failure(RelayError.tooManyPermissions) == .refused)
+        #expect(PushRegistration.Failure(APIError.server(status: 409, message: "relay_mismatch")) == .refused)
+        #expect(PushRegistration.Failure(URLError(.notConnectedToInternet)) == .refused)
+    }
+
     // MARK: - Foreground and local alerts
 
     @Test func failedRunsAndAgentMessagesShowInFrontUnlessTheirChatIsOnScreen() {
@@ -367,6 +378,13 @@ struct PushSendPermissionTests {
         )
     }
 
+    private func disable(_ serverId: String) async {
+        let configuration = configuration
+        await PushRegistration.shared.disable(serverId: serverId, api: nil, relay: nil) {
+            PushRelayClient(relay: $0, session: URLSession(configuration: configuration))
+        }
+    }
+
     private func withBackend(_ body: () async throws -> Void) async throws {
         BackendProtocol.backend = backend
         defer {
@@ -604,6 +622,17 @@ struct PushSendPermissionTests {
             #expect(PushRelayRegistrationStore.load(relay: relay, environment: .sandbox)?.appAttestKeyId == "k_1")
             // The next registration attests a new key.
             #expect(pendingAttestKey.store.load() == nil)
+        }
+    }
+
+    /// The Live Activities consent names it while the server is offline.
+    @Test func theRelayThisPhoneRegisteredWithIsKnownWithoutTheServer() async throws {
+        try await withBackend {
+            try storeRelayRegistration("r_A")
+            try await connect()
+            #expect(PushRegistration.savedRelay(serverId: serverId) == relay)
+            await disable(serverId)
+            #expect(PushRegistration.savedRelay(serverId: serverId) == nil)
         }
     }
 

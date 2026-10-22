@@ -21,14 +21,17 @@ struct ServerNotificationsSection: View {
     @State private var liveActivityEnabled = false
     @State private var consent: Consent?
     @State private var status: Status = .idle
+    /// Why turning push on last failed; cleared on the next try.
+    @State private var pushFailure: PushRegistration.Failure?
     @State private var liveActivityStatus: Status = .idle
 
-    /// What the user is being asked to agree to before it takes effect. The relay host is
-    /// captured when the alert is shown: the connection can drop while it is up, and the
-    /// message must not change or go blank.
+    /// What the user is being asked to agree to before it takes effect. The relay is captured
+    /// when the alert is shown: the connection can drop or name another relay while it is up,
+    /// and the message must not change or go blank, nor push go to a relay it did not name.
     enum Consent: Equatable {
-        /// Push on. `withCounts`: Live Activities is already on, so the card's counts go too.
-        case push(relayHost: String, withCounts: Bool)
+        /// Push on, through `relay`. `withCounts`: Live Activities is already on, so the card's
+        /// counts go too.
+        case push(relay: URL, withCounts: Bool)
         /// Live Activities on while push is already on.
         case liveActivity(relayHost: String)
 
@@ -56,7 +59,13 @@ struct ServerNotificationsSection: View {
         APNsEnvironment.current == .production && !DCAppAttestService.shared.isSupported
     }
 
-    /// The relay host is unknown while the server is offline or reconnecting.
+    /// The relay this phone registered with names it while the server is offline or
+    /// reconnecting.
+    private var relayHostForConsent: String? {
+        relayHost ?? PushRegistration.savedRelay(serverId: serverId)?.host()
+    }
+
+    /// The relay host is unknown when neither the connection nor a registration names it.
     private static func hostForConsent(_ relayHost: String?) -> String {
         relayHost ?? String(localized: "the push relay")
     }
@@ -75,10 +84,9 @@ struct ServerNotificationsSection: View {
                     get: { pushEnabled },
                     set: { newValue in
                         if newValue {
-                            consent = .push(
-                                relayHost: Self.hostForConsent(relayHost),
-                                withCounts: liveActivityEnabled
-                            )
+                            // The toggle shows only while the relay is known.
+                            guard let relay = connection?.pushRelay else { return }
+                            consent = .push(relay: relay, withCounts: liveActivityEnabled)
                         } else {
                             turnPushOff()
                         }
@@ -92,8 +100,8 @@ struct ServerNotificationsSection: View {
                     ProgressView()
                         .accessibilityIdentifier("server.push.working")
                 }
-                if status == .failed {
-                    Text("Couldn't turn on push. Check that notifications are allowed for Oppi, then try again.")
+                if let pushFailure {
+                    Text(Self.message(for: pushFailure))
                         .foregroundStyle(.themeOrange)
                         .accessibilityIdentifier("server.push.error")
                 }
@@ -102,7 +110,7 @@ struct ServerNotificationsSection: View {
                 get: { liveActivityEnabled },
                 set: { newValue in
                     if newValue,
-                       let needed = Self.consentForLiveActivityOn(pushEnabled: pushEnabled, relayHost: relayHost) {
+                       let needed = Self.consentForLiveActivityOn(pushEnabled: pushEnabled, relayHost: relayHostForConsent) {
                         consent = needed
                     } else {
                         setLiveActivity(newValue)
@@ -147,7 +155,7 @@ struct ServerNotificationsSection: View {
         ) { pending in
             Button("Turn On") {
                 switch pending {
-                case .push: turnPushOn()
+                case .push(let relay, _): turnPushOn(relay: relay)
                 case .liveActivity: setLiveActivity(true)
                 }
             }
@@ -166,12 +174,24 @@ struct ServerNotificationsSection: View {
     /// Oppi's relay (the App Store and TestFlight relay); the doc says so too.
     static func message(for consent: Consent) -> String {
         switch consent {
-        case .push(let relayHost, let withCounts):
+        case .push(let relay, let withCounts):
+            let relayHost = relay.host() ?? relay.absoluteString
             let base = String(localized: "Alerts travel through \(relayHost) on Cloudflare, then Apple, encrypted so only this device can read them. All three see this device's push token and when alerts are sent; only the relay and Cloudflare see your server's IP address. App Attest checks with Apple that this is Oppi, so Apple learns this install uses push.")
             guard withCounts else { return base }
             return base + " " + String(localized: "The Live Activity's two counts also reach all three unencrypted, up to once a minute.")
         case .liveActivity(let relayHost):
             return String(localized: "To keep the card current while Oppi is closed, its two counts go to \(relayHost), Cloudflare, and Apple unencrypted, up to once a minute. No names or other text.")
+        }
+    }
+
+    static func message(for failure: PushRegistration.Failure) -> String {
+        switch failure {
+        case .notificationsOff:
+            String(localized: "Couldn't turn on push: notifications are off for Oppi. Allow them in the Settings app, then try again.")
+        case .relayBusy:
+            String(localized: "Couldn't turn on push: the push relay is busy. Try again later.")
+        case .refused:
+            String(localized: "Couldn't turn on push: the server or the push relay didn't accept it. Try again later.")
         }
     }
 
@@ -206,44 +226,47 @@ struct ServerNotificationsSection: View {
               let deviceId = connection.credentials?.deviceCredential?.deviceId else { return }
         liveActivityStatus = .working
         Task {
-            let updated = await PushRegistration.shared.register(
+            let failure = await PushRegistration.shared.register(
                 api: api,
                 serverId: serverId,
                 deviceId: deviceId,
                 relay: relay
             )
-            liveActivityStatus = updated ? .idle : .failed
+            liveActivityStatus = failure == nil ? .idle : .failed
         }
     }
 
-    private func turnPushOn() {
-        guard let connection, let relay = connection.pushRelay, let api = connection.apiClient,
+    /// `relay` is the one the consent named. If the server has moved to another relay since,
+    /// it refuses this one (`409 relay_mismatch`).
+    private func turnPushOn(relay: URL) {
+        pushFailure = nil
+        guard let connection, let api = connection.apiClient,
               let deviceId = connection.credentials?.deviceCredential?.deviceId else {
-            status = .failed
+            pushFailure = .refused
             return
         }
         PushRegistration.setEnabled(true, serverId: serverId)
         pushEnabled = true
         status = .working
         Task {
-            let registered = await PushRegistration.shared.register(
+            let failure = await PushRegistration.shared.register(
                 api: api,
                 serverId: serverId,
                 deviceId: deviceId,
                 relay: relay
             )
-            if registered {
-                status = .idle
-            } else {
+            if let failure {
                 PushRegistration.setEnabled(false, serverId: serverId)
                 pushEnabled = false
-                status = .failed
+                pushFailure = failure
             }
+            status = .idle
         }
     }
 
     private func turnPushOff() {
         pushEnabled = false
+        pushFailure = nil
         status = .working
         let connection = connection
         Task {
