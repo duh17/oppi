@@ -633,18 +633,21 @@ struct SSHTerminalSwitcherTests {
             let session = SSHTerminalConnectSession(registry: registry)
             let host = SSHTerminalProfile(host: "statusbar.invalid", username: "alice")
             seedColors(host.id, background: background)
+            var window: UIWindow?
+            defer {
+                window?.isHidden = true
+                window?.rootViewController = nil
+                closeEverything(registry)
+                SSHTerminalColorStore().forget(host.id)
+            }
             let channel = try adopt(registry, host, ThemedConnection())
             session.show(try #require(registry.terminal(for: host.id)))
             let terminal = SSHTerminalViewController(
                 channel: channel, reconnect: {}, editHost: {}, hostLabel: "alice@statusbar", session: session
             )
-            let window = try mount(terminal)
+            window = try mount(terminal)
             try await settle(terminal)
             #expect(terminal.preferredStatusBarStyle == style, "Oppi \(oppi) over \(background)")
-            window.isHidden = true
-            window.rootViewController = nil
-            closeEverything(registry)
-            SSHTerminalColorStore().forget(host.id)
         }
     }
 }
