@@ -362,6 +362,10 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
         scheduler = LiveVoicePlaybackScheduler()
         echoCancellation = false
         recoveries = 0
+        // Call end only: lets Music resume and Bluetooth leave HFP (same as dictation).
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        #endif
     }
 
     func play(_ pcm: Data) {

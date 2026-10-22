@@ -224,6 +224,13 @@ final class LiveVoiceCallController {
                 guard let self, !Task.isCancelled else { return }
                 await self.handle(message, generation: generation)
             }
+            // The stream finishes on its own only when the link is gone for good (device
+            // revoked, auth refresh failed, session gone). Our own close paths cancel this
+            // task, bump the generation, or clear isLive first. A pre-confirm finish is
+            // start()'s to report (startWaiter is still set).
+            guard let self, !Task.isCancelled, generation == self.startGeneration,
+                  self.isLive, self.startWaiter == nil else { return }
+            self.failClosed("Live Voice disconnected.", closeChannel: true)
         }
     }
 

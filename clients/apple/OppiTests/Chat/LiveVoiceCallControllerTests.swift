@@ -509,6 +509,20 @@ struct LiveVoiceCallControllerTests {
         #expect(!harness.audio.isCapturing)
     }
 
+    @Test("The call stream ending for good ends the call, stops capture, and says why")
+    func streamFinishingEndsConfirmedCall() async throws {
+        let harness = try await startedHarness()
+        await waitUntil { harness.audio.isCapturing }
+
+        // WebSocketClient finishes its stream only on a terminal disconnect.
+        harness.channel.finishStream()
+        await waitUntil { !harness.controller.isLive }
+
+        #expect(harness.controller.lastError == "Live Voice disconnected.")
+        #expect(!harness.audio.isCapturing)
+        #expect(harness.channel.closed)
+    }
+
     @Test("Inbound PCM plays on the duplex owner without ending the call")
     func inboundPcmPlaysWithoutEndingCall() async throws {
         let harness = try await startedHarness()
@@ -746,6 +760,12 @@ private final class FakeLiveVoiceCallChannel: LiveVoiceCallChannel {
 
     func emitAudio(_ pcm: Data) {
         onInboundAudio?(pcm)
+    }
+
+    /// The stream ends without the controller closing the channel.
+    func finishStream() {
+        continuation?.finish()
+        continuation = nil
     }
 }
 
