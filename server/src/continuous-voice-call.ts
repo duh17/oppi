@@ -9,6 +9,13 @@ import type {
 
 const DEFAULT_LEASE_DURATION_MS = 30_000;
 const DEFAULT_RETENTION_GRACE_MS = 30_000;
+/**
+ * How long a call that lost its frontend stays rejoinable. Past this, the next start or
+ * attach ends it: a start days later is a new conversation, not the old one with its
+ * delegations. Rejoin after a socket drop, a server restart, or leaving the chat for a
+ * while stays well inside it.
+ */
+const DEFAULT_DETACHED_CALL_TTL_MS = 10 * 60_000;
 const MAX_REPLAY_EVENTS = 128;
 const MAX_RETAINED_CALLS = 256;
 const MAX_DELEGATIONS_PER_CALL = 256;
@@ -69,6 +76,11 @@ export interface PersistedVoiceCall {
 export interface VoiceCallPersistence {
   load(): readonly PersistedVoiceCall[];
   save(calls: readonly PersistedVoiceCall[]): void;
+  /**
+   * The stored calls could not be read or restored. The store sets them aside so the
+   * controller can start empty instead of keeping the server from booting.
+   */
+  quarantine?(reason: unknown): void;
 }
 
 interface MutableVoiceCall {
@@ -76,11 +88,6 @@ interface MutableVoiceCall {
   controlSessionId: string;
   clientCallId: string;
   ownerDeviceId: string;
-  /**
-   * The stored calls could not be read or restored. The store sets them aside so the
-   * controller can start empty instead of keeping the server from booting.
-   */
-  quarantine?(reason: unknown): void;
   lifecycle: "active" | "ended";
   frontendConnection?: VoiceCallFrontendConnection;
   detachedAt?: number;
@@ -111,6 +118,7 @@ export class VoiceCallController {
   private readonly now: () => number;
   private readonly leaseDurationMs: number;
   private readonly retentionGraceMs: number;
+  private readonly detachedCallTtlMs: number;
   private readonly maxRetainedCalls: number;
 
   constructor(
@@ -119,6 +127,7 @@ export class VoiceCallController {
       now?: () => number;
       leaseDurationMs?: number;
       retentionGraceMs?: number;
+      detachedCallTtlMs?: number;
       maxRetainedCalls?: number;
       persistence?: VoiceCallPersistence;
       dispatchDelegation?: (controlSessionId: string, delegation: VoiceDelegation) => void;
@@ -132,6 +141,10 @@ export class VoiceCallController {
     this.retentionGraceMs = deps.retentionGraceMs ?? DEFAULT_RETENTION_GRACE_MS;
     if (!Number.isFinite(this.retentionGraceMs) || this.retentionGraceMs <= 0) {
       throw new Error("Voice call retention grace must be positive and finite");
+    }
+    this.detachedCallTtlMs = deps.detachedCallTtlMs ?? DEFAULT_DETACHED_CALL_TTL_MS;
+    if (!Number.isFinite(this.detachedCallTtlMs) || this.detachedCallTtlMs <= 0) {
+      throw new Error("Voice detached call TTL must be positive and finite");
     }
     this.maxRetainedCalls = deps.maxRetainedCalls ?? MAX_RETAINED_CALLS;
     if (!Number.isSafeInteger(this.maxRetainedCalls) || this.maxRetainedCalls <= 0) {
@@ -163,6 +176,7 @@ export class VoiceCallController {
       return this.attachCall({ callId: existing.callId }, frontend);
     }
 
+    this.endStaleDetachedCalls();
     this.pruneReclaimableCalls();
     for (const call of this.calls.values()) {
       if (
@@ -211,6 +225,7 @@ export class VoiceCallController {
   ): VoiceCallAttachResult {
     validateFrontend(frontend);
     this.assertConnectionAuthorized(frontend);
+    this.endStaleDetachedCalls();
     const call = this.requireActiveCall(input.callId);
     this.assertOwnerDevice(call, frontend.authenticatedDeviceId);
     const lastEventSeq = input.lastEventSeq;
@@ -390,9 +405,6 @@ export class VoiceCallController {
     if (call.delegations.has(input.delegationId)) {
       throw new Error(`Duplicate voice delegation: ${input.delegationId}`);
     }
-    if (call.delegations.size >= MAX_DELEGATIONS_PER_CALL) {
-      throw new Error("Voice delegation capacity is reached");
-    }
 
     call.partialTranscript = undefined;
     const createdAt = this.now();
@@ -404,6 +416,7 @@ export class VoiceCallController {
       createdAt,
     };
     this.deps.dispatchDelegation?.(call.controlSessionId, delegation);
+    this.makeRoomForDelegation(call);
     call.delegations.set(input.delegationId, {
       ...delegation,
       state: "delegated",
@@ -495,6 +508,47 @@ export class VoiceCallController {
     }
   }
 
+  /**
+   * A long call must keep taking requests. At the cap the oldest answered delegation goes
+   * (else the oldest open one); a refused utterance would be dropped with only a log line.
+   * Updates to an evicted delegation are rejected like any unknown one.
+   */
+  private makeRoomForDelegation(call: MutableVoiceCall): void {
+    if (call.delegations.size < MAX_DELEGATIONS_PER_CALL) return;
+    let evict: string | undefined;
+    for (const [id, delegation] of call.delegations) {
+      evict ??= id;
+      if (delegation.state === "completed") {
+        evict = id;
+        break;
+      }
+    }
+    if (evict !== undefined) call.delegations.delete(evict);
+  }
+
+  /** Ends active calls that lost their frontend longer ago than the rejoin window. */
+  private endStaleDetachedCalls(): void {
+    const now = this.now();
+    let changed = false;
+    for (const call of this.calls.values()) {
+      if (
+        call.lifecycle !== "active" ||
+        call.frontendConnection ||
+        call.detachedAt === undefined ||
+        call.detachedAt + this.detachedCallTtlMs > now
+      ) {
+        continue;
+      }
+      call.lifecycle = "ended";
+      call.controllerLeaseEpoch += 1;
+      call.controllerLeaseExpiresAt = now;
+      call.eventSeq += 1;
+      call.updatedAt = now;
+      changed = true;
+    }
+    if (changed) this.persist();
+  }
+
   private nextEventSeq(call: MutableVoiceCall): number {
     call.eventSeq += 1;
     call.updatedAt = this.now();
@@ -533,6 +587,14 @@ export class VoiceCallController {
         }
         restored.set(call.callId, call);
       }
+    } catch (error) {
+      // Without a way to set the file aside, refuse to boot on it as before.
+      if (!persistence.quarantine) throw error;
+      persistence.quarantine(error);
+      return;
+    }
+    if (restored.size === 0) return;
+    for (const call of restored.values()) {
       if (call.lifecycle === "active") {
         this.detach(call);
       }
@@ -587,14 +649,6 @@ export class VoiceCallController {
     this.assertOwnerDevice(call, frontend.authenticatedDeviceId);
     if (
       !Number.isSafeInteger(controllerLeaseEpoch) ||
-    } catch (error) {
-      // Without a way to set the file aside, refuse to boot on it as before.
-      if (!persistence.quarantine) throw error;
-      persistence.quarantine(error);
-      return;
-    }
-    if (restored.size === 0) return;
-    for (const call of restored.values()) {
       controllerLeaseEpoch <= 0 ||
       controllerLeaseEpoch !== call.controllerLeaseEpoch ||
       call.frontendConnection?.connectionId !== frontend.connectionId ||

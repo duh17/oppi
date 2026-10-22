@@ -12,6 +12,7 @@ function makeHarness(
     leaseDurationMs?: number;
     maxRetainedCalls?: number;
     retentionGraceMs?: number;
+    detachedCallTtlMs?: number;
   } = {},
 ) {
   let now = 1_000;
@@ -22,6 +23,7 @@ function makeHarness(
     leaseDurationMs: options.leaseDurationMs ?? 30_000,
     maxRetainedCalls: options.maxRetainedCalls,
     retentionGraceMs: options.retentionGraceMs,
+    detachedCallTtlMs: options.detachedCallTtlMs,
   });
 
   const frontend = (
@@ -40,6 +42,108 @@ function makeHarness(
 }
 
 describe("continuous voice call controller", () => {
+  it("ends a detached call left past the rejoin window so a new start is fresh", () => {
+    const harness = makeHarness({ detachedCallTtlMs: 60_000 });
+    const first = harness.frontend("connection-1");
+    const started = harness.controller.startCall(
+      { controlSessionId: "control-session-1", clientCallId: "client-call-1" },
+      first.connection,
+    );
+    harness.controller.commitFrontendUtterance({
+      callId: started.state.callId,
+      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
+      frontendConnectionId: "connection-1",
+      utteranceId: "utterance-1",
+      delegationId: "delegation-1",
+      request: "an old request",
+    });
+    harness.controller.disconnectConnection("connection-1");
+
+    // Inside the window the same device still rejoins the call and its delegations.
+    harness.setNow(1_000 + 59_000);
+    const rejoined = harness.controller.startCall(
+      { controlSessionId: "control-session-1", clientCallId: "client-call-2" },
+      harness.frontend("connection-2").connection,
+    );
+    expect(rejoined.state.callId).toBe("call-1");
+    expect(rejoined.state.delegations).toHaveLength(1);
+    harness.controller.disconnectConnection("connection-2");
+
+    // Days later it is a different conversation: the old call ends, the new start is empty.
+    harness.setNow(1_000 + 59_000 + 3 * 24 * 60 * 60 * 1000);
+    const fresh = harness.controller.startCall(
+      { controlSessionId: "control-session-1", clientCallId: "client-call-3" },
+      harness.frontend("connection-3").connection,
+    );
+    expect(fresh.state.callId).toBe("call-2");
+    expect(fresh.state.delegations).toEqual([]);
+    expect(harness.controller.snapshot("call-1").lifecycle).toBe("ended");
+    expect(harness.controller.activeCallIdForControlSession("control-session-1")).toBe("call-2");
+  });
+
+  it("refuses to re-attach a stale detached call by id and ends it", () => {
+    const harness = makeHarness({ detachedCallTtlMs: 60_000 });
+    const first = harness.frontend("connection-1");
+    const started = harness.controller.startCall(
+      { controlSessionId: "control-session-1", clientCallId: "client-call-1" },
+      first.connection,
+    );
+    harness.controller.disconnectConnection("connection-1");
+    harness.setNow(1_000 + 60_000);
+
+    expect(() =>
+      harness.controller.attachCall(
+        { callId: started.state.callId },
+        harness.frontend("connection-2").connection,
+      ),
+    ).toThrow("Voice call has ended");
+    expect(harness.controller.snapshot(started.state.callId).lifecycle).toBe("ended");
+  });
+
+  it("keeps accepting utterances past the delegation cap by dropping the oldest", () => {
+    const harness = makeHarness();
+    const phone = harness.frontend("connection-1");
+    const started = harness.controller.startCall(
+      { controlSessionId: "control-session-1", clientCallId: "client-call-1" },
+      phone.connection,
+    );
+    const say = (n: number) =>
+      harness.controller.commitFrontendUtterance({
+        callId: started.state.callId,
+        controllerLeaseEpoch: started.state.controllerLeaseEpoch,
+        frontendConnectionId: "connection-1",
+        utteranceId: `utterance-${n}`,
+        delegationId: `delegation-${n}`,
+        request: `request ${n}`,
+      });
+    for (let n = 1; n <= 256; n += 1) say(n);
+    // Delegation 2 is answered; 1 is still open. The oldest *settled* one goes first.
+    harness.controller.applyDelegationUpdate(started.state.callId, {
+      delegationId: "delegation-2",
+      kind: "final",
+      text: "done",
+    });
+
+    expect(() => say(257)).not.toThrow();
+    const ids = harness.controller
+      .snapshot(started.state.callId)
+      .delegations.map((d) => d.delegationId);
+    expect(ids).toHaveLength(256);
+    expect(ids).toContain("delegation-1");
+    expect(ids).not.toContain("delegation-2");
+    expect(ids.at(-1)).toBe("delegation-257");
+
+    // With nothing settled, the oldest open one is dropped rather than the caller's words.
+    expect(() => say(258)).not.toThrow();
+    const after = harness.controller
+      .snapshot(started.state.callId)
+      .delegations.map((d) => d.delegationId);
+    expect(after).toHaveLength(256);
+    expect(after).not.toContain("delegation-1");
+    expect(after.at(-1)).toBe("delegation-258");
+    expect(harness.controller.latestOpenDelegationId(started.state.callId)).toBe("delegation-258");
+  });
+
   it("holds an expired connection open only while it controls a live call", () => {
     const { controller, frontend, setNow } = makeHarness();
     const phone = frontend("connection-a");
