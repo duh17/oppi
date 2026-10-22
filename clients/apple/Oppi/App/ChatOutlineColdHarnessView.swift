@@ -608,10 +608,14 @@ private enum ChatRoutesFixture {
         }
         connection.workspaceStore.workspacesByServer[serverId] = [workspace]
         connection.sessionStore.switchServer(to: serverId)
-        connection.sessionStore.upsert(session(
+        var routesSession = session(
             id: sessionId,
             status: environment["CHAT_ROUTES_STATUS"] == "busy" ? .busy : .ready
-        ))
+        )
+        if environment["CHAT_ROUTES_ENGINE"] == "durable" {
+            routesSession.engine = .durable
+        }
+        connection.sessionStore.upsert(routesSession)
         enableShare(on: connection)
         connection.chatState.cachedModels = models
         if environment["CHAT_ROUTES_ASK"] == "1" {

@@ -323,6 +323,32 @@ final class ChatRoutesUITests: XCTestCase {
 
     // MARK: - Side panels
 
+    /// A classic chat's outline switches between Timeline and Tree; a durable
+    /// chat has no tree, so its outline is the timeline with no switch.
+    func testDurableOutlineShowsOnlyTheTimeline() {
+        for (engine, offersTree) in [("classic", true), ("durable", false)] {
+            launch(environment: engine == "durable" ? ["CHAT_ROUTES_ENGINE": "durable"] : [:])
+            let outlineButton = app.buttons["chat.toolbar.outline"]
+            XCTAssertTrue(outlineButton.waitForExistence(timeout: 10), "\(engine): outline must be available")
+            outlineButton.tap()
+            XCTAssertTrue(
+                app.navigationBars["Session Outline"].waitForExistence(timeout: 5),
+                "\(engine): outline did not open"
+            )
+            XCTAssertTrue(
+                app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "ROUTES_FILL_2")).firstMatch
+                    .waitForExistence(timeout: 5),
+                "\(engine): the outline must list the timeline"
+            )
+            XCTAssertEqual(
+                app.segmentedControls.buttons["Tree"].exists, offersTree,
+                offersTree ? "A classic outline keeps the Tree switch" : "A durable outline has no Tree switch"
+            )
+            attachScreenshot("outline-\(engine)")
+            app.terminate()
+        }
+    }
+
     /// Regular width puts these in the trailing column beside the chat;
     /// compact width presents them as sheets.
     func testOutlineSearchesAndClosesBothWays() {
