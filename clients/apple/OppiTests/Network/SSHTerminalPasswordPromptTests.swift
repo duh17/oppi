@@ -203,13 +203,48 @@ struct SSHTerminalPasswordPromptTests {
         NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
         channel.engine.receive(Data("$ sudo ls\r\nPassword: ".utf8))
         try await Self.draw(grid)
-        #expect(!grid.isSecureTextEntry, "nothing paints while the scene is inactive")
-
-        // Coming back, the very next thing the grid does is look at the screen:
-        // no display-link tick, no run-loop turn, before a key can be typed.
-        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
-        #expect(grid.isSecureTextEntry, "the keyboard is secure before the first key after reactivation")
+        #expect(grid.isSecureTextEntry, "the live line decides without a paint")
         #expect(reported == [true])
+
+        // Coming back changes nothing: the latch holds through the repaint.
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        #expect(grid.isSecureTextEntry)
+        #expect(reported == [true])
+    }
+
+    @Test func secureEntryDoesNotWaitForAPaintAndHistoryStillLeavesItAlone() throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(PasswordPromptStubConnection())
+        // Never in a window: presentIfNeeded returns false, so no snapshot is taken.
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        defer { channel.close(reason: "done") }
+        var reported: [Bool] = []
+        grid.secureInputChanged = { reported.append($0) }
+
+        channel.engine.receive(Data("$ sudo ls\r\nPassword: ".utf8))
+        #expect(channel.engine.cursorLineBeforeCursor == nil, "no frame has painted this output")
+        grid.drawFrame()
+        #expect(channel.engine.cursorLineBeforeCursor == nil, "and none could")
+        #expect(grid.isSecureTextEntry)
+        #expect(reported == [true])
+
+        // Reading history is not the live screen: output arriving there decides nothing.
+        channel.engine.scroll(rows: -1)
+        channel.engine.receive(Data("\r\n$ ".utf8))
+        grid.drawFrame()
+        channel.engine.receive(Data("\r\n".utf8))
+        grid.drawFrame()
+        #expect(grid.isSecureTextEntry)
+        #expect(reported == [true])
+
+        // Back on the live screen the prompt is gone; two unpainted ticks agree.
+        channel.engine.backToLive()
+        grid.drawFrame()
+        #expect(grid.isSecureTextEntry, "one off picture keeps the latch")
+        channel.engine.receive(Data("x\r\n".utf8))
+        grid.drawFrame()
+        #expect(!grid.isSecureTextEntry)
+        #expect(reported == [true, false])
     }
 
     @Test func aSecretTypedAtAPromptDoesNotOutliveItWhenThePromptEndsWithoutReturn() async throws {

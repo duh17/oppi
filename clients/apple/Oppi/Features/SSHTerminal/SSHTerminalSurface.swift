@@ -1690,10 +1690,14 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
 
     /// Turns the keyboard's secure entry on while the live screen asks for a
     /// secret (`Password:`, `[sudo] password for duh:`). The trait is read when
-    /// the keyboard is built, so a change reloads the input views once. Only a
-    /// painted frame that changed the picture asks the terminal again, and a
-    /// frame with no fresh snapshot leaves the state alone. The keyboard bar
-    /// shows a lock meanwhile, and the screen moves typing off the chat bar.
+    /// the keyboard is built, so a change reloads the input views once. The
+    /// terminal is asked again only when its output or the cursor's row changed.
+    /// The painted snapshot answers when it covers the newest output; otherwise
+    /// (a paint bailed: renderer not ready, ring full, no drawable, scene
+    /// inactive) the live screen does, so a prompt is not undetected until some
+    /// later frame paints. History and a hidden cursor leave the state alone.
+    /// The keyboard bar shows a lock meanwhile, and the screen moves typing off
+    /// the chat bar.
     private func updateSecureEntry() {
         guard channel.connected else {
             securePrompt = nil
@@ -1704,9 +1708,10 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         let changes = channel.engine.changeCount
         let row = channel.engine.cursorCell.row
         guard changes != secureCheckedChanges || row != secureCheckedRow else { return }
-        // nil is history, a hidden cursor, or a picture no frame has drawn yet,
-        // not "no prompt".
-        guard let line = channel.engine.cursorLineBeforeCursor else { return }
+        // The live read formats one row, and only runs here, after the change
+        // gate. nil from both is history or a hidden cursor, not "no prompt".
+        guard let line = channel.engine.cursorLineBeforeCursor
+            ?? channel.engine.liveCursorLineBeforeCursor() else { return }
         secureCheckedChanges = changes
         secureCheckedRow = row
         let latched = securePrompt.map {
