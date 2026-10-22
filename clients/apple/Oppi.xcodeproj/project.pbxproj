@@ -1528,6 +1528,7 @@
 		B0C08483B53129C6B031B962 /* ShareQuickSessionSender.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36A3D874CE198C3D073E6DFC /* ShareQuickSessionSender.swift */; };
 		B0D5DAFC75471905BDBA8277 /* ServerConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D836FB0DA08C599C8880923 /* ServerConnectionTests.swift */; };
 		B0E9D8EF94B2A3151F049583 /* MacWorkspaceClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC07DC076BD473A1B1276EAA /* MacWorkspaceClientTests.swift */; };
+		B0F0E849CD8A66DDFF667F1F /* GitLogo-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 66BF9B680D6DB91C9A1A5912 /* GitLogo-LICENSE.txt */; };
 		B1611852AA87E8F15AF8AF56 /* MacSessionOutlineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DF57AC7AE0F03D772CFEBA4 /* MacSessionOutlineTests.swift */; };
 		B1775643A4F7697E495D5F97 /* WorkspaceExtensionsPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB3FB12C1CF9C8A4FEAF3B1B /* WorkspaceExtensionsPage.swift */; };
 		B1BFA75FA7A4265F667EAB3F /* SSHTerminalRegistryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F17F8D3ADCA2CFAE588462 /* SSHTerminalRegistryTests.swift */; };
@@ -1636,6 +1637,7 @@
 		BE1FED752A04007DAB3B6A2A /* McpServersModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BDDCE0F0735EB78B55B0A99 /* McpServersModelTests.swift */; };
 		BE241DF7581A814BF06A6602 /* AgentIconPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38DB0954C2905517F2B36F6D /* AgentIconPickerView.swift */; };
 		BE59429C6E1F515417F435D7 /* SessionInboxGrouping.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74EB3C33F8069566D2C48FD1 /* SessionInboxGrouping.swift */; };
+		BE670BE4C9AACD0EDD38782A /* ChatGitPanelViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E60B4BD59D5A719164644D7 /* ChatGitPanelViewController.swift */; };
 		BE680B1B4C3DFD777889D723 /* TableBodyLeakRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D2D1A41291EA1313BB195AC /* TableBodyLeakRegressionTests.swift */; };
 		BE910209B51DF6706BEE3D9E /* NIOPosix in Frameworks */ = {isa = PBXBuildFile; productRef = 45CC369552CCB81E34595239 /* NIOPosix */; };
 		BE9410F2AC20682C3B6DCCAA /* ExtensionUINativeSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74343B20957C6BCACDE5A263 /* ExtensionUINativeSurface.swift */; };
@@ -2789,6 +2791,7 @@
 		3E36D83EA919E4B66F59D11B /* MarkdownBlockSerializerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlockSerializerTests.swift; sourceTree = "<group>"; };
 		3E38F93E098B5307B62EDEE0 /* LocalDataProtection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataProtection.swift; sourceTree = "<group>"; };
 		3E5DB2A30FA568F80E7A8545 /* DoubleTapZoomTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoubleTapZoomTests.swift; sourceTree = "<group>"; };
+		3E60B4BD59D5A719164644D7 /* ChatGitPanelViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatGitPanelViewController.swift; sourceTree = "<group>"; };
 		3E7191944EB6FBA435CA06CD /* ElevatedSurfaceOpacityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElevatedSurfaceOpacityTests.swift; sourceTree = "<group>"; };
 		3E7592E51C57D2AF187551D7 /* ModelProvidersManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelProvidersManagementView.swift; sourceTree = "<group>"; };
 		3F475D72760E5AD0D98FFA74 /* NativeFullScreenTerminalWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFullScreenTerminalWindowTests.swift; sourceTree = "<group>"; };
@@ -3051,6 +3054,7 @@
 		665B0A72A85F2881EDAE397D /* WorkspaceHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceHomeView.swift; sourceTree = "<group>"; };
 		6698289848C2AE90BD46FBA3 /* NavigationSwipeGesturePolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationSwipeGesturePolicyTests.swift; sourceTree = "<group>"; };
 		669F9504EE56A2C7818DFD9B /* WorkspaceNetworkAccessPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceNetworkAccessPage.swift; sourceTree = "<group>"; };
+		66BF9B680D6DB91C9A1A5912 /* GitLogo-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "GitLogo-LICENSE.txt"; sourceTree = "<group>"; };
 		66FF391C8FD9D17F3CD14300 /* TimelineScrollCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineScrollCoordinator.swift; sourceTree = "<group>"; };
 		6703059B6CFE97D4EA1BFBD6 /* TimelineSnapshotApplier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineSnapshotApplier.swift; sourceTree = "<group>"; };
 		673AF0AB0E41C5DC721E1108 /* OppiTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = OppiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -4764,6 +4768,7 @@
 		34730CDC0EC5522E7AF2A6B7 /* Support */ = {
 			isa = PBXGroup;
 			children = (
+				3E60B4BD59D5A719164644D7 /* ChatGitPanelViewController.swift */,
 				D7CEA9D22685CAE3E47820EE /* ChatTopBarActions.swift */,
 				5FEADE0AD77DC1916FF25536 /* ContextInspectorViewController.swift */,
 				B7587BC83B6BFE2FE81B1294 /* DragSelectState.swift */,
@@ -5431,6 +5436,7 @@
 				22CBADB19FF5C739FC72FA85 /* AppIcon.icon */,
 				F3ED987CC68F402EE744D564 /* Assets.xcassets */,
 				AA3C5BD17F50BE4A484BAE1C /* GhosttyVt-LICENSE.txt */,
+				66BF9B680D6DB91C9A1A5912 /* GitLogo-LICENSE.txt */,
 				B4BAD411CB60FD93BBF578F0 /* Info.plist */,
 				AEF895A9115EF9F2143B7A6F /* InfoPlist.xcstrings */,
 				16DA599F0281A91ADEA0C700 /* Localizable.xcstrings */,
@@ -7658,6 +7664,7 @@
 				2034BC7BDDB50598A7E898DD /* FiraCode-Regular.ttf in Resources */,
 				754AAFE32609AF8126B5DDD3 /* FiraCode-SemiBold.ttf in Resources */,
 				A649A71151AF35B90AC5BBB9 /* GhosttyVt-LICENSE.txt in Resources */,
+				B0F0E849CD8A66DDFF667F1F /* GitLogo-LICENSE.txt in Resources */,
 				F8779CA832B183A59F1024A5 /* InfoPlist.xcstrings in Resources */,
 				4D227089BE22F03AB42A8A2A /* JetBrainsMono-Bold.ttf in Resources */,
 				EDCFB602D6A682390786E267 /* JetBrainsMono-Regular.ttf in Resources */,
@@ -9202,6 +9209,7 @@
 				D4607F103AAC3E1A3170FF8F /* ChatDisplayPreviewCards.swift in Sources */,
 				A980E139A897C42DB213D124 /* ChatFileBrowserPanel.swift in Sources */,
 				8D9B4E343CFD62EFC949944B /* ChatFooterViews.swift in Sources */,
+				BE670BE4C9AACD0EDD38782A /* ChatGitPanelViewController.swift in Sources */,
 				12316A59121A62100202DF9A /* ChatItem.swift in Sources */,
 				101C65C1AEE2CA71312F8B7D /* ChatOutlineColdHarnessView.swift in Sources */,
 				3BA10821AFB3F509A2DAA9A0 /* ChatReviewCommentsController.swift in Sources */,

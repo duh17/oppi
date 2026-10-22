@@ -1,14 +1,14 @@
 import UIKit
 
 /// The chat's navigation bar: Back leading, the session title in the middle,
-/// and trailing the buttons the user chose — Files, Outline, the context ring,
-/// and Terminal, in their order — with a … menu holding the ones they hid. On
+/// and trailing the buttons the user chose — Files, Git, Outline, the context
+/// ring, and Terminal, in their order — with a … menu holding the ones they hid. On
 /// a vertical toolbar rail (the iPhone Duo) the same controls join the rail one
 /// per position and the session slot carries the title's menu.
 ///
 /// The choice is Settings → Chat → Top Bar (`ChatTopBarLayout`): one device-wide
 /// setting, the same for every chat, not a per-chat decision. An action this
-/// session cannot offer (Files and Terminal without a workspace, Outline on an
+/// session cannot offer (Files, Git, and Terminal without a workspace, Outline on an
 /// empty timeline, Terminal while the experiment is off) leaves no control at
 /// all, and no menu item either: what the user chose is what the bar shows, and
 /// the … menu never offers a button that could only fail.
@@ -41,7 +41,7 @@ final class ChatBarItems {
     private lazy var moreItem = makeMoreItem()
     private lazy var moreButton: UIButton = {
         let button = Self.barButton(
-            symbol: "ellipsis", textStyle: .subheadline, weight: .regular,
+            image: UIImage(systemName: "ellipsis"), textStyle: .subheadline, weight: .regular,
             identifier: "chat.toolbar.more", label: "More actions"
         ) {}
         button.showsMenuAsPrimaryAction = true
@@ -50,13 +50,19 @@ final class ChatBarItems {
     }()
     private lazy var backItem = makeBackItem()
     private lazy var backButton = Self.barButton(
-        symbol: "chevron.left", textStyle: .headline, weight: .semibold,
+        image: UIImage(systemName: "chevron.left"), textStyle: .headline, weight: .semibold,
         identifier: "chat.toolbar.back", label: "Back"
     ) { [weak self] in self?.chat?.navigateBackFromChat() }
 
-    private lazy var files = ActionControls(rail: makeFilesItem(), button: makeActionButton(.files))
-    private lazy var terminal = ActionControls(rail: makeTerminalItem(), button: makeActionButton(.terminal))
-    private lazy var outline = ActionControls(rail: makeOutlineItem(), button: makeActionButton(.outline))
+    private lazy var files = ActionControls(rail: makeRailItem(.files), button: makeActionButton(.files))
+    private lazy var git = ActionControls(rail: makeRailItem(.git), button: makeGitButton())
+    /// The changed-file count on the horizontal bar's Git button. The rail
+    /// item has no room for one; its accessibility value carries the count.
+    private let gitBadge = InsetLabel(insets: .zero, capsule: false)
+    /// From the button's center to the badge's leading edge: half the logo.
+    private var gitBadgeLeading: NSLayoutConstraint?
+    private lazy var terminal = ActionControls(rail: makeRailItem(.terminal), button: makeActionButton(.terminal))
+    private lazy var outline = ActionControls(rail: makeRailItem(.outline), button: makeActionButton(.outline))
 
     /// Back alone on the left; the chosen buttons and … on the right.
     private lazy var leadingStack = Self.group([backButton], spacing: 10)
@@ -94,11 +100,17 @@ final class ChatBarItems {
         // A shown action draws its own control; a hidden one is only in the …
         // menu. Nothing refills a place another action could not fill.
         let drawnSet = Set(drawn)
+        let filesOpen = chat.model.isFilePanelVisible
+        let open: Set<ChatTopBarAction> = filesOpen ? [.files] : []
         for (action, controls) in [
-            (ChatTopBarAction.files, files), (.terminal, terminal), (.outline, outline),
+            (ChatTopBarAction.files, files), (.git, git), (.terminal, terminal), (.outline, outline),
         ] {
             controls.rail.isHidden = !drawnSet.contains(action)
             controls.button.isHidden = !drawnSet.contains(action)
+            // Every pass, so a text size change reaches the Git logo, which
+            // is drawn for one size, as it reaches the symbols.
+            controls.rail.image = action.image(textStyle: .body, isActive: open.contains(action))
+            controls.button.configuration?.image = action.image(textStyle: .subheadline, isActive: open.contains(action))
         }
         contextItem.isHidden = !drawnSet.contains(.context)
         for item in [backItem, railSessionItem, moreItem] where item.isHidden {
@@ -117,11 +129,8 @@ final class ChatBarItems {
         navigationItem.hidesBackButton = usesCustomBack
         navigationItem.largeTitleDisplayMode = .never
 
-        let filesOpen = chat.model.isFilePanelVisible
-        files.rail.image = UIImage(systemName: filesOpen ? "folder.fill" : "folder")
         files.rail.tintColor = filesOpen ? colors.blue : colors.fg
         files.rail.accessibilityLabel = filesOpen ? "Close chat files" : ChatTopBarAction.files.accessibilityLabel
-        files.button.configuration?.image = UIImage(systemName: filesOpen ? "folder.fill" : "folder")
         files.button.tintColor = filesOpen ? colors.blue : colors.fg
         files.button.accessibilityLabel = filesOpen ? "Close chat files" : ChatTopBarAction.files.accessibilityLabel
         // The folder lookup can take a round trip; the control says so and takes
@@ -139,6 +148,23 @@ final class ChatBarItems {
         let outlineTint = usesColumn && chat.model.showOutline ? colors.blue : colors.fg
         outline.rail.tintColor = outlineTint
         outline.button.tintColor = outlineTint
+        let gitTint = usesColumn && chat.model.showGit ? colors.blue : colors.fg
+        git.rail.tintColor = gitTint
+        git.button.tintColor = gitTint
+        // The strip that used to sit over the timeline showed the branch and
+        // the change count at a glance; the button says both.
+        let gitSummary = chat.gitBarSummary
+        let gitValue = gitSummary.map(Self.gitAccessibilityValue)
+        git.rail.accessibilityValue = gitValue
+        git.button.accessibilityValue = gitValue
+        let changedFiles = gitSummary?.changedFiles ?? 0
+        gitBadge.isHidden = changedFiles <= 0
+        gitBadge.text = changedFiles > 99 ? "99+" : "\(changedFiles)"
+        // The badge starts just past the logo and grows away from it.
+        gitBadgeLeading?.constant = (git.button.configuration?.image?.size.width ?? 20) / 2
+        // Plain count, no fill: the bar's glass draws its content's colors
+        // monochrome, so a colored capsule reads as an empty grey dot.
+        gitBadge.textColor = colors.fg
         backItem.tintColor = colors.fg
         backButton.tintColor = colors.fg
         moreItem.tintColor = colors.fg
@@ -192,23 +218,46 @@ final class ChatBarItems {
     private func currentAvailability(of chat: ChatViewController) -> Set<ChatTopBarAction> {
         Self.availableActions(
             hasWorkspace: chat.session?.workspaceId != nil,
+            gitAvailable: chat.mayHaveGit,
             showsOutline: chat.outlineAvailability.isAvailable,
             terminalEnabled: AppPreferences.Experiments.sshTerminalEnabled && chat.hasUsableTerminalFolder
         )
     }
 
+    /// "main, 3 changed files": the Git button's value, from the count the
+    /// panel opens with.
+    static func gitAccessibilityValue(_ summary: (branch: String?, changedFiles: Int)) -> String {
+        let count = summary.changedFiles == 1
+            ? String(localized: "1 changed file")
+            : String(localized: "\(summary.changedFiles) changed files")
+        guard let branch = summary.branch, !branch.isEmpty else { return count }
+        return "\(branch), \(count)"
+    }
+
+    /// Git is a button that could only fail in a workspace with Git status
+    /// turned off, or once its loaded status says it is no repository. While
+    /// the status is unknown (not loaded yet) the button stays, rather than
+    /// appearing late and shifting the bar.
+    static func mayOfferGit(gitStatusEnabled: Bool?, loadedStatus: GitStatus?) -> Bool {
+        if gitStatusEnabled == false { return false }
+        return loadedStatus?.isGitRepo ?? true
+    }
+
     /// Which actions this chat can offer right now: the ring is always there,
-    /// Files and Terminal need a workspace, Outline needs a timeline, and
+    /// Files, Git, and Terminal need a workspace, Outline needs a timeline, Git
+    /// needs a workspace that may be a Git repository (`gitAvailable`), and
     /// Terminal also needs a workspace folder a shell can start in, so a sandbox
     /// workspace or a relative host mount offers no Terminal.
     static func availableActions(
         hasWorkspace: Bool,
+        gitAvailable: Bool,
         showsOutline: Bool,
         terminalEnabled: Bool
     ) -> Set<ChatTopBarAction> {
         var available: Set<ChatTopBarAction> = [.outline, .context]
         if hasWorkspace {
             available.insert(.files)
+            if gitAvailable { available.insert(.git) }
             if terminalEnabled { available.insert(.terminal) }
         }
         if !showsOutline { available.remove(.outline) }
@@ -221,10 +270,11 @@ final class ChatBarItems {
     /// `update()` shows them again.
     func clear() {
         isSuspended = true
-        for item in [backItem, files.rail, terminal.rail, outline.rail, contextItem, railSessionItem, moreItem] {
+        for item in [backItem, files.rail, git.rail, terminal.rail, outline.rail, contextItem, railSessionItem, moreItem] {
             item.isHidden = true
         }
         files.button.isHidden = true
+        git.button.isHidden = true
         terminal.button.isHidden = true
         outline.button.isHidden = true
         moreButton.isHidden = true
@@ -240,6 +290,7 @@ final class ChatBarItems {
     private func controls(for action: ChatTopBarAction) -> ActionControls? {
         switch action {
         case .files: files
+        case .git: git
         case .terminal: terminal
         case .outline: outline
         case .context: nil
@@ -295,7 +346,9 @@ final class ChatBarItems {
         let items = AppPreferences.ChatTopBar.layout.menu(available: available).map { action in
             let item = UIAction(
                 title: action.menuTitle(filesOpen: filesOpen),
-                image: UIImage(systemName: action.symbolName)
+                // The menu sizes unconfigured symbols itself; `nil` gives it
+                // those, and the Git logo at the size it draws them.
+                image: action.image(textStyle: nil)
             ) { [weak self] _ in self?.chat?.runTopBarAction(action) }
             item.accessibilityIdentifier = action.menuIdentifier
             // The ring's number is the reason to open the panel; the menu keeps
@@ -309,7 +362,7 @@ final class ChatBarItems {
     }
 
     private static func barButton(
-        symbol: String,
+        image: UIImage?,
         textStyle: UIFont.TextStyle,
         weight: UIImage.SymbolWeight,
         identifier: String,
@@ -317,9 +370,14 @@ final class ChatBarItems {
         action: @escaping () -> Void
     ) -> UIButton {
         var configuration = UIButton.Configuration.plain()
-        configuration.image = UIImage(systemName: symbol)
-        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: textStyle)
-            .applying(UIImage.SymbolConfiguration(weight: weight))
+        configuration.image = image
+        // A symbol configuration also scales a plain image (the Git logo) to
+        // the text size, which shrank the logo below its neighbours; such an
+        // image arrives at its size already (`ChatTopBarAction.image`).
+        if image?.isSymbolImage != false {
+            configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: textStyle)
+                .applying(UIImage.SymbolConfiguration(weight: weight))
+        }
         configuration.contentInsets = .zero
         let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in action() })
         button.translatesAutoresizingMaskIntoConstraints = false
@@ -372,34 +430,35 @@ final class ChatBarItems {
         return item
     }
 
-    private func makeFilesItem() -> UIBarButtonItem {
+    /// An action's item on the Duo's vertical rail.
+    private func makeRailItem(_ action: ChatTopBarAction) -> UIBarButtonItem {
         let item = UIBarButtonItem(
-            image: UIImage(systemName: "folder"),
-            primaryAction: UIAction(title: "Files") { [weak self] _ in self?.chat?.runTopBarAction(.files) }
+            image: action.image(textStyle: .body),
+            primaryAction: UIAction(title: action.label) { [weak self] _ in self?.chat?.runTopBarAction(action) }
         )
-        item.accessibilityLabel = ChatTopBarAction.files.accessibilityLabel
-        item.accessibilityIdentifier = ChatTopBarAction.files.accessibilityIdentifier
+        item.accessibilityLabel = action.accessibilityLabel
+        item.accessibilityIdentifier = action.accessibilityIdentifier
         return item
     }
 
-    private func makeTerminalItem() -> UIBarButtonItem {
-        let item = UIBarButtonItem(
-            image: UIImage(systemName: "terminal"),
-            primaryAction: UIAction(title: "Terminal") { [weak self] _ in self?.chat?.runTopBarAction(.terminal) }
-        )
-        item.accessibilityLabel = ChatTopBarAction.terminal.accessibilityLabel
-        item.accessibilityIdentifier = ChatTopBarAction.terminal.accessibilityIdentifier
-        return item
-    }
-
-    private func makeOutlineItem() -> UIBarButtonItem {
-        let item = UIBarButtonItem(
-            image: UIImage(systemName: "list.bullet"),
-            primaryAction: UIAction(title: "Outline") { [weak self] _ in self?.chat?.runTopBarAction(.outline) }
-        )
-        item.accessibilityLabel = ChatTopBarAction.outline.accessibilityLabel
-        item.accessibilityIdentifier = ChatTopBarAction.outline.accessibilityIdentifier
-        return item
+    /// The Git bar button with its count badge at the top trailing corner.
+    private func makeGitButton() -> UIButton {
+        let button = makeActionButton(.git)
+        gitBadge.font = UIFont.scaled(.caption2, .semibold, monospacedDigits: true)
+        gitBadge.textAlignment = .center
+        gitBadge.isHidden = true
+        gitBadge.isUserInteractionEnabled = false
+        gitBadge.isAccessibilityElement = false
+        gitBadge.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(gitBadge)
+        // Leading-anchored past the logo, so "99+" grows away from it.
+        let leading = gitBadge.leadingAnchor.constraint(equalTo: button.centerXAnchor, constant: 10)
+        gitBadgeLeading = leading
+        NSLayoutConstraint.activate([
+            gitBadge.topAnchor.constraint(equalTo: button.topAnchor, constant: 1),
+            leading,
+        ])
+        return button
     }
 
     private func makeMoreItem() -> UIBarButtonItem {
@@ -411,7 +470,7 @@ final class ChatBarItems {
 
     private func makeActionButton(_ action: ChatTopBarAction) -> UIButton {
         Self.barButton(
-            symbol: action.symbolName, textStyle: .subheadline, weight: .regular,
+            image: action.image(textStyle: .subheadline), textStyle: .subheadline, weight: .regular,
             identifier: action.accessibilityIdentifier, label: action.accessibilityLabel
         ) { [weak self] in self?.chat?.runTopBarAction(action) }
     }
@@ -605,6 +664,7 @@ extension ChatViewController {
         ])
         if model.isFilePanelVisible {
             model.showOutline = false
+            model.showGit = false
             model.showContextInspector = false
         }
     }
@@ -627,10 +687,19 @@ extension ChatViewController {
         }
     }
 
+    func toggleGitPanel() {
+        if usesTrailingSidePanel {
+            showSidePanel(model.showGit ? nil : .git)
+        } else {
+            model.showGit = true
+        }
+    }
+
     /// At most one side panel at a time; the newest request wins.
     func showSidePanel(_ panel: ChatSidePanel?) {
         model.isFilePanelVisible = panel == .files
         model.showOutline = panel == .outline
+        model.showGit = panel == .git
         model.showContextInspector = panel == .context
     }
 
@@ -666,7 +735,7 @@ extension ChatViewController {
 
 /// The chat's side panels. A new panel replaces the column's screen.
 enum ChatSidePanel: Hashable {
-    case files, outline, context
+    case files, outline, git, context
 }
 
 extension ChatViewController {
@@ -676,6 +745,7 @@ extension ChatViewController {
     func runTopBarAction(_ action: ChatTopBarAction) {
         switch action {
         case .files: toggleChatFilePanel(source: "top_trailing_pill")
+        case .git: toggleGitPanel()
         case .outline: toggleOutlinePanel()
         case .context: toggleContextPanel()
         case .terminal: openTerminalHere()

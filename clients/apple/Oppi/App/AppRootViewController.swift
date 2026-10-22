@@ -42,8 +42,8 @@ final class AppRootViewController: UIViewController {
         super.viewDidLoad()
         layer.view.backgroundColor = .clear
         embed(layer, at: 0)
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (root: Self, _: UITraitCollection) in
-            root.followSystemAppearance()
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (controller: Self, _: UITraitCollection) in
+            controller.root.themeStore.followSystemAppearance(from: controller)
         }
     }
 
@@ -87,14 +87,7 @@ final class AppRootViewController: UIViewController {
 
     private func applyTheme() {
         // Observation tracking re-runs `updateProperties` when the theme changes.
-        view.window?.overrideUserInterfaceStyle = root.themeStore.userInterfaceStyle
-        followSystemAppearance()
-    }
-
-    /// In the theme's system mode the window shows the system appearance;
-    /// the theme follows it.
-    private func followSystemAppearance() {
-        root.themeStore.followSystemAppearance(traitCollection.userInterfaceStyle)
+        root.themeStore.applyToWindow(of: self)
     }
 
     // MARK: Content
@@ -206,3 +199,62 @@ final class AppRootViewController: UIViewController {
         Router.topPresenter(from: self).present(alert, animated: true)
     }
 }
+
+extension ThemeStore {
+    /// The window root's half of the theme: the window takes the theme's color
+    /// scheme, and in the theme's system mode the theme follows the system
+    /// appearance the window then shows. Without it a system-mode store keeps
+    /// the scheme it guessed at launch, so router sheets (whose navigation
+    /// controllers leave system mode to the window) drew light bars and titles
+    /// over a dark palette. Call from `updateProperties()` and on appearance.
+    func applyToWindow(of root: UIViewController) {
+        root.view.window?.overrideUserInterfaceStyle = userInterfaceStyle
+        followSystemAppearance(from: root)
+    }
+
+    /// Call on a `UITraitUserInterfaceStyle` change of the window root too.
+    func followSystemAppearance(from root: UIViewController) {
+        followSystemAppearance(root.traitCollection.userInterfaceStyle)
+    }
+}
+
+#if DEBUG
+/// The window root for debug harnesses and screenshot previews, which render
+/// app screens without `AppRootViewController`: it applies the theme to the
+/// window the same way, so a preview's sheets match its content.
+final class HarnessRootViewController: UIViewController {
+    private let themeStore: ThemeStore
+    private let content: UIViewController
+
+    init(content: UIViewController, themeStore: ThemeStore) {
+        self.content = content
+        self.themeStore = themeStore
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        addChild(content)
+        content.view.frame = view.bounds
+        content.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(content.view)
+        content.didMove(toParent: self)
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (controller: Self, _: UITraitCollection) in
+            controller.themeStore.followSystemAppearance(from: controller)
+        }
+    }
+
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+        themeStore.applyToWindow(of: self)
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        themeStore.applyToWindow(of: self)
+    }
+}
+#endif

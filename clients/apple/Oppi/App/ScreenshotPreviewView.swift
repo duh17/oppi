@@ -181,32 +181,32 @@ struct ScreenshotPreviewView: View {
             ChatRoutesHarnessPreview()
         case "chat-top-bar-default":
             ChatTopBarScreenshotPreview(
-                order: [.files, .outline, .context, .terminal],
+                order: ChatTopBarAction.allCases,
                 shown: ChatTopBarLayout.defaultShown,
                 terminalExperiment: false
             )
         case "chat-top-bar-terminal":
             ChatTopBarScreenshotPreview(
-                order: [.terminal, .files, .outline, .context],
+                order: [.terminal, .files, .git, .outline, .context],
                 shown: [.terminal, .files],
                 terminalExperiment: true
             )
         case "chat-top-bar-all":
             ChatTopBarScreenshotPreview(
-                order: [.files, .outline, .context, .terminal],
-                shown: [.files, .outline, .context, .terminal],
+                order: ChatTopBarAction.allCases,
+                shown: Set(ChatTopBarAction.allCases),
                 terminalExperiment: true
             )
         case "chat-top-bar-none":
             ChatTopBarScreenshotPreview(
-                order: [.files, .outline, .context, .terminal],
+                order: ChatTopBarAction.allCases,
                 shown: [],
                 terminalExperiment: true
             )
         case "chat-top-bar-reordered":
             ChatTopBarScreenshotPreview(
-                order: [.outline, .files, .context, .terminal],
-                shown: [.outline, .files, .context, .terminal],
+                order: [.outline, .files, .context, .git, .terminal],
+                shown: Set(ChatTopBarAction.allCases),
                 terminalExperiment: true
             )
         case "workspace-top-bar":

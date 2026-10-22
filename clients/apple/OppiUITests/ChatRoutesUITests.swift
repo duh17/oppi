@@ -20,7 +20,7 @@ final class ChatRoutesUITests: XCTestCase {
 
     // MARK: - Top bar
 
-    /// The default bar: Files, Outline, and the context ring, with Terminal in
+    /// The default bar: Files, Git, Outline, and the context ring, with Terminal in
     /// the … menu because the SSH Terminal experiment is off. Customize Top
     /// Bar… opens the Top Bar page over the chat.
     func testTopBarShowsTheDefaultButtonsAndTheRestInTheMenu() {
@@ -30,6 +30,7 @@ final class ChatRoutesUITests: XCTestCase {
         dismissMicrophonePrompt()
         let files = app.buttons["chat.toolbar.files"]
         XCTAssertTrue(files.waitForExistence(timeout: 15), "Files is on by default")
+        XCTAssertTrue(app.buttons["chat.toolbar.git"].exists, "Git is on by default")
         XCTAssertTrue(app.buttons["chat.toolbar.outline"].exists, "Outline is on by default")
         XCTAssertTrue(app.buttons["chat.toolbar.context"].exists, "The context ring is on by default")
         XCTAssertFalse(app.buttons["chat.toolbar.terminal"].exists, "Terminal needs the SSH Terminal experiment")
@@ -43,7 +44,7 @@ final class ChatRoutesUITests: XCTestCase {
         attachScreenshot("chat-top-bar-menu")
         customize.tap()
         XCTAssertTrue(app.navigationBars["Top Bar"].waitForExistence(timeout: 5), "Customize Top Bar must open the Top Bar page")
-        for id in ["files", "outline", "context", "terminal"] {
+        for id in ["files", "git", "outline", "context", "terminal"] {
             XCTAssertTrue(
                 app.switches["settings.chat.topBar.\(id)"].waitForExistence(timeout: 5),
                 "The Top Bar page must show the \(id) switch"
@@ -60,7 +61,7 @@ final class ChatRoutesUITests: XCTestCase {
     }
 
     /// Terminal on and shown: it takes its place in the bar, and the buttons the
-    /// user hid — Outline and the ring — are in the … menu instead.
+    /// user hid — Git, Outline, and the ring — are in the … menu instead.
     func testTopBarWithTerminalOnAndTheRestInTheMenu() {
         launchScreen("chat-top-bar-terminal")
         dismissMicrophonePrompt()
@@ -69,6 +70,7 @@ final class ChatRoutesUITests: XCTestCase {
             "Terminal must show when it is on and the experiment is on"
         )
         XCTAssertTrue(app.buttons["chat.toolbar.files"].exists, "Files is on")
+        XCTAssertFalse(app.buttons["chat.toolbar.git"].exists, "A hidden Git is not on the bar")
         XCTAssertFalse(app.buttons["chat.toolbar.outline"].exists, "A hidden Outline is not on the bar")
         XCTAssertFalse(app.buttons["chat.toolbar.context"].exists, "A hidden ring is not on the bar")
         attachScreenshot("chat-top-bar-terminal")
@@ -79,16 +81,19 @@ final class ChatRoutesUITests: XCTestCase {
             "Outline is the … menu's action"
         )
         XCTAssertTrue(app.buttons["chat.toolbar.menu.context"].exists, "The hidden ring is in the … menu")
+        XCTAssertTrue(app.buttons["chat.toolbar.menu.git"].exists, "The hidden Git is in the … menu")
         attachScreenshot("chat-top-bar-terminal-menu")
         assertRunning()
     }
 
-    /// Every button on: all four are in the bar in the chosen order, and the …
+    /// Every button on: all five are in the bar in the chosen order, and the …
     /// menu has nothing but Customize Top Bar….
     func testTopBarShowsEveryButtonWhenAllAreOn() {
         launchScreen("chat-top-bar-all")
         dismissMicrophonePrompt()
-        let order = ["chat.toolbar.files", "chat.toolbar.outline", "chat.toolbar.context", "chat.toolbar.terminal"]
+        let order = [
+            "chat.toolbar.files", "chat.toolbar.git", "chat.toolbar.outline", "chat.toolbar.context", "chat.toolbar.terminal",
+        ]
         for id in order {
             XCTAssertTrue(app.buttons[id].waitForExistence(timeout: 15), "\(id) must be on the bar")
         }
@@ -104,19 +109,19 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
     }
 
-    /// Every button off: only … is left, and the menu offers all four.
+    /// Every button off: only … is left, and the menu offers all five.
     func testTopBarShowsOnlyTheMenuWhenEveryButtonIsOff() {
         launchScreen("chat-top-bar-none")
         dismissMicrophonePrompt()
         let more = app.buttons["chat.toolbar.more"]
         XCTAssertTrue(more.waitForExistence(timeout: 15), "… is the only bar control left")
-        for id in ["files", "outline", "context", "terminal"] {
+        for id in ["files", "git", "outline", "context", "terminal"] {
             XCTAssertFalse(app.buttons["chat.toolbar.\(id)"].exists, "\(id) is hidden")
         }
         attachScreenshot("chat-top-bar-none")
 
         more.tap()
-        for id in ["files", "outline", "context", "terminal"] {
+        for id in ["files", "git", "outline", "context", "terminal"] {
             XCTAssertTrue(
                 app.buttons["chat.toolbar.menu.\(id)"].waitForExistence(timeout: 5),
                 "\(id) must be in the … menu"
@@ -132,7 +137,9 @@ final class ChatRoutesUITests: XCTestCase {
     func testTopBarFollowsTheChosenOrder() {
         launchScreen("chat-top-bar-reordered")
         dismissMicrophonePrompt()
-        let order = ["chat.toolbar.outline", "chat.toolbar.files", "chat.toolbar.context", "chat.toolbar.terminal"]
+        let order = [
+            "chat.toolbar.outline", "chat.toolbar.files", "chat.toolbar.context", "chat.toolbar.git", "chat.toolbar.terminal",
+        ]
         for id in order {
             XCTAssertTrue(app.buttons[id].waitForExistence(timeout: 15), "\(id) must be on the bar")
         }
@@ -144,7 +151,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(customize.waitForExistence(timeout: 5))
         customize.tap()
         XCTAssertTrue(app.navigationBars["Top Bar"].waitForExistence(timeout: 5))
-        let rows = ["outline", "files", "context", "terminal"].map { "settings.chat.topBar.row.\($0)" }
+        let rows = ["outline", "files", "context", "git", "terminal"].map { "settings.chat.topBar.row.\($0)" }
         for id in rows {
             XCTAssertTrue(app.cells[id].waitForExistence(timeout: 5), "\(id) must be a row")
         }
@@ -193,7 +200,7 @@ final class ChatRoutesUITests: XCTestCase {
             // helper and its app handle live.
             MainActor.assumeIsolated { self?.resetSavedTopBar() }
         }
-        let rowIDs = ["files", "outline", "context", "terminal"]
+        let rowIDs = ["files", "git", "outline", "context", "terminal"]
         func row(_ id: String) -> XCUIElement { app.cells["settings.chat.topBar.row.\(id)"] }
         func handle(_ id: String) -> XCUIElement { row(id).buttons["settings.chat.topBar.row.\(id)"] }
         for id in rowIDs {
@@ -217,7 +224,7 @@ final class ChatRoutesUITests: XCTestCase {
             waitFor(row("terminal").frame.minY < row("files").frame.minY),
             "Dragging Terminal to the top must reorder the page"
         )
-        assertTopToBottom(["terminal", "files", "outline", "context"].map(row), "The dragged order")
+        assertTopToBottom(["terminal", "files", "git", "outline", "context"].map(row), "The dragged order")
 
         // Both writes are the layout, not the screen: a fresh launch reads them
         // back on the page the writes came from.
@@ -226,7 +233,7 @@ final class ChatRoutesUITests: XCTestCase {
         for id in rowIDs {
             XCTAssertTrue(row(id).waitForExistence(timeout: 15), "\(id) must come back as a row")
         }
-        assertTopToBottom(["terminal", "files", "outline", "context"].map(row), "The order after a relaunch")
+        assertTopToBottom(["terminal", "files", "git", "outline", "context"].map(row), "The order after a relaunch")
         XCTAssertEqual(
             app.switches["settings.chat.topBar.outline"].value as? String,
             "0",
@@ -817,9 +824,9 @@ final class ChatRoutesUITests: XCTestCase {
 
     // MARK: - Review modals
 
-    func testContextBarCommitPushesAChatAndShowsTheDiffPanel() {
+    func testGitPanelCommitPushesAChatAndShowsTheDiffPanel() {
         launch()
-        openContextBar()
+        openGitPanel()
         tapCommitRow()
         let commit = app.navigationBars["Commit"]
         XCTAssertTrue(commit.waitForExistence(timeout: 5), "Commit sheet did not open in a router navigation bar")
@@ -854,19 +861,87 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
     }
 
-    func testContextBarFileReviewOpensAndCloses() {
+    /// The Git panel opens from the bar, lists only the session's file until
+    /// All changes lists every change, opens a file's review over itself, and
+    /// closes by its own control and, as a sheet, by swipe-down.
+    func testGitPanelScopesItsFilesAndOpensAReview() {
         launch()
-        openContextBar()
-        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "App.swift")).firstMatch.tap()
+        openGitPanel()
+        let panel = app.navigationBars["Git"]
+        XCTAssertTrue(panel.exists, "The Git panel must be titled Git")
+        let otherChange = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "README.md")).firstMatch
+        XCTAssertFalse(otherChange.exists, "This session must not list a change the session did not make")
+        let scope = app.segmentedControls["workspace-context-bar.scope"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5), "A main-checkout session must offer This session / All changes")
+        attachScreenshot("git-panel-this-session")
+        scope.buttons["All changes (2)"].tap()
+        XCTAssertTrue(otherChange.waitForExistence(timeout: 5), "All changes must list every change")
+        attachScreenshot("git-panel-all-changes")
+        scope.buttons["This session"].tap()
+        XCTAssertTrue(waitForDisappearance(of: otherChange), "This session must narrow the list again")
+
+        // The panel's row carries the line counts; the timeline's file pill
+        // beside the column does not.
+        let fileRow = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "App.swift", "+2")
+        ).firstMatch
+        fileRow.tap()
         let review = app.navigationBars["App.swift"]
         XCTAssertTrue(review.waitForExistence(timeout: 5), "File review sheet did not open")
-        attachScreenshot("context-bar-file-review")
+        attachScreenshot("git-panel-file-review")
         app.buttons[closeLabel].firstMatch.tap()
         XCTAssertTrue(waitForDisappearance(of: review), "Close must close the file review")
-        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "App.swift")).firstMatch.tap()
+        fileRow.tap()
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         dragToBottom(review)
         XCTAssertTrue(waitForDisappearance(of: review), "Swipe-down must close the file review")
+        XCTAssertTrue(panel.exists, "Closing the review must leave the Git panel open")
+        assertRunning()
+
+        app.buttons["chat.git.close"].tap()
+        XCTAssertTrue(waitForDisappearance(of: panel), "Close must close the Git panel")
+        if usesSheets {
+            openGitPanel()
+            dragToBottom(panel)
+            XCTAssertTrue(waitForDisappearance(of: panel), "Swipe-down must close the Git sheet")
+        }
+        assertRunning()
+    }
+
+    /// New Session from the Git panel's selection closes the panel and opens
+    /// the new chat on this chat's own stack, not inside the sheet or column:
+    /// Back from it lands on the chat, with no Git panel to come back to.
+    func testGitPanelNewSessionOpensOnTheChatStack() {
+        launch()
+        openGitPanel()
+        let panel = app.navigationBars["Git"]
+        let select = app.buttons["Select"]
+        XCTAssertTrue(select.waitForExistence(timeout: 5), "The Git panel must offer Select")
+        select.tap()
+        app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "App.swift", "+2")
+        ).firstMatch.tap()
+        let newSession = app.buttons["Start new session with selected files"]
+        XCTAssertTrue(newSession.waitForExistence(timeout: 5), "Selecting must offer New Session")
+        newSession.tap()
+
+        let newChatTitle = app.buttons.matching(
+            NSPredicate(format: "label == %@ AND value == %@", "Rename session", "New routes session")
+        ).firstMatch
+        XCTAssertTrue(newChatTitle.waitForExistence(timeout: 10), "New Session must open its chat")
+        XCTAssertTrue(waitForDisappearance(of: panel, timeout: 10), "Starting a session must close the Git panel")
+        let created = app.descendants(matching: .any)["chatRoutes.createdSessions"]
+        XCTAssertEqual(created.value as? String, "1", "The stub must have received the new session")
+        attachScreenshot("git-panel-new-session-chat")
+
+        let backButtons = app.buttons.matching(identifier: "chat.toolbar.back")
+        XCTAssertEqual(backButtons.count, 1, "The new chat must be the only chat on screen, not one inside a sheet")
+        backButtons.element(boundBy: 0).tap()
+        let originalTitle = app.buttons.matching(
+            NSPredicate(format: "label == %@ AND value == %@", "Rename session", "Routes")
+        ).firstMatch
+        XCTAssertTrue(originalTitle.waitForExistence(timeout: 5), "Back must return to the chat the panel was opened from")
+        XCTAssertFalse(panel.exists, "Back must not return to the Git panel")
         assertRunning()
     }
 
@@ -988,18 +1063,19 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
     }
 
-    /// The git bar's commit row: one button across the row.
+    /// The Git panel's commit row: one button across the row.
     private func tapCommitRow() {
         app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Route commit")).firstMatch.tap()
     }
 
-    /// Expands the git bar and waits for its rows to stop moving.
-    private func openContextBar() {
-        let toggle = app.buttons["workspace-context-bar.toggle"]
-        XCTAssertTrue(toggle.waitForExistence(timeout: 10), "Context bar missing")
-        toggle.tap()
+    /// Opens the Git panel from the top bar and waits for its rows to stop moving.
+    private func openGitPanel() {
+        let git = app.buttons["chat.toolbar.git"]
+        XCTAssertTrue(git.waitForExistence(timeout: 10), "The Git button is on the default bar")
+        git.tap()
+        XCTAssertTrue(app.navigationBars["Git"].waitForExistence(timeout: 5), "The Git panel did not open")
         let commitRow = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Route commit")).firstMatch
-        XCTAssertTrue(commitRow.waitForExistence(timeout: 5), "The expanded bar must list the commit")
+        XCTAssertTrue(commitRow.waitForExistence(timeout: 5), "The Git panel must list the commit")
         var lastFrame = CGRect.zero
         XCTAssertTrue(waitFor({
             let current = commitRow.frame

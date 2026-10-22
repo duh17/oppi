@@ -36,7 +36,7 @@ Settings → Sessions → **Session Rows** opens the row editor. Choose **Standa
 
 The sidebar or drawer manages saved Agents and schedules, collapses the workspace list, opens App Settings, or browses a workspace's sessions, files, and settings.
 
-Open a session to see the chat timeline. Tap a tool row to inspect command, output, diff, or file content. The changed-files bar lists files this session touched. If an extension shows a card or sheet, answer it in the app; you do not need to go back to a Mac.
+Open a session to see the chat timeline. Tap a tool row to inspect command, output, diff, or file content. The top bar's **Git** button opens the session's changes ([Git panel](#git-panel)). If an extension shows a card or sheet, answer it in the app; you do not need to go back to a Mac.
 
 ## Prompt, steer, follow-up, and stop
 
@@ -82,6 +82,13 @@ Attach files from the Files picker, photos and videos from the library, or a cam
 
 Assistant output can open markdown, code, diffs, and other documents in full-screen viewers. See [Document viewers](document-viewers.md).
 
+### Git panel
+
+In a chat whose workspace is a Git repository, the top bar's **Git** button shows how many files the session changed, and opens a panel with the branch, the changed files, and recent commits (a sheet on iPhone, a column beside the chat on iPad). Tap a file for its review or a commit for its detail; **Select** picks files to start a session or a prompt template with. Which files it lists depends on where the session runs:
+
+- A session in its own worktree lists every change in that worktree, including ones its shell commands or scripts made.
+- A session in the main checkout lists the files it edited (**This session**). **All changes** lists every change in the checkout, including other sessions' and your own. The panel opens on This session each time.
+
 ## Voice
 
 **Settings → Voice & Dictation → Dictation Engine** is **On-device** or **Server**.
@@ -99,7 +106,7 @@ Selecting text shows a microphone first in the edit menu, followed by **Comment*
 
 **Settings → Chat → Style** picks how every chat looks, classic and durable, on any screen width, unless the chat's Agent has its own [Chat Style](#agents-and-schedules). **Full** (the default) shows every tool call and thinking block. **Compact** folds each turn's tool calls and thinking into one strip you tap to expand, showing **Icons** or **Words**. **Chat** uses a messaging layout: your messages are trailing bubbles, replies are cards, each turn's work is a **Worked 9s · 2 steps** pill, and the title shows the model and thinking level.
 
-**Settings → Chat → Top Bar** chooses which buttons a chat's top bar shows, and their order: **Files**, **Outline**, **Context** (the usage ring), and **Terminal**, each on or off. The default is Files, Outline, and Context, with Terminal in the **…** menu at the right end of the bar. A button turned off moves into the **…** menu, and **Customize Top Bar…** there opens the same page. Nothing can be turned off entirely: the **…** menu always stays. **Terminal** is offered only while **SSH Terminal** is on under Experiments, and it opens a login shell in the session's folder ([Open Terminal here](ssh-terminal.md#open-terminal-here)). A workspace with no host folder to open in (a sandbox workspace, or a relative folder) offers no Terminal either. A chat with no workspace offers no Files or Terminal, and a session with an empty timeline offers no Outline, so the bar is shorter rather than showing a button that could only fail.
+**Settings → Chat → Top Bar** chooses which buttons a chat's top bar shows, and their order: **Files**, **Git**, **Outline**, **Context** (the usage ring), and **Terminal**, each on or off. The default is Files, Git, Outline, and Context, with Terminal in the **…** menu at the right end of the bar. A top bar customized before Git was added keeps its buttons and offers Git in the **…** menu. A button turned off moves into the **…** menu, and **Customize Top Bar…** there opens the same page. Nothing can be turned off entirely: the **…** menu always stays. **Terminal** is offered only while **SSH Terminal** is on under Experiments, and it opens a login shell in the session's folder ([Open Terminal here](ssh-terminal.md#open-terminal-here)). A workspace with no host folder to open in (a sandbox workspace, or a relative folder) offers no Terminal either. A chat with no workspace offers no Files, Git, or Terminal, a workspace that is not a Git repository (or has Git status turned off) offers no Git, and a session with an empty timeline offers no Outline, so the bar is shorter rather than showing a button that could only fail.
 
 ## Appearance
 

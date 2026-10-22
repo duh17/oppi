@@ -49,7 +49,7 @@ enum FeatureEducationTips {
     static let changedFilesBar = FeatureEducationTipDescriptor(
         id: "changed-files-bar",
         title: "Review changed files",
-        message: "Tap the changed-files bar to inspect files this session touched.",
+        message: "Tap the changed-files bar to inspect this workspace's changes.",
         systemImageName: "doc.text.magnifyingglass"
     )
 

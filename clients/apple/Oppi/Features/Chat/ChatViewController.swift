@@ -33,7 +33,7 @@ enum ChatSessionWarningChrome {
 
 /// The chat screen's own state: what it opens, what its footer and drawers
 /// show, and the composer values that are not the draft. The controller and
-/// its UIKit footer, title, and context bar read it in `updateProperties()`,
+/// its UIKit footer, title, and bar items read it in `updateProperties()`,
 /// so a change reaches each without one pushing to another.
 @MainActor @Observable
 final class ChatScreenModel {
@@ -44,6 +44,7 @@ final class ChatScreenModel {
     var messageQueueError: String?
 
     var showOutline = false
+    var showGit = false
     var isFilePanelVisible = false
     var showContextInspector = false
     var showModelPicker = false
@@ -59,8 +60,6 @@ final class ChatScreenModel {
     /// their live tails.
     var extensionDrawerExpanded = false
     var reviewCommentStashPresentation: ReviewCommentStripChrome.StashPresentation?
-    var contextBarCollapseToken = 0
-    var contextBarExpanded = false
     var activeReviewCommentRequest: ReviewCommentSelectionRequest?
     /// Bumped when Settings → Chat → Style changes.
     var chatDisplayRefresh = 0
@@ -82,7 +81,7 @@ final class ChatScreenModel {
 }
 
 /// The chat screen. UIKit owns its structure: the timeline
-/// (`ChatTimelineController`), the context bar and footer leaves, the composer
+/// (`ChatTimelineController`), the footer leaves, the composer
 /// (`ChatComposerOwner`), its bar items, and every presentation. It reads the
 /// session, the connection's stores, and its own `ChatScreenModel` in
 /// `updateProperties()`; streaming never reaches it, because the timeline
@@ -126,8 +125,6 @@ final class ChatViewController: UIViewController {
     var timelineView: UICollectionView?
     let composer = ChatComposerOwner()
     let footerStack = UIStackView()
-    let scrim = UIView()
-    var contextBar: WorkspaceContextBarView?
     /// Set once the footer rows, title, and jump hint are installed.
     var footerAbove: ChatFooterAboveView?
     let canvasAnchor = ComposerCanvasDestinationAnchorController()

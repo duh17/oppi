@@ -40,9 +40,9 @@ enum TimelineRenderWindowPolicy {
 ///
 /// The overlap is measured from frames, never from a safe-area inset. Both
 /// frames are in window coordinates: the timeline starts under the navigation
-/// bar, and the context bar sits below that bar. `header.maxY - timeline.minY`
-/// then covers the bar and the chrome above it, and follows any change to
-/// either.
+/// bar, and the header is the top of the safe area below that bar.
+/// `header.maxY - timeline.minY` then covers the bar and the chrome above it,
+/// and follows any change to either.
 enum ChatTimelineChromeOverlap {
     static func topInset(timelineFrame: CGRect, headerFrame: CGRect) -> CGFloat {
         if timelineFrame == .zero, headerFrame == .zero {

@@ -4,55 +4,85 @@ import UIKit
 // MARK: - Scoping logic (testable)
 
 /// Pure-function extraction of the context bar's session-scoping rules.
-/// When `sessionId` is set, all display properties scope exclusively to
-/// that session's changed files — workspace-level data never leaks through.
+///
+/// A workspace's bar (no session) and a session in a worktree of its own list
+/// the checkout's whole Git status: every change in the session's worktree is
+/// the session's, including ones its shell commands made. A session in the
+/// main checkout shares it with other work, so it lists only the files its
+/// edit and write calls touched ("This session") until the panel's switch
+/// asks for every change ("All changes").
 enum ContextBarScoping {
+    /// Which changes a main-checkout session's bar lists.
+    enum FileScope: Hashable {
+        case session
+        case all
+    }
 
-    static func hasContent(
-        gitStatus: GitStatus?,
-        sessionId: String?,
-        sessionScope: SessionScopedGitStatus?,
-        showCleanWorkspace: Bool = false
-    ) -> Bool {
+    /// The session runs in a worktree of its own, not the main checkout.
+    static func isOwnWorktree(_ worktreeId: String?) -> Bool {
+        guard let worktreeId, !worktreeId.isEmpty else { return false }
+        return worktreeId != WorkspaceWorktree.mainId
+    }
+
+    /// Only a session in the main checkout can narrow to its own files, so
+    /// only its bar offers the This session / All changes switch.
+    static func offersFileScope(sessionId: String?, worktreeId: String?) -> Bool {
+        sessionId != nil && !isOwnWorktree(worktreeId)
+    }
+
+    /// Whether the bar lists the session's files instead of the Git status.
+    static func filtersToSession(sessionId: String?, worktreeId: String?, fileScope: FileScope) -> Bool {
+        offersFileScope(sessionId: sessionId, worktreeId: worktreeId) && fileScope == .session
+    }
+
+    /// The Git status narrowed to `changedFiles` (the session's
+    /// `changeStats.changedFiles`); nil when the session touched nothing.
+    static func sessionScope(gitStatus: GitStatus?, changedFiles: [String]?) -> SessionScopedGitStatus? {
+        guard let gitStatus, let changedFiles, !changedFiles.isEmpty else { return nil }
+        return SessionScopedGitStatus.filter(gitStatus: gitStatus, sessionChangedFiles: changedFiles)
+    }
+
+    /// A Git repository with changes, or any Git repository when the host
+    /// shows a clean one too. A session whose own files are none still has
+    /// content: its branch, commits, and the switch to every change.
+    static func hasContent(gitStatus: GitStatus?, showCleanWorkspace: Bool = false) -> Bool {
         guard let gitStatus, gitStatus.isGitRepo else { return false }
-        if sessionId != nil { return sessionScope != nil }
-        if showCleanWorkspace { return true }
-        return !gitStatus.isClean
+        return showCleanWorkspace || !gitStatus.isClean
     }
 
     static func displayFileCount(
         gitStatus: GitStatus?,
-        sessionId: String?,
+        filtersToSession: Bool,
         sessionScope: SessionScopedGitStatus?
     ) -> Int {
-        if sessionId != nil { return sessionScope?.sessionFileCount ?? 0 }
+        if filtersToSession { return sessionScope?.sessionFileCount ?? 0 }
         return gitStatus?.uncommittedCount ?? 0
     }
 
     static func displayAddedLines(
         gitStatus: GitStatus?,
-        sessionId: String?,
+        filtersToSession: Bool,
         sessionScope: SessionScopedGitStatus?
     ) -> Int {
-        if sessionId != nil { return sessionScope?.sessionAddedLines ?? 0 }
+        if filtersToSession { return sessionScope?.sessionAddedLines ?? 0 }
         return gitStatus?.addedLines ?? 0
     }
 
     static func displayRemovedLines(
         gitStatus: GitStatus?,
-        sessionId: String?,
+        filtersToSession: Bool,
         sessionScope: SessionScopedGitStatus?
     ) -> Int {
-        if sessionId != nil { return sessionScope?.sessionRemovedLines ?? 0 }
+        if filtersToSession { return sessionScope?.sessionRemovedLines ?? 0 }
         return gitStatus?.removedLines ?? 0
     }
 
     static func displayFiles(
         gitStatus: GitStatus?,
-        sessionId: String?,
+        filtersToSession: Bool,
         sessionScope: SessionScopedGitStatus?
     ) -> [GitFileStatus] {
-        if sessionId != nil { return sessionScope?.sessionFiles ?? [] }
+        if filtersToSession { return sessionScope?.sessionFiles ?? [] }
         return gitStatus?.files ?? []
     }
 }
@@ -73,15 +103,17 @@ enum ContextBarQuickActionRouting {
 
 // MARK: - Bar
 
-/// Expandable bar showing workspace git status, over the top of the chat's
-/// timeline and of a workspace's sessions.
+/// Expandable bar showing workspace git status, over the top of a workspace's
+/// sessions, and (always expanded) the whole of the chat's Git panel
+/// (`Options.isPanel`).
 ///
 /// Collapsed shows branch + dirty count + repo-wide +/-. Expanded shows a
 /// tappable file list with file-type icons, per-file line stats, recent
-/// commits, and select-for-review controls. A file opens its review and a
-/// commit its detail, each in a sheet presented from `presenter`. The sheet
-/// belongs to the presenter, not to this bar, so a transient loss of Git
-/// content (the bar empties) leaves an open review alone.
+/// commits, and select-for-review controls; a session in the main checkout
+/// also gets a This session / All changes switch (`ContextBarScoping`). A
+/// file opens its review and a commit its detail, each in a sheet presented
+/// from `presenter`. The sheet belongs to the presenter, not to this bar, so a
+/// transient loss of Git content (the bar empties) leaves an open review alone.
 ///
 /// Supports swipe-to-select: in select mode, dragging vertically across rows
 /// selects or deselects them (Mail-style — first row touched determines direction).
@@ -96,7 +128,7 @@ final class WorkspaceContextBarView: UIView {
         var worktreeId: String?
         var serverId: String?
         /// Incremented by the host to collapse an expanded bar (a tap on the
-        /// timeline, the scrim, or the composer).
+        /// list or the scrim).
         var collapseToken = 0
     }
 
@@ -106,8 +138,20 @@ final class WorkspaceContextBarView: UIView {
         /// A workspace with no changes still shows its branch and commits.
         var showCleanWorkspace = false
         var initiallyExpanded = false
+        /// The bar is a whole panel (the chat's Git panel): it stays expanded
+        /// with no collapse chevron, so collapsing can never leave an empty
+        /// sheet; it has no glass card, corners, or outer padding, so its
+        /// content fills the panel; and its list scrolls in the height the panel gives it instead
+        /// of stopping at the 480 pt an inline bar caps at. Pin its bottom with
+        /// `lessThanOrEqualTo` so it hugs a short list.
+        var isPanel = false
         var onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)?
         var fileDetailReviewCommentScope: ReviewCommentSelectionScope?
+        /// Shows a chat this bar's New Session or prompt template started. Nil
+        /// pushes it onto `presenter`'s stack, which suits a bar on its own
+        /// screen; a panel passes its chat's push, so the new chat does not
+        /// open inside the panel's sheet or column.
+        var pushChat: ((ChatViewController) -> Void)?
     }
 
     var context: Context {
@@ -168,9 +212,19 @@ final class WorkspaceContextBarView: UIView {
     private var dragSelect = DragSelectState()
     private weak var presentedReview: UIViewController?
 
+    /// This bar's This session / All changes choice; not saved.
+    private var fileScope: ContextBarScoping.FileScope = .session {
+        didSet {
+            guard fileScope != oldValue else { return }
+            selectedPaths.removeAll()
+            setNeedsUpdateProperties()
+        }
+    }
+
     // Derived on each render.
     private var displayFiles: [GitFileStatus] = []
     private var sessionScope: SessionScopedGitStatus?
+    private var filtersToSession = false
 
     // Views.
     private let card = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
@@ -243,7 +297,7 @@ final class WorkspaceContextBarView: UIView {
         self.connection = connection
         self.apiClient = apiClient
         self.navigation = navigation
-        isExpanded = options.initiallyExpanded
+        isExpanded = options.initiallyExpanded || options.isPanel
         super.init(frame: .zero)
         setUpViews()
         registerForTraitChanges(
@@ -280,12 +334,11 @@ final class WorkspaceContextBarView: UIView {
     // MARK: Derived state
 
     private var hasContent: Bool {
-        ContextBarScoping.hasContent(
-            gitStatus: context.gitStatus,
-            sessionId: context.sessionId,
-            sessionScope: sessionScope,
-            showCleanWorkspace: options.showCleanWorkspace
-        )
+        ContextBarScoping.hasContent(gitStatus: context.gitStatus, showCleanWorkspace: options.showCleanWorkspace)
+    }
+
+    private var offersFileScope: Bool {
+        ContextBarScoping.offersFileScope(sessionId: context.sessionId, worktreeId: context.worktreeId)
     }
 
     /// All commits: recent from git status + any additionally loaded ones.
@@ -298,9 +351,8 @@ final class WorkspaceContextBarView: UIView {
     }
 
     /// Regular width (iPad, the iPhone Duo inner display) gets the larger git
-    /// bar type. This chrome sits above the timeline, so a fold steps it one
-    /// text style with the rest of the regular layout; reading text in the
-    /// timeline keeps its size.
+    /// bar type. This is chrome, not reading text, so a fold steps it one
+    /// text style with the rest of the regular layout.
     private var usesRegularTypography: Bool {
         traitCollection.horizontalSizeClass == .regular
     }
@@ -326,8 +378,14 @@ final class WorkspaceContextBarView: UIView {
     // MARK: Setup
 
     private func setUpViews() {
-        card.layer.cornerRadius = 10
-        card.layer.cornerCurve = .continuous
+        // A panel's content fills the panel like Outline and Context: glass
+        // is for floating controls, not content, so the card has no chrome.
+        if options.isPanel {
+            card.effect = nil
+        } else {
+            card.layer.cornerRadius = 10
+            card.layer.cornerCurve = .continuous
+        }
         card.clipsToBounds = true
         card.translatesAutoresizingMaskIntoConstraints = false
         addSubview(card)
@@ -337,8 +395,8 @@ final class WorkspaceContextBarView: UIView {
 
         let leading = card.leadingAnchor.constraint(equalTo: leadingAnchor)
         let trailing = card.trailingAnchor.constraint(equalTo: trailingAnchor)
-        let top = card.topAnchor.constraint(equalTo: topAnchor, constant: 4)
-        let bottom = card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2)
+        let top = card.topAnchor.constraint(equalTo: topAnchor, constant: options.isPanel ? 0 : 4)
+        let bottom = card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: options.isPanel ? 0 : -2)
         // An empty bar is 0 tall; the card's padding gives way.
         top.priority = .required - 1
         bottom.priority = .required - 1
@@ -355,7 +413,10 @@ final class WorkspaceContextBarView: UIView {
         ])
 
         setUpCollapsedRow()
-        cardStack.addArrangedSubview(tipHost)
+        // The tip says to tap the bar open; a panel is open already.
+        if !options.isPanel {
+            cardStack.addArrangedSubview(tipHost)
+        }
 
         expandedStack.axis = .vertical
         scrollView.alwaysBounceVertical = false
@@ -366,15 +427,16 @@ final class WorkspaceContextBarView: UIView {
         scrollView.addSubview(panelStack)
         let hug = scrollView.frameLayoutGuide.heightAnchor.constraint(equalTo: panelStack.heightAnchor)
         hug.priority = .defaultHigh
-        // The panel hugs its rows up to 480 pt, then scrolls.
+        // An inline bar's panel hugs its rows up to 480 pt, then scrolls; a
+        // whole panel scrolls in the height its host gives it.
         let maxHeight = scrollView.frameLayoutGuide.heightAnchor.constraint(lessThanOrEqualToConstant: 480)
+        maxHeight.isActive = !options.isPanel
         NSLayoutConstraint.activate([
             panelStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             panelStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
             panelStack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor),
             panelStack.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor),
             hug,
-            maxHeight,
         ])
         expandedStack.addArrangedSubview(scrollView)
         selectionBar.axis = .vertical
@@ -434,18 +496,30 @@ final class WorkspaceContextBarView: UIView {
         let root = HostFactory.root(near: self)
         let themeID = root?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
-        let sessions = connection.sessionStore.sessions
 
-        sessionScope = Self.sessionScope(gitStatus: context.gitStatus, sessionId: context.sessionId, sessions: sessions)
+        filtersToSession = ContextBarScoping.filtersToSession(
+            sessionId: context.sessionId,
+            worktreeId: context.worktreeId,
+            fileScope: fileScope
+        )
+        if filtersToSession, let sessionId = context.sessionId {
+            let session = connection.sessionStore.sessions.first { $0.id == sessionId }
+            sessionScope = ContextBarScoping.sessionScope(
+                gitStatus: context.gitStatus,
+                changedFiles: session?.changeStats?.changedFiles
+            )
+        } else {
+            sessionScope = nil
+        }
         displayFiles = ContextBarScoping.displayFiles(
             gitStatus: context.gitStatus,
-            sessionId: context.sessionId,
+            filtersToSession: filtersToSession,
             sessionScope: sessionScope
         )
         let showsContent = !(context.isLoading && context.gitStatus == nil) && hasContent
         card.isHidden = !showsContent
         emptyHeight?.isActive = !showsContent
-        let padding: CGFloat = options.appliesOuterHorizontalPadding ? 16 : 0
+        let padding: CGFloat = options.appliesOuterHorizontalPadding && !options.isPanel ? 16 : 0
         cardLeading?.constant = padding
         cardTrailing?.constant = -padding
         updateTip(showsContent: showsContent)
@@ -459,13 +533,6 @@ final class WorkspaceContextBarView: UIView {
         if isSelecting {
             renderSelectionBar(themeID: themeID)
         }
-    }
-
-    private static func sessionScope(gitStatus: GitStatus?, sessionId: String?, sessions: [Session]) -> SessionScopedGitStatus? {
-        guard let gitStatus, let sessionId else { return nil }
-        guard let session = sessions.first(where: { $0.id == sessionId }) else { return nil }
-        guard let changedFiles = session.changeStats?.changedFiles, !changedFiles.isEmpty else { return nil }
-        return SessionScopedGitStatus.filter(gitStatus: gitStatus, sessionChangedFiles: changedFiles)
     }
 
     override func layoutSubviews() {
@@ -485,7 +552,7 @@ final class WorkspaceContextBarView: UIView {
     }
 
     private func updateTip(showsContent: Bool) {
-        if showsContent, window != nil {
+        if showsContent, window != nil, !options.isPanel {
             guard !tipStarted else { return }
             tipStarted = true
             tipHost.start()
@@ -504,11 +571,15 @@ final class WorkspaceContextBarView: UIView {
         let gitStatus = context.gitStatus
         let fileCount = ContextBarScoping.displayFileCount(
             gitStatus: gitStatus,
-            sessionId: context.sessionId,
+            filtersToSession: filtersToSession,
             sessionScope: sessionScope
         )
-        let added = ContextBarScoping.displayAddedLines(gitStatus: gitStatus, sessionId: context.sessionId, sessionScope: sessionScope)
-        let removed = ContextBarScoping.displayRemovedLines(gitStatus: gitStatus, sessionId: context.sessionId, sessionScope: sessionScope)
+        let added = ContextBarScoping.displayAddedLines(
+            gitStatus: gitStatus, filtersToSession: filtersToSession, sessionScope: sessionScope
+        )
+        let removed = ContextBarScoping.displayRemovedLines(
+            gitStatus: gitStatus, filtersToSession: filtersToSession, sessionScope: sessionScope
+        )
 
         let cyan = UIColor(palette.cyan)
         branchGroup.isHidden = gitStatus?.branch == nil
@@ -548,6 +619,10 @@ final class WorkspaceContextBarView: UIView {
         behindLabel.font = upstreamFont
         behindLabel.textColor = UIColor(palette.orange)
 
+        // A panel's summary row is its header: nothing to collapse.
+        chevron.isHidden = options.isPanel
+        toggleButton.isUserInteractionEnabled = !options.isPanel
+        toggleButton.accessibilityTraits = options.isPanel ? .header : .button
         chevron.image = UIImage(systemName: isExpanded ? "chevron.up" : "chevron.down")
         chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
             font: font(fixed: 9, .bold, regular: .caption2, .bold)
@@ -594,6 +669,8 @@ final class WorkspaceContextBarView: UIView {
         let isLoadingMore: Bool
         let gitStatus: GitStatus?
         let sessionId: String?
+        /// The switch's choice; nil when the bar offers no switch.
+        let fileScope: ContextBarScoping.FileScope?
         let canTap: Bool
         let regular: Bool
         let themeID: ThemeID
@@ -608,6 +685,7 @@ final class WorkspaceContextBarView: UIView {
             isLoadingMore: isLoadingMore,
             gitStatus: context.gitStatus,
             sessionId: context.sessionId,
+            fileScope: offersFileScope ? fileScope : nil,
             canTap: context.workspaceId != nil,
             regular: usesRegularTypography,
             themeID: themeID
@@ -625,6 +703,10 @@ final class WorkspaceContextBarView: UIView {
         let comment = UIColor(palette.comment)
         panelStack.addArrangedSubview(divider(comment.withAlphaComponent(0.2)))
 
+        if offersFileScope {
+            panelStack.addArrangedSubview(fileScopeSwitch())
+        }
+
         if isSelecting {
             panelStack.addArrangedSubview(selectionHeader(palette: palette))
             panelStack.addArrangedSubview(divider(comment.withAlphaComponent(0.15)))
@@ -632,6 +714,16 @@ final class WorkspaceContextBarView: UIView {
 
         if !displayFiles.isEmpty {
             panelStack.addArrangedSubview(fileListView(palette: palette))
+        } else if filtersToSession {
+            // The repo may still be dirty; the switch above lists it.
+            let none = Self.label(
+                String(localized: "No changes from this session"),
+                font: font(.caption2, .caption1),
+                color: UIColor(palette.comment)
+            )
+            panelStack.addArrangedSubview(
+                Self.padded(none, NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+            )
         }
 
         if !allCommits.isEmpty {
@@ -641,6 +733,25 @@ final class WorkspaceContextBarView: UIView {
             panelStack.addArrangedSubview(divider(comment.withAlphaComponent(0.15)))
             panelStack.addArrangedSubview(headCommitRow(gitStatus, palette: palette))
         }
+    }
+
+    /// This session / All changes, for a session in the main checkout. The
+    /// count is every uncommitted change, so the other choice says what it adds.
+    private func fileScopeSwitch() -> UIView {
+        let allCount = SessionFormatting.compactCount(context.gitStatus?.uncommittedCount ?? 0)
+        let control = UISegmentedControl(items: [
+            String(localized: "This session"),
+            String(localized: "All changes (\(allCount))"),
+        ])
+        control.selectedSegmentIndex = fileScope == .session ? 0 : 1
+        control.setTitleTextAttributes([.font: font(.caption1, .footnote, .medium)], for: .normal)
+        control.accessibilityIdentifier = "workspace-context-bar.scope"
+        control.addAction(UIAction { [weak self, weak control] _ in
+            guard let self, let control else { return }
+            let next: ContextBarScoping.FileScope = control.selectedSegmentIndex == 0 ? .session : .all
+            animateLayout(duration: 0.15) { self.fileScope = next }
+        }, for: .valueChanged)
+        return Self.padded(control, NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 4, trailing: 12))
     }
 
     private var allFilesSelected: Bool {
@@ -701,7 +812,7 @@ final class WorkspaceContextBarView: UIView {
             fileRows.append((file.path, row.view, row.mark))
         }
 
-        if context.sessionId == nil, let gitStatus = context.gitStatus, gitStatus.totalFiles > gitStatus.files.count {
+        if !filtersToSession, let gitStatus = context.gitStatus, gitStatus.totalFiles > gitStatus.files.count {
             let more = Self.label(
                 "... and \(gitStatus.totalFiles - gitStatus.files.count) more",
                 font: font(.caption2, .caption1),
@@ -1069,6 +1180,7 @@ final class WorkspaceContextBarView: UIView {
     // MARK: Actions
 
     private func toggleExpanded() {
+        guard !options.isPanel else { return }
         let wasExpanded = isExpanded
         animateLayout {
             self.isExpanded.toggle()
@@ -1098,10 +1210,10 @@ final class WorkspaceContextBarView: UIView {
     }
 
     /// Collapses an expanded bar (the host's collapse token changed, or a
-    /// launch finished).
+    /// launch finished). A panel stays expanded and only leaves selection.
     private func collapseBar() {
         animateLayout {
-            self.isExpanded = false
+            self.isExpanded = self.options.isPanel
             self.isSelecting = false
             self.selectedPaths.removeAll()
             self.dragSelect.reset()
@@ -1220,7 +1332,8 @@ final class WorkspaceContextBarView: UIView {
     }
 
     /// Starts a session from a quick action and pushes its chat above the
-    /// screen that shows this bar, with this bar's server and navigation.
+    /// screen that shows this bar (or through `Options.pushChat`), with this
+    /// bar's server and navigation.
     private var quickActionLauncher: WorkspaceQuickActionLauncher? {
         guard let presenter, let workspaceId = context.workspaceId else { return nil }
         return WorkspaceQuickActionLauncher(
@@ -1232,7 +1345,8 @@ final class WorkspaceContextBarView: UIView {
             selectedSessionId: context.sessionId,
             presenter: presenter,
             isLaunching: { [weak self] in self?.launchActionInFlightTitle != nil },
-            setProgress: { [weak self] in self?.launchActionInFlightTitle = $0 }
+            setProgress: { [weak self] in self?.launchActionInFlightTitle = $0 },
+            push: options.pushChat
         )
     }
 

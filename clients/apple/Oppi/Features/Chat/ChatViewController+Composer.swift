@@ -164,7 +164,6 @@ extension ChatViewController {
         model.composerTextBeforeRecording = nil
         composer.requestFocus()
         if request.startsDictation { composer.requestDictation(owner: .reviewCommentMenu) }
-        model.contextBarCollapseToken &+= 1
     }
 
     func applyQuickCommentTemplate(_ template: QuickCommentTemplate) {

@@ -1,9 +1,10 @@
-import Foundation
+import UIKit
 
 /// A button a chat can show in its top bar, or — when it is hidden — offer in
 /// the … menu. The cases read in the default bar order.
 enum ChatTopBarAction: String, CaseIterable, Identifiable, Hashable {
     case files
+    case git
     case outline
     case context
     case terminal
@@ -15,6 +16,7 @@ enum ChatTopBarAction: String, CaseIterable, Identifiable, Hashable {
     var label: String {
         switch self {
         case .files: String(localized: "Files")
+        case .git: String(localized: "Git")
         case .outline: String(localized: "Outline")
         case .context: String(localized: "Context")
         case .terminal: String(localized: "Terminal")
@@ -26,6 +28,7 @@ enum ChatTopBarAction: String, CaseIterable, Identifiable, Hashable {
     var accessibilityLabel: String {
         switch self {
         case .files: String(localized: "Open chat files")
+        case .git: String(localized: "Open Git")
         case .outline: String(localized: "Open session outline")
         case .context: String(localized: "Open context inspector")
         case .terminal: String(localized: "Open terminal here")
@@ -38,6 +41,7 @@ enum ChatTopBarAction: String, CaseIterable, Identifiable, Hashable {
     var accessibilityIdentifier: String {
         switch self {
         case .files: "chat.toolbar.files"
+        case .git: "chat.toolbar.git"
         case .outline: "chat.toolbar.outline"
         case .context: "chat.toolbar.context"
         case .terminal: "chat.toolbar.terminal"
@@ -47,13 +51,28 @@ enum ChatTopBarAction: String, CaseIterable, Identifiable, Hashable {
     /// Stable identifier on the … menu item for a hidden action.
     var menuIdentifier: String { "chat.toolbar.menu.\(rawValue)" }
 
-    var symbolName: String {
+    /// The action's image for text at `textStyle`: the one owner for the bar
+    /// button (`.subheadline`), the rail item and the Settings → Top Bar row
+    /// (`.body`), and the … menu item (nil, below). `isActive` is the open state a
+    /// control shows (Files draws filled while its panel is open). Git is the
+    /// Git logo, not `arrow.triangle.branch`, which means a worktree elsewhere
+    /// in the app; the rest are SF Symbols. Every image is a template, so it
+    /// takes its control's tint.
+    ///
+    /// A nil `textStyle` is the overflow menu: an unconfigured symbol, which the
+    /// menu sizes itself, and the logo at the size the menu draws its symbols.
+    @MainActor
+    func image(textStyle: UIFont.TextStyle?, isActive: Bool = false) -> UIImage? {
+        let symbol: String
         switch self {
-        case .files: "folder"
-        case .outline: "list.bullet"
-        case .context: "chart.pie"
-        case .terminal: "terminal"
+        case .files: symbol = isActive ? "folder.fill" : "folder"
+        case .git: return GitLogoImage.image(textStyle: textStyle)
+        case .outline: symbol = "list.bullet"
+        case .context: symbol = "chart.pie"
+        case .terminal: symbol = "terminal"
         }
+        guard let textStyle else { return UIImage(systemName: symbol) }
+        return UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(textStyle: textStyle))
     }
 
     /// The … menu title. Files names the state it would change; the rest name
@@ -61,8 +80,42 @@ enum ChatTopBarAction: String, CaseIterable, Identifiable, Hashable {
     func menuTitle(filesOpen: Bool) -> String {
         switch self {
         case .files: filesOpen ? String(localized: "Close Files") : String(localized: "Open Files")
-        case .outline, .context, .terminal: label
+        case .git, .outline, .context, .terminal: label
         }
+    }
+}
+
+/// The Git logo (`git-logo` asset; credit in `Resources/GitLogo-LICENSE.txt`)
+/// sized to sit beside SF Symbols at a text style. The mark is a solid diamond,
+/// so it takes the size SF Symbols gives its own solid diamond (`diamond.fill`)
+/// at that style: the size the symbol set balances against the folder, list,
+/// and pie beside it (about 20 pt for `.subheadline`). Sized from the font's
+/// point size instead, it read as a small blot next to them. A vector asset
+/// does not take a symbol configuration, so each size is rendered once, as a
+/// template.
+///
+/// A menu draws a plain image at its own size but resizes its symbols; an
+/// unconfigured symbol there measures as body text at the small symbol scale
+/// (folder 19 pt and list 17 pt wide on iPhone), so the menu's logo is
+/// `diamond.fill` at that configuration.
+@MainActor
+private enum GitLogoImage {
+    private static var cache: [CGFloat: UIImage] = [:]
+
+    static func image(textStyle: UIFont.TextStyle?) -> UIImage? {
+        let configuration = textStyle.map { UIImage.SymbolConfiguration(textStyle: $0) }
+            ?? UIImage.SymbolConfiguration(textStyle: .body, scale: .small)
+        let reference = UIImage(systemName: "diamond.fill", withConfiguration: configuration)
+        let fallback = UIFont.preferredFont(forTextStyle: textStyle ?? .body).pointSize
+        let side = (reference?.size.width ?? fallback).rounded()
+        if let cached = cache[side] { return cached }
+        guard let logo = UIImage(named: "git-logo") else { return nil }
+        let size = CGSize(width: side, height: side)
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            logo.draw(in: CGRect(origin: .zero, size: size))
+        }.withRenderingMode(.alwaysTemplate)
+        cache[side] = image
+        return image
     }
 }
 
@@ -79,9 +132,11 @@ struct ChatTopBarLayout: Hashable {
     /// The actions the bar draws. The rest are in the … menu.
     private(set) var shown: Set<ChatTopBarAction>
 
-    /// Files, Outline, and Context: the bar people already had, with Terminal
-    /// one … menu away because it needs the SSH Terminal experiment.
-    static let defaultShown: Set<ChatTopBarAction> = [.files, .outline, .context]
+    /// Files, Git, Outline, and Context, with Terminal one … menu away because
+    /// it needs the SSH Terminal experiment. A layout saved before Git existed
+    /// keeps the bar it shows: `init` appends Git to its order, and because Git
+    /// is not in the saved `shown`, it is offered in the … menu.
+    static let defaultShown: Set<ChatTopBarAction> = [.files, .git, .outline, .context]
     static let defaultValue = ChatTopBarLayout(order: ChatTopBarAction.allCases, shown: defaultShown)
 
     /// A stored order missing an action, or naming one twice, still covers every

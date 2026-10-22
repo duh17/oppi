@@ -236,8 +236,12 @@ final class OppiApp {
         if let debugHarness {
             // Harnesses and previews render app screens, the timeline, and
             // UIKit-hosted SwiftUI without the app's root controller. The
-            // router and HostFactory need the app root above them there too.
-            return HostFactory.content(debugHarness.modifier(AppLockAccessibilityHidden()), root: root)
+            // router and HostFactory need the app root above them there too,
+            // and the window needs the theme applied the way the app root does.
+            return HarnessRootViewController(
+                content: HostFactory.content(debugHarness.modifier(AppLockAccessibilityHidden()), root: root),
+                themeStore: root.themeStore
+            )
         }
 #endif
         return AppRootViewController(app: self)

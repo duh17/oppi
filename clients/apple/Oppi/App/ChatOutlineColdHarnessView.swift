@@ -554,6 +554,8 @@ private enum ChatRoutesFixture {
     static let sessionId = "chat-routes-session"
     static let commitSha = "abc1234"
     static let changedPath = "Sources/App.swift"
+    /// A Git change from outside the session.
+    static let otherChangePath = "README.md"
     /// A file the session wrote outside Git's changes: the Files panel opens
     /// its current bytes instead of a review.
     static let touchedPath = "Notes/plan.md"
@@ -741,12 +743,17 @@ private enum ChatRoutesFixture {
         headSha: commitSha,
         ahead: 0,
         behind: 0,
-        dirtyCount: 1,
+        dirtyCount: 2,
         untrackedCount: 0,
         stagedCount: 0,
-        files: [GitFileStatus(status: " M", path: changedPath, addedLines: 2, removedLines: 1)],
-        totalFiles: 1,
-        addedLines: 2,
+        // README.md is a change the session did not make: the Git panel's
+        // This session lists App.swift alone, All changes both.
+        files: [
+            GitFileStatus(status: " M", path: changedPath, addedLines: 2, removedLines: 1),
+            GitFileStatus(status: " M", path: otherChangePath, addedLines: 4, removedLines: 0),
+        ],
+        totalFiles: 2,
+        addedLines: 6,
         removedLines: 1,
         stashCount: 0,
         lastCommitMessage: "Route commit",

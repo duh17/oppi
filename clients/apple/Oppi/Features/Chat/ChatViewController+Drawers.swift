@@ -91,12 +91,4 @@ extension ChatViewController {
     func collapseNotifyChip() {
         connection.extensionNotifyChipStore.setExpanded(false, sessionId: sessionId)
     }
-
-    func handleContextBarExpandedChanged(_ expanded: Bool) {
-        model.contextBarExpanded = expanded
-        guard expanded else { return }
-        // Avoid overlap between expanded git context and composer when the
-        // software keyboard is visible.
-        dismissKeyboard()
-    }
 }

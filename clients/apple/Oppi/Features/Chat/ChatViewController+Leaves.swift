@@ -1,8 +1,8 @@
 import SwiftUI
 import UIKit
 
-// The chat's context bar, the screens it presents, and the pages the UIKit
-// Files panel pushes (`SessionFilePages`). UIKit owns the screen
+// The chat's Git and Files panels, the screens they present, and the pages
+// the UIKit Files panel pushes (`SessionFilePages`). UIKit owns the screen
 // (`ChatViewController`) and its footer, title, and jump hint
 // (`ChatFooterViews`).
 
@@ -19,29 +19,48 @@ extension ChatViewController {
         phase == .inactive || phase == .background
     }
 
-    /// The workspace context bar over the top of the timeline, below the bar.
-    /// Its reviews present from this chat, on its server and navigation.
-    func makeContextBar() -> WorkspaceContextBarView {
-        let bar = WorkspaceContextBarView(
-            context: contextBarContext,
-            options: .init(
-                onReviewInCurrentSession: { [weak self] prompt, files in
-                    self?.stageWorkspaceReviewInCurrentSession(prompt: prompt, files: files)
-                },
-                fileDetailReviewCommentScope: .activeSession(reviewCommentSelectionRouter)
-            ),
-            connection: connection,
-            apiClient: apiClient,
-            navigation: appNavigation
-        )
-        bar.presenter = self
-        bar.onExpandedChanged = { [weak self] in self?.handleContextBarExpandedChanged($0) }
-        return bar
+    /// The Git panel (UIKit), as a sheet or in the trailing column: the
+    /// workspace context bar, always expanded, on this chat's server and
+    /// navigation. A review staged for this session, or a comment started in a
+    /// file review, closes the panel so it reaches the composer; a session
+    /// started from it closes the panel and pushes onto this chat's stack.
+    func gitPanelScreen() -> RouterScreen {
+        .controller({ [weak self] in
+            guard let self else { preconditionFailure("The Git panel presents only while its chat is alive") }
+            let closePanel: () -> Void = { [weak self] in self?.model.showGit = false }
+            return ChatGitPanelViewController(
+                context: { [weak self] in self?.gitPanelContext },
+                options: .init(
+                    showCleanWorkspace: true,
+                    initiallyExpanded: true,
+                    isPanel: true,
+                    onReviewInCurrentSession: { [weak self] prompt, files in
+                        closePanel()
+                        self?.stageWorkspaceReviewInCurrentSession(prompt: prompt, files: files)
+                    },
+                    fileDetailReviewCommentScope: SessionFilePages.closingPanelScope(
+                        .activeSession(self.reviewCommentSelectionRouter),
+                        closePanel: closePanel
+                    ),
+                    // A session started from the panel opens on this chat's
+                    // stack, not inside the sheet or column.
+                    pushChat: { [weak self] chat in
+                        guard let self else { return }
+                        closePanel()
+                        Router.push(chat, from: self)
+                    }
+                ),
+                connection: self.connection,
+                apiClient: self.apiClient,
+                navigation: self.appNavigation,
+                onClose: closePanel
+            )
+        })
     }
 
-    /// The context bar's Git status and session. Read in `updateProperties()`,
-    /// so the bar follows the Git status store and the session.
-    var contextBarContext: WorkspaceContextBarView.Context {
+    /// The Git panel's status and session, read in its `updateProperties()`,
+    /// so it follows the Git status store and the session.
+    var gitPanelContext: WorkspaceContextBarView.Context {
         let session = session
         return WorkspaceContextBarView.Context(
             gitStatus: connection.gitStatusStore.gitStatus,
@@ -49,9 +68,39 @@ extension ChatViewController {
             workspaceId: session?.workspaceId,
             sessionId: sessionId,
             worktreeId: session?.worktreeId,
-            serverId: serverIdHint ?? connection.currentServerId,
-            collapseToken: model.contextBarCollapseToken
+            serverId: serverIdHint ?? connection.currentServerId
         )
+    }
+
+    /// Whether this chat's workspace may be a Git repository, so the bar offers
+    /// Git (`ChatBarItems.mayOfferGit`), from the status loaded for this
+    /// workspace only.
+    var mayHaveGit: Bool {
+        guard let workspaceId = session?.workspaceId else { return false }
+        let workspace = connection.workspaceStore.workspaces.first { $0.id == workspaceId }
+        let store = connection.gitStatusStore
+        return ChatBarItems.mayOfferGit(
+            gitStatusEnabled: workspace?.gitStatusEnabled,
+            loadedStatus: store.workspaceId == workspaceId ? store.gitStatus : nil
+        )
+    }
+
+    /// What the Git button says at a glance: the branch, and how many changed
+    /// files the panel lists when it opens (the session's own in the main
+    /// checkout, every change in the session's worktree). Nil outside Git.
+    var gitBarSummary: (branch: String?, changedFiles: Int)? {
+        guard let gitStatus = connection.gitStatusStore.gitStatus, gitStatus.isGitRepo else { return nil }
+        let session = session
+        let filters = ContextBarScoping.filtersToSession(
+            sessionId: sessionId,
+            worktreeId: session?.worktreeId,
+            fileScope: .session
+        )
+        let scope = filters
+            ? ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: session?.changeStats?.changedFiles)
+            : nil
+        let count = ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope)
+        return (gitStatus.branch, count)
     }
 
     /// The Files panel (UIKit), as a sheet or in the trailing column. It

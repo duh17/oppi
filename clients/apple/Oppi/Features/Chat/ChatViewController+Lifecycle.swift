@@ -23,15 +23,6 @@ extension ChatViewController {
         bottomFollowsKeyboard = followsKeyboard
         bottomAtSafeArea = contentBottomGuide.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
 
-        // Dismiss scrim: dims the timeline so content doesn't bleed through
-        // the context bar's glass, and collapses the bar on tap. A
-        // semi-opaque fill instead of clear prevents the visual overlap
-        // between expanded bar content and the timeline behind.
-        scrim.translatesAutoresizingMaskIntoConstraints = false
-        scrim.isHidden = true
-        scrim.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(scrimTapped)))
-        view.addSubview(scrim)
-
         footerStack.axis = .vertical
         footerStack.alignment = .fill
         footerStack.spacing = 0
@@ -44,16 +35,11 @@ extension ChatViewController {
             contentBottomGuide.topAnchor.constraint(equalTo: view.topAnchor),
             followsKeyboard,
             // The timeline reaches up under the navigation bar so rows scroll
-            // under its glass; `topOverlap` keeps the first row below the bar
-            // and the context bar.
+            // under its glass; `topOverlap` keeps the first row below the bar.
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             collectionView.bottomAnchor.constraint(equalTo: contentBottomGuide.bottomAnchor),
-            scrim.topAnchor.constraint(equalTo: view.topAnchor),
-            scrim.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrim.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrim.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             footerStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             footerStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             footerStack.bottomAnchor.constraint(equalTo: contentBottomGuide.bottomAnchor),
@@ -95,11 +81,6 @@ extension ChatViewController {
     private func installLeavesIfNeeded() {
         guard footerAbove == nil, root != nil else { return }
 
-        let contextBar = makeContextBar()
-        contextBar.translatesAutoresizingMaskIntoConstraints = false
-        view.insertSubview(contextBar, aboveSubview: scrim)
-        self.contextBar = contextBar
-
         let above = ChatFooterAboveView(chat: self)
         footerStack.addArrangedSubview(above)
         footerStack.addArrangedSubview(composer.view)
@@ -114,15 +95,11 @@ extension ChatViewController {
         view.addSubview(jump)
 
         NSLayoutConstraint.activate([
-            contextBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            contextBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            contextBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             jump.widthAnchor.constraint(equalToConstant: Self.jumpToBottomSlotSize),
             jump.heightAnchor.constraint(equalToConstant: Self.jumpToBottomSlotSize),
             jump.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -27),
             jump.bottomAnchor.constraint(equalTo: footerStack.topAnchor, constant: -10),
         ])
-        contextBar.onHeightChange = { [weak self] _ in self?.view.setNeedsLayout() }
     }
 
     /// The jump-to-bottom hint's slot; the button sits at its bottom trailing corner.
@@ -184,14 +161,11 @@ extension ChatViewController {
         super.viewDidLayoutSubviews()
         guard let timelineView else { return }
         // Measured in window coordinates from the two frames, never from an
-        // inset: it covers the bar and the context bar below it.
-        let header: UIView = contextBar ?? view
-        let headerFrame = contextBar == nil
-            ? CGRect(x: 0, y: view.safeAreaInsets.top, width: view.bounds.width, height: 0)
-            : header.bounds
+        // inset: it covers the bar down to the top of the safe area.
+        let headerFrame = CGRect(x: 0, y: view.safeAreaInsets.top, width: view.bounds.width, height: 0)
         let top = ChatTimelineChromeOverlap.topInset(
             timelineFrame: timelineView.convert(timelineView.bounds, to: nil),
-            headerFrame: header.convert(headerFrame, to: nil)
+            headerFrame: view.convert(headerFrame, to: nil)
         )
         let bottom = footerStack.frame.height
         let width = timelineView.bounds.width
@@ -208,8 +182,6 @@ extension ChatViewController {
         installLeavesIfNeeded()
         let root = root
         view.backgroundColor = root?.themeStore.backgroundColor
-        let palette = root?.themeStore.activeThemeID.palette ?? ThemeRuntimeState.currentPalette()
-        scrim.backgroundColor = ComposerThemeColors(palette: palette).bg.withAlphaComponent(0.5)
         timeline.contentRoot = root
         _ = model.chatDisplayRefresh
         _ = model.topBarRefresh
@@ -217,8 +189,7 @@ extension ChatViewController {
         observeChanges()
         updateTitleMaxWidth()
         updateTimelineChrome()
-        contextBar?.context = contextBarContext
-        updateFooter()
+        composer.view.isHidden = isStopped
         barItems.update()
         updateSidePanels()
         updateModals()
@@ -240,7 +211,6 @@ extension ChatViewController {
             askRequestID: activeComposerAskRequest?.id,
             toolsExpanded: extensionSurfaceState.toolsExpanded,
             editorTextRevision: chatState.extensionEditorTextUpdate?.revision,
-            jumpToBottomVisible: scrollController.isJumpToBottomHintVisible,
             showsNowPlayingPill: showsNowPlayingPill,
             showsReviewCommentPill: showsReviewCommentPill,
             liveVoiceHoldsComposer: liveVoiceController.holdsComposer,
@@ -284,9 +254,6 @@ extension ChatViewController {
         if previous.scenePhaseIsActive != next.scenePhaseIsActive
             || previous.scenePhasePausesTimeline != next.scenePhasePausesTimeline {
             handleScenePhaseChange()
-        }
-        if !previous.jumpToBottomVisible, next.jumpToBottomVisible {
-            model.contextBarCollapseToken &+= 1
         }
         if previous.showsNowPlayingPill, !next.showsNowPlayingPill {
             model.nowPlayingDrawerExpanded = false
@@ -335,16 +302,6 @@ extension ChatViewController {
                 }
             },
             center.addObserver(
-                forName: UIResponder.keyboardWillShowNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self, self.viewIfLoaded?.window != nil else { return }
-                    self.model.contextBarCollapseToken &+= 1
-                }
-            },
-            center.addObserver(
                 forName: AudioPlayerService.stateDidChangeNotification,
                 object: nil,
                 queue: .main
@@ -372,18 +329,6 @@ extension ChatViewController {
                 }
             },
         ]
-    }
-
-    @objc private func scrimTapped() {
-        model.contextBarCollapseToken &+= 1
-    }
-
-    // MARK: - Footer
-
-    private func updateFooter() {
-        let stopped = isStopped
-        composer.view.isHidden = stopped
-        scrim.isHidden = !model.contextBarExpanded
     }
 
     // MARK: - Keyboard
@@ -749,7 +694,6 @@ struct ChatObservedValues: Equatable {
     var askRequestID: String?
     var toolsExpanded: Bool?
     var editorTextRevision: Int?
-    var jumpToBottomVisible = false
     var showsNowPlayingPill = false
     var showsReviewCommentPill = false
     var liveVoiceHoldsComposer = false
@@ -768,7 +712,6 @@ struct ChatObservedValues: Equatable {
         askRequestID: String?,
         toolsExpanded: Bool?,
         editorTextRevision: Int?,
-        jumpToBottomVisible: Bool,
         showsNowPlayingPill: Bool,
         showsReviewCommentPill: Bool,
         liveVoiceHoldsComposer: Bool,
@@ -785,7 +728,6 @@ struct ChatObservedValues: Equatable {
         self.askRequestID = askRequestID
         self.toolsExpanded = toolsExpanded
         self.editorTextRevision = editorTextRevision
-        self.jumpToBottomVisible = jumpToBottomVisible
         self.showsNowPlayingPill = showsNowPlayingPill
         self.showsReviewCommentPill = showsReviewCommentPill
         self.liveVoiceHoldsComposer = liveVoiceHoldsComposer

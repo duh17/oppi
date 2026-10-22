@@ -1,6 +1,6 @@
 import UIKit
 
-/// Settings > Chat > Top Bar: which of Files, Outline, Context, and Terminal a
+/// Settings > Chat > Top Bar: which of Files, Git, Outline, Context, and Terminal a
 /// chat's top bar shows, and in what order. A row's switch shows or hides it; a
 /// hidden button moves into the … menu, which always stays last. Rows reorder
 /// with their handles, so editing stays on and there is no Edit button.
@@ -105,7 +105,10 @@ final class SettingsChatTopBarViewController: UIViewController, UICollectionView
     private func configure(_ cell: UICollectionViewListCell, action: ChatTopBarAction) {
         var content = cell.defaultContentConfiguration()
         content.text = action.label
-        content.image = UIImage(systemName: action.symbolName)
+        content.image = action.image(textStyle: .body)
+        // The symbol column's width for every row, so a label beside the Git
+        // logo (an image, not a symbol) lines up with the others.
+        content.imageProperties.reservedLayoutSize.width = UIListContentConfiguration.ImageProperties.standardDimension
         // Terminal keeps its row while the experiment is off: a saved choice
         // stays visible and explains itself instead of leaving a stale button
         // nobody can account for.

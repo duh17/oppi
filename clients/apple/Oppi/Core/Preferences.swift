@@ -511,7 +511,7 @@ enum AppPreferences {
 
     // MARK: - Chat Top Bar
 
-    /// Which buttons the chat's top bar shows (Files, Outline, Context, Terminal)
+    /// Which buttons the chat's top bar shows (Files, Git, Outline, Context, Terminal)
     /// and in what order. Hidden buttons live in the bar's … menu. Device-local,
     /// like the other chat display preferences, and the same for every session.
     enum ChatTopBar {
@@ -520,9 +520,10 @@ enum AppPreferences {
         static let didChangeNotification = Notification.Name("oppi.chatTopBar.didChange")
 
         /// The stored order and visibility. Both keys missing (a fresh install,
-        /// or one that never opened the setting) falls back to Files, Outline,
-        /// and Context in that order, so nobody who never chose sees a different
-        /// bar. A hidden-everything choice stores an empty list, not nothing.
+        /// or one that never opened the setting) falls back to the default bar:
+        /// Files, Git, Outline, and Context in that order. A saved layout keeps
+        /// what it shows; an action added after it was saved (Git) joins its
+        /// … menu. A hidden-everything choice stores an empty list, not nothing.
         static var layout: ChatTopBarLayout { layout(in: .standard) }
 
         static func layout(in defaults: UserDefaults) -> ChatTopBarLayout {
@@ -543,8 +544,8 @@ enum AppPreferences {
             NotificationCenter.default.post(name: didChangeNotification, object: nil)
         }
 
-        /// Forgets the saved layout, so the bar is back to Files, Outline, and
-        /// Context. The screenshot harness calls this for
+        /// Forgets the saved layout, so the bar is back to Files, Git, Outline,
+        /// and Context. The screenshot harness calls this for
         /// `SCREENSHOT_RESET_TOP_BAR=1`, which is how a UI test that writes the
         /// layout leaves the device as it found it.
         static func reset(in defaults: UserDefaults) {

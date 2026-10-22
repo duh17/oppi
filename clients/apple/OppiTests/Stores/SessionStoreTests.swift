@@ -521,11 +521,6 @@ struct SessionStorePartitioningTests {
         )
 
         #expect(scope.sessionFiles.map(\.path) == ["server/src/session-events.ts", "README.md"])
-        #expect(ContextBarScoping.hasContent(
-            gitStatus: gitStatus,
-            sessionId: "s1",
-            sessionScope: scope
-        ))
     }
 
     @Test func staleSummaryPreservesExistingChangeStats() {

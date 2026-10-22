@@ -38,8 +38,8 @@ struct FeatureEducationTipsPreview: View {
             id: "open-changed-files-bar",
             priority: "P0",
             title: "Review changed files",
-            message: "Tap the changed-files bar to inspect files this session touched.",
-            trigger: "First chat session with session-scoped changed files",
+            message: "Tap the changed-files bar to inspect this workspace's changes.",
+            trigger: "A workspace's session list shows its changed-files bar",
             completion: "Changed-files bar expanded",
             stories: "IOS-043, IOS-100"
         ),

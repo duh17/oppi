@@ -1,0 +1,9 @@
+Oppi's chat top bar Git button shows the Git logo, unmodified except for
+conversion from SVG to PDF (Assets.xcassets/git-logo.imageset).
+
+# Git Logo
+Git Logo by Jason Long is licensed under the Creative Commons Attribution 3.0
+Unported License (CC BY 3.0): https://creativecommons.org/licenses/by/3.0/
+
+Source: https://git-scm.com/images/logos/downloads/Git-Icon-Black.svg
+Logos page: https://git-scm.com/downloads/logos

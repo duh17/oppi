@@ -8,13 +8,14 @@ import UIKit
 final class ChatModalSlots {
     let outline = RouterModalPresenter()
     let files = RouterModalPresenter()
+    let git = RouterModalPresenter()
     let context = RouterModalPresenter()
     let share = RouterModalPresenter()
     let modelPicker = RouterModalPresenter()
     let reviewCommentStash = RouterModalPresenter()
 
     private var all: [RouterModalPresenter] {
-        [outline, files, context, share, modelPicker, reviewCommentStash]
+        [outline, files, git, context, share, modelPicker, reviewCommentStash]
     }
 
     weak var anchor: UIViewController? {
@@ -59,11 +60,11 @@ extension ChatViewController {
         ).inNavigation()
     }
 
-    /// Every chat modal is a router modal. Outline, Files, and Context sit in
-    /// a router navigation controller, as a modal here or in the trailing
+    /// Every chat modal is a router modal. Outline, Files, Git, and Context sit
+    /// in a router navigation controller, as a modal here or in the trailing
     /// column (`updateSidePanels`). Files and Context push through their
     /// screen navigator; the outline is a UIKit screen that owns its bar and
-    /// search.
+    /// search; Git presents its reviews over itself.
     func updateModals() {
         guard let root else { return }
         let sidePanel = usesTrailingSidePanel
@@ -84,6 +85,13 @@ extension ChatViewController {
             root: root,
             clear: { [weak self] in self?.model.isFilePanelVisible = false },
             screen: filePanelScreen
+        )
+        modals.git.update(
+            id: !sidePanel && model.showGit ? auxiliaryID : nil,
+            presentation: auxiliary,
+            root: root,
+            clear: { [weak self] in self?.model.showGit = false },
+            screen: gitPanelScreen
         )
         modals.context.update(
             id: !sidePanel && model.showContextInspector ? auxiliaryID : nil,
@@ -159,6 +167,7 @@ extension ChatViewController {
             guard usesTrailingSidePanel else { return nil }
             if model.isFilePanelVisible { return .files }
             if model.showOutline { return .outline }
+            if model.showGit { return .git }
             if model.showContextInspector { return .context }
             return nil
         }()
@@ -175,11 +184,12 @@ extension ChatViewController {
         )
     }
 
-    /// Outline, Context, and Files are UIKit screens.
+    /// Outline, Git, Context, and Files are UIKit screens.
     private func sidePanelScreen(_ panel: ChatSidePanel) -> RouterScreen {
         switch panel {
         case .files: filePanelScreen()
         case .outline: outlineScreen()
+        case .git: gitPanelScreen()
         case .context: contextScreen()
         }
     }
