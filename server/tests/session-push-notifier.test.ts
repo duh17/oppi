@@ -5,7 +5,7 @@ import { SessionPushNotifier } from "../src/session-push-notifier.js";
 import { encodePushPlaintextJSON } from "../src/push/envelope.js";
 import type { PushNotification, PushSender } from "../src/push/push-sender.js";
 import type { Storage } from "../src/storage.js";
-import type { ProgramStatus, ProgramStatusKind, PushRegistration, Session } from "../src/types.js";
+import type { ProgramStatus, PushRegistration, Session } from "../src/types.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   const now = Date.now();
@@ -78,6 +78,7 @@ function makeNotifier(
   return new SessionPushNotifier(push, storage, {
     isDevicePresent: (deviceId) => present.has(deviceId),
     liveSessions: options.liveSessions ?? (() => []),
+    appAlertsFor: () => false,
     ...(options.now ? { now: options.now } : {}),
   });
 }
@@ -205,6 +206,7 @@ describe("SessionPushNotifier", () => {
       const notifier = new SessionPushNotifier(push, makeStorage(), {
         isDevicePresent: (deviceId) => present.has(deviceId),
         liveSessions: () => [],
+        appAlertsFor: () => false,
       });
       const toBlocked = change({ state: "working" }, { state: "blocked", kind: "question" });
 
@@ -222,22 +224,24 @@ describe("SessionPushNotifier", () => {
     const T0 = Date.parse("2026-10-17T12:00:00Z");
     const toBlocked = (since: number) =>
       change({ state: "working" }, { state: "blocked", kind: "permission", since });
-    const blockedSession = (since: number, kind: ProgramStatusKind = "permission") =>
+    const blockedSession = (since: number) =>
       makeSession({
-        programStatus: { state: "blocked", kind, message: "Push to main?", since },
+        programStatus: { state: "blocked", kind: "permission", message: "Push to main?", since },
       });
 
     afterEach(() => vi.useRealTimers());
 
-    function setup(devices: string[], present: string[], kind: ProgramStatusKind = "permission") {
+    /** `appAlerts`: the app posts its own local alert for what the session waits on. */
+    function setup(devices: string[], present: string[], appAlerts = false) {
       vi.useFakeTimers({ now: T0 });
       const push = makePush(devices);
-      const session = blockedSession(T0, kind);
+      const session = blockedSession(T0);
       const live = [session];
       const presentSet = new Set(present);
       const notifier = new SessionPushNotifier(push, makeStorage(session), {
         isDevicePresent: (id) => presentSet.has(id),
         liveSessions: () => live,
+        appAlertsFor: () => appAlerts,
       });
       return { push, session, notifier, presentSet };
     }
@@ -290,11 +294,11 @@ describe("SessionPushNotifier", () => {
       expect(push.send).not.toHaveBeenCalled();
     });
 
-    it("pushes a question only after a drop, and only if it blocked after the last frame", () => {
-      const { push, notifier } = setup(["phone"], [], "question");
-      // The app closed the stream: its own alert covers a question.
+    it("pushes a dialog the app alerts for only after a drop, and a block after the last frame", () => {
+      const { push, notifier } = setup(["phone"], [], true);
+      // The app closed the stream: its own local alert covers a confirm, input, or select.
       notifier.deviceLeft("dev-phone", { heardAt: T0 - 1, dropped: false });
-      // The stream dropped, but the app had already seen the question.
+      // The stream dropped, but the app had already seen the dialog.
       notifier.deviceLeft("dev-phone", { heardAt: T0, dropped: true });
       expect(push.send).not.toHaveBeenCalled();
 
@@ -302,16 +306,14 @@ describe("SessionPushNotifier", () => {
       expect(push.send).toHaveBeenCalledTimes(1);
     });
 
-    it("pushes an approval or sign-in on any leave: the app has no local alert for them", () => {
-      for (const kind of ["permission", "auth"] as const) {
-        const { push, notifier } = setup(["phone"], [], kind);
-        notifier.deviceLeft("dev-phone", { heardAt: T0 + 5_000, dropped: false });
-        expect(push.send).toHaveBeenCalledTimes(1);
-        expect(push.send).toHaveBeenCalledWith(
-          target("phone"),
-          expect.objectContaining({ event: "blocked", kind }),
-        );
-      }
+    it("pushes what the app has no local alert for, such as an editor, on any leave", () => {
+      const { push, notifier } = setup(["phone"], [], false);
+      notifier.deviceLeft("dev-phone", { heardAt: T0 + 5_000, dropped: false });
+      expect(push.send).toHaveBeenCalledTimes(1);
+      expect(push.send).toHaveBeenCalledWith(
+        target("phone"),
+        expect.objectContaining({ event: "blocked", kind: "permission" }),
+      );
     });
 
     it("does not push an approval again within a minute of the last alert", () => {
@@ -359,6 +361,7 @@ describe("SessionPushNotifier", () => {
       const notifier = new SessionPushNotifier(push, makeStorage(session), {
         isDevicePresent: () => false,
         liveSessions: () => [session],
+        appAlertsFor: () => false,
       });
       // A send in flight when the server stops: its failure must not schedule a retry.
       notifier.deviceLeft("dev-phone", { heardAt: T0 - 1, dropped: true });
@@ -386,6 +389,7 @@ describe("SessionPushNotifier", () => {
       const notifier = new SessionPushNotifier(push, makeStorage(session), {
         isDevicePresent: (id) => present.has(id),
         liveSessions: () => [session],
+        appAlertsFor: () => false,
       });
       notifier.handleProgramStatusChange(
         session,

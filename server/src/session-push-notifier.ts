@@ -58,6 +58,12 @@ export interface SessionPushNotifierOptions {
   isDevicePresent: (deviceId: string) => boolean;
   /** Sessions with a live runtime; their `programStatus` is current. */
   liveSessions: () => Session[];
+  /**
+   * Whether the app posts its own local alert for what `sessionId` waits on while it runs in
+   * the background: true for the dialogs it turns into an ask (`ask`, `select`, `confirm`,
+   * `input`), false for an `editor` dialog or when nothing is pending.
+   */
+  appAlertsFor: (sessionId: string) => boolean;
   now?: () => number;
 }
 
@@ -80,11 +86,12 @@ export interface SessionPushNotifierOptions {
  * A device that stops being present (`deviceLeft`) gets the Needs you of each session that
  * became blocked in the last two minutes, unless it was already told: an app suspended with
  * its sockets still open stays present until the ping timeout, and a session that blocked in
- * that window would otherwise wait unannounced. The app posts its own local alert for a
- * question while it runs in the background, so a question is pushed only when the connection
- * dropped and the session blocked after the last frame the device sent. An approval or
- * sign-in has no local alert and is pushed on any leave. If no relay accepted a Needs you, it
- * is tried once more after a minute while the session is still blocked in the same stretch.
+ * that window would otherwise wait unannounced. A running, backgrounded app posts its own
+ * local alert for the dialogs it shows as an ask (`appAlertsFor`), so for those the push goes
+ * out only when the connection dropped and the session blocked after the last frame the
+ * device sent; for any other dialog (an `editor`) it goes out on any leave. If no relay
+ * accepted a Needs you, it is tried once more after a minute while the session is still
+ * blocked in the same stretch.
  *
  * Failed and agent alerts go to every registered device, present or not: the app hides one
  * only while that session's chat is on screen. Each alert pushes at most once a minute per
@@ -152,8 +159,9 @@ export class SessionPushNotifier implements SessionNotifyPort {
    * the app closing it. `heardAt` is when the device last sent a frame. Tell it about each
    * live session that became blocked within the last two minutes, unless it already got that
    * stretch's alert or any Needs you for the session in the last minute (the per-session
-   * throttle's interval, kept per device). A question is skipped unless the stream dropped
-   * and it blocked after `heardAt`: the app shows its own alert for a question it saw.
+   * throttle's interval, kept per device). Where the app posts its own alert for what the
+   * session waits on (`appAlertsFor`), the push goes out only if the stream dropped and the
+   * session blocked after `heardAt`: otherwise the app already told the person.
    */
   deviceLeft(deviceId: string, leave: { heardAt: number; dropped: boolean }): void {
     if (this.stopped) return;
@@ -164,7 +172,7 @@ export class SessionPushNotifier implements SessionNotifyPort {
       const status = session.programStatus;
       if (status?.state !== "blocked" || now - status.since > BLOCKED_CATCH_UP_MS) continue;
       if (
-        (status.kind ?? "question") === "question" &&
+        this.options.appAlertsFor(session.id) &&
         (!leave.dropped || status.since <= leave.heardAt)
       ) {
         continue;

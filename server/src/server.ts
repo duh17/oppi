@@ -35,6 +35,7 @@ import { markLegacyControlDomains } from "./legacy-app-compat.js";
 import { defaultModelRefFromGlobalSettings, ModelCatalog } from "./model-catalog.js";
 import { ExtensionProviderCatalog } from "./extension-model-discovery.js";
 import type { ProgramStatusSync } from "./program-status.js";
+import { isPendingUserReplyRequest } from "./session-attention.js";
 import { SessionPushNotifier } from "./session-push-notifier.js";
 import { LiveActivityNotifier, liveActivityCounts } from "./live-activity-notifier.js";
 import { FileLiveActivityStateStore, liveActivityStatePath } from "./live-activity-state-store.js";
@@ -587,6 +588,16 @@ export class Server {
     this.sessionPushNotifier = new SessionPushNotifier(this.push, this.storage, {
       isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),
       liveSessions: () => this.liveSessions(),
+      appAlertsFor: (sessionId) => {
+        const waiting = this.sessionRuntimes
+          .getPendingUIRequestMessages(sessionId)
+          .filter(
+            (message): message is Extract<ServerMessage, { type: "extension_ui_request" }> =>
+              message.type === "extension_ui_request" && isPendingUserReplyRequest(message),
+          );
+        const method = waiting.at(-1)?.method;
+        return method !== undefined && method !== "editor";
+      },
     });
     this.liveActivityNotifier = new LiveActivityNotifier(this.push, {
       isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),
@@ -1491,7 +1502,8 @@ export class Server {
    * `closeCode` is the WebSocket close code. 1006 (no close frame: the ping timeout
    * terminates the socket, or the network broke) is a drop; 1000, 1001 and 1005 (no status) are
    * the app closing the stream. While it runs in the background the app posts its own alert for
-   * a question only, so the notifier decides per blocked kind what each kind of leave pushes.
+   * the dialogs it shows as an ask but not for an `editor`, so the notifier decides per pending
+   * dialog method what each kind of leave pushes.
    */
   private forgetPresenceSocket(ws: WebSocket, closeCode: number): void {
     const deviceId = this.presenceSocketDevices.get(ws);
