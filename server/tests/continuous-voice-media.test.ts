@@ -657,6 +657,54 @@ describe("continuous voice media", () => {
     expect(payload).toMatch(/STT backend unreachable/);
   });
 
+  it("starts no media when the caller's socket closes while the old media is still stopping", async () => {
+    const calls = makeCalls();
+    const frontend = new DeterministicVoiceCallFrontend({
+      connectionId: "connection-1",
+      authenticatedDeviceId: "paired-device-a",
+    });
+    let releaseStop: () => void = () => {};
+    const adapters: VoiceMediaAdapter[] = [];
+    const coordinator = new VoiceCallMediaCoordinator({
+      createAdapter: () => {
+        const first = adapters.length === 0;
+        const adapter: VoiceMediaAdapter = {
+          start: vi.fn(),
+          speak: vi.fn(),
+          feedAudio: vi.fn(),
+          // Yuwp's stop can take seconds; only the first adapter's is slow here.
+          stop: first
+            ? () => new Promise<void>((resolve) => (releaseStop = resolve))
+            : vi.fn(),
+        };
+        adapters.push(adapter);
+        return adapter;
+      },
+      calls,
+    });
+    const started = calls.startCall(
+      { controlSessionId: "voice-1", clientCallId: "client-1" },
+      frontend.connection,
+    );
+    const input = {
+      callId: started.state.callId,
+      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
+      frontend: frontend.connection,
+    };
+    await coordinator.attach(input);
+
+    const reattach = coordinator.attach(input);
+    // Mirrors server.ts handleConnectionClosed while the old adapter is stopping.
+    calls.disconnectConnection("connection-1");
+    await coordinator.detach("connection-1");
+    releaseStop();
+    await reattach;
+
+    expect(adapters).toHaveLength(1);
+    expect(coordinator.feedAudio("connection-1", Buffer.from("pcm"))).toBe(false);
+    expect(coordinator.callIdsForSession("voice-1")).toEqual([]);
+  });
+
   it("one-shot Live Voice STT skips constructor warmup so start does not race createSession", async () => {
     const endpoint = "http://127.0.0.1:7936";
     const streamUrl = `${endpoint}/v1/audio/transcriptions/stream`;

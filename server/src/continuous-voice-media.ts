@@ -359,6 +359,15 @@ export class VoiceCallMediaCoordinator {
 
   async attach(input: VoiceCallMediaAttachInput): Promise<void> {
     await this.detach(input.frontend.connectionId);
+    // The socket can close while the old adapter stops; its detach found nothing, so a
+    // new adapter here would outlive the caller.
+    if (!this.deps.calls.isCallConnection(input.frontend.connectionId)) {
+      log.info("voice_media.attach_skipped", {
+        callId: input.callId,
+        reason: "connection_closed",
+      });
+      return;
+    }
     const adapter = this.deps.createAdapter();
     if (input.frontend.sendAudio) {
       adapter.setPlaybackSink?.(input.frontend.sendAudio);

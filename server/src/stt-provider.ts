@@ -276,6 +276,14 @@ export class StreamingSttProvider implements SttProvider {
 
     await this.createSession();
 
+    // stop()/cancel() landed while the create was in flight and saw no session to close;
+    // release the new one instead of orphaning it with a feed timer.
+    if (this.stopped && this.sessionId) {
+      void this.deleteSession(this.sessionId);
+      this.sessionId = null;
+      return { contextApplied: this.contextApplied };
+    }
+
     if (!this.sessionId) {
       throw new SttSessionCreateError({ category: "invalid_response" });
     }

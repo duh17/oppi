@@ -579,6 +579,36 @@ describe("StreamingSttProvider", () => {
     expect(callOrder.slice(0, 4)).toEqual(["create", "feed-1", "feed-2", "delete"]);
   });
 
+  it("stop during a pending create releases the new session instead of feeding it", async () => {
+    let releaseCreate: () => void = () => {};
+    const { fetchFn, calls } = createMockFetch([
+      {
+        match: isCreate,
+        response: async () => {
+          await new Promise<void>((resolve) => (releaseCreate = resolve));
+          return jsonResponse({ session_id: "s1" })();
+        },
+      },
+      { match: isFeed, response: jsonResponse({ text: "" }) },
+      { match: isDelete, response: jsonResponse({ text: "" }) },
+    ]);
+    const provider = makeProvider(fetchFn);
+
+    const starting = provider.start();
+    provider.feedAudio(Buffer.from([1, 2, 3]));
+    await provider.stop();
+    releaseCreate();
+    await starting;
+    await flush();
+    vi.advanceTimersByTime(1000);
+    await flush();
+
+    expect(calls.filter((c) => isDelete(c.url, c.method)).map((c) => c.url)).toEqual([
+      `${STREAM_URL}/s1`,
+    ]);
+    expect(calls.some((c) => isFeed(c.url, c.method))).toBe(false);
+  });
+
   it("handles 404 on feed when session recreation also fails", async () => {
     let sessionCounter = 0;
     let createShouldFail = false;
