@@ -771,6 +771,8 @@ struct PushSendPermissionTests {
 
             #expect(backend.sentTokens.isEmpty)
             #expect(backend.deletedPermissions == ["p_1"])
+            #expect(backend.deletedRegistrations == ["r_A"])
+            #expect(PushRelayRegistrationStore.load(relay: relay, environment: .sandbox) == nil)
             #expect(!PushRegistration.isEnabled(serverId: serverId))
             #expect(PushSendTokenStore.load(serverId: serverId) == nil)
             #expect(PushSharedStore.allKeys().allSatisfy { $0.serverId != serverId })

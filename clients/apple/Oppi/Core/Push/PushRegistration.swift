@@ -156,11 +156,19 @@ final class PushRegistration {
         apnsToken: String,
         client: PushRelayClient
     ) async throws {
-        try await register(
-            api: api, serverId: serverId, deviceId: deviceId, relay: relay,
-            environment: environment, apnsToken: apnsToken, client: client,
-            replacing: nil, mayReplaceRelayRegistration: true, mayRecoverGoneSendToken: true
-        )
+        do {
+            try await register(
+                api: api, serverId: serverId, deviceId: deviceId, relay: relay,
+                environment: environment, apnsToken: apnsToken, client: client,
+                replacing: nil, mayReplaceRelayRegistration: true, mayRecoverGoneSendToken: true
+            )
+        } catch PushRegistrationError.turnedOff {
+            // The `disable` that turned push off counted this registration as running and
+            // kept the relay registration for it. It has stopped now, so turn push off again:
+            // that deletes the relay registration when no other server uses it.
+            await disable(serverId: serverId, api: api, relay: relay, relayClient: { _ in client })
+            throw PushRegistrationError.turnedOff
+        }
     }
 
     /// `replacing`: a relay registration the relay refused. Each `may…` recovery runs at most
