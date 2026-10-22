@@ -18,6 +18,9 @@
 # Fairness: there is no queue. A waiter retries every OPPI_HEAVY_POLL seconds and a newcomer
 # tries at once, so a newcomer can take a slot that freed between a waiter's polls.
 #
+# sim-pool takes xcode-build slots itself (clients/apple/scripts/sim-pool-build.ts: flock(2) on
+# these same slot files, the same env knobs), so `sim-pool run` needs no heavy.sh wrapper.
+#
 # The kernel holds each slot through lockf(1) exactly as long as the command runs; a crashed
 # holder frees its slot at once, so there is no stale-lock takeover logic. The command's exit
 # status is passed through. Nested use of a class already held by an ancestor runs directly.
@@ -33,7 +36,7 @@ case "$class" in
   *) echo "heavy.sh: unknown class $class" >&2; exit 2 ;;
 esac
 [[ "$slots" =~ ^[1-9][0-9]*$ ]] || { echo "heavy.sh: invalid slot count '$slots' for $class" >&2; exit 2; }
-# Nested use (sim-pool inside a pre-push lane that already holds a slot) must not deadlock.
+# Nested use (a command inside a job that already holds this class) must not deadlock.
 if [[ "${OPPI_HEAVY_HELD:-}" == *":$class:"* ]]; then exec "$@"; fi
 dir="${OPPI_HEAVY_DIR:-$HOME/Library/Caches/oppi-heavy}"; mkdir -p "$dir"
 export OPPI_HEAVY_HELD="${OPPI_HEAVY_HELD:-:}$class:"

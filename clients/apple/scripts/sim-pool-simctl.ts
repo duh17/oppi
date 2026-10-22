@@ -136,23 +136,17 @@ export function preferredAcquireSlots(
   devices: SimulatorDevice[],
   runtime: string,
   deviceType: string,
-  warm: ReadonlyMap<number, number> = new Map(),
 ): number[] {
-  const warmSlots: number[] = [];
   const preferred: number[] = [];
   const fallback: number[] = [];
   for (const slot of slots) {
-    if (warm.has(slot)) {
-      warmSlots.push(slot);
-    } else if (findMatchingPoolDevice(devices, slot, runtime, deviceType).match) {
+    if (findMatchingPoolDevice(devices, slot, runtime, deviceType).match) {
       preferred.push(slot);
     } else {
       fallback.push(slot);
     }
   }
-  // Array.prototype.sort is stable, so equal recency keeps slot order.
-  warmSlots.sort((a, b) => (warm.get(b) ?? 0) - (warm.get(a) ?? 0));
-  return [...warmSlots, ...preferred, ...fallback];
+  return [...preferred, ...fallback];
 }
 
 export function deviceState(devices: SimulatorDevice[], udid: string): string | undefined {

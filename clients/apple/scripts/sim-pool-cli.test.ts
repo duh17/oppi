@@ -81,6 +81,9 @@ if [[ "\${1:-}" == "xcodebuild" || "\${1:-}" == */xcodebuild ]]; then
   echo "unexpected extra executable token: $1" >&2
   exit 99
 fi
+printf '%s\\n' "$@" >> "${fakeDir}/xcodebuild.calls"
+printf -- '--\\n' >> "${fakeDir}/xcodebuild.calls"
+${FAKE_BUILD_FOR_TESTING}
 printf '%s\\n' "$@" > "${fakeDir}/xcodebuild.args"
 echo "** BUILD SUCCEEDED **"
 echo "Test run with 3 tests passed"
@@ -135,6 +138,23 @@ function runtimesJson(): string {
   ]
 }`;
 }
+
+/**
+ * Shell for a fake xcodebuild: a `build-for-testing` call (sim-pool's slotless build phase)
+ * writes `<scheme>_iphonesimulator-arm64.xctestrun` into its DerivedData and exits 0.
+ */
+const FAKE_BUILD_FOR_TESTING = `case " $* " in *" build-for-testing "*)
+  dd=""; scheme=""; prev=""
+  for a in "$@"; do
+    [ "$prev" = -derivedDataPath ] && dd="$a"
+    [ "$prev" = -scheme ] && scheme="$a"
+    prev="$a"
+  done
+  mkdir -p "$dd/Build/Products"
+  : > "$dd/Build/Products/\${scheme}_iphonesimulator-arm64.xctestrun"
+  echo "** TEST BUILD SUCCEEDED **"
+  exit 0 ;;
+esac`;
 
 const swiftTestPrelude = `Test Suite 'All tests' passed at 2026-10-01 13:10:19.718.
 \t Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
@@ -206,6 +226,7 @@ function runCompletionFixture(text: string, options: {
   }
   writeFileSync(join(bin, "xcodebuild"), `#!/bin/sh
 set -eu
+${FAKE_BUILD_FOR_TESTING}
 echo attempt >> "${fake}/attempts"
 cat <<'TEST_LOG'
 ${text}TEST_LOG
@@ -345,7 +366,7 @@ describe("sim-pool CLI", () => {
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     expect(result.status).toBe(0);
@@ -360,6 +381,120 @@ describe("sim-pool CLI", () => {
     expect(state === "unreadable" ? undefined : state?.status).toBe("reusable");
     const calls = existsSync(join(fake, "xcrun.calls")) ? readFileSync(join(fake, "xcrun.calls"), "utf8") : "";
     expect(calls).not.toContain("delete unavailable");
+  });
+
+  function slotlessFixture(label: string) {
+    const root = tempDir(label);
+    const fake = join(root, "fake");
+    const bin = join(root, "bin");
+    mkdirSync(fake, { recursive: true });
+    mkdirSync(join(root, "home"), { recursive: true });
+    initCheckout(root);
+    writeFileSync(join(fake, "devices.json"), devicesJson());
+    writeFileSync(join(fake, "runtimes.json"), runtimesJson());
+    writeFakeXcrun(bin, fake);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      HOME: join(root, "home"),
+      OPPI_ROOT: root,
+      OPPI_SIM_POOL_LOCK_DIR: join(root, "locks"),
+      OPPI_SIM_POOL_COUNT: "1",
+      OPPI_SIM_POOL_WAIT: "0",
+      OPPI_SIM_SLIM: "0",
+      OPPI_SIM_POOL_PROGRESS_POLL: "0.05",
+      OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
+      OPPI_HEAVY_DIR: join(root, "heavy"),
+      OPPI_HEAVY_XCODE_BUILD: "1",
+      OPPI_HEAVY_POLL: "0.1",
+    };
+    delete env.PIOS_ROOT;
+    delete env.OPPI_HEAVY_HELD;
+    const apple = join(root, "clients", "apple");
+    const calls = () =>
+      existsSync(join(fake, "xcodebuild.calls"))
+        ? readFileSync(join(fake, "xcodebuild.calls"), "utf8").split("--\n").filter(Boolean).map((call) => call.trim().split("\n"))
+        : [];
+    const simctl = () => (existsSync(join(fake, "xcrun.calls")) ? readFileSync(join(fake, "xcrun.calls"), "utf8") : "");
+    return { root, fake, apple, env, calls, simctl };
+  }
+
+  test("a build with no test action runs in the checkout DerivedData without a simulator slot", () => {
+    const fx = slotlessFixture("build-only");
+    const result = spawnSync("bun", [cli, "run", "--", "xcodebuild", "-scheme", "OppiUnitTests", "build-for-testing"], {
+      cwd: fx.apple, env: fx.env, encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    const calls = fx.calls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain("generic/platform=iOS Simulator");
+    expect(calls[0]).toContain("ARCHS=arm64");
+    expect(realpathSync.native(calls[0][calls[0].indexOf("-derivedDataPath") + 1])).toBe(join(realpathSync.native(fx.apple), ".build", "dd"));
+    expect(fx.simctl()).toBe("");
+    expect(existsSync(join(fx.root, "locks", "slot-0.lock"))).toBe(false);
+    const logs = join(fx.apple, ".build", "logs");
+    const summary = JSON.parse(readFileSync(join(logs, readdirSync(logs).find((name) => name.endsWith(".summary.json"))!), "utf8"));
+    expect(summary.simulator_slot).toBeNull();
+    expect(summary.exit_code).toBe(0);
+  });
+
+  test("a test run builds without a slot, then runs the cloned products with the test flags in a slot", () => {
+    const fx = slotlessFixture("split");
+    const result = spawnSync(
+      "bun",
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "OppiUnitTests", "test",
+        "-only-testing:OppiTests/FooTests", "-resultBundlePath", join(fx.root, "r.xcresult")],
+      { cwd: fx.apple, env: fx.env, encoding: "utf8" },
+    );
+    expect(result.status).toBe(0);
+    const [buildCall, testCall] = fx.calls();
+    expect(buildCall).toContain("build-for-testing");
+    expect(buildCall.some((arg) => arg.startsWith("-only-testing") || arg === "-resultBundlePath")).toBe(false);
+    expect(testCall.slice(0, 2)).toEqual(["test-without-building", "-xctestrun"]);
+    const runDir = testCall[testCall.indexOf("-derivedDataPath") + 1];
+    expect(testCall[2]).toBe(join(runDir, "Build", "Products", "OppiUnitTests_iphonesimulator-arm64.xctestrun"));
+    expect(realpathSync.native(join(runDir, ".."))).toBe(join(realpathSync.native(fx.apple), ".build", "runs"));
+    expect(testCall).toContain("-only-testing:OppiTests/FooTests");
+    expect(testCall).toContain(join(fx.root, "r.xcresult"));
+    expect(testCall).toContain("platform=iOS Simulator,id=UDID-POOL-0");
+    expect(testCall).not.toContain("-scheme");
+    const logs = join(fx.apple, ".build", "logs");
+    const summary = JSON.parse(readFileSync(join(logs, readdirSync(logs).find((name) => /^pool-.*\.summary\.json$/.test(name))!), "utf8"));
+    expect(summary.derived_data_path).toBe(runDir);
+    expect(summary.build_phase.exit_code).toBe(0);
+    expect(summary.simulator_slot).toBe(0);
+  });
+
+  test("a failed build ends the run before it takes a simulator slot", () => {
+    const fx = slotlessFixture("build-fails");
+    writeFileSync(join(fx.root, "bin", "xcodebuild"), "#!/bin/sh\necho 'error: boom' \nexit 65\n", { mode: 0o755 });
+    const result = spawnSync("bun", [cli, "run", "--", "xcodebuild", "-scheme", "OppiUnitTests", "test"], {
+      cwd: fx.apple, env: fx.env, encoding: "utf8",
+    });
+    expect(result.status).toBe(65);
+    expect(fx.simctl()).toBe("");
+    expect(existsSync(join(fx.root, "locks", "slot-0.lock"))).toBe(false);
+  });
+
+  test("the build waits for a free machine-wide xcode-build slot", async () => {
+    const fx = slotlessFixture("heavy-busy");
+    mkdirSync(join(fx.root, "heavy"), { recursive: true });
+    const holder = spawn("/usr/bin/lockf", ["-k", join(fx.root, "heavy", "xcode-build.0"), "/bin/sleep", "30"]);
+    procs.push(holder);
+    await Bun.sleep(300);
+    const child = spawn("bun", [cli, "run", "--", "xcodebuild", "-scheme", "OppiUnitTests", "build-for-testing"], {
+      cwd: fx.apple, env: fx.env,
+    });
+    procs.push(child);
+    let stderr = "";
+    child.stderr!.on("data", (chunk) => { stderr += chunk; });
+    const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+    await Bun.sleep(1500);
+    expect(fx.calls()).toHaveLength(0);
+    expect(stderr).toContain("xcode-build slots busy");
+    holder.kill("SIGKILL");
+    expect(await exited).toBe(0);
+    expect(fx.calls()).toHaveLength(1);
   });
 
   test("mismatch device is replaced under the slot lock", () => {
@@ -401,7 +536,7 @@ describe("sim-pool CLI", () => {
       OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
     };
     delete env.PIOS_ROOT;
-    const result = spawnSync("bun", [cli, "run", "--", "xcodebuild", "-scheme", "Oppi", "build"], {
+    const result = spawnSync("bun", [cli, "run", "--", "xcodebuild", "-scheme", "Oppi", "test-without-building"], {
       cwd: join(root, "clients", "apple"),
       env,
       encoding: "utf8",
@@ -465,7 +600,7 @@ describe("sim-pool CLI", () => {
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     expect(result.status).toBe(0);
@@ -529,7 +664,7 @@ describe("sim-pool CLI", () => {
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     expect(result.status).toBe(0);
@@ -571,7 +706,7 @@ describe("sim-pool CLI", () => {
       DEVELOPER_DIR: developerDir,
       OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
     };
-    const result = spawnSync("bun", [cli, "run", "--", "xcodebuild", "build"], {
+    const result = spawnSync("bun", [cli, "run", "--", "xcodebuild", "test-without-building"], {
       cwd: join(root, "clients", "apple"),
       env,
       encoding: "utf8",
@@ -617,7 +752,7 @@ sleep 30
       OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
     };
     delete env.PIOS_ROOT;
-    const child = spawn("bun", [cli, "run", "--", "xcodebuild", "-scheme", finished ? "OppiUnitTests" : "Oppi", finished ? "test" : "build", "-only-testing:OppiTests"], {
+    const child = spawn("bun", [cli, "run", "--", "xcodebuild", "-scheme", finished ? "OppiUnitTests" : "Oppi", finished ? "test" : "test-without-building", "-only-testing:OppiTests"], {
       cwd: join(root, "clients", "apple"),
       env,
       stdio: "ignore",
@@ -679,7 +814,7 @@ exit 0
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(mainRoot, "clients", "apple"), env, encoding: "utf8" },
     );
     // Status 0 is required; signal and spawn error are included so a child that
@@ -780,7 +915,7 @@ exit 0
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     expect(result.status).toBe(0);
@@ -828,7 +963,7 @@ exit 0
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     const read = (name: string) => (existsSync(join(fake, name)) ? readFileSync(join(fake, name), "utf8") : "");
@@ -906,7 +1041,7 @@ exit 0
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", "xcodebuild", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", "xcodebuild", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     expect(result.status).toBe(0);
@@ -1000,7 +1135,7 @@ sleep 30
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", "xcodebuild", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", "xcodebuild", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     expect(result.status).not.toBe(0);
@@ -1253,7 +1388,7 @@ sleep 30
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", xcode, "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", xcode, "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     expect(result.status).toBe(0);
@@ -1342,7 +1477,7 @@ sleep 30
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     expect(result.status).toBe(0);
@@ -1466,7 +1601,7 @@ exec /usr/bin/pgrep "$@"
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     expect(existsSync(join(fake, "injected"))).toBe(true);
@@ -1553,7 +1688,7 @@ esac
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     expect(result.status).not.toBe(0);
@@ -1640,7 +1775,7 @@ esac
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     if (existsSync(logs)) {
@@ -1681,7 +1816,7 @@ esac
     delete env.PIOS_ROOT;
     const result = spawnSync(
       "bun",
-      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
       { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
     );
     expect(result.status).toBe(0);

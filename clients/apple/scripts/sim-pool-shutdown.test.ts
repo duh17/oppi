@@ -513,7 +513,7 @@ exit 127
     await waitForFile(join(fake, "shutdown.log"));
     const contender = tryAcquireSlot({ lockDir, slot: 0, argv: ["run"] });
     expect(contender.ok).toBe(false);
-    const run = spawnSync("bun", [cli, "run", "--", "xcodebuild", "build"], {
+    const run = spawnSync("bun", [cli, "run", "--", "xcodebuild", "test-without-building"], {
       env: {
         ...process.env,
         PATH: `${bin}:${process.env.PATH ?? ""}`,

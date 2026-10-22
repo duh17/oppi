@@ -15,6 +15,22 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
+  acquireHeavyBuildSlot,
+  checkoutDerivedData,
+  cloneProducts,
+  completionArgvForXctestrun,
+  findXctestrun,
+  isXcodebuild,
+  planRun,
+  pruneRunDirectories,
+  runDirectory,
+  SLOTLESS_BUILD_DESTINATION,
+  slotlessBuildSettings,
+  waitForFlock,
+  type HeldLock,
+  type RunPlan,
+} from "./sim-pool-build";
+import {
   lockPath,
   beginPublishing,
   recordOwnedPgid,
@@ -371,36 +387,6 @@ export function dropBuildDescriptionsMissingVendor(appleDir: string, derivedData
     rmSync(join(descriptions, name), { recursive: true, force: true });
     log(`[sim-pool] Dropped build description planned without Vendor/: ${join(descriptions, name)}`);
   }
-}
-
-// Recency (ms) of each slot whose DerivedData under buildBase already holds a
-// build for this checkout; cold or missing slots are absent. A build leaves
-// Build/Intermediates.noindex behind, and every xcodebuild invocation writes a
-// fresh activity log into Logs/Build, so the newest entry there is the last time
-// the slot built. The pool-N directory mtime is not used: it only moves when its
-// direct children are added or removed.
-export function warmDerivedDataRecency(buildBase: string, slots: number[]): Map<number, number> {
-  const warm = new Map<number, number>();
-  for (const slot of slots) {
-    const root = join(buildBase, `pool-${slot}`);
-    try {
-      const intermediates = join(root, "Build", "Intermediates.noindex");
-      if (readdirSync(intermediates).length === 0) continue;
-      const logs = join(root, "Logs", "Build");
-      let newest = 0;
-      try {
-        for (const name of readdirSync(logs)) {
-          newest = Math.max(newest, statSync(join(logs, name)).mtimeMs);
-        }
-      } catch {
-        // No build logs: fall back to the build products themselves.
-      }
-      warm.set(slot, newest || statSync(intermediates).mtimeMs);
-    } catch {
-      // Missing or unreadable DerivedData is cold.
-    }
-  }
-  return warm;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: string): PoolConfig {
@@ -1073,13 +1059,7 @@ async function acquireRunSlot(
       die("canceled while waiting for a simulator slot");
     }
     const devices = await listDevices(session);
-    for (const slot of preferredAcquireSlots(
-      slotNumbers(config),
-      devices,
-      runtime,
-      config.deviceType,
-      warmDerivedDataRecency(config.buildBase, slotNumbers(config)),
-    )) {
+    for (const slot of preferredAcquireSlots(slotNumbers(config), devices, runtime, config.deviceType)) {
       if (session.canceled) {
         die("canceled while waiting for a simulator slot");
       }
@@ -1111,8 +1091,9 @@ type ArtifactInput = {
   attemptNumber: number;
   attemptCount: number;
   hangDetected: boolean;
-  slot: number;
-  udid: string;
+  /** null for a slotless build. */
+  slot: number | null;
+  udid: string | null;
   derivedData: string;
   logFile: string;
   exitCode: number;
@@ -1285,6 +1266,8 @@ function printSummary(input: {
   artifactPath: string;
   videoPath?: string;
   derivedData?: string;
+  /** The slotless build that preceded the test phase, or the whole run when it only built. */
+  build?: BuildPhase;
   completion?: TestCompletion;
   /** Crash line that made the run skip its hang retry. */
   hostCrash?: string;
@@ -1294,11 +1277,26 @@ function printSummary(input: {
   const duration = input.endedAt - input.startedAt;
   const totalDuration = input.totalEndedAt - input.totalStartedAt;
   const lines: string[] = ["", `Started: ${new Date(input.totalStartedAt * 1000).toLocaleString()}`, `Ended:   ${new Date(input.totalEndedAt * 1000).toLocaleString()}`];
-  if (totalDuration !== duration) {
+  const build = input.build;
+  const buildOnly = build != null && build.logFile === input.logFile;
+  if (build) {
+    lines.push(
+      `Build (no simulator slot): ${build.endedAt - build.startedAt}s after checkout lock wait ${build.lockWaitSeconds}s + xcode-build slot wait ${build.heavyWaitSeconds}s`,
+      `Build DerivedData: ${build.derivedData}`,
+    );
+    if (!buildOnly) {
+      lines.push(`Build log: ${build.logFile}`);
+    }
+  }
+  if (buildOnly) {
+    lines.push(`Total elapsed: ${totalDuration}s`);
+  } else if (totalDuration !== duration) {
     lines.push(`Total elapsed: ${totalDuration}s`);
     lines.push(`xcodebuild elapsed: ${duration}s`);
     lines.push(
-      `Breakdown: slot wait ${input.slotWait}s + simulator prep ${input.simPrep}s + xcodebuild ${duration}s`,
+      build
+        ? `Breakdown: build ${build.endedAt - build.startedAt}s + slot wait ${input.slotWait}s + simulator prep ${input.simPrep}s + tests ${duration}s`
+        : `Breakdown: slot wait ${input.slotWait}s + simulator prep ${input.simPrep}s + xcodebuild ${duration}s`,
     );
   } else {
     lines.push(`Elapsed: ${duration}s`);
@@ -1370,10 +1368,14 @@ async function runXcodebuildAttempt(input: {
   config: PoolConfig;
   command: string;
   argv: string[];
+  /** The caller's command, which decides early test completion (the test phase runs an xctestrun). */
+  completionArgv?: string[];
   logFile: string;
   derivedData: string;
-  udid: string;
+  /** -destination value: a pool simulator id, or the generic simulator for slotless builds. */
+  destination: string;
   extraSettings: string[];
+  env?: NodeJS.ProcessEnv;
 }): Promise<{
   code: number;
   hung: boolean;
@@ -1392,12 +1394,13 @@ async function runXcodebuildAttempt(input: {
       ...input.argv,
       ...input.extraSettings,
       "-destination",
-      `platform=iOS Simulator,id=${input.udid}`,
+      input.destination,
       "-derivedDataPath",
       input.derivedData,
     ],
     {
       stdio: ["ignore", logFd, logFd],
+      ...(input.env ? { env: input.env } : {}),
     },
   );
   closeSync(logFd);
@@ -1440,7 +1443,7 @@ async function runXcodebuildAttempt(input: {
     const size = fileSize(input.logFile);
     if (size !== lastLogSize) {
       lastLogSize = size;
-      const next = finishedTests(input.argv, readFileSync(input.logFile, "utf8"));
+      const next = finishedTests(input.completionArgv ?? input.argv, readFileSync(input.logFile, "utf8"));
       if (next?.summary !== completion?.summary) {
         completionSince = next ? nowMs : 0;
       }
@@ -1530,13 +1533,124 @@ async function runXcodebuildAttempt(input: {
   };
 }
 
+type BuildPhase = {
+  code: number;
+  hung: boolean;
+  /** The build's process group did not prove quiescent, or the run was canceled. */
+  uncertain: boolean;
+  logFile: string;
+  derivedData: string;
+  startedAt: number;
+  endedAt: number;
+  lockWaitSeconds: number;
+  heavyWaitSeconds: number;
+  xctestrun?: string;
+};
+
+function buildPhaseMetadata(build: BuildPhase): Record<string, unknown> {
+  return {
+    derived_data_path: build.derivedData,
+    log_path: build.logFile,
+    exit_code: build.code,
+    hang_detected: build.hung,
+    ...(build.xctestrun ? { xctestrun: build.xctestrun } : {}),
+  };
+}
+
+/**
+ * Build in this checkout's one DerivedData without holding a simulator slot: exclusive
+ * checkout lock, then a machine-wide xcode-build slot (scripts/heavy.sh's semaphore) around
+ * xcodebuild only. For a test run, clone the products for the test phase under the same
+ * checkout lock, so a later rebuild cannot change what these tests run.
+ */
+async function runBuildPhase(input: {
+  session: CommandSession;
+  config: PoolConfig;
+  command: string;
+  argv: string[];
+  extraSettings: string[];
+  logFile: string;
+  cloneFor?: { runDir: string; scheme: string };
+}): Promise<BuildPhase> {
+  const { session, config } = input;
+  const derivedData = checkoutDerivedData(config.buildBase);
+  mkdirSync(derivedData, { recursive: true });
+  const lockStart = nowEpoch();
+  const phase: BuildPhase = {
+    code: 1,
+    hung: false,
+    uncertain: false,
+    logFile: input.logFile,
+    derivedData,
+    startedAt: lockStart,
+    endedAt: lockStart,
+    lockWaitSeconds: 0,
+    heavyWaitSeconds: 0,
+  };
+  writeFileSync(input.logFile, "");
+  const checkoutLock = await waitForFlock(`${derivedData}.lock`, "exclusive", session, () =>
+    log(`[sim-pool] another run is building this checkout (${derivedData}); waiting`),
+  );
+  if (!checkoutLock) {
+    phase.uncertain = true;
+    phase.code = session.cancelExitCode();
+    return phase;
+  }
+  try {
+    phase.lockWaitSeconds = nowEpoch() - lockStart;
+    dropBuildDescriptionsMissingVendor(process.cwd(), derivedData);
+    const heavy = await acquireHeavyBuildSlot(process.env, session, log);
+    if (!heavy) {
+      phase.uncertain = true;
+      phase.code = session.cancelExitCode();
+      return phase;
+    }
+    phase.heavyWaitSeconds = heavy.waitedSeconds;
+    try {
+      log(`[sim-pool] Building without a simulator slot in ${derivedData}`);
+      log(`[sim-pool] Build log: ${input.logFile}`);
+      phase.startedAt = nowEpoch();
+      const result = await runXcodebuildAttempt({
+        session,
+        config,
+        command: input.command,
+        argv: input.argv,
+        logFile: input.logFile,
+        derivedData,
+        destination: SLOTLESS_BUILD_DESTINATION,
+        extraSettings: [...input.extraSettings, ...slotlessBuildSettings(input.argv)],
+        env: { ...process.env, OPPI_HEAVY_HELD: heavy.heldEnv },
+      });
+      phase.endedAt = nowEpoch();
+      phase.code = result.code;
+      phase.hung = result.hung;
+      phase.uncertain = !result.stop.quiescent || session.canceled;
+    } finally {
+      heavy.lock?.release();
+    }
+    if (phase.code === 0 && !phase.uncertain && input.cloneFor) {
+      try {
+        const products = cloneProducts(derivedData, input.cloneFor.runDir);
+        phase.xctestrun = findXctestrun(products, input.cloneFor.scheme);
+        log(`[sim-pool] Test products: ${products}`);
+      } catch (error) {
+        log(`[sim-pool] ${error instanceof Error ? error.message : String(error)}`);
+        phase.code = 1;
+      }
+    }
+  } finally {
+    checkoutLock.release();
+  }
+  return phase;
+}
+
 function pruneOldLogs(logDir: string): void {
   if (!existsSync(logDir)) {
     return;
   }
   const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000;
   for (const name of readdirSync(logDir)) {
-    if (!/^pool-.*\.(log|json|summary\.json)$/.test(name)) {
+    if (!/^(?:pool|build)-.*\.(log|json|summary\.json)$/.test(name)) {
       continue;
     }
     const path = join(logDir, name);
@@ -1645,8 +1759,12 @@ export async function commandRun(
   validateCommandGuardrails(config, args);
   const split = splitRunCommand(args);
   const extraSettings = applyPoolBuildSettings(config, split.argv);
+  const plan: RunPlan = isXcodebuild(split.command) ? planRun(split.argv) : { kind: "slot", readsDerivedData: true };
   const runStart = nowEpoch();
   let owned: OwnedSlot | undefined;
+  let build: BuildPhase | undefined;
+  let sharedDerivedData: HeldLock | undefined;
+  const slotWaitStartHolder = { value: runStart };
   const slotWaitEndHolder = { value: runStart };
   let uncertain = false;
   let videoSession: VideoSession | null = null;
@@ -1670,7 +1788,56 @@ export async function commandRun(
   let videoPath: string | undefined;
   let videoRecording: Record<string, unknown> | undefined;
   const attemptArtifacts: string[] = [];
+  const logDir = join(config.buildBase, "logs");
+  mkdirSync(logDir, { recursive: true });
+  pruneOldLogs(logDir);
+  pruneRunDirectories(config.buildBase);
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  let testArgv = split.argv;
+  let completionArgv: string[] | undefined;
   try {
+    if (plan.kind === "build" || plan.kind === "split") {
+      const runDir = plan.kind === "split" ? runDirectory(config.buildBase, stamp) : undefined;
+      build = await runBuildPhase({
+        session,
+        config,
+        command: split.command,
+        argv: plan.buildArgv,
+        extraSettings,
+        logFile: join(logDir, `build-${stamp}.log`),
+        ...(runDir && plan.kind === "split" ? { cloneFor: { runDir, scheme: plan.scheme } } : {}),
+      });
+      exitCode = build.code;
+      hangDetected = build.hung;
+      uncertain = uncertain || build.uncertain;
+      if (plan.kind === "build" || build.code !== 0 || !build.xctestrun || !runDir) {
+        return commandRunExitCode({
+          canceled: session.canceled,
+          cancelExitCode: session.cancelExitCode(),
+          uncertain,
+          exitCode,
+        });
+      }
+      testArgv = ["test-without-building", "-xctestrun", build.xctestrun, ...plan.testFlags];
+      completionArgv = split.argv;
+      derivedData = runDir;
+    } else if (plan.readsDerivedData) {
+      // The caller's own test-without-building reads products built in this checkout's
+      // DerivedData; keep a rebuild from replacing them mid-run.
+      derivedData = checkoutDerivedData(config.buildBase);
+      mkdirSync(derivedData, { recursive: true });
+      sharedDerivedData = await waitForFlock(`${derivedData}.lock`, "shared", session, () =>
+        log(`[sim-pool] this checkout is building (${derivedData}); waiting to read its products`),
+      );
+      if (!sharedDerivedData) {
+        uncertain = true;
+        return session.cancelExitCode();
+      }
+    } else {
+      derivedData = runDirectory(config.buildBase, stamp);
+      completionArgv = completionArgvForXctestrun(split.argv);
+    }
+    slotWaitStartHolder.value = nowEpoch();
     owned = await acquireRunSlot(config, ["run", ...args], session);
     slotWaitEndHolder.value = nowEpoch();
     const slotOwner = owned;
@@ -1686,9 +1853,7 @@ export async function commandRun(
     }
     log(`[sim-pool] Acquired slot ${owned.slot}`);
     simUdId = await ensureSim(session, config, owned.slot);
-    derivedData = join(config.buildBase, `pool-${owned.slot}`);
     mkdirSync(derivedData, { recursive: true });
-    dropBuildDescriptionsMissingVendor(process.cwd(), derivedData);
     log(`[sim-pool] Simulator: ${poolDeviceName(owned.slot)} (${simUdId})`);
     log(`[sim-pool] DerivedData: ${derivedData}`);
     prepStart = nowEpoch();
@@ -1696,10 +1861,6 @@ export async function commandRun(
     const beforeBoot = hooks.beforeBoot;
     await prepareSimulator(session, config, bootUdid, "normal", beforeBoot && (() => beforeBoot(bootUdid)));
     prepEnd = nowEpoch();
-    const logDir = join(config.buildBase, "logs");
-    mkdirSync(logDir, { recursive: true });
-    pruneOldLogs(logDir);
-    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
     const baseLog = join(logDir, `pool-${owned.slot}-${stamp}.log`);
     const baseArtifact = baseLog.replace(/\.log$/, ".json");
     finalArtifact = baseLog.replace(/\.log$/, ".summary.json");
@@ -1725,7 +1886,7 @@ export async function commandRun(
         log(`[sim-pool] Retry ${attemptsUsed}/${config.hangRetries + 1} — log: ${logFile}`);
         await prepareSimulator(session, config, simUdId, "recovery");
       }
-      const attemptArgs = buildAttemptCommand(attempt, split.argv);
+      const attemptArgs = buildAttemptCommand(attempt, testArgv);
       if (attempt > 0) {
         const bundle = extractFlagValue("-resultBundlePath", attemptArgs);
         if (bundle) {
@@ -1737,10 +1898,12 @@ export async function commandRun(
         config,
         command: split.command,
         argv: attemptArgs,
+        ...(completionArgv ? { completionArgv: buildAttemptCommand(attempt, completionArgv) } : {}),
         logFile,
         derivedData,
-        udid: simUdId,
-        extraSettings,
+        destination: `platform=iOS Simulator,id=${simUdId}`,
+        // The test phase runs prebuilt products; build settings went to the build phase.
+        extraSettings: build ? [] : extraSettings,
       });
       exitCode = result.code;
       hangDetected = hangDetected || result.hung;
@@ -1864,8 +2027,61 @@ export async function commandRun(
     if (!stopped.quiescent) {
       uncertain = true;
     }
+    sharedDerivedData?.release();
+    const slotWaitStart = slotWaitStartHolder.value;
     const slotWaitEnd = slotWaitEndHolder.value;
     const runEnd = nowEpoch();
+    const buildMetadata = build ? { build_phase: buildPhaseMetadata(build) } : {};
+    if (build && !owned) {
+      // Slotless build (no test action), or a test run whose build failed.
+      const artifactPath = build.logFile.replace(/\.log$/, ".summary.json");
+      try {
+        writeJsonArtifact({
+          artifactPath,
+          scope: "final",
+          startedAt: build.startedAt,
+          endedAt: build.endedAt,
+          attemptNumber: 1,
+          attemptCount: 1,
+          hangDetected: build.hung,
+          slot: null,
+          udid: null,
+          derivedData: build.derivedData,
+          logFile: build.logFile,
+          exitCode: uncertain && exitCode === 0 ? 1 : exitCode,
+          extra: {
+            ...buildMetadata,
+            ...(uncertain ? { incomplete: true } : {}),
+            timing_breakdown_seconds: {
+              checkout_lock_wait: build.lockWaitSeconds,
+              xcode_build_slot_wait: build.heavyWaitSeconds,
+              build: build.endedAt - build.startedAt,
+              total_wall: runEnd - runStart,
+            },
+          },
+        });
+        log(`[sim-pool] Artifact: ${artifactPath}`);
+        if (!uncertain) {
+          printSummary({
+            logFile: build.logFile,
+            exitCode,
+            startedAt: build.startedAt,
+            endedAt: build.endedAt,
+            totalStartedAt: runStart,
+            totalEndedAt: runEnd,
+            attemptCount: 1,
+            hangDetected: build.hung,
+            slotWait: 0,
+            simPrep: 0,
+            artifactPath,
+            derivedData: build.derivedData,
+            build,
+          });
+        }
+      } catch {
+        uncertain = true;
+      }
+    }
     if (owned && finalArtifact && !uncertain) {
       try {
         writeJsonArtifact({
@@ -1889,8 +2105,14 @@ export async function commandRun(
             ...(sampleOutput != null ? { sample_output: sampleOutput } : {}),
             ...(videoPath ? { video_path: videoPath } : {}),
             ...(videoRecording ? { video_recording: videoRecording } : {}),
+            ...buildMetadata,
             timing_breakdown_seconds: {
-              slot_wait: slotWaitEnd - runStart,
+              ...(build ? {
+                checkout_lock_wait: build.lockWaitSeconds,
+                xcode_build_slot_wait: build.heavyWaitSeconds,
+                build: build.endedAt - build.startedAt,
+              } : {}),
+              slot_wait: slotWaitEnd - slotWaitStart,
               simulator_prepare: simPrep,
               xcodebuild: xcodeEnd - xcodeStart,
               total_wall: runEnd - runStart,
@@ -1898,7 +2120,8 @@ export async function commandRun(
             timing_phase_epochs: {
               run_start: runStart,
               run_end: runEnd,
-              slot_wait_start: runStart,
+              ...(build ? { build_start: build.startedAt, build_end: build.endedAt } : {}),
+              slot_wait_start: slotWaitStart,
               slot_wait_end: slotWaitEnd,
               simulator_prepare_start: prepStart,
               simulator_prepare_end: prepEnd,
@@ -1917,11 +2140,12 @@ export async function commandRun(
           totalEndedAt: runEnd,
           attemptCount: attemptsUsed,
           hangDetected,
-          slotWait: slotWaitEnd - runStart,
+          slotWait: slotWaitEnd - slotWaitStart,
           simPrep,
           artifactPath: finalArtifact,
           videoPath,
           derivedData,
+          build,
           completion: testCompletion,
           hostCrash,
           stalledBeforeProjectOpen,
@@ -2165,8 +2389,17 @@ OPPI_SIM_POOL_COUNT override the profile.
 Every command builds with DEVELOPER_DIR, defaulting to the Xcode in
 xcode-toolchain.txt (Xcode 27.1); an explicit DEVELOPER_DIR wins.
 
-run acquires a simulator pool slot, injects -destination and -derivedDataPath,
-runs xcodebuild, and releases the slot on exit. An already-booted pool
+run builds outside the simulator slots. Every build goes to one DerivedData per
+checkout (clients/apple/.build/dd) for a generic arm64 simulator, under a
+checkout lock and one of the machine-wide heavy.sh xcode-build slots
+(OPPI_HEAVY_XCODE_BUILD, default 2). A build with no test action
+(build, build-for-testing) takes no simulator at all. A test run builds, clones
+the products into .build/runs/<run> (APFS clone), then acquires a pool slot
+only for test-without-building -xctestrun on that clone, so every slot and
+device profile reuses one build and a rebuild cannot change running tests.
+A caller's own test-without-building runs in a slot against .build/dd (or its
+-xctestrun). run injects -destination and -derivedDataPath and releases the
+slot on exit. An already-booted pool
 simulator is reused unless OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1. Pool simulators
 stay booted after a run unless OPPI_SIM_POOL_KEEP_BOOTED=0; at the end of each
 run, claim, and release the reaper shuts down pool simulators idle for
@@ -2200,8 +2433,10 @@ in-flight/uncertain reclaim when recorded groups are idle or the ledger is
 proven empty. Booted is rechecked as device state, not idleness. Killing xcrun
 does not mean CoreSimulator finished.
 
-prune-cache dry-runs this checkout's numeric pool-* dirs, derived-data-*, and
-one-off mac-* experiment dirs. --apply deletes pool-* only after acquiring the
+prune-cache dry-runs this checkout's numeric pool-* dirs (per-slot DerivedData
+from before builds moved to .build/dd), derived-data-*, and one-off mac-*
+experiment dirs. run itself drops cloned products of finished runs after an
+hour and run directories after three days. --apply deletes pool-* only after acquiring the
 slot lease. derived-data-* and mac-* are skipped on apply (no exclusive lease).
 `);
   process.exit(1);

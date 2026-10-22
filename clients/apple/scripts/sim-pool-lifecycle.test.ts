@@ -430,7 +430,7 @@ describe("sim-pool reap after a run", () => {
     seedSlot(sim.lockDir, 5, 60);
     writeCheckout(sim.root);
 
-    const result = sim.pool(["run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"], {
+    const result = sim.pool(["run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"], {
       OPPI_ROOT: sim.root,
       OPPI_SIM_POOL_COUNT: "1",
       OPPI_SIM_DEVICE_TYPE: IPHONE,
@@ -457,7 +457,7 @@ describe("sim-pool booted ceiling", () => {
     seedSlot(sim.lockDir, 4, 50);
     writeCheckout(sim.root);
 
-    const result = sim.pool(["run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"], {
+    const result = sim.pool(["run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"], {
       OPPI_ROOT: sim.root,
       OPPI_SIM_POOL_COUNT: "1",
       OPPI_SIM_DEVICE_TYPE: IPHONE,

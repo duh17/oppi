@@ -625,7 +625,8 @@ export function parseStrictSimPoolSummary(
   if (exitCode == null) {
     throw new QAVerifyError("sim-pool exit_code missing", "Owned exit code is required", 1);
   }
-  const expectedPrefix = join(expected.appleDir, ".build", `pool-`);
+  // A sim-pool test run executes a per-run clone of this checkout's build (.build/runs/<run>).
+  const expectedPrefix = join(expected.appleDir, ".build", "runs") + "/";
   if (!derivedDataPath.startsWith(expectedPrefix)) {
     throw new QAVerifyError(
       `sim-pool derived_data_path is not this worktree pool: ${derivedDataPath}`,

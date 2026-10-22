@@ -12,7 +12,7 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 SIM_POOL="$REPO_ROOT/clients/apple/scripts/sim-pool.sh"
 HEAVY="$REPO_ROOT/scripts/heavy.sh"
 PLANNER="$REPO_ROOT/scripts/pre-push-plan.ts"
-GATE_VERSION="6"
+GATE_VERSION="7"
 ZERO_OID="0000000000000000000000000000000000000000"
 CACHE_DIR="$(git rev-parse --git-dir)/oppi/pre-push-cache/v${GATE_VERSION}"
 GIT_LOCAL_ENV_VARS="$(git rev-parse --local-env-vars)"
@@ -100,14 +100,55 @@ run_self_test() {
     MAC_CHANGED=1
     run_apple_gate() { false; echo apple-continued >> "$lane_fixture/trace"; }
     run_mac_gate() { echo mac-ran >> "$lane_fixture/trace"; }
+    run_ios_unit_gate() { echo unit-ran >> "$lane_fixture/trace"; }
     apple_then_mac & wait "$!"
   ) >/dev/null 2>&1
   lane_status=$?
   set -e
   [[ "$lane_status" -ne 0 && ! -e "$lane_fixture/trace" && ! -e "$lane_fixture/apple.pass" ]] || {
-    echo "pre-push self-test: a failing Apple lane must fail apple_then_mac before Mac and without a cache marker" >&2
+    echo "pre-push self-test: a failing Apple build must fail apple_then_mac before Mac or unit tests and without a cache marker" >&2
     exit 1
   }
+  # Unit tests fail while the Mac compile is still running: the lane fails only after Mac ends.
+  set +e
+  (
+    set -euo pipefail
+    eval "$lane_src"
+    ensure_lane_clean() { return 0; }
+    cache_path() { echo "$lane_fixture/$1.pass"; }
+    MAC_CHANGED=1
+    run_apple_gate() { true; }
+    run_mac_gate() { sleep 1; echo mac-ran >> "$lane_fixture/trace"; }
+    run_ios_unit_gate() { false; echo unit-continued >> "$lane_fixture/trace"; }
+    apple_then_mac & wait "$!"
+  ) >/dev/null 2>&1
+  lane_status=$?
+  set -e
+  [[ "$lane_status" -ne 0 && "$(cat "$lane_fixture/trace")" == "mac-ran" && ! -e "$lane_fixture/ios-unit.pass" ]] || {
+    echo "pre-push self-test: failing unit tests must fail apple_then_mac after the Mac compile ends" >&2
+    exit 1
+  }
+  rm -f "$lane_fixture"/*
+  # The Mac compile fails while unit tests pass: the lane fails.
+  set +e
+  (
+    set -euo pipefail
+    eval "$lane_src"
+    ensure_lane_clean() { return 0; }
+    cache_path() { echo "$lane_fixture/$1.pass"; }
+    MAC_CHANGED=1
+    run_apple_gate() { true; }
+    run_mac_gate() { false; echo mac-continued >> "$lane_fixture/trace"; }
+    run_ios_unit_gate() { true; }
+    apple_then_mac & wait "$!"
+  ) >/dev/null 2>&1
+  lane_status=$?
+  set -e
+  [[ "$lane_status" -ne 0 && ! -e "$lane_fixture/trace" && ! -e "$lane_fixture/mac.pass" ]] || {
+    echo "pre-push self-test: a failing Mac compile must fail apple_then_mac" >&2
+    exit 1
+  }
+  rm -f "$lane_fixture"/*
   set +e
   (
     set -euo pipefail
@@ -117,12 +158,13 @@ run_self_test() {
     MAC_CHANGED=1
     run_apple_gate() { true; }
     run_mac_gate() { echo mac-ran >> "$lane_fixture/trace"; }
+    run_ios_unit_gate() { true; }
     apple_then_mac & wait "$!"
   ) >/dev/null 2>&1
   lane_status=$?
   set -e
-  [[ "$lane_status" -eq 0 && "$(cat "$lane_fixture/trace")" == "mac-ran" && -e "$lane_fixture/mac.pass" ]] || {
-    echo "pre-push self-test: a passing Apple lane must run Mac and record both markers" >&2
+  [[ "$lane_status" -eq 0 && "$(cat "$lane_fixture/trace")" == "mac-ran" && -e "$lane_fixture/mac.pass" && -e "$lane_fixture/ios-unit.pass" ]] || {
+    echo "pre-push self-test: a passing Apple lane must run Mac and the unit tests and record every marker" >&2
     exit 1
   }
   rm -rf "$lane_fixture"
@@ -317,6 +359,7 @@ lane_has_dirty_paths() {
     apple) [[ "$dirty_apple" != "none" ]] && overlaps=0 ;;
     mac) [[ "$dirty_mac" -eq 1 ]] && overlaps=0 ;;
     harness) [[ "$dirty_harness" -eq 1 ]] && overlaps=0 ;;
+    ios-unit) [[ "$dirty_apple" != "none" ]] && overlaps=0 ;;
   esac
 
   if [[ "$overlaps" -eq 0 ]]; then
@@ -342,7 +385,7 @@ cache_path() {
   local lane_mode key
   case "$lane" in
     server) lane_mode="$SERVER_MODE" ;;
-    apple) lane_mode="$APPLE_MODE" ;;
+    apple|ios-unit) lane_mode="$APPLE_MODE" ;;
     mac) lane_mode="$MAC_CHANGED" ;;
     harness) lane_mode="$HARNESS_CHANGED" ;;
   esac
@@ -429,12 +472,15 @@ run_apple_gate() {
   if [[ "$APPLE_MODE" == "all" ]]; then
     scheme="Oppi"
   fi
-  # Lock order: the heavy.sh xcode-build slot is the OUTER lock and sim-pool's simulator
-  # slot is the INNER one. The slot is therefore held while sim-pool waits for or prepares a
-  # simulator. A later sim-pool change that takes heavy slots itself must keep this order
-  # (heavy outside, sim-pool inside); re-entrancy via OPPI_HEAVY_HELD covers the nesting.
-  (cd "$REPO_ROOT/clients/apple" && "$HEAVY" xcode-build -- "$SIM_POOL" run -- \
+  # sim-pool builds without a simulator slot and takes a machine-wide heavy.sh xcode-build
+  # slot around the build itself.
+  (cd "$REPO_ROOT/clients/apple" && "$SIM_POOL" run -- \
     xcodebuild -project Oppi.xcodeproj -scheme "$scheme" build-for-testing)
+}
+
+# Every OppiUnitTests test, in OPPI_UNIT_SHARDS (3) pool slots from one build (~2 min).
+run_ios_unit_gate() {
+  (cd "$REPO_ROOT/clients/apple" && bun scripts/unit-shards.ts)
 }
 
 run_mac_gate() {
@@ -448,7 +494,8 @@ run_mac_gate() {
 
 echo "pre-push: $CHANGED_COUNT changed paths; server=$SERVER_MODE apple=$APPLE_MODE mac=$MAC_CHANGED harness=$HARNESS_CHANGED"
 
-if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 ]]; then
+# The Apple build runs the server's architecture rules in a build phase, so it needs them too.
+if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 || "$APPLE_MODE" != "none" ]]; then
   # Install server deps from this worktree's lockfile before any lane starts, so
   # lanes never race on node_modules. Fails the hook if deps cannot be synced.
   if ! run_without_git_local_env ensure_server_deps; then
@@ -457,16 +504,25 @@ if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 ]]; then
   fi
 fi
 
-# The Mac compile (~50 s) follows the Apple lane instead of waiting for every lane:
-# the server suite is the longest lane, so the Mac build now overlaps it. A failed
-# Apple lane skips the Mac compile, as before.
+# After the iOS build, the Mac compile (~50 s) and the sharded iOS unit tests (~2 min) run
+# together, overlapping the server lane. A failed iOS build skips both.
 # Keep run_cached out of || / && / if-tests here: they disable set -e inside its nested
-# shell (see run_cached). The background subshell inherits set -e, so a failed Apple lane
-# ends this function with that status before Mac starts.
+# shell (see run_cached). The background subshell inherits set -e, so a failed Apple build
+# ends this function with that status before Mac or the unit tests start; a failed unit
+# lane still waits for the Mac compile (EXIT trap) and a failed Mac compile fails `wait`.
 apple_then_mac() {
   run_cached apple run_apple_gate
-  [[ "$MAC_CHANGED" -eq 1 ]] || return 0
-  run_cached mac run_mac_gate
+  local mac_pid=""
+  if [[ "$MAC_CHANGED" -eq 1 ]]; then
+    run_cached mac run_mac_gate & mac_pid="$!"
+    trap '[[ -z "$mac_pid" ]] || wait "$mac_pid" 2>/dev/null' EXIT
+  fi
+  run_cached ios-unit run_ios_unit_gate
+  # An if-body, not an || list: set -e must see a failed wait.
+  if [[ -n "$mac_pid" ]]; then
+    wait "$mac_pid"
+    mac_pid=""
+  fi
 }
 
 PIDS=()
