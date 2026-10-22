@@ -1,5 +1,7 @@
 import Foundation
 import GhosttyVt
+import LocalAuthentication
+import Synchronization
 import Testing
 import UIKit
 @testable import Oppi
@@ -13,11 +15,46 @@ private final class QuietConnection: SSHTerminalConnection {
     func cancel() async {}
 }
 
+/// Saved hosts and passwords for a test: its own defaults suite and an
+/// in-memory keychain, so nothing reaches the app's real store.
+private struct IsolatedProfiles {
+    private final class MemoryKeychain: SSHCredentialStoring {
+        private let items = Mutex<[String: Data]>([:])
+        func load(account: String, requirePresence: Bool, authenticationContext: LAContext?) throws -> Data? {
+            items.withLock { $0[account] }
+        }
+        func save(_ data: Data, account: String, requirePresence: Bool) throws {
+            items.withLock { $0[account] = data }
+        }
+        func delete(account: String) throws { items.withLock { $0[account] = nil } }
+    }
+
+    /// UserDefaults is not Sendable, so the closure reopens the same named suite.
+    private let suite = "SSHTerminalSwitcherTests.profiles.\(UUID().uuidString)"
+    private let keychain = MemoryKeychain()
+
+    var make: @Sendable () -> SSHTerminalProfileStore {
+        { [suite, keychain] in
+            SSHTerminalProfileStore(defaults: UserDefaults(suiteName: suite)!, keychain: keychain)
+        }
+    }
+}
+
 @Suite("SSH terminal switcher", .serialized, .timeLimit(.minutes(1)))
 @MainActor
 struct SSHTerminalSwitcherTests {
     private let studio = SSHTerminalProfile(host: "mac-studio", username: "chen")
     private let mini = SSHTerminalProfile(host: "mac-mini", username: "chen", startupCommand: "herdr")
+
+    /// Turns the SSH experiment on for a test; call the result to put the flag back.
+    private func enableExperiment() -> () -> Void {
+        let flag = AppPreferences.Experiments.sshTerminalKey
+        let previous = UserDefaults.standard.object(forKey: flag)
+        UserDefaults.standard.set(true, forKey: flag)
+        return {
+            if let previous { UserDefaults.standard.set(previous, forKey: flag) } else { UserDefaults.standard.removeObject(forKey: flag) }
+        }
+    }
 
     private func makeRegistry() -> SSHTerminalRegistry {
         let defaults = UserDefaults(suiteName: "SSHTerminalSwitcherTests.\(UUID().uuidString)")!
@@ -156,14 +193,10 @@ struct SSHTerminalSwitcherTests {
     }
 
     @Test func reconnectAfterASwitchAsksForTheShownHostsPasswordAndDialsThatHost() async throws {
-        let flag = AppPreferences.Experiments.sshTerminalKey
-        let previous = UserDefaults.standard.object(forKey: flag)
-        UserDefaults.standard.set(true, forKey: flag)
-        defer {
-            if let previous { UserDefaults.standard.set(previous, forKey: flag) } else { UserDefaults.standard.removeObject(forKey: flag) }
-        }
+        let restore = enableExperiment()
+        defer { restore() }
         let registry = makeRegistry()
-        let session = SSHTerminalConnectSession(registry: registry)
+        let session = SSHTerminalConnectSession(registry: registry, profileStore: IsolatedProfiles().make)
         // Two password hosts with nothing saved: any reconnect asks.
         let hostA = SSHTerminalProfile(host: "reconnect-a.invalid", username: "alice")
         let hostB = SSHTerminalProfile(host: "reconnect-b.invalid", username: "bob")
@@ -214,23 +247,13 @@ struct SSHTerminalSwitcherTests {
         #expect(session.folder == "~/proj")
         #expect(session.folderTerminalCommand == "tmux new -A -s proj")
         session.cancel()
-        // The attempt saves host B before it notices the cancel; leave no stray host behind.
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while SSHTerminalProfileStore().profile(id: hostB.id) == nil, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        try? SSHTerminalProfileStore().delete(id: hostB.id)
     }
 
     @Test func theSavePasswordSwitchOfAReconnectEditsTheReconnectedProfile() throws {
-        let flag = AppPreferences.Experiments.sshTerminalKey
-        let previous = UserDefaults.standard.object(forKey: flag)
-        UserDefaults.standard.set(true, forKey: flag)
-        defer {
-            if let previous { UserDefaults.standard.set(previous, forKey: flag) } else { UserDefaults.standard.removeObject(forKey: flag) }
-        }
+        let restore = enableExperiment()
+        defer { restore() }
         let registry = makeRegistry()
-        let session = SSHTerminalConnectSession(registry: registry)
+        let session = SSHTerminalConnectSession(registry: registry, profileStore: IsolatedProfiles().make)
         let channel = try open(registry, mini)
         session.show(try #require(registry.terminal(for: mini.id)))
         channel.close(reason: "dropped")
@@ -241,6 +264,77 @@ struct SSHTerminalSwitcherTests {
         session.setPromptSavesPassword(true)
         #expect(session.promptTarget?.profile.savesPassword == true)
         #expect(session.connectedProfile?.savesPassword == false, "the shown terminal's profile is unchanged until it is saved")
+    }
+
+    /// Reconnects the terminal the session shows, on a form for `formHost`, and
+    /// answers the password sheet. Returns what the form was told was saved.
+    private func reconnectFromAForm(
+        formHost: SSHTerminalProfile, shown: SSHTerminalProfile, profiles: IsolatedProfiles, savePassword: Bool
+    ) async throws -> (saved: [SSHTerminalProfile], store: SSHTerminalProfileStore) {
+        let registry = makeRegistry()
+        let session = SSHTerminalConnectSession(registry: registry, profileStore: profiles.make)
+        let channel = try open(registry, shown)
+        session.show(try #require(registry.terminal(for: shown.id)))
+        var saved = [SSHTerminalProfile]()
+        let opening = UIViewController()
+        let window = try mount(opening, appRoot: makeTestAppRoot())
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            registry.closeAll(reason: "done")
+        }
+        let chrome = SSHTerminalConnectChrome(
+            host: opening, session: session,
+            profile: { formHost }, setProfile: { _ in }, editHost: {},
+            submitPassword: { _ in },
+            onSaved: { saved.append($0) }
+        )
+        chrome.sync()
+        try await Task.sleep(for: .milliseconds(100))
+        channel.close(reason: "The connection dropped.")
+        session.reconnect(experimentEnabled: true)
+        chrome.sync()
+        try await Task.sleep(for: .milliseconds(100))
+        let sheet = try #require(
+            (opening.presentedViewController as? UINavigationController)?.viewControllers.first
+                as? SSHTerminalPasswordViewController
+        )
+        if savePassword { session.setPromptSavesPassword(true) }
+        sheet.submit("the-password")
+        // The attempt saves the host, tells the form, then dials; wait for the save.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while profiles.make().profile(id: shown.id) == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        session.cancel()
+        return (saved, profiles.make())
+    }
+
+    @Test func aSameHostReconnectTellsItsFormThatSavePasswordWasTurnedOn() async throws {
+        let restore = enableExperiment()
+        defer { restore() }
+        let host = SSHTerminalProfile(host: "form-same.invalid", username: "alice")
+        let result = try await reconnectFromAForm(
+            formHost: host, shown: host, profiles: IsolatedProfiles(), savePassword: true
+        )
+        #expect(result.saved.count == 1)
+        #expect(result.saved.first?.id == host.id)
+        #expect(result.saved.first?.savesPassword == true, "the form must not later save over the stored password")
+        #expect(result.store.profile(id: host.id)?.savesPassword == true)
+    }
+
+    @Test func aReconnectOfAnotherHostLeavesTheFormOnItsOwnHost() async throws {
+        let restore = enableExperiment()
+        defer { restore() }
+        let formHost = SSHTerminalProfile(host: "form-a.invalid", username: "alice")
+        let shown = SSHTerminalProfile(host: "form-b.invalid", username: "bob")
+        let result = try await reconnectFromAForm(
+            formHost: formHost, shown: shown, profiles: IsolatedProfiles(), savePassword: true
+        )
+        #expect(result.store.profile(id: shown.id)?.savesPassword == true, "the shown host was saved")
+        #expect(result.store.profile(id: formHost.id) == nil, "the form's host was not")
+        #expect(result.saved.isEmpty, "the form for host A is not turned into host B's")
     }
 
     @Test func theChatBarDraftOfEachTerminalSurvivesASwapAndBack() async throws {

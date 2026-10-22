@@ -47,9 +47,16 @@ final class SSHTerminalConnectSession {
     private var task: Task<Void, Never>?
     private var runID = UUID()
     @ObservationIgnored private let registry: SSHTerminalRegistry
+    /// Where profiles and saved passwords live. Tests pass a store over their
+    /// own defaults and an in-memory keychain.
+    @ObservationIgnored private let profileStore: @Sendable () -> SSHTerminalProfileStore
 
-    init(registry: SSHTerminalRegistry = .shared) {
+    init(
+        registry: SSHTerminalRegistry = .shared,
+        profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() }
+    ) {
         self.registry = registry
+        self.profileStore = profileStore
     }
 
     func connect(
@@ -68,7 +75,8 @@ final class SSHTerminalConnectSession {
         promptTarget = PromptTarget(profile: value, isReconnect: reconnecting)
         // A lock that is due but not applied yet covers Oppi as well.
         if AppLockService.shared.requiresUnlock() { SSHApprovalCache.shared.invalidateAll() }
-        let old = SSHTerminalProfileStore().profile(id: value.id)
+        let makeStore = profileStore
+        let old = makeStore().profile(id: value.id)
         if value.authentication == .password && suppliedPassword == nil
             && !(value.reusesSavedPassword(of: old) && value.savesPassword) {
             savingHostOnly = false
@@ -80,7 +88,7 @@ final class SSHTerminalConnectSession {
         task = Task {
             defer { registry.untrack(attempt: attempt) }
             do {
-                try await Task.detached { try SSHTerminalProfileStore().save(value, password: suppliedPassword) }.value
+                try await Task.detached { try makeStore().save(value, password: suppliedPassword) }.value
                 guard !Task.isCancelled, runID == self.runID else { return }
                 registry.reconcile(saved: value)
                 onSaved?(value)
@@ -109,7 +117,7 @@ final class SSHTerminalConnectSession {
                             switch value.authentication {
                             case .password:
                                 if let suppliedPassword { return .password(suppliedPassword) }
-                                let stored = try await SSHTerminalProfileStore().approvedPassword(for: value)
+                                let stored = try await makeStore().approvedPassword(for: value)
                                 guard let stored else { throw SSHKeychainError.passwordRequired }
                                 return .password(stored)
                             case .deviceKey:
@@ -177,7 +185,8 @@ final class SSHTerminalConnectSession {
         let value = profile.normalized()
         guard value.isConfigured else { return }
         promptTarget = nil
-        let old = SSHTerminalProfileStore().profile(id: value.id)
+        let makeStore = profileStore
+        let old = makeStore().profile(id: value.id)
         if value.authentication == .password && value.savesPassword && suppliedPassword == nil
             && !value.reusesSavedPassword(of: old) {
             savingHostOnly = true
@@ -190,7 +199,7 @@ final class SSHTerminalConnectSession {
             do {
                 // Updating a presence-protected item can wait for approval.
                 // Never block the main actor on a Security call.
-                try await Task.detached { try SSHTerminalProfileStore().save(value, password: suppliedPassword) }.value
+                try await Task.detached { try makeStore().save(value, password: suppliedPassword) }.value
                 guard !Task.isCancelled, runID == self.runID else { return }
                 registry.reconcile(saved: value)
                 onSaved?(value)
@@ -224,9 +233,12 @@ final class SSHTerminalConnectSession {
     }
 
     /// The password for the pending prompt, sent to the host it was asked for.
-    func submitPrompt(password: String) {
+    func submitPrompt(password: String, onSaved: ((SSHTerminalProfile) -> Void)? = nil) {
         guard let target = promptTarget else { return }
-        connect(profile: target.profile, suppliedPassword: password, reconnecting: target.isReconnect)
+        connect(
+            profile: target.profile, suppliedPassword: password,
+            reconnecting: target.isReconnect, onSaved: onSaved
+        )
     }
 
     func trustAndConnect(

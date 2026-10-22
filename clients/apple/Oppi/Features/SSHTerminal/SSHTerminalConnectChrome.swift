@@ -99,6 +99,13 @@ final class SSHTerminalConnectChrome {
         reconnectTarget?.profile ?? profile()
     }
 
+    /// Tells this screen what a connect saved, only when the connect is for
+    /// this screen's own host: a form for host A must not turn into host B's
+    /// because a switched terminal reconnected.
+    private func savedHandler(for target: SSHTerminalProfile) -> ((SSHTerminalProfile) -> Void)? {
+        target.id == profile().id ? onSaved : nil
+    }
+
     private func presentPassword(from host: UIViewController) {
         guard passwordScreen == nil else { return }
         let shown = promptProfile()
@@ -126,7 +133,9 @@ final class SSHTerminalConnectChrome {
                 self.session.password = ""
                 self.session.passwordPrompt = false
                 if isReconnect {
-                    self.session.submitPrompt(password: password)
+                    self.session.submitPrompt(
+                        password: password, onSaved: self.savedHandler(for: self.promptProfile())
+                    )
                 } else {
                     self.submitPassword(password)
                 }
@@ -166,7 +175,7 @@ final class SSHTerminalConnectChrome {
                 guard let self else { return }
                 self.session.trustAndConnect(
                     profile: self.promptProfile(),
-                    onSaved: self.onSaved
+                    onSaved: self.savedHandler(for: self.promptProfile())
                 )
             },
             onForget: { [weak self] in self?.requestForget() }
