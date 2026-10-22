@@ -292,10 +292,15 @@ final class RouterRoutesUITests: XCTestCase {
         )
         // App Settings is the root of its pages, so it keeps a large title: the
         // bar is taller than an inline one (44 pt plus the large-title row).
-        XCTAssertGreaterThan(
-            settings.frame.height, 70,
-            "Settings must draw its large title (bar was \(settings.frame))"
-        )
+        // On the iPhone Duo's vertical rail the title is inline by design; the
+        // rail is where Back sits outside the bar element.
+        let onVerticalRail = !settings.buttons["BackButton"].exists && app.buttons["BackButton"].exists
+        if !onVerticalRail {
+            XCTAssertGreaterThan(
+                settings.frame.height, 70,
+                "Settings must draw its large title (bar was \(settings.frame))"
+            )
+        }
         attachScreenshot("shell-settings")
         assertRunning()
 
