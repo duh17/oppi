@@ -216,7 +216,8 @@ describe("FileVoiceCallStore", () => {
 
       expect(fresh.state.callId).toBe("call-new");
       expect(fresh.state.delegations).toEqual([]);
-      expect(restarted.snapshot("call-old").lifecycle).toBe("ended");
+      // Ended days ago, so its record is past retention and gone, not re-entered.
+      expect(() => restarted.snapshot("call-old")).toThrow("Unknown voice call");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -530,6 +531,129 @@ describe("FileVoiceCallStore", () => {
 
         controller.dispose();
         expect(cancelled).toBe(true);
+      });
+    });
+
+    function sweepHarness(path: string, store = new FileVoiceCallStore(path)) {
+      let now = 1_000;
+      let sweep: (() => void) | undefined;
+      const callIds = ["call-1", "call-2"];
+      const controller = new VoiceCallController({
+        now: () => now,
+        nextCallId: () => callIds.shift() as string,
+        persistence: store,
+        schedule: (run) => {
+          sweep = run;
+          return () => {};
+        },
+      });
+      const front = new DeterministicVoiceCallFrontend({
+        connectionId: "connection-1",
+        authenticatedDeviceId: "paired-device-a",
+      });
+      return {
+        controller,
+        front,
+        setNow(value: number) {
+          now = value;
+        },
+        runSweep() {
+          sweep?.();
+        },
+      };
+    }
+
+    function storedCalls(
+      path: string,
+    ): Array<{ callId: string; lifecycle: string; updatedAt: number }> {
+      return (
+        JSON.parse(readFileSync(path, "utf8")) as {
+          calls: Array<{ callId: string; lifecycle: string; updatedAt: number }>;
+        }
+      ).calls;
+    }
+
+    it("ends and then drops a call left detached on an idle server, 24 hours after its rejoin window", () => {
+      withStoreDir((path) => {
+        const harness = sweepHarness(path);
+        startAndSay(harness.controller, harness.front, {
+          sessionId: "session-1",
+          clientCallId: "client-1",
+          callId: "call-1",
+          request: "SECRET dropped-call request",
+        });
+        harness.controller.disconnectConnection("connection-1");
+        expect(storedCalls(path)).toMatchObject([{ callId: "call-1", lifecycle: "active" }]);
+
+        // The 10-minute rejoin window is over: the sweep ends the call, and the record stays.
+        harness.setNow(1_000 + 30 * 60_000);
+        harness.runSweep();
+        expect(storedCalls(path)).toMatchObject([
+          { callId: "call-1", lifecycle: "ended", updatedAt: 1_000 + 10 * 60_000 },
+        ]);
+
+        // 24 hours count from the end of the rejoin window, not from when the sweep noticed.
+        harness.setNow(1_000 + 24 * HOUR_MS + 10 * 60_000 - 1);
+        harness.runSweep();
+        expect(storedCalls(path)).toHaveLength(1);
+
+        harness.setNow(1_000 + 24 * HOUR_MS + 10 * 60_000);
+        harness.runSweep();
+        expect(storedCalls(path)).toEqual([]);
+        expect(readFileSync(path, "utf8")).not.toContain("SECRET");
+      });
+    });
+
+    it("counts a start-time end of a stale call from the end of its rejoin window too", () => {
+      withStoreDir((path) => {
+        const harness = sweepHarness(path);
+        startAndSay(harness.controller, harness.front, {
+          sessionId: "session-1",
+          clientCallId: "client-1",
+          callId: "call-1",
+          request: "first request",
+        });
+        harness.controller.disconnectConnection("connection-1");
+
+        harness.setNow(1_000 + 3 * HOUR_MS);
+        harness.controller.startCall(
+          { controlSessionId: "session-1", clientCallId: "client-2" },
+          harness.front.connection,
+        );
+
+        expect(storedCalls(path)).toMatchObject([
+          { callId: "call-1", lifecycle: "ended", updatedAt: 1_000 + 10 * 60_000 },
+          { callId: "call-2", lifecycle: "active" },
+        ]);
+      });
+    });
+
+    it("logs a failed sweep save instead of throwing and retries on the next tick", () => {
+      withStoreDir((path) => {
+        const store = new FileVoiceCallStore(path);
+        const harness = sweepHarness(path, store);
+        const state = startAndSay(harness.controller, harness.front, {
+          sessionId: "session-1",
+          clientCallId: "client-1",
+          callId: "call-1",
+          request: "request",
+        });
+        harness.controller.endCall(
+          { callId: "call-1", controllerLeaseEpoch: state.controllerLeaseEpoch },
+          harness.front.connection,
+        );
+
+        const save = store.save.bind(store);
+        store.save = () => {
+          throw new Error("disk full");
+        };
+        harness.setNow(1_000 + 25 * HOUR_MS);
+        expect(() => harness.runSweep()).not.toThrow();
+        expect(storedCalls(path)).toHaveLength(1);
+
+        store.save = save;
+        harness.runSweep();
+        expect(storedCalls(path)).toEqual([]);
       });
     });
 

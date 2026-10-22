@@ -77,7 +77,8 @@ describe("continuous voice call controller", () => {
     );
     expect(fresh.state.callId).toBe("call-2");
     expect(fresh.state.delegations).toEqual([]);
-    expect(harness.controller.snapshot("call-1").lifecycle).toBe("ended");
+    // It ended days ago, so its record is already past retention and gone.
+    expect(() => harness.controller.snapshot("call-1")).toThrow("Unknown voice call");
     expect(harness.controller.activeCallIdForControlSession("control-session-1")).toBe("call-2");
   });
 

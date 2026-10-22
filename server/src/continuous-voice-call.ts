@@ -1,3 +1,5 @@
+import { safeErrorMessage } from "./log-utils.js";
+import { createLogger } from "./logger.js";
 import type {
   ServerMessage,
   VoiceCallDelegationSnapshot,
@@ -6,6 +8,8 @@ import type {
   VoiceCallStateSnapshot,
   VoiceDelegationUpdateMessage,
 } from "./types.js";
+
+const log = createLogger({ base: { component: "voice_call_store" } });
 
 const DEFAULT_LEASE_DURATION_MS = 30_000;
 const DEFAULT_RETENTION_GRACE_MS = 30_000;
@@ -142,6 +146,8 @@ export class VoiceCallController {
   private readonly detachedCallTtlMs: number;
   private readonly maxRetainedCalls: number;
   private cancelSweep: (() => void) | undefined;
+  /** A save failed after the calls changed in memory; the next sweep writes again. */
+  private saveFailed = false;
 
   constructor(
     private readonly deps: {
@@ -598,20 +604,21 @@ export class VoiceCallController {
       ) {
         continue;
       }
-      this.end(call);
+      // The call ended when its rejoin window ran out, not when this noticed: the 24-hour
+      // retention counts from then, whichever of a start, an attach, or the sweep notices first.
+      this.end(call, call.detachedAt + this.detachedCallTtlMs);
       changed = true;
     }
     if (changed) this.persist();
   }
 
-  private end(call: MutableVoiceCall): void {
-    const now = this.now();
+  private end(call: MutableVoiceCall, endedAt = this.now()): void {
     call.lifecycle = "ended";
     call.frontendConnection = undefined;
     call.controllerLeaseEpoch += 1;
-    call.controllerLeaseExpiresAt = now;
+    call.controllerLeaseExpiresAt = this.now();
     call.eventSeq += 1;
-    call.updatedAt = now;
+    call.updatedAt = endedAt;
   }
 
   private forget(call: MutableVoiceCall): void {
@@ -621,13 +628,19 @@ export class VoiceCallController {
     );
   }
 
-  /** Saves (which prunes) only when an ended call has aged out; an idle sweep writes nothing. */
+  /**
+   * Ends calls whose rejoin window ran out, then saves (which prunes) only when an ended call
+   * has aged out; an idle sweep writes nothing. A failed save is logged, not thrown: the timer
+   * has no caller, and an uncaught error there would shut the server down.
+   */
   private sweepExpiredEndedCalls(): void {
-    for (const call of this.calls.values()) {
-      if (this.isPastEndedRetention(call)) {
+    try {
+      this.endStaleDetachedCalls();
+      if (this.saveFailed || [...this.calls.values()].some((c) => this.isPastEndedRetention(c))) {
         this.persist();
-        return;
       }
+    } catch (error) {
+      log.error("voice_call_store.sweep_failed", { error: safeErrorMessage(error) });
     }
   }
 
@@ -686,13 +699,7 @@ export class VoiceCallController {
       persistence.quarantine(error);
       return;
     }
-    let droppedExpired = false;
-    for (const [callId, call] of restored) {
-      if (!this.isPastEndedRetention(call)) continue;
-      restored.delete(callId);
-      droppedExpired = true;
-    }
-    if (restored.size === 0 && !droppedExpired) return;
+    if (restored.size === 0) return;
     for (const call of restored.values()) {
       // A call attached when the server stopped is detached now. One already detached keeps
       // its own time, so a restart does not give a stale call a fresh rejoin window.
@@ -712,7 +719,11 @@ export class VoiceCallController {
     for (const call of [...this.calls.values()]) {
       if (this.isPastEndedRetention(call)) this.forget(call);
     }
-    this.deps.persistence?.save(this.serializeCalls());
+    const persistence = this.deps.persistence;
+    if (!persistence) return;
+    this.saveFailed = true;
+    persistence.save(this.serializeCalls());
+    this.saveFailed = false;
   }
 
   private serializeCalls(): PersistedVoiceCall[] {
