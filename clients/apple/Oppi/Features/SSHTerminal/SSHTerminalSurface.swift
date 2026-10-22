@@ -1692,10 +1692,14 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// secret (`Password:`, `[sudo] password for duh:`). The trait is read when
     /// the keyboard is built, so a change reloads the input views once. The
     /// terminal is asked again only when its output or the cursor's row changed.
-    /// The painted snapshot answers when it covers the newest output; otherwise
-    /// (a paint bailed: renderer not ready, ring full, no drawable, scene
-    /// inactive) the live screen does, so a prompt is not undetected until some
-    /// later frame paints. History and a hidden cursor leave the state alone.
+    /// The painted snapshot answers when it covers the newest output. When it
+    /// does not (a paint bailed: renderer not ready, ring full, no drawable,
+    /// scene inactive) and no synchronized update is held, the live screen may
+    /// turn secure entry on or keep it latched, so a prompt is not undetected
+    /// until some later frame paints. The live screen never counts toward
+    /// turning it off: mid-update it can show the cursor parked in another pane,
+    /// and the frozen painted line would have kept the latch. Turning off waits
+    /// for two painted frames. History and a hidden cursor leave the state alone.
     /// The keyboard bar shows a lock meanwhile, and the screen moves typing off
     /// the chat bar.
     private func updateSecureEntry() {
@@ -1708,12 +1712,14 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         let changes = channel.engine.changeCount
         let row = channel.engine.cursorCell.row
         guard changes != secureCheckedChanges || row != secureCheckedRow else { return }
-        // The live read formats one row, and only runs here, after the change
-        // gate. nil from both is history or a hidden cursor, not "no prompt".
-        guard let line = channel.engine.cursorLineBeforeCursor
-            ?? channel.engine.liveCursorLineBeforeCursor() else { return }
-        secureCheckedChanges = changes
-        secureCheckedRow = row
+        // nil is history, a hidden cursor, or a picture no frame has drawn yet,
+        // not "no prompt". For the last, the live line stands in unless a
+        // synchronized update holds the screen half-drawn. The live read formats
+        // one row, and only runs here, after the change gate.
+        let painted = channel.engine.cursorLineBeforeCursor
+        let fromLive = painted == nil
+        guard let line = painted ?? (channel.engine.renderHeld ? nil : channel.engine.liveCursorLineBeforeCursor())
+        else { return }
         let latched = securePrompt.map {
             $0.row == row && SSHTerminalPasswordPrompt.trimmingEcho(line).hasPrefix($0.text)
         } ?? false
@@ -1723,16 +1729,25 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             )
             if let prompt {
                 // Turning it on is immediate: the prompt is on screen now.
+                secureCheckedChanges = changes
+                secureCheckedRow = row
                 securePrompt = SecurePrompt(row: row, text: prompt)
                 secureOffChanges = nil
                 applySecureEntry(true)
                 return
             }
         } else {
+            secureCheckedChanges = changes
+            secureCheckedRow = row
             secureOffChanges = nil
             applySecureEntry(true)
             return
         }
+        // A live read that shows no prompt decides nothing and is not stamped,
+        // so the next tick reads again; only painted frames turn it off.
+        if fromLive { return }
+        secureCheckedChanges = changes
+        secureCheckedRow = row
         // Off, on one frame: one more check on a later picture decides, so a
         // single half-drawn frame changes nothing.
         if let off = secureOffChanges, off != changes {

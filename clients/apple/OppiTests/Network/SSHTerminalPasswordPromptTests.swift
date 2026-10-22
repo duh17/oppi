@@ -237,14 +237,46 @@ struct SSHTerminalPasswordPromptTests {
         #expect(grid.isSecureTextEntry)
         #expect(reported == [true])
 
-        // Back on the live screen the prompt is gone; two unpainted ticks agree.
+        // Back on the live screen the prompt is gone, but unpainted ticks only
+        // ever turn secure entry on: releasing waits for two painted frames.
         channel.engine.backToLive()
         grid.drawFrame()
-        #expect(grid.isSecureTextEntry, "one off picture keeps the latch")
         channel.engine.receive(Data("x\r\n".utf8))
         grid.drawFrame()
-        #expect(!grid.isSecureTextEntry)
-        #expect(reported == [true, false])
+        channel.engine.receive(Data("y\r\n".utf8))
+        grid.drawFrame()
+        #expect(grid.isSecureTextEntry, "live reads never release the latch")
+        #expect(reported == [true])
+    }
+
+    @Test func aHeldRedrawWithNoPaintsDoesNotReleaseTheLatch() throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(PasswordPromptStubConnection())
+        // Never in a window, so every paint bails, as with a full GPU ring.
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        defer { channel.close(reason: "done") }
+        var reported: [Bool] = []
+        grid.secureInputChanged = { reported.append($0) }
+
+        channel.engine.receive(Data("Password: ".utf8))
+        grid.drawFrame()
+        #expect(grid.isSecureTextEntry)
+
+        // A synchronized update redraws another pane: the cursor passes through
+        // rows that are not the prompt, across several chunks, before it returns.
+        channel.engine.receive(Data("\u{1b}[?2026h".utf8))
+        #expect(channel.engine.renderHeld)
+        channel.engine.receive(Data("\u{1b}[3;1Hother pane".utf8))
+        grid.drawFrame()
+        channel.engine.receive(Data("\u{1b}[4;1Hmore".utf8))
+        grid.drawFrame()
+        channel.engine.receive(Data("\u{1b}[5;1H".utf8))
+        grid.drawFrame()
+        #expect(grid.isSecureTextEntry, "a held screen is half drawn, and nothing painted")
+        channel.engine.receive(Data("\u{1b}[1;11H\u{1b}[?2026l".utf8))
+        grid.drawFrame()
+        #expect(grid.isSecureTextEntry)
+        #expect(reported == [true])
     }
 
     @Test func aSecretTypedAtAPromptDoesNotOutliveItWhenThePromptEndsWithoutReturn() async throws {
