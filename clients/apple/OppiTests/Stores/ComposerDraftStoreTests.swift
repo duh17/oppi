@@ -695,6 +695,103 @@ struct ComposerDraftStoreTests {
         #expect(reloaded.record(for: newKey)?.payload.text == "typed while locked")
     }
 
+    /// The save that re-reads an unreadable drafts file merges what it reads. A
+    /// draft the user cleared in the meantime has to stay cleared, not come back
+    /// from the older copy on disk.
+    @Test func clearedDraftIsNotResurrectedWhenTheUnreadableFileIsReadAgain() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let first = fixture.makeStore()
+        await first.load()
+        let key = try fixture.key(sessionID: "cleared")
+        let record = try #require(first.setDraft(.init(text: "sent already", repoPointers: []), for: key))
+        await first.flush()
+        first.saveLifecycleFallback(record)
+
+        // The main file cannot be read at launch; the backup can, so the draft
+        // is on screen and the user clears it.
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: fixture.fileURL.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.fileURL.path) }
+        let launching = fixture.makeStore()
+        await launching.load()
+        #expect(launching.record(for: key)?.payload.text == "sent already")
+        #expect(launching.clearDraft(for: key))
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.fileURL.path)
+        await launching.flush()
+
+        #expect(launching.record(for: key) == nil, "The re-read brought the cleared draft back")
+        let relaunched = fixture.makeStore()
+        await relaunched.load()
+        #expect(relaunched.record(for: key) == nil, "The cleared draft came back after a relaunch")
+    }
+
+    /// The lifecycle backup holds the latest keystrokes. Present but unreadable
+    /// (data protection), it is not empty: nothing may overwrite or delete it.
+    @Test func unreadableLifecycleBackupIsNotOverwrittenOrRemoved() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let first = fixture.makeStore()
+        await first.load()
+        let key = try fixture.key(sessionID: "typed")
+        let other = try fixture.key(sessionID: "other")
+        first.setDraft(.init(text: "debounced value", repoPointers: []), for: key)
+        await first.flush()
+        let latest = try #require(first.setDraft(.init(text: "latest keystrokes", repoPointers: []), for: key))
+        first.saveLifecycleFallback(latest)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: fixture.fallbackURL.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.fallbackURL.path) }
+        let launching = fixture.makeStore()
+        await launching.load()
+        // A clear writes the backup's clear marker; a flush with nothing to
+        // record would remove the backup.
+        let scratch = try #require(launching.setDraft(.init(text: "scratch", repoPointers: []), for: other))
+        // The before-suspension snapshot cannot be written either; that has to
+        // be reported, not silently dropped.
+        launching.saveLifecycleFallback(scratch)
+        #expect(launching.lastError == "Failed to save the latest message draft before suspension.")
+        #expect(launching.clearDraft(for: other))
+        await launching.flush()
+        #expect(FileManager.default.fileExists(atPath: fixture.fallbackURL.path))
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.fallbackURL.path)
+        let relaunched = fixture.makeStore()
+        await relaunched.load()
+        #expect(relaunched.record(for: key)?.payload.text == "latest keystrokes")
+    }
+
+    @Test func lifecycleBackupReadLaterIsMergedWithClearsMadeWhileItWasUnreadable() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let first = fixture.makeStore()
+        await first.load()
+        let key = try fixture.key(sessionID: "typed")
+        let other = try fixture.key(sessionID: "other")
+        first.setDraft(.init(text: "debounced value", repoPointers: []), for: key)
+        let otherRecord = try #require(first.setDraft(.init(text: "to clear", repoPointers: []), for: other))
+        await first.flush()
+        let latest = try #require(first.setDraft(.init(text: "latest keystrokes", repoPointers: []), for: key))
+        first.saveLifecycleFallback(latest)
+        first.saveLifecycleFallback(otherRecord)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: fixture.fallbackURL.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.fallbackURL.path) }
+        let launching = fixture.makeStore()
+        await launching.load()
+        #expect(launching.clearDraft(for: other))
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.fallbackURL.path)
+        await launching.flush()
+
+        #expect(launching.record(for: key)?.payload.text == "latest keystrokes")
+        #expect(launching.record(for: other) == nil)
+        let relaunched = fixture.makeStore()
+        await relaunched.load()
+        #expect(relaunched.record(for: key)?.payload.text == "latest keystrokes")
+        #expect(relaunched.record(for: other) == nil)
+    }
+
     private struct Fixture {
         let rootURL: URL
         let fileURL: URL

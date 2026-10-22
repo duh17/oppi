@@ -49,6 +49,36 @@ private struct ComposerDraftFallbackDocument: Codable, Sendable {
     var isEmpty: Bool {
         activeRecords.isEmpty && clearTombstones.isEmpty
     }
+
+    /// Folds in a document read from disk after this one gained its own entries:
+    /// the newer record per key wins, the later clear wins, and a record a clear
+    /// covers is dropped.
+    mutating func merge(_ other: Self) {
+        var tombstones = clearTombstones
+        for tombstone in other.clearTombstones {
+            if let index = tombstones.firstIndex(where: { $0.key == tombstone.key }) {
+                if tombstones[index].clearedRevision < tombstone.clearedRevision {
+                    tombstones[index] = tombstone
+                }
+            } else {
+                tombstones.append(tombstone)
+            }
+        }
+        var records = activeRecords
+        for record in other.activeRecords {
+            if let index = records.firstIndex(where: { $0.key == record.key }) {
+                if composerDraftRecordIsNewer(record, than: records[index]) {
+                    records[index] = record
+                }
+            } else {
+                records.append(record)
+            }
+        }
+        clearTombstones = tombstones
+        activeRecords = records.filter { record in
+            !tombstones.contains { $0.key == record.key && record.revision <= $0.clearedRevision }
+        }
+    }
 }
 
 private enum ComposerDraftPersistenceError: LocalizedError {
@@ -364,6 +394,10 @@ final class ComposerDraftStore {
     @ObservationIgnored private let saveDelay: Duration
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var durableFileUnreadable = false
+    /// Same guard for the lifecycle backup file: present but unreadable means it
+    /// may hold drafts newer than the main file, so it is never overwritten or
+    /// removed until it has been read and merged.
+    @ObservationIgnored private var fallbackFileUnreadable = false
     @ObservationIgnored private var pendingLegacyDraft: PendingLegacyDraft?
     @ObservationIgnored private var fallbackDocument = ComposerDraftFallbackDocument.empty
     @ObservationIgnored private var attachmentDataByKey: [ComposerDraftKey: [String: Data]] = [:]
@@ -464,14 +498,12 @@ final class ComposerDraftStore {
         }
     }
 
-    func load() async {
-        guard !isLoaded else { return }
-
-        await loadDurableRecords()
-
+    /// Reads the lifecycle backup into memory, merging with what the store
+    /// already holds (clears made while it was unreadable stay cleared).
+    private func loadFallbackRecords() async {
         do {
             if let fallback = try await persistence.loadLifecycleFallback() {
-                fallbackDocument = fallback
+                fallbackDocument.merge(fallback)
                 applyLoadedFallback(fallback)
                 mergeLoadedAttachmentSidecars(
                     await persistence.loadAttachmentSidecars(
@@ -480,10 +512,20 @@ final class ComposerDraftStore {
                     )
                 )
             }
+            fallbackFileUnreadable = false
         } catch {
+            fallbackFileUnreadable = !(error is DecodingError || error is ComposerDraftPersistenceError)
             lastError = "Failed to load the latest message draft fallback."
             composerDraftLogger.error("Draft fallback load failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    func load() async {
+        guard !isLoaded else { return }
+
+        await loadDurableRecords()
+
+        await loadFallbackRecords()
 
         isLoaded = true
         if !fallbackDocument.isEmpty {
@@ -773,6 +815,13 @@ final class ComposerDraftStore {
         fallbackDocument.clearTombstones.removeAll {
             $0.key == record.key && $0.clearedRevision < record.revision
         }
+        guard !fallbackFileUnreadable else {
+            // The snapshot stays in memory until the backup can be read and
+            // merged; say so, because this is the before-suspension save.
+            lastError = "Failed to save the latest message draft before suspension."
+            composerDraftLogger.error("Draft lifecycle snapshot not written: the backup file is unreadable")
+            return
+        }
         persistFallbackDocumentReportingErrors(
             failureMessage: "Failed to save the latest message draft before suspension."
         )
@@ -823,6 +872,13 @@ final class ComposerDraftStore {
     private func mergeLoadedRecord(_ record: ComposerDraftRecord) {
         guard !record.payload.isEmpty else { return }
         latestRevisionByKey[record.key] = max(latestRevisionByKey[record.key] ?? 0, record.revision)
+        // A draft the user cleared must not come back from a file read again
+        // before the clear reached it.
+        if fallbackDocument.clearTombstones.contains(where: {
+            $0.key == record.key && record.revision <= $0.clearedRevision
+        }) {
+            return
+        }
         if let current = records[record.key],
            !composerDraftRecordIsNewer(record, than: current) {
             return
@@ -898,11 +954,17 @@ final class ComposerDraftStore {
             await loadDurableRecords()
             guard !durableFileUnreadable else { return }
         }
+        if fallbackFileUnreadable {
+            await loadFallbackRecords()
+        }
         let snapshot = recordsForPersistence()
 
         do {
             try await persistence.save(snapshot)
-            pruneFallbackDocumentCovered(by: snapshot)
+            // Pruning drops clear markers the unread backup may still need.
+            if !fallbackFileUnreadable {
+                pruneFallbackDocumentCovered(by: snapshot)
+            }
             try persistFallbackDocument()
             lastError = nil
         } catch {
@@ -939,6 +1001,8 @@ final class ComposerDraftStore {
     }
 
     private func persistFallbackDocument() throws {
+        // Writing or removing a backup that was never read would drop its drafts.
+        guard !fallbackFileUnreadable else { return }
         let fileManager = FileManager.default
         guard !fallbackDocument.isEmpty else {
             if fileManager.fileExists(atPath: lifecycleFallbackURL.path) {
