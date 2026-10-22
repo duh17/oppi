@@ -2084,11 +2084,17 @@ struct SSHTerminalTests {
         try await settle(mounted)
         #expect(!grid.isFirstResponder, "the hide key sends the keyboard away")
 
-        // Two pictures have to agree before the prompt is over.
+        // Two pictures have to agree before the prompt is over. A layout
+        // picture (here a resize, as a keyboard transition or a rotation
+        // causes) is a picture the renderer draws, but it is not output: it
+        // must not stand in for the second look and end the prompt early.
         channel.engine.receive(Data("\r\n".utf8))
         grid.drawFrame()
         try await settle(mounted)
-        #expect(grid.isSecureTextEntry)
+        channel.engine.resize(.init(columns: 79, rows: 23))
+        grid.drawFrame()
+        try await settle(mounted)
+        #expect(grid.isSecureTextEntry, "a resize is not the second picture")
         channel.engine.receive(Data("\r\n".utf8))
         grid.drawFrame()
         try await settle(mounted)

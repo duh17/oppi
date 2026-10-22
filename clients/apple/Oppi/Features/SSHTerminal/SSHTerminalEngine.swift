@@ -116,6 +116,11 @@ final class SSHTerminalEngine {
     /// Bumped by anything that can change the picture. The display link repaints
     /// when it moved, so output never invalidates SwiftUI.
     private(set) var changeCount = 0
+    /// Bumped by the output the shell wrote, and by nothing else. A resize, a
+    /// scroll, and a recolour move `changeCount` too, and secure entry's "two
+    /// pictures have to agree" rule counts these instead: a layout picture must
+    /// not stand in for the second look at a prompt that is still live.
+    private(set) var outputChangeCount = 0
     /// Starts the grid display link. Without this, an idle-paused link never
     /// sees PTY output, scroll, or resize.
     var onPictureChange: (() -> Void)?
@@ -232,14 +237,15 @@ final class SSHTerminalEngine {
         progress.reset()
     }
 
-    private func notePictureChange() {
+    private func notePictureChange(output: Bool = false) {
         changeCount &+= 1
+        if output { outputChangeCount &+= 1 }
         onPictureChange?()
     }
 
     func receive(_ bytes: Data) {
         guard live else { return }
-        notePictureChange()
+        notePictureChange(output: true)
         bytes.withUnsafeBytes { buffer in
             ghostty_terminal_vt_write(terminal, buffer.bindMemory(to: UInt8.self).baseAddress, bytes.count)
         }

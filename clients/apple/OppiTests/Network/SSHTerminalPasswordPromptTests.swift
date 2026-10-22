@@ -360,6 +360,41 @@ struct SSHTerminalPasswordPromptTests {
         }
     }
 
+    /// A picture the renderer draws for layout — here a resize, as a keyboard
+    /// transition or a rotation causes — is not output. It must not count as
+    /// the second picture that lets a live prompt end, or a keyboard transition
+    /// could drop secure entry with the secret still on screen.
+    @Test func aResizeIsNotTheSecondPictureThatEndsThePrompt() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(PasswordPromptStubConnection())
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedPasswordPromptGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        var reported: [Bool] = []
+        grid.secureInputChanged = { reported.append($0) }
+
+        channel.engine.receive(Data("Password: ".utf8))
+        try await Self.draw(grid)
+        #expect(grid.isSecureTextEntry)
+
+        // The prompt ends: one picture of output is not enough.
+        channel.engine.receive(Data("\r\n".utf8))
+        try await Self.draw(grid)
+        #expect(grid.isSecureTextEntry, "one picture of output keeps the latch")
+
+        // A resize repaints every row, but it is a layout picture, not output.
+        channel.engine.resize(.init(columns: 79, rows: 23))
+        try await Self.draw(grid)
+        #expect(grid.isSecureTextEntry, "a resize is not the second picture")
+        #expect(reported == [true])
+
+        // The next picture of output is the second look, and it ends the prompt.
+        channel.engine.receive(Data("\r\n".utf8))
+        try await Self.draw(grid)
+        #expect(!grid.isSecureTextEntry)
+        #expect(reported == [true, false])
+    }
+
     @Test func thePromptStaysSecureWhileTheSecretIsTypedAndHistoryDoesNotEndIt() async throws {
         let channel = try SSHTerminalChannel()
         channel.opened(PasswordPromptStubConnection())

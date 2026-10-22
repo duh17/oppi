@@ -111,11 +111,14 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         var text: String
     }
     private var securePrompt: SecurePrompt?
-    /// The change count of the first check that no longer saw the prompt. The
-    /// latch and the input switch back only when a check on a later picture
-    /// agrees, so one half-drawn frame (a repaint in a neighbouring Herdr pane
-    /// that moves the cursor away and back) cannot drop secure entry and pull
-    /// the chat bar up under the rest of the secret.
+    /// The output change count of the first check that no longer saw the
+    /// prompt. The latch and the input switch back only when a check on a later
+    /// picture of the shell's output agrees, so one half-drawn frame (a repaint
+    /// in a neighbouring Herdr pane that moves the cursor away and back) cannot
+    /// drop secure entry and pull the chat bar up under the rest of the secret.
+    /// Output, not `changeCount`: a resize from a keyboard transition or a
+    /// rotation is a picture too, and it must not stand in for the second look
+    /// at a prompt that is still live.
     private var secureOffChanges: Int?
     /// The change count and cursor row of the last completed check, so an
     /// idle frame costs two reads and no string.
@@ -1699,7 +1702,8 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// until some later frame paints. The live screen never counts toward
     /// turning it off: mid-update it can show the cursor parked in another pane,
     /// and the frozen painted line would have kept the latch. Turning off waits
-    /// for two painted frames. History and a hidden cursor leave the state alone.
+    /// for two painted frames of shell output; a resize, scroll, or recolour is
+    /// no vote. History and a hidden cursor leave the state alone.
     /// The keyboard bar shows a lock meanwhile, and the screen moves typing off
     /// the chat bar.
     private func updateSecureEntry() {
@@ -1710,6 +1714,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             return
         }
         let changes = channel.engine.changeCount
+        let outputChanges = channel.engine.outputChangeCount
         let row = channel.engine.cursorCell.row
         guard changes != secureCheckedChanges || row != secureCheckedRow else { return }
         // nil is history, a hidden cursor, or a picture no frame has drawn yet,
@@ -1748,14 +1753,15 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         if fromLive { return }
         secureCheckedChanges = changes
         secureCheckedRow = row
-        // Off, on one frame: one more check on a later picture decides, so a
-        // single half-drawn frame changes nothing.
-        if let off = secureOffChanges, off != changes {
+        // Off, after one frame: one more check on a later picture of output
+        // decides, so a single half-drawn frame changes nothing, and a layout
+        // picture (a resize, a scroll) is no vote at all.
+        if let off = secureOffChanges, off != outputChanges {
             secureOffChanges = nil
             securePrompt = nil
             applySecureEntry(false)
         } else {
-            secureOffChanges = changes
+            secureOffChanges = outputChanges
         }
     }
 
