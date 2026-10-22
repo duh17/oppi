@@ -191,6 +191,18 @@ final class ServerStore {
         servers.first { $0.id == id }
     }
 
+    /// Every paired server: the loaded ones and those whose record could not
+    /// be read. Decide "is this server still paired?" here, never from
+    /// `servers`, so an unreadable record is not treated as unpaired.
+    var pairedServerIds: [String] {
+        let loadedIds = servers.map(\.id)
+        return loadedIds + unreadableServerIds.filter { !loadedIds.contains($0) }
+    }
+
+    func isPaired(_ id: String) -> Bool {
+        server(for: id) != nil || unreadableServerIds.contains(id)
+    }
+
     /// Look up which server owns a given host:port combination.
     func server(forHost host: String, port: Int) -> PairedServer? {
         servers.first { $0.host == host && $0.port == port }
@@ -218,10 +230,25 @@ final class ServerStore {
     ///
     /// Shared suite: readable by widget extension for Live Activity intents.
     /// Standard: backward-compatible fallback.
+    /// An unreadable server keeps its place in the index, after the nearest
+    /// server that preceded it, so readers that take the index order see the
+    /// same order once its record reads again.
     private func saveIndex() {
         guard loadState == .loaded else { return }
-        let loadedIds = servers.map(\.id)
-        let ids = loadedIds + unreadableServerIds.filter { !loadedIds.contains($0) }
+        let key = SharedConstants.pairedServerIdsKey
+        let previous = SharedConstants.sharedDefaults.stringArray(forKey: key)
+            ?? UserDefaults.standard.stringArray(forKey: key)
+            ?? []
+        var ids = servers.map(\.id)
+        for id in unreadableServerIds where !ids.contains(id) {
+            guard let position = previous.firstIndex(of: id) else {
+                ids.append(id)
+                continue
+            }
+            let anchor = previous[..<position].last { ids.contains($0) }
+            let insertAt = anchor.flatMap { ids.firstIndex(of: $0) }.map { $0 + 1 } ?? 0
+            ids.insert(id, at: insertAt)
+        }
         SharedConstants.sharedDefaults.set(ids, forKey: SharedConstants.pairedServerIdsKey)
         UserDefaults.standard.set(ids, forKey: SharedConstants.pairedServerIdsKey)
     }

@@ -237,8 +237,8 @@ struct ServerStoreTests {
     }
 
     /// A server whose record could not be read is still paired. Writes for
-    /// the readable servers keep it in the index, so it loads again once its
-    /// record reads.
+    /// the readable servers keep it in the index, at its place, so it loads
+    /// again (in the same order) once its record reads.
     @Test func unreadableRecordStaysInTheIndexAcrossWrites() throws {
         let unreadableId = "sha256:unreadable-kept"
         let readable = try #require(PairedServer(from: makeTestCredentials(
@@ -262,11 +262,9 @@ struct ServerStoreTests {
 
         try store.persistServer(added)
 
-        let expected: Set = [readable.id, added.id, unreadableId]
-        let shared = SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey)
-        let standard = UserDefaults.standard.stringArray(forKey: SharedConstants.pairedServerIdsKey)
-        #expect(Set(shared ?? []) == expected)
-        #expect(Set(standard ?? []) == expected)
+        let expected = [unreadableId, readable.id, added.id]
+        #expect(SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey) == expected)
+        #expect(UserDefaults.standard.stringArray(forKey: SharedConstants.pairedServerIdsKey) == expected)
     }
 
     // MARK: - Helpers

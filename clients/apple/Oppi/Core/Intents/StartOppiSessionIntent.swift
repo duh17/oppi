@@ -64,7 +64,7 @@ struct StartOppiSessionIntent: AppIntent {
         do {
             pairedServers = try IntentPairedServers.load()
         } catch {
-            return .result(dialog: IntentDialog(stringLiteral: IntentPairedServers.unavailableDialog))
+            return .result(dialog: IntentDialog(stringLiteral: IntentPairedServers.dialog(for: error)))
         }
 
         let target: IntentSessionDisambiguation.WorkspaceHit

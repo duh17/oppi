@@ -47,7 +47,8 @@ final class AppIconBadgeService {
     func refresh() -> Int? {
         guard let coordinator else { return nil }
         var recount = Self.recount(stores: coordinator.connections.mapValues(\.sessionStore))
-        recount.pairedServerIds = Set(coordinator.serverStore.servers.map(\.id))
+        // An unreadable server is still paired: its counts stay.
+        recount.pairedServerIds = Set(coordinator.serverStore.pairedServerIds)
         if recount != lastRecount {
             lastRecount = recount
             let reconcile = { (badge: inout SessionBadge) in

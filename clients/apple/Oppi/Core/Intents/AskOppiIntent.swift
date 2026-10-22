@@ -42,7 +42,7 @@ struct AskOppiIntent: AppIntent {
         do {
             servers = try IntentPairedServers.load()
         } catch {
-            return .result(dialog: IntentDialog(stringLiteral: IntentPairedServers.unavailableDialog))
+            return .result(dialog: IntentDialog(stringLiteral: IntentPairedServers.dialog(for: error)))
         }
         guard let server = pairedServer(in: servers) else {
             return .result(dialog: "No paired server found. Open Oppi to pair first.")

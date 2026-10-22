@@ -445,10 +445,11 @@ final class AppOpener {
         guard let request = parked else { return }
         // A removed server or a sign-out ends the request instead of leaving a
         // toast that repeats at every launch. Before launch reads the pairing
-        // list, a missing server is only unread.
+        // list, a missing server is only unread; a server whose record could
+        // not be read is still paired.
         if serverStore.loadState == .loaded,
            let serverId = serverIdReferenced(by: request),
-           serverStore.server(for: serverId) == nil {
+           !serverStore.isPaired(serverId) {
             clearParked()
             return
         }
@@ -622,6 +623,13 @@ final class AppOpener {
         case .externalURL:
             if let named = open.serverId {
                 guard serverStore.server(for: named) != nil else {
+                    if serverStore.isPaired(named) {
+                        // Paired, but its saved record could not be read:
+                        // keep the request (and its Siri receipt) for a
+                        // later foreground instead of forgetting it.
+                        toastIfFirstAttempt("Can\u{2019}t read this server\u{2019}s saved pairing right now")
+                        return .unreachable
+                    }
                     // A receipt for a removed server would otherwise toast
                     // again at every launch.
                     if let requestID = open.startedSessionRequestID {
@@ -838,10 +846,11 @@ final class AppOpener {
 
     /// An expired receipt does not navigate, and its unsent prompt is not
     /// lost: it becomes the created session's draft. A receipt for an unpaired
-    /// server is forgotten, as an open of it would be.
+    /// server is forgotten, as an open of it would be; an unreadable server
+    /// is still paired.
     private func retireExpiredIntentReceipt(_ receipt: IntentSessionOpenTrigger.Receipt) {
         openerLog.notice("Not opening a start-session receipt that waited too long")
-        guard serverStore.server(for: receipt.serverId) != nil else {
+        guard serverStore.isPaired(receipt.serverId) else {
             intentSessionOpenTrigger.abandon(requestID: receipt.requestID)
             return
         }
@@ -958,18 +967,18 @@ final class AppOpener {
         activeConnection.extensionToast = message
     }
 
-    func toastUnreachable(_ serverId: String) {
-        let name = serverStore.server(for: serverId)?.name ?? "Server \(serverId.prefix(8))"
-        toast("Could not reach \(name)")
-    }
-
     /// A request that stays parked says it once: retries on the next
     /// foreground are silent. A launch-parked request that only later finds
     /// its server unreachable still says it once.
     func toastUnreachableIfFirstAttempt(_ serverId: String) {
+        let name = serverStore.server(for: serverId)?.name ?? "Server \(serverId.prefix(8))"
+        toastIfFirstAttempt("Could not reach \(name)")
+    }
+
+    private func toastIfFirstAttempt(_ message: String) {
         guard !didToastUnreachable else { return }
         didToastUnreachable = true
-        toastUnreachable(serverId)
+        toast(message)
     }
 
     func resourceReferenceServerName(_ serverID: String) -> String {

@@ -1243,6 +1243,45 @@ struct AppOpenerTests {
         #expect(connection.sessionStore.viewingSessionId == "current")
     }
 
+    @Test func aReceiptForAnUnreadableServerSurvivesLaunchAndParks() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            unreadableServerIds: ["server-b"],
+            launch: false
+        )
+        let receipt = IntentSessionOpenTrigger.Receipt(
+            requestID: harness.intentTrigger.issueRequestID(),
+            serverId: "server-b",
+            sessionId: "created",
+            workspaceId: "w1",
+            unsentPrompt: "Write the release notes",
+            session: nil
+        )
+        harness.intentTrigger.enqueue(receipt)
+
+        harness.opener.launchDidFinish()
+        await harness.settle()
+
+        // server-b is still paired; only its record could not be read. The
+        // receipt and its prompt stay, and the open waits for a later try.
+        #expect(harness.intentTrigger.peek()?.unsentPrompt == "Write the release notes")
+        #expect(harness.opener._parkedRequestForTesting == .session(SessionOpen(
+            serverId: "server-b",
+            sessionId: "created",
+            workspaceId: "w1",
+            origin: .externalURL,
+            startedSessionRequestID: receipt.requestID
+        )))
+        #expect(harness.connection("server-a").extensionToast
+            == "Can\u{2019}t read this server\u{2019}s saved pairing right now")
+
+        // The next foreground keeps it parked rather than dropping it as removed.
+        harness.opener.sceneDidBecomeActive()
+        await harness.settle()
+        #expect(harness.opener._parkedRequestForTesting != nil)
+        #expect(harness.intentTrigger.peek() != nil)
+    }
+
     @Test func destinationWorkspaceComesFromLoadedDataNotTheRequestHint() async throws {
         let harness = OpenerHarness(
             servers: [makeServer("server-a")],
@@ -1367,6 +1406,7 @@ private final class OpenerHarness {
 
     init(
         servers: [PairedServer],
+        unreadableServerIds: [String] = [],
         appLockTimeout: AppLockTimeout = .off,
         authOutcomes: [DeviceOwnerAuthentication.Outcome] = [.success],
         launch: Bool = true,
@@ -1391,7 +1431,9 @@ private final class OpenerHarness {
 
         // The Keychain may hold servers other suites paired; this fixture's
         // list is read from memory.
-        let serverStore = ServerStore(loadServers: { .init(records: servers, unreadableIds: []) })
+        let serverStore = ServerStore(loadServers: {
+            .init(records: servers, unreadableIds: unreadableServerIds)
+        })
         if loadsServers {
             serverStore.load()
         }

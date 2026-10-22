@@ -21,24 +21,49 @@ private func intentQueriesAreLocked() async -> Bool {
 /// unlocked; an unreadable Keychain must not read as "no paired servers".
 enum IntentPairedServers {
     static let unavailableDialog = "Unlock your device, then try again. Nothing was sent."
+    static let unreadableServerDialog = "Oppi can\u{2019}t read one of your saved servers. Nothing was sent."
 
     /// Thrown when the paired servers cannot be read, so queries tell the
     /// user to unlock instead of listing nothing.
     struct Unavailable: Error, CustomLocalizedStringResourceConvertible {
+        /// The device is unlocked, but one saved server's record cannot be read.
+        var serverUnreadable = false
+
         var localizedStringResource: LocalizedStringResource {
-            "Unlock your device to use your Oppi servers."
+            serverUnreadable
+                ? "Oppi can\u{2019}t read one of your saved servers."
+                : "Unlock your device to use your Oppi servers."
         }
     }
 
-    static func load() throws(Unavailable) -> [PairedServer] {
+    /// What an intent says when `load()` failed.
+    static func dialog(for error: any Error) -> String {
+        (error as? Unavailable)?.serverUnreadable == true ? unreadableServerDialog : unavailableDialog
+    }
+
+    /// Every paired server, in the app's order. Siri and Shortcuts pick "the
+    /// first server" and offer workspaces from this list, so a list missing
+    /// an unreadable server would send work to the wrong one: it fails
+    /// instead.
+    static func load(
+        read: () throws -> PairedServerKeychain.Read<PairedServer> = KeychainService.loadServers
+    ) throws(Unavailable) -> [PairedServer] {
+        let result: PairedServerKeychain.Read<PairedServer>
         do {
-            return try KeychainService.loadServers().records
+            result = try read()
         } catch {
             pairedServersLogger.error(
                 "Paired servers unavailable to intent: \(error.localizedDescription, privacy: .public)"
             )
             throw Unavailable()
         }
+        guard result.unreadableIds.isEmpty else {
+            pairedServersLogger.error(
+                "Paired servers incomplete for intent: \(result.unreadableIds.count, privacy: .public) unreadable"
+            )
+            throw Unavailable(serverUnreadable: true)
+        }
+        return result.records.sorted { $0.sortOrder < $1.sortOrder }
     }
 }
 

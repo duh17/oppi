@@ -494,6 +494,34 @@ struct StartOppiSessionIntentTests {
         #expect(intent.workspace == nil)
         #expect(intent.server == nil)
     }
+
+    /// Siri picks "the first server" and offers workspaces from this list. A
+    /// list missing an unreadable server would route work elsewhere, so the
+    /// intent fails closed; a complete list comes back in the app's order.
+    @Test func pairedServersFailClosedWhenOneRecordIsUnreadable() throws {
+        let first = try #require(PairedServer(
+            from: makeTestCredentials(host: "first-host", name: "First", fingerprint: "sha256:first"),
+            sortOrder: 0
+        ))
+        let second = try #require(PairedServer(
+            from: makeTestCredentials(host: "second-host", name: "Second", fingerprint: "sha256:second"),
+            sortOrder: 1
+        ))
+
+        do {
+            let servers = try IntentPairedServers.load {
+                .init(records: [second], unreadableIds: [first.id])
+            }
+            Issue.record("Expected the partial list to fail, got \(servers.map(\.id))")
+        } catch {
+            #expect(IntentPairedServers.dialog(for: error) == IntentPairedServers.unreadableServerDialog)
+        }
+
+        let loaded = try IntentPairedServers.load {
+            .init(records: [second, first], unreadableIds: [])
+        }
+        #expect(loaded.map(\.id) == [first.id, second.id])
+    }
 }
 
 @Suite("StartOppiSessionConfirmation")
