@@ -428,8 +428,14 @@ final class FeatureEducationTipHostView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit {
+    /// A host destroyed while its tip is shown (leaving a busy chat) never gets
+    /// a `stop()`; without this its claim would block every other tip until
+    /// relaunch.
+    isolated deinit {
         updatesTask?.cancel()
+        if isPresented {
+            coordinator.release(tipID: descriptor.id, ownerID: ownerID)
+        }
     }
 
     func start() {
