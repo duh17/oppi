@@ -59,8 +59,15 @@ final class ChatBarItems {
     /// The changed-file count on the horizontal bar's Git button. The rail
     /// item has no room for one; its accessibility value carries the count.
     private let gitBadge = InsetLabel(insets: .zero, capsule: false)
-    /// From the button's center to the badge's leading edge: half the logo.
+    /// From the button's leading edge to the badge's: just past the logo.
     private var gitBadgeLeading: NSLayoutConstraint?
+    /// The Git button's width: the standard side, plus the room a badge wider
+    /// than the space beside the logo needs (`layOutGitBadge`).
+    private var gitButtonWidth: NSLayoutConstraint?
+    /// Every bar button's side.
+    private static let barButtonSide: CGFloat = 36
+    /// Names a bar button's width constraint, so the Git button can widen.
+    private static let barButtonWidthIdentifier = "chat.bar.button.width"
     private lazy var terminal = ActionControls(rail: makeRailItem(.terminal), button: makeActionButton(.terminal))
     private lazy var outline = ActionControls(rail: makeRailItem(.outline), button: makeActionButton(.outline))
 
@@ -129,9 +136,7 @@ final class ChatBarItems {
         navigationItem.hidesBackButton = usesCustomBack
         navigationItem.largeTitleDisplayMode = .never
 
-        files.rail.tintColor = filesOpen ? colors.blue : colors.fg
         files.rail.accessibilityLabel = filesOpen ? "Close chat files" : ChatTopBarAction.files.accessibilityLabel
-        files.button.tintColor = filesOpen ? colors.blue : colors.fg
         files.button.accessibilityLabel = filesOpen ? "Close chat files" : ChatTopBarAction.files.accessibilityLabel
         // The folder lookup can take a round trip; the control says so and takes
         // no second tap until it finishes.
@@ -143,14 +148,35 @@ final class ChatBarItems {
         terminal.rail.accessibilityValue = openingTerminal ? String(localized: "Opening…") : nil
         terminal.button.accessibilityValue = terminal.rail.accessibilityValue
 
-        // A rail button tints while its panel is open in the trailing
-        // column. A compact-width sheet covers the chat, so it needs no tint.
-        let outlineTint = usesColumn && chat.model.showOutline ? colors.blue : colors.fg
-        outline.rail.tintColor = outlineTint
-        outline.button.tintColor = outlineTint
-        let gitTint = usesColumn && chat.model.showGit ? colors.blue : colors.fg
-        git.rail.tintColor = gitTint
-        git.button.tintColor = gitTint
+        // A button shows as selected while its panel is open in the trailing
+        // column beside it. A compact-width sheet covers the chat, so it needs
+        // no state. The bar's glass draws the content of its controls in one
+        // color, so a tint never showed and none is set: the state is a
+        // platter behind the icon (which glass keeps), the selected trait,
+        // and on the rail the bar item's own selected state. Files keeps its
+        // filled folder while its panel is open, sheet or column.
+        let openInColumn: ChatTopBarAction?
+        if !usesColumn {
+            openInColumn = nil
+        } else if filesOpen {
+            openInColumn = .files
+        } else if chat.model.showOutline {
+            openInColumn = .outline
+        } else if chat.model.showGit {
+            openInColumn = .git
+        } else if chat.model.showContextInspector {
+            openInColumn = .context
+        } else {
+            openInColumn = nil
+        }
+        for (action, controls) in [(ChatTopBarAction.files, files), (.outline, outline), (.git, git)] {
+            Self.showOpen(openInColumn == action, controls: controls, colors: colors)
+            controls.rail.tintColor = colors.fg
+            controls.button.tintColor = colors.fg
+        }
+        for ring in [railRing, ringButton] {
+            ring.isSelected = openInColumn == .context
+        }
         // The strip that used to sit over the timeline showed the branch and
         // the change count at a glance; the button says both.
         let gitSummary = chat.gitBarSummary
@@ -160,8 +186,7 @@ final class ChatBarItems {
         let changedFiles = gitSummary?.changedFiles ?? 0
         gitBadge.isHidden = changedFiles <= 0
         gitBadge.text = changedFiles > 99 ? "99+" : "\(changedFiles)"
-        // The badge starts just past the logo and grows away from it.
-        gitBadgeLeading?.constant = (git.button.configuration?.image?.size.width ?? 20) / 2
+        layOutGitBadge()
         // Plain count, no fill: the bar's glass draws its content's colors
         // monochrome, so a colored capsule reads as an empty grey dot.
         gitBadge.textColor = colors.fg
@@ -426,9 +451,11 @@ final class ChatBarItems {
         configuration.contentInsets = .zero
         let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in action() })
         button.translatesAutoresizingMaskIntoConstraints = false
+        let width = button.widthAnchor.constraint(equalToConstant: barButtonSide)
+        width.identifier = barButtonWidthIdentifier
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 36),
-            button.heightAnchor.constraint(equalToConstant: 36),
+            width,
+            button.heightAnchor.constraint(equalToConstant: barButtonSide),
         ])
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = label
@@ -486,6 +513,36 @@ final class ChatBarItems {
         return item
     }
 
+    /// A panel button's open state: the selected platter behind its icon on
+    /// the horizontal bar and the selected trait for VoiceOver, and the bar
+    /// item's selected state on the rail.
+    private static func showOpen(_ isOpen: Bool, controls: ActionControls, colors: ComposerThemeColors) {
+        controls.rail.isSelected = isOpen
+        controls.button.configuration?.background.backgroundColor = isOpen
+            ? colors.fg.withAlphaComponent(0.14)
+            : .clear
+        controls.button.configuration?.background.cornerRadius = barButtonSide / 2
+        controls.button.accessibilityTraits = isOpen ? [.button, .selected] : .button
+    }
+
+    /// The badge starts just past the logo and grows away from it. The logo
+    /// stays where every bar icon sits (centered in the standard side); a
+    /// badge wider than the room right of the logo ("99+") widens the button
+    /// by the difference, so it pushes the next button over instead of
+    /// running into it.
+    private func layOutGitBadge() {
+        let side = Self.barButtonSide
+        let logoWidth = git.button.configuration?.image?.size.width ?? 20
+        let badgeStart = side / 2 + logoWidth / 2
+        let badgeWidth = gitBadge.isHidden ? 0 : ceil(gitBadge.intrinsicContentSize.width)
+        let extra = max(0, badgeStart + badgeWidth - side)
+        gitBadgeLeading?.constant = badgeStart
+        gitButtonWidth?.constant = side + extra
+        if git.button.configuration?.contentInsets.trailing != extra {
+            git.button.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: extra)
+        }
+    }
+
     /// The Git bar button with its count badge at the top trailing corner.
     private func makeGitButton() -> UIButton {
         let button = makeActionButton(.git)
@@ -497,8 +554,9 @@ final class ChatBarItems {
         gitBadge.translatesAutoresizingMaskIntoConstraints = false
         button.addSubview(gitBadge)
         // Leading-anchored past the logo, so "99+" grows away from it.
-        let leading = gitBadge.leadingAnchor.constraint(equalTo: button.centerXAnchor, constant: 10)
+        let leading = gitBadge.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: Self.barButtonSide / 2 + 10)
         gitBadgeLeading = leading
+        gitButtonWidth = button.constraints.first { $0.identifier == Self.barButtonWidthIdentifier }
         NSLayoutConstraint.activate([
             gitBadge.topAnchor.constraint(equalTo: button.topAnchor, constant: 1),
             leading,
@@ -609,6 +667,16 @@ final class ContextUsageRingButton: UIControl {
     private let track = CAShapeLayer()
     private let fill = CAShapeLayer()
     private let label = UILabel()
+    /// The selected platter behind the ring while the Context panel is open
+    /// in the trailing column, as the other panel buttons show it.
+    private let platter = CALayer()
+
+    override var isSelected: Bool {
+        didSet {
+            platter.isHidden = !isSelected
+            accessibilityTraits = isSelected ? [.button, .selected] : .button
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
@@ -617,6 +685,8 @@ final class ContextUsageRingButton: UIControl {
         accessibilityTraits = .button
         accessibilityIdentifier = ChatTopBarAction.context.accessibilityIdentifier
         accessibilityLabel = "Open context inspector"
+        platter.isHidden = true
+        self.layer.addSublayer(platter)
         for layer in [track, fill] {
             layer.fillColor = UIColor.clear.cgColor
             self.layer.addSublayer(layer)
@@ -647,6 +717,7 @@ final class ContextUsageRingButton: UIControl {
 
     func apply(usage: ContextUsageSnapshot, colors: ComposerThemeColors) {
         track.strokeColor = colors.comment.withAlphaComponent(0.35).cgColor
+        platter.backgroundColor = colors.fg.withAlphaComponent(0.14).cgColor
         let progress = usage.progress
         let stroke: UIColor = if let progress {
             progress > 0.9 ? colors.red : progress > 0.7 ? colors.orange : colors.green
@@ -676,6 +747,9 @@ final class ContextUsageRingButton: UIControl {
         track.path = path
         fill.path = path
         label.frame = ring.insetBy(dx: 3, dy: 3)
+        // The same 36 pt circle as a selected bar button.
+        platter.frame = CGRect(x: bounds.midX - 18, y: bounds.midY - 18, width: 36, height: 36)
+        platter.cornerRadius = 18
     }
 
     override func accessibilityActivate() -> Bool {

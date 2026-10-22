@@ -101,6 +101,47 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
     }
 
+    /// A three-character count ("99+") widens the Git button instead of
+    /// running into the button beside it, and the button still says the full
+    /// count.
+    func testGitBadgeOfHundredsStaysClearOfTheNextButton() {
+        launchScreen("chat-top-bar-all", environment: ["CHAT_ROUTES_MANY_CHANGES": "1"])
+        dismissMicrophonePrompt()
+        let git = app.buttons["chat.toolbar.git"]
+        let outline = app.buttons["chat.toolbar.outline"]
+        XCTAssertTrue(outline.waitForExistence(timeout: 15), "The all-on bar must load")
+        XCTAssertTrue(
+            waitFor((git.value as? String)?.contains("121 changed files") == true, timeout: 10),
+            "The Git button must say the full count: \(git.value ?? "nil")"
+        )
+        XCTAssertLessThanOrEqual(git.frame.maxX, outline.frame.minX, "The badge's button must end before Outline starts")
+        XCTAssertGreaterThan(git.frame.width, outline.frame.width, "A 99+ badge must widen the Git button")
+        attachScreenshot("chat-top-bar-git-badge-99")
+        assertRunning()
+    }
+
+    /// The Duo's vertical rail (sim-pool `duo` profile): every pinned action is
+    /// a rail item, Git's logo among them, in the chosen order top to bottom.
+    /// Elsewhere there is no rail and the test skips.
+    func testVerticalRailCarriesTheGitLogoInOrder() throws {
+        launchScreen("chat-top-bar-all")
+        dismissMicrophonePrompt()
+        XCTAssertTrue(app.buttons["chat.toolbar.context"].waitForExistence(timeout: 15), "The all-on bar must load")
+        guard app.buttons["chat.rail.session"].exists else {
+            throw XCTSkip("No vertical toolbar rail on this device")
+        }
+        let order = ["files", "git", "outline", "context", "terminal"].map { app.buttons["chat.toolbar.\($0)"] }
+        for item in order {
+            XCTAssertTrue(item.exists, "\(item) must be on the rail")
+        }
+        assertTopToBottom(order, "The rail")
+        let git = app.buttons["chat.toolbar.git"]
+        let outline = app.buttons["chat.toolbar.outline"]
+        XCTAssertEqual(git.frame.width, outline.frame.width, accuracy: 2, "Git's rail item must be a standard rail item")
+        attachScreenshot("chat-rail-git-logo")
+        assertRunning()
+    }
+
     /// A bar someone customized needs no hint about where its buttons went.
     func testCustomizedBarShowsNoMenuHint() {
         launchScreen("chat-top-bar-all", arguments: ["--reset-feature-tips"])
@@ -412,6 +453,7 @@ final class ChatRoutesUITests: XCTestCase {
         outlineButton.tap()
         let outline = app.navigationBars["Session Outline"]
         XCTAssertTrue(outline.waitForExistence(timeout: 5), "Outline did not open in a router navigation bar")
+        assertOpenInColumn("chat.toolbar.outline")
         let search = outlineSearchField()
         search.tap()
         search.typeText("ROUTES_FILL_2")
@@ -544,6 +586,7 @@ final class ChatRoutesUITests: XCTestCase {
         app.buttons["chat.toolbar.context"].tap()
         let context = app.navigationBars["Context"]
         XCTAssertTrue(context.waitForExistence(timeout: 5), "Context did not open")
+        assertOpenInColumn("chat.toolbar.context")
         // The window splits in request order; tools loaded on demand are listed apart.
         for segment in ["systemPrompt", "agentsFiles", "skills", "messages", "tools", "compactionReserve", "onDemand"] {
             XCTAssertTrue(
@@ -952,6 +995,7 @@ final class ChatRoutesUITests: XCTestCase {
             NSPredicate(format: "label CONTAINS %@", "branch feat/routes, checked out in feat/routes")
         ).firstMatch
         XCTAssertTrue(worktreeBranch.exists, "The graph must list every branch and mark one another worktree has out")
+        assertOpenInColumn("chat.toolbar.git")
         let otherChange = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "README.md")).firstMatch
         XCTAssertFalse(otherChange.exists, "This session must not list a change the session did not make")
         let scope = app.segmentedControls["workspace-context-bar.scope"]
@@ -1197,6 +1241,23 @@ final class ChatRoutesUITests: XCTestCase {
             app.launchEnvironment[key] = value
         }
         app.launch()
+    }
+
+    /// In the trailing column (regular width) the panel's bar button stays on
+    /// screen beside it and reads as selected; no other panel button does.
+    /// A compact-width sheet covers the bar, so there is nothing to check.
+    private func assertOpenInColumn(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
+        guard !usesSheets else { return }
+        XCTAssertTrue(
+            waitFor(app.buttons[identifier].isSelected),
+            "\(identifier) must read as selected while its panel is open in the column",
+            file: file,
+            line: line
+        )
+        for other in ["chat.toolbar.files", "chat.toolbar.git", "chat.toolbar.outline", "chat.toolbar.context"]
+        where other != identifier && app.buttons[other].exists {
+            XCTAssertFalse(app.buttons[other].isSelected, "\(other) must not read as selected", file: file, line: line)
+        }
     }
 
     /// Compact width presents chat panels as sheets; regular width puts them

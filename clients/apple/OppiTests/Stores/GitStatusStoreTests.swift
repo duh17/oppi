@@ -60,6 +60,47 @@ struct GitStatusStoreTests {
         #expect(store.gitStatus == nil)
     }
 
+    // MARK: - status(workspaceId:worktreeId:)
+
+    /// A chat reads only its own checkout's status: the store holds whichever
+    /// loaded last, and another workspace or worktree's branch and counts must
+    /// not reach this chat's Git button or panel.
+    @Test func statusIsOnlyForTheCheckoutItBelongsTo() {
+        let store = GitStatusStore()
+        store.loadInitial(workspaceId: "ws-1", worktreeId: "wt-feature", apiClient: makeMockAPIClient(), gitStatusEnabled: false)
+        store.handleGitStatusPush(workspaceId: "ws-1", worktreeId: "wt-feature", status: makeGitStatus(branch: "feature", dirtyCount: 2))
+
+        #expect(store.status(workspaceId: "ws-1", worktreeId: "wt-feature")?.branch == "feature")
+        #expect(store.status(workspaceId: "ws-1", worktreeId: nil) == nil, "The main checkout is another checkout")
+        #expect(store.status(workspaceId: "ws-2", worktreeId: "wt-feature") == nil, "Another workspace")
+
+        // The main checkout reads the same whether named by nil or its id.
+        store.loadInitial(workspaceId: "ws-1", apiClient: makeMockAPIClient(), gitStatusEnabled: false)
+        store.handleGitStatusPush(workspaceId: "ws-1", status: makeGitStatus(branch: "main", dirtyCount: 1))
+        #expect(store.status(workspaceId: "ws-1", worktreeId: nil)?.branch == "main")
+        #expect(store.status(workspaceId: "ws-1", worktreeId: WorkspaceWorktree.mainId)?.branch == "main")
+        #expect(store.status(workspaceId: "ws-1", worktreeId: "wt-feature") == nil)
+    }
+
+    /// A checkout the store tracks has its status on the way even before one
+    /// arrives; another worktree of the same workspace is not tracked, so its
+    /// chat reads as loading, not as having no Git status.
+    @Test func tracksIsTheSameCheckoutRuleAsStatus() {
+        let store = GitStatusStore()
+        #expect(!store.tracks(workspaceId: "ws-1", worktreeId: nil))
+
+        store.loadInitial(workspaceId: "ws-1", worktreeId: "wt-feature", apiClient: makeMockAPIClient(), gitStatusEnabled: false)
+        #expect(store.gitStatus == nil)
+        #expect(store.tracks(workspaceId: "ws-1", worktreeId: "wt-feature"), "Tracked before any status arrives")
+        #expect(!store.tracks(workspaceId: "ws-1", worktreeId: nil), "Same workspace, other worktree")
+        #expect(!store.tracks(workspaceId: "ws-1", worktreeId: WorkspaceWorktree.mainId))
+        #expect(!store.tracks(workspaceId: "ws-2", worktreeId: "wt-feature"))
+
+        store.loadInitial(workspaceId: "ws-1", apiClient: makeMockAPIClient(), gitStatusEnabled: false)
+        #expect(store.tracks(workspaceId: "ws-1", worktreeId: nil))
+        #expect(store.tracks(workspaceId: "ws-1", worktreeId: WorkspaceWorktree.mainId))
+    }
+
     // MARK: - loadInitial with gitStatusEnabled=false
 
     @Test func loadInitialWithDisabledGitSetsWorkspaceButNilStatus() {

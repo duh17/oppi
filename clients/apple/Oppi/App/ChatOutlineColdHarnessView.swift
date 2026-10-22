@@ -677,8 +677,8 @@ private enum ChatRoutesFixture {
             cost: 0,
             changeStats: SessionChangeStats(
                 mutatingToolCalls: 1,
-                filesChanged: 2,
-                changedFiles: [changedPath, touchedPath],
+                filesChanged: 2 + manyChangePaths.count,
+                changedFiles: [changedPath, touchedPath] + manyChangePaths,
                 changedFilesOverflow: nil
             ),
             contextTokens: 1_000,
@@ -741,13 +741,19 @@ private enum ChatRoutesFixture {
         workspaceId: workspace.id
     )
 
+    /// `CHAT_ROUTES_MANY_CHANGES=1`: 120 more files the session changed, so
+    /// the Git button's badge reads 99+ (`chat-top-bar-all`).
+    static let manyChangePaths: [String] = environment["CHAT_ROUTES_MANY_CHANGES"] == "1"
+        ? (1...120).map { "Sources/Generated/Route\($0).swift" }
+        : []
+
     static let gitStatus = GitStatus(
         isGitRepo: true,
         branch: "main",
         headSha: commitSha,
         ahead: 0,
         behind: 0,
-        dirtyCount: 2,
+        dirtyCount: 2 + manyChangePaths.count,
         untrackedCount: 0,
         stagedCount: 0,
         // README.md is a change the session did not make: the Git panel's
@@ -755,9 +761,9 @@ private enum ChatRoutesFixture {
         files: [
             GitFileStatus(status: " M", path: changedPath, addedLines: 2, removedLines: 1),
             GitFileStatus(status: " M", path: otherChangePath, addedLines: 4, removedLines: 0),
-        ],
-        totalFiles: 2,
-        addedLines: 6,
+        ] + manyChangePaths.map { GitFileStatus(status: " M", path: $0, addedLines: 1, removedLines: 0) },
+        totalFiles: 2 + manyChangePaths.count,
+        addedLines: 6 + manyChangePaths.count,
         removedLines: 1,
         stashCount: 0,
         lastCommitMessage: "Route commit",

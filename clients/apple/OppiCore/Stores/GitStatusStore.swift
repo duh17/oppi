@@ -41,6 +41,21 @@ final class GitStatusStore {
         self.environment = environment
     }
 
+    /// The status, only while it is the one for `workspaceId` and `worktreeId`
+    /// (nil and the main worktree's id are the main checkout). The store holds
+    /// whichever checkout loaded last, so a chat reads its own through this and
+    /// never shows another chat's branch or counts.
+    func status(workspaceId: String, worktreeId: String?) -> GitStatus? {
+        tracks(workspaceId: workspaceId, worktreeId: worktreeId) ? gitStatus : nil
+    }
+
+    /// Whether the store is tracking that checkout, loaded yet or not. Until it
+    /// is, a chat's status is on its way rather than missing.
+    func tracks(workspaceId: String, worktreeId: String?) -> Bool {
+        self.workspaceId == workspaceId
+            && (self.worktreeId ?? WorkspaceWorktree.mainId) == (worktreeId ?? WorkspaceWorktree.mainId)
+    }
+
     // MARK: - Handle push from WebSocket
 
     /// Called when a `git_status` ServerMessage arrives.

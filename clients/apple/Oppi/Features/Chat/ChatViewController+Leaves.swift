@@ -62,9 +62,14 @@ extension ChatViewController {
     /// so it follows the Git status store and the session.
     var gitPanelContext: WorkspaceContextBarView.Context {
         let session = session
+        let store = connection.gitStatusStore
+        let loaded = loadedGitStatus
         return WorkspaceContextBarView.Context(
-            gitStatus: connection.gitStatusStore.gitStatus,
-            isLoading: connection.gitStatusStore.isLoading,
+            gitStatus: loaded,
+            // Another checkout's status in the store (another workspace, or
+            // another worktree of this one) means this chat's is on its way
+            // (the chat loads it when it appears), not missing.
+            isLoading: loaded == nil && (store.isLoading || !tracksOwnGitStatus),
             workspaceId: session?.workspaceId,
             sessionId: sessionId,
             worktreeId: session?.worktreeId,
@@ -78,11 +83,22 @@ extension ChatViewController {
     var mayHaveGit: Bool {
         guard let workspaceId = session?.workspaceId else { return false }
         let workspace = connection.workspaceStore.workspaces.first { $0.id == workspaceId }
-        let store = connection.gitStatusStore
-        return ChatBarItems.mayOfferGit(
-            gitStatusEnabled: workspace?.gitStatusEnabled,
-            loadedStatus: store.workspaceId == workspaceId ? store.gitStatus : nil
-        )
+        return ChatBarItems.mayOfferGit(gitStatusEnabled: workspace?.gitStatusEnabled, loadedStatus: loadedGitStatus)
+    }
+
+    /// The Git status of this chat's workspace and worktree, or nil while the
+    /// shared store holds another checkout's (`GitStatusStore.status`). The
+    /// bar's availability, badge, accessibility value, menu glance, and the
+    /// Git panel all read this one.
+    var loadedGitStatus: GitStatus? {
+        guard let workspaceId = session?.workspaceId else { return nil }
+        return connection.gitStatusStore.status(workspaceId: workspaceId, worktreeId: session?.worktreeId)
+    }
+
+    /// Whether the shared store is tracking this chat's checkout yet.
+    private var tracksOwnGitStatus: Bool {
+        guard let workspaceId = session?.workspaceId else { return false }
+        return connection.gitStatusStore.tracks(workspaceId: workspaceId, worktreeId: session?.worktreeId)
     }
 
     /// What the Git button says at a glance: the branch, and how many changed
@@ -109,7 +125,7 @@ extension ChatViewController {
     /// The Git status and the counts the panel opens with, scoped the way the
     /// panel scopes them (`ContextBarScoping`, This session).
     private var gitGlance: (status: GitStatus, changedFiles: Int, added: Int, removed: Int)? {
-        guard let gitStatus = connection.gitStatusStore.gitStatus, gitStatus.isGitRepo else { return nil }
+        guard let gitStatus = loadedGitStatus, gitStatus.isGitRepo else { return nil }
         let session = session
         let filters = ContextBarScoping.filtersToSession(
             sessionId: sessionId,
