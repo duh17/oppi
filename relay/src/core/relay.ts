@@ -111,6 +111,24 @@ class HttpError extends Error {
   }
 }
 
+/**
+ * Cloudflare's Workers Free plan refuses Durable Object work for the rest of the UTC day once
+ * the account has used one of its daily allowances (requests, rows read, rows written,
+ * duration), throwing these messages from the stub or storage call. Only these mean "until
+ * 00:00 UTC"; any other storage error (the 5 GB storage cap included) is not a daily limit.
+ */
+const DAILY_LIMIT_ERROR =
+  /Exceeded allowed (?:volume of requests|rows read|rows written|duration) in Durable Objects free tier/;
+
+function isDailyLimitError(error: unknown): boolean {
+  return DAILY_LIMIT_ERROR.test(error instanceof Error ? error.message : String(error));
+}
+
+function secondsToNextUtcDay(now: number): number {
+  const nextDay = Math.floor(now / 86_400_000) * 86_400_000 + 86_400_000;
+  return Math.max(1, Math.ceil((nextDay - now) / 1000));
+}
+
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -685,6 +703,12 @@ export function createRelayHandler(deps: RelayDeps): (
       return await route(request, clientAddress);
     } catch (error) {
       if (error instanceof HttpError) return json(error.status, { error: error.code }, error.headers);
+      // Servers pause pushes to this relay until Retry-After passes, so only a daily limit
+      // that really lasts until 00:00 UTC says so.
+      if (isDailyLimitError(error)) {
+        log("relay.capacity_exhausted");
+        return json(503, { error: "relay_capacity" }, { "retry-after": String(secondsToNextUtcDay(now())) });
+      }
       log("relay.internal_error");
       return json(500, { error: "internal" });
     }

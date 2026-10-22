@@ -205,6 +205,13 @@ JSON over HTTPS. Request bodies are at most 8 KiB (`413 body_too_large`). Unknow
 fields fail with `400 unknown_field`. Errors are `{"error": "<code>"}`. Secrets travel only
 in the `Authorization` header, never in a URL.
 
+Any call may answer `503 {"error": "relay_capacity"}` with `Retry-After` set to the seconds
+until the next 00:00 UTC. The relay sends it only when its host refuses work for the rest of
+the UTC day (on Cloudflare's Workers Free plan, a used-up daily Durable Object allowance:
+requests, rows read, rows written, or duration), so a caller may hold off until then. Any
+other internal failure is `500 internal` without `Retry-After`. A Worker that is itself out of
+requests for the day never runs, and Cloudflare answers with its own error page.
+
 ### 3.1 App calls
 
 **`POST /v1/challenge`** → `200 {"challenge": "<base64url 32 bytes>", "expiresAt": <ms>}`.

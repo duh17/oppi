@@ -379,6 +379,39 @@ describe("node adapter", () => {
     expect(stamps()).toEqual([second, second + 61, second + 62, second + 63]);
   });
 
+  it("answers 503 relay_capacity until 00:00 UTC only for a daily Cloudflare limit", async () => {
+    class FailingStore extends MemoryRelayStore {
+      error: Error | null = null;
+      override async authorizePush(...args: Parameters<MemoryRelayStore["authorizePush"]>) {
+        if (this.error) throw this.error;
+        return super.authorizePush(...args);
+      }
+    }
+    const store = new FailingStore();
+    harness = await startHarness({ now: Date.parse("2026-10-10T23:00:00Z"), store });
+    const sendToken = await mintSendToken(harness, await registerUnattested(harness));
+    const push = () => call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } });
+
+    for (const limit of ["volume of requests", "rows written", "rows read", "duration"]) {
+      store.error = new Error(`Exceeded allowed ${limit} in Durable Objects free tier.`);
+      const full = await push();
+      expect(full, limit).toMatchObject({ status: 503, json: { error: "relay_capacity" } });
+      expect(full.headers.get("retry-after"), limit).toBe("3600");
+    }
+    // Any other storage failure is no reason for servers to wait until tomorrow.
+    for (const message of [
+      "Durable Object is overloaded. Too many requests for the same object within a 10 second window.",
+      "Durable Object storage operation exceeded timeout which caused object to be reset.",
+    ]) {
+      store.error = new Error(message);
+      const failed = await push();
+      expect(failed, message).toMatchObject({ status: 500, json: { error: "internal" } });
+      expect(failed.headers.get("retry-after"), message).toBeNull();
+    }
+    store.error = null;
+    expect((await push()).status).toBe(200);
+  });
+
   it("records the exact APNs request in capture mode instead of sending it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-relay-capture-"));
     const capturePath = join(dir, "apns.jsonl");
