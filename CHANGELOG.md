@@ -173,6 +173,7 @@ Example:
 
 ### Migration notes
 
+- **Server:** Conversations of durable sessions deleted before this update stay in `$OPPI_DATA_DIR/durable/sessions/<id>/`. To reclaim them, stop the server and remove the directories whose id no remaining session uses.
 - **Server:** Existing servers keep the `images.autoResize: false` saved in `config.json`. Run `oppi config set images.autoResize true` for faster image sends, or keep `false` to store full-size originals in sessions.
 - **Server:** The first start opens each durable store (`$OPPI_DATA_DIR/durable/`) with pi-durable 1.4.0, which migrates its SQLite file for good: an `oppi-server` built on Pi 1.3.0 or earlier cannot open it afterwards, so durable sessions do not survive a downgrade past this release. Classic sessions are unaffected.
 - **Compatibility:** Build 55 and older keep showing user photos in chat history: the server sends them inline, as before, to apps that do not declare stored-image support, so those chats load at their previous size. Update to Build 56 to get the smaller history.

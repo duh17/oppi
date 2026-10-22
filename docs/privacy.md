@@ -99,7 +99,7 @@ These are implementation boundaries, not promises that every copy disappears at 
 
 ### Incognito sessions
 
-An Incognito session is left out of server search, and the app asks the server to delete it when you leave its chat. That delete removes what deleting any session removes, Live Voice call records included. Its prompts still go to the model provider like any other session's. If the delete fails, for example because the server can't be reached, the session stays on the server and shows in your list again at the next sync.
+An Incognito session is left out of server search, and the app asks the server to delete it when you leave its chat. That delete removes what deleting any session removes, Live Voice call records included. Its prompts still go to the model provider like any other session's. If the app closes before you leave the chat, or the delete fails (for example because the server can't be reached), the session stays on the server and shows in your list again at the next sync.
 
 ## Prompts, files, and photos
 
@@ -148,7 +148,7 @@ Live Voice is an experiment and is off until you turn on **Settings → Experime
 - `yuwp` (the default): the server sends the audio to `asr.sttEndpoint` for transcription. When the server has a `tts` config, the text-to-speech service read aloud uses speaks the agent's replies. If the agent does not speak during a reply, the server has that service read the start of its written reply, or its error.
 - `grok-voice`: the server sends the audio to xAI (`wss://api.x.ai/v1/realtime`) with the server's xAI sign-in or API key. xAI transcribes it, decides which of your words to pass to the agent, and receives the text of everything the agent says aloud. xAI's privacy policy and retention apply.
 
-What you ask during a call becomes a message in the session, like a typed prompt, and follows the same model-provider flow. The Oppi server does not store call audio. It keeps a record of each call in `voice-calls.json` (your requests and the agent's progress and replies) so a call can continue after a server restart. A call's record is deleted between 24 and 25 hours after the call ends (the server checks hourly), or as soon as you delete its session.
+What you ask during a call becomes a message in the session, like a typed prompt, and follows the same model-provider flow. The Oppi server does not store call audio. It keeps a record of each call in `voice-calls.json` (your requests and the agent's progress and replies) so a call can continue after a server restart. A call's record is deleted between 24 and 25 hours after the call ends (the server checks hourly), or as soon as you delete its session. A call that drops and is not rejoined ends 10 minutes after it dropped. If the server finds `voice-calls.json` corrupt, it keeps the file as `voice-calls.json.corrupt-<time>` and does not delete it; remove it by hand.
 
 ## Push notifications
 
