@@ -476,6 +476,7 @@ final class OppiApp {
         // A launch before first unlock read App Lock's timeout as off. Fix it
         // before anything below (reconnect, ask notifications) reads it.
         AppLockService.shared.refreshStoredTimeoutAfterProtectedData()
+        ScopedLockService.shared.refreshStoredFlagsAfterProtectedData()
         await composerDraftStore.load()
         // Everything below reads paired servers or the timeline cache.
         await loadPairedServers()

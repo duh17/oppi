@@ -247,6 +247,146 @@ struct ScopedLockServiceTests {
     }
 }
 
+// MARK: - Locked launch
+
+/// A launch before the first unlock after a reboot cannot read the stored
+/// flags. The service starts empty, then reads them once data is available.
+@Suite("Scoped lock locked launch")
+@MainActor
+struct ScopedLockLockedLaunchTests {
+    private let server = ScopedLockScope.server(serverId: "srv")
+    private let workspace = ScopedLockScope.workspace(serverId: "srv", workspaceId: "w1")
+    private let session = ScopedLockScope.session(serverId: "srv", sessionId: "s1")
+
+    private final class Availability {
+        var isAvailable: Bool
+        init(_ isAvailable: Bool) { self.isAvailable = isAvailable }
+    }
+
+    private struct Launch {
+        let defaults: UserDefaults
+        let availability: Availability
+        let locks: ScopedLockService
+        let locked: Locked
+    }
+
+    @MainActor
+    private final class Locked {
+        var scopes: [ScopedLockScope] = []
+    }
+
+    /// Stored flags exist in `defaults`, but the service started while they
+    /// could not be read: they appear after init, as if data had been unreadable.
+    private func launch(
+        stored: [ScopedLockScope],
+        sessionWorkspaceId: String? = nil,
+        availableAtLaunch: Bool
+    ) -> Launch {
+        guard let defaults = UserDefaults(suiteName: "ScopedLockLaunchTests-\(UUID().uuidString)") else {
+            preconditionFailure("isolated UserDefaults suite")
+        }
+        let availability = Availability(availableAtLaunch)
+        let appLock = AppLockService(
+            defaults: defaults,
+            availability: { .available },
+            method: { .faceID },
+            authenticator: { _ in .success },
+            didTurnOn: {},
+            isProtectedDataAvailable: { true }
+        )
+        let locked = Locked()
+        if availableAtLaunch { seed(stored, sessionWorkspaceId: sessionWorkspaceId, in: defaults) }
+        let locks = ScopedLockService(
+            defaults: defaults, appLock: appLock,
+            didLock: { locked.scopes.append($0) },
+            isProtectedDataAvailable: { availability.isAvailable }
+        )
+        if !availableAtLaunch { seed(stored, sessionWorkspaceId: sessionWorkspaceId, in: defaults) }
+        return Launch(defaults: defaults, availability: availability, locks: locks, locked: locked)
+    }
+
+    private func seed(_ scopes: [ScopedLockScope], sessionWorkspaceId: String?, in defaults: UserDefaults) {
+        let appLock = AppLockService(
+            defaults: defaults, availability: { .available }, method: { .faceID },
+            authenticator: { _ in .success }, didTurnOn: {}, isProtectedDataAvailable: { true }
+        )
+        let writer = ScopedLockService(
+            defaults: defaults, appLock: appLock, didLock: { _ in }, isProtectedDataAvailable: { true }
+        )
+        for scope in scopes { writer.lock(scope, workspaceId: sessionWorkspaceId) }
+    }
+
+    private func storedScopes(_ defaults: UserDefaults) -> Set<ScopedLockScope> {
+        ScopedLockService(
+            defaults: defaults, appLock: AppLockService(
+                defaults: defaults, availability: { .available }, method: { .faceID },
+                authenticator: { _ in .success }, didTurnOn: {}, isProtectedDataAvailable: { true }
+            ),
+            didLock: { _ in }, isProtectedDataAvailable: { true }
+        ).flags
+    }
+
+    @Test func aLaunchBeforeFirstUnlockEnforcesStoredLocksOnceDataIsAvailable() {
+        let launch = launch(stored: [server, session], sessionWorkspaceId: "w1", availableAtLaunch: false)
+        let target = ScopedLockTarget.session(serverId: "srv", workspaceId: "w1", sessionId: "s1", isIncognito: false)
+        #expect(launch.locks.flags.isEmpty)
+        #expect(!launch.locks.isLocked(target))
+
+        launch.locks.refreshStoredFlagsAfterProtectedData()
+        #expect(launch.locks.flags.isEmpty, "still unavailable: nothing is read")
+
+        launch.availability.isAvailable = true
+        launch.locks.refreshStoredFlagsAfterProtectedData()
+
+        #expect(launch.locks.flags == [server, session])
+        #expect(launch.locks.isLocked(target))
+        #expect(launch.locked.scopes.isEmpty, "learning stored locks must not wipe notifications that never showed locked text")
+    }
+
+    @Test func aLockToggledBeforeTheRefreshKeepsTheStoredLocks() {
+        let launch = launch(stored: [server], availableAtLaunch: false)
+        launch.availability.isAvailable = true
+
+        launch.locks.lock(workspace)
+
+        #expect(launch.locks.flags == [server, workspace])
+        #expect(storedScopes(launch.defaults) == [server, workspace], "the toggle must not save over the stored locks")
+    }
+
+    @Test func removingALockBeforeTheRefreshKeepsTheOtherStoredLocks() async {
+        let launch = launch(stored: [server, workspace], availableAtLaunch: false)
+        launch.availability.isAvailable = true
+
+        #expect(await launch.locks.removeLock(workspace))
+
+        #expect(storedScopes(launch.defaults) == [server])
+    }
+
+    @Test func aLaunchWithDataAvailableLearnsNoNewLocksAndClearsNothing() {
+        let launch = launch(stored: [server], availableAtLaunch: true)
+
+        launch.locks.refreshStoredFlagsAfterProtectedData()
+
+        #expect(launch.locks.flags == [server])
+        #expect(launch.locked.scopes.isEmpty)
+    }
+
+    @Test func aRefreshNeverRemovesALockHeldInMemory() {
+        let launch = launch(stored: [server], availableAtLaunch: false)
+        // A lock set while storage was unreadable exists only in memory.
+        launch.locks.lock(session)
+        launch.defaults.removeObject(forKey: ScopedLockService.flagsKey)
+        seed([server], sessionWorkspaceId: nil, in: launch.defaults)
+        launch.availability.isAvailable = true
+
+        launch.locks.refreshStoredFlagsAfterProtectedData()
+
+        #expect(launch.locks.flags == [server, session])
+        #expect(storedScopes(launch.defaults) == [server, session], "the in-memory lock reaches storage")
+        #expect(launch.locked.scopes == [session], "only lock() clears content, and only once")
+    }
+}
+
 // MARK: - Surfaces outside the open screen
 
 @MainActor

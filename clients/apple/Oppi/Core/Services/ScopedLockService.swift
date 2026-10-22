@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 /// A server, workspace, or session that can carry a device-local lock flag.
 /// Servers are keyed by their identity fingerprint (`PairedServer.id`);
@@ -197,15 +198,24 @@ final class ScopedLockService {
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let appLock: AppLockService
+    @ObservationIgnored private let isProtectedDataAvailable: @MainActor () -> Bool
+    /// The service started before the first unlock after a reboot (a push or
+    /// Live Activity background launch): the stored flags may have been
+    /// unreadable and read as empty. Cleared by the first read made with
+    /// protected data available.
+    @ObservationIgnored private var flagsMayBeUnread: Bool
 
     init(
         defaults: UserDefaults = .standard,
         appLock: AppLockService = .shared,
-        didLock: @escaping @MainActor (ScopedLockScope) -> Void = { ScopedLockService.clearContentShownBeforeLock($0) }
+        didLock: @escaping @MainActor (ScopedLockScope) -> Void = { ScopedLockService.clearContentShownBeforeLock($0) },
+        isProtectedDataAvailable: @escaping @MainActor () -> Bool = { UIApplication.shared.isProtectedDataAvailable }
     ) {
         self.defaults = defaults
         self.appLock = appLock
         self.didLock = didLock
+        self.isProtectedDataAvailable = isProtectedDataAvailable
+        flagsMayBeUnread = !isProtectedDataAvailable()
         let stored = Self.loadFlags(from: defaults)
         flags = Set(stored.map(\.scope))
         sessionWorkspaceIds = Dictionary(
@@ -221,6 +231,34 @@ final class ScopedLockService {
             generation: appLock.scopedUnlockGeneration,
             appLockEnabled: appLock.isEnabled
         )
+    }
+
+    /// Once protected data is available after a launch before the first
+    /// unlock, reads the stored flags again and adds them to the ones in
+    /// memory (a refresh never removes a lock). The push redaction snapshot is
+    /// republished with the union. Delivered and pending notifications are
+    /// left alone: none showed locked text (the extension used the stored
+    /// snapshot, and local asks start after this refresh), so clearing them
+    /// would only wipe unrelated banners on the first unlock.
+    /// Startup calls this as soon as protected data is available; every path
+    /// that decides or writes flags repeats it. Not for render getters: it
+    /// changes observed state.
+    func refreshStoredFlagsAfterProtectedData() {
+        guard flagsMayBeUnread, isProtectedDataAvailable() else { return }
+        flagsMayBeUnread = false
+        let stored = Self.loadFlags(from: defaults)
+        let storedScopes = Set(stored.map(\.scope))
+        let added = storedScopes.subtracting(flags)
+        for flag in stored {
+            if let workspaceId = flag.workspaceId, sessionWorkspaceIds[flag.scope] == nil {
+                sessionWorkspaceIds[flag.scope] = workspaceId
+            }
+        }
+        flags.formUnion(added)
+        guard !added.isEmpty || flags != storedScopes else { return }
+        // Writes the union (a flag set in memory while storage was unreadable
+        // reaches storage) and publishes the snapshot the extension reads.
+        save()
     }
 
     // MARK: - Queries
@@ -283,6 +321,7 @@ final class ScopedLockService {
     /// Device authentication for `target` unless it is already reachable.
     /// Success unlocks every gated scope in its chain for this generation.
     func authorize(_ target: ScopedLockTarget) async -> Bool {
+        refreshStoredFlagsAfterProtectedData()
         let current = policy
         guard current.access(target) == .locked else { return true }
         // One prompt at a time. A request that arrives while a prompt is up
@@ -315,6 +354,7 @@ final class ScopedLockService {
     /// Otherwise asks for authentication and calls `onUnlock` after success;
     /// cancel or failure leaves the caller where it was.
     func gate(_ target: ScopedLockTarget, onUnlock: @escaping @MainActor () -> Void) -> Bool {
+        refreshStoredFlagsAfterProtectedData()
         guard isLocked(target) else { return true }
         Task { @MainActor in
             if await authorize(target) { onUnlock() }
@@ -334,6 +374,7 @@ final class ScopedLockService {
     /// the current generation when the user locks it from inside (settings).
     /// `workspaceId` is a session's workspace, kept for workspace deletion.
     func lock(_ scope: ScopedLockScope, workspaceId: String? = nil, unlockedForNow: Bool = false) {
+        refreshStoredFlagsAfterProtectedData()
         guard !flags.contains(scope) else { return }
         flags.insert(scope)
         if case .session = scope, let workspaceId, !workspaceId.isEmpty {
@@ -349,6 +390,7 @@ final class ScopedLockService {
     /// Turning a lock off always asks for device authentication.
     @discardableResult
     func removeLock(_ scope: ScopedLockScope) async -> Bool {
+        refreshStoredFlagsAfterProtectedData()
         guard flags.contains(scope), !isAuthenticating else { return !flags.contains(scope) }
         isAuthenticating = true
         defer { isAuthenticating = false }
@@ -363,6 +405,7 @@ final class ScopedLockService {
     // MARK: - Cleanup
 
     func forgetServer(_ serverId: String) {
+        refreshStoredFlagsAfterProtectedData()
         var next = policy
         next.forgetServer(serverId)
         apply(next)
@@ -371,6 +414,7 @@ final class ScopedLockService {
     /// Also forgets the workspace's sessions: every session locked while
     /// recorded in it, plus the listed ids the device still has for it.
     func forgetWorkspace(serverId: String, workspaceId: String, sessionIds: [String] = []) {
+        refreshStoredFlagsAfterProtectedData()
         let recorded = sessionWorkspaceIds
             .filter { $0.key.serverId == serverId && $0.value == workspaceId }
             .map(\.key)
@@ -382,6 +426,7 @@ final class ScopedLockService {
     }
 
     func forgetSession(serverId: String, sessionId: String) {
+        refreshStoredFlagsAfterProtectedData()
         var next = policy
         next.forget([ScopedLockScope.session(serverId: serverId, sessionId: sessionId)])
         apply(next)

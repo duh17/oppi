@@ -35,6 +35,8 @@ enum AppLockIntentGate {
         continueInForeground: () async throws -> Void,
         waitUntilActive: () async -> Void = waitUntilAppIsActive
     ) async -> Bool {
+        // An intent can start the process before first unlock, ahead of startup.
+        locks.refreshStoredFlagsAfterProtectedData()
         guard locks.isLocked(target) else { return true }
         if !isActive() {
             do {
