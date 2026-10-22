@@ -35,6 +35,8 @@ scripts/*
 !scripts/pre-push-plan.test.ts
 !scripts/heavy.sh
 !scripts/heavy.test.ts
+!scripts/batch-gate.ts
+!scripts/batch-gate.test.ts
 !scripts/sim-pool.sh
 clients/apple/scripts/*
 !clients/apple/scripts/build-tailscalekit.sh
