@@ -480,6 +480,15 @@ enum ToolTimelineRowPresentationHelpers {
 
     // MARK: - Interaction-deferred invalidation
 
+    /// The ordinary path rechecks every `interactionRetryIntervalMilliseconds` for at most this
+    /// many tries, then gives up; the forced path never gives up while the interaction lasts.
+    static let ordinaryInteractionRetryBudget = 180
+    static let interactionRetryIntervalMilliseconds = 16
+    /// How long the ordinary path stays pending before giving up (~2.9 s).
+    static var ordinaryInteractionRetryWindow: Duration {
+        .milliseconds(ordinaryInteractionRetryBudget * interactionRetryIntervalMilliseconds)
+    }
+
     private static var pendingInteractionInvalidations: Set<ObjectIdentifier> = []
     private static var pendingForcedInteractionInvalidations: Set<ObjectIdentifier> = []
 
@@ -500,7 +509,7 @@ enum ToolTimelineRowPresentationHelpers {
         recheckOrdinaryInteractionAndInvalidateWhenIdle(
             collectionView: collectionView,
             identifier: identifier,
-            retriesRemaining: 180
+            retriesRemaining: ordinaryInteractionRetryBudget
         )
     }
 
@@ -520,7 +529,9 @@ enum ToolTimelineRowPresentationHelpers {
             return
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16)) { [weak collectionView] in
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(interactionRetryIntervalMilliseconds)
+        ) { [weak collectionView] in
             guard let collectionView else {
                 pendingInteractionInvalidations.remove(identifier)
                 return

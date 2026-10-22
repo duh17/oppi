@@ -731,8 +731,9 @@ struct ToolExpandedSurfaceHostTests {
         await Task.yield()
         #expect(recycledFirstSource == nil)
 
-        // Long enough to span several of the 250 ms capped recheck intervals while tracking.
-        try? await Task.sleep(for: .seconds(1))
+        // Outlast the bounded ordinary retry (180 x 16 ms) with margin, so a pending request here
+        // can only be the forced path that never gives up while tracking.
+        try? await Task.sleep(for: ToolTimelineRowPresentationHelpers.ordinaryInteractionRetryWindow + .milliseconds(1_500))
         #expect(
             ToolTimelineRowPresentationHelpers.forcedInteractionInvalidationIsPendingForTesting(
                 collectionView
