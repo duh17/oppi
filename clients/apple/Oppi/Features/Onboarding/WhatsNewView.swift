@@ -153,7 +153,7 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
             icon: .gitLogo,
             iconColor: \.yellow,
             title: String(localized: "Reorganized top bar"),
-            description: String(localized: "The chat's top-right bar now holds Files, Git, Context, Terminal, and Outline, and Settings → Chat → Top Bar lets you choose which ones show.")
+            description: String(localized: "The chat's top-right bar is reorganized: Context sits up front, and Files, Git, Outline, and Terminal are in its … menu. Settings → Chat → Top Bar pins the ones you use.")
         ),
         WhatsNewFeature(
             id: "pi",
