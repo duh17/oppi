@@ -1587,12 +1587,14 @@ describe("SessionManager prompt", () => {
   });
 
   it("runs a followUp prompt as a plain prompt on an idle session", async () => {
-    const { manager, sdkBackend } = makeManagerHarness({ status: "ready" });
+    const { manager, sdkBackend, session } = makeManagerHarness({ status: "ready" });
 
     await manager.sendPrompt("s1", "now", { streamingBehavior: "followUp" });
 
     expect(sdkBackend.prompt).toHaveBeenCalledTimes(1);
     expect(sdkBackend.prompt.mock.calls[0]?.[1]?.streamingBehavior).toBeUndefined();
+    expect(session.messageCount).toBe(1);
+    expect(session.lastMessage).toBe("now");
   });
 
   it.each([
@@ -1601,7 +1603,8 @@ describe("SessionManager prompt", () => {
   ] as const)(
     "forwards a busy %s prompt to the SDK and queues it",
     async (streamingBehavior, queueName) => {
-      const { manager, sdkBackend } = makeManagerHarness({ status: "busy" });
+      const { manager, sdkBackend, session } = makeManagerHarness({ status: "busy" });
+      const lastActivity = session.lastActivity;
 
       await manager.sendPrompt("s1", "queued", {
         streamingBehavior,
@@ -1615,6 +1618,10 @@ describe("SessionManager prompt", () => {
       expect(manager.getMessageQueue("s1")[queueName].map((item) => item.message)).toEqual([
         "queued",
       ]);
+      // Queued, like a bare steer or follow_up: the session's message record is untouched.
+      expect(session.messageCount).toBe(0);
+      expect(session.lastMessage).toBeUndefined();
+      expect(session.lastActivity).toBe(lastActivity);
     },
   );
 

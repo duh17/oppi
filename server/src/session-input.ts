@@ -224,6 +224,14 @@ export class SessionInputCoordinator {
     });
     const dispatchImages = prepared.images;
     const dispatchMessage = prepared.message;
+    // A busy prompt with a streaming behavior is queued like a bare steer or
+    // follow_up, and like them it is not recorded as a session message here.
+    const queueKind =
+      runtimeBusy && opts?.streamingBehavior
+        ? opts.streamingBehavior === "steer"
+          ? "steer"
+          : "follow_up"
+        : undefined;
     let acceptedTurn: { clientTurnId?: string; duplicate: boolean } | undefined;
     let turnDispatched = false;
     const acceptPreflight = (): void => {
@@ -241,7 +249,7 @@ export class SessionInputCoordinator {
         throw new Error("Prompt turn became duplicate during serialized preflight admission");
       }
 
-      if (shouldRecordPromptLocally(active.session)) {
+      if (!queueKind && shouldRecordPromptLocally(active.session)) {
         const capturedFirst = appendSessionMessage(active.session, {
           role: "user",
           content: dispatchMessage,
@@ -297,15 +305,9 @@ export class SessionInputCoordinator {
       imageCount: dispatchImages.length,
       attachmentCount: opts?.attachments?.length ?? 0,
       streamingBehavior: cmd.streamingBehavior as string | undefined,
-      recordPromptLocally: shouldRecordPromptLocally(active.session),
+      recordPromptLocally: !queueKind && shouldRecordPromptLocally(active.session),
     });
 
-    const queueKind =
-      runtimeBusy && opts?.streamingBehavior
-        ? opts.streamingBehavior === "steer"
-          ? "steer"
-          : "follow_up"
-        : undefined;
     const data = await this.dispatchModelTurn(key, active, cmd, permit, () => {
       acceptPreflight();
       // Pi can synchronously emit agent_start immediately after preflight.
