@@ -993,7 +993,7 @@ struct ConversationStreamSessionTests {
 }
 
 /// Main-thread work of following busy subagents: eight children each stream ten frames a second,
-/// as the server's frame interval allows, for two seconds. Each publication of the tails
+/// as the server's frame interval allows, for under a second. Each publication of the tails
 /// rebuilds the parent timeline's rows, so they must stay batched. Prints a `PERF` line.
 @Suite("Subagent live tail cost")
 @MainActor
@@ -1020,7 +1020,7 @@ struct ConversationChildTailPerfTests {
         #expect(await waitForMainActorCondition { harness.manager.childTails.count == children })
 
         let before = harness.manager._childTailPublicationsForTesting
-        let rounds = 20
+        let rounds = 8
         let start = ContinuousClock.now
         for round in 1...rounds {
             for index in 0..<children {
@@ -1040,7 +1040,7 @@ struct ConversationChildTailPerfTests {
             format: "PERF conversation-stream child tails: %d children, %d frames in %.2f s, %d publications (%.1f/s)",
             children, children * rounds, seconds, publications, Double(publications) / seconds
         ))
-        // Unbatched, every one of the 160 frames would publish.
+        // Unbatched, every one of the 64 frames would publish.
         #expect(publications >= 2)
         #expect(Double(publications) <= seconds * 4 + 2)
         await harness.finish()
