@@ -78,7 +78,7 @@ Example:
 ### Changed
 
 - **Client:** SSH Terminal is no longer an experiment. **Settings → SSH Hosts** and **Terminal** below **MCP Servers** are always there, and a workspace's and a chat's Terminal work wherever the folder can open. See [SSH Terminal](docs/ssh-terminal.md).
-- **Client:** Dictation uses on-device speech by default on new installs; choose **Server** under **Settings → Voice & Dictation → Dictation Engine** to send audio to your server. Your saved choice is kept. See [Usage](docs/usage.md#voice).
+- **Client:** Dictation uses on-device speech unless you chose **Server** under **Settings → Voice & Dictation → Dictation Engine**. If you never picked an engine, this update switches you from Server to On-device; a choice you made is kept. See [Usage](docs/usage.md#voice).
 - **Client/Server:** A chat's user photos are stored on the server once and fetched by the app, so reopening a chat with screenshots no longer downloads megabytes of image data on every history load. See [Attachment rendering](docs/attachment-rendering.md#stored-images-in-chat-history).
 - **Client/Server:** The read-aloud speaker, server dictation, and Live Voice (once its experiment is on) appear only while their backend is reachable, and **Server Settings → About This Server → Voice** shows each backend's state. With Engine set to Server, the mic records on-device while server dictation is unavailable. See [Voice backend health](docs/server-configuration.md#voice-backend-health).
 - **Client:** The chat screen, composer, Ask card, Session Outline, and every sheet and settings page are rebuilt in UIKit, so opening chats, scrolling, and moving between screens is faster.

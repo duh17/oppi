@@ -91,7 +91,7 @@ In a chat whose workspace is a Git repository, the top bar's **Git** button show
 
 ## Voice
 
-**Settings → Voice & Dictation → Dictation Engine** is **On-device** or **Server**. New installs use **On-device**; choose **Server** to send dictation audio to your server. A choice you already made is kept.
+**Settings → Voice & Dictation → Dictation Engine** is **On-device** or **Server**. **On-device** is the default; choose **Server** to send dictation audio to your server. If you never picked an engine, you are on **On-device**; a choice you made is kept.
 
 - **On-device** uses Apple's speech APIs on the phone. Audio stays on the device. Submitting the transcript still sends the prompt to the paired server.
 - **Server** streams audio to the paired server, which forwards it to the configured speech-to-text backend.
