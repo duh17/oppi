@@ -187,8 +187,10 @@ export class LiveActivityNotifier {
   /**
    * Whether a rise from zero is work starting. False after `start` restored a card: the new
    * process sees the counts rise from its own empty start as sessions resume, which says
-   * nothing about the restored card, so it must not re-date it. True again once the counts
-   * have fallen to zero here, as the card then ended.
+   * nothing about the restored cards, so it must not re-date them. `start` seeds
+   * `countsRoseAt` with the earliest restored start instead, which also dates the card of a
+   * device that was not restored. True again once the counts have fallen to zero here, as the
+   * cards then ended.
    */
   private countsRiseTrusted = true;
   private stopped = false;
@@ -219,7 +221,7 @@ export class LiveActivityNotifier {
     const now = this.now();
     const saved = this.options.state?.load() ?? new Map<string, PersistedCard>();
     this.stateLoaded = true;
-    let restored = false;
+    const restoredStarts: number[] = [];
     for (const registration of this.registrations()) {
       const device = this.device(registration.deviceId);
       const card = saved.get(registration.deviceId);
@@ -231,12 +233,15 @@ export class LiveActivityNotifier {
       ) {
         device.startedAt = card.startedAt;
         device.activity = card.activity;
-        restored = true;
+        restoredStarts.push(card.startedAt);
       }
       device.lastSentAt = now;
       this.schedule(registration.deviceId);
     }
-    if (restored) this.countsRiseTrusted = false;
+    if (restoredStarts.length > 0) {
+      this.countsRiseTrusted = false;
+      this.countsRoseAt = Math.min(this.countsRoseAt ?? Infinity, ...restoredStarts);
+    }
     this.persistSoon();
   }
 
@@ -345,7 +350,12 @@ export class LiveActivityNotifier {
     const counts = this.options.counts();
     const previous = this.lastCounts;
     if (!sameCounts(previous, counts)) {
-      if (isEmpty(previous) && this.countsRiseTrusted) this.countsRoseAt = this.now();
+      // A card this server started and has not ended may have come through a short zero (no
+      // end goes out within a minute of the last send): the work it counts is not new, and
+      // dating later would let it reach Apple's 8 hours before the server restarts it.
+      if (isEmpty(previous) && this.countsRiseTrusted && !this.anyCardLive()) {
+        this.countsRoseAt = this.now();
+      }
       if (isEmpty(counts)) this.countsRiseTrusted = true;
       this.lastCounts = counts;
       this.lastCountsChangeAt = this.now();
@@ -355,6 +365,12 @@ export class LiveActivityNotifier {
       if (!deviceIds.has(deviceId)) this.forget(deviceId);
     }
     for (const deviceId of deviceIds) this.schedule(deviceId);
+  }
+
+  /** Whether this server started a card that no delivered `end` has since removed. */
+  private anyCardLive(): boolean {
+    for (const device of this.devices.values()) if (device.activity === "live") return true;
+    return false;
   }
 
   /** A device opened its first or closed its last live stream. */

@@ -22,6 +22,8 @@ const phone: PushRegistration = {
   events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
 };
 
+const ipad: PushRegistration = { ...phone, deviceId: "d_ipad", sendToken: "osp1.r.p.i" };
+
 function session(id: string, state: string, parentSessionId?: string): Session {
   return {
     id,
@@ -73,6 +75,10 @@ describe("LiveActivityNotifier", () => {
   let present: boolean;
   let registrations: PushRegistration[];
   let sent: LiveActivityPush[];
+  /** The device each entry of `sent` went to. */
+  let sentTo: string[];
+  /** Devices holding a live stream, besides all of them while `present`. */
+  let presentIds: Set<string>;
   let answer: (push: LiveActivityPush) => LiveActivitySendResult;
   let notifier: LiveActivityNotifier;
   /** What the notifier saved: the card file that outlives a process. */
@@ -83,14 +89,15 @@ describe("LiveActivityNotifier", () => {
   function build(): LiveActivityNotifier {
     const push = {
       registrations: () => registrations,
-      sendLiveActivity: async (_registration: PushRegistration, payload: LiveActivityPush) => {
+      sendLiveActivity: async (registration: PushRegistration, payload: LiveActivityPush) => {
         sent.push(payload);
+        sentTo.push(registration.deviceId);
         if (hang) return new Promise<never>(() => undefined);
         return answer(payload);
       },
     } as unknown as Pick<PushSender, "registrations" | "sendLiveActivity">;
     return new LiveActivityNotifier(push, {
-      isDevicePresent: () => present,
+      isDevicePresent: (deviceId) => present || presentIds.has(deviceId),
       counts: () => counts,
       state: { load: () => new Map(saved), save: (cards) => void (saved = new Map(cards)) },
     });
@@ -102,6 +109,8 @@ describe("LiveActivityNotifier", () => {
     present = false;
     registrations = [phone];
     sent = [];
+    sentTo = [];
+    presentIds = new Set();
     answer = () => ({ status: "delivered" });
     saved = new Map();
     hang = false;
@@ -125,6 +134,10 @@ describe("LiveActivityNotifier", () => {
   }
 
   const events = () => sent.map((push) => `${push.event} ${push.running}/${push.needsYou}`);
+  const eventsFor = (registration: PushRegistration) =>
+    sent
+      .filter((_, index) => sentTo[index] === registration.deviceId)
+      .map((push) => `${push.event} ${push.running}/${push.needsYou}`);
 
   it("starts when work begins while the phone is away, then ends when nothing runs", async () => {
     leave();
@@ -314,6 +327,31 @@ describe("LiveActivityNotifier", () => {
     expect(events()).toEqual(["end 0/0", "start 1/0", "end 0/0", "start 1/0"]);
   });
 
+  it("dates a card it kept through a short zero blip by its own start", async () => {
+    leave();
+    change({ running: 1, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(3 * 60 * 60_000);
+    change({ running: 2, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    // Zero, and work again, before the end may go out (a minute after the update).
+    change({ running: 0, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(20_000);
+    change({ running: 1, needsYou: 0 });
+    expect(events()).toEqual(["start 1/0", "update 2/0"]);
+    // The app opens and leaves; the card, still the server's, is 3 hours and a bit old.
+    present = true;
+    notifier.presenceChanged(phone.deviceId);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    leave();
+    await vi.advanceTimersByTimeAsync(
+      LIVE_ACTIVITY_MAX_AGE_MS - 3 * 60 * 60_000 - 10 * 60_000 - 20_001,
+    );
+    expect(events()).toEqual(["start 1/0", "update 2/0"]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(events()).toEqual(["start 1/0", "update 2/0", "end 0/0", "start 1/0"]);
+  });
+
   it("starts no card over one it could not end", async () => {
     present = true;
     notifier.presenceChanged(phone.deviceId);
@@ -474,6 +512,7 @@ describe("LiveActivityNotifier", () => {
       await vi.advanceTimersByTimeAsync(cardAgeMs);
       restart();
       sent.length = 0;
+      sentTo.length = 0;
       counts = { running: 2, needsYou: 1 };
       notifier.start();
     }
@@ -503,6 +542,25 @@ describe("LiveActivityNotifier", () => {
       expect(events()).toEqual([]);
       await vi.advanceTimersByTimeAsync(1);
       expect(events()).toEqual(["end 0/0", "start 2/1"]);
+    });
+
+    it("keeps a device that was not restored from restarting at once when it leaves", async () => {
+      // The iPad's app drives its card across the restart; the phone has a restored card.
+      registrations = [phone, ipad];
+      presentIds.add(ipad.deviceId);
+      await startCardAndRestart(60 * 60_000);
+      notifier.countsChanged();
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      presentIds.delete(ipad.deviceId);
+      notifier.presenceChanged(ipad.deviceId);
+      // The iPad's card is dated by the restored card's start, 1 hour before the restart, so
+      // its 8 hours run out 7 hours after it; so do the phone's, from its real start.
+      await vi.advanceTimersByTimeAsync(7 * 60 * 60_000 - 10 * 60_000 - 1);
+      expect(eventsFor(ipad)).toEqual([]);
+      expect(eventsFor(phone)).toEqual(["update 2/1"]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(eventsFor(ipad)).toEqual(["end 0/0", "start 2/1"]);
+      expect(eventsFor(phone)).toEqual(["update 2/1", "end 0/0", "start 2/1"]);
     });
 
     it("ends a card the last process started when the server is stopped before the reconcile", async () => {
@@ -544,6 +602,7 @@ describe("LiveActivityNotifier", () => {
       await vi.advanceTimersByTimeAsync(5_000);
       restart();
       sent.length = 0;
+      sentTo.length = 0;
       notifier.start();
       await vi.advanceTimersByTimeAsync(60_000);
       expect(events()).toEqual(["update 2/1"]);
