@@ -460,13 +460,14 @@ final class LiveVoiceCallController {
             return
         }
         if rejoinOnly {
-            // Nothing remembered to rejoin.
+            // Nothing remembered to rejoin; a rejoin never starts a call of its own.
             failClosed(Self.endedText, closeChannel: true)
             return
         }
-        if !startSent {
-            await sendStart()
-        }
+        // A reconnect with the start already sent: its reply went down with the old socket.
+        // The same clientCallId makes the resend idempotent on the server (it re-enters the
+        // call the first start created, or creates it); a rejected resend fails the call.
+        await sendStart()
     }
 
     private func rejoinCall() async {
