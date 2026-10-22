@@ -74,8 +74,9 @@ function launchctlMessage(err: unknown): string {
 }
 
 function isAlreadyLoadedError(err: unknown): boolean {
-  // Do not search the whole execSync message for "37": uid 537 or a path like
-  // /Users/chen37 would turn bootstrap 125 into a false already-loaded hit.
+  // Do not search the whole execSync message for "37": uid 537 or a home path
+  // that merely contains those digits would turn bootstrap 125 into a false
+  // already-loaded hit.
   return launchctlStatus(err) === 37 || /\b37:/.test(launchctlMessage(err));
 }
 

@@ -494,6 +494,16 @@ run_mac_gate() {
 
 echo "pre-push: $CHANGED_COUNT changed paths; server=$SERVER_MODE apple=$APPLE_MODE mac=$MAC_CHANGED harness=$HARNESS_CHANGED"
 
+# Cheap repo-wide invariant that no lane owns: tracked source and configuration
+# must not record an absolute home directory. It runs on every push because an
+# iOS-only or doc-only change otherwise never reaches the server lane, and a
+# stale home path only fails later, at runtime. See
+# server/scripts/check-home-paths.ts.
+if ! run_without_git_local_env bun "$REPO_ROOT/server/scripts/check-home-paths.ts"; then
+  echo "pre-push: absolute home paths in tracked files; see the list above." >&2
+  exit 1
+fi
+
 # The Apple build runs the server's architecture rules in a build phase, so it needs them too.
 if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 || "$APPLE_MODE" != "none" ]]; then
   # Install server deps from this worktree's lockfile before any lane starts, so
