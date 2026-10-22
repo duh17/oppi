@@ -117,7 +117,9 @@ export function completionArgvForXctestrun(argv: string[]): string[] | undefined
   const scheme = xctestrun ? /^([A-Za-z0-9]+)_[^/]*\.xctestrun$/.exec(basename(xctestrun))?.[1] : undefined;
   if (!scheme || !argv.includes("test-without-building")) return undefined;
   const filters = argv.filter((arg) => /^-(?:only|skip)-testing:/.test(arg));
-  const others = argv.filter((arg, i) => !filters.includes(arg) && arg !== "test-without-building" && arg !== "-xctestrun" && argv[i - 1] !== "-xctestrun");
+  // Diagnostics collection changes nothing about what a finished summary means.
+  const valued = new Set(["-xctestrun", "-collect-test-diagnostics"]);
+  const others = argv.filter((arg, i) => !filters.includes(arg) && arg !== "test-without-building" && !valued.has(arg) && !valued.has(argv[i - 1]));
   if (others.length > 0) return undefined;
   return ["-scheme", scheme, "test", ...filters];
 }

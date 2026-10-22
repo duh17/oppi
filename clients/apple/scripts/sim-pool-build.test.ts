@@ -37,7 +37,7 @@ describe("planRun", () => {
 
   test("a unit-shard xctestrun run is parsed for completion like the scheme test it stands for", () => {
     const shard = ["test-without-building", "-xctestrun", "/r/Build/Products/OppiUnitTests_iphonesimulator27.1-arm64.xctestrun",
-      "-only-testing:OppiTests", "-skip-testing:OppiTests/A"];
+      "-collect-test-diagnostics", "never", "-only-testing:OppiTests", "-skip-testing:OppiTests/A"];
     expect(completionArgvForXctestrun(shard)).toEqual(["-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests", "-skip-testing:OppiTests/A"]);
     // Repetition changes what a finished summary means; leave such runs unparsed.
     expect(completionArgvForXctestrun([...shard, "-test-iterations", "3"])).toBeUndefined();

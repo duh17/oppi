@@ -135,7 +135,11 @@ async function runShard(index: number, xctestrun: string, flags: string[], outDi
   const output = join(outDir, `${label}.out`);
   const fd = openSync(output, "w");
   const started = Date.now();
-  const child = spawn(join(scriptDir, "sim-pool.sh"), ["run", "--", "xcodebuild", "test-without-building", "-xctestrun", xctestrun, ...flags], {
+  // No failure diagnostics (simctl diagnose runs minutes and, cut short by sim-pool's
+  // completion stop, leaves an unreadable xcresult, so failed tests could not be rerun).
+  const child = spawn(join(scriptDir, "sim-pool.sh"), [
+    "run", "--", "xcodebuild", "test-without-building", "-xctestrun", xctestrun, "-collect-test-diagnostics", "never", ...flags,
+  ], {
     cwd: appleDir,
     stdio: ["ignore", fd, fd],
   });
