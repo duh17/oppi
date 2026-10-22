@@ -584,7 +584,7 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       expect((await send(current, "start")).status).toBe(200);
     });
 
-    it("counts Live Activity pushes apart from alerts", async () => {
+    it("counts Live Activity pushes apart from alerts each minute", async () => {
       const { sendToken } = await liveActivityPhone(harness);
       const start = () => liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 });
       const alert = () => call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } });
@@ -594,7 +594,7 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       const limited = await start();
       expect(limited).toMatchObject({ status: 429, json: { error: "quota_exceeded" } });
       expect(Number(limited.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
-      // A Live Activity at its limit leaves every alert.
+      // A Live Activity at its minute's limit leaves every alert that minute.
       for (let index = 0; index < DEFAULT_QUOTA_LIMITS.perMinute; index += 1) {
         expect((await alert()).status).toBe(200);
       }

@@ -314,27 +314,31 @@ Shares the per-address push limit (`429 rate_limited` with `Retry-After: 60`).
 
 ### 3.3 Quotas
 
-Per registration and UTC day: 100 pushes when attested, 20 when not (sandbox only). Per
-registration: at most 10 pushes per minute. A phone holds one registration per APNs token,
-so registering again never resets these counts. The counts are the phone's, shared by every
+Per registration and UTC day: 100 pushes when attested, 20 when not (sandbox only), alerts
+and Live Activity pushes (3.6) together; `limits.pushesPerDay` in the registration answer is
+this number. Per registration: at most 10 alerts per minute. A phone holds one registration
+per APNs token, so registering again never resets these counts. The counts are the phone's, shared by every
 server it is paired with. They fit normal use within the Cloudflare Workers Free plan
 (100,000 Worker requests, Durable Object requests, and rows written a day each). An alert or
 Live Activity update costs one Worker request, one Durable Object request, and one row; a
 delivered Live Activity `end`, or a `start` that replaces a card's token, two Durable Object
 requests and two rows; each Live Activity upload from the phone two requests and one row
 (`relay/README.md`, "What each request costs"). A
-phone at every cap uses about 170 Durable Object requests a day, so about 600 such phones
-fill the plan; normal use is about 100. A refused push writes nothing. Unattested
+phone at the cap uses about 130 Durable Object requests a day (100 pushes, a few card
+starts and ends, its uploads), so about 750 such phones fill the plan. A refused push writes
+nothing. Unattested
 registrations: at most 5 per client address per hour (in memory). Pushes, Live Activity
 pushes, and permission releases: at most 60 per client address per minute together (in
 memory), checked before the send token is looked up. An IPv6 client address counts as its /64.
 
-Live Activity pushes (3.6) have their own counters: 40 per registration and UTC day when
-attested, 20 when not, and 3 a minute. They never spend the alert quota and alerts never
-spend theirs; registering again keeps both. A Live Activity push refused before APNs
+Alerts come first: a Live Activity `start` or `update` is refused once the day's count
+reaches 70 when attested, 14 when not, keeping the last 30 (6) for alerts, which may use the
+day to its last push. Live Activity pushes have their own per-minute limit, 3, and alerts
+never spend it. The relay keeps an alert count and a Live Activity count per day and adds
+them; registering again keeps both. A Live Activity push refused before APNs
 (`409 no_activity`) is not counted. An `end` is counted but never refused for the day's
 limit (so a full quota cannot leave a card showing finished work) and has an overdraft of 8
-more: 48 a day when attested, 28 when not. The per-minute limit still applies. A delivered `end` clears the card's update
+more: 108 a day when attested, 28 when not. The per-minute limit still applies. A delivered `end` clears the card's update
 token, but one APNs failed (`502`) keeps it and may be sent again, which the overdraft bounds.
 
 ### 3.4 Relay storage
@@ -345,7 +349,8 @@ flag, App Attest public key and counter, creation time, permissions (id and
 push-to-start token; for each server whose card is on, the permission id that may drive it,
 its slot, the live card's update token and the time the relay first saw it, and whether the
 person dismissed it (and whether a server has ended it since); the last Live Activity
-`aps.timestamp` it sent; and the Live Activity quota counters. Per
+`aps.timestamp` it sent; and the Live Activity quota counters (counted with the alert ones
+toward the day's limit). Per
 APNs token, the id of its current registration (the Cloudflare adapter keys this by the
 token and stores only the id). Challenges until used or expired. No envelopes, no Live
 Activity counts, no client addresses, no request logs.
@@ -552,12 +557,13 @@ removes them from Notification Center when it becomes active: they open nothing.
   the relay to delete its permission.
 - Revoking a device or rotating the owner token removes its registration in the same
   write and asks the relay to delete the permission.
-- Per-device budget, in memory: 100 pushes per UTC day and 10 per minute for each device,
-  the same numbers as the relay's quota. The relay's quota is per phone and shared by every
+- Per-device budget, in memory: 100 pushes per UTC day, alerts and Live Activity together,
+  and 10 alerts per minute for each device, the same numbers as the relay's quota. The relay's quota is per phone and shared by every
   server that phone is paired with, so a server within its own budget can still get a relay
   `429` once other servers have used the phone's quota; the relay's answer decides. Routine events
-  (`error`, `notify`, `device_enrolled`) stop at 80 a day and 8 a minute; the rest
-  is kept for `blocked` and `pairing_approval`, which wait on the user. A relay `429` with
+  (`error`, `notify`, `device_enrolled`) stop at 90 a day and 8 a minute; the rest
+  is kept for `blocked` and `pairing_approval`, which wait on the user. Live Activity
+  starts and updates stop at 70 (below). A relay `429` with
   `Retry-After` pauses that device's pushes until it passes; so does a relay `503
   relay_capacity` with `Retry-After` (section 3), the same way (per device for alerts, per
   event kind for Live Activity). A `503` without `Retry-After` is a relay failure.
@@ -615,10 +621,10 @@ removes them from Notification Center when it becomes active: they open nothing.
   the 2 minutes before (a suspended app may have missed that), and then sends. A minute after
   startup it reconciles each device once. Network failures retry after 5 minutes; a `429`, or a
   `503 relay_capacity` with `Retry-After`, waits it out, apart for an `end` and for a `start` or `update`: a day's quota
-  that stops updates does not hold back the `end`. Budget: 40 per device and UTC day, apart from alerts; `update`
-  stops at 32, and a `start` needs two free slots (its own and its `end`'s). An `end` is
-  never refused for the day's 40 but has an overdraft of 8 (so 48), and waits out only its
-  own `429`. The server counts a send only when the relay counted it:
+  that stops updates does not hold back the `end`. Budget: the device's daily 100, shared with
+  alerts; `start` and `update` stop at 70, so 30 stay for alerts, and a `start` needs two free
+  slots under 70 (its own and its `end`'s). An `end` is never refused for the day's 100 but
+  has an overdraft of 8 (so 108), and waits out only its own `429`. The server counts a send only when the relay counted it:
   delivered, `502 apns_unavailable` (APNs failed after the relay charged it), and `429`; a
   network failure, a timeout, another `5xx`, a `503 relay_capacity`, or a `409 no_activity`
   does not count. The relay charges before APNs, so a `409` for a token APNs retired still

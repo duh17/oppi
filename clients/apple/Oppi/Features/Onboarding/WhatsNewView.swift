@@ -139,7 +139,7 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
             icon: .symbol("bell.badge"),
             iconColor: \.orange,
             title: String(localized: "Push and Live Activities (experimental)"),
-            description: String(localized: "Opt in for each server in Server Settings → Notifications to get end-to-end-encrypted alerts through Oppi's free relay when a session needs your answer or approval, a run fails, or an agent notifies you. Live Activities show running and waiting counts on the Lock Screen. Both are off by default, and the privacy policy lists what the relay can see. Limits are preliminary: up to 100 alerts and 40 Live Activity updates per phone a day.")
+            description: String(localized: "Opt in for each server in Server Settings → Notifications to get end-to-end-encrypted alerts through Oppi's free relay when a session needs your answer or approval, a run fails, or an agent notifies you. Live Activities show running and waiting counts on the Lock Screen. Both are off by default, and the privacy policy lists what the relay can see. Limits are preliminary: up to 100 pushes per phone a day, 30 kept for alerts.")
         ),
         WhatsNewFeature(
             id: "diff-engine",

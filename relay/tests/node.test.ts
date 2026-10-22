@@ -13,7 +13,13 @@ import {
 } from "../src/core/relay.js";
 import { CaptureApnsSender, Http2ApnsSender } from "../src/node/apns-http2.js";
 import { MemoryRelayStore } from "../src/node/memory-store.js";
-import { DEFAULT_QUOTA_LIMITS } from "../src/core/store.js";
+import {
+  applyAuthorizeLiveActivity,
+  applyAuthorizePush,
+  DEFAULT_QUOTA_LIMITS,
+  emptyQuota,
+  type RegistrationRecord,
+} from "../src/core/store.js";
 import { startNodeRelay } from "../src/node/server.js";
 import {
   createAssertion,
@@ -266,45 +272,70 @@ describe("node adapter", () => {
     expect((await push()).status).toBe(200);
   });
 
-  it("stops an unattested phone's Live Activity pushes at their own daily limit while alerts keep going", async () => {
+  it("stops an unattested phone's Live Activity starts at the alert reserve while alerts use the rest of the day", async () => {
     harness = await startHarness({ now: Date.parse("2026-10-10T00:00:00Z") });
     const { sendToken } = await liveActivityPhone(harness);
+    const { unattestedPerDay: perDay, unattestedAlertReserve: reserve } = DEFAULT_QUOTA_LIMITS;
     const start = () => liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 });
-    const step = (ms: number) => harness.advance(ms);
-    for (let index = 0; index < DEFAULT_QUOTA_LIMITS.liveActivityUnattestedPerDay; index += 1) {
-      if (index % DEFAULT_QUOTA_LIMITS.liveActivityPerMinute === 0) step(61_000);
+    const alert = () => call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } });
+    for (let index = 0; index < perDay - reserve; index += 1) {
+      if (index % DEFAULT_QUOTA_LIMITS.liveActivityPerMinute === 0) harness.advance(61_000);
       expect((await start()).status).toBe(200);
     }
-    step(61_000);
+    harness.advance(61_000);
     const limited = await start();
     expect(limited).toMatchObject({ status: 429, json: { error: "quota_exceeded" } });
     expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(3600);
-    expect((await call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } })).status).toBe(200);
-    step(24 * 3_600_000);
+    // The reserve is the alerts', and alerts may use the day to its last push.
+    for (let index = 0; index < reserve; index += 1) {
+      expect((await alert()).status, `alert ${index + 1}`).toBe(200);
+    }
+    harness.advance(61_000);
+    expect((await alert()).status).toBe(429);
+    harness.advance(24 * 3_600_000);
     expect((await start()).status).toBe(200);
   });
 
-  it("delivers a Live Activity end after the daily Live Activity quota is full, refusing start and update", async () => {
+  it("counts alerts against the day's Live Activity room", async () => {
+    harness = await startHarness({ now: Date.parse("2026-10-10T00:00:00Z") });
+    const { sendToken } = await liveActivityPhone(harness);
+    const { unattestedPerDay: perDay, unattestedAlertReserve: reserve } = DEFAULT_QUOTA_LIMITS;
+    const alert = () => call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } });
+    const start = () => liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 });
+    // Alerts use all but one of the Live Activity's room: one start fits, the next does not.
+    for (let index = 0; index < perDay - reserve - 1; index += 1) {
+      if (index % DEFAULT_QUOTA_LIMITS.perMinute === 0) harness.advance(61_000);
+      expect((await alert()).status).toBe(200);
+    }
+    expect((await start()).status).toBe(200);
+    expect((await start()).status).toBe(429);
+  });
+
+  it("delivers a Live Activity end after the day's pushes are used up, refusing start, update, and alerts", async () => {
     harness = await startHarness({ now: Date.parse("2026-10-10T08:00:00Z") });
     const { registration, sendToken } = await liveActivityPhone(harness);
     const activities = [card(sendToken, { token: ACTIVITY_TOKEN })];
     expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities })).toBe(204);
+    const { unattestedPerDay: perDay, unattestedAlertReserve: reserve } = DEFAULT_QUOTA_LIMITS;
     const send = (event: "start" | "update" | "end") =>
       liveActivity(
         harness,
         sendToken,
         event === "end" ? { event, running: 0, needsYou: 0 } : { event, running: 1, needsYou: 0 },
       );
-    for (let index = 0; index < DEFAULT_QUOTA_LIMITS.liveActivityUnattestedPerDay; index += 1) {
+    const alert = () => call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } });
+    for (let index = 0; index < perDay - reserve; index += 1) {
       if (index % DEFAULT_QUOTA_LIMITS.liveActivityPerMinute === 0) harness.advance(61_000);
       expect((await send("update")).status).toBe(200);
     }
+    for (let index = 0; index < reserve; index += 1) expect((await alert()).status).toBe(200);
     harness.advance(61_000);
     for (const event of ["update", "start"] as const) {
       const limited = await send(event);
       expect(limited, event).toMatchObject({ status: 429, json: { error: "quota_exceeded" } });
       expect(Number(limited.headers.get("retry-after")), event).toBeGreaterThan(3600);
     }
+    expect((await alert()).status).toBe(429);
     const delivered = harness.apnsRequests.length;
     expect((await send("end")).status).toBe(200);
     expect(harness.apnsRequests).toHaveLength(delivered + 1);
@@ -313,7 +344,7 @@ describe("node adapter", () => {
     expect((await send("end")).json.error).toBe("no_activity");
   });
 
-  it("bounds failing Live Activity ends to an overdraft past the daily quota", async () => {
+  it("bounds failing Live Activity ends to an overdraft past the day's pushes", async () => {
     harness = await startHarness({ now: Date.parse("2026-10-10T08:00:00Z") });
     const { registration, sendToken } = await liveActivityPhone(harness);
     const activities = [card(sendToken, { token: ACTIVITY_TOKEN })];
@@ -324,19 +355,26 @@ describe("node adapter", () => {
         sendToken,
         event === "end" ? { event, running: 0, needsYou: 0 } : { event, running: 1, needsYou: 0 },
       );
-    const { liveActivityUnattestedPerDay: perDay, liveActivityEndOverdraft: overdraft } = DEFAULT_QUOTA_LIMITS;
+    const alert = () => call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } });
+    const {
+      unattestedPerDay: perDay,
+      unattestedAlertReserve: reserve,
+      liveActivityEndOverdraft: overdraft,
+    } = DEFAULT_QUOTA_LIMITS;
     let sentToday = 0;
     const tick = () => {
       if (sentToday % DEFAULT_QUOTA_LIMITS.liveActivityPerMinute === 0) harness.advance(61_000);
       sentToday += 1;
     };
-    for (let index = 0; index < perDay; index += 1) {
+    for (let index = 0; index < perDay - reserve; index += 1) {
       tick();
       expect((await send("update")).status).toBe(200);
     }
+    for (let index = 0; index < reserve; index += 1) expect((await alert()).status).toBe(200);
     // APNs fails every end: the relay counts each and keeps the card's token, so the server may
     // send it again, but only as far as the overdraft.
     harness.respondApns(() => ({ status: 500 }));
+    sentToday = 0;
     for (let index = 0; index < overdraft; index += 1) {
       tick();
       expect((await send("end")).status, `end ${index + 1}`).toBe(502);
@@ -350,6 +388,60 @@ describe("node adapter", () => {
     harness.respondApns(() => ({ status: 200 }));
     harness.advance(24 * 3_600_000);
     expect((await send("end")).status).toBe(200);
+  });
+
+  it("gives an attested phone 100 pushes a day: Live Activity starts and updates to 70, alerts to the last one, ends past it", () => {
+    const now = Date.parse("2026-10-10T08:00:00Z");
+    const permission = { id: "p_attested", secretHash: "hash" };
+    const record: RegistrationRecord = {
+      id: "r_attested",
+      secretHash: "registration-hash",
+      apnsToken: APNS_TOKEN,
+      environment: "production",
+      attested: true,
+      createdAt: now,
+      permissions: [permission],
+      quota: emptyQuota(),
+      liveActivity: {
+        startToken: START_TOKEN,
+        activities: [{ permissionId: permission.id, slot: "s".repeat(22), token: ACTIVITY_TOKEN, tokenAt: now }],
+      },
+    };
+    // A minute apart, so only the daily pool can refuse.
+    let minute = 0;
+    const at = () => now + 61_000 * (minute += 1);
+    const liveActivityPush = (event: "update" | "end") =>
+      applyAuthorizeLiveActivity(record, permission.id, permission.secretHash, event, at()).authorization;
+    const alertPush = () => applyAuthorizePush(record, permission.id, permission.secretHash, at());
+
+    for (let index = 0; index < 70; index += 1) expect(liveActivityPush("update").ok, `update ${index + 1}`).toBe(true);
+    expect(liveActivityPush("update")).toMatchObject({ ok: false, reason: "quota" });
+    for (let index = 0; index < 30; index += 1) expect(alertPush().ok, `alert ${index + 1}`).toBe(true);
+    expect(alertPush()).toMatchObject({ ok: false, reason: "quota" });
+    for (let index = 0; index < 8; index += 1) expect(liveActivityPush("end").ok, `end ${index + 1}`).toBe(true);
+    expect(liveActivityPush("end")).toMatchObject({ ok: false, reason: "quota" });
+  });
+
+  it("counts a stored day's alert and Live Activity pushes together", () => {
+    const now = Date.parse("2026-10-10T08:00:00Z");
+    const permission = { id: "p_attested", secretHash: "hash" };
+    const today = { day: "2026-10-10", minuteStart: 0, minuteCount: 0 };
+    // Counts kept apart before one pool covered both: 60 alerts and 39 Live Activity today.
+    const record: RegistrationRecord = {
+      id: "r_attested",
+      secretHash: "registration-hash",
+      apnsToken: APNS_TOKEN,
+      environment: "production",
+      attested: true,
+      createdAt: now,
+      permissions: [permission],
+      quota: { ...today, dayCount: 60 },
+      liveActivityQuota: { ...today, dayCount: 39 },
+    };
+    expect(applyAuthorizePush(record, permission.id, permission.secretHash, now).ok).toBe(true);
+    expect(applyAuthorizePush(record, permission.id, permission.secretHash, now + 1)).toMatchObject({ ok: false, reason: "quota" });
+    // Yesterday's counts are not today's.
+    expect(applyAuthorizePush(record, permission.id, permission.secretHash, now + 86_400_000).ok).toBe(true);
   });
 
   it("refuses updates to an activity Apple has ended after 8 hours, but still ends it", async () => {

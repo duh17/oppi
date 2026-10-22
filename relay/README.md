@@ -18,9 +18,9 @@ The protocol, the envelope, and the threat model are in
 | --- | --- | --- |
 | Device registration | APNs token, sandbox or production, App Attest attestation | Token, environment, App Attest public key and counter, `SHA-256` of the registration secret |
 | Send permissions | — | Permission ID and `SHA-256` of its secret, up to 16 per registration |
-| Each push | Server IP address, time, a 641-byte envelope it cannot open, an optional collapse ID | Daily and per-minute counts only |
+| Each push | Server IP address, time, a 641-byte envelope it cannot open, an optional collapse ID | Daily and per-minute alert counts only |
 | Live Activity state | ActivityKit push-to-start token; per server whose card is on, the permission ID that may drive it, the phone's random slot, the live card's update token, and whether the person dismissed it | The tokens, slots, permission IDs, when each update token first arrived, and which dismissed cards a server has ended since |
-| Each Live Activity push | Server IP address, time, `start`/`update`/`end`, the running and needs-you counts | Its own daily and per-minute counts only |
+| Each Live Activity push | Server IP address, time, `start`/`update`/`end`, the running and needs-you counts | Daily and per-minute Live Activity counts only |
 
 No envelopes, IP addresses, request bodies, or request logs are stored. Logs carry event names
 and status codes only. Client addresses feed in-memory rate limits and are never written down.
@@ -57,25 +57,31 @@ stays inside the free plan:
 
 | Limit | Value |
 | --- | --- |
-| Pushes per phone per UTC day | 100 with App Attest; 20 for sandbox registrations without it |
-| Pushes per phone per minute | 10 |
-| Registrations per phone | 1 per APNs token; registering again keeps the day's counts |
-| Live Activity pushes per phone per UTC day | 40 with App Attest; 20 for sandbox registrations without it, counted apart from alerts. An `end` is counted but never refused for the day's limit: it has an overdraft of 8 more (48 with App Attest, 28 without) |
+| Pushes per phone per UTC day, alerts and Live Activity together | 100 with App Attest; 20 for sandbox registrations without it |
+| Kept for alerts | 30 with App Attest (Live Activity `start` and `update` stop at 70); 6 without (they stop at 14). Alerts may use the whole day's pushes |
+| Live Activity `end` | Counted, but never refused for the day's limit: it has an overdraft of 8 more (108 with App Attest, 28 without) |
+| Alerts per phone per minute | 10 |
 | Live Activity pushes per phone per minute | 3, `end` included |
+| Registrations per phone | 1 per APNs token; registering again keeps the day's counts |
 | Pushes, Live Activity pushes, and permission releases per client address per minute | 60 together, checked before any send token is looked up; an IPv6 address counts as its /64 |
 | Registrations without App Attest | sandbox only, 5 per client address per hour |
 | Challenge and registration requests | 3 per client address per 10 seconds (Cloudflare rate limiting rule) |
 
-Each Oppi server keeps its own per-device budget at or below the relay's (100 a day, with
-routine alerts stopping at 80), so one server alone rarely reaches the relay's limit. The
+One pool serves both kinds because the operator's phone used 5 to 25 alerts a day but ran out
+of separate Live Activity pushes daily: a Live Activity gets whatever alerts leave, and alerts
+keep the last 30 for themselves.
+
+Each Oppi server keeps its own per-device budget at or below the relay's (100 a day; Live
+Activity starts and updates stop at 70, routine alerts at 90), so one server alone rarely
+reaches the relay's limit. The
 relay's limits are per phone and shared by every server that phone is paired with. A server
 keeps its count in memory, so a restart starts that server's count over.
 
 The Free plan allows 100,000 Worker requests, 100,000 Durable Object requests, and 100,000
-rows written a day. An alert costs one of each; the table below has the rest. A phone at
-every cap (100 alerts, a busy Live Activity, 10 uploads of its Live Activity state) uses about
-170 Durable Object requests a day, so about 600 such phones fill the plan; normal use is about
-100 a day, room for about 1,000 phones. When a daily Durable Object limit is reached, every
+rows written a day. An alert or Live Activity update costs one of each; the table below has
+the rest. A phone at the cap (100 pushes, a few card starts and ends, 10 uploads of its Live
+Activity state) uses about 130 Durable Object requests a day, so about 750 such phones fill
+the plan; the pushes alone would allow about 1,000. When a daily Durable Object limit is reached, every
 push fails until 00:00 UTC, and the relay answers `503 relay_capacity` with `Retry-After` set
 to then; when the Worker request limit is reached, Cloudflare answers before the relay runs.
 The Free plan never bills. A determined flood of junk requests can still use up a day's

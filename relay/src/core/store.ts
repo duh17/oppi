@@ -42,6 +42,10 @@ export interface LiveActivityState {
   activities: LiveActivityRecord[];
 }
 
+/**
+ * One kind of push's counts: alerts or Live Activity. The day's limit covers both kinds
+ * together (their two counts for today, summed); each kind keeps its own minute.
+ */
 export interface QuotaState {
   /** UTC day `YYYY-MM-DD` the daily count belongs to. */
   day: string;
@@ -62,10 +66,11 @@ export interface RegistrationRecord {
   appAttestCounter?: number;
   createdAt: number;
   permissions: PermissionRecord[];
+  /** Alert pushes. */
   quota: QuotaState;
   /** Absent until the phone first sends its Live Activity tokens. */
   liveActivity?: LiveActivityState;
-  /** Live Activity pushes, counted apart from alerts. Absent until the first one. */
+  /** Live Activity pushes. Absent until the first one. */
   liveActivityQuota?: QuotaState;
   /**
    * Unix seconds of the last Live Activity event (`aps.timestamp`). Each event goes out
@@ -77,12 +82,18 @@ export interface RegistrationRecord {
 }
 
 export interface QuotaLimits {
+  /** Pushes per registration and UTC day, alerts and Live Activity together. */
   attestedPerDay: number;
   unattestedPerDay: number;
+  /**
+   * Of the day's pushes, the last ones are kept for alerts: a Live Activity `start` or
+   * `update` is refused once the day's count reaches the limit minus this reserve.
+   */
+  attestedAlertReserve: number;
+  unattestedAlertReserve: number;
+  /** Alerts per registration and minute. */
   perMinute: number;
-  /** Live Activity pushes per registration and UTC day, separate from alerts. */
-  liveActivityAttestedPerDay: number;
-  liveActivityUnattestedPerDay: number;
+  /** Live Activity pushes per registration and minute. */
   liveActivityPerMinute: number;
   /**
    * Live Activity `end`s allowed beyond the daily limit. A full daily quota must not leave a
@@ -97,19 +108,21 @@ export interface QuotaLimits {
  * requests, and rows written a day each). An alert or Live Activity update costs one of each;
  * a Live Activity `start` that replaces a card's token and a delivered `end` cost two Durable
  * Object requests and two rows; each phone Live Activity upload two requests and one row (the
- * per-endpoint table is in relay/README.md, "What each request costs"). A phone at the alert
- * cap with a busy Live Activity is about 170 Durable Object requests a day, so about 600 such
- * phones fill the plan; normal use is about 100. The quotas are per phone and shared by every
- * server it is paired with. Unattested registrations exist only in sandbox (development builds,
- * Simulator, and health probes), so they get just enough for testing.
+ * per-endpoint table is in relay/README.md, "What each request costs"). One daily pool covers
+ * alerts and Live Activity, so a phone that sends few alerts gives its Live Activity the rest;
+ * alerts keep the last 30. A phone at the cap (100 pushes, a few card starts and ends, 10
+ * uploads) is about 130 Durable Object requests a day, so about 750 such phones fill the plan;
+ * the pushes alone would allow about 1,000. The quotas are per phone and shared by every
+ * server it is paired with. Unattested registrations exist only in sandbox (development
+ * builds, Simulator, and health probes), so they get just enough for testing.
  */
 export const DEFAULT_QUOTA_LIMITS: QuotaLimits = {
   attestedPerDay: 100,
   unattestedPerDay: 20,
+  attestedAlertReserve: 30,
+  unattestedAlertReserve: 6,
   perMinute: 10,
   // A server sends at most one Live Activity push a minute per phone, plus a restart.
-  liveActivityAttestedPerDay: 40,
-  liveActivityUnattestedPerDay: 20,
   liveActivityPerMinute: 3,
   liveActivityEndOverdraft: 8,
 };
@@ -271,18 +284,25 @@ export function applyAuthorizePush(
   if (!permission || !hashesEqual(permission.secretHash, secretHash)) {
     return { ok: false, reason: "gone" };
   }
-  const dailyLimit = record.attested ? limits.attestedPerDay : limits.unattestedPerDay;
-  const charged = chargeQuota(record.quota, now, dailyLimit, limits.perMinute);
+  const charged = chargeQuota(
+    record.quota,
+    record.liveActivityQuota,
+    now,
+    record.attested ? limits.attestedPerDay : limits.unattestedPerDay,
+    limits.perMinute,
+  );
   if (!charged.ok) return charged;
   return { ok: true, apnsToken: record.apnsToken, environment: record.environment };
 }
 
 /**
- * Count one push against `quota`, or say when the next one fits. `perDay` is the day's
- * refusal point: callers allowing an overdraft pass the limit plus the overdraft.
+ * Count one push against `quota`, or say when the next one fits. The day's count is this
+ * kind's and `otherKind`'s together; `perDay` is where this push is refused: the limit, less
+ * the alert reserve for a Live Activity start or update, plus the overdraft for an end.
  */
 function chargeQuota(
   quota: QuotaState,
+  otherKind: QuotaState | undefined,
   now: number,
   perDay: number,
   perMinute: number,
@@ -296,7 +316,8 @@ function chargeQuota(
     quota.minuteStart = now;
     quota.minuteCount = 0;
   }
-  if (quota.dayCount >= perDay) {
+  const usedToday = quota.dayCount + (otherKind?.day === day ? otherKind.dayCount : 0);
+  if (usedToday >= perDay) {
     const nextDay = Date.parse(`${day}T00:00:00Z`) + 86_400_000;
     return { ok: false, reason: "quota", retryAfterSeconds: Math.ceil((nextDay - now) / 1000) };
   }
@@ -392,14 +413,16 @@ export function applyAuthorizeLiveActivity(
   if (!token) return { authorization: { ok: false, reason: "no_activity" }, changed };
 
   record.liveActivityQuota ??= emptyQuota();
+  const perDay = record.attested ? limits.attestedPerDay : limits.unattestedPerDay;
+  const reserve = record.attested ? limits.attestedAlertReserve : limits.unattestedAlertReserve;
   const charged = chargeQuota(
     record.liveActivityQuota,
+    record.quota,
     now,
-    // An `end` is never refused for the day's limit, so a full quota cannot leave a card
-    // showing finished work; its overdraft on top (48 for 40, 28 for 20) bounds a failing-end
-    // loop.
-    (record.attested ? limits.liveActivityAttestedPerDay : limits.liveActivityUnattestedPerDay) +
-      (event === "end" ? limits.liveActivityEndOverdraft : 0),
+    // A start or update leaves the alert reserve. An `end` is never refused for the day's
+    // limit, so a full quota cannot leave a card showing finished work; its overdraft on top
+    // (108 for 100, 28 for 20) bounds a failing-end loop.
+    event === "end" ? perDay + limits.liveActivityEndOverdraft : perDay - reserve,
     limits.liveActivityPerMinute,
   );
   if (!charged.ok) return { authorization: charged, changed };

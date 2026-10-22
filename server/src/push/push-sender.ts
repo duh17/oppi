@@ -23,44 +23,56 @@ const log = createLogger({ base: { component: "push" } });
 const PUSH_TTL_SECONDS = 3600;
 
 /**
- * Pushes one device may get from this server (protocol/push/spec.md §5). Matches the relay's
- * per-phone quota, so the server stops asking before the relay refuses. Routine alerts stop
- * at the lower numbers; the rest is kept for alerts that wait on the user (`blocked`,
- * `pairing_approval`), so a busy day of failed runs and agent messages never hides an approval.
+ * Pushes one device may get from this server (protocol/push/spec.md §5), alerts and Live
+ * Activity from one daily pool as at the relay, so the server stops asking before the relay
+ * refuses. Live Activity starts and updates stop at `liveActivityPerDay`, leaving the rest to
+ * alerts; a start needs two free slots (its own and its end's). Routine alerts stop at
+ * `routinePerDay` and `routinePerMinute`; the rest is kept for alerts that wait on the user
+ * (`blocked`, `pairing_approval`), so a busy day of failed runs, agent messages, and card
+ * updates never hides an approval. An end is never refused for the day's `perDay` but has an
+ * overdraft of `liveActivityEndOverdraft` more, as at the relay, so a failing end cannot
+ * repeat all day; a card left up after its work finished stays wrong until Apple's 8 h limit.
  */
 export const PUSH_DEVICE_BUDGET = {
   perDay: 100,
+  routinePerDay: 90,
+  liveActivityPerDay: 70,
+  liveActivityEndOverdraft: 8,
   perMinute: 10,
-  routinePerDay: 80,
   routinePerMinute: 8,
 } as const;
 
 type DeviceUsage = {
   /** UTC day `YYYY-MM-DD`, the relay's quota day. */
   day: string;
+  /** Alerts and Live Activity pushes together. */
   dayCount: number;
+  /** Alerts only; a Live Activity has no per-minute budget here (the notifier sends one a minute). */
   minuteStart: number;
   minuteCount: number;
-  /** No sends before this time: the relay answered 429 with Retry-After. */
-  pausedUntil: number;
+  /** No alerts before this time: the relay answered 429 with Retry-After. */
+  alertsPausedUntil: number;
+  /** The same for a Live Activity start or update. */
+  liveActivityPausedUntil: number;
+  /** The same for an end, which the relay holds to a more generous daily limit. */
+  endPausedUntil: number;
 };
 
-/** In memory only: a restart starts a fresh budget, and the relay still enforces its own. */
+/**
+ * In memory only: a restart starts a fresh budget, and the relay still enforces its own. An
+ * alert counts when it is sent. A Live Activity push counts only once the relay has counted
+ * it (it reached APNs, or the relay says the quota is full), so a relay that was unreachable
+ * or refused before APNs costs nothing; the notifier sends one Live Activity push per device
+ * at a time, so checking before and counting after cannot race. A `429` pauses only its own
+ * kind: an update refused for the full day must not hold back an approval or the end that
+ * removes the finished card.
+ */
 class DeviceBudget {
   private readonly usage = new Map<string, DeviceUsage>();
 
-  take(deviceId: string, waitsOnUser: boolean, now: number): boolean {
-    const day = new Date(now).toISOString().slice(0, 10);
-    let usage = this.usage.get(deviceId);
-    if (!usage) {
-      usage = { day, dayCount: 0, minuteStart: now, minuteCount: 0, pausedUntil: 0 };
-      this.usage.set(deviceId, usage);
-    }
-    if (now < usage.pausedUntil) return false;
-    if (usage.day !== day) {
-      usage.day = day;
-      usage.dayCount = 0;
-    }
+  takeAlert(deviceId: string, waitsOnUser: boolean, now: number): boolean {
+    const usage = this.current(deviceId, now);
+    if (now < usage.alertsPausedUntil) return false;
     if (now - usage.minuteStart >= 60_000) {
       usage.minuteStart = now;
       usage.minuteCount = 0;
@@ -75,81 +87,56 @@ class DeviceBudget {
     return true;
   }
 
-  pause(deviceId: string, until: number): void {
-    const usage = this.usage.get(deviceId);
-    if (usage) usage.pausedUntil = Math.max(usage.pausedUntil, until);
-  }
-}
-
-/**
- * Live Activity pushes one device may get from this server a UTC day, apart from alerts
- * (spec "Live Activity"), matching the relay's per-phone Live Activity quota. Updates stop
- * at the lower number, and a start needs two free slots (its own and its end's), so a busy
- * day still leaves room to end every card it started. An end is never refused for the day's
- * `perDay` but has an overdraft of `endOverdraft` more, as at the relay, so a failing end
- * cannot repeat all day; a card left up after its work finished stays wrong until Apple's
- * 8 h limit.
- */
-export const LIVE_ACTIVITY_DEVICE_BUDGET = {
-  perDay: 40,
-  updatesPerDay: 32,
-  endOverdraft: 8,
-} as const;
-
-interface LiveActivityUsage {
-  day: string;
-  dayCount: number;
-  /** A relay `429`'s Retry-After for a start or update. */
-  pausedUntil: number;
-  /** The same for an end, which the relay holds to a more generous daily limit. */
-  endPausedUntil: number;
-}
-
-/**
- * In memory, like `DeviceBudget`; the relay enforces its own quota as well. A send counts
- * only once the relay has counted it (it reached APNs, or the relay says the quota is full),
- * so a relay that was unreachable or refused before APNs costs nothing. The notifier sends one
- * Live Activity push per device at a time, so checking before and counting after cannot race.
- * A `429` pauses only its own kind: an update refused for the full day must not hold back the
- * end that removes the finished card.
- */
-class LiveActivityBudget {
-  private readonly usage = new Map<string, LiveActivityUsage>();
-
-  allows(deviceId: string, event: LiveActivityPush["event"], now: number): boolean {
+  allowsLiveActivity(deviceId: string, event: LiveActivityPush["event"], now: number): boolean {
     const usage = this.current(deviceId, now);
     switch (event) {
       case "update":
         return (
-          now >= usage.pausedUntil && usage.dayCount < LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay
+          now >= usage.liveActivityPausedUntil &&
+          usage.dayCount < PUSH_DEVICE_BUDGET.liveActivityPerDay
         );
       case "start":
-        return now >= usage.pausedUntil && usage.dayCount <= LIVE_ACTIVITY_DEVICE_BUDGET.perDay - 2;
+        return (
+          now >= usage.liveActivityPausedUntil &&
+          usage.dayCount <= PUSH_DEVICE_BUDGET.liveActivityPerDay - 2
+        );
       case "end":
         return (
           now >= usage.endPausedUntil &&
-          usage.dayCount <
-            LIVE_ACTIVITY_DEVICE_BUDGET.perDay + LIVE_ACTIVITY_DEVICE_BUDGET.endOverdraft
+          usage.dayCount < PUSH_DEVICE_BUDGET.perDay + PUSH_DEVICE_BUDGET.liveActivityEndOverdraft
         );
     }
   }
 
-  charge(deviceId: string, now: number): void {
+  chargeLiveActivity(deviceId: string, now: number): void {
     this.current(deviceId, now).dayCount += 1;
   }
 
-  pause(deviceId: string, event: LiveActivityPush["event"], until: number): void {
+  pauseAlerts(deviceId: string, until: number): void {
+    const usage = this.usage.get(deviceId);
+    if (usage) usage.alertsPausedUntil = Math.max(usage.alertsPausedUntil, until);
+  }
+
+  pauseLiveActivity(deviceId: string, event: LiveActivityPush["event"], until: number): void {
     const usage = this.usage.get(deviceId);
     if (!usage) return;
     if (event === "end") usage.endPausedUntil = Math.max(usage.endPausedUntil, until);
-    else usage.pausedUntil = Math.max(usage.pausedUntil, until);
+    else usage.liveActivityPausedUntil = Math.max(usage.liveActivityPausedUntil, until);
   }
 
-  private current(deviceId: string, now: number): LiveActivityUsage {
+  private current(deviceId: string, now: number): DeviceUsage {
     const day = new Date(now).toISOString().slice(0, 10);
     let usage = this.usage.get(deviceId);
     if (!usage) {
-      usage = { day, dayCount: 0, pausedUntil: 0, endPausedUntil: 0 };
+      usage = {
+        day,
+        dayCount: 0,
+        minuteStart: now,
+        minuteCount: 0,
+        alertsPausedUntil: 0,
+        liveActivityPausedUntil: 0,
+        endPausedUntil: 0,
+      };
       this.usage.set(deviceId, usage);
     }
     if (usage.day !== day) {
@@ -283,7 +270,6 @@ const GONE_SEND_TOKENS_MAX = 256;
 export class PushSender {
   private readonly now: () => number;
   private readonly budget = new DeviceBudget();
-  private readonly liveActivityBudget = new LiveActivityBudget();
   /**
    * The `push` config block as it was at startup. `ConfigStore.mutate` reloads `config.json`
    * on every locked write, so reading it live would apply a `push.mode` edit at a random later
@@ -347,7 +333,7 @@ export class PushSender {
     const startedAt = this.now();
     const waitsOnUser =
       notification.event === "blocked" || notification.event === "pairing_approval";
-    if (!this.budget.take(registration.deviceId, waitsOnUser, startedAt)) {
+    if (!this.budget.takeAlert(registration.deviceId, waitsOnUser, startedAt)) {
       log.info("push.device_budget_exhausted", { alert: notification.event });
       this.options.metrics?.record("server.push_result", 1, {
         result: "throttled",
@@ -377,14 +363,14 @@ export class PushSender {
     }
 
     if (result.status === "rejected" && result.retryAfterSeconds !== undefined) {
-      this.budget.pause(registration.deviceId, this.now() + result.retryAfterSeconds * 1000);
+      this.budget.pauseAlerts(registration.deviceId, this.now() + result.retryAfterSeconds * 1000);
     }
     this.settle(registration, result, startedAt, notification.event);
     return result;
   }
 
   /**
-   * Send one Live Activity push to a device that accepts them, within its own budget. Prunes
+   * Send one Live Activity push to a device that accepts them, within its budget. Prunes
    * the registration on a primary `410`, like `send`. Never throws.
    */
   async sendLiveActivity(
@@ -395,7 +381,7 @@ export class PushSender {
     if (!relays || !registration.liveActivity || !this.isCurrent(registration)) return null;
     const startedAt = this.now();
     const event = `live_activity_${push.event}`;
-    if (!this.liveActivityBudget.allows(registration.deviceId, push.event, startedAt)) {
+    if (!this.budget.allowsLiveActivity(registration.deviceId, push.event, startedAt)) {
       log.info("push.device_budget_exhausted", { alert: event });
       this.options.metrics?.record("server.push_result", 1, { result: "throttled", event });
       return { status: "throttled" };
@@ -411,10 +397,10 @@ export class PushSender {
       result = { status: "failed" };
     }
     if (relayCountedLiveActivity(result)) {
-      this.liveActivityBudget.charge(registration.deviceId, startedAt);
+      this.budget.chargeLiveActivity(registration.deviceId, startedAt);
     }
     if (result.status === "rejected" && result.retryAfterSeconds !== undefined) {
-      this.liveActivityBudget.pause(
+      this.budget.pauseLiveActivity(
         registration.deviceId,
         push.event,
         this.now() + result.retryAfterSeconds * 1000,
