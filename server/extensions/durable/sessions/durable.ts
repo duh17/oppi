@@ -289,8 +289,22 @@ function stillRunning(name: string, jobs: readonly RunningJob[], followed: boole
     `[still running: ${named}. ${name} keeps running and answers again when its job ` +
     (followed
       ? "ends; that answer arrives as a follow-up message, so do not poll.]"
-      : "ends; wait for it again to read that answer.]")
+      : "ends, but that answer does not arrive on its own. wait returns at once while the job " +
+        `runs, so wait again only after the job should have ended, or message ${name}.]`)
   );
+}
+
+/**
+ * The answer `wait` or `spawn` returns for a child: its newest `latest`, with `note` when that is
+ * still the answer the note was made for. A newer answer came after the child's turn on its job
+ * (the job ended), so the note would be wrong.
+ */
+function answerWithNote(
+  latest: { id: EntryId; text: string } | undefined,
+  note: { text: string; answer: EntryId | undefined } | undefined,
+): string {
+  const text = latest?.text ?? "(no answer yet)";
+  return note !== undefined && latest?.id === note.answer ? `${text}\n\n${note.text}` : text;
 }
 
 const COMPLETED = { status: "terminal", outcome: { status: "completed", result: null } } as const;
@@ -624,7 +638,8 @@ export function createDurableSessions(
    * of its own pending: idle alone may be an interim answer ("still waiting on the job"), and the
    * waker's receipt wakes it to answer again. Its `error` when it failed. Idle with only jobs of
    * its own still running is enough, as such a job may never end: then `note` names them, for
-   * the answer the caller returns. The call's abort (the parent's Stop) ends the wait.
+   * the child's newest answer then (`note.answer`). The call's abort (the parent's Stop) ends
+   * the wait.
    */
   const finished = async (
     api: ToolExecutionApi,
@@ -635,8 +650,8 @@ export function createDurableSessions(
       sessionId,
     }: { name: string; conversationId: ConversationId; sessionId: string },
     context: Context,
-  ): Promise<{ error?: string; note?: string }> => {
-    let note: string | undefined;
+  ): Promise<{ error?: string; note?: { text: string; answer: EntryId | undefined } }> => {
+    let note: { text: string; answer: EntryId | undefined } | undefined;
     const error = await followChild(
       api,
       conversationId,
@@ -650,11 +665,23 @@ export function createDurableSessions(
             if (live === "again" || live.length === 0) return live;
             const jobs = await runningJobsOnly(tx, conversationId, live);
             if (!jobs) return live;
-            // A reporter that follows the child reports its next answer to the caller.
+            // A reporter that follows the child reports its next answer to the caller. One that
+            // only reports a failure to start (`report` without `after`) ends after it.
             const followed = (await liveReporters(tx, api.conversationId, conversationId)).some(
-              (task) => !task.abortRequested,
+              (task) => {
+                const checkpoint = task.state.checkpoint as { phase?: string; after?: EntryId };
+                return (
+                  !task.abortRequested &&
+                  (checkpoint.phase === "deliver" ||
+                    checkpoint.phase === "follow" ||
+                    (checkpoint.phase === "report" && checkpoint.after !== undefined))
+                );
+              },
             );
-            note = stillRunning(name, jobs, followed);
+            note = {
+              text: stillRunning(name, jobs, followed),
+              answer: (await latestText(tx, conversationId))?.id,
+            };
             return [];
           }, context),
         signal: context.abortSignal,
@@ -812,8 +839,7 @@ export function createDurableSessions(
           );
           const lines = waited.map((result) =>
             result.error === undefined
-              ? `${result.name}: ${answers[idle.indexOf(result)]}` +
-                ("note" in result ? `\n\n${result.note}` : "")
+              ? `${result.name}: ${answerWithNote(answers[idle.indexOf(result)], result.note)}`
               : `${result.name}: ${result.error}`,
           );
           const failed = waited.some((result) => result.error !== undefined);
@@ -994,8 +1020,7 @@ export function createDurableSessions(
     );
     if (error !== undefined) throw new Error(`Subagent ${name} (${sessionId}): ${error}`);
     const latest = await api.commit((tx) => latestText(tx, conversationId), context);
-    const text = latest?.text ?? "(no answer yet)";
-    return reply(note === undefined ? text : `${text}\n\n${note}`, {
+    return reply(answerWithNote(latest, note), {
       name,
       conversationId,
       sessionId,
@@ -1055,7 +1080,7 @@ async function takeLatestAnswers(
   api: ToolExecutionApi,
   children: Array<{ name: string; conversationId: ConversationId }>,
   context: Context,
-): Promise<string[]> {
+): Promise<Array<{ id: EntryId; text: string } | undefined>> {
   return api.commit(async (tx) => {
     // pi-durable refuses a table read after a table write in one commit: read everything first.
     const state = await tx.doc(Subagents, api.conversationId);
@@ -1079,9 +1104,9 @@ async function takeLatestAnswers(
         (await reportDecided(tx, api.conversationId, conversationId, latest.id));
       plans.push({ latest, record, recorded, requestId, report, decided });
     }
-    const texts: string[] = [];
+    const taken: Array<{ id: EntryId; text: string } | undefined> = [];
     for (const { latest, record, recorded, requestId, report, decided } of plans) {
-      texts.push(latest?.text ?? "(no answer yet)");
+      taken.push(latest);
       if (!latest || !record) continue;
       if (!recorded) {
         record.reported ??= [];
@@ -1101,7 +1126,7 @@ async function takeLatestAnswers(
           reason: "withdrawn",
         });
     }
-    return texts;
+    return taken;
   }, context);
 }
 

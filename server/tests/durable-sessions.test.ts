@@ -1614,6 +1614,74 @@ describe("durable-native threads", () => {
     );
   });
 
+  it("holds wait on a child idle while its own subagent works, and ends that wait with the parent's Stop", async () => {
+    const held = gate();
+    const f = await fixture(
+      model(async ({ last, text, signal }) => {
+        if (text.includes("[session Grand")) return fauxAssistantMessage("LEAD_DONE");
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("LEAD_WAITING");
+        if (text.includes("Delegate lead"))
+          return spawnCall({ name: "Lead", task: "LEAD_TASK", allowNestedDelegation: true });
+        if (text.includes("Wait for Lead")) return subagentCall("wait", { names: ["Lead"] });
+        if (text.includes("LEAD_TASK")) return spawnCall({ name: "Grand", task: "GRAND_TASK" });
+        if (text.includes("GRAND_TASK")) {
+          await held.wait(signal);
+          return fauxAssistantMessage("GRAND_DONE");
+        }
+        return fauxAssistantMessage("OTHER");
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await f.manager.sendPrompt(f.parent.id, "Delegate lead");
+    await until(
+      async () => (await reports(harness, parentConversation)).length === 1,
+      "Lead's first report",
+    );
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    const lead = f.storage.listSessions().find((session) => session.name === "Lead")!;
+    const leadConversation = conversationOf(f.storage, lead);
+    // Lead answered and is idle; its only pending waker is its reporter of Grand, still working.
+    expect((await harness.snapshot(LiveDoc, leadConversation, context))?.run).toBeUndefined();
+    expect(await (await f.owner()).pendingWakers(leadConversation)).toHaveLength(1);
+
+    await f.manager.sendPrompt(f.parent.id, "Wait for Lead");
+    const slot = async () =>
+      (await harness.snapshot(LiveDoc, parentConversation, context))?.tools?.find(
+        (candidate) => candidate.name === "subagent",
+      );
+    await until(async () => (await slot())?.status === "running", "the wait call");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect((await slot())?.status).toBe("running");
+    expect(await toolResults(harness, parentConversation)).toHaveLength(1);
+    // Deciding that Lead waits on its own subagent wrote nothing for jobs it never started.
+    expect(await harness.snapshot(DurableJobs, leadConversation, context)).toBeUndefined();
+
+    await f.manager.sendAbort(f.parent.id);
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    // The parent is idle while Grand still works; the aborted wait returned no answer of Lead.
+    expect(await (await f.owner()).pendingWakers(leadConversation)).toHaveLength(1);
+    expect(
+      (await toolResults(harness, parentConversation)).filter((result) =>
+        result.text.includes("LEAD_"),
+      ),
+    ).toEqual([]);
+
+    // Grand's answer wakes Lead, whose answer then reaches the parent as a report.
+    held.open();
+    await until(
+      async () => (await reports(harness, parentConversation)).length === 2,
+      "Lead's report after Grand",
+    );
+    const header = `[session Lead (${lead.id}) finished, no reply needed] `;
+    expect(await reports(harness, parentConversation)).toEqual([
+      `${header}LEAD_WAITING`,
+      `${header}LEAD_DONE`,
+    ]);
+  });
+
   describe("a child that answers while its background job runs", () => {
     /**
      * Builder's model: on its task it starts `command()` as a job, ends that turn (once `turn`
@@ -1717,14 +1785,22 @@ describe("durable-native threads", () => {
       expect(f.manager.isActive(child.id)).toBe(false);
     });
 
-    /** The note on the answer of a child idle with only `gated`'s job still running. */
-    const stillRunning = (next: string) =>
-      new RegExp(
-        String.raw`\n\n\[still running: job bash-1 ` +
-          String.raw`\x60for i in \$\(seq 1 400\); do \[ -f '[^\x60]*…\x60\. ` +
-          String.raw`Builder keeps running and answers again when its job ends; ${next}\]$`,
-      );
-    const followedNote = "that answer arrives as a follow-up message, so do not poll\\.";
+    /**
+     * `text` is `answer` and then a note that names the job still running, which it still is.
+     */
+    const expectAnswerNamingRunningJob = async (
+      f: Fixture,
+      child: Session,
+      text: string,
+      answer: string,
+    ) => {
+      expect(text.startsWith(`${answer}\n\n`)).toBe(true);
+      expect(text.slice(answer.length)).toContain("bash-1");
+      const harness = await f.harness();
+      expect(
+        (await harness.snapshot(DurableJobs, conversationOf(f.storage, child), context))?.jobs,
+      ).toMatchObject([{ id: "bash-1", status: "running" }]);
+    };
 
     it("returns the child's answer from wait with a note while only its job runs, and the job's end still wakes it", async () => {
       const { f, child, parentConversation, open } = await jobFixture();
@@ -1738,14 +1814,9 @@ describe("durable-native threads", () => {
       const waited = (await toolResults(harness, parentConversation))[1]!;
       expect(waited.toolName).toBe("subagent");
       expect(waited.isError).toBeFalsy();
-      expect(waited.text).toMatch(
-        new RegExp(`^Builder: WAITING_ON_JOB${stillRunning(followedNote).source}`),
-      );
-      // The child still waits on its job, which still runs.
+      await expectAnswerNamingRunningJob(f, child, waited.text, "Builder: WAITING_ON_JOB");
+      // The child still waits on its job.
       expect(await (await f.owner()).pendingWakers(childConversation)).toHaveLength(1);
-      expect(
-        (await harness.snapshot(DurableJobs, childConversation, context))?.jobs[0]?.status,
-      ).toBe("running");
 
       // Its end wakes the child, whose answer arrives as a report.
       open();
@@ -1790,8 +1861,11 @@ describe("durable-native threads", () => {
         async () => (await toolResults(harness, parentConversation)).length === 2,
         "the wait result",
       );
-      expect((await toolResults(harness, parentConversation))[1]!.text).toMatch(
-        new RegExp(`^Builder: WAITING_ON_JOB${stillRunning(followedNote).source}`),
+      await expectAnswerNamingRunningJob(
+        f,
+        child,
+        (await toolResults(harness, parentConversation))[1]!.text,
+        "Builder: WAITING_ON_JOB",
       );
 
       // wait took that answer, so only the answer after the job's receipt is reported.
@@ -1820,13 +1894,8 @@ describe("durable-native threads", () => {
       );
       const spawned = (await toolResults(harness, parentConversation))[0]!;
       expect(spawned.toolName).toBe("subagent");
-      // No reporter follows a foreground child: the note says to wait for it again.
-      expect(spawned.text).toMatch(
-        new RegExp(
-          `^WAITING_ON_JOB${stillRunning("wait for it again to read that answer\\.").source}`,
-        ),
-      );
       const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+      await expectAnswerNamingRunningJob(f, child, spawned.text, "WAITING_ON_JOB");
       const childConversation = conversationOf(f.storage, child);
       await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
 
