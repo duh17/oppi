@@ -439,18 +439,15 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         visualImageButton.tap()
         sleep(1) // Allow scroll animation and cell rendering
 
-        // Thumbnail tap-through: the 1x1 test fixture image may not always
-        // render a hittable thumbnail cell in time. Skip the full-screen
-        // open/close cycle when the thumbnail doesn't appear — the stall
-        // detection still covers the scroll and expand operations above.
+        // Thumbnail tap-through: a user photo opens the pushed chat reader
+        // (as in a real chat), and its back button returns to the timeline.
         let firstThumbnail = app.descendants(matching: .any)["chat.user.thumbnail.0"]
-        if firstThumbnail.waitForExistence(timeout: 10) {
-            firstThumbnail.tap()
-            let doneButton = app.buttons["Done"]
-            if doneButton.waitForExistence(timeout: 4) {
-                doneButton.tap()
-            }
-        }
+        XCTAssertTrue(firstThumbnail.waitForExistence(timeout: 10), "Visual image thumbnail did not become visible")
+        firstThumbnail.tap()
+        let readerBack = app.descendants(matching: .any)["fullscreen-image.back"]
+        XCTAssertTrue(readerBack.waitForExistence(timeout: 5), "Image reader did not open")
+        readerBack.tap()
+        XCTAssertTrue(waitForElementToDisappear(readerBack, timeout: 5), "Image reader did not close")
 
         let topButton = app.descendants(matching: .any)["harness.scroll.top"]
         XCTAssertTrue(topButton.waitForExistence(timeout: 4))
@@ -494,16 +491,19 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         )
         XCTAssertTrue(row.waitForExistence(timeout: 3))
         XCTAssertTrue(thumbnail.waitForExistence(timeout: 3))
-        let rowYBefore = row.frame.minY
+        // Measured inside the timeline: the router shows its navigation bar again
+        // when the reader pops, which moves the harness chrome but not the viewport.
+        let rowYBefore = row.frame.minY - timeline.frame.minY
 
+        // A user photo opens the pushed chat reader; Back must land on the same viewport.
         thumbnail.tap()
-        let dismissButton = app.descendants(matching: .any)["fullscreen-image.dismiss"]
-        XCTAssertTrue(dismissButton.waitForExistence(timeout: 5), "Full-screen image did not present")
-        dismissButton.tap()
-        XCTAssertTrue(waitForElementToDisappear(dismissButton, timeout: 5), "Full-screen image did not dismiss")
+        let readerBack = app.descendants(matching: .any)["fullscreen-image.back"]
+        XCTAssertTrue(readerBack.waitForExistence(timeout: 5), "Image reader did not open")
+        readerBack.tap()
+        XCTAssertTrue(waitForElementToDisappear(readerBack, timeout: 5), "Image reader did not close")
         XCTAssertTrue(row.waitForExistence(timeout: 5), "Stable image row disappeared after preview")
 
-        let rowYAfter = row.frame.minY
+        let rowYAfter = row.frame.minY - timeline.frame.minY
         XCTAssertLessThanOrEqual(
             abs(rowYAfter - rowYBefore),
             2,

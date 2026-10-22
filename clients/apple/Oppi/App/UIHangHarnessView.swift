@@ -650,6 +650,7 @@ private struct UIHangHarnessContent: View {
 
     @State private var themeID = ThemeRuntimeState.currentThemeID()
     @State private var originalThemeID = ThemeRuntimeState.currentThemeID()
+    @State private var hasAppeared = false
     @State private var inputText = ""
     @State private var frameIntervalMonitor = HarnessFrameIntervalMonitor()
 
@@ -949,16 +950,24 @@ private struct UIHangHarnessContent: View {
         .environment(\.chatReaderPayloadStore, chatReaderPayloadStore)
         .environment(\.openChatReader, ChatReaderOpenAction { payload in openChatReader(payload) })
         .onAppear {
+            // Back from a pushed chat reader appears again. A real chat restores the
+            // viewport it left, so only the first appearance seeds rows, resets
+            // metrics, and jumps to the bottom.
+            let isFirstAppearance = !hasAppeared
+            hasAppeared = true
             originalThemeID = ThemeRuntimeState.currentThemeID()
             ThemeRuntimeState.setThemeID(themeID)
-            resetRuntimeMetrics()
+            if isFirstAppearance {
+                resetRuntimeMetrics()
+                renderWindow = min(Self.initialRenderWindow, currentItems.count)
+                seedVisualToolFixtures()
+                ensureAssistantOverlapFixtureExists()
+            }
             frameIntervalMonitor.start()
-            renderWindow = min(Self.initialRenderWindow, currentItems.count)
-            seedVisualToolFixtures()
-            ensureAssistantOverlapFixtureExists()
             startDiagnosticsLoop()
             restartStreamingLoop()
 
+            guard isFirstAppearance else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 scrollToBottom(animated: false)
             }
