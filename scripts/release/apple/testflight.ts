@@ -31,6 +31,12 @@ import * as path from "path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { $ } from "bun";
+import {
+  APP_GROUPS,
+  APS_ENVIRONMENT,
+  TIME_SENSITIVE,
+  verifyExportedIpa,
+} from "./exported-entitlements.ts";
 import { applyXcodeToolchain } from "../../../clients/apple/scripts/xcode-toolchain.ts";
 import {
   nextIosReleaseBuild,
@@ -818,53 +824,71 @@ async function cmdBuild(opts: {
   }
   console.log("Archive created.");
 
-  // Step 5: Export / Upload
-  if (buildOnly) {
-    console.log("--- Step 5: Exporting IPA (build-only, no upload) ---");
-    const localPlist = path.join(buildDir, "ExportOptions-local.plist");
-    fs.writeFileSync(
-      localPlist,
-      `<?xml version="1.0" encoding="UTF-8"?>
+  // Step 5: Export the IPA locally and assert its signed entitlements. The upload
+  // path exports with destination=upload, which has no local IPA to inspect, so it
+  // must pass this check first.
+  console.log("--- Step 5: Exporting IPA (local, no upload) ---");
+  const localPlist = path.join(buildDir, "ExportOptions-local.plist");
+  fs.writeFileSync(
+    localPlist,
+    `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>method</key>
-    <string>app-store-connect</string>
-    <key>teamID</key>
-    <string>${TEAM_ID}</string>
-    <key>signingStyle</key>
-    <string>automatic</string>
-    <key>uploadSymbols</key>
-    <true/>
+  <key>method</key>
+  <string>app-store-connect</string>
+  <key>teamID</key>
+  <string>${TEAM_ID}</string>
+  <key>signingStyle</key>
+  <string>automatic</string>
+  <key>uploadSymbols</key>
+  <true/>
 </dict>
 </plist>`,
-    );
+  );
 
-    const { keyPath, keyId, issuerId } = creds();
-    await runXcodebuild(
-      [
-        "-exportArchive",
-        "-archivePath",
-        archivePath,
-        "-exportPath",
-        exportPath,
-        "-exportOptionsPlist",
-        localPlist,
-        "-allowProvisioningUpdates",
-        "-authenticationKeyPath",
-        keyPath,
-        "-authenticationKeyID",
-        keyId,
-        "-authenticationKeyIssuerID",
-        issuerId,
-      ],
-      path.join(buildDir, "export.log"),
-      10,
+  const { keyPath, keyId, issuerId } = creds();
+  await runXcodebuild(
+    [
+      "-exportArchive",
+      "-archivePath",
+      archivePath,
+      "-exportPath",
+      exportPath,
+      "-exportOptionsPlist",
+      localPlist,
+      "-allowProvisioningUpdates",
+      "-authenticationKeyPath",
+      keyPath,
+      "-authenticationKeyID",
+      keyId,
+      "-authenticationKeyIssuerID",
+      issuerId,
+    ],
+    path.join(buildDir, "export.log"),
+    10,
+  );
+  console.log(`IPA exported to: ${exportPath}/`);
+
+  console.log("--- Step 6: Verifying exported entitlements ---");
+  try {
+    const { app, notificationService, expected } = verifyExportedIpa(
+      exportPath,
+      APPLE_DIR,
     );
-    console.log(`IPA exported to: ${exportPath}/`);
-  } else {
-    console.log("--- Step 5: Exporting + uploading to App Store Connect ---");
-    const { keyPath, keyId, issuerId } = creds();
+    console.log(
+      `OK Oppi.app ${APS_ENVIRONMENT} = ${app[APS_ENVIRONMENT]}\n` +
+        `OK Oppi.app ${APP_GROUPS} = ${JSON.stringify(app[APP_GROUPS])} (expected ${expected.appGroup})\n` +
+        `OK OppiNotificationService ${APP_GROUPS} = ${JSON.stringify(notificationService[APP_GROUPS])}\n` +
+        `OK Oppi.app ${TIME_SENSITIVE} = ${app[TIME_SENSITIVE]}`,
+    );
+  } catch (error) {
+    die(error instanceof Error ? error.message : String(error));
+  }
+
+  if (!buildOnly) {
+    console.log("--- Step 7: Exporting + uploading to App Store Connect ---");
+    const uploadPath = path.join(buildDir, "upload");
     const exportPlist = path.join(APPLE_DIR, "ExportOptions-AppStore.plist");
 
     await runXcodebuild(
@@ -873,7 +897,7 @@ async function cmdBuild(opts: {
         "-archivePath",
         archivePath,
         "-exportPath",
-        exportPath,
+        uploadPath,
         "-exportOptionsPlist",
         exportPlist,
         "-allowProvisioningUpdates",
