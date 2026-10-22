@@ -3,7 +3,7 @@ import UIKit
 /// Password prompt for Connect and Save Host. Save Password edits the profile
 /// through `onSavesPasswordChange` so the host list round-trips the toggle.
 final class SSHTerminalPasswordViewController: UIViewController, UICollectionViewDelegate, UITextFieldDelegate {
-    private let endpointLabel: String
+    let endpointLabel: String
     private var savesPassword: Bool
     private let confirmTitle: String
     private let onSavesPasswordChange: (Bool) -> Void
@@ -156,6 +156,12 @@ final class SSHTerminalPasswordViewController: UIViewController, UICollectionVie
     @objc private func confirm() {
         guard !password.isEmpty else { return }
         onConfirm(password)
+    }
+
+    /// Confirms with `password`, as typing it and tapping Connect does.
+    func submit(_ password: String) {
+        self.password = password
+        confirm()
     }
 
     private var themePalette: ThemePalette { sshTerminalThemeID.palette }

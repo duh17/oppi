@@ -127,7 +127,8 @@ final class SSHTerminalFolderViewController: UIViewController {
     /// whichever screen is on top (the terminal, once this screen has gone).
     private func editHost() {
         let presenter = navigationController?.topViewController ?? self
-        Router.push(SSHTerminalSetupViewController(profileID: profile.id), from: presenter)
+        // The terminal now shown, which the switcher may have changed.
+        Router.push(SSHTerminalSetupViewController(profileID: session.connectedProfile?.id ?? profile.id), from: presenter)
     }
 
     private func connect(password: String? = nil) {

@@ -136,11 +136,14 @@ struct SSHTerminalSwitcherTests {
 
     // MARK: The screen
 
-    private func mount(_ terminal: SSHTerminalViewController) throws -> UIWindow {
+    /// `appRoot` publishes the app's services above the screen, as the app does;
+    /// presenting a sheet from it (the password prompt) needs them.
+    private func mount(_ screen: UIViewController, appRoot: AppRootEnvironment? = nil) throws -> UIWindow {
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        window.rootViewController = RouterNavigationController(rootViewController: terminal)
+        if let appRoot { window.traitOverrides.appRootEnvironment = appRoot }
+        window.rootViewController = RouterNavigationController(rootViewController: screen)
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
         return window
@@ -150,6 +153,154 @@ struct SSHTerminalSwitcherTests {
         if view.accessibilityIdentifier == identifier { return view }
         for child in view.subviews { if let hit = find(identifier, in: child) { return hit } }
         return nil
+    }
+
+    @Test func reconnectAfterASwitchAsksForTheShownHostsPasswordAndDialsThatHost() async throws {
+        let flag = AppPreferences.Experiments.sshTerminalKey
+        let previous = UserDefaults.standard.object(forKey: flag)
+        UserDefaults.standard.set(true, forKey: flag)
+        defer {
+            if let previous { UserDefaults.standard.set(previous, forKey: flag) } else { UserDefaults.standard.removeObject(forKey: flag) }
+        }
+        let registry = makeRegistry()
+        let session = SSHTerminalConnectSession(registry: registry)
+        // Two password hosts with nothing saved: any reconnect asks.
+        let hostA = SSHTerminalProfile(host: "reconnect-a.invalid", username: "alice")
+        let hostB = SSHTerminalProfile(host: "reconnect-b.invalid", username: "bob")
+        try open(registry, hostA)
+        let channelB = try open(registry, hostB, folder: "~/proj", command: "tmux new -A -s proj")
+        session.show(try #require(registry.terminal(for: hostA.id)))
+
+        // The screen that opened this session is host A's.
+        var openingScreenSubmitted = [String]()
+        var openingScreenProfile = hostA
+        let opening = UIViewController()
+        let window = try mount(opening, appRoot: makeTestAppRoot())
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            registry.closeAll(reason: "done")
+        }
+        let chrome = SSHTerminalConnectChrome(
+            host: opening, session: session,
+            profile: { openingScreenProfile },
+            setProfile: { openingScreenProfile = $0 },
+            editHost: {},
+            submitPassword: { openingScreenSubmitted.append($0) },
+            onSaved: { _ in }
+        )
+        chrome.sync() // pushes the terminal over it, as the app does
+        try await Task.sleep(for: .milliseconds(100))
+
+        session.show(try #require(registry.terminal(for: hostB.id, folder: "~/proj")))
+        channelB.close(reason: "The connection dropped.")
+        session.reconnect(experimentEnabled: true)
+        #expect(session.passwordPrompt)
+        chrome.sync()
+        try await Task.sleep(for: .milliseconds(100))
+
+        let sheet = try #require(
+            (opening.presentedViewController as? UINavigationController)?.viewControllers.first
+                as? SSHTerminalPasswordViewController
+        )
+        #expect(sheet.endpointLabel == hostB.endpointLabel, "the sheet names the host being reconnected")
+
+        sheet.submit("password-for-b")
+        #expect(openingScreenSubmitted.isEmpty, "the opening screen's own connect, bound to host A, is never used")
+        #expect(openingScreenProfile == hostA)
+        #expect(session.connecting)
+        #expect(session.attemptedHost == hostB.host, "the dial is for host B")
+        #expect(session.connectedProfile == hostB)
+        #expect(session.folder == "~/proj")
+        #expect(session.folderTerminalCommand == "tmux new -A -s proj")
+        session.cancel()
+        // The attempt saves host B before it notices the cancel; leave no stray host behind.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while SSHTerminalProfileStore().profile(id: hostB.id) == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try? SSHTerminalProfileStore().delete(id: hostB.id)
+    }
+
+    @Test func theSavePasswordSwitchOfAReconnectEditsTheReconnectedProfile() throws {
+        let flag = AppPreferences.Experiments.sshTerminalKey
+        let previous = UserDefaults.standard.object(forKey: flag)
+        UserDefaults.standard.set(true, forKey: flag)
+        defer {
+            if let previous { UserDefaults.standard.set(previous, forKey: flag) } else { UserDefaults.standard.removeObject(forKey: flag) }
+        }
+        let registry = makeRegistry()
+        let session = SSHTerminalConnectSession(registry: registry)
+        let channel = try open(registry, mini)
+        session.show(try #require(registry.terminal(for: mini.id)))
+        channel.close(reason: "dropped")
+        session.reconnect(experimentEnabled: true)
+        #expect(session.promptTarget?.profile.id == mini.id)
+        #expect(session.promptTarget?.isReconnect == true)
+        #expect(session.promptTarget?.profile.savesPassword == false)
+        session.setPromptSavesPassword(true)
+        #expect(session.promptTarget?.profile.savesPassword == true)
+        #expect(session.connectedProfile?.savesPassword == false, "the shown terminal's profile is unchanged until it is saved")
+    }
+
+    @Test func theChatBarDraftOfEachTerminalSurvivesASwapAndBack() async throws {
+        let registry = makeRegistry()
+        let session = SSHTerminalConnectSession(registry: registry)
+        let first = try open(registry, studio)
+        let second = try open(registry, mini)
+        session.show(try #require(registry.terminal(for: studio.id)))
+        let terminal = SSHTerminalViewController(
+            channel: first, reconnect: {}, editHost: {}, hostLabel: "chen@mac-studio", session: session
+        )
+        let window = try mount(terminal)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            registry.closeAll(reason: "done")
+        }
+        func settle() async throws {
+            for _ in 0..<4 {
+                await Task.yield()
+                terminal.view.setNeedsLayout()
+                terminal.updatePropertiesIfNeeded()
+                terminal.view.layoutIfNeeded()
+            }
+            try await Task.sleep(for: .milliseconds(200))
+            terminal.view.layoutIfNeeded()
+        }
+        func chatField() throws -> PastableUITextView {
+            func search(_ view: UIView) -> PastableUITextView? {
+                if let field = view as? PastableUITextView { return field }
+                for child in view.subviews { if let hit = search(child) { return hit } }
+                return nil
+            }
+            return try #require(search(terminal.view))
+        }
+        func type(_ text: String) throws {
+            let field = try chatField()
+            field.text = text
+            field.delegate?.textViewDidChange?(field)
+        }
+        let agent = Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)
+        first.event(.data(agent))
+        second.event(.data(agent))
+        try await settle()
+        try type("draft for studio")
+
+        session.show(try #require(registry.terminal(for: mini.id)))
+        try await settle()
+        #expect(terminal.channel === second)
+        #expect(try chatField().text.isEmpty, "the other terminal starts with its own, empty bar")
+        try type("draft for mini")
+
+        session.show(try #require(registry.terminal(for: studio.id)))
+        try await settle()
+        #expect(terminal.channel === first)
+        #expect(try chatField().text == "draft for studio")
+
+        session.show(try #require(registry.terminal(for: mini.id)))
+        try await settle()
+        #expect(try chatField().text == "draft for mini")
     }
 
     @Test func theBarOffersTheSwitcherOnlyWithMoreThanOneTerminalAndSwapsTheScreen() throws {

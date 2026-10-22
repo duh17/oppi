@@ -88,14 +88,30 @@ final class SSHTerminalConnectChrome {
         session.forgetConfirmation = false
     }
 
+    /// A reconnect of a terminal the switcher showed is for that terminal's
+    /// host, not for this screen's: its prompts name that host and act on it.
+    private var reconnectTarget: SSHTerminalConnectSession.PromptTarget? {
+        session.promptTarget.flatMap { $0.isReconnect ? $0 : nil }
+    }
+
+    /// The profile a prompt is about: the reconnect's, else this screen's.
+    private func promptProfile() -> SSHTerminalProfile {
+        reconnectTarget?.profile ?? profile()
+    }
+
     private func presentPassword(from host: UIViewController) {
         guard passwordScreen == nil else { return }
+        let shown = promptProfile()
         let screen = SSHTerminalPasswordViewController(
-            endpointLabel: profile().endpointLabel,
-            savesPassword: profile().savesPassword,
+            endpointLabel: shown.endpointLabel,
+            savesPassword: shown.savesPassword,
             confirmTitle: session.savingHostOnly ? "Save" : "Connect",
             onSavesPasswordChange: { [weak self] saves in
                 guard let self else { return }
+                if self.reconnectTarget != nil {
+                    self.session.setPromptSavesPassword(saves)
+                    return
+                }
                 var next = self.profile()
                 next.savesPassword = saves
                 self.setProfile(next)
@@ -106,9 +122,14 @@ final class SSHTerminalConnectChrome {
             },
             onConfirm: { [weak self] password in
                 guard let self else { return }
+                let isReconnect = self.reconnectTarget != nil
                 self.session.password = ""
                 self.session.passwordPrompt = false
-                self.submitPassword(password)
+                if isReconnect {
+                    self.session.submitPrompt(password: password)
+                } else {
+                    self.submitPassword(password)
+                }
             }
         )
         passwordScreen = screen
@@ -144,7 +165,7 @@ final class SSHTerminalConnectChrome {
             onTrust: { [weak self] in
                 guard let self else { return }
                 self.session.trustAndConnect(
-                    profile: self.profile(),
+                    profile: self.promptProfile(),
                     onSaved: self.onSaved
                 )
             },

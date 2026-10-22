@@ -85,6 +85,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var copyNoticeText: String?
     private var copyNoticeTask: Task<Void, Never>?
     private var lastCopies = 0
+    /// The terminal on screen and the chat-bar drafts of the ones left, so a
+    /// swap does not lose what was being typed.
+    private var shownIdentity: SSHTerminalIdentity?
+    private var composerDrafts: [SSHTerminalIdentity: SSHTerminalComposerHost.Draft] = [:]
     private var detached = false
     /// The cursor shift was held for history or a touch on the last update.
     private var cursorShiftHeld = false
@@ -113,6 +117,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// The registry closed this terminal while this screen was showing.
     private var sawClosedForBackground = false
     private var isOnScreen = false
+    /// Leaving was asked for since the session last showed a terminal.
+    private var requestedFinish = false
     private var presentingHerdr = false
     private var presentingStatusDetail = false
     private var reduceMotion = UIAccessibility.isReduceMotionEnabled
@@ -144,6 +150,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        shownIdentity = terminalIdentity
         buildLayout()
         reduceMotionObserver = NotificationCenter.default.addObserver(
             forName: UIAccessibility.reduceMotionStatusDidChangeNotification,
@@ -323,8 +330,15 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         }
         if phase == .active { reconnectAfterReturn() }
         if !locked { reconnectAfterReturn() }
-        if let session, !session.showsTerminal, isOnScreen, !isMovingFromParent {
-            Router.finish(self)
+        // This pass re-runs on every update; leave once per showing. A session
+        // that shows a terminal again re-arms the request.
+        if let session {
+            if session.showsTerminal {
+                requestedFinish = false
+            } else if isOnScreen, !isMovingFromParent, !requestedFinish {
+                requestedFinish = true
+                Router.finish(self)
+            }
         }
 
         let detected = detectedMode
@@ -554,7 +568,13 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         reconnectOnReturn = false
         channel = next
         channel.isViewed = isOnScreen && AppScenePhase.shared.phase == .active
+        // Not this terminal's copies: a swap shows no notice for the last one's.
+        lastCopies = next.copies
+        // The glyph's hold, ring, and last root belong to the terminal left.
+        statusGlyph.reset()
+        stashComposerDraft()
         destroyComposer()
+        shownIdentity = terminalIdentity
         gridView?.removeFromSuperview()
         installGrid(makeGrid())
     }
@@ -928,6 +948,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             themeID: themeID,
             showRawKeyboard: { [weak self] in self?.showTerminalKeyboard() }
         )
+        if let identity = terminalIdentity, let draft = composerDrafts[identity] { session.restore(draft) }
         session.onNeedsLayout = { [weak self] in self?.updateComposerHeight() }
         session.onFailureChange = { [weak self] message in self?.applySendFailure(message) }
 
@@ -1057,6 +1078,17 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         let constant = -(composerReservedHeight + bottomBarReserve)
         guard abs((gridBottom?.constant ?? 0) - constant) > 0.5 else { return }
         gridBottom?.constant = constant
+    }
+
+    private var terminalIdentity: SSHTerminalIdentity? {
+        guard let session, let profile = session.connectedProfile else { return nil }
+        return SSHTerminalIdentity(profileID: profile.id, folder: session.folder)
+    }
+
+    /// Keeps the chat bar's text and attachments for the terminal being left.
+    private func stashComposerDraft() {
+        guard let identity = shownIdentity, let draft = composerSession?.draft else { return }
+        composerDrafts[identity] = draft.isEmpty ? nil : draft
     }
 
     private func destroyComposer() {

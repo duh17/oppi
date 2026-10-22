@@ -15,6 +15,9 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     private var copied = false
     private let session = SSHTerminalConnectSession()
     private var chrome: SSHTerminalConnectChrome?
+    /// Edit Host from a terminal the switcher changed: that host's form opens
+    /// once the terminal has closed over this one.
+    private var editAfterTerminal: UUID?
 
     private let collectionView: UICollectionView
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
@@ -69,7 +72,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             session: session,
             profile: { [weak self] in self?.normalizedProfile() ?? SSHTerminalProfile() },
             setProfile: { [weak self] in self?.applySaved($0) },
-            editHost: { [weak self] in self?.session.showsTerminal = false },
+            editHost: { [weak self] in self?.editConnectedHost() },
             submitPassword: { [weak self] password in
                 guard let self else { return }
                 if self.session.savingHostOnly { self.saveHost(password: password) } else { self.connect(password: password) }
@@ -97,6 +100,10 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         _ = session.savingHostOnly
         _ = session.channel
         _ = session.devicePasscodeChanged
+        if !session.showsTerminal, let id = editAfterTerminal {
+            editAfterTerminal = nil
+            Router.push(SSHTerminalSetupViewController(profileID: id), from: self)
+        }
         _ = AppScenePhase.shared.isBackground
         deviceKey.observePasscodeChanged(session.devicePasscodeChanged, failure: session.failure)
         let themeID = sshTerminalThemeID
@@ -552,6 +559,13 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         var result = profile
         result.port = port ?? 22
         return result.normalized()
+    }
+
+    /// Edit Host in the terminal's menu acts on the terminal shown. When the
+    /// switcher moved it to another host, that host's form follows.
+    private func editConnectedHost() {
+        if let shown = session.connectedProfile?.id, shown != profileID { editAfterTerminal = shown }
+        session.showsTerminal = false
     }
 
     private func applySaved(_ saved: SSHTerminalProfile) {

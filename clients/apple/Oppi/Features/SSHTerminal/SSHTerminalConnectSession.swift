@@ -18,6 +18,16 @@ final class SSHTerminalConnectSession {
     var attemptedPort: UInt16 = 22
     var forgetConfirmation = false
     var passwordPrompt = false
+    /// The connect that the password and host-key prompts belong to. A
+    /// reconnect of a terminal shown by the switcher is for that terminal's
+    /// host, not for the screen that opened this session, so the prompts act on
+    /// this and never on the opening screen's own profile.
+    struct PromptTarget: Equatable {
+        var profile: SSHTerminalProfile
+        var isReconnect: Bool
+    }
+
+    private(set) var promptTarget: PromptTarget?
     var password = ""
     var channel: SSHTerminalChannel?
     var showsTerminal = false
@@ -45,6 +55,7 @@ final class SSHTerminalConnectSession {
     func connect(
         profile: SSHTerminalProfile,
         suppliedPassword: String? = nil,
+        reconnecting: Bool = false,
         onSaved: ((SSHTerminalProfile) -> Void)? = nil
     ) {
         let value = profile.normalized()
@@ -54,6 +65,7 @@ final class SSHTerminalConnectSession {
             show(live)
             return
         }
+        promptTarget = PromptTarget(profile: value, isReconnect: reconnecting)
         // A lock that is due but not applied yet covers Oppi as well.
         if AppLockService.shared.requiresUnlock() { SSHApprovalCache.shared.invalidateAll() }
         let old = SSHTerminalProfileStore().profile(id: value.id)
@@ -149,6 +161,9 @@ final class SSHTerminalConnectSession {
         hostFailure = nil
         folder = terminal.folder
         folderTerminalCommand = terminal.folderCommand
+        // A folder still waiting to open inside the opening terminal's
+        // multiplexer belongs to that terminal, not this one.
+        multiplexerFolder = nil
         connectedProfile = terminal.profile
         channel = terminal.channel
         showsTerminal = true
@@ -161,6 +176,7 @@ final class SSHTerminalConnectSession {
     ) {
         let value = profile.normalized()
         guard value.isConfigured else { return }
+        promptTarget = nil
         let old = SSHTerminalProfileStore().profile(id: value.id)
         if value.authentication == .password && value.savesPassword && suppliedPassword == nil
             && !value.reusesSavedPassword(of: old) {
@@ -191,9 +207,26 @@ final class SSHTerminalConnectSession {
         }
     }
 
-    func reconnect(onSaved: ((SSHTerminalProfile) -> Void)? = nil) {
+    /// Opens the terminal this session stands for again: its host, folder, and
+    /// attach command, whichever screen opened the session.
+    func reconnect(suppliedPassword: String? = nil, onSaved: ((SSHTerminalProfile) -> Void)? = nil) {
         guard let connectedProfile else { return }
-        connect(profile: connectedProfile, onSaved: onSaved)
+        connect(
+            profile: connectedProfile, suppliedPassword: suppliedPassword,
+            reconnecting: true, onSaved: onSaved
+        )
+    }
+
+    /// The Save Password switch on a reconnect's password sheet: it edits the
+    /// profile being reconnected, not the opening screen's.
+    func setPromptSavesPassword(_ saves: Bool) {
+        promptTarget?.profile.savesPassword = saves
+    }
+
+    /// The password for the pending prompt, sent to the host it was asked for.
+    func submitPrompt(password: String) {
+        guard let target = promptTarget else { return }
+        connect(profile: target.profile, suppliedPassword: password, reconnecting: target.isReconnect)
     }
 
     func trustAndConnect(
@@ -205,7 +238,7 @@ final class SSHTerminalConnectSession {
               case .unknownHostKey(let key) = hostFailure else { return }
         do {
             try SSHKnownHosts().trust(key, host: attemptedHost, port: attemptedPort)
-            connect(profile: value, onSaved: onSaved)
+            connect(profile: value, reconnecting: promptTarget?.isReconnect ?? false, onSaved: onSaved)
         } catch {
             failure = error.localizedDescription
         }

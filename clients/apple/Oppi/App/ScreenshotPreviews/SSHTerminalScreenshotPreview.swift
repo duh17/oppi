@@ -10,7 +10,7 @@ enum SSHTerminalScreenshotStatus: String {
     /// sent the way `kitten icat` or an agent's image output sends them.
     case kitty
     /// Real OSC 9;4 progress reports, with and without an OSC 7501 status.
-    case progressSet, progressIndeterminate, progressError, progressPause, progressWithStatus
+    case progressSet, progressIndeterminate, progressError, progressErrorNoPercent, progressPause, progressWithStatus
     /// Three open terminals in a private registry, so the bottom bar's
     /// switcher shows and its menu lists them. Tap `sshTerminal.switcher`.
     case switcher
@@ -20,6 +20,7 @@ enum SSHTerminalScreenshotStatus: String {
         case .progressSet, .progressWithStatus: "1;40"
         case .progressIndeterminate: "3"
         case .progressError: "2;70"
+        case .progressErrorNoPercent: "2"
         case .progressPause: "4;60"
         default: nil
         }
@@ -153,7 +154,7 @@ struct SSHTerminalScreenshotPreview: View {
         let line: String = switch step ?? status {
         case .none, .sequence: ""
         case .switcher: "chen@mac-studio: login shell"
-        case .progressSet, .progressIndeterminate, .progressError, .progressPause, .progressWithStatus:
+        case .progressSet, .progressIndeterminate, .progressError, .progressErrorNoPercent, .progressPause, .progressWithStatus:
             "$ cargo build --release"
         case .kitty: "$ kitten icat gradient.png"
         case .notification: "$ cargo test"
@@ -184,7 +185,7 @@ struct SSHTerminalScreenshotPreview: View {
         case .tree, .detail:
             return osc("state=working:app=deploy:msg=\(b64("Deploying v2.4.1"))")
                 + osc("state=blocked:kind=permission:id=eu-west:title=\(b64("EU West")):msg=\(b64("Approve deploy to eu-west?"))")
-        case .sequence, .kitty, .switcher, .progressSet, .progressIndeterminate, .progressError, .progressPause:
+        case .sequence, .kitty, .switcher, .progressSet, .progressIndeterminate, .progressError, .progressErrorNoPercent, .progressPause:
             return Data()
         case .progressWithStatus:
             return osc("state=working:app=pi:msg=\(b64("Building"))")

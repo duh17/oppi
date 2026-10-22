@@ -17,8 +17,8 @@ struct SSHTerminalProgressTests {
         #expect(Report(state: .set, percent: 40).fraction == 0.4)
         #expect(Report(state: .set, percent: 140).percent == 100)
         #expect(Report(state: .error, percent: 70).fraction == 0.7)
-        // No position: an error or an indeterminate report spins, a pause is full.
-        #expect(Report(state: .error, percent: nil).fraction == nil)
+        // No position: an indeterminate report spins; a pause or an error is a full, still ring.
+        #expect(Report(state: .error, percent: nil).fraction == 1)
         #expect(Report(state: .indeterminate, percent: 55).percent == nil)
         #expect(Report(state: .indeterminate, percent: 55).fraction == nil)
         #expect(Report(state: .paused, percent: nil).fraction == 1)
@@ -148,6 +148,33 @@ struct SSHTerminalProgressTests {
         #expect(Report(state: .indeterminate, percent: nil).spokenValue == "Progress, in progress")
     }
 
+    @Test func aSpinKeepsItsPhaseAcrossRepeatedReportsAndRestartsOnlyWhenItBegins() {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let ring = SSHTerminalProgressRingView(frame: CGRect(x: 0, y: 0, width: 28, height: 28))
+        window.addSubview(ring)
+        let spinning = Report(state: .indeterminate, percent: nil)
+        ring.apply(spinning, color: .blue, reduceMotion: false)
+        for _ in 0..<5 { ring.apply(spinning, color: .blue, reduceMotion: false) } // updateProperties passes
+        #expect(ring.spinStarts == 1)
+        ring.apply(Report(state: .set, percent: 20), color: .blue, reduceMotion: false)
+        ring.apply(spinning, color: .blue, reduceMotion: false)
+        #expect(ring.spinStarts == 2)
+    }
+
+    @Test func resettingTheGlyphForAnotherTerminalDropsItsRingAndHeldState() {
+        let glyph = SSHTerminalStatusGlyphButton()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        window.addSubview(glyph)
+        glyph.apply(
+            status: .working, summary: "", themeID: .dark, reduceMotion: false, root: nil,
+            progress: Report(state: .indeterminate, percent: nil)
+        )
+        #expect(!glyph.mark.ring.isHidden)
+        glyph.reset()
+        #expect(glyph.mark.ring.isHidden)
+        #expect(!glyph.mark.ring.isSpinning)
+    }
+
     @Test func theRingFillsToThePercentSpinsWhenIndeterminateAndStaysStillUnderReducedMotion() {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
         let ring = SSHTerminalProgressRingView(frame: CGRect(x: 0, y: 0, width: 28, height: 28))
@@ -171,7 +198,8 @@ struct SSHTerminalProgressTests {
         #expect(ring.drawnFraction == 1)
 
         ring.apply(Report(state: .error, percent: nil), color: .red, reduceMotion: false)
-        #expect(ring.isSpinning)
+        #expect(!ring.isSpinning)
+        #expect(ring.drawnFraction == 1)
 
         ring.apply(nil, color: .red, reduceMotion: false)
         #expect(ring.isHidden)

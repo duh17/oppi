@@ -84,6 +84,8 @@ struct ScreenshotPreviewView: View {
             SSHTerminalScreenshotPreview(status: .progressIndeterminate)
         case "ssh-terminal-progress-error":
             SSHTerminalScreenshotPreview(status: .progressError)
+        case "ssh-terminal-progress-error-no-percent":
+            SSHTerminalScreenshotPreview(status: .progressErrorNoPercent)
         case "ssh-terminal-progress-pause":
             SSHTerminalScreenshotPreview(status: .progressPause)
         case "ssh-terminal-progress-with-status":

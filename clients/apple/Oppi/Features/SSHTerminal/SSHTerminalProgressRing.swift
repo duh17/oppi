@@ -20,6 +20,9 @@ final class SSHTerminalProgressRingView: UIView {
     private let track = CAShapeLayer()
     private let arc = CAShapeLayer()
     private var spins = false
+    /// Times the arc was set turning from 12 o'clock, for tests: a report that
+    /// repeats must not count.
+    private(set) var spinStarts = 0
     private var activeObserver: NSObjectProtocol?
 
     override init(frame: CGRect) {
@@ -88,6 +91,7 @@ final class SSHTerminalProgressRingView: UIView {
         let dashed = report.state == .paused
 
         // A report moving the arc animates; reduced motion jumps.
+        let wasSpinning = spins
         CATransaction.begin()
         CATransaction.setDisableActions(reduceMotion)
         if let fraction = report.fraction {
@@ -111,12 +115,19 @@ final class SSHTerminalProgressRingView: UIView {
         } else {
             nil
         }
-        restartSpin()
+        // Every report passes through here; only the start of a spin turns the
+        // arc from 12 o'clock again. A spin already going keeps its phase.
+        if !spins {
+            arc.removeAnimation(forKey: Self.spinKey)
+        } else if !wasSpinning {
+            restartSpin()
+        }
     }
 
     private func restartSpin() {
         arc.removeAnimation(forKey: Self.spinKey)
         guard spins, window != nil else { return }
+        spinStarts += 1
         let spin = CABasicAnimation(keyPath: "transform.rotation.z")
         spin.fromValue = 0
         spin.toValue = CGFloat.pi * 2

@@ -22,7 +22,7 @@ final class SSHTerminalStatusMarkView: UIView {
     let style: Style
     private let imageView = UIImageView()
     /// The OSC 9;4 ring around the symbol; only the floating controls draw it.
-    private let ring = SSHTerminalProgressRingView()
+    let ring = SSHTerminalProgressRingView()
     private var progress: SSHTerminalProgressReport?
     private var hold: SSHTerminalStatusHold?
     private var holdTask: Task<Void, Never>?
@@ -92,6 +92,25 @@ final class SSHTerminalStatusMarkView: UIView {
             }
         }
         render()
+    }
+
+    /// Forgets the terminal this mark showed, for a screen that now shows another:
+    /// no hold, no remembered root, no ring, no entry effect for the next first
+    /// state. The owner applies the new terminal's state right after.
+    func reset() {
+        holdTask?.cancel()
+        holdTask = nil
+        checkTask?.cancel()
+        checkTask = nil
+        hold = nil
+        lastRoot = nil
+        headline = nil
+        progress = nil
+        shown = .idle
+        checkDrawn = false
+        imageView.removeAllSymbolEffects()
+        imageView.image = nil
+        ring.apply(nil, color: .clear, reduceMotion: true)
     }
 
     private func render() {
@@ -202,6 +221,9 @@ final class SSHTerminalStatusGlyphButton: UIButton {
 
     /// `status` is nil when only OSC 9;4 progress is showing. The glyph then
     /// has no list to open, so it reads as a static value, not a button.
+    /// Forgets the terminal this glyph showed; see `SSHTerminalStatusMarkView.reset`.
+    func reset() { mark.reset() }
+
     func apply(
         status: SessionStatusKind?,
         summary: String,

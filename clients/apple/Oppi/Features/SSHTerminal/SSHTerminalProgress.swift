@@ -5,8 +5,9 @@ import Observation
 ///
 /// The states and the percentage follow libghostty's parser, which follows
 /// Ghostty's own handling: a determinate report carries 0...100, a pause with
-/// no number stands for "stopped at the end" (full), and an error with no
-/// number or an indeterminate report has no position to show.
+/// no number stands for "stopped at the end" (full), as does an error with
+/// none (Ghostty bounces a bar there; a still red ring says "failed" better),
+/// and an indeterminate report has no position to show.
 struct SSHTerminalProgressReport: Equatable, Sendable {
     enum State: Equatable, Sendable {
         case set, error, indeterminate, paused
@@ -23,10 +24,11 @@ struct SSHTerminalProgressReport: Equatable, Sendable {
     }
 
     /// How much of the ring is filled. Nil means the ring spins: the program
-    /// gave no position.
+    /// gave no position. A pause or an error with no number is a full ring,
+    /// and still: the work stopped, it is not going on.
     var fraction: Double? {
         if let percent { return Double(percent) / 100 }
-        return state == .paused ? 1 : nil
+        return state == .paused || state == .error ? 1 : nil
     }
 
     /// The VoiceOver value. A plain determinate report reads "Progress 40%".

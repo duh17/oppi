@@ -172,7 +172,7 @@ A program can report progress with OSC 9;4 (`ESC ] 9 ; 4 ; state ; percent ST`, 
 |---|---|
 | `1;N` set | Blue, filled clockwise from the top to N%. |
 | `3` indeterminate | Blue, a short arc that spins. |
-| `2` or `2;N` error | Red, filled to N%; with no number, a spinning arc. |
+| `2` or `2;N` error | Red, filled to N%; with no number, a full ring, still (the work stopped; it is not going on). |
 | `4` or `4;N` pause | Orange and dashed, filled to N%; with no number, a full ring. |
 | `0` remove | No ring. |
 
@@ -207,7 +207,7 @@ While a terminal is off screen Oppi still reads its output and answers its termi
 
 With more than one terminal open, a **Switch terminal** button (stacked rectangles) sits beside **…** in the bottom bar. It opens a menu of every open terminal: each host's own terminal and each folder terminal, as the saved host (`user@host`) over the folder's last component (`oppi` for `~/workspace/oppi`), or over the host's Run on Connect command or **Login shell** for its own terminal. A green dot marks a connected terminal; a terminal whose program is blocked and waiting for you shows that program-status symbol instead and says what it waits on. The terminal on screen is checked, and the list keeps one order: hosts by name, a host's own terminal first, then its folders.
 
-Choosing one swaps the screen to that terminal, with the same live channel and grid as tapping its **Connected** host in the list: nothing dials, nothing signs in, and the terminal you left stays open and keeps reading its output. **Reconnect** and **Edit Host** then act on the terminal now shown. The button is hidden with one terminal open, and returns when a second one opens. VoiceOver reads **Switch terminal** with the count open.
+Choosing one swaps the screen to that terminal, with the same live channel and grid as tapping its **Connected** host in the list: nothing dials, nothing signs in, and the terminal you left stays open and keeps reading its output. **Reconnect** and **Edit Host** then act on the terminal now shown, from whichever screen opened this one (the host list, a folder's connecting screen, or the Add/Edit Host form): a Reconnect that needs a password asks for that terminal's host, names it in the sheet, and its **Save Password** switch edits that host; a host-key prompt is for it too, and the folder and attach command it reopens are its own. **Edit Host** opens that host's form. What you were typing in the chat bar stays with its terminal: swap away and back and the text and attachments are there again (until you leave the terminal screen). The button is hidden with one terminal open, and returns when a second one opens. VoiceOver reads **Switch terminal** with the count open.
 
 ## Approval reuse
 

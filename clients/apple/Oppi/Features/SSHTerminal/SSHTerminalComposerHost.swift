@@ -44,6 +44,26 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         self.showRawKeyboard = showRawKeyboard
     }
 
+    /// What the bar holds that a swap to another terminal must not lose.
+    struct Draft {
+        var text: String
+        var attachments: [PendingAttachment]
+        var repoPointers: [PendingFileReference]
+
+        var isEmpty: Bool {
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty && repoPointers.isEmpty
+        }
+    }
+
+    var draft: Draft { Draft(text: text, attachments: pendingAttachments, repoPointers: pendingRepoPointers) }
+
+    /// Before the bar is attached: sets the draft without a refresh.
+    func restore(_ draft: Draft) {
+        text = draft.text
+        pendingAttachments = draft.attachments
+        pendingRepoPointers = draft.repoPointers
+    }
+
     func attach(_ controller: ComposerBarController) {
         self.controller = controller
         controller.host = self
