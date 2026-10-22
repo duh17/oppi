@@ -1,4 +1,5 @@
 import CryptoKit
+import DeviceCheck
 import Foundation
 import Testing
 import UserNotifications
@@ -248,15 +249,35 @@ struct PushSendPermissionTests {
 
     private var serverId: String { backend.serverPublicKey.sha256Fingerprint }
 
-    private func storeRelayRegistration(_ registrationId: String) throws {
+    private func storeRelayRegistration(
+        _ registrationId: String,
+        apnsToken: String = String(repeating: "a", count: 64),
+        appAttestKeyId: String? = nil
+    ) throws {
         try PushRelayRegistrationStore.save(PushRelayClient.Registration(
             relay: relay.absoluteString,
             environment: APNsEnvironment.sandbox.rawValue,
-            apnsToken: String(repeating: "a", count: 64),
+            apnsToken: apnsToken,
             registrationId: registrationId,
             registrationSecret: "secret",
-            appAttestKeyId: nil
+            appAttestKeyId: appAttestKeyId
         ), relay: relay, environment: .sandbox)
+    }
+
+    /// App Attest after a reinstall: keys from before it are gone, a new one works.
+    private struct ReinstalledAppAttest: AppAttestProviding {
+        static let newKey = "k_new"
+        var isSupported: Bool { true }
+        func generateKey() async throws -> String { Self.newKey }
+        func attestKey(_ keyId: String, clientDataHash: Data) async throws -> Data { Data("attestation".utf8) }
+        func generateAssertion(_ keyId: String, clientDataHash: Data) async throws -> Data {
+            guard keyId == Self.newKey else { throw DCError(.invalidKey) }
+            return Data("assertion".utf8)
+        }
+    }
+
+    private func relayClient() -> PushRelayClient {
+        PushRelayClient(relay: relay, session: URLSession(configuration: configuration), appAttest: ReinstalledAppAttest())
     }
 
     /// One connection's registration with the server, as `register()` runs it.
@@ -272,7 +293,7 @@ struct PushSendPermissionTests {
             relay: relay,
             environment: .sandbox,
             apnsToken: String(repeating: "a", count: 64),
-            client: PushRelayClient(relay: relay, session: URLSession(configuration: configuration)),
+            client: relayClient(),
             retryWithNewRelayRegistration: true
         )
     }
@@ -350,6 +371,56 @@ struct PushSendPermissionTests {
 
             #expect(backend.mints == ["r_A", "r_NEW"])
             #expect(backend.sentTokens == ["osp1.r_A.p_1.secret", "osp1.r_NEW.p_2.secret"])
+        }
+    }
+
+    // A reinstall keeps the keychain's relay registration but not its App Attest key.
+
+    @Test func aNewServerAfterAReinstallGetsARegistrationWithANewKey() async throws {
+        try await withBackend {
+            try storeRelayRegistration("r_A", appAttestKeyId: "k_lost")
+            try await connect()
+
+            #expect(backend.mints == ["r_NEW"])
+            #expect(backend.sentTokens == ["osp1.r_NEW.p_1.secret"])
+            let stored = PushRelayRegistrationStore.load(relay: relay, environment: .sandbox)
+            #expect(stored?.registrationId == "r_NEW")
+            #expect(stored?.appAttestKeyId == ReinstalledAppAttest.newKey)
+        }
+    }
+
+    @Test func aNewAPNsTokenAfterAReinstallStillRegisters() async throws {
+        try await withBackend {
+            try storeRelayRegistration("r_A", apnsToken: String(repeating: "b", count: 64), appAttestKeyId: "k_lost")
+            try await connect()
+
+            #expect(backend.mints == ["r_NEW"])
+            #expect(backend.sentTokens == ["osp1.r_NEW.p_1.secret"])
+        }
+    }
+
+    @Test func aLiveActivityUploadAfterAReinstallGetsTheRegistrationReplaced() async throws {
+        try await withBackend {
+            // The server's send token survived too, so connecting needs no relay call.
+            try storeRelayRegistration("r_A", appAttestKeyId: "k_lost")
+            try PushSendTokenStore.save(.init(sendToken: "osp1.r_A.p_0.secret", deviceId: "d_phone"), serverId: serverId)
+            let defaultsName = "PushSendPermissionTests.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: defaultsName)!
+            defer { defaults.removePersistentDomain(forName: defaultsName) }
+            let relay = relay
+            let client = relayClient()
+            let sync = LiveActivityRelaySync(
+                registrations: { [PushRelayRegistrationStore.load(relay: relay, environment: .sandbox)].compactMap { $0 } },
+                cards: { [.init(slot: "slot", registrationId: "r_A", permissionId: "p_0")] },
+                put: { state, registration in try await client.putLiveActivity(state, registration: registration) },
+                sleep: { _ in },
+                defaults: defaults
+            )
+            await sync.publish().value
+            try await connect()
+
+            #expect(backend.mints == ["r_NEW"])
+            #expect(backend.sentTokens == ["osp1.r_NEW.p_1.secret"])
         }
     }
 

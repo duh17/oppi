@@ -122,7 +122,13 @@ final class PushRegistration {
         if let existing = relayRegistration, existing.apnsToken != apnsToken {
             // A new APNs token needs a new relay registration. The old one goes first, with
             // its permissions.
-            try await client.deleteRegistration(existing)
+            do {
+                try await client.deleteRegistration(existing)
+            } catch PushRelayClient.RelayError.keyLost {
+                // Nothing can sign its delete any more. It stays at the relay until APNs
+                // retires its token; this phone must not keep it.
+                logger.error("Push relay registration lost its App Attest key; registering again")
+            }
             PushRelayRegistrationStore.delete(relay: relay, environment: environment)
             relayRegistration = nil
         }
@@ -153,12 +159,16 @@ final class PushRegistration {
                     try? await client.deletePermission(storedPermission.permissionId, registration: registration)
                 }
                 sendToken = try await client.mintSendToken(registration).sendToken
-            } catch PushRelayClient.RelayError.gone, PushRelayClient.RelayError.tooManyPermissions
-                where retryWithNewRelayRegistration {
-                // The relay forgot this device (APNs retired the token), or permissions leaked
-                // before this phone reused them filled it: start over with a fresh
-                // registration, once. Every server mints again on its next connection.
-                try await client.deleteRegistration(registration)
+            } catch let error as PushRelayClient.RelayError
+                where retryWithNewRelayRegistration && [.gone, .tooManyPermissions, .keyLost].contains(error) {
+                // The relay forgot this device (APNs retired the token), permissions leaked
+                // before this phone reused them filled it, or its App Attest key is gone (the
+                // app was reinstalled): start over with a fresh registration, once. Every
+                // server mints again on its next connection. A registration without its key
+                // cannot be deleted; the new one for the same APNs token replaces it.
+                if error != .keyLost {
+                    try await client.deleteRegistration(registration)
+                }
                 PushRelayRegistrationStore.delete(relay: relay, environment: environment)
                 try await register(
                     api: api, serverId: serverId, deviceId: deviceId, relay: relay,

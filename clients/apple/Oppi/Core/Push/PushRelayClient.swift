@@ -14,6 +14,10 @@ struct PushRelayClient: Sendable {
     enum RelayError: Error, Equatable {
         /// The relay no longer holds this registration: register again.
         case gone
+        /// The App Attest key this registration was attested with is gone, so nothing can sign
+        /// for it again: forget it and register again. The keychain keeps the registration
+        /// through a reinstall; App Attest keys do not survive one.
+        case keyLost
         case tooManyPermissions
         case rejected(Int, String?)
         case invalidResponse
@@ -154,10 +158,15 @@ struct PushRelayClient: Sendable {
         if let keyId = registration.appAttestKeyId {
             let bodyHash = Data(SHA256.hash(data: body)).base64URLEncodedString
             let clientData = "oppi-relay-request-v1\n\(method)\n\(path)\n\(bodyHash)"
-            let assertion = try await appAttest.generateAssertion(
-                keyId,
-                clientDataHash: Data(SHA256.hash(data: Data(clientData.utf8)))
-            )
+            let assertion: Data
+            do {
+                assertion = try await appAttest.generateAssertion(
+                    keyId,
+                    clientDataHash: Data(SHA256.hash(data: Data(clientData.utf8)))
+                )
+            } catch let error as DCError where error.code == .invalidKey {
+                throw RelayError.keyLost
+            }
             headers["X-Oppi-Assertion"] = assertion.base64EncodedString()
         }
         return try await send(method, path: path, body: body, headers: headers)

@@ -213,10 +213,11 @@ final class LiveActivityRelaySync {
                 do {
                     try await put(state, registration)
                     stored.accepted[registration.registrationId] = state
-                } catch PushRelayClient.RelayError.gone {
-                    // A gone registration holds nothing and can start nothing. Forget it, so
-                    // the next push registration starts a new one, mints each server's
-                    // permission there, and publishes again.
+                } catch PushRelayClient.RelayError.gone, PushRelayClient.RelayError.keyLost {
+                    // A gone registration holds nothing and can start nothing, and one whose
+                    // App Attest key is gone can never be updated again. Forget it, so the
+                    // next push registration starts a new one (which replaces a keyless one at
+                    // the relay), mints each server's permission there, and publishes again.
                     forget(registration)
                     stored.accepted[registration.registrationId] = state
                 } catch {
