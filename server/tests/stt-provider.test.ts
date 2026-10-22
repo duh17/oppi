@@ -479,7 +479,27 @@ describe("StreamingSttProvider", () => {
     ]);
     const provider = makeProvider(fetchFn);
     await expect(provider.start()).rejects.toThrow(SttSessionCreateError);
-    await expect(provider.start()).rejects.toThrow(/network/);
+    await expect(provider.start()).rejects.toMatchObject({ category: "network" });
+  });
+
+  it("tells the user what to do when the speech service dies after the health check", async () => {
+    const { fetchFn } = createMockFetch([
+      {
+        match: isCreate,
+        response: () => {
+          throw new Error("fetch failed");
+        },
+      },
+    ]);
+    const provider = makeProvider(fetchFn);
+    const error = await provider.start().then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+    // This message is what the phone shows: no provider jargon or error-category tags.
+    expect(error?.message).toBe(
+      "Speech recognition is unavailable. Check that the speech service is running, then try again.",
+    );
   });
 
   it("after startup, feed timer concatenates multiple queued chunks into one request", async () => {

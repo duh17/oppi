@@ -101,14 +101,30 @@ export interface StreamingSttOptions {
 
 export type SttSessionCreateErrorCategory = "http_error" | "invalid_response" | "network" | "auth";
 
+/**
+ * What the user reads when speech recognition cannot start. Dictation and Live Voice pass
+ * a create failure's message to the phone as is, so it is plain copy, not a diagnostic.
+ */
+function sttSessionCreateMessage(category: SttSessionCreateErrorCategory, status?: number): string {
+  switch (category) {
+    case "network":
+      return "Speech recognition is unavailable. Check that the speech service is running, then try again.";
+    case "auth":
+      return "Speech recognition was not accepted by the speech service. Check its credentials, then try again.";
+    case "http_error":
+      return `Speech recognition could not start${status !== undefined ? ` (HTTP ${status})` : ""}. Try again.`;
+    case "invalid_response":
+      return "Speech recognition got an unexpected reply from the speech service. Check that it is up to date.";
+  }
+}
+
 /** Bounded create failure. Never includes upstream bodies, parser text, or hints. */
 export class SttSessionCreateError extends Error {
   readonly status: number | undefined;
   readonly category: SttSessionCreateErrorCategory;
 
   constructor(opts: { category: SttSessionCreateErrorCategory; status?: number }) {
-    const statusPart = opts.status !== undefined ? ` HTTP ${opts.status}` : "";
-    super(`STT session create failed:${statusPart} (${opts.category})`);
+    super(sttSessionCreateMessage(opts.category, opts.status));
     this.name = "SttSessionCreateError";
     this.category = opts.category;
     this.status = opts.status;

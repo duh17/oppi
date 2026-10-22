@@ -9,7 +9,12 @@ import { DictationManager, type DictationSendFn } from "../src/dictation-manager
 import type { DictationServerMessage } from "../src/dictation-types.js";
 import type { ServerMetricCollector } from "../src/server-metric-collector.js";
 import type { ServerMetricName } from "../src/server-metric-registry.js";
-import type { SttProvider, SttStartOptions, SttStartResult } from "../src/stt-provider.js";
+import {
+  SttSessionCreateError,
+  type SttProvider,
+  type SttStartOptions,
+  type SttStartResult,
+} from "../src/stt-provider.js";
 
 // ─── Test helpers ───
 
@@ -504,6 +509,22 @@ describe("DictationManager", () => {
       expect(errors[0].error).toContain("STT failed to start");
       // No dictation_ready should have been sent
       expect(messagesOfType(mgrSent, "dictation_ready")).toHaveLength(0);
+    });
+
+    it("shows the speech service's own message when its session cannot be created", async () => {
+      const failStartProvider = mockSttProvider(["test"]);
+      failStartProvider.start.mockRejectedValue(new SttSessionCreateError({ category: "network" }));
+      const mgr = new DictationManager(failStartProvider);
+      const mgrSent: DictationServerMessage[] = [];
+
+      mgr.handleControlMessage({ type: "dictation_start" }, (m) => mgrSent.push(m));
+      await drain();
+
+      const errors = messagesOfType(mgrSent, "dictation_error");
+      expect(errors).toHaveLength(1);
+      expect(errors[0].fatal).toBe(true);
+      expect(errors[0].error).toBe(new SttSessionCreateError({ category: "network" }).message);
+      expect(errors[0].error).not.toContain("STT failed to start");
     });
 
     it("does not emit late dictation_ready after cancel during STT start", async () => {

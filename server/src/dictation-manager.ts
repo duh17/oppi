@@ -16,7 +16,7 @@ import {
   type DictationClientMessage,
   type DictationServerMessage,
 } from "./dictation-types.js";
-import type { SttProvider } from "./stt-provider.js";
+import { SttSessionCreateError, type SttProvider } from "./stt-provider.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import { createLogger } from "./logger.js";
 
@@ -223,7 +223,8 @@ export class DictationManager {
       log.error("dictation.stt_start.failed", { error: errorMsg });
       this.send({
         type: "dictation_error",
-        error: `STT failed to start: ${errorMsg}`,
+        // A create failure's message is already written for the user.
+        error: err instanceof SttSessionCreateError ? errorMsg : `STT failed to start: ${errorMsg}`,
         fatal: true,
       });
       // Clear the session so the manager knows dictation is not active

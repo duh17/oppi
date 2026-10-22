@@ -110,6 +110,7 @@ Example:
 
 ### Fixed
 
+- **Server:** If the speech service stops between the health check and the start of dictation, the phone says that speech recognition is unavailable and to check the service, instead of "STT failed to start: STT session create failed: (network)".
 - **Client:** Opening a chat that holds large screenshots no longer freezes the app for several seconds or briefly uses over a gigabyte of memory, and the chat no longer stalls when a new message arrives in it.
 - **Client:** Scrolling past a long subagent report with a table no longer freezes the chat for several seconds.
 - **Client:** When iOS starts Oppi in the background while the phone is locked, for example to start a Live Activity, opening Oppi later no longer shows onboarding to a paired user or clears the cached session lists and chats. Siri, Shortcuts, and the share sheet ask you to unlock the phone instead of saying no server is paired. If Oppi still can't read its saved servers, it says so and offers Retry instead of showing onboarding.
