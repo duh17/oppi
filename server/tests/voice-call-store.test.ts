@@ -169,6 +169,59 @@ describe("FileVoiceCallStore", () => {
     },
   );
 
+  it("keeps when a call was detached across restarts, so a stale call is not revived", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-voice-call-store-detached-"));
+    try {
+      const path = voiceCallStorePath(dir);
+      const DAY_MS = 24 * 60 * 60_000;
+      const callIds = ["call-old", "call-new"];
+      const first = new VoiceCallController({
+        now: () => 1_000,
+        nextCallId: () => callIds.shift() as string,
+        persistence: new FileVoiceCallStore(path),
+      });
+      const phone = new DeterministicVoiceCallFrontend({
+        connectionId: "connection-1",
+        authenticatedDeviceId: "paired-device-a",
+      });
+      const started = first.startCall(
+        { controlSessionId: "voice-session-1", clientCallId: "client-call-1" },
+        phone.connection,
+      );
+      first.commitFrontendUtterance({
+        callId: "call-old",
+        controllerLeaseEpoch: started.state.controllerLeaseEpoch,
+        frontendConnectionId: "connection-1",
+        utteranceId: "utterance-1",
+        delegationId: "delegation-1",
+        request: "Old request",
+      });
+      first.disconnectConnection("connection-1");
+
+      // Two restarts days later: neither restores the call with a fresh rejoin window.
+      new VoiceCallController({
+        now: () => 1_000 + 3 * DAY_MS,
+        nextCallId: () => "unused",
+        persistence: new FileVoiceCallStore(path),
+      });
+      const restarted = new VoiceCallController({
+        now: () => 1_000 + 3 * DAY_MS + 60_000,
+        nextCallId: () => callIds.shift() as string,
+        persistence: new FileVoiceCallStore(path),
+      });
+      const fresh = restarted.startCall(
+        { controlSessionId: "voice-session-1", clientCallId: "client-call-2" },
+        phone.connection,
+      );
+
+      expect(fresh.state.callId).toBe("call-new");
+      expect(fresh.state.delegations).toEqual([]);
+      expect(restarted.snapshot("call-old").lifecycle).toBe("ended");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("loads a call file written before spoken approval was removed", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-voice-call-store-legacy-"));
     try {

@@ -666,7 +666,9 @@ export class VoiceCallController {
     }
     if (restored.size === 0 && !droppedExpired) return;
     for (const call of restored.values()) {
-      if (call.lifecycle === "active") {
+      // A call attached when the server stopped is detached now. One already detached keeps
+      // its own time, so a restart does not give a stale call a fresh rejoin window.
+      if (call.lifecycle === "active" && call.detachedAt === undefined) {
         this.detach(call);
       }
       this.calls.set(call.callId, call);
