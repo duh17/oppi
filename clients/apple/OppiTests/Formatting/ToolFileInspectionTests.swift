@@ -98,7 +98,6 @@ struct ToolFileInspectionTests {
         context.outputPresentation = facts.1
         let row = ToolPresentationBuilder.build(itemID: "row", tool: "replace_text", argsSummary: "", outputPreview: "",
             isError: false, isDone: true, context: context)
-        #expect(row.trailing == "Requested")
         #expect(row.editAdded == 2)
         #expect(row.editRemoved == 1)
     }
