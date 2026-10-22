@@ -53,7 +53,7 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Oppi needs local network access to connect to your paired self-hosted server.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Oppi uses the microphone to transcribe your voice into text prompts.</string>
+	<string>Oppi uses the microphone for dictation and Live Voice calls with your agent.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Oppi saves images from agent conversations to your photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

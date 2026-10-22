@@ -71,13 +71,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Oppi uses the microphone to transcribe your voice into text prompts."
+            "value": "Oppi uses the microphone for dictation and Live Voice calls with your agent."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Oppi 使用麦克风将你的语音转录为文本提示词。"
+            "value": "Oppi 使用麦克风进行听写，以及与你的智能体进行 Live Voice 通话。"
           }
         }
       }

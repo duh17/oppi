@@ -187,7 +187,7 @@ targets:
         NSLocalNetworkUsageDescription: "Oppi needs local network access to connect to your paired self-hosted server."
         NSBonjourServices:
           - "_oppi._tcp"
-        NSMicrophoneUsageDescription: "Oppi uses the microphone to transcribe your voice into text prompts."
+        NSMicrophoneUsageDescription: "Oppi uses the microphone for dictation and Live Voice calls with your agent."
         NSSpeechRecognitionUsageDescription: "Oppi uses on-device speech recognition to convert your voice into text."
         NSFaceIDUsageDescription: "Oppi uses Face ID to unlock the app when App Lock is on, to confirm new or changed servers, and to approve protected actions like removing a server or setting an API key."
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
