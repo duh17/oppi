@@ -591,28 +591,38 @@ removes them from Notification Center when it becomes active: they open nothing.
   status `working`, `needsYou` = `blocked`. The server sends only when the card's counts
   would change, at most once a minute per device, the latest counts winning. Per device it
   tracks whether a card exists: none (start when work begins), unknown (the app drove it, or
-  the server restarted), live (started by this server), or lost (out of reach). Zero counts
-  end the card, from any state. A `start` goes out only when there is no card: from none, or
-  right after a delivered `end`; never after an `end` answered `409`, which could leave a
+  the server restarted with no saved card), live (started by this server), or lost (out of reach). Zero counts
+  end the card, from any state. A `start` goes out only when there is no card the server can reach: from none, right
+  after a delivered `end`, or after the update retries below; never after an `end` answered `409`, which could leave a
   second card next to one the person sees or bring back one they dismissed. An `update`
   answered `409 no_activity` is tried again once a minute up to 5 times (the phone may still
-  be reporting a new card's token), then the card is lost: nothing more goes out until the
-  counts reach zero. A `start` answered `409 no_activity` (dismissed card, or no
-  start token) also makes the card lost: no more starts until the counts reach zero, when an
+  be reporting a new card's token); if every try fails, the server tries one `start` (work
+  that began while the app was backgrounded but connected has no card). A `start` answered
+  `409 no_activity` (dismissed card, no start token, or a server the phone did not list)
+  makes the card lost: no more starts until the counts reach zero, when an
   `end` goes out (it ends a dismissal at the relay) and the next work starts a card. Every card is ended and started again
   by 8 hours from the earliest it can have started, while work goes on: when this server
   started it; for an unknown card, the latest of the time the counts last rose from zero,
-  this server's last start, and 8 hours before the server lost track (so a card left from
-  before a restart is restarted at the reconcile). When a device leaves, the server assumes its card shows the current counts, unless they changed in
+  this server's last start, and 8 hours before the server lost track. The server saves each
+  `live` or `unknown` card's start in `<dataDir>/live-activity-state.json`; after a restart a
+  saved card under 7.5 hours old keeps that start and gets an `update` at the reconcile, and
+  any other card is ended and, while work goes on, restarted. A stop the person asked for
+  (`oppi server stop` or `uninstall`, which leave a `server-stop-requested` marker, or Ctrl-C
+  of a foreground serve) sends each away device whose card may be up one best-effort `end`,
+  about 3 seconds in all; an ordinary restart sends none. Revoking a device or rotating the
+  owner token sends the same best-effort `end` (3 seconds at most) before releasing the
+  permission. When a device leaves, the server assumes its card shows the current counts, unless they changed in
   the 2 minutes before (a suspended app may have missed that), and then sends. A minute after
-  startup it reconciles each device once. Network failures retry after 5 minutes; a `429`
-  waits out `Retry-After`, apart for an `end` and for a `start` or `update`: a day's quota
+  startup it reconciles each device once. Network failures retry after 5 minutes; a `429`, or a
+  `503 relay_capacity` with `Retry-After`, waits it out, apart for an `end` and for a `start` or `update`: a day's quota
   that stops updates does not hold back the `end`. Budget: 40 per device and UTC day, apart from alerts; `update`
   stops at 32, and a `start` needs two free slots (its own and its `end`'s). An `end` is
   never refused for the day's 40 but has an overdraft of 8 (so 48), and waits out only its
-  own `429`. Only sends the relay counted use it: delivered,
-  `502 apns_unavailable` (APNs failed after the relay charged it), and `429`; a network
-  failure, a timeout, another `5xx`, or a `409 no_activity` does not count.
+  own `429`. The server counts a send only when the relay counted it:
+  delivered, `502 apns_unavailable` (APNs failed after the relay charged it), and `429`; a
+  network failure, a timeout, another `5xx`, a `503 relay_capacity`, or a `409 no_activity`
+  does not count. The relay charges before APNs, so a `409` for a token APNs retired still
+  uses one of its slots, and it can run a little ahead of this count.
 
 ## 6. Threat model
 
