@@ -1359,9 +1359,11 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     // MARK: - Fill Password
 
-    /// The saved host this terminal is connected to, which says whether there
-    /// is a password to fill.
-    private var passwordFillProfile: SSHTerminalProfile? { session?.currentProfile ?? previewFillProfile }
+    /// The saved host the channel being typed into belongs to, which says
+    /// whether there is a password to fill. Read from that channel, not from
+    /// the session: while the screen swaps to another terminal the session can
+    /// already stand for the next one.
+    private var passwordFillProfile: SSHTerminalProfile? { session?.profile(of: channel) ?? previewFillProfile }
 
     /// The screenshot preview has no connect session; it names the host here.
     var previewFillProfile: SSHTerminalProfile?

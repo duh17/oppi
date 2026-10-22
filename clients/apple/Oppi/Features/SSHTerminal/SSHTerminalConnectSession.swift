@@ -32,6 +32,13 @@ final class SSHTerminalConnectSession {
     var channel: SSHTerminalChannel?
     var showsTerminal = false
     var connectedProfile: SSHTerminalProfile?
+    /// The profile the live terminal on `channel` runs with now, nil when the
+    /// registry no longer holds it. What Fill Password reads, so it always names
+    /// the channel being typed into.
+    func profile(of channel: SSHTerminalChannel) -> SSHTerminalProfile? {
+        registry.profile(of: channel)
+    }
+
     /// `connectedProfile` as the live terminal knows it now: saving a password
     /// for the host (or removing one) updates the terminal's profile in place,
     /// and a stale copy would hide or show Fill Password wrongly.
@@ -86,6 +93,8 @@ final class SSHTerminalConnectSession {
                 // Save Password was just turned on and no password is stored:
                 // ask in connect mode, so submitting comes back through here,
                 // saves it, and attaches (a save-only sheet would stop short).
+                // The sheet is about this host, not whichever reconnect asked last.
+                promptTarget = PromptTarget(profile: value, isReconnect: reconnecting)
                 savingHostOnly = false
                 passwordPrompt = true
             } else {

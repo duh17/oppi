@@ -241,6 +241,75 @@ struct SSHTerminalSwitcherTests {
         session.cancel()
     }
 
+    @Test func aFormTurningOnSavePasswordAfterAnotherHostsReconnectAsksForItsOwnHost() async throws {
+        let registry = makeRegistry()
+        let profiles = IsolatedProfiles()
+        let session = SSHTerminalConnectSession(registry: registry, profileStore: profiles.make)
+        let hostA = SSHTerminalProfile(host: "form-a.invalid", username: "alice")
+        let hostB = SSHTerminalProfile(host: "form-b.invalid", username: "bob")
+        let channelA = try open(registry, hostA)
+        let channelB = try open(registry, hostB, folder: "~/proj", command: "tmux new -A -s proj")
+
+        // A's form turns Save Password on, with no password typed.
+        var editedA = hostA
+        editedA.savesPassword = true
+        var submittedByForm = [String]()
+        let opening = UIViewController()
+        let window = try mount(opening, appRoot: makeTestAppRoot())
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            closeEverything(registry)
+        }
+        let chrome = SSHTerminalConnectChrome(
+            host: opening, session: session,
+            profile: { editedA },
+            setProfile: { _ in },
+            editHost: {},
+            submitPassword: { password in
+                submittedByForm.append(password)
+                session.connect(profile: editedA, suppliedPassword: password)
+            },
+            onSaved: { _ in }
+        )
+
+        // Switch to B and reconnect it: the prompt target is now B's.
+        session.show(try #require(registry.terminal(for: hostB.id, folder: "~/proj")))
+        channelB.close(reason: "The connection dropped.")
+        session.reconnect()
+        #expect(session.promptTarget?.profile.id == hostB.id)
+        session.cancel()
+        session.passwordPrompt = false
+
+        // Back on A, Connect from its form.
+        session.show(try #require(registry.terminal(for: hostA.id)))
+        chrome.sync() // pushes the terminal over the form, as the app does
+        try await Task.sleep(for: .milliseconds(100))
+        session.connect(profile: editedA)
+        #expect(session.passwordPrompt)
+        #expect(session.promptTarget?.profile.id == hostA.id, "the sheet is about the form's host, not B")
+        #expect(session.promptTarget?.isReconnect == false)
+        chrome.sync()
+        try await Task.sleep(for: .milliseconds(100))
+        let sheet = try #require(
+            (opening.presentedViewController as? UINavigationController)?.viewControllers.first
+                as? SSHTerminalPasswordViewController
+        )
+        #expect(sheet.endpointLabel == hostA.endpointLabel)
+
+        // Submitting goes to A's own form, which saves A's password and attaches.
+        sheet.submit("password-for-a")
+        #expect(submittedByForm == ["password-for-a"])
+        for _ in 0..<100 where profiles.make().profile(id: hostA.id)?.savesPassword != true {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(profiles.make().profile(id: hostA.id)?.savesPassword == true)
+        #expect(profiles.make().profile(id: hostB.id) == nil, "B was never saved or dialed")
+        #expect(session.attemptedHost != hostB.host)
+        #expect(session.channel === channelA, "attached to A's live terminal; nothing was dialed")
+        #expect(channelA.connected)
+    }
+
     @Test func theSavePasswordSwitchOfAReconnectEditsTheReconnectedProfile() throws {
         let registry = makeRegistry()
         let session = SSHTerminalConnectSession(registry: registry, profileStore: IsolatedProfiles().make)
