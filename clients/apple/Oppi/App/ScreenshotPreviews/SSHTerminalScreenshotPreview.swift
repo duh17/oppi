@@ -298,13 +298,11 @@ private struct SSHTerminalPreviewHost: UIViewControllerRepresentable {
 /// program is blocked.
 @MainActor
 final class SSHTerminalSwitcherPreviewFixture {
-    let registry = SSHTerminalRegistry(experimentEnabled: { true })
+    let registry = SSHTerminalRegistry()
     let session: SSHTerminalConnectSession
     private var channels = [SSHTerminalChannel]()
 
     init() {
-        // The screen closes a session's terminal when the experiment is off.
-        ScreenshotVolatileDefaults.apply([AppPreferences.Experiments.sshTerminalKey: true])
         session = SSHTerminalConnectSession(registry: registry)
         session.showsTerminal = true
     }

@@ -46,22 +46,16 @@ struct SSHTerminalSwitcherTests {
     private let studio = SSHTerminalProfile(host: "mac-studio", username: "chen")
     private let mini = SSHTerminalProfile(host: "mac-mini", username: "chen", startupCommand: "herdr")
 
-    /// Turns the SSH experiment on for a test; call the result to put the flag back.
-    private func enableExperiment() -> () -> Void {
-        let flag = AppPreferences.Experiments.sshTerminalKey
-        let previous = UserDefaults.standard.object(forKey: flag)
-        UserDefaults.standard.set(true, forKey: flag)
-        return {
-            if let previous { UserDefaults.standard.set(previous, forKey: flag) } else { UserDefaults.standard.removeObject(forKey: flag) }
-        }
+    private func makeRegistry() -> SSHTerminalRegistry {
+        SSHTerminalRegistry(
+            backgroundTasks: FakeBackgroundTasks(), sleep: { _ in try await Task.sleep(for: .seconds(3600)) }
+        )
     }
 
-    private func makeRegistry() -> SSHTerminalRegistry {
-        let defaults = UserDefaults(suiteName: "SSHTerminalSwitcherTests.\(UUID().uuidString)")!
-        return SSHTerminalRegistry(
-            backgroundTasks: FakeBackgroundTasks(), sleep: { _ in try await Task.sleep(for: .seconds(3600)) },
-            defaults: defaults, experimentEnabled: { true }
-        )
+    private func closeEverything(_ registry: SSHTerminalRegistry) {
+        for id in Set(registry.openTerminals().map(\.profile.id)) {
+            registry.closeAllTerminals(of: id, reason: "done")
+        }
     }
 
     @discardableResult
@@ -193,8 +187,6 @@ struct SSHTerminalSwitcherTests {
     }
 
     @Test func reconnectAfterASwitchAsksForTheShownHostsPasswordAndDialsThatHost() async throws {
-        let restore = enableExperiment()
-        defer { restore() }
         let registry = makeRegistry()
         let session = SSHTerminalConnectSession(registry: registry, profileStore: IsolatedProfiles().make)
         // Two password hosts with nothing saved: any reconnect asks.
@@ -212,7 +204,7 @@ struct SSHTerminalSwitcherTests {
         defer {
             window.isHidden = true
             window.rootViewController = nil
-            registry.closeAll(reason: "done")
+            closeEverything(registry)
         }
         let chrome = SSHTerminalConnectChrome(
             host: opening, session: session,
@@ -227,7 +219,7 @@ struct SSHTerminalSwitcherTests {
 
         session.show(try #require(registry.terminal(for: hostB.id, folder: "~/proj")))
         channelB.close(reason: "The connection dropped.")
-        session.reconnect(experimentEnabled: true)
+        session.reconnect()
         #expect(session.passwordPrompt)
         chrome.sync()
         try await Task.sleep(for: .milliseconds(100))
@@ -250,14 +242,12 @@ struct SSHTerminalSwitcherTests {
     }
 
     @Test func theSavePasswordSwitchOfAReconnectEditsTheReconnectedProfile() throws {
-        let restore = enableExperiment()
-        defer { restore() }
         let registry = makeRegistry()
         let session = SSHTerminalConnectSession(registry: registry, profileStore: IsolatedProfiles().make)
         let channel = try open(registry, mini)
         session.show(try #require(registry.terminal(for: mini.id)))
         channel.close(reason: "dropped")
-        session.reconnect(experimentEnabled: true)
+        session.reconnect()
         #expect(session.promptTarget?.profile.id == mini.id)
         #expect(session.promptTarget?.isReconnect == true)
         #expect(session.promptTarget?.profile.savesPassword == false)
@@ -281,7 +271,7 @@ struct SSHTerminalSwitcherTests {
         defer {
             window.isHidden = true
             window.rootViewController = nil
-            registry.closeAll(reason: "done")
+            closeEverything(registry)
         }
         let chrome = SSHTerminalConnectChrome(
             host: opening, session: session,
@@ -292,7 +282,7 @@ struct SSHTerminalSwitcherTests {
         chrome.sync()
         try await Task.sleep(for: .milliseconds(100))
         channel.close(reason: "The connection dropped.")
-        session.reconnect(experimentEnabled: true)
+        session.reconnect()
         chrome.sync()
         try await Task.sleep(for: .milliseconds(100))
         let sheet = try #require(
@@ -312,8 +302,6 @@ struct SSHTerminalSwitcherTests {
     }
 
     @Test func aSameHostReconnectTellsItsFormThatSavePasswordWasTurnedOn() async throws {
-        let restore = enableExperiment()
-        defer { restore() }
         let host = SSHTerminalProfile(host: "form-same.invalid", username: "alice")
         let result = try await reconnectFromAForm(
             formHost: host, shown: host, profiles: IsolatedProfiles(), savePassword: true
@@ -325,8 +313,6 @@ struct SSHTerminalSwitcherTests {
     }
 
     @Test func aReconnectOfAnotherHostLeavesTheFormOnItsOwnHost() async throws {
-        let restore = enableExperiment()
-        defer { restore() }
         let formHost = SSHTerminalProfile(host: "form-a.invalid", username: "alice")
         let shown = SSHTerminalProfile(host: "form-b.invalid", username: "bob")
         let result = try await reconnectFromAForm(
@@ -350,7 +336,7 @@ struct SSHTerminalSwitcherTests {
         defer {
             window.isHidden = true
             window.rootViewController = nil
-            registry.closeAll(reason: "done")
+            closeEverything(registry)
         }
         func settle() async throws {
             for _ in 0..<4 {
@@ -409,7 +395,7 @@ struct SSHTerminalSwitcherTests {
         defer {
             window.isHidden = true
             window.rootViewController = nil
-            registry.closeAll(reason: "done")
+            closeEverything(registry)
         }
         let switcher = try #require(find("sshTerminal.switcher", in: terminal.view))
         #expect(switcher.isHidden, "one terminal open: nothing to switch to")
