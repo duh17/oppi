@@ -48,8 +48,8 @@ See spec §3.6.
 ## Limits and why they are set this way
 
 Oppi's relay at `push.oppi.chaosdonkey.dev` runs on the Cloudflare Workers Free plan. There
-is no paid tier and no plan for subscriptions or accounts. The limits below come from the
-operator's own daily use, sized so that most people get a good experience while the relay
+is no paid tier and no plan for subscriptions or accounts. These limits are preliminary and may
+change. They come from the operator's own daily use, sized so that most people get a good experience while the relay
 stays inside the free plan:
 
 | Limit | Value |
@@ -64,7 +64,9 @@ stays inside the free plan:
 | Challenge and registration requests | 3 per client address per 10 seconds (Cloudflare rate limiting rule) |
 
 Each Oppi server keeps its own per-device budget at or below the relay's (100 a day, with
-routine alerts stopping at 80), so normal use never reaches the relay's limit.
+routine alerts stopping at 80), so one server alone rarely reaches the relay's limit. The
+relay's limits are per phone and shared by every server that phone is paired with. A server
+keeps its count in memory, so a restart starts that server's count over.
 
 The Free plan allows 100,000 Worker requests and 100,000 Durable Object requests a day, and a
 push costs about one of each. That covers about 1,000 phones at the daily cap and several
