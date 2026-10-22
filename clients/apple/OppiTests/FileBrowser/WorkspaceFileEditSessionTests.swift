@@ -487,7 +487,8 @@ struct WorkspaceFileEditSessionTests {
         let url = harness.store.fileURL(for: harness.identity)
         #expect(try Data(contentsOf: url).count > draft.bytes.count, "draft is a file on disk")
 #if !targetEnvironment(simulator)
-        // The simulator does not report data-protection classes; devices do.
+        // The Simulator reports no class for a file written with a protection option (one
+        // set afterwards through `setResourceValue` it does report); devices do.
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         #expect(attributes[.protectionKey] as? FileProtectionType == .completeUnlessOpen)
 #endif

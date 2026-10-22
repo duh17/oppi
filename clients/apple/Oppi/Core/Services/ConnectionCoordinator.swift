@@ -1106,12 +1106,6 @@ final class ConnectionCoordinator {
         retryPreparationAfterBoundaryServerIds.remove(id)
         // Remove identity before suspension so a re-pair cannot observe or reuse it.
         let removedConnection = connections.removeValue(forKey: id)
-        // End the server's card while this phone still drives it: once push is off below, no
-        // server can end it, and it would show its last counts until iOS ends it hours later.
-        if LiveActivitySettings.isEnabled(serverId: id) {
-            LiveActivitySettings.setEnabled(false, serverId: id)
-            LiveActivityManager.shared.settingsChanged(serverId: id)
-        }
         if let conn = removedConnection {
             conn.cancelListRefreshWork()
             conn.disconnectSession()
@@ -1127,6 +1121,13 @@ final class ConnectionCoordinator {
               serverStore.server(for: id) == nil else { return }
         // Device-local lock flags for the server, its workspaces, and sessions.
         ScopedLockService.shared.forgetServer(id)
+        // End the server's card while this phone still drives it: once push is off below, no
+        // server can end it, and it would show its last counts until iOS ends it hours later.
+        // After the guard, so a re-pair during shutdown keeps its card setting.
+        if LiveActivitySettings.isEnabled(serverId: id) {
+            LiveActivitySettings.setEnabled(false, serverId: id)
+            LiveActivityManager.shared.settingsChanged(serverId: id)
+        }
         // Push keys and the relay permission for this server. The transport is gone, so the
         // server forgets this device's registration when its relay permission 410s.
         await PushRegistration.shared.disable(serverId: id, api: nil, relay: removedConnection?.pushRelay)

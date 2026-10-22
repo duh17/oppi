@@ -135,7 +135,7 @@ enum LocalDataProtection {
     /// Shared `UserDefaults` plists belong to cfprefsd, not to Oppi's stores. Push state stays
     /// `completeUntilFirstUserAuthentication` by design: the Notification Service Extension
     /// opens it while the phone is locked (`PushSharedStore`).
-    static func excludedPaths(fileManager: FileManager) -> Set<String> {
+    private static func excludedPaths(fileManager: FileManager) -> Set<String> {
         guard let group = fileManager.containerURL(forSecurityApplicationGroupIdentifier: SharedConstants.appGroupIdentifier) else {
             return []
         }

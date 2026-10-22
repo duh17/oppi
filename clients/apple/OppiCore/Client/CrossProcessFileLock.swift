@@ -111,7 +111,8 @@ enum CrossProcessFileLock {
             guard errno == EEXIST else { throw POSIXError.current }
             let existing = open(url.path, O_RDWR)
             if existing >= 0 {
-                // Nil where the file system has no data protection (the Simulator, macOS).
+                // Nil where the file system reports no class. The Simulator reports one set
+                // through `setResourceValue`, as `setProtection` does.
                 if let current = try? url.resourceValues(forKeys: [.fileProtectionKey]).fileProtection,
                    current != protection {
                     setProtection(protection, at: url)

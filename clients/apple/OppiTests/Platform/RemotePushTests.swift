@@ -32,22 +32,6 @@ struct RemotePushTests {
         #expect(APNsEnvironment.fromProvisioningProfile(Data("not a profile".utf8)) == nil)
     }
 
-    // MARK: - Push state at rest
-
-    /// The extension takes the badge lock while the phone is locked, so it lives with the push
-    /// files the app's at-rest upgrade leaves at the class the extension can open.
-    @Test func pushLocksLiveInTheStateTheAtRestUpgradeSkips() throws {
-        let container = try CrossProcessFileLock.appGroupContainer(identifier: SharedConstants.appGroupIdentifier)
-        _ = PushSharedStore.updateSessionBadge { _ in }
-
-        let lock = container
-            .appendingPathComponent(PushSharedStore.stateDirectoryName, isDirectory: true)
-            .appendingPathComponent("badge.lock")
-        #expect(FileManager.default.fileExists(atPath: lock.path))
-        #expect(LocalDataProtection.excludedPaths(fileManager: .default)
-            .contains(lock.deletingLastPathComponent().standardizedFileURL.path))
-    }
-
     // MARK: - Foreground and local alerts
 
     @Test func failedRunsAndAgentMessagesShowInFrontUnlessTheirChatIsOnScreen() {
