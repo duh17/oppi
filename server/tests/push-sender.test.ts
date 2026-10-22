@@ -398,29 +398,34 @@ describe("PushSender", () => {
       expect((await push.sendLiveActivity(registration, update))?.status).toBe("throttled");
     });
 
-    it("spends its own daily budget, keeping room to start and end, apart from alerts", async () => {
+    it("spends its own daily budget, keeping room to end every card, apart from alerts", async () => {
       const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
       const push = liveActivitySender(fetchImpl);
       const [registration] = push.registrations();
       if (!registration) throw new Error("missing registration");
-      const results: string[] = [];
-      for (let index = 0; index <= LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay; index += 1) {
-        results.push((await push.sendLiveActivity(registration, update))?.status ?? "none");
+      const status = async (event: "start" | "update" | "end") =>
+        (
+          await push.sendLiveActivity(
+            registration,
+            event === "end" ? { event, running: 0, needsYou: 0 } : { ...update, event },
+          )
+        )?.status;
+      for (let index = 0; index < LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay; index += 1) {
+        expect(await status("update")).toBe("delivered");
       }
-      expect(results.at(-1)).toBe("throttled");
-      expect(results.filter((status) => status === "delivered")).toHaveLength(
-        LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay,
-      );
-      const end = { event: "end" as const, running: 0, needsYou: 0 };
-      for (
-        let index = LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay;
-        index < LIVE_ACTIVITY_DEVICE_BUDGET.perDay;
-        index += 1
-      ) {
-        expect((await push.sendLiveActivity(registration, end))?.status).toBe("delivered");
+      expect(await status("update")).toBe("throttled");
+
+      // Start/end pairs fill the rest of the day: a start is refused when its end would not fit.
+      const pairs =
+        (LIVE_ACTIVITY_DEVICE_BUDGET.perDay - LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay) / 2;
+      for (let pair = 0; pair < pairs; pair += 1) {
+        expect(await status("start")).toBe("delivered");
+        expect(await status("end")).toBe("delivered");
       }
-      expect((await push.sendLiveActivity(registration, end))?.status).toBe("throttled");
       expect(calls).toHaveLength(LIVE_ACTIVITY_DEVICE_BUDGET.perDay);
+      expect(await status("start")).toBe("throttled");
+      // An end goes even with the budget full.
+      expect(await status("end")).toBe("delivered");
 
       // Alerts keep their whole budget.
       expect((await push.send(registration, notification))?.status).toBe("delivered");

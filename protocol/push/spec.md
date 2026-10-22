@@ -573,7 +573,8 @@ removes them from Notification Center when it becomes active: they open nothing.
   the 2 minutes before (a suspended app may have missed that), and then sends. A minute after
   startup it reconciles each device once. Network failures retry after 5 minutes; a `429`
   waits out `Retry-After`. Budget: 40 per device and UTC day, apart from alerts; `update`
-  stops at 32 so `start` and `end` keep room. Only sends the relay counted use it: delivered,
+  stops at 32, and a `start` needs two free slots (its own and its `end`'s). An `end` is
+  never refused by the budget, only by a `429` pause. Only sends the relay counted use it: delivered,
   `502 apns_unavailable` (APNs failed after the relay charged it), and `429`; a network
   failure, a timeout, another `5xx`, or a `409 no_activity` does not count.
 

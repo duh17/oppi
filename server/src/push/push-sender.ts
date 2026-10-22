@@ -84,7 +84,10 @@ class DeviceBudget {
 /**
  * Live Activity pushes one device may get from this server a UTC day, apart from alerts
  * (spec "Live Activity"), matching the relay's per-phone Live Activity quota. Updates stop
- * at the lower number so a busy day still leaves room to start and end the card.
+ * at the lower number, and a start needs two free slots (its own and its end's), so a busy
+ * day still leaves room to end every card it started. An end is never refused by this
+ * budget, as the relay never refuses one for its daily quota; a card left up after its
+ * work finished stays wrong until Apple's 8 h limit.
  */
 export const LIVE_ACTIVITY_DEVICE_BUDGET = {
   perDay: 40,
@@ -103,13 +106,17 @@ class LiveActivityBudget {
     { day: string; dayCount: number; pausedUntil: number }
   >();
 
-  allows(deviceId: string, isUpdate: boolean, now: number): boolean {
+  allows(deviceId: string, event: LiveActivityPush["event"], now: number): boolean {
     const usage = this.current(deviceId, now);
     if (now < usage.pausedUntil) return false;
-    const limit = isUpdate
-      ? LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay
-      : LIVE_ACTIVITY_DEVICE_BUDGET.perDay;
-    return usage.dayCount < limit;
+    switch (event) {
+      case "update":
+        return usage.dayCount < LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay;
+      case "start":
+        return usage.dayCount <= LIVE_ACTIVITY_DEVICE_BUDGET.perDay - 2;
+      case "end":
+        return true;
+    }
   }
 
   charge(deviceId: string, now: number): void {
@@ -347,9 +354,7 @@ export class PushSender {
     if (!relays || !registration.liveActivity || !this.isCurrent(registration)) return null;
     const startedAt = this.now();
     const event = `live_activity_${push.event}`;
-    if (
-      !this.liveActivityBudget.allows(registration.deviceId, push.event === "update", startedAt)
-    ) {
+    if (!this.liveActivityBudget.allows(registration.deviceId, push.event, startedAt)) {
       log.info("push.device_budget_exhausted", { alert: event });
       this.options.metrics?.record("server.push_result", 1, { result: "throttled", event });
       return { status: "throttled" };
