@@ -45,9 +45,10 @@ export class Http2ApnsSender implements ApnsSender {
   }
 
   async send(request: ApnsRequest): Promise<ApnsResult> {
-    const authorization = `bearer ${await this.providerToken.get()}`;
+    const token = await this.providerToken.get();
+    const authorization = `bearer ${token}`;
     const session = this.session(request.environment);
-    return new Promise<ApnsResult>((resolve, reject) => {
+    const result = await new Promise<ApnsResult>((resolve, reject) => {
       const stream = session.request({
         ":method": "POST",
         ":path": `/3/device/${request.deviceToken}`,
@@ -82,6 +83,8 @@ export class Http2ApnsSender implements ApnsSender {
       stream.on("error", reject);
       stream.end(request.payload);
     });
+    this.providerToken.forgetIfRefused(token, result);
+    return result;
   }
 
   close(): void {

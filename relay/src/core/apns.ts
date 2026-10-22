@@ -144,8 +144,23 @@ export interface ApnsCredentials {
   teamId: string;
 }
 
+interface CachedProviderToken {
+  token: Promise<string>;
+  issuedAt: number;
+  /** Set once signed. */
+  value?: string;
+}
+
+/** APNs `403` reasons a newly signed provider token can cure. */
+const REFUSED_PROVIDER_TOKEN = new Set(["ExpiredProviderToken", "InvalidProviderToken"]);
+
 export class ApnsProviderToken {
-  private cached: { token: string; issuedAt: number } | null = null;
+  /**
+   * The token being signed or signed already. Holding the promise, not the result, makes
+   * concurrent misses share one signature: APNs refuses provider tokens that change too often
+   * (`TooManyProviderTokenUpdates`).
+   */
+  private cached: CachedProviderToken | null = null;
   private keyPromise: Promise<CryptoKey> | null = null;
 
   constructor(
@@ -153,11 +168,35 @@ export class ApnsProviderToken {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async get(): Promise<string> {
+  get(): Promise<string> {
     const now = this.now();
     if (this.cached && now - this.cached.issuedAt < PROVIDER_TOKEN_REFRESH_MS) {
       return this.cached.token;
     }
+    const entry: CachedProviderToken = { token: this.sign(now), issuedAt: now };
+    this.cached = entry;
+    entry.token.then(
+      (value) => {
+        entry.value = value;
+      },
+      () => {
+        if (this.cached === entry) this.cached = null;
+      },
+    );
+    return entry.token;
+  }
+
+  /**
+   * After APNs answered a request signed with `token`: an expired or invalid provider token is
+   * dropped so the next request signs a new one. Only while it is still the current token, so
+   * a late answer to an older one keeps a newer token.
+   */
+  forgetIfRefused(token: string, result: ApnsResult): void {
+    if (result.status !== 403 || !REFUSED_PROVIDER_TOKEN.has(result.reason ?? "")) return;
+    if (this.cached?.value === token) this.cached = null;
+  }
+
+  private async sign(now: number): Promise<string> {
     this.keyPromise ??= importP8(this.credentials.keyP8);
     const key = await this.keyPromise;
     const header = base64urlEncode(utf8(JSON.stringify({ alg: "ES256", kid: this.credentials.keyId })));
@@ -172,9 +211,7 @@ export class ApnsProviderToken {
         utf8(signingInput) as BufferSource,
       ),
     );
-    const token = `${signingInput}.${base64urlEncode(signature)}`;
-    this.cached = { token, issuedAt: now };
-    return token;
+    return `${signingInput}.${base64urlEncode(signature)}`;
   }
 }
 

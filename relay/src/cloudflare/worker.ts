@@ -283,12 +283,13 @@ class FetchApnsSender implements ApnsSender {
   constructor(private readonly providerToken: ApnsProviderToken) {}
 
   async send(request: ApnsRequest): Promise<ApnsResult> {
+    const token = await this.providerToken.get();
     const response = await fetch(
       `${APNS_ORIGINS[request.environment]}/3/device/${request.deviceToken}`,
       {
         method: "POST",
         headers: {
-          authorization: `bearer ${await this.providerToken.get()}`,
+          authorization: `bearer ${token}`,
           "content-type": "application/json",
           ...request.headers,
         },
@@ -302,7 +303,9 @@ class FetchApnsSender implements ApnsSender {
     } catch {
       // An empty body is a success.
     }
-    return reason === undefined ? { status: response.status } : { status: response.status, reason };
+    const result = reason === undefined ? { status: response.status } : { status: response.status, reason };
+    this.providerToken.forgetIfRefused(token, result);
+    return result;
   }
 }
 

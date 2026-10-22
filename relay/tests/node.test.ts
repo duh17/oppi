@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ApnsProviderToken } from "../src/core/apns.js";
 import {
   PUSHES_PER_ADDRESS_PER_MINUTE,
   requestClientData,
@@ -410,6 +411,29 @@ describe("node adapter", () => {
     }
     store.error = null;
     expect((await push()).status).toBe(200);
+  });
+
+  it("signs one APNs provider token for concurrent requests, and a new one after APNs refuses it", async () => {
+    const concurrent = new ApnsProviderToken({ keyP8: apnsKeyP8, keyId: "KEYID12345", teamId: "TESTTEAM01" });
+    const [first, second] = await Promise.all([concurrent.get(), concurrent.get()]);
+    expect(second).toBe(first);
+
+    harness = await startHarness();
+    const sendToken = await mintSendToken(harness, await registerUnattested(harness));
+    const push = () => call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } });
+    const signed = () => new Set(harness.apns.authorizations).size;
+    expect((await Promise.all([push(), push(), push()])).map((response) => response.status)).toEqual([200, 200, 200]);
+    expect(signed()).toBe(1);
+    // An APNs failure that is not about the token keeps it.
+    harness.respondApns(() => ({ status: 403, reason: "BadTopic" }));
+    expect((await push()).status).toBe(502);
+    expect(signed()).toBe(1);
+    harness.respondApns(() => ({ status: 403, reason: "ExpiredProviderToken" }));
+    expect((await push()).status).toBe(502);
+    harness.respondApns(() => ({ status: 200 }));
+    expect((await push()).status).toBe(200);
+    expect(signed()).toBe(2);
+    expect(harness.apns.authorizations.at(-1)).not.toBe(harness.apns.authorizations[0]);
   });
 
   it("records the exact APNs request in capture mode instead of sending it", async () => {
