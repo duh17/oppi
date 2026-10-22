@@ -1000,6 +1000,14 @@ final class ChatRoutesUITests: XCTestCase {
             NSPredicate(format: "label CONTAINS %@", "branch feat/routes, checked out in feat/routes")
         ).firstMatch
         XCTAssertTrue(worktreeBranch.exists, "The graph must list every branch and mark one another worktree has out")
+        // The graph's first page fits on screen, so Load more fetches page two.
+        let baseCommit = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Base commit")).firstMatch
+        XCTAssertFalse(baseCommit.exists, "The base commit is on the graph's second page")
+        let loadMore = app.buttons["Load more"]
+        XCTAssertTrue(loadMore.waitForExistence(timeout: 5), "A graph with more pages must offer Load more")
+        loadMore.tap()
+        XCTAssertTrue(baseCommit.waitForExistence(timeout: 5), "Load more must append the next page")
+        XCTAssertTrue(waitForDisappearance(of: loadMore), "The last page must leave no Load more")
         assertOpenInColumn("chat.toolbar.git")
         let otherChange = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "README.md")).firstMatch
         XCTAssertFalse(otherChange.exists, "This session must not list a change the session did not make")

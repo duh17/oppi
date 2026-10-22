@@ -222,6 +222,8 @@ final class WorkspaceContextBarView: UIView {
         let workspaceId: String
         let worktreeId: String?
         var commits: [CommitGraphCommit]
+        /// Commits the server has returned, the next page's offset.
+        var fetched: Int
         var hasMore: Bool
         var worktrees: [WorkspaceWorktree]
     }
@@ -237,9 +239,34 @@ final class WorkspaceContextBarView: UIView {
     private var isLoadingMoreGraph = false {
         didSet { if isLoadingMoreGraph != oldValue { setNeedsUpdateProperties() } }
     }
-    /// The graph's rows, kept across panel rebuilds (a Git status update, the
-    /// scope switch, selection) until the graph itself changes.
-    private var graphRows: (key: GraphRowsKey, view: UIView)?
+    /// The graph's section stays in the panel while the files above it are
+    /// rebuilt (a pushed Git status, the scope switch, selection): rebuilt with
+    /// them, it cancelled a tap on a row or on Load more, and a status push
+    /// arrives every few seconds while an agent edits. Its rows are drawn once
+    /// and a later page appends below them.
+    private lazy var graphSection: UIStackView = {
+        let section = UIStackView(arrangedSubviews: [graphDivider, graphRowsStack, graphFooter])
+        section.axis = .vertical
+        return section
+    }()
+    private let graphDivider = UIView()
+    private let graphRowsStack: UIStackView = {
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.isLayoutMarginsRelativeArrangement = true
+        stack.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: 0, bottom: 0, trailing: 0)
+        return stack
+    }()
+    private let graphFooter: UIStackView = {
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.isLayoutMarginsRelativeArrangement = true
+        stack.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 6, trailing: 0)
+        return stack
+    }()
+    /// What the graph's rows draw now; a graph that only grew appends rows.
+    private var drawnGraph: (style: GraphStyleKey, commits: [CommitGraphCommit], laneCount: Int)?
+    private var graphFooterKey: GraphFooterKey?
 
     /// This bar's This session / All changes choice; not saved.
     private var fileScope: ContextBarScoping.FileScope = .session {
@@ -326,6 +353,7 @@ final class WorkspaceContextBarView: UIView {
     private weak var selectedCountLabel: UILabel?
     private lazy var dragSelectGesture = UIPanGestureRecognizer(target: self, action: #selector(handleDragSelect(_:)))
     private var panelKey: PanelKey?
+    private var panelStatusKey: PanelStatusKey?
     private var selectionBarKey: SelectionBarKey?
     private var lastReportedHeight: CGFloat = -1
     private var tipStarted = false
@@ -465,6 +493,9 @@ final class WorkspaceContextBarView: UIView {
 
         expandedStack.axis = .vertical
         scrollView.alwaysBounceVertical = false
+        if options.isPanel {
+            scrollView.delegate = self
+        }
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         panelStack.axis = .vertical
         panelStack.alignment = .fill
@@ -703,19 +734,18 @@ final class WorkspaceContextBarView: UIView {
 
     // MARK: Expanded panel
 
-    /// Everything the expanded panel draws but the selection. The panel is
-    /// rebuilt only when this changes, not on every session-store update;
+    /// Everything the expanded panel draws above the graph but the selection.
+    /// It is rebuilt only when this changes, not on every session-store update;
     /// the selection updates the rows in place, so a drag across them keeps
-    /// its gesture.
+    /// its gesture. The graph has its own keys (`renderGraph`).
     private struct PanelKey: Equatable {
         let files: [GitFileStatus]
         let isSelecting: Bool
         let commits: [GitCommitSummary]
         let hasMoreCommits: Bool
         let isLoadingMore: Bool
-        let graph: GraphState?
-        let graphFailed: Bool
-        let isLoadingMoreGraph: Bool
+        /// The graph's section, or the commit list or HEAD row in its place.
+        let showsGraph: Bool
         let gitStatus: GitStatus?
         let sessionId: String?
         /// The switch's choice; nil when the bar offers no switch.
@@ -726,16 +756,17 @@ final class WorkspaceContextBarView: UIView {
     }
 
     private func renderPanel(themeID: ThemeID) {
+        let showsGraph = canLoadGraph && graph?.commits.isEmpty != true
         let key = PanelKey(
             files: displayFiles,
             isSelecting: isSelecting,
+            // A panel's commits are the graph's; the status's recent commits
+            // would rebuild it on every push.
             commits: options.isPanel ? [] : allCommits,
             hasMoreCommits: hasMoreCommits,
             isLoadingMore: isLoadingMore,
-            graph: graph,
-            graphFailed: graphFailed,
-            isLoadingMoreGraph: isLoadingMoreGraph,
-            gitStatus: context.gitStatus,
+            showsGraph: showsGraph,
+            gitStatus: options.isPanel ? nil : context.gitStatus,
             sessionId: context.sessionId,
             fileScope: offersFileScope ? fileScope : nil,
             canTap: context.workspaceId != nil,
@@ -744,10 +775,22 @@ final class WorkspaceContextBarView: UIView {
         )
         let palette = themeID.palette
         defer { applySelection(palette: palette) }
-        guard key != panelKey else { return }
+        if showsGraph {
+            if graphSection.superview !== panelStack {
+                panelStack.addArrangedSubview(graphSection)
+            }
+            renderGraph(themeID: themeID)
+        } else {
+            graphSection.removeFromSuperview()
+        }
+        // A panel's file rows read the status's counts through `files` and
+        // its totals below; its other fields change on every push.
+        let panelStatus = context.gitStatus.map { PanelStatusKey($0) }
+        guard key != panelKey || (options.isPanel && panelStatus != panelStatusKey) else { return }
         panelKey = key
-        // The scope switch stays put, so a tap on it animates to the end.
-        for view in panelStack.arrangedSubviews where view !== scopeSwitch {
+        panelStatusKey = panelStatus
+        // The scope switch and the graph stay put, so a tap on either finishes.
+        for view in panelStack.arrangedSubviews where view !== scopeSwitch && view !== graphSection {
             view.removeFromSuperview()
         }
         fileRows = []
@@ -761,19 +804,28 @@ final class WorkspaceContextBarView: UIView {
         if offersFileScope {
             updateScopeSwitch()
             if scopeSwitch.superview !== panelStack {
-                panelStack.addArrangedSubview(scopeSwitch)
+                panelStack.insertArrangedSubview(scopeSwitch, at: 1)
             }
         } else {
             scopeSwitch.removeFromSuperview()
         }
 
+        // Above the graph, when it is there.
+        let add: (UIView) -> Void = { [panelStack, graphSection] view in
+            if let index = panelStack.arrangedSubviews.firstIndex(of: graphSection) {
+                panelStack.insertArrangedSubview(view, at: index)
+            } else {
+                panelStack.addArrangedSubview(view)
+            }
+        }
+
         if isSelecting {
-            panelStack.addArrangedSubview(selectionHeader(palette: palette))
-            panelStack.addArrangedSubview(divider(comment.withAlphaComponent(0.15)))
+            add(selectionHeader(palette: palette))
+            add(divider(comment.withAlphaComponent(0.15)))
         }
 
         if !displayFiles.isEmpty {
-            panelStack.addArrangedSubview(fileListView(palette: palette))
+            add(fileListView(palette: palette))
         } else if filtersToSession {
             // The repo may still be dirty; the switch above lists it.
             let none = Self.label(
@@ -781,20 +833,40 @@ final class WorkspaceContextBarView: UIView {
                 font: font(.caption2, .caption1),
                 color: UIColor(palette.comment)
             )
-            panelStack.addArrangedSubview(
-                Self.padded(none, NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
-            )
+            add(Self.padded(none, NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)))
         }
 
-        if canLoadGraph, graph?.commits.isEmpty != true {
-            panelStack.addArrangedSubview(divider(comment.withAlphaComponent(0.15)))
-            panelStack.addArrangedSubview(graphSection(themeID: themeID))
+        if showsGraph {
+            return
         } else if !options.isPanel, !allCommits.isEmpty {
-            panelStack.addArrangedSubview(divider(comment.withAlphaComponent(0.15)))
-            panelStack.addArrangedSubview(commitList(palette: palette))
+            add(divider(comment.withAlphaComponent(0.15)))
+            add(commitList(palette: palette))
         } else if let gitStatus = context.gitStatus, gitStatus.isGitRepo {
-            panelStack.addArrangedSubview(divider(comment.withAlphaComponent(0.15)))
-            panelStack.addArrangedSubview(headCommitRow(gitStatus, palette: palette))
+            add(divider(comment.withAlphaComponent(0.15)))
+            add(headCommitRow(gitStatus, palette: palette))
+        }
+    }
+
+    /// The fields of a pushed Git status a panel draws outside its file rows
+    /// and graph: the scope switch's count, the "and N more" line, and the
+    /// HEAD row shown before the graph loads.
+    private struct PanelStatusKey: Equatable {
+        let uncommittedCount: Int
+        let totalFiles: Int
+        let listedFiles: Int
+        let isGitRepo: Bool
+        let headSha: String?
+        let lastCommitMessage: String?
+        let stashCount: Int
+
+        init(_ status: GitStatus) {
+            uncommittedCount = status.uncommittedCount
+            totalFiles = status.totalFiles
+            listedFiles = status.files.count
+            isGitRepo = status.isGitRepo
+            headSha = status.headSha
+            lastCommitMessage = status.lastCommitMessage
+            stashCount = status.stashCount
         }
     }
 
@@ -812,76 +884,119 @@ final class WorkspaceContextBarView: UIView {
 
     // MARK: Commit graph
 
-    /// What the graph's rows draw; the rows are rebuilt only when it changes.
-    private struct GraphRowsKey: Equatable {
-        let commits: [CommitGraphCommit]
+    /// What every graph row draws apart from its own commit; a change redraws
+    /// all of them.
+    private struct GraphStyleKey: Equatable {
         let worktrees: [WorkspaceWorktree]
         let worktreeId: String?
         let regular: Bool
         let themeID: ThemeID
     }
 
-    /// The graph, its Load more or retry, and the stash count.
-    private func graphSection(themeID: ThemeID) -> UIView {
-        let palette = themeID.palette
-        let section = UIStackView()
-        section.axis = .vertical
-        section.isLayoutMarginsRelativeArrangement = true
-        section.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0)
+    private enum GraphFooterState: Equatable {
+        case none
+        case loading
+        case failed
+        case loadMore
+    }
 
-        guard let graph else {
-            section.addArrangedSubview(graphFailed ? graphRetryRow(palette: palette) : Self.centered(Self.smallSpinner()))
-            return section
+    private struct GraphFooterKey: Equatable {
+        let state: GraphFooterState
+        let stashCount: Int
+        let regular: Bool
+        let themeID: ThemeID
+    }
+
+    /// Draws the graph's rows (appending a later page below the drawn ones),
+    /// then its footer: a spinner, a retry, or Load more, and the stash count.
+    private func renderGraph(themeID: ThemeID) {
+        let palette = themeID.palette
+        graphDivider.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.15)
+        if graphDivider.constraints.isEmpty {
+            graphDivider.heightAnchor.constraint(equalToConstant: 1 / max(traitCollection.displayScale, 1)).isActive = true
         }
 
-        let key = GraphRowsKey(
-            commits: graph.commits,
-            worktrees: graph.worktrees,
-            worktreeId: context.worktreeId,
+        if let graph {
+            let layout = CommitGraphLayout(commits: graph.commits)
+            let style = GraphStyleKey(
+                worktrees: graph.worktrees,
+                worktreeId: context.worktreeId,
+                regular: usesRegularTypography,
+                themeID: themeID
+            )
+            var from = 0
+            if let drawn = drawnGraph, drawn.style == style, drawn.laneCount == layout.laneCount,
+               graph.commits.starts(with: drawn.commits) {
+                from = drawn.commits.count
+            } else {
+                graphRowsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            }
+            if from < layout.rows.count {
+                CommitGraphView.appendRows(
+                    layout.rows[from...],
+                    laneCount: layout.laneCount,
+                    to: graphRowsStack,
+                    worktrees: graph.worktrees,
+                    currentWorktreeId: context.worktreeId,
+                    style: CommitGraphView.Style(
+                        sha: font(.caption2, .caption1, mono: true),
+                        message: font(.caption2, .caption1),
+                        chip: font(.caption2, .caption1, .medium),
+                        chevron: font(fixed: 8, .semibold, regular: .caption2, .semibold),
+                        palette: palette
+                    ),
+                    onSelect: { [weak self] commit in self?.presentCommit(commit.summary) }
+                )
+            }
+            drawnGraph = (style, graph.commits, layout.laneCount)
+        } else if drawnGraph != nil {
+            graphRowsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            drawnGraph = nil
+        }
+
+        let state: GraphFooterState
+        if graph == nil || isLoadingMoreGraph {
+            state = graphFailed ? .failed : .loading
+        } else if graphFailed {
+            state = .failed
+        } else if let graph, graph.hasMore, graph.key == graphLoadKey {
+            state = .loadMore
+        } else {
+            state = .none
+        }
+        let footerKey = GraphFooterKey(
+            state: state,
+            stashCount: context.gitStatus?.stashCount ?? 0,
             regular: usesRegularTypography,
             themeID: themeID
         )
-        if graphRows?.key != key {
-            let rows = CommitGraphView.make(
-                layout: CommitGraphLayout(commits: graph.commits),
-                worktrees: graph.worktrees,
-                currentWorktreeId: context.worktreeId,
-                style: CommitGraphView.Style(
-                    sha: font(.caption2, .caption1, mono: true),
-                    message: font(.caption2, .caption1),
-                    chip: font(.caption2, .caption1, .medium),
-                    chevron: font(fixed: 8, .semibold, regular: .caption2, .semibold),
-                    palette: palette
-                ),
-                onSelect: { [weak self] commit in self?.presentCommit(commit.summary) }
-            )
-            graphRows = (key, rows)
-        }
-        if let rows = graphRows?.view {
-            section.addArrangedSubview(rows)
-        }
-
-        if isLoadingMoreGraph {
-            section.addArrangedSubview(Self.centered(Self.smallSpinner()))
-        } else if graphFailed {
-            section.addArrangedSubview(graphRetryRow(palette: palette))
-        } else if graph.hasMore, graph.key == graphLoadKey {
-            section.addArrangedSubview(Self.centered(linkButton(String(localized: "Load more"), palette: palette) { [weak self] in
-                Task { await self?.loadMoreGraph() }
+        guard footerKey != graphFooterKey else { return }
+        graphFooterKey = footerKey
+        graphFooter.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        switch state {
+        case .none:
+            break
+        case .loading:
+            graphFooter.addArrangedSubview(Self.centered(Self.smallSpinner()))
+        case .failed:
+            graphFooter.addArrangedSubview(graphRetryRow(palette: palette))
+        case .loadMore:
+            // Scrolling near the end loads the next page by itself; the button
+            // is for a graph too short to scroll, and for VoiceOver.
+            graphFooter.addArrangedSubview(Self.centered(linkButton(String(localized: "Load more"), palette: palette) { [weak self] in
+                self?.loadMoreGraph()
             }))
         }
-
-        if let gitStatus = context.gitStatus, gitStatus.stashCount > 0 {
-            section.addArrangedSubview(Self.padded(
+        if footerKey.stashCount > 0 {
+            graphFooter.addArrangedSubview(Self.padded(
                 Self.label(
-                    "\(gitStatus.stashCount) stash",
+                    "\(footerKey.stashCount) stash",
                     font: font(.caption2, .caption1, mono: true),
                     color: UIColor(palette.purple)
                 ),
                 NSDirectionalEdgeInsets(top: 4, leading: 12, bottom: 0, trailing: 12)
             ))
         }
-        return section
     }
 
     private func graphRetryRow(palette: ThemePalette) -> UIView {
@@ -893,7 +1008,7 @@ final class WorkspaceContextBarView: UIView {
         let retry = linkButton(String(localized: "Retry"), palette: palette) { [weak self] in
             guard let self else { return }
             if let graph, graph.key == graphLoadKey {
-                Task { await self.loadMoreGraph() }
+                loadMoreGraph()
             } else {
                 // The first page, or a reload for a new HEAD, failed.
                 graphLoadKey = nil
@@ -1659,8 +1774,9 @@ final class WorkspaceContextBarView: UIView {
         if let graph, graph.workspaceId != workspaceId || graph.worktreeId != worktreeId {
             self.graph = nil
         }
-        // A reload keeps the pages already shown.
-        let limit = min(200, max(50, graph?.commits.count ?? 0))
+        // A reload keeps the pages already shown (up to the server's 500), so a
+        // commit while you are deep in the graph does not cut it short.
+        let limit = min(500, max(50, graph?.fetched ?? 0))
         Task { [weak self] in
             do {
                 let page = try await api.getGitGraph(workspaceId: workspaceId, worktreeId: worktreeId, limit: limit)
@@ -1670,6 +1786,7 @@ final class WorkspaceContextBarView: UIView {
                     workspaceId: workspaceId,
                     worktreeId: worktreeId,
                     commits: page.commits,
+                    fetched: page.commits.count,
                     hasMore: page.hasMore,
                     worktrees: page.worktrees ?? []
                 )
@@ -1683,24 +1800,45 @@ final class WorkspaceContextBarView: UIView {
     /// The next page of the graph on screen, from the checkout it was loaded
     /// for. Nothing while a reload for a new HEAD is under way: its pages
     /// would not continue this graph.
-    private func loadMoreGraph() async {
-        guard let api = apiClient, let current = graph, current.key == graphLoadKey,
+    /// Starts it synchronously, so the many scroll callbacks near the end
+    /// start one request.
+    private func loadMoreGraph() {
+        guard let api = apiClient, let current = graph, current.hasMore, current.key == graphLoadKey,
               !isLoadingMoreGraph else { return }
         isLoadingMoreGraph = true
         graphFailed = false
-        defer { isLoadingMoreGraph = false }
-        do {
-            let page = try await api.getGitGraph(
-                workspaceId: current.workspaceId,
-                worktreeId: current.worktreeId,
-                offset: current.commits.count
-            )
-            guard graph == current else { return }
-            graph?.commits += page.commits
-            graph?.hasMore = page.hasMore
-        } catch {
-            guard graph == current else { return }
-            graphFailed = true
+        Task { [weak self] in
+            do {
+                let page = try await api.getGitGraph(
+                    workspaceId: current.workspaceId,
+                    worktreeId: current.worktreeId,
+                    offset: current.fetched
+                )
+                guard let self else { return }
+                isLoadingMoreGraph = false
+                guard graph == current else { return }
+                // Pages are offsets into a log another worktree's commit can
+                // shift, so a commit may come twice; draw it once.
+                let shown = Set(current.commits.map(\.sha))
+                graph?.commits += page.commits.filter { !shown.contains($0.sha) }
+                graph?.fetched += page.commits.count
+                graph?.hasMore = page.hasMore
+            } catch {
+                guard let self else { return }
+                isLoadingMoreGraph = false
+                guard graph == current else { return }
+                graphFailed = true
+            }
+        }
+    }
+
+    /// Loads the next page once the panel scrolls within a screen of the end
+    /// of the graph, the panel's last section.
+    private func loadMoreGraphIfNearEnd() {
+        guard options.isPanel, graph?.hasMore == true, !graphFailed, !isLoadingMoreGraph else { return }
+        let remaining = scrollView.contentSize.height - scrollView.contentOffset.y - scrollView.bounds.height
+        if remaining < scrollView.bounds.height {
+            loadMoreGraph()
         }
     }
 
@@ -1718,6 +1856,12 @@ final class WorkspaceContextBarView: UIView {
         } catch {
             // Silently fail — not critical
         }
+    }
+}
+
+extension WorkspaceContextBarView: UIScrollViewDelegate {
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        loadMoreGraphIfNearEnd()
     }
 }
 

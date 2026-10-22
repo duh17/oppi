@@ -977,7 +977,7 @@ private final class ChatRoutesURLProtocol: URLProtocol {
         case ("GET", "\(workspace)/git/status"):
             body = try? JSONEncoder().encode(ChatRoutesFixture.gitStatus)
         case ("GET", "\(workspace)/git/graph"):
-            body = Self.json(Self.graph)
+            body = Self.json(Self.graph(url))
         case ("GET", "\(workspace)/git/commits/abc1234"):
             body = Self.json([
                 "sha": "abc1234",
@@ -1050,39 +1050,47 @@ private final class ChatRoutesURLProtocol: URLProtocol {
 
     override func stopLoading() {}
 
-    /// The Git panel's graph: the session's commit on main, a branch another
-    /// worktree has out, and the tagged base both grew from.
-    private static var graph: [String: Any] { [
-        "commits": [
-            [
-                "sha": "abc1234" + String(repeating: "0", count: 33), "shortSha": "abc1234",
-                "parents": ["def5678" + String(repeating: "0", count: 33)], "message": "Route commit",
-                "date": "2026-10-15T18:00:00Z",
-                "refs": [["kind": "branch", "name": "main", "isHead": true]],
-            ],
-            [
-                "sha": "9a8b7c6" + String(repeating: "0", count: 33), "shortSha": "9a8b7c6",
-                "parents": ["def5678" + String(repeating: "0", count: 33)], "message": "Side branch work",
-                "date": "2026-10-15T17:00:00Z",
-                "refs": [["kind": "branch", "name": "feat/routes"]],
-            ],
-            [
-                "sha": "def5678" + String(repeating: "0", count: 33), "shortSha": "def5678",
-                "parents": [String](), "message": "Base commit",
-                "date": "2026-10-14T18:00:00Z",
-                "refs": [["kind": "tag", "name": "v1"], ["kind": "remote", "name": "origin/main"]],
-            ],
+    /// The Git panel's graph in two pages: the session's commit on main and a
+    /// branch another worktree has out, then (offset 2) the tagged base both
+    /// grew from.
+    private static func graph(_ url: URL) -> [String: Any] {
+        let offset = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == "offset" }?.value.flatMap(Int.init) ?? 0
+        let commits = graphCommits.dropFirst(offset).prefix(2)
+        var page: [String: Any] = ["commits": Array(commits), "hasMore": offset + commits.count < graphCommits.count]
+        if offset == 0 { page["worktrees"] = graphWorktrees }
+        return page
+    }
+
+    private static var graphCommits: [[String: Any]] { [
+        [
+            "sha": "abc1234" + String(repeating: "0", count: 33), "shortSha": "abc1234",
+            "parents": ["def5678" + String(repeating: "0", count: 33)], "message": "Route commit",
+            "date": "2026-10-15T18:00:00Z",
+            "refs": [["kind": "branch", "name": "main", "isHead": true]],
         ],
-        "hasMore": false,
-        "worktrees": [
-            [
-                "id": "main", "name": "oppi", "path": "/tmp/oppi-chat-routes", "branch": "main",
-                "headSha": "abc1234", "isMain": true, "isGitRepo": true,
-            ],
-            [
-                "id": "wt_routes", "name": "wt_routes", "path": "/tmp/oppi-chat-routes-wt", "branch": "feat/routes",
-                "headSha": "9a8b7c6", "isMain": false, "isGitRepo": true,
-            ],
+        [
+            "sha": "9a8b7c6" + String(repeating: "0", count: 33), "shortSha": "9a8b7c6",
+            "parents": ["def5678" + String(repeating: "0", count: 33)], "message": "Side branch work",
+            "date": "2026-10-15T17:00:00Z",
+            "refs": [["kind": "branch", "name": "feat/routes"]],
+        ],
+        [
+            "sha": "def5678" + String(repeating: "0", count: 33), "shortSha": "def5678",
+            "parents": [String](), "message": "Base commit",
+            "date": "2026-10-14T18:00:00Z",
+            "refs": [["kind": "tag", "name": "v1"], ["kind": "remote", "name": "origin/main"]],
+        ],
+    ] }
+
+    private static var graphWorktrees: [[String: Any]] { [
+        [
+            "id": "main", "name": "oppi", "path": "/tmp/oppi-chat-routes", "branch": "main",
+            "headSha": "abc1234", "isMain": true, "isGitRepo": true,
+        ],
+        [
+            "id": "wt_routes", "name": "wt_routes", "path": "/tmp/oppi-chat-routes-wt", "branch": "feat/routes",
+            "headSha": "9a8b7c6", "isMain": false, "isGitRepo": true,
         ],
     ] }
 

@@ -14,33 +14,35 @@ enum CommitGraphView {
         let palette: ThemePalette
     }
 
-    /// The rows of `layout`, in a vertical stack. `currentWorktreeId` is the
-    /// queried checkout; every other checkout marks the branch or commit it has
-    /// out.
-    static func make(
-        layout: CommitGraphLayout,
+    /// Appends a row for each of `rows` to `stack`, its gutter sized for
+    /// `laneCount` lanes. A later page appends its rows below the ones drawn;
+    /// a page that widens the graph needs every row redrawn. `currentWorktreeId`
+    /// is the queried checkout; every other checkout marks the branch or commit
+    /// it has out.
+    static func appendRows(
+        _ rows: ArraySlice<CommitGraphRow>,
+        laneCount: Int,
+        to stack: UIStackView,
         worktrees: [WorkspaceWorktree],
         currentWorktreeId: String?,
         style: Style,
         onSelect: @escaping (CommitGraphCommit) -> Void
-    ) -> UIStackView {
-        let stack = UIStackView()
-        stack.axis = .vertical
+    ) {
         let marks = WorktreeMarks(worktrees: worktrees, currentWorktreeId: currentWorktreeId)
         let colors = laneColors(style.palette)
-        for row in layout.rows {
+        for row in rows {
             let content = RowContentView(
                 row: row,
-                laneCount: layout.laneCount,
+                laneCount: laneCount,
                 laneColors: colors,
                 chips: chips(for: row.commit, marks: marks, style: style),
                 style: style
             )
-            let button = PlainRowButton(wrapping: content) { onSelect(row.commit) }
+            let commit = row.commit
+            let button = PlainRowButton(wrapping: content) { onSelect(commit) }
             button.accessibilityLabel = content.accessibilityParts.joined(separator: ", ")
             stack.addArrangedSubview(button)
         }
-        return stack
     }
 
     private static func laneColors(_ palette: ThemePalette) -> [UIColor] {
