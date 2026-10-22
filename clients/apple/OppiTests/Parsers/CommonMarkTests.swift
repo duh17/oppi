@@ -373,7 +373,8 @@ struct CommonMarkTests {
 
     @Test func boundedCandidateScannerStaysFastAcrossLateOpaqueBoundaryAndLaterCloser() {
         let openers = Array(repeating: #"\["#, count: 1_023)
-        let largeGap = (0..<8_000).map { "gap line \($0)" }
+        // 1,023 openers hit the candidate cap; the gap only needs to dwarf the closer's distance.
+        let largeGap = (0..<2_000).map { "gap line \($0)" }
         let markdown = (openers + largeGap + ["<div>", "opaque", "</div>", "", #"\]"#, "After"])
             .joined(separator: "\n")
 
