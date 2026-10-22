@@ -201,13 +201,14 @@ describe("LiveActivityNotifier", () => {
     expect(sent).toHaveLength(3);
   });
 
-  it("leaves a card it cannot reach alone until the counts reach zero", async () => {
+  it("tries one start for a card it cannot reach, then leaves it alone until the counts reach zero", async () => {
     // The person dismissed the app's card, or the phone ended it: the relay holds no token.
     present = true;
     notifier.presenceChanged(phone.deviceId);
     change({ running: 1, needsYou: 0 });
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     leave();
+    // The relay refuses the start of a dismissed card as well.
     answer = () => ({ status: "no_activity" });
     change({ running: 2, needsYou: 0 });
     await vi.advanceTimersByTimeAsync(60 * 60_000);
@@ -215,10 +216,10 @@ describe("LiveActivityNotifier", () => {
       { length: LIVE_ACTIVITY_MISSING_TOKEN_RETRIES + 1 },
       () => "update 2/0",
     );
-    expect(events()).toEqual(updates);
+    expect(events()).toEqual([...updates, "start 2/0"]);
     change({ running: 3, needsYou: 1 });
     await vi.advanceTimersByTimeAsync(LIVE_ACTIVITY_MAX_AGE_MS);
-    expect(events()).toEqual(updates);
+    expect(events()).toEqual([...updates, "start 2/0"]);
 
     // Zero ends the dismissal at the relay; the next work gets a card.
     change({ running: 0, needsYou: 0 });
@@ -226,7 +227,51 @@ describe("LiveActivityNotifier", () => {
     answer = () => ({ status: "delivered" });
     change({ running: 1, needsYou: 0 });
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(events()).toEqual([...updates, "end 0/0", "start 1/0"]);
+    expect(events()).toEqual([...updates, "start 2/0", "end 0/0", "start 1/0"]);
+  });
+
+  it("starts a card for work that began while the app was backgrounded but connected", async () => {
+    present = true;
+    notifier.presenceChanged(phone.deviceId);
+    change({ running: 1, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(30_000);
+    // The app cannot start a card in the background; the relay holds no card token. The
+    // relay refuses the updates and accepts the start.
+    answer = (push) =>
+      push.event === "update" ? { status: "no_activity" } : { status: "delivered" };
+    leave();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    const updates = Array.from(
+      { length: LIVE_ACTIVITY_MISSING_TOKEN_RETRIES + 1 },
+      () => "update 1/0",
+    );
+    expect(events()).toEqual([...updates, "start 1/0"]);
+
+    // The new card is this server's: it updates and ends it like any other.
+    answer = () => ({ status: "delivered" });
+    change({ running: 2, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    change({ running: 0, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events()).toEqual([...updates, "start 1/0", "update 2/0", "end 0/0"]);
+  });
+
+  it("tries that start again after a failure, not after a refusal", async () => {
+    leave();
+    change({ running: 1, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    answer = () => ({ status: "no_activity" });
+    change({ running: 2, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync((LIVE_ACTIVITY_MISSING_TOKEN_RETRIES + 1) * 60_000);
+    answer = (push) =>
+      push.event === "update" ? { status: "no_activity" } : { status: "unavailable" };
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events().slice(-1)).toEqual(["start 2/0"]);
+    answer = () => ({ status: "delivered" });
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(events().slice(-2)).toEqual(["start 2/0", "start 2/0"]);
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(events().filter((entry) => entry.startsWith("start"))).toHaveLength(3);
   });
 
   it("restarts the card after Apple's 8 hours while work goes on", async () => {
@@ -329,6 +374,29 @@ describe("LiveActivityNotifier", () => {
     change({ running: 0, needsYou: 0 });
     await vi.advanceTimersByTimeAsync(60_000);
     expect(events()).toEqual(["start 1/0", "update 2/0", "end 0/0"]);
+  });
+
+  it("holds the 8-hour restart's start back until a 429 of its own kind has passed", async () => {
+    leave();
+    change({ running: 1, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    // An update is refused for 2 hours an hour before the card's 8 run out; the counts then
+    // return to what the card shows, so nothing waits on the update.
+    await vi.advanceTimersByTimeAsync(LIVE_ACTIVITY_MAX_AGE_MS - 3600_000);
+    answer = () => ({ status: "rejected", httpStatus: 429, retryAfterSeconds: 2 * 3600 });
+    change({ running: 2, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    answer = () => ({ status: "delivered" });
+    change({ running: 1, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(3600_000 - 1);
+    expect(events()).toEqual(["start 1/0", "update 2/0"]);
+    // The end goes (it has its own limit); the start waits for the update's Retry-After.
+    await vi.advanceTimersByTimeAsync(1);
+    expect(events()).toEqual(["start 1/0", "update 2/0", "end 0/0"]);
+    await vi.advanceTimersByTimeAsync(3600_000 - 1_000);
+    expect(sent).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(events()).toEqual(["start 1/0", "update 2/0", "end 0/0", "start 1/0"]);
   });
 
   it("does not retry an end before the Retry-After of its own 429", async () => {

@@ -90,8 +90,8 @@ interface DeviceState {
   /**
    * `none`: no card, as far as this server knows. `unknown`: the phone drove the card while
    * present, or the server restarted. `live`: this server started the card. `lost`: the relay
-   * holds no update token for the card (the person dismissed it, or the phone ended it), so
-   * this server starts no card until the counts reach zero.
+   * holds no update token for the card and refused a start (the person dismissed it, or the
+   * phone ended it), so this server starts no card until the counts reach zero.
    */
   activity: "none" | "unknown" | "live" | "lost";
   /**
@@ -99,7 +99,10 @@ interface DeviceState {
    * started, so its 8-hour restart comes no later than Apple's end.
    */
   startedAt?: number;
-  /** Counts the card shows (or the relay last refused to start for); undefined: not known. */
+  /**
+   * Counts the card shows: `EMPTY` with no card, the counts last delivered otherwise.
+   * Undefined: not known (the card is lost, or a change may have reached it unseen).
+   */
   shown?: LiveActivityCounts;
   /** Updates in a row that found no update token. */
   missedUpdates: number;
@@ -114,8 +117,6 @@ interface DeviceState {
   endRetryAt: number;
   timer?: ReturnType<typeof setTimeout>;
   sending: boolean;
-  /** Something changed while a send was in flight. */
-  dirty: boolean;
 }
 
 export interface LiveActivityNotifierOptions {
@@ -140,10 +141,14 @@ export interface LiveActivityNotifierOptions {
  * A start goes out only when this server knows there is no card: it ended the last one
  * (the relay delivered the `end`) or the counts reached zero. An update the relay cannot
  * deliver means the relay holds no token for the card: the phone may still be reporting a new
- * card's token, so the update is tried again a few times; after that the card is out of
- * reach (dismissed, or ended on the phone) and nothing more goes out until the counts reach
- * zero. Starting a card then could put a second card next to one the person can see, or
- * bring back one they dismissed.
+ * card's token, so the update is tried again a few times. After that there is no card the
+ * server can reach: work that began while the app was backgrounded but connected has none,
+ * since the app cannot start one then. The server tries one `start`. The relay refuses it for
+ * a dismissed card and for a server the phone did not list; then the card is lost and nothing
+ * more goes out until the counts reach zero. A start the relay accepts cannot double a card
+ * the person sees: the relay holds no token for that card, and the app replaces an older card
+ * of the same slot with the newer one. A start after an `end` the relay could not deliver is
+ * never tried, as the card may still be on the Lock Screen.
  */
 export class LiveActivityNotifier {
   private readonly devices = new Map<string, DeviceState>();
@@ -243,7 +248,6 @@ export class LiveActivityNotifier {
         retryAt: 0,
         endRetryAt: 0,
         sending: false,
-        dirty: false,
       };
       device.startedAt = this.earliestCardStart(device);
       this.devices.set(deviceId, device);
@@ -289,10 +293,8 @@ export class LiveActivityNotifier {
   private needsSend(device: DeviceState, counts: LiveActivityCounts, now: number): boolean {
     switch (device.activity) {
       case "none":
-        // At zero after a refused start: an `end` ends a dismissal at the relay.
-        return isEmpty(counts)
-          ? !sameCounts(device.shown, EMPTY)
-          : !sameCounts(device.shown, counts);
+        // Every route into `none` leaves `shown` empty: only work starting needs a send.
+        return !isEmpty(counts);
       case "lost":
         return isEmpty(counts);
       default:
@@ -311,10 +313,8 @@ export class LiveActivityNotifier {
   private schedule(deviceId: string): void {
     if (this.stopped) return;
     const device = this.device(deviceId);
-    if (device.sending) {
-      device.dirty = true;
-      return;
-    }
+    // A send in flight reschedules when it ends, with the counts it finds then.
+    if (device.sending) return;
     this.cancel(device);
     if (this.options.isDevicePresent(deviceId)) return;
     const now = this.now();
@@ -350,7 +350,6 @@ export class LiveActivityNotifier {
       return;
     }
     device.sending = true;
-    device.dirty = false;
     try {
       await this.drive(registration, device, counts);
     } catch (err: unknown) {
@@ -383,11 +382,20 @@ export class LiveActivityNotifier {
       const ended = await this.send(registration, device, "end", EMPTY);
       if (ended === "delivered") {
         this.settle(device, "none", EMPTY);
-        await this.begin(registration, device, counts);
+        // The start waits out a failure or `429` of its own kind; `schedule` sends it then.
+        if (this.now() >= device.retryAt) await this.begin(registration, device, counts);
       } else if (ended === "no_activity") {
         // No token to end: the card is out of reach. Starting one could sit next to it.
         this.settle(device, "lost", undefined);
       }
+      return;
+    }
+    if (device.missedUpdates > LIVE_ACTIVITY_MISSING_TOKEN_RETRIES) {
+      // The relay holds no token for any card of ours: work that began while the app was
+      // backgrounded but connected has none. One start; `begin` makes the card lost if the
+      // relay refuses it (dismissed, or this server not listed).
+      log.info("live_activity.card_missing_start");
+      await this.begin(registration, device, counts);
       return;
     }
     const result = await this.send(registration, device, "update", counts);
@@ -396,10 +404,6 @@ export class LiveActivityNotifier {
       device.missedUpdates = 0;
     } else if (result === "no_activity") {
       device.missedUpdates += 1;
-      if (device.missedUpdates > LIVE_ACTIVITY_MISSING_TOKEN_RETRIES) {
-        log.info("live_activity.card_out_of_reach");
-        this.settle(device, "lost", undefined);
-      }
     }
   }
 
@@ -426,10 +430,11 @@ export class LiveActivityNotifier {
       device.shown = counts;
       device.missedUpdates = 0;
     } else if (result === "no_activity") {
-      // No start token at the relay (the phone turned Live Activities off), or the person
-      // dismissed the card. The relay refuses every start until an `end` ends the dismissal,
-      // and each refused start still costs it a request, so send nothing until the counts
-      // reach zero: `lost` ends the card then, and the next work starts a new one.
+      // No start token at the relay (the phone turned Live Activities off), the person
+      // dismissed the card, or the phone does not list this server. The relay refuses every
+      // start until an `end` ends the dismissal, and each refused start still costs it a
+      // request, so send nothing until the counts reach zero: `lost` ends the card then, and
+      // the next work starts a new one.
       this.settle(device, "lost", undefined);
     }
   }
@@ -450,9 +455,10 @@ export class LiveActivityNotifier {
       needsYou: counts.needsYou,
     });
     const retry = (ms: number): void => {
+      // Keep the later time: a short failure must not shorten a day-long `429`.
       const at = this.now() + ms;
-      if (event === "end") device.endRetryAt = at;
-      else device.retryAt = at;
+      if (event === "end") device.endRetryAt = Math.max(device.endRetryAt, at);
+      else device.retryAt = Math.max(device.retryAt, at);
     };
     switch (result?.status) {
       case "delivered":
