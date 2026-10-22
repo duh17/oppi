@@ -1640,6 +1640,7 @@ struct SSHTerminalTests {
         #expect(!channel.isViewed)
         #expect(!session.showsTerminal)
         #expect(channel.connected)
+        window.endEditing(true)  // a hidden window must not leave its keyboard up
         window.isHidden = true
         window.rootViewController = nil
         channel.close(reason: "done")
@@ -1659,6 +1660,7 @@ struct SSHTerminalTests {
         window.rootViewController = nav
         window.makeKeyAndVisible()
         defer {
+            window.endEditing(true)  // a hidden window must not leave its keyboard up
             window.isHidden = true
             window.rootViewController = nil
             channel.close(reason: "done")
@@ -1862,8 +1864,10 @@ struct SSHTerminalTests {
             grid.convert(CGPoint(x: 0, y: grid.bounds.maxY), to: terminal.view).y
         }
 
-        try await Task.sleep(for: .milliseconds(150))
-        mounted.host.view.layoutIfNeeded()
+        // The keyboard below is posted by hand, so a real one must not be
+        // moving the keyboard guide as well. A simulator without a hardware
+        // keyboard raises one for any earlier test's leftover first responder.
+        #expect(await mounted.waitForNoRealKeyboard(), "a real keyboard is still up: \(mounted.keyboardDiagnostics())")
         #expect(try backPillTop() >= gridBottom(), "the bar starts below the grid")
 
         // Typing, then the connection drops: the bar floats above the keyboard
@@ -1879,12 +1883,15 @@ struct SSHTerminalTests {
         // The keyboard goes down: the bar takes its rows back. A disconnected
         // channel sends no resize, so this checks the grid and the engine size.
         keyboard(top: mounted.window.bounds.maxY)
-        try await Task.sleep(for: .milliseconds(400))
+        let settled = await waitForMainActorCondition(timeout: .seconds(3)) {
+            mounted.host.view.layoutIfNeeded()
+            return channel.engine.geometry.rows == Int(grid.bounds.height / grid.cellSize.height)
+        }
         mounted.host.view.layoutIfNeeded()
         #expect(try backPillTop() >= gridBottom(), "the bar is below the grid again")
         #expect(
-            channel.engine.geometry.rows == Int(grid.bounds.height / grid.cellSize.height),
-            "the remote terminal ends above the bar again"
+            settled,
+            "the remote terminal ends above the bar again: engine rows \(channel.engine.geometry.rows), grid rows \(Int(grid.bounds.height / grid.cellSize.height))"
         )
     }
 
@@ -2069,6 +2076,7 @@ private final class MountedTerminalTestGrid {
     }
 
     func dismiss() {
+        window.endEditing(true)  // a hidden window must not leave its keyboard up
         window.isHidden = true
         window.rootViewController = nil
     }
@@ -2106,8 +2114,38 @@ private final class MountedTerminalTestController {
     }
 
     func dismiss() {
+        window.endEditing(true)  // a hidden window must not leave its keyboard up
         window.isHidden = true
         window.rootViewController = nil
+    }
+
+    /// Sends a real software keyboard away and waits for the screen's keyboard
+    /// guide to rest at the bottom. Tests that post their own keyboard frames
+    /// need this: a real keyboard keeps moving the guide the grid sits on.
+    func waitForNoRealKeyboard() async -> Bool {
+        // Another test may have hidden its window with a field still focused;
+        // that keeps the real keyboard up, and it is not in this window's chain.
+        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+            for window in scene.windows { window.endEditing(true) }
+        }
+        return await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.view.layoutIfNeeded()
+            // A software keyboard is far taller than the home-indicator strip
+            // the guide rests as.
+            return controller.view.keyboardLayoutGuide.layoutFrame.height < 100
+        }
+    }
+
+    func keyboardDiagnostics() -> String {
+        func responders(in view: UIView) -> [String] {
+            (view.isFirstResponder ? [String(describing: type(of: view))] : []) + view.subviews.flatMap(responders)
+        }
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let windows = scenes.flatMap(\.windows).map { (window: UIWindow) -> String in
+            let root = window.rootViewController.map { String(describing: type(of: $0)) } ?? "none"
+            return "hidden=\(window.isHidden) key=\(window.isKeyWindow) root=\(root) responders=\(responders(in: window))"
+        }
+        return "guide=\(controller.view.keyboardLayoutGuide.layoutFrame) windows=\(windows)"
     }
 
     func find(_ predicate: (UIView) -> Bool) -> UIView? {
@@ -2161,6 +2199,7 @@ private final class MountedTerminalComposer {
     }
 
     func dismiss() {
+        window.endEditing(true)  // a hidden window must not leave its keyboard up
         window.isHidden = true
         window.rootViewController = nil
     }
