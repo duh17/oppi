@@ -64,14 +64,17 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         collectionView.accessibilityIdentifier = "settings.list"
         SSHTerminalSettingsList.pin(collectionView, in: view)
         installDataSource()
-        installRailReader()
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
+        if #available(iOS 27.1, *) {
+            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (self: Self, _) in
+                self.setNeedsUpdateProperties()
+            }
+        }
         setNeedsUpdateProperties()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        navigationController?.navigationBar.prefersLargeTitles = true
         // A page writes straight to preferences, so the summary it feeds is
         // re-read on the way back. The cache size is measured here too: Clear
         // Local Cache on the Storage page writes nothing this screen observes.
@@ -89,35 +92,15 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         }
     }
 
-    /// A large title is wrong where the system puts the bar on a vertical edge
-    /// (the Duo's outer display draws no title area there). UIKit has no read
-    /// API for the system's preferred edge — `UIBarButtonItem.axisBehavior`
-    /// only writes it — so this hosts the same reader `HostedScreenController`
-    /// uses, as a zero-size child.
-    private func installRailReader() {
-        let reader = HostFactory.content(
-            VerticalToolbarEdgeReporter { [weak self] isOnVerticalRail in
-                self?.applyTitleDisplayMode(isOnVerticalRail: isOnVerticalRail)
-            },
-            root: root
-        )
-        addChild(reader)
-        reader.view.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(reader.view)
-        NSLayoutConstraint.activate([
-            reader.view.topAnchor.constraint(equalTo: view.topAnchor),
-            reader.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            reader.view.widthAnchor.constraint(equalToConstant: 0),
-            reader.view.heightAnchor.constraint(equalToConstant: 0),
-        ])
-        reader.didMove(toParent: self)
-    }
-
     /// Same rule as `HostedScreenController.applyTitleDisplayMode`: a large
-    /// title shows nothing on the rail, so the title stays inline there.
-    private func applyTitleDisplayMode(isOnVerticalRail: Bool) {
-        let large = !isOnVerticalRail
-        navigationItem.largeTitleDisplayMode = large ? .always : .never
+    /// title shows nothing where the system puts the bar on a vertical edge,
+    /// so the title stays inline there. `SystemVerticalBar` reads the trait the
+    /// chat's rail items use, and a trait change re-runs this pass.
+    private func applyTitleDisplayMode() {
+        let large = !SystemVerticalBar.traitIsActive(traitCollection)
+        let mode: UINavigationItem.LargeTitleDisplayMode = large ? .always : .never
+        guard navigationItem.largeTitleDisplayMode != mode else { return }
+        navigationItem.largeTitleDisplayMode = mode
         if large { navigationController?.navigationBar.prefersLargeTitles = true }
     }
 
@@ -134,6 +117,7 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         _ = (root.themeStore.mode, root.themeStore.manualThemeID)
         _ = navigation.sessionThreadsEnabled
         _ = (AppPreferences.Voice.engineMode, FontPreferences.codeFont)
+        applyTitleDisplayMode()
         applySnapshot()
     }
 

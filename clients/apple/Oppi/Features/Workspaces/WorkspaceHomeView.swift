@@ -703,23 +703,6 @@ private struct ToolbarVerticalEdgeReader<Content: View>: View {
     }
 }
 
-/// Reports the window's vertical toolbar edge to a UIKit screen that sets its
-/// own title mode. UIKit has no read API for the system's preferred edge
-/// (`UIBarButtonItem.axisBehavior` only writes it), so the screen hosts this
-/// through `HostFactory.content`, the way `HostedScreenController` learns it.
-struct VerticalToolbarEdgeReporter: View {
-    let onChange: (Bool) -> Void
-
-    var body: some View {
-        readingToolbarVerticalEdge { edge in
-            Color.clear
-                .onChange(of: edge != nil, initial: true) { _, isOnVerticalRail in
-                    onChange(isOnVerticalRail)
-                }
-        }
-    }
-}
-
 extension View {
     /// Host switcher on the side rail when the system has a vertical edge.
     @ViewBuilder
