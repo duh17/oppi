@@ -68,8 +68,14 @@ final class ChatGitPanelViewController: UIViewController {
             bar.topAnchor.constraint(equalTo: guide.topAnchor),
             bar.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: guide.trailingAnchor),
-            // The bar hugs a short list and scrolls a long one in this height.
+            // The bar's table scrolls in this height; an empty bar (no Git
+            // content) is 0 tall instead.
             bar.bottomAnchor.constraint(lessThanOrEqualTo: guide.bottomAnchor),
+            {
+                let fill = bar.bottomAnchor.constraint(equalTo: guide.bottomAnchor)
+                fill.priority = .defaultHigh
+                return fill
+            }(),
             statusLabel.centerYAnchor.constraint(equalTo: guide.centerYAnchor),
             statusLabel.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 24),
             statusLabel.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -24),

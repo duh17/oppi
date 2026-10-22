@@ -1,9 +1,11 @@
 import UIKit
 
-/// The Git panel's commit graph: one row per commit, its lanes drawn in a
-/// gutter on the left (`CommitGraphLayout`), its SHA and subject, and chips for
-/// the branches, tags, and worktrees that point at it. Rows stack with no gap,
-/// so each row's lanes meet the next row's.
+/// The Git panel's commit graph: one table cell per commit, its lanes drawn in
+/// a gutter on the left (`CommitGraphLayout`), its SHA and subject, and chips
+/// for the branches, tags, and worktrees that point at it. Cells sit with no
+/// gap, so each row's lanes meet the next row's. A table, not a stack: a
+/// stack of every loaded commit held hundreds of MB of label bitmaps and laid
+/// all of them out on each change, a multi-second hang a few pages in.
 @MainActor
 enum CommitGraphView {
     struct Style {
@@ -14,38 +16,75 @@ enum CommitGraphView {
         let palette: ThemePalette
     }
 
-    /// Appends a row for each of `rows` to `stack`, its gutter sized for
-    /// `laneCount` lanes. A later page appends its rows below the ones drawn;
-    /// a page that widens the graph needs every row redrawn. `currentWorktreeId`
-    /// is the queried checkout; every other checkout marks the branch or commit
-    /// it has out.
-    static func appendRows(
-        _ rows: ArraySlice<CommitGraphRow>,
-        laneCount: Int,
-        to stack: UIStackView,
-        worktrees: [WorkspaceWorktree],
-        currentWorktreeId: String?,
-        style: Style,
-        onSelect: @escaping (CommitGraphCommit) -> Void
-    ) {
-        let marks = WorktreeMarks(worktrees: worktrees, currentWorktreeId: currentWorktreeId)
-        let colors = laneColors(style.palette)
-        for row in rows {
-            let content = RowContentView(
-                row: row,
-                laneCount: laneCount,
-                laneColors: colors,
-                chips: chips(for: row.commit, marks: marks, style: style),
-                style: style
-            )
-            let commit = row.commit
-            let button = PlainRowButton(wrapping: content) { onSelect(commit) }
-            button.accessibilityLabel = content.accessibilityParts.joined(separator: ", ")
-            stack.addArrangedSubview(button)
+    /// What every row draws besides its own commit. `currentWorktreeId` is
+    /// the queried checkout; every other checkout marks the branch or commit it
+    /// has out.
+    @MainActor
+    struct Context {
+        let laneCount: Int
+        let style: Style
+        fileprivate let marks: WorktreeMarks
+        fileprivate let laneColors: [UIColor]
+
+        init(laneCount: Int, worktrees: [WorkspaceWorktree], currentWorktreeId: String?, style: Style) {
+            self.laneCount = laneCount
+            self.style = style
+            marks = WorktreeMarks(worktrees: worktrees, currentWorktreeId: currentWorktreeId)
+            laneColors = CommitGraphView.laneColors(style.palette)
         }
     }
 
-    private static func laneColors(_ palette: ThemePalette) -> [UIColor] {
+    /// A row's height, from its fonts alone: the subject line, and the chip
+    /// line under it when the commit has refs. The table asks for every row's
+    /// height on each update, so it is arithmetic, not a layout pass: self-sized
+    /// rows made a 2,000-commit graph re-measure every row per page.
+    static func rowHeight(for row: CommitGraphRow, context: Context) -> CGFloat {
+        let style = context.style
+        let firstLine = max(style.sha.lineHeight, style.message.lineHeight).rounded(.up)
+        guard !row.commit.refs.isEmpty || !context.marks.detachedAt(row.commit).isEmpty else {
+            return firstLine + 8
+        }
+        let chipLine = (style.chip.lineHeight + 2).rounded(.up)
+        return firstLine + 3 + chipLine + 8
+    }
+
+    /// A commit's row; a tap runs `configure`'s `onSelect`.
+    final class Cell: UITableViewCell {
+        static let reuseIdentifier = "CommitGraphView.Cell"
+
+        private let content = RowContentView()
+        private var button: PlainRowButton?
+        private var onSelect: (() -> Void)?
+
+        override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+            super.init(style: style, reuseIdentifier: reuseIdentifier)
+            backgroundColor = .clear
+            selectionStyle = .none
+            let button = PlainRowButton(wrapping: content) { [weak self] in self?.onSelect?() }
+            button.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.topAnchor.constraint(equalTo: contentView.topAnchor),
+                button.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+                button.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+                button.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            ])
+            self.button = button
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { nil }
+
+        func configure(row: CommitGraphRow, context: Context, onSelect: @escaping () -> Void) {
+            self.onSelect = onSelect
+            let chips = CommitGraphView.chips(for: row.commit, marks: context.marks, style: context.style)
+            content.configure(row: row, context: context, chips: chips)
+            button?.accessibilityLabel = ([row.commit.shortSha, row.commit.message] + chips.map(\.accessibility))
+                .joined(separator: ", ")
+        }
+    }
+
+    fileprivate static func laneColors(_ palette: ThemePalette) -> [UIColor] {
         [palette.purple, palette.cyan, palette.green, palette.orange, palette.blue, palette.yellow, palette.red]
             .map { UIColor($0) }
     }
@@ -54,7 +93,7 @@ enum CommitGraphView {
 
     /// Which checkouts other than the queried one have a branch or a detached
     /// commit out.
-    private struct WorktreeMarks {
+    fileprivate struct WorktreeMarks {
         var byBranch: [String: WorkspaceWorktree] = [:]
         var detached: [WorkspaceWorktree] = []
 
@@ -88,7 +127,7 @@ enum CommitGraphView {
 
     /// The commit's refs, most telling first: what this checkout has out, local
     /// branches, other checkouts, tags, then remotes.
-    private static func chips(for commit: CommitGraphCommit, marks: WorktreeMarks, style: Style) -> [Chip] {
+    fileprivate static func chips(for commit: CommitGraphCommit, marks: WorktreeMarks, style: Style) -> [Chip] {
         let palette = style.palette
         var head: [Chip] = []
         var branches: [Chip] = []
@@ -142,72 +181,89 @@ enum CommitGraphView {
     // MARK: Row
 
     /// A row: the lane gutter, then the SHA and subject over the ref chips.
+    /// Its views are made once per cell and refilled on reuse.
     private final class RowContentView: UIView {
-        private let lanes: LanesView
+        private let lanes = LanesView()
+        private let sha = UILabel()
+        private let message = UILabel()
+        private let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
         private let firstLine: UIStackView
+        private let chipRow = UIStackView()
         private let textStack: UIStackView
-        let accessibilityParts: [String]
+        private var lanesWidth: NSLayoutConstraint?
 
         /// Chips a row shows before it counts the rest.
         private static let maxChips = 3
 
-        init(row: CommitGraphRow, laneCount: Int, laneColors: [UIColor], chips: [Chip], style: Style) {
-            lanes = LanesView(row: row, laneCount: laneCount, colors: laneColors, background: UIColor(style.palette.bg))
-            let sha = Self.label(row.commit.shortSha, font: style.sha, color: UIColor(style.palette.comment))
+        init() {
+            firstLine = UIStackView(arrangedSubviews: [sha, message, chevron])
+            textStack = UIStackView(arrangedSubviews: [firstLine, chipRow])
+            super.init(frame: .zero)
+            // Fonts change only through `configure`: a row's height is computed
+            // from them (`rowHeight`), so a label must not rescale on its own.
             sha.setContentCompressionResistancePriority(.required, for: .horizontal)
             sha.setContentHuggingPriority(.required, for: .horizontal)
-            let message = Self.label(
-                row.commit.message,
-                font: style.message,
-                color: UIColor(row.commit.isHead ? style.palette.fg : style.palette.fgDim)
-            )
             message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             message.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            let chevron = ChangedFileRow.chevron(font: style.chevron, palette: style.palette)
-            firstLine = UIStackView(arrangedSubviews: [sha, message, chevron])
+            chevron.setContentHuggingPriority(.required, for: .horizontal)
             firstLine.axis = .horizontal
             firstLine.alignment = .center
             firstLine.spacing = 8
             firstLine.setCustomSpacing(16, after: message)
-            textStack = UIStackView(arrangedSubviews: [firstLine])
+            chipRow.axis = .horizontal
+            chipRow.alignment = .center
+            chipRow.spacing = 4
             textStack.axis = .vertical
             textStack.alignment = .fill
             textStack.spacing = 3
-            if !chips.isEmpty {
-                textStack.addArrangedSubview(Self.chipRow(chips, style: style))
-            }
-            accessibilityParts = [row.commit.shortSha, row.commit.message] + chips.map(\.accessibility)
-            super.init(frame: .zero)
             isOpaque = false
             for view in [lanes, textStack] as [UIView] {
                 view.translatesAutoresizingMaskIntoConstraints = false
                 addSubview(view)
             }
+            let width = lanes.widthAnchor.constraint(equalToConstant: LanesView.width(laneCount: 1))
+            lanesWidth = width
             NSLayoutConstraint.activate([
                 lanes.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
                 lanes.topAnchor.constraint(equalTo: topAnchor),
                 lanes.bottomAnchor.constraint(equalTo: bottomAnchor),
-                lanes.widthAnchor.constraint(equalToConstant: LanesView.width(laneCount: laneCount)),
+                width,
                 textStack.leadingAnchor.constraint(equalTo: lanes.trailingAnchor, constant: 6),
                 textStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
                 textStack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-                textStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+                // The table sets the height (`rowHeight(for:context:)`).
+                textStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -4),
             ])
         }
 
         @available(*, unavailable)
         required init?(coder: NSCoder) { nil }
 
-        /// The dot sits level with the subject line.
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            lanes.dotY = textStack.frame.minY + firstLine.frame.midY
-        }
+        func configure(row: CommitGraphRow, context: Context, chips: [Chip]) {
+            let style = context.style
+            let palette = style.palette
+            lanes.configure(
+                row: row,
+                laneCount: context.laneCount,
+                colors: context.laneColors,
+                background: UIColor(palette.bg)
+            )
+            lanesWidth?.constant = LanesView.width(laneCount: context.laneCount)
+            sha.text = row.commit.shortSha
+            sha.font = style.sha
+            sha.textColor = UIColor(palette.comment)
+            message.text = row.commit.message
+            message.font = style.message
+            message.textColor = UIColor(row.commit.isHead ? palette.fg : palette.fgDim)
+            chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: style.chevron)
+            chevron.tintColor = UIColor(palette.comment).withAlphaComponent(0.5)
 
-        private static func chipRow(_ chips: [Chip], style: Style) -> UIView {
-            var views = chips.prefix(maxChips).map { chipView($0, font: style.chip) }
-            if chips.count > maxChips {
-                views.append(label("+\(chips.count - maxChips)", font: style.chip, color: UIColor(style.palette.comment)))
+            chipRow.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            chipRow.isHidden = chips.isEmpty
+            guard !chips.isEmpty else { return }
+            var views = chips.prefix(Self.maxChips).map { Self.chipView($0, font: style.chip) }
+            if chips.count > Self.maxChips {
+                views.append(Self.label("+\(chips.count - Self.maxChips)", font: style.chip, color: UIColor(palette.comment)))
             }
             for view in views.dropLast() {
                 view.setContentHuggingPriority(.required, for: .horizontal)
@@ -215,11 +271,15 @@ enum CommitGraphView {
             let spacer = UIView()
             spacer.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
             spacer.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
-            let row = UIStackView(arrangedSubviews: views + [spacer])
-            row.axis = .horizontal
-            row.alignment = .center
-            row.spacing = 4
-            return row
+            for view in views + [spacer] {
+                chipRow.addArrangedSubview(view)
+            }
+        }
+
+        /// The dot sits level with the subject line.
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            lanes.dotY = textStack.frame.minY + firstLine.frame.midY
         }
 
         private static func chipView(_ chip: Chip, font: UIFont) -> UIView {
@@ -254,7 +314,6 @@ enum CommitGraphView {
             label.text = text
             label.font = font
             label.textColor = color
-            label.adjustsFontForContentSizeCategory = true
             return label
         }
     }
@@ -278,19 +337,15 @@ enum CommitGraphView {
             CGFloat(max(laneCount, 1)) * laneSpacing(laneCount: laneCount)
         }
 
-        private let row: CommitGraphRow
-        private let laneSpacing: CGFloat
-        private let colors: [UIColor]
-        private let background: UIColor
+        private var row: CommitGraphRow?
+        private var laneSpacing: CGFloat = 12
+        private var colors: [UIColor] = [.gray]
+        private var background: UIColor = .clear
         var dotY: CGFloat = 0 {
             didSet { if abs(dotY - oldValue) > 0.25 { setNeedsDisplay() } }
         }
 
-        init(row: CommitGraphRow, laneCount: Int, colors: [UIColor], background: UIColor) {
-            self.row = row
-            laneSpacing = Self.laneSpacing(laneCount: laneCount)
-            self.colors = colors
-            self.background = background
+        init() {
             super.init(frame: .zero)
             isOpaque = false
             contentMode = .redraw
@@ -299,6 +354,14 @@ enum CommitGraphView {
 
         @available(*, unavailable)
         required init?(coder: NSCoder) { nil }
+
+        func configure(row: CommitGraphRow, laneCount: Int, colors: [UIColor], background: UIColor) {
+            self.row = row
+            laneSpacing = Self.laneSpacing(laneCount: laneCount)
+            self.colors = colors
+            self.background = background
+            setNeedsDisplay()
+        }
 
         private func x(_ lane: Int) -> CGFloat {
             (CGFloat(lane) + 0.5) * laneSpacing
@@ -309,7 +372,7 @@ enum CommitGraphView {
         }
 
         override func draw(_ rect: CGRect) {
-            guard let context = UIGraphicsGetCurrentContext() else { return }
+            guard let row, let context = UIGraphicsGetCurrentContext() else { return }
             context.setLineWidth(Self.lineWidth)
             context.setLineCap(.round)
             let bottom = bounds.height

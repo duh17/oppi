@@ -142,9 +142,10 @@ final class WorkspaceContextBarView: UIView {
         /// The bar is a whole panel (the chat's Git panel): it stays expanded
         /// with no collapse chevron, so collapsing can never leave an empty
         /// sheet; it has no glass card, corners, or outer padding, so its
-        /// content fills the panel; and its list scrolls in the height the panel gives it instead
-        /// of stopping at the 480 pt an inline bar caps at. Pin its bottom with
-        /// `lessThanOrEqualTo` so it hugs a short list.
+        /// content fills the panel; and it scrolls a table (files, then the
+        /// commit graph) in the height the panel gives it instead of stopping
+        /// at the 480 pt an inline bar caps at. Pin its bottom to the panel's
+        /// below the required height of an empty bar (0).
         var isPanel = false
         var onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)?
         var fileDetailReviewCommentScope: ReviewCommentSelectionScope?
@@ -228,8 +229,16 @@ final class WorkspaceContextBarView: UIView {
         var worktrees: [WorkspaceWorktree]
     }
     private var graph: GraphState? {
-        didSet { if graph != oldValue { setNeedsUpdateProperties() } }
+        didSet {
+            guard graph != oldValue else { return }
+            graphVersion += 1
+            setNeedsUpdateProperties()
+        }
     }
+    /// Counts changes to `graph`, so a render compares one number, not every
+    /// commit, to learn whether the rows need laying out again.
+    private var graphVersion = 0
+    private var graphRowInputs: GraphRowInputs?
     /// The checkout and HEAD the graph shows; a new commit or another
     /// checkout reloads it.
     private var graphLoadKey: String?
@@ -239,24 +248,10 @@ final class WorkspaceContextBarView: UIView {
     private var isLoadingMoreGraph = false {
         didSet { if isLoadingMoreGraph != oldValue { setNeedsUpdateProperties() } }
     }
-    /// The graph's section stays in the panel while the files above it are
-    /// rebuilt (a pushed Git status, the scope switch, selection): rebuilt with
-    /// them, it cancelled a tap on a row or on Load more, and a status push
-    /// arrives every few seconds while an agent edits. Its rows are drawn once
-    /// and a later page appends below them.
-    private lazy var graphSection: UIStackView = {
-        let section = UIStackView(arrangedSubviews: [graphDivider, graphRowsStack, graphFooter])
-        section.axis = .vertical
-        return section
-    }()
-    private let graphDivider = UIView()
-    private let graphRowsStack: UIStackView = {
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.isLayoutMarginsRelativeArrangement = true
-        stack.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: 0, bottom: 0, trailing: 0)
-        return stack
-    }()
+    /// The graph's rows and footer live in the panel's table, outside the
+    /// files rebuilt above them (a pushed Git status, the scope switch,
+    /// selection): rebuilt with them, they cancelled a tap on a row or on Load
+    /// more, and a status push arrives every few seconds while an agent edits.
     private let graphFooter: UIStackView = {
         let stack = UIStackView()
         stack.axis = .vertical
@@ -264,8 +259,6 @@ final class WorkspaceContextBarView: UIView {
         stack.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 6, trailing: 0)
         return stack
     }()
-    /// What the graph's rows draw now; a graph that only grew appends rows.
-    private var drawnGraph: (style: GraphStyleKey, commits: [CommitGraphCommit], laneCount: Int)?
     private var graphFooterKey: GraphFooterKey?
 
     /// This bar's This session / All changes choice; not saved.
@@ -341,7 +334,25 @@ final class WorkspaceContextBarView: UIView {
         insets: NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
     )
     private let expandedStack = UIStackView()
-    private let scrollView = UIScrollView()
+    /// The expanded panel's scroller. A whole panel's is a table
+    /// (`graphTable`): its files in the header, a cell per commit of the graph,
+    /// then the graph's footer, so only the commits on screen have views.
+    private let scrollView: UIScrollView
+    private var graphTable: UITableView? { scrollView as? UITableView }
+    /// A panel table's header: everything above the graph (`panelStack`).
+    /// Header and footer are plain views, not cells, so VoiceOver reads their
+    /// rebuilt rows; a table caches the accessibility of a cell it never
+    /// dequeued again.
+    private let panelHeader = UIView()
+    /// A panel table's footer: the graph's spinner, retry, or Load more, and
+    /// the stash count (`graphFooter`).
+    private let panelFooter = UIView()
+    /// The header or footer content changed since it was last measured.
+    private var panelChromeNeedsSizing = true
+    /// The table width the header and footer were last measured at.
+    private var panelChromeSizedWidth: CGFloat = 0
+    /// The graph rows the table shows; changed only with a table update.
+    private var graphRows: (layout: CommitGraphLayout, context: CommitGraphView.Context, key: GraphStyleKey)?
     private let panelStack = UIStackView()
     private let selectionBar = UIStackView()
     private var emptyHeight: NSLayoutConstraint?
@@ -370,6 +381,7 @@ final class WorkspaceContextBarView: UIView {
         self.connection = connection
         self.apiClient = apiClient
         self.navigation = navigation
+        scrollView = options.isPanel ? PanelTableView(frame: .zero, style: .plain) : UIScrollView()
         isExpanded = options.initiallyExpanded || options.isPanel
         super.init(frame: .zero)
         setUpViews()
@@ -493,27 +505,26 @@ final class WorkspaceContextBarView: UIView {
 
         expandedStack.axis = .vertical
         scrollView.alwaysBounceVertical = false
-        if options.isPanel {
-            scrollView.delegate = self
-        }
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         panelStack.axis = .vertical
         panelStack.alignment = .fill
         panelStack.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.addSubview(panelStack)
-        let hug = scrollView.frameLayoutGuide.heightAnchor.constraint(equalTo: panelStack.heightAnchor)
-        hug.priority = .defaultHigh
-        // An inline bar's panel hugs its rows up to 480 pt, then scrolls; a
-        // whole panel scrolls in the height its host gives it.
-        let maxHeight = scrollView.frameLayoutGuide.heightAnchor.constraint(lessThanOrEqualToConstant: 480)
-        maxHeight.isActive = !options.isPanel
-        NSLayoutConstraint.activate([
-            panelStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            panelStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            panelStack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor),
-            panelStack.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor),
-            hug,
-        ])
+        if let table = graphTable {
+            setUpPanelTable(table)
+        } else {
+            // An inline bar's panel hugs its rows up to 480 pt, then scrolls.
+            scrollView.addSubview(panelStack)
+            let hug = scrollView.frameLayoutGuide.heightAnchor.constraint(equalTo: panelStack.heightAnchor)
+            hug.priority = .defaultHigh
+            NSLayoutConstraint.activate([
+                panelStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+                panelStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+                panelStack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor),
+                panelStack.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor),
+                hug,
+                scrollView.frameLayoutGuide.heightAnchor.constraint(lessThanOrEqualToConstant: 480),
+            ])
+        }
         expandedStack.addArrangedSubview(scrollView)
         selectionBar.axis = .vertical
         expandedStack.addArrangedSubview(selectionBar)
@@ -775,13 +786,8 @@ final class WorkspaceContextBarView: UIView {
         )
         let palette = themeID.palette
         defer { applySelection(palette: palette) }
-        if showsGraph {
-            if graphSection.superview !== panelStack {
-                panelStack.addArrangedSubview(graphSection)
-            }
-            renderGraph(themeID: themeID)
-        } else {
-            graphSection.removeFromSuperview()
+        if graphTable != nil {
+            renderGraph(themeID: themeID, showsGraph: showsGraph)
         }
         // A panel's file rows read the status's counts through `files` and
         // its totals below; its other fields change on every push.
@@ -789,8 +795,8 @@ final class WorkspaceContextBarView: UIView {
         guard key != panelKey || (options.isPanel && panelStatus != panelStatusKey) else { return }
         panelKey = key
         panelStatusKey = panelStatus
-        // The scope switch and the graph stay put, so a tap on either finishes.
-        for view in panelStack.arrangedSubviews where view !== scopeSwitch && view !== graphSection {
+        // The scope switch stays put, so a tap on it finishes.
+        for view in panelStack.arrangedSubviews where view !== scopeSwitch {
             view.removeFromSuperview()
         }
         fileRows = []
@@ -810,14 +816,7 @@ final class WorkspaceContextBarView: UIView {
             scopeSwitch.removeFromSuperview()
         }
 
-        // Above the graph, when it is there.
-        let add: (UIView) -> Void = { [panelStack, graphSection] view in
-            if let index = panelStack.arrangedSubviews.firstIndex(of: graphSection) {
-                panelStack.insertArrangedSubview(view, at: index)
-            } else {
-                panelStack.addArrangedSubview(view)
-            }
-        }
+        let add: (UIView) -> Void = panelStack.addArrangedSubview
 
         if isSelecting {
             add(selectionHeader(palette: palette))
@@ -837,7 +836,9 @@ final class WorkspaceContextBarView: UIView {
         }
 
         if showsGraph {
-            return
+            // The graph's rows follow in the table.
+            add(divider(comment.withAlphaComponent(0.15)))
+            add(Self.spacer(height: 6))
         } else if !options.isPanel, !allCommits.isEmpty {
             add(divider(comment.withAlphaComponent(0.15)))
             add(commitList(palette: palette))
@@ -845,6 +846,9 @@ final class WorkspaceContextBarView: UIView {
             add(divider(comment.withAlphaComponent(0.15)))
             add(headCommitRow(gitStatus, palette: palette))
         }
+        // The table resizes its header to the rebuilt files.
+        panelChromeNeedsSizing = true
+        graphTable?.setNeedsLayout()
     }
 
     /// The fields of a pushed Git status a panel draws outside its file rows
@@ -889,7 +893,11 @@ final class WorkspaceContextBarView: UIView {
     private struct GraphStyleKey: Equatable {
         let worktrees: [WorkspaceWorktree]
         let worktreeId: String?
+        let laneCount: Int
         let regular: Bool
+        /// Row heights come from the fonts (`CommitGraphView.rowHeight`), so a
+        /// Dynamic Type change rebuilds them.
+        let contentSize: UIContentSizeCategory
         let themeID: ThemeID
     }
 
@@ -907,55 +915,90 @@ final class WorkspaceContextBarView: UIView {
         let themeID: ThemeID
     }
 
-    /// Draws the graph's rows (appending a later page below the drawn ones),
-    /// then its footer: a spinner, a retry, or Load more, and the stash count.
-    private func renderGraph(themeID: ThemeID) {
-        let palette = themeID.palette
-        graphDivider.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.15)
-        if graphDivider.constraints.isEmpty {
-            graphDivider.heightAnchor.constraint(equalToConstant: 1 / max(traitCollection.displayScale, 1)).isActive = true
+    /// Brings the panel table's graph rows up to date (a later page inserts
+    /// its rows below the shown ones; anything else reloads the table), then
+    /// its footer: a spinner, a retry, or Load more, and the stash count.
+    private func renderGraph(themeID: ThemeID, showsGraph: Bool) {
+        guard graphTable != nil else { return }
+        // A Git status push re-renders the panel; the rows' layout is redone
+        // only when the graph or how it is drawn changed.
+        let inputs = GraphRowInputs(
+            version: graphVersion,
+            showsGraph: showsGraph,
+            worktreeId: context.worktreeId,
+            regular: usesRegularTypography,
+            contentSize: traitCollection.preferredContentSizeCategory,
+            themeID: themeID
+        )
+        if inputs != graphRowInputs {
+            graphRowInputs = inputs
+            updateGraphRows(themeID: themeID, showsGraph: showsGraph)
         }
+        renderGraphFooter(themeID: themeID, showsGraph: showsGraph)
+    }
 
-        if let graph {
+    private struct GraphRowInputs: Equatable {
+        let version: Int
+        let showsGraph: Bool
+        let worktreeId: String?
+        let regular: Bool
+        let contentSize: UIContentSizeCategory
+        let themeID: ThemeID
+    }
+
+    /// Lays the graph out and brings the table's rows up to date: a later
+    /// page inserts its rows below the shown ones; anything else reloads.
+    private func updateGraphRows(themeID: ThemeID, showsGraph: Bool) {
+        guard let table = graphTable else { return }
+        let palette = themeID.palette
+        let old = graphRows
+        var new: (layout: CommitGraphLayout, context: CommitGraphView.Context, key: GraphStyleKey)?
+        if showsGraph, let graph {
             let layout = CommitGraphLayout(commits: graph.commits)
-            let style = GraphStyleKey(
+            let key = GraphStyleKey(
                 worktrees: graph.worktrees,
                 worktreeId: context.worktreeId,
+                laneCount: layout.laneCount,
                 regular: usesRegularTypography,
+                contentSize: traitCollection.preferredContentSizeCategory,
                 themeID: themeID
             )
-            var from = 0
-            if let drawn = drawnGraph, drawn.style == style, drawn.laneCount == layout.laneCount,
-               graph.commits.starts(with: drawn.commits) {
-                from = drawn.commits.count
-            } else {
-                graphRowsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-            }
-            if from < layout.rows.count {
-                CommitGraphView.appendRows(
-                    layout.rows[from...],
-                    laneCount: layout.laneCount,
-                    to: graphRowsStack,
-                    worktrees: graph.worktrees,
-                    currentWorktreeId: context.worktreeId,
-                    style: CommitGraphView.Style(
-                        sha: font(.caption2, .caption1, mono: true),
-                        message: font(.caption2, .caption1),
-                        chip: font(.caption2, .caption1, .medium),
-                        chevron: font(fixed: 8, .semibold, regular: .caption2, .semibold),
-                        palette: palette
-                    ),
-                    onSelect: { [weak self] commit in self?.presentCommit(commit.summary) }
+            let context = old.flatMap { $0.key == key ? $0.context : nil } ?? CommitGraphView.Context(
+                laneCount: layout.laneCount,
+                worktrees: graph.worktrees,
+                currentWorktreeId: self.context.worktreeId,
+                style: CommitGraphView.Style(
+                    sha: font(.caption2, .caption1, mono: true),
+                    message: font(.caption2, .caption1),
+                    chip: font(.caption2, .caption1, .medium),
+                    chevron: font(fixed: 8, .semibold, regular: .caption2, .semibold),
+                    palette: palette
                 )
-            }
-            drawnGraph = (style, graph.commits, layout.laneCount)
-        } else if drawnGraph != nil {
-            graphRowsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-            drawnGraph = nil
+            )
+            new = (layout, context, key)
         }
+        // Rows are inserted only into a table on screen that has drawn the old
+        // ones; otherwise the next reload counts them all.
+        if table.window != nil, let old, let new, old.key == new.key,
+           old.layout.rows.count <= new.layout.rows.count,
+           new.layout.rows.starts(with: old.layout.rows) {
+            if old.layout.rows.count < new.layout.rows.count {
+                graphRows = new
+                let added = (old.layout.rows.count..<new.layout.rows.count).map { IndexPath(row: $0, section: 0) }
+                UIView.performWithoutAnimation { table.insertRows(at: added, with: .none) }
+            }
+        } else if old?.layout != new?.layout || old?.key != new?.key {
+            graphRows = new
+            table.reloadData()
+        }
+    }
 
+    private func renderGraphFooter(themeID: ThemeID, showsGraph: Bool) {
+        let palette = themeID.palette
         let state: GraphFooterState
-        if graph == nil || isLoadingMoreGraph {
+        if !showsGraph {
+            state = .none
+        } else if graph == nil || isLoadingMoreGraph {
             state = graphFailed ? .failed : .loading
         } else if graphFailed {
             state = .failed
@@ -966,7 +1009,8 @@ final class WorkspaceContextBarView: UIView {
         }
         let footerKey = GraphFooterKey(
             state: state,
-            stashCount: context.gitStatus?.stashCount ?? 0,
+            // Without the graph, the HEAD row above shows the stash count.
+            stashCount: showsGraph ? context.gitStatus?.stashCount ?? 0 : 0,
             regular: usesRegularTypography,
             themeID: themeID
         )
@@ -996,6 +1040,39 @@ final class WorkspaceContextBarView: UIView {
                 ),
                 NSDirectionalEdgeInsets(top: 4, leading: 12, bottom: 0, trailing: 12)
             ))
+        }
+        panelChromeNeedsSizing = true
+        graphTable?.setNeedsLayout()
+    }
+
+    /// Sizes the panel table's header (`panelStack`) and footer
+    /// (`graphFooter`) to their content at the table's width, from the table's
+    /// own layout (`PanelTableView`), so the width is this pass's. A table
+    /// header or footer keeps the frame it was given, so a changed one is set
+    /// again.
+    ///
+    /// A table lays out on every scroll frame, so this measures only after the
+    /// header or footer was rebuilt (`panelChromeNeedsSizing`) or the width
+    /// changed.
+    private func sizePanelHeaderAndFooter(_ table: UITableView) {
+        let width = table.bounds.width
+        guard width > 0, panelChromeNeedsSizing || width != panelChromeSizedWidth else { return }
+        panelChromeNeedsSizing = false
+        panelChromeSizedWidth = width
+        for (container, content) in [(panelHeader, panelStack as UIView), (panelFooter, graphFooter as UIView)] {
+            let height = content.systemLayoutSizeFitting(
+                CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+            let frame = CGRect(x: 0, y: 0, width: width, height: height)
+            guard container.frame != frame else { continue }
+            container.frame = frame
+            if container === panelHeader {
+                table.tableHeaderView = container
+            } else {
+                table.tableFooterView = container
+            }
         }
     }
 
@@ -1450,6 +1527,13 @@ final class WorkspaceContextBarView: UIView {
         return spacer
     }
 
+    /// Vertical space in a stack.
+    private static func spacer(height: CGFloat) -> UIView {
+        let spacer = UIView()
+        spacer.heightAnchor.constraint(equalToConstant: height).isActive = true
+        return spacer
+    }
+
     private static func padded(_ view: UIView, _ insets: NSDirectionalEdgeInsets) -> UIView {
         let container = UIView()
         pad(view, in: container, insets)
@@ -1859,7 +1943,60 @@ final class WorkspaceContextBarView: UIView {
     }
 }
 
-extension WorkspaceContextBarView: UIScrollViewDelegate {
+// MARK: - Panel table
+
+/// A whole panel's table: `panelHeader` (files and everything else above the
+/// graph), a `CommitGraphView.Cell` per graph row, then `panelFooter`. Header
+/// and footer are sized to their content in `layoutSubviews`; rows size
+/// themselves.
+extension WorkspaceContextBarView: UITableViewDataSource, UITableViewDelegate {
+    func setUpPanelTable(_ table: UITableView) {
+        table.dataSource = self
+        table.delegate = self
+        (table as? PanelTableView)?.beforeLayout = { [weak self] table in
+            self?.sizePanelHeaderAndFooter(table)
+        }
+        table.backgroundColor = .clear
+        table.separatorStyle = .none
+        table.allowsSelection = false
+        // Exact heights, no estimates (`CommitGraphView.rowHeight`).
+        table.estimatedRowHeight = 0
+        table.register(CommitGraphView.Cell.self, forCellReuseIdentifier: CommitGraphView.Cell.reuseIdentifier)
+        for (container, content) in [(panelHeader, panelStack as UIView), (panelFooter, graphFooter as UIView)] {
+            content.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(content)
+            // No bottom pin: the container's height comes from the content's
+            // (`sizePanelHeaderAndFooter`), never the other way round.
+            NSLayoutConstraint.activate([
+                content.topAnchor.constraint(equalTo: container.topAnchor),
+                content.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                content.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            ])
+        }
+        table.tableHeaderView = panelHeader
+        table.tableFooterView = panelFooter
+    }
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        graphRows?.layout.rows.count ?? 0
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: CommitGraphView.Cell.reuseIdentifier, for: indexPath)
+        if let cell = cell as? CommitGraphView.Cell, let graphRows {
+            let row = graphRows.layout.rows[indexPath.row]
+            cell.configure(row: row, context: graphRows.context) { [weak self] in
+                self?.presentCommit(row.commit.summary)
+            }
+        }
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+        guard let graphRows else { return 0 }
+        return CommitGraphView.rowHeight(for: graphRows.layout.rows[indexPath.row], context: graphRows.context)
+    }
+
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         loadMoreGraphIfNearEnd()
     }
@@ -1873,6 +2010,18 @@ extension WorkspaceContextBarView: UIGestureRecognizerDelegate {
         shouldBeRequiredToFailBy other: UIGestureRecognizer
     ) -> Bool {
         gestureRecognizer === dragSelectGesture && other === scrollView.panGestureRecognizer
+    }
+}
+
+/// A panel's table, which sizes its header and footer at the start of its
+/// own layout: the bar's layout runs before the table has this pass's width.
+@MainActor
+private final class PanelTableView: UITableView {
+    var beforeLayout: ((UITableView) -> Void)?
+
+    override func layoutSubviews() {
+        beforeLayout?(self)
+        super.layoutSubviews()
     }
 }
 
