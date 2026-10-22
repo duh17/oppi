@@ -31,6 +31,8 @@ import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
+import { clearServerStopRequest, requestServerStop } from "./server-stop-marker.js";
+
 const LABEL = "dev.chaosdonkey.oppi";
 
 const BUNDLED_HELPERS_SUFFIX = "/Contents/Resources/Helpers";
@@ -574,6 +576,7 @@ export function installService(dataDir?: string): {
  */
 export function uninstallService(): { ok: boolean; message: string } {
   const plist = plistPath();
+  let stopRequestDir: string | undefined;
   try {
     const hadPlist = existsSync(plist);
     const hadJob = findLoadedDomain(LABEL) !== null;
@@ -582,6 +585,9 @@ export function uninstallService(): { ok: boolean; message: string } {
       return { ok: true, message: "LaunchAgent not installed (nothing to remove)" };
     }
 
+    // An explicit stop, not a restart: the server ends away phones' Live Activity cards.
+    stopRequestDir = hadJob ? readInstalledPlist()?.dataDir : undefined;
+    if (stopRequestDir) requestServerStop(stopRequestDir);
     bootoutLabel(LABEL);
     if (hadPlist) {
       bootoutPlist(plist);
@@ -589,6 +595,7 @@ export function uninstallService(): { ok: boolean; message: string } {
 
     const remaining = loadedDomains(LABEL);
     if (remaining.length > 0) {
+      if (stopRequestDir) clearServerStopRequest(stopRequestDir);
       return {
         ok: false,
         message: `Failed to unload LaunchAgent from ${remaining.join(", ")}`,
@@ -606,6 +613,7 @@ export function uninstallService(): { ok: boolean; message: string } {
 
     return { ok: true, message: "LaunchAgent uninstalled" };
   } catch (err: unknown) {
+    if (stopRequestDir) clearServerStopRequest(stopRequestDir);
     return { ok: false, message: `Failed to unload LaunchAgent: ${launchctlMessage(err)}` };
   }
 }
@@ -641,12 +649,17 @@ export function stopService(): { ok: boolean; message: string } {
     return { ok: false, message: "LaunchAgent not installed." };
   }
 
+  let stopRequestDir: string | undefined;
   try {
     const hadJob = findLoadedDomain(LABEL) !== null;
+    // An explicit stop, not a restart: the server ends away phones' Live Activity cards.
+    stopRequestDir = hadJob ? readInstalledPlist()?.dataDir : undefined;
+    if (stopRequestDir) requestServerStop(stopRequestDir);
     bootoutLabel(LABEL);
     bootoutPlist(plist);
     const remaining = loadedDomains(LABEL);
     if (remaining.length > 0) {
+      if (stopRequestDir) clearServerStopRequest(stopRequestDir);
       return {
         ok: false,
         message: `Stop failed: job still loaded in ${remaining.join(", ")}`,
@@ -660,6 +673,7 @@ export function stopService(): { ok: boolean; message: string } {
     }
     return { ok: true, message: "Service was not running" };
   } catch (err: unknown) {
+    if (stopRequestDir) clearServerStopRequest(stopRequestDir);
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, message: `Stop failed: ${msg}` };
   }

@@ -38,6 +38,7 @@ import type { ProgramStatusSync } from "./program-status.js";
 import { SessionPushNotifier } from "./session-push-notifier.js";
 import { LiveActivityNotifier, liveActivityCounts } from "./live-activity-notifier.js";
 import { FileLiveActivityStateStore, liveActivityStatePath } from "./live-activity-state-store.js";
+import { clearServerStopRequest, consumeServerStopRequest } from "./server-stop-marker.js";
 import { AgentScheduleRunner } from "./agent-schedule-runner.js";
 import { intervalFromEnv, ServerResourceSampler } from "./server-resource-sampler.js";
 import { HostResourceProbe } from "./host-resource-probe.js";
@@ -182,7 +183,7 @@ const WS_CLOSE_GOING_AWAY = 1001;
 const WS_SHUTDOWN_GRACE_MS = 500;
 /** How soon a socket kept past its token for a Live Voice call closes after the call ends. */
 const LIVE_VOICE_EXPIRY_RECHECK_MS = 5_000;
-/** Longest a stop that is not a restart waits to end away phones' Live Activity cards, in all. */
+/** Longest an explicit stop waits to end away phones' Live Activity cards, in all. */
 const LIVE_ACTIVITY_STOP_END_MS = 3_000;
 /** The same for the card of a device being revoked, which only delays the permission release. */
 const LIVE_ACTIVITY_REVOKE_END_MS = 3_000;
@@ -514,12 +515,6 @@ export class Server {
   private sessionPushNotifier: SessionPushNotifier;
   // Counts-only Live Activity for away phones, through the push relay.
   private liveActivityNotifier: LiveActivityNotifier;
-  /**
-   * Set when an in-app update is about to restart this process. It is the only restart this
-   * process can tell from a stop: `oppi server restart` (launchd kickstart) and `oppi server
-   * stop` both arrive as SIGTERM.
-   */
-  private restartingForUpdate = false;
 
   // Full-text search index (SQLite FTS5)
   private searchIndex: SearchIndex | null = null;
@@ -555,11 +550,8 @@ export class Server {
     },
   ) {
     this.storage = storage;
-    const restartAfterUpdate = options?.onRestartAfterUpdate;
     this.serverUpdate = new ServerUpdateService({
-      onRestart: restartAfterUpdate
-        ? (mode, version) => this.restartForUpdate(restartAfterUpdate, mode, version)
-        : undefined,
+      onRestart: options?.onRestartAfterUpdate,
       restartNeededVersion: options?.restartNeededVersion,
       packageDir: options?.updatePackageDir,
     });
@@ -1017,6 +1009,8 @@ export class Server {
   }
 
   async start(): Promise<void> {
+    // A request left by a stop that never reached a running server must not end this run's cards.
+    clearServerStopRequest(this.storage.getDataDir());
     const config = this.storage.getConfig();
     const invalidTls = this.storage.describeInvalidTlsConfig();
     // An invalid on-disk TLS block cannot opt into plaintext, even via a proxy.
@@ -1184,21 +1178,14 @@ export class Server {
     return this.httpServer?.listening === true;
   }
 
-  private restartForUpdate(
-    restart: (mode: ServerRestartMode, targetVersion: string) => void,
-    mode: ServerRestartMode,
-    version: string,
-  ): void {
-    if (mode !== "manual") this.restartingForUpdate = true;
-    restart(mode, version);
-  }
-
   async stop(): Promise<void> {
     this.stopUploadGcLoop();
     this.pairing.dispose();
-    // A phone's card would show stale counts for hours once this server is gone. A restart
-    // keeps it: the next process reads the saved card and updates it.
-    if (!this.restartingForUpdate) {
+    // A phone's card would show stale counts for hours once this server is gone. Only a stop
+    // the person asked for (`oppi server stop`/`uninstall`, Ctrl-C) ends it. Any other SIGTERM,
+    // the in-app update and a crash restart look alike, and a restarted server reads the saved
+    // card and updates it, so a restart keeps the card.
+    if (consumeServerStopRequest(this.storage.getDataDir())) {
       await this.liveActivityNotifier.endLiveCards(LIVE_ACTIVITY_STOP_END_MS);
     }
     this.liveActivityNotifier.stop();

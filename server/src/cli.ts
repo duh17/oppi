@@ -45,6 +45,7 @@ import { generateInvite, type GeneratedInvite } from "./invite.js";
 import { activePushRelays, releasePushPermissions } from "./push/push-sender.js";
 import { allowsTrustedPrivateHttpBind, parsePublicUrl } from "./proxy-config.js";
 import { getPackageInfo } from "./version.js";
+import { requestServerStop } from "./server-stop-marker.js";
 import {
   getServiceStatus,
   installService,
@@ -299,6 +300,8 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   }
 
   process.on("SIGINT", () => {
+    // Ctrl-C in a foreground `oppi serve` is an explicit stop: it ends away phones' cards.
+    requestServerStop(storage.getDataDir());
     void shutdown(0, "\nShutting down...");
   });
 

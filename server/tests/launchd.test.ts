@@ -780,6 +780,74 @@ describe("stopService", () => {
   });
 });
 
+// ── explicit stop marker ───────────────────────────────────────────────────
+
+// The serving process ends away phones' Live Activity cards only when it finds this marker:
+// `oppi server stop` and `uninstall` write it before they stop the job, a restart does not.
+describe("stop marker", () => {
+  const marker = "/Users/testuser/.config/oppi/server-stop-requested";
+  const plistXml = [
+    "<key>ProgramArguments</key>",
+    "<array>",
+    "<string>/opt/homebrew/bin/node</string>",
+    "<string>/opt/homebrew/lib/node_modules/oppi-server/dist/src/cli.js</string>",
+    "<string>serve</string>",
+    "<string>--data-dir</string>",
+    "<string>/Users/testuser/.config/oppi</string>",
+    "</array>",
+  ].join("\n");
+  let order: string[];
+  let loaded: boolean;
+  /** The job stays loaded after a bootout, as when the stop fails. */
+  let bootoutWorks: boolean;
+
+  beforeEach(() => {
+    order = [];
+    loaded = true;
+    bootoutWorks = true;
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockImplementation(() => plistXml);
+    mockWriteFileSync.mockImplementation((path: string) => void order.push(`write ${path}`));
+    mockUnlinkSync.mockImplementation((path: string) => void order.push(`unlink ${path}`));
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("bootout")) {
+        order.push("bootout");
+        if (bootoutWorks) loaded = false;
+        return "";
+      }
+      if (isPrintAnyService(cmd)) {
+        if (!loaded) throw new Error("Could not find service");
+        return "dev.chaosdonkey.oppi = {\n  pid = 12345\n  state = running\n}";
+      }
+      return defaultLaunchctlOutput(cmd);
+    });
+  });
+
+  it.each([
+    ["stop", () => stopService()],
+    ["uninstall", () => uninstallService()],
+  ])("is written before %s takes the running job down", (_name, run) => {
+    expect(run().ok).toBe(true);
+    expect(order.indexOf(`write ${marker}`)).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf(`write ${marker}`)).toBeLessThan(order.indexOf("bootout"));
+    expect(order).not.toContain(`unlink ${marker}`);
+  });
+
+  it("is withdrawn when the job is still loaded after the stop", () => {
+    bootoutWorks = false;
+    expect(stopService().ok).toBe(false);
+    expect(order.at(-1)).toBe(`unlink ${marker}`);
+  });
+
+  it("is not written when no job is running, or by a restart", () => {
+    loaded = false;
+    expect(stopService().ok).toBe(true);
+    loaded = true;
+    expect(restartService().ok).toBe(true);
+    expect(order.filter((entry) => entry.startsWith("write "))).toEqual([]);
+  });
+});
+
 // ── getServiceStatus ───────────────────────────────────────────────────────
 
 describe("getServiceStatus", () => {
