@@ -889,34 +889,6 @@ enum EventFlowTimelineItemKind {
     case toolCall
 }
 
-/// An idle prompt or a busy steer / follow-up. All three go out as `prompt`
-/// frames; the busy ones carry their streaming behavior.
-enum EventFlowAckCommand: CaseIterable {
-    case prompt
-    case steer
-    case followUp
-
-    var rawValue: String {
-        switch self {
-        case .prompt: return "prompt"
-        case .steer: return "steer"
-        case .followUp: return "follow_up"
-        }
-    }
-
-    var behavior: StreamingBehavior? {
-        switch self {
-        case .prompt: return nil
-        case .steer: return .steer
-        case .followUp: return .followUp
-        }
-    }
-
-    func send(using connection: ServerConnection, text: String) async throws {
-        try await connection.sendPrompt(text, streamingBehavior: behavior)
-    }
-}
-
 @MainActor
 struct EventFlowAckRequest {
     let command: String

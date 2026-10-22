@@ -6,38 +6,36 @@ import Foundation
 @MainActor
 struct ServerConnectionSendAckTests {
 
-    @Test func sendAckSuccessForPromptSteerAndFollowUp() async throws {
-        for command in EventFlowAckCommand.allCases {
-            let (conn, pipe) = makeEventFlowAckTestConnection()
+    /// A busy send is a prompt that carries the composer's streaming behavior.
+    @Test func sendAckSuccessForBusyPromptCarriesStreamingBehavior() async throws {
+        let (conn, pipe) = makeEventFlowAckTestConnection()
 
-            var sentRequestId: String?
-            conn._sendMessageForTesting = { message in
-                guard let sent = extractEventFlowAckRequest(from: message) else {
-                    Issue.record("Expected prompt/steer/follow_up message")
-                    return
-                }
-                #expect(sent.command == "prompt")
-                #expect(sent.streamingBehavior == command.behavior)
-                #expect(sent.clientTurnId != nil)
-                sentRequestId = sent.requestId
-
-                if let requestId = sent.requestId {
-                    pipe.handle(
-                        .commandResult(
-                            command: sent.command,
-                            requestId: requestId,
-                            success: true,
-                            data: nil,
-                            error: nil
-                        ),
-                        sessionId: "s1"
-                    )
-                }
+        var sentRequestId: String?
+        conn._sendMessageForTesting = { message in
+            guard let sent = extractEventFlowAckRequest(from: message) else {
+                Issue.record("Expected prompt message")
+                return
             }
+            #expect(sent.streamingBehavior == .steer)
+            #expect(sent.clientTurnId != nil)
+            sentRequestId = sent.requestId
 
-            try await command.send(using: conn, text: "hello")
-            #expect(sentRequestId != nil, "\(command.rawValue) should include requestId")
+            if let requestId = sent.requestId {
+                pipe.handle(
+                    .commandResult(
+                        command: sent.command,
+                        requestId: requestId,
+                        success: true,
+                        data: nil,
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+            }
         }
+
+        try await conn.sendPrompt("hello", streamingBehavior: .steer)
+        #expect(sentRequestId != nil)
     }
 
     @Test func sendAckUsesTurnAckStages() async throws {
@@ -266,77 +264,73 @@ struct ServerConnectionSendAckTests {
         #expect(delivered == 7)
     }
 
-    @Test func sendAckRejectedForPromptSteerAndFollowUp() async {
-        for command in EventFlowAckCommand.allCases {
-            let (conn, pipe) = makeEventFlowAckTestConnection()
+    @Test func sendAckRejectedForPrompt() async {
+        let (conn, pipe) = makeEventFlowAckTestConnection()
 
-            conn._sendMessageForTesting = { message in
-                guard let sent = extractEventFlowAckRequest(from: message) else {
-                    Issue.record("Expected prompt/steer/follow_up message")
-                    return
-                }
-                #expect(sent.clientTurnId != nil)
-
-                if let requestId = sent.requestId {
-                    pipe.handle(
-                        .commandResult(
-                            command: sent.command,
-                            requestId: requestId,
-                            success: false,
-                            data: nil,
-                            error: "rejected-by-test"
-                        ),
-                        sessionId: "s1"
-                    )
-                }
+        conn._sendMessageForTesting = { message in
+            guard let sent = extractEventFlowAckRequest(from: message) else {
+                Issue.record("Expected prompt message")
+                return
             }
+            #expect(sent.clientTurnId != nil)
 
-            do {
-                try await command.send(using: conn, text: "hello")
-                Issue.record("Expected \(command.rawValue) rejection")
-            } catch let error as SendAckError {
-                switch error {
-                case .rejected(let rejectedCommand, let reason):
-                    #expect(rejectedCommand == "prompt")
-                    #expect(reason == "rejected-by-test")
-                default:
-                    Issue.record("Expected rejected error, got \(error)")
-                }
-            } catch {
-                Issue.record("Expected SendAckError.rejected, got \(error)")
+            if let requestId = sent.requestId {
+                pipe.handle(
+                    .commandResult(
+                        command: sent.command,
+                        requestId: requestId,
+                        success: false,
+                        data: nil,
+                        error: "rejected-by-test"
+                    ),
+                    sessionId: "s1"
+                )
             }
+        }
+
+        do {
+            try await conn.sendPrompt("hello")
+            Issue.record("Expected prompt rejection")
+        } catch let error as SendAckError {
+            switch error {
+            case .rejected(let rejectedCommand, let reason):
+                #expect(rejectedCommand == "prompt")
+                #expect(reason == "rejected-by-test")
+            default:
+                Issue.record("Expected rejected error, got \(error)")
+            }
+        } catch {
+            Issue.record("Expected SendAckError.rejected, got \(error)")
         }
     }
 
     /// A frame that reached the socket but was never acknowledged is reported as
     /// unconfirmed (the server may hold it), carrying the id a resend must reuse.
-    @Test func sendAckTimeoutAfterDispatchIsUnconfirmedForPromptSteerAndFollowUp() async {
-        for command in EventFlowAckCommand.allCases {
-            let (conn, pipe) = makeEventFlowAckTestConnection(timeout: .milliseconds(40))
+    @Test func sendAckTimeoutAfterDispatchIsUnconfirmed() async {
+        let (conn, pipe) = makeEventFlowAckTestConnection(timeout: .milliseconds(40))
 
-            var sentTurnIds: Set<String> = []
-            conn._sendMessageForTesting = { message in
-                if let clientTurnId = extractEventFlowAckRequest(from: message)?.clientTurnId {
-                    sentTurnIds.insert(clientTurnId)
-                }
+        var sentTurnIds: Set<String> = []
+        conn._sendMessageForTesting = { message in
+            if let clientTurnId = extractEventFlowAckRequest(from: message)?.clientTurnId {
+                sentTurnIds.insert(clientTurnId)
             }
-
-            do {
-                try await command.send(using: conn, text: "hello")
-                Issue.record("Expected \(command.rawValue) timeout")
-            } catch let error as TurnSendUnconfirmedError {
-                #expect(error.command == "prompt")
-                #expect(sentTurnIds == [error.clientTurnId])
-                if case .timeout(let timedOutCommand)? = error.underlying as? SendAckError {
-                    #expect(timedOutCommand == "prompt")
-                } else {
-                    Issue.record("Expected underlying ack timeout, got \(error.underlying)")
-                }
-            } catch {
-                Issue.record("Expected TurnSendUnconfirmedError, got \(error)")
-            }
-            _ = pipe
         }
+
+        do {
+            try await conn.sendPrompt("hello")
+            Issue.record("Expected prompt timeout")
+        } catch let error as TurnSendUnconfirmedError {
+            #expect(error.command == "prompt")
+            #expect(sentTurnIds == [error.clientTurnId])
+            if case .timeout(let timedOutCommand)? = error.underlying as? SendAckError {
+                #expect(timedOutCommand == "prompt")
+            } else {
+                Issue.record("Expected underlying ack timeout, got \(error.underlying)")
+            }
+        } catch {
+            Issue.record("Expected TurnSendUnconfirmedError, got \(error)")
+        }
+        _ = pipe
     }
 
     /// Failing before any frame is written stays a plain never-dispatched error.

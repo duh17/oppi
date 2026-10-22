@@ -1051,40 +1051,38 @@ struct ServerConnectionTests {
 
     // MARK: - Send ACK integration
 
-    @Test func sendAckSuccessForPromptSteerAndFollowUp() async throws {
-        for command in AckCommand.allCases {
-            let conn = ServerConnection()
-            conn._setActiveSessionIdForTesting("s1")
-            let pipe = TestEventPipeline(sessionId: "s1", connection: conn)
+    /// A busy send is a prompt that carries the composer's streaming behavior.
+    @Test func sendAckSuccessForBusyPromptCarriesStreamingBehavior() async throws {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: conn)
 
-            var sentRequestId: String?
-            conn._sendMessageForTesting = { message in
-                guard let sent = extractAckRequest(from: message) else {
-                    Issue.record("Expected prompt/steer/follow_up message")
-                    return
-                }
-                #expect(sent.command == "prompt")
-                #expect(sent.streamingBehavior == command.behavior)
-                #expect(sent.clientTurnId != nil)
-                sentRequestId = sent.requestId
-
-                if let requestId = sent.requestId {
-                    pipe.handle(
-                        .commandResult(
-                            command: sent.command,
-                            requestId: requestId,
-                            success: true,
-                            data: nil,
-                            error: nil
-                        ),
-                        sessionId: "s1"
-                    )
-                }
+        var sentRequestId: String?
+        conn._sendMessageForTesting = { message in
+            guard let sent = extractAckRequest(from: message) else {
+                Issue.record("Expected prompt message")
+                return
             }
+            #expect(sent.streamingBehavior == .followUp)
+            #expect(sent.clientTurnId != nil)
+            sentRequestId = sent.requestId
 
-            try await command.send(using: conn, text: "hello")
-            #expect(sentRequestId != nil, "\(command.rawValue) should include requestId")
+            if let requestId = sent.requestId {
+                pipe.handle(
+                    .commandResult(
+                        command: sent.command,
+                        requestId: requestId,
+                        success: true,
+                        data: nil,
+                        error: nil
+                    ),
+                    sessionId: "s1"
+                )
+            }
         }
+
+        try await conn.sendPrompt("hello", streamingBehavior: .followUp)
+        #expect(sentRequestId != nil)
     }
 
     @Test func sendAckUsesTurnAckStages() async throws {
@@ -1328,47 +1326,45 @@ struct ServerConnectionTests {
         #expect(delivered == 7)
     }
 
-    @Test func sendAckRejectedForPromptSteerAndFollowUp() async {
-        for command in AckCommand.allCases {
-            let conn = ServerConnection()
-            conn._setActiveSessionIdForTesting("s1")
-            let pipe = TestEventPipeline(sessionId: "s1", connection: conn)
+    @Test func sendAckRejectedForPrompt() async {
+        let conn = ServerConnection()
+        conn._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: conn)
 
-            conn._sendMessageForTesting = { message in
-                guard let sent = extractAckRequest(from: message) else {
-                    Issue.record("Expected prompt/steer/follow_up message")
-                    return
-                }
-                #expect(sent.clientTurnId != nil)
-
-                if let requestId = sent.requestId {
-                    pipe.handle(
-                        .commandResult(
-                            command: sent.command,
-                            requestId: requestId,
-                            success: false,
-                            data: nil,
-                            error: "rejected-by-test"
-                        ),
-                        sessionId: "s1"
-                    )
-                }
+        conn._sendMessageForTesting = { message in
+            guard let sent = extractAckRequest(from: message) else {
+                Issue.record("Expected prompt message")
+                return
             }
+            #expect(sent.clientTurnId != nil)
 
-            do {
-                try await command.send(using: conn, text: "hello")
-                Issue.record("Expected \(command.rawValue) rejection")
-            } catch let error as SendAckError {
-                switch error {
-                case .rejected(let rejectedCommand, let reason):
-                    #expect(rejectedCommand == "prompt")
-                    #expect(reason == "rejected-by-test")
-                default:
-                    Issue.record("Expected rejected error, got \(error)")
-                }
-            } catch {
-                Issue.record("Expected SendAckError.rejected, got \(error)")
+            if let requestId = sent.requestId {
+                pipe.handle(
+                    .commandResult(
+                        command: sent.command,
+                        requestId: requestId,
+                        success: false,
+                        data: nil,
+                        error: "rejected-by-test"
+                    ),
+                    sessionId: "s1"
+                )
             }
+        }
+
+        do {
+            try await conn.sendPrompt("hello")
+            Issue.record("Expected prompt rejection")
+        } catch let error as SendAckError {
+            switch error {
+            case .rejected(let rejectedCommand, let reason):
+                #expect(rejectedCommand == "prompt")
+                #expect(reason == "rejected-by-test")
+            default:
+                Issue.record("Expected rejected error, got \(error)")
+            }
+        } catch {
+            Issue.record("Expected SendAckError.rejected, got \(error)")
         }
     }
 
@@ -1653,34 +1649,6 @@ struct ServerConnectionTests {
     @Test func currentServerIdNilByDefault() {
         let conn = ServerConnection()
         #expect(conn.currentServerId == nil)
-    }
-}
-
-/// An idle prompt or a busy steer / follow-up. All three go out as `prompt`
-/// frames; the busy ones carry their streaming behavior.
-private enum AckCommand: CaseIterable {
-    case prompt
-    case steer
-    case followUp
-
-    var rawValue: String {
-        switch self {
-        case .prompt: return "prompt"
-        case .steer: return "steer"
-        case .followUp: return "follow_up"
-        }
-    }
-
-    var behavior: StreamingBehavior? {
-        switch self {
-        case .prompt: return nil
-        case .steer: return .steer
-        case .followUp: return .followUp
-        }
-    }
-
-    func send(using connection: ServerConnection, text: String) async throws {
-        try await connection.sendPrompt(text, streamingBehavior: behavior)
     }
 }
 
