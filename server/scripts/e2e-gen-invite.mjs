@@ -20,8 +20,11 @@ if (!dataDir) {
 
 const inviteHost = process.env.E2E_APP_HOST || "127.0.0.1";
 const storage = new Storage(dataDir);
+// The wrapper writes the invite before sim-pool leases a simulator, so the
+// token must outlive the slot wait plus a cold build on a busy shared pool;
+// 10 minutes expired there ("Invite link expired or was already used").
 const invite = generateInvite(storage, () => inviteHost, () => "e2e-server", {
-  pairingTokenTtlMs: 600_000,
+  pairingTokenTtlMs: 45 * 60_000,
 });
 
 console.log(JSON.stringify({ inviteURL: invite.inviteURL, inviteHost }));
