@@ -40,6 +40,7 @@ import type { AgentBackend } from "./agent-backend.js";
 import type { SessionStopCoordinator } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
 import { materializeToolMediaDetails } from "./session-attachments.js";
+import { recordStartedQueueItem } from "./session-queue-utils.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { normalizeMutationToolName } from "./tool-mutations.js";
 import { projectVisibleCustomMessage, type SessionEntry as TraceSessionEntry } from "./trace.js";
@@ -143,6 +144,8 @@ export class SessionAgentEventCoordinator {
     }
 
     if (data.type === "queue_item_started") {
+      // A native queue (durable) placed a queued steer or follow-up into the run.
+      recordStartedQueueItem(active.session, data.item.message);
       this.deps.broadcast(key, data);
       return;
     }

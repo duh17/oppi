@@ -3422,36 +3422,59 @@ describe("server durable managed runtime", () => {
     ]);
   });
 
-  it("publishes durable queue_item_started by submission identity without text reconciliation", async () => {
-    const f = await fixture(
-      [
-        fauxAssistantMessage(
-          "A long streaming answer leaves time for deterministic native queue admission.",
-        ),
-        fauxAssistantMessage("Answered the queued input."),
-      ],
-      { slow: true },
-    );
-    const harness = await openHarness(f.dir, f.models);
-    mockDurableOpen(harness, f.models);
-    await f.manager.startSession(f.session.id, f.workspace);
-    const projection = observe(f.manager, f.session.id);
-    await f.manager.sendPrompt(f.session.id, "start");
-    const started = projection.next((message) => message.type === "queue_item_started");
-    await f.manager.sendFollowUp(f.session.id, "same", { clientTurnId: "queued-delivery" });
-    const queue = await f.manager.getMessageQueue(f.session.id);
-    expect(queue.followUp).toHaveLength(1);
-    const event = await started;
-    expect(event).toMatchObject({
-      type: "queue_item_started",
-      kind: "follow_up",
-      item: queue.followUp[0],
-    });
-    expect(event.type === "queue_item_started" && event.queueVersion).toBeGreaterThan(
-      queue.version,
-    );
-    projection.unsubscribe();
-  });
+  it.each(["follow_up", "prompt followUp"] as const)(
+    "publishes durable queue_item_started by submission identity without text reconciliation (%s)",
+    async (send) => {
+      const f = await fixture(
+        [
+          fauxAssistantMessage(
+            "A long streaming answer leaves time for deterministic native queue admission.",
+          ),
+          fauxAssistantMessage("Answered the queued input."),
+        ],
+        { slow: true },
+      );
+      const harness = await openHarness(f.dir, f.models);
+      mockDurableOpen(harness, f.models);
+      await f.manager.startSession(f.session.id, f.workspace);
+      const projection = observe(f.manager, f.session.id);
+      await f.manager.sendPrompt(f.session.id, "start");
+      const started = projection.next((message) => message.type === "queue_item_started");
+      // The session's message count right before, and right at, the placement broadcast.
+      const countNow = () => f.manager.getActiveSession(f.session.id)!.messageCount;
+      let countBefore = countNow();
+      let placementCountDelta: number | undefined;
+      const unsubscribeCount = f.manager.subscribe(f.session.id, (message) => {
+        if (message.type === "queue_item_started" && placementCountDelta === undefined)
+          placementCountDelta = countNow() - countBefore;
+        countBefore = countNow();
+      });
+      if (send === "follow_up") {
+        await f.manager.sendFollowUp(f.session.id, "same", { clientTurnId: "queued-delivery" });
+      } else {
+        await f.manager.sendPrompt(f.session.id, "same", {
+          clientTurnId: "queued-delivery",
+          streamingBehavior: "followUp",
+        });
+      }
+      const queue = await f.manager.getMessageQueue(f.session.id);
+      expect(queue.followUp).toHaveLength(1);
+      const event = await started;
+      unsubscribeCount();
+      // Counted as the session's message once, when it is placed.
+      expect(placementCountDelta).toBe(1);
+      expect(f.manager.getActiveSession(f.session.id)!.lastMessage).toBe("same");
+      expect(event).toMatchObject({
+        type: "queue_item_started",
+        kind: "follow_up",
+        item: queue.followUp[0],
+      });
+      expect(event.type === "queue_item_started" && event.queueVersion).toBeGreaterThan(
+        queue.version,
+      );
+      projection.unsubscribe();
+    },
+  );
 
   it("removes identical-text durable submissions independently and restores raw attachment metadata", async () => {
     const f = await fixture(

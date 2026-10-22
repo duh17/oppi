@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 
 import type { PiMessage } from "./pi-events.js";
+import { appendSessionMessage } from "./session-protocol.js";
+import { shouldRecordPromptLocally } from "./session-runtime-capabilities.js";
 import type {
   ChatAttachmentRef,
   MessageQueueItem,
   MessageQueueKind,
   MessageQueueState,
   ServerMessage,
+  Session,
 } from "./types.js";
 
 export interface QueueImageContent {
@@ -28,6 +31,17 @@ export interface StartedQueueItem<T extends MessageQueueItem = MessageQueueItem>
 }
 
 export type QueueStateMessage = Extract<ServerMessage, { type: "queue_state" }>;
+
+/**
+ * A queued steer or follow-up reached the model: count it as the session's message,
+ * as a prompt that runs right away is counted when admitted. Terminal-owned (pi-tui)
+ * sessions record user messages from their own events instead.
+ */
+export function recordStartedQueueItem(session: Session, text: string): void {
+  if (!text.trim() || !shouldRecordPromptLocally(session)) return;
+  appendSessionMessage(session, { role: "user", content: text, timestamp: Date.now() });
+}
+
 export type QueueItemStartedMessage = Extract<ServerMessage, { type: "queue_item_started" }>;
 
 function cloneAttachmentRef(attachment: ChatAttachmentRef): ChatAttachmentRef {

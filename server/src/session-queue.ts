@@ -20,6 +20,7 @@ import {
   queueImagesFromPromptImages,
   queueItemStartedMessage,
   queueStateMessage,
+  recordStartedQueueItem,
   type QueueImageContent,
 } from "./session-queue-utils.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
@@ -122,6 +123,19 @@ export class SessionMessageQueueCoordinator {
 
   private sdkQueueText(item: QueueStoreItem): string {
     return item.sdkMessage ?? item.message;
+  }
+
+  /**
+   * A queued input reached the model: record it as the session's message, as a prompt
+   * that runs right away is recorded at admission, then tell clients it started.
+   */
+  private announceQueueItemStarted(
+    key: string,
+    active: SessionMessageQueueState,
+    started: { kind: MessageQueueKind; item: QueueStoreItem; queueVersion: number },
+  ): void {
+    recordStartedQueueItem(active.session, this.sdkQueueText(started.item));
+    this.deps.broadcast(key, queueItemStartedMessage(started));
   }
 
   private reconcileItemsWithSdkTextQueue(
@@ -427,25 +441,19 @@ export class SessionMessageQueueCoordinator {
       }
 
       for (const item of synced.removedSteering) {
-        this.deps.broadcast(
-          key,
-          queueItemStartedMessage({
-            kind: "steer",
-            item,
-            queueVersion: synced.queue.version,
-          }),
-        );
+        this.announceQueueItemStarted(key, active, {
+          kind: "steer",
+          item,
+          queueVersion: synced.queue.version,
+        });
       }
 
       for (const item of synced.removedFollowUp) {
-        this.deps.broadcast(
-          key,
-          queueItemStartedMessage({
-            kind: "follow_up",
-            item,
-            queueVersion: synced.queue.version,
-          }),
-        );
+        this.announceQueueItemStarted(key, active, {
+          kind: "follow_up",
+          item,
+          queueVersion: synced.queue.version,
+        });
       }
 
       this.broadcastQueueState(key, synced.queue);
@@ -462,7 +470,7 @@ export class SessionMessageQueueCoordinator {
       (item, value) => item.message === value || this.sdkQueueText(item) === value,
     );
     if (started) {
-      this.deps.broadcast(key, queueItemStartedMessage(started));
+      this.announceQueueItemStarted(key, active, started);
       this.broadcastQueueState(key, queue);
       return;
     }
@@ -557,10 +565,11 @@ export class SessionMessageQueueCoordinator {
     queue.steering = remainingSteering;
     queue.followUp = remainingFollowUp;
     queue.version = version;
-    this.deps.broadcast(
-      key,
-      queueItemStartedMessage({ kind: first.kind, item: firstItem, queueVersion: queue.version }),
-    );
+    this.announceQueueItemStarted(key, active, {
+      kind: first.kind,
+      item: firstItem,
+      queueVersion: queue.version,
+    });
     this.broadcastQueueState(key, queue);
     return true;
   }

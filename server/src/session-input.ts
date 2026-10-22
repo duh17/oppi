@@ -225,9 +225,11 @@ export class SessionInputCoordinator {
     const dispatchImages = prepared.images;
     const dispatchMessage = prepared.message;
     // A busy prompt with a streaming behavior is queued like a bare steer or
-    // follow_up, and like them it is not recorded as a session message here.
+    // follow_up, and like them it is recorded when it starts, not here. The
+    // turn may have ended during the await above, so read busy again: a prompt
+    // that runs now is a plain prompt and is recorded at admission.
     const queueKind =
-      runtimeBusy && opts?.streamingBehavior
+      opts?.streamingBehavior && this.isRuntimeBusy(active)
         ? opts.streamingBehavior === "steer"
           ? "steer"
           : "follow_up"
@@ -290,8 +292,8 @@ export class SessionInputCoordinator {
       cmd.images = dispatchImages;
     }
 
-    // If agent is busy, add streaming behavior
-    if (runtimeBusy && opts?.streamingBehavior) {
+    // If the agent is still busy, add the streaming behavior.
+    if (queueKind && opts?.streamingBehavior) {
       cmd.streamingBehavior = opts.streamingBehavior;
     }
 

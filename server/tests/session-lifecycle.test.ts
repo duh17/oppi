@@ -1718,6 +1718,83 @@ describe("SessionManager message queue", () => {
     expect(queue.followUp.map((item) => item.message)).toEqual(["first follow"]);
   });
 
+  it.each([
+    ["busy prompt", { streamingBehavior: "steer" as const }],
+    ["bare steer", undefined],
+  ])("counts a queued %s once, when it starts", async (_label, behavior) => {
+    const { manager, sdkBackend, session } = makeManagerHarness({ status: "busy" });
+
+    if (behavior) {
+      await manager.sendPrompt("s1", "queued steer", { ...behavior, clientTurnId: "turn-q" });
+    } else {
+      await manager.sendSteer("s1", "queued steer", { clientTurnId: "turn-q" });
+    }
+    expect(session.messageCount).toBe(0);
+
+    sdkBackend.session.clearQueue();
+    feedEvent(manager, "s1", {
+      type: "message_start",
+      message: { role: "user", content: [{ type: "text", text: "queued steer" }] },
+    });
+    feedEvent(manager, "s1", { type: "turn_start", turnId: "t-q", timestamp: Date.now() });
+
+    expect(session.messageCount).toBe(1);
+    expect(session.lastMessage).toBe("queued steer");
+  });
+
+  it("counts a queued item the SDK reconcile finds started", async () => {
+    const { manager, sdkBackend, session } = makeManagerHarness({ status: "busy" });
+
+    await manager.sendPrompt("s1", "later", { streamingBehavior: "followUp", clientTurnId: "t-l" });
+    sdkBackend.session.clearQueue();
+    feedEvent(manager, "s1", { type: "turn_start", turnId: "t-r", timestamp: Date.now() });
+
+    expect(session.messageCount).toBe(1);
+    expect(session.lastMessage).toBe("later");
+  });
+
+  it("never counts a queued prompt that was withdrawn", async () => {
+    const { manager, session } = makeManagerHarness({ status: "busy" });
+
+    await manager.sendPrompt("s1", "take me back", {
+      streamingBehavior: "followUp",
+      clientTurnId: "turn-w",
+    });
+    await manager.takeMessageQueue("s1");
+    feedEvent(manager, "s1", { type: "turn_start", turnId: "t-w", timestamp: Date.now() });
+
+    expect(manager.getMessageQueue("s1").followUp).toHaveLength(0);
+    expect(session.messageCount).toBe(0);
+  });
+
+  it("counts a busy prompt once when the turn ends while it is admitted", async () => {
+    const { manager, sdkBackend, session } = makeManagerHarness({ status: "busy" });
+    // The turn ends while the prompt's attachments are prepared.
+    const input = (manager as unknown as { inputCoordinator: Record<string, unknown> })
+      .inputCoordinator;
+    const prepare = (input.prepareMessageWithAttachments as (...args: unknown[]) => unknown).bind(
+      input,
+    );
+    input.prepareMessageWithAttachments = async (...args: unknown[]) => {
+      session.status = "ready";
+      return prepare(...args);
+    };
+
+    await manager.sendPrompt("s1", "just in time", {
+      streamingBehavior: "steer",
+      clientTurnId: "turn-race",
+    });
+    feedEvent(manager, "s1", {
+      type: "message_start",
+      message: { role: "user", content: [{ type: "text", text: "just in time" }] },
+    });
+    feedEvent(manager, "s1", { type: "turn_start", turnId: "t-race", timestamp: Date.now() });
+
+    expect(sdkBackend.prompt.mock.calls[0]?.[1]?.streamingBehavior).toBeUndefined();
+    expect(manager.getMessageQueue("s1").steering).toHaveLength(0);
+    expect(session.messageCount).toBe(1);
+  });
+
   it("reconciles queue state from SDK when user message starts", async () => {
     const { manager, sdkBackend, events } = makeManagerHarness({ status: "busy" });
 
