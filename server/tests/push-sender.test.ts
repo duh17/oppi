@@ -268,15 +268,17 @@ describe("PushSender", () => {
       const { fetchImpl } = relayFetch({ [PRIMARY]: gone });
       // A new UTC day per send, so the device budget never refuses before the relay answers.
       let clock = Date.parse("2026-01-01T12:00:00Z");
+      // A small bound: the claim is the eviction order, and 257 real signed sends took 6-10 s.
       const push = new PushSender(storage, {
         signingKey: signing.privateKey,
         fetch: fetchImpl,
         now: () => clock,
+        goneSendTokensMax: 4,
       });
       const [first] = push.registrations();
       if (!first) throw new Error("missing registration");
       const tokens: string[] = [];
-      for (let index = 0; index < 257; index += 1) {
+      for (let index = 0; index < 5; index += 1) {
         const sendToken = `osp1.r_a.p_a.secret-${index}`;
         tokens.push(sendToken);
         storage.setPushRegistration({ ...first, sendToken });
@@ -287,7 +289,7 @@ describe("PushSender", () => {
       }
       expect(push.isSendTokenGone(tokens[0]!)).toBe(false);
       expect(push.isSendTokenGone(tokens[1]!)).toBe(true);
-      expect(push.isSendTokenGone(tokens[256]!)).toBe(true);
+      expect(push.isSendTokenGone(tokens[4]!)).toBe(true);
     });
   });
 

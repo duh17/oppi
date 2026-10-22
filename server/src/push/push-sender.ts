@@ -180,6 +180,8 @@ export interface PushSenderOptions {
   metrics?: ServerMetricCollector;
   fetch?: typeof fetch;
   now?: () => number;
+  /** How many pruned send tokens to remember (default GONE_SEND_TOKENS_MAX). */
+  goneSendTokensMax?: number;
 }
 
 /** `[primary, standby]` when relay mode is on and configured; otherwise undefined. */
@@ -451,7 +453,7 @@ export class PushSender {
     const hash = sendTokenHash(sendToken);
     this.goneSendTokens.delete(hash);
     this.goneSendTokens.add(hash);
-    if (this.goneSendTokens.size > GONE_SEND_TOKENS_MAX) {
+    if (this.goneSendTokens.size > (this.options.goneSendTokensMax ?? GONE_SEND_TOKENS_MAX)) {
       const oldest = this.goneSendTokens.values().next().value;
       if (oldest !== undefined) this.goneSendTokens.delete(oldest);
     }
