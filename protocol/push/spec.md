@@ -509,6 +509,11 @@ removes them from Notification Center when it becomes active: they open nothing.
   device's previous registration and answers `{"serverPublicKey": "<base64url 32 bytes>",
   "keyId": "<kid>"}`. The app checks the public key against the pinned fingerprint before
   storing it for the extension. In `off` mode the route answers `409 push_disabled`.
+  After the signature check, a send token the primary relay answered `410` for (the server
+  pruned that registration) is refused with `410 {"error":"send_token_gone"}`: the relay
+  retired that permission, so the app drops the token and registers a new one. The server
+  remembers the last few hundred such tokens, as hashes, in memory only; after a restart the
+  next send's `410` teaches it again.
   `liveActivity` (optional boolean, `400` otherwise) says the phone shows this server's
   Live Activity; it is outside the signature on purpose: a proxy that sets it only gets
   `409 no_activity` from the relay, which follows the phone's own list (3.6), and one that

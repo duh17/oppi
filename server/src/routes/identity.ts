@@ -559,6 +559,13 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return;
     }
 
+    // After the signature, so only the device that holds this send token learns it is dead.
+    if (push.sender.isSendTokenGone(check.sendToken)) {
+      log.info("identity.push.registration_rejected", { status: 410, error: "send_token_gone" });
+      helpers.error(res, 410, "send_token_gone");
+      return;
+    }
+
     const replaced = ctx.storage.setPushRegistration({
       deviceId: device.id,
       keyId: check.keyId,

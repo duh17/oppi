@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { createPrivateKey, generateKeyPairSync, sign } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +9,9 @@ import { createRouteHelpers } from "../src/routes/http.js";
 import { createIdentityRoutes } from "../src/routes/identity.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { markLocalRequest } from "../src/request-trust.js";
+import { PushSender } from "../src/push/push-sender.js";
+import { pushRegistrationMessage } from "../src/push/registration.js";
+import { ensureIdentityMaterial, identityConfigForDataDir } from "../src/security.js";
 import { Storage } from "../src/storage.js";
 import {
   makeRawRequest,
@@ -712,5 +716,122 @@ describe("deleted auth route persistence", () => {
     expect(handled).toBe(false);
     const after = statSync(configPath);
     expect(`${after.ino}:${after.mtimeNs}:${after.size}`).toBe(fingerprint);
+  });
+});
+
+describe("PUT /me/push-registration after the relay retired a send token", () => {
+  const PRIMARY = "https://primary.example.test";
+  const vectors = JSON.parse(
+    readFileSync(
+      new URL("../../protocol/push/vectors/cryptokit-hpke.json", import.meta.url),
+      "utf8",
+    ),
+  ) as { recipient: { publicKey: string; keyId: string } };
+  let dataDir: string;
+
+  afterEach(() => rmSync(dataDir, { recursive: true, force: true }));
+
+  it("answers 409 push_disabled while the server runs with push off", async () => {
+    dataDir = mkdtempSync(join(tmpdir(), "oppi-identity-push-off-"));
+    const dispatch = createIdentityRoutes(
+      { push: { sender: { relays: () => undefined } } } as unknown as RouteContext,
+      createRouteHelpers(),
+    );
+    const res = makeResponse();
+    await dispatch({
+      method: "PUT",
+      path: "/me/push-registration",
+      url: new URL("http://localhost/me/push-registration"),
+      req: makeRequest({}) as never,
+      res: res as never,
+      principal: { kind: "device", deviceId: "dev", tokenClass: "at_" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({ error: "push_disabled" });
+  });
+
+  it("answers 410 send_token_gone for that token only", async () => {
+    dataDir = mkdtempSync(join(tmpdir(), "oppi-identity-push-gone-"));
+    const storage = new Storage(dataDir);
+    storage.ensurePaired();
+    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+    const deviceKeys = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const jwk = deviceKeys.publicKey.export({ format: "jwk" }) as { x: string; y: string };
+    const enrolled = storage.enrollViaPairing(storage.issuePairingToken(), {
+      publicKey: { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y },
+    });
+    if (!enrolled) throw new Error("enrollment failed");
+    const identity = ensureIdentityMaterial(identityConfigForDataDir(dataDir));
+    const relayAnswers = vi.fn(async () => new Response('{"error":"gone"}', { status: 410 }));
+    const sender = new PushSender(storage, {
+      signingKey: createPrivateKey(identity.privateKeyPem),
+      fetch: relayAnswers as unknown as typeof fetch,
+    });
+    const dispatch = createIdentityRoutes(
+      {
+        storage,
+        push: {
+          sender,
+          serverPublicKey: "server-public-key",
+          serverFingerprint: identity.fingerprint,
+        },
+      } as unknown as RouteContext,
+      createRouteHelpers(),
+    );
+
+    async function register(sendToken: string) {
+      const issuedAt = Date.now();
+      const signature = sign(
+        "sha256",
+        pushRegistrationMessage({
+          deviceId: enrolled!.deviceId,
+          serverFingerprint: identity.fingerprint,
+          keyId: vectors.recipient.keyId,
+          publicKey: Buffer.from(vectors.recipient.publicKey, "base64url"),
+          sendToken,
+          relay: PRIMARY,
+          issuedAt,
+        }),
+        { key: deviceKeys.privateKey, dsaEncoding: "ieee-p1363" },
+      );
+      const res = makeResponse();
+      await dispatch({
+        method: "PUT",
+        path: "/me/push-registration",
+        url: new URL("http://localhost/me/push-registration"),
+        req: makeRequest({
+          keyId: vectors.recipient.keyId,
+          publicKey: vectors.recipient.publicKey,
+          sendToken,
+          relay: PRIMARY,
+          issuedAt,
+          signature: signature.toString("base64url"),
+          events: ["blocked"],
+        }) as never,
+        res: res as never,
+        principal: { kind: "device", deviceId: enrolled!.deviceId, tokenClass: "at_" },
+      });
+      return { status: res.statusCode, body: JSON.parse(res.body) as Record<string, unknown> };
+    }
+
+    expect((await register("osp1.r_a.p_a.old")).status).toBe(200);
+    const [registration] = storage.getPushRegistrations();
+    if (!registration) throw new Error("missing registration");
+    // The primary relay retires the token: the server prunes the registration.
+    await sender.send(registration, {
+      event: "blocked",
+      kind: "question",
+      sessionId: "s1",
+      title: "Question",
+      body: "Waiting for your answer.",
+    });
+    expect(storage.getPushRegistrations()).toEqual([]);
+
+    expect(await register("osp1.r_a.p_a.old")).toEqual({
+      status: 410,
+      body: { error: "send_token_gone" },
+    });
+    expect(storage.getPushRegistrations()).toEqual([]);
+    expect((await register("osp1.r_a.p_b.new")).status).toBe(200);
   });
 });
