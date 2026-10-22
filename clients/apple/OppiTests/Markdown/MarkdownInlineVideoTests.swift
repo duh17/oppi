@@ -2290,14 +2290,7 @@ private func seekExactly(_ player: AVPlayer, to seconds: Double) async {
 }
 
 private func knownGoodH264URL() throws -> URL {
-    let url = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appendingPathComponent("Fixtures/known-good-h264.mp4")
-    guard FileManager.default.fileExists(atPath: url.path) else {
-        throw CocoaError(.fileNoSuchFile)
-    }
-    return url
+    try TestFixtures.url("known-good-h264.mp4")
 }
 
 private func waitUntil(

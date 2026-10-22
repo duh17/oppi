@@ -25,26 +25,17 @@ struct PushCanaryCaptureTests {
         let other: Key
     }
 
-    /// OppiTests/Protocol/<file> → clients/apple → repo root.
-    private static let vectorsDir = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appendingPathComponent("protocol/push/vectors")
-
     private let capture: Capture
     private let keys: CryptoKitVectors
 
     init() throws {
         capture = try JSONDecoder().decode(
             Capture.self,
-            from: Data(contentsOf: Self.vectorsDir.appendingPathComponent("canary-capture.json"))
+            from: ProtocolFixtures.data("push/vectors/canary-capture.json")
         )
         keys = try JSONDecoder().decode(
             CryptoKitVectors.self,
-            from: Data(contentsOf: Self.vectorsDir.appendingPathComponent("cryptokit-hpke.json"))
+            from: ProtocolFixtures.data("push/vectors/cryptokit-hpke.json")
         )
     }
 

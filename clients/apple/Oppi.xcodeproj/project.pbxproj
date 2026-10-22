@@ -342,6 +342,7 @@
 		267CB1CF4DBBED21EF8C1E3B /* ExtensionInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFA016130A814EDC9CAFD31D /* ExtensionInfo.swift */; };
 		268187BC1BBCA7828849B82E /* AskCardAccessibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0716EBCFA44B23E0F46D5D44 /* AskCardAccessibilityTests.swift */; };
 		268CFF493A9F61A5596B72E8 /* FileIndexStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9281422D1136DD4ED4E6D6D8 /* FileIndexStore.swift */; };
+		26ABC078A55D4E1BA09C2CC1 /* protocol in Resources */ = {isa = PBXBuildFile; fileRef = B1B7D3942B88CCCB1A2A4B5A /* protocol */; };
 		26CDF4B6634032E40F9E2CBE /* HTMLDOMElementAnchor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DDA13930E1A4560D57462C8 /* HTMLDOMElementAnchor.swift */; };
 		26D9D602B3F8522CFC3B5D67 /* SSHTerminalSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AB7FAF1B443E4A7DDEEF494 /* SSHTerminalSwitcher.swift */; };
 		2711CB23226803CBFE2607DE /* SessionListSearchPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E7936889CCCD1DE6176AA20 /* SessionListSearchPresentation.swift */; };
@@ -1510,6 +1511,7 @@
 		ACA38258E37236D91E56F59E /* VoiceLocaleStabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D73D045D7B9EF40C4EFCE622 /* VoiceLocaleStabilityTests.swift */; };
 		ACA598551439BAF2701CE60E /* AuthenticatedMediaSourceShareTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A62F1D29853F66CA5E208ABF /* AuthenticatedMediaSourceShareTests.swift */; };
 		ACD995B4F580D3E249FCE68B /* LANDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A8AE7154614BA4807F19B3E /* LANDiscovery.swift */; };
+		ACEF24896B7C5CD12327E9C4 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 0BE652C5B106E54C38B4CD02 /* LICENSE */; };
 		ACF1556F3986C45C49F4CF80 /* MacExtensionSurfacePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEDE8E0D810F10493467F1E1 /* MacExtensionSurfacePanel.swift */; };
 		AD2F966B8110424382BBEF1B /* ServerMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B9DEEC04E853CB815D56DAE /* ServerMetrics.swift */; };
 		AD5DC3361B442B9BDA7113CD /* AskSubmissionRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA2FCF1CC7D5A626A6BF4C5E /* AskSubmissionRecoveryTests.swift */; };
@@ -2446,6 +2448,7 @@
 		0BA5980D0C2B23B8FE37A93B /* ServerConnectionSessionCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionSessionCacheTests.swift; sourceTree = "<group>"; };
 		0BB895285BA2AF4ADA2B07E3 /* SessionExtensionContextViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionExtensionContextViewController.swift; sourceTree = "<group>"; };
 		0BE2100110E798F90E4B98AF /* StreamingRenderPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingRenderPolicy.swift; sourceTree = "<group>"; };
+		0BE652C5B106E54C38B4CD02 /* LICENSE */ = {isa = PBXFileReference; path = LICENSE; sourceTree = "<group>"; };
 		0C08E25FE0E3CFAF94DAD6CA /* ToolInspectionConsumerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolInspectionConsumerTests.swift; sourceTree = "<group>"; };
 		0C3E2292E082C2BDAC152D8A /* MarkdownBlockSerializer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlockSerializer.swift; sourceTree = "<group>"; };
 		0C57BE9C65CE037A604BBB75 /* NativeExpandedToolViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeExpandedToolViews.swift; sourceTree = "<group>"; };
@@ -3625,6 +3628,7 @@
 		B17A681971AB3EBCDC80BCDD /* AppLockService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockService.swift; sourceTree = "<group>"; };
 		B18C77A867A3E3FDBD62CE49 /* AppOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppOpener.swift; sourceTree = "<group>"; };
 		B1A6302BDCA7995387C4CD97 /* ModelProvidersNavigationE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelProvidersNavigationE2ETests.swift; sourceTree = "<group>"; };
+		B1B7D3942B88CCCB1A2A4B5A /* protocol */ = {isa = PBXFileReference; lastKnownFileType = folder; name = protocol; path = ../../protocol; sourceTree = SOURCE_ROOT; };
 		B1CD4894F02D2A9D449FC67B /* SSHTerminalMetalRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalMetalRenderer.swift; sourceTree = "<group>"; };
 		B1DABF1E606BB73CE0AFA0AC /* SSHTerminalFolderCommandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalFolderCommandTests.swift; sourceTree = "<group>"; };
 		B2024B81F2A6E0BD319161F9 /* AgentScheduleAPIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentScheduleAPIClientTests.swift; sourceTree = "<group>"; };
@@ -4303,6 +4307,7 @@
 			isa = PBXGroup;
 			children = (
 				EDACED1D13984141866B1AAF /* Fonts */,
+				B1B7D3942B88CCCB1A2A4B5A /* protocol */,
 				F8547DE28ECED3B7948D374D /* apple */,
 				319DE540BE8714E80964EFB6 /* Oppi */,
 				D4D8D08BEA82702C7FB56AB6 /* OppiActivityExtension */,
@@ -5322,6 +5327,7 @@
 		5E1F17C27B739508A8737275 /* Orbs */ = {
 			isa = PBXGroup;
 			children = (
+				0BE652C5B106E54C38B4CD02 /* LICENSE */,
 				D2AAFFD8B270468690DCB014 /* OrbDisplayPolicy.swift */,
 				D93E76EF6BD2F8ACD5D108D7 /* OrbGeometry.swift */,
 				728367337213199138DC6B69 /* OrbMetalRenderer.swift */,
@@ -7767,9 +7773,11 @@
 			files = (
 				1B7D47808689D687E86B63DD /* 2026-08-22-anthropic-s1-report.md in Resources */,
 				F572AA36961CEC5DBE91BF24 /* AUDIT-RESULTS.md in Resources */,
+				ACEF24896B7C5CD12327E9C4 /* LICENSE in Resources */,
 				DC352F589D285632FC9224DB /* known-good-h264.mp4 in Resources */,
 				BFC5A1E291D0C798583FFA4C /* mermaid-rendering-gallery.md in Resources */,
 				C0BB27F2808CFAAECD6B8DBA /* mixed-markdown-stress-corpus.md in Resources */,
+				26ABC078A55D4E1BA09C2CC1 /* protocol in Resources */,
 				0319F9323EC77505AB007F32 /* suzanne-garden.usdz in Resources */,
 				FD3FED6CD03AE53F9499AE61 /* synthetic-long-markdown.md in Resources */,
 			);

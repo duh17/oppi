@@ -14,7 +14,7 @@ import Testing
 struct ProtocolSnapshotTests {
 
     @Test func withdrawalResultsKeepTakenInputSeparateFromQueueState() throws {
-        let data = try Data(contentsOf: snapshotURL)
+        let data = try ProtocolFixtures.data("server-messages.json")
         let fixture = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         let messages = try #require(fixture["messages"] as? [String: Any])
         for command in ["remove_queued_message", "take_queue"] {
@@ -38,22 +38,8 @@ struct ProtocolSnapshotTests {
 
     // MARK: - Snapshot Loading
 
-    /// Path to the shared protocol snapshot file.
-    private var snapshotURL: URL {
-        // #filePath → .../clients/apple/OppiTests/Protocol/ProtocolSnapshotTests.swift
-        // Navigate up to repo root, then into protocol/
-        let testFile = URL(fileURLWithPath: #filePath)
-        let repoRoot = testFile
-            .deletingLastPathComponent()  // ProtocolSnapshotTests.swift
-            .deletingLastPathComponent()  // Protocol/
-            .deletingLastPathComponent()  // OppiTests/
-            .deletingLastPathComponent()  // apple/
-            .deletingLastPathComponent()  // clients/
-        return repoRoot.appendingPathComponent("protocol/server-messages.json")
-    }
-
     private func loadSnapshot() throws -> [String: Any] {
-        let data = try Data(contentsOf: snapshotURL)
+        let data = try ProtocolFixtures.data("server-messages.json")
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         return json["messages"] as? [String: Any] ?? [:]
     }
@@ -90,13 +76,6 @@ struct ProtocolSnapshotTests {
             Issue.record("Expected setting tool result"); return
         }
         #expect(output?.settingEffect == "voiceReplyMode")
-    }
-
-    @Test func snapshotFileExists() throws {
-        #expect(
-            FileManager.default.fileExists(atPath: snapshotURL.path),
-            "Protocol snapshot not found at \(snapshotURL.path). Run: cd server && npm run protocol:fixtures:update"
-        )
     }
 
     @Test func decodeAllServerMessages() throws {

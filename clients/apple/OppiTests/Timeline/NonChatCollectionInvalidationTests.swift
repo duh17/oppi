@@ -178,11 +178,8 @@ struct NonChatCollectionInvalidationTests {
         return "# Static gallery width fixture\n\n\(before)\n\n```mermaid\n\(code)\n```\n\n\(after)"
     }
 
-    private func fixtureURL(_ fileName: String) -> URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/\(fileName)")
+    private func fixtureURL(_ fileName: String) throws -> URL {
+        try TestFixtures.url(fileName)
     }
 
     private func drainMainQueue() async {

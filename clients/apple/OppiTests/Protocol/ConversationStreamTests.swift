@@ -280,7 +280,7 @@ struct ConversationStreamTests {
             let frames: [ConversationStreamServerMessage]
             let trace: [TraceEvent]
         }
-        let golden = try JSONDecoder().decode(Golden.self, from: Data(contentsOf: Self.protocolURL("conversation-stream-golden.json")))
+        let golden = try JSONDecoder().decode(Golden.self, from: ProtocolFixtures.data("conversation-stream-golden.json"))
         var replica = ConversationReplica()
         for frame in golden.frames { try replica.apply(frame) }
         #expect(replica.hasOlder == false)
@@ -330,18 +330,8 @@ struct ConversationStreamTests {
         init(integerLiteral value: Int) { self = .index(value) }
     }
 
-    private static func protocolURL(_ name: String) -> URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // Protocol/
-            .deletingLastPathComponent()  // OppiTests/
-            .deletingLastPathComponent()  // apple/
-            .deletingLastPathComponent()  // clients/
-            .deletingLastPathComponent()  // repo root
-            .appendingPathComponent("protocol/\(name)")
-    }
-
     private func fixtureMessages() throws -> [String: Any] {
-        let data = try Data(contentsOf: Self.protocolURL("conversation-stream.json"))
+        let data = try ProtocolFixtures.data("conversation-stream.json")
         let root = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         return try #require(root["messages"] as? [String: Any])
     }

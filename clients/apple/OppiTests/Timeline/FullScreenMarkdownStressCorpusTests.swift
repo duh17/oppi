@@ -911,7 +911,7 @@ struct FullScreenMarkdownStressCorpusTests {
     )
     func documentReaderLaysOutCrashedHostReportWithoutHanging() throws {
         ToolTimelineRowPresentationHelpers.debugResetNestedLayoutInvalidationCountForTesting()
-        let url = fixtureURL("2026-08-22-anthropic-s1-report.md")
+        let url = try fixtureURL("2026-08-22-anthropic-s1-report.md")
         let content = try String(contentsOf: url, encoding: .utf8)
         let body = NativeFullScreenMarkdownBody(
             content: content,
@@ -952,7 +952,7 @@ struct FullScreenMarkdownStressCorpusTests {
 
     @Test("crashed host report fixture is byte-identical and parses into a finite document")
     func crashedHostReportFixtureParsesIntoFiniteDocument() throws {
-        let url = fixtureURL("2026-08-22-anthropic-s1-report.md")
+        let url = try fixtureURL("2026-08-22-anthropic-s1-report.md")
         let data = try Data(contentsOf: url)
         #expect(
             data.count == Self.crashedReportByteCount,
@@ -967,15 +967,11 @@ struct FullScreenMarkdownStressCorpusTests {
     }
 
     private func mixedStressFixture() throws -> String {
-        let url = fixtureURL("mixed-markdown-stress-corpus.md")
-        return try String(contentsOf: url, encoding: .utf8)
+        try String(contentsOf: fixtureURL("mixed-markdown-stress-corpus.md"), encoding: .utf8)
     }
 
-    private func fixtureURL(_ fileName: String) -> URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/\(fileName)")
+    private func fixtureURL(_ fileName: String) throws -> URL {
+        try TestFixtures.url(fileName)
     }
 
     private static func tinyPNGData() -> Data? {

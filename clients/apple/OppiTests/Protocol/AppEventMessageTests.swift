@@ -4,18 +4,8 @@ import Testing
 
 @Suite("AppEventMessage decoding")
 struct AppEventMessageTests {
-    private var snapshotURL: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("protocol/app-event-messages.json")
-    }
-
     private func loadSnapshot() throws -> [String: Any] {
-        let data = try Data(contentsOf: snapshotURL)
+        let data = try ProtocolFixtures.data("app-event-messages.json")
         let root = try #require(
             JSONSerialization.jsonObject(with: data) as? [String: Any]
         )

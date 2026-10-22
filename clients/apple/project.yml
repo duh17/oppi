@@ -614,6 +614,14 @@ targets:
     sources:
       - path: OppiTests
         type: group
+      # Cross-language contract fixtures: tests read them from the bundle, never by source path.
+      - path: ../../protocol
+        type: folder
+        buildPhase: resources
+      # The Orb attribution license test reads the shipped LICENSE file.
+      - path: Shared/Renderers/Orbs/LICENSE
+        type: file
+        buildPhase: resources
     dependencies:
       - target: Oppi
       - framework: Vendor/GhosttyVt/ghostty-vt.xcframework

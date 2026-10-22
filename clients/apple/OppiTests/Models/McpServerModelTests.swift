@@ -10,11 +10,7 @@ struct McpServerModelTests {
         let flows: [McpAuthFlowSnapshot]
     }
     private func fixture() throws -> Fixture {
-        let repo = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent()
-        return try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: repo.appendingPathComponent("protocol/mcp-http.json")))
+        try JSONDecoder().decode(Fixture.self, from: ProtocolFixtures.data("mcp-http.json"))
     }
 
     @Test func decodesServerAuthAndTrustStatesFromServerFixture() throws {

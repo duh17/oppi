@@ -290,11 +290,7 @@ struct ConversationStreamSessionTests {
             let frames: [ConversationStreamServerMessage]
             let trace: [TraceEvent]
         }
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("protocol/conversation-stream-golden.json")
-        let golden = try JSONDecoder().decode(Golden.self, from: Data(contentsOf: url))
+        let golden = try JSONDecoder().decode(Golden.self, from: ProtocolFixtures.data("conversation-stream-golden.json"))
         let harness = Harness()
         await harness.connect()
         _ = try await harness.attach(1)

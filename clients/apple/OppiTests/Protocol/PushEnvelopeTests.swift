@@ -7,14 +7,6 @@ import Testing
 /// Notification Service Extension's own decision path, with storage injected.
 @Suite("Push envelope v1")
 struct PushEnvelopeTests {
-    /// OppiTests/Protocol/<file> → clients/apple → repo root.
-    private static let repoRoot = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-
     struct ServerVectors: Decodable {
         struct Recipient: Decodable { let privateKey: String; let publicKey: String; let keyId: String }
         struct Server: Decodable { let publicKey: String; let fingerprint: String }
@@ -43,14 +35,12 @@ struct PushEnvelopeTests {
     }
 
     static func vectors() throws -> ServerVectors {
-        let url = repoRoot.appendingPathComponent("protocol/push/vectors/server-envelopes.json")
-        return try JSONDecoder().decode(ServerVectors.self, from: Data(contentsOf: url))
+        try JSONDecoder().decode(ServerVectors.self, from: ProtocolFixtures.data("push/vectors/server-envelopes.json"))
     }
 
     /// Expected plaintext of a valid case, decoded from the vector's JSON.
     static func expectedPlaintext(_ name: String) throws -> PushPlaintext {
-        let url = repoRoot.appendingPathComponent("protocol/push/vectors/server-envelopes.json")
-        let root = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let root = try #require(JSONSerialization.jsonObject(with: ProtocolFixtures.data("push/vectors/server-envelopes.json")) as? [String: Any])
         let valid = try #require(root["valid"] as? [[String: Any]])
         let entry = try #require(valid.first { $0["name"] as? String == name })
         let json = try JSONSerialization.data(withJSONObject: try #require(entry["plaintext"]))

@@ -213,3 +213,43 @@ func testArtifactURL(_ name: String, in subdirectory: String? = nil) throws -> U
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     return directory.appending(path: name, directoryHint: .notDirectory)
 }
+
+/// Files from `OppiTests/Fixtures`, which the test bundle carries flat
+/// (`project.yml` bundles every non-source file of the OppiTests group).
+enum TestFixtures {
+    private final class BundleAnchor {}
+
+    static var bundle: Bundle { Bundle(for: BundleAnchor.self) }
+
+    static func url(_ fileName: String) throws -> URL {
+        let name = fileName as NSString
+        return try #require(
+            bundle.url(
+                forResource: name.deletingPathExtension,
+                withExtension: name.pathExtension.isEmpty ? nil : name.pathExtension
+            ),
+            "Missing \(fileName) in the OppiTests bundle"
+        )
+    }
+}
+
+/// The cross-language contract fixtures under the repository's `protocol/`
+/// directory. `project.yml` copies that directory into the OppiTests bundle,
+/// so tests read the shipped files without computing a path from their own
+/// source location.
+enum ProtocolFixtures {
+    /// `protocol/<path>` inside the test bundle. Throws when the file is missing.
+    static func url(_ path: String) throws -> URL {
+        let url = try #require(TestFixtures.bundle.resourceURL, "OppiTests bundle has no resource directory")
+            .appending(path: "protocol/\(path)", directoryHint: .notDirectory)
+        try #require(
+            FileManager.default.fileExists(atPath: url.path),
+            "Missing protocol/\(path) in the OppiTests bundle; is the protocol folder a resource in project.yml?"
+        )
+        return url
+    }
+
+    static func data(_ path: String) throws -> Data {
+        try Data(contentsOf: url(path))
+    }
+}
