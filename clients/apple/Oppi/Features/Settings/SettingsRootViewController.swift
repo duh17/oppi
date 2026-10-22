@@ -79,6 +79,7 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         // re-read on the way back. The cache size is measured here too: Clear
         // Local Cache on the Storage page writes nothing this screen observes.
         refreshCacheSize()
+        applyTitleDisplayMode()
         setNeedsUpdateProperties()
     }
 
@@ -98,10 +99,13 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
     /// chat's rail items use, and a trait change re-runs this pass.
     private func applyTitleDisplayMode() {
         let large = !SystemVerticalBar.traitIsActive(traitCollection)
+        // The bar's own flag, not the item's mode, is what makes a large title
+        // draw; it has to be set on the first pass too, where the mode already
+        // matches the one `init` set.
+        if large { navigationController?.navigationBar.prefersLargeTitles = true }
         let mode: UINavigationItem.LargeTitleDisplayMode = large ? .always : .never
         guard navigationItem.largeTitleDisplayMode != mode else { return }
         navigationItem.largeTitleDisplayMode = mode
-        if large { navigationController?.navigationBar.prefersLargeTitles = true }
     }
 
     @objc private func themeDidChange() { setNeedsUpdateProperties() }

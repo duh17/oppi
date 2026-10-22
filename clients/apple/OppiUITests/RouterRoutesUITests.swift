@@ -290,6 +290,12 @@ final class RouterRoutesUITests: XCTestCase {
             app.buttons["settings.addServer"].waitForExistence(timeout: 5),
             "The Servers section must offer Add Server"
         )
+        // App Settings is the root of its pages, so it keeps a large title: the
+        // bar is taller than an inline one (44 pt plus the large-title row).
+        XCTAssertGreaterThan(
+            settings.frame.height, 70,
+            "Settings must draw its large title (bar was \(settings.frame))"
+        )
         attachScreenshot("shell-settings")
         assertRunning()
 

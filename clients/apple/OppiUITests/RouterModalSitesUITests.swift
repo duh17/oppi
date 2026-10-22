@@ -305,6 +305,9 @@ final class RouterModalSitesUITests: XCTestCase {
             glyph.tap()
             XCTAssertTrue(detail.waitForExistence(timeout: 5), "Program status popover did not open")
             attachScreenshot("program-status-popover")
+            // Let the presentation settle first: a popover swallows taps while
+            // it animates in, which is not something an outside tap can fix.
+            XCTAssertTrue(waitForPopoverToSettle(detail), "Program status popover never settled")
             // The glyph sits in the bottom bar, so the popover opens upward from
             // the bottom of the screen and reaches where a fixed low point used
             // to be. Tap the grid above where it actually opened.
@@ -319,17 +322,27 @@ final class RouterModalSitesUITests: XCTestCase {
                 "The outside tap \(tap) must not land inside the popover \(popover)"
             )
             app.coordinate(withNormalizedOffset: point).tap()
-            // A popover still presenting swallows the first tap, and the
-            // system's top band does too: one more tap on the grid closes it.
-            if !waitForDisappearance(of: detail, timeout: 3) {
-                app.coordinate(withNormalizedOffset: point).tap()
-            }
             XCTAssertTrue(
                 waitForDisappearance(of: detail),
                 "A tap outside must close the popover (popover \(popover), tapped at \(tap))"
             )
             assertRunning()
         }
+    }
+
+    /// The popover stops moving and takes hits: its presentation animation is
+    /// over. Kept separate from `waitForExistence`, which returns as soon as the
+    /// element exists, when a tap outside would still be swallowed.
+    private func waitForPopoverToSettle(_ popover: XCUIElement, timeout: TimeInterval = 5) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        var previous = CGRect.null
+        while Date() < deadline {
+            let frame = popover.frame
+            if popover.isHittable, !frame.isEmpty, frame == previous { return true }
+            previous = frame
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        return false
     }
 
     /// A normalized point inside the app but above `popover`, so a tap there is
