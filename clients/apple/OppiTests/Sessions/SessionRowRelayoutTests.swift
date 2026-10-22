@@ -60,7 +60,11 @@ struct SessionRowRelayoutTests {
 
     /// The real session list, hosted at iPhone portrait width with one row in
     /// Compact, where every fact shares one detail line while it fits.
-    private func makeList() -> (list: SessionListCollection<Int, Int, Int, Int>, window: UIWindow) {
+    private func makeList(
+        width: CGFloat = 402,
+        height: CGFloat = 800,
+        sideSafeArea: CGFloat = 0
+    ) -> (list: SessionListCollection<Int, Int, Int, Int>, window: UIWindow) {
         let root = makeTestAppRoot(
             sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay(density: .compact))
         )
@@ -73,7 +77,8 @@ struct SessionRowRelayoutTests {
             onToggle: { _ in }
         )
         let controller = UIViewController()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 800))
+        controller.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: sideSafeArea, bottom: 0, right: sideSafeArea)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: height))
         list.collectionView.translatesAutoresizingMaskIntoConstraints = false
         controller.view.addSubview(list.collectionView)
         NSLayoutConstraint.activate([
@@ -157,13 +162,47 @@ struct SessionRowRelayoutTests {
         )
 
         // The two detail rows are drawn apart, not on top of each other.
-        if let workspace = label("tools", in: row), let gauge = label("87%", in: row) {
-            let workspaceFrame = workspace.convert(workspace.bounds, to: row)
-            let gaugeFrame = gauge.convert(gauge.bounds, to: row)
-            #expect(
-                workspaceFrame.maxY <= gaugeFrame.minY + 0.5,
-                "Detail rows overlap: workspace \(workspaceFrame), gauge \(gaugeFrame)"
-            )
+        let workspace = try #require(label("tools", in: row))
+        let gauge = try #require(label("32%", in: row))
+        let workspaceFrame = workspace.convert(workspace.bounds, to: row)
+        let gaugeFrame = gauge.convert(gauge.bounds, to: row)
+        #expect(
+            workspaceFrame.maxY <= gaugeFrame.minY + 0.5,
+            "Detail rows overlap: workspace \(workspaceFrame), gauge \(gaugeFrame)"
+        )
+    }
+
+    /// A notched iPhone in landscape (or an iPad) puts the safe area, or the
+    /// readable margin, beside the row. The list sizes a cell at the width its
+    /// row is later laid out at: sized for a narrower row, Compact would settle
+    /// two detail lines for a row that is then drawn with room for one, and the
+    /// cell would keep the taller height.
+    @Test func compactRowIsSizedForTheWidthItIsLaidOutAtBesideTheSafeArea() throws {
+        let (list, window) = makeList(width: 620, height: 402, sideSafeArea: 62)
+        defer { window.isHidden = true }
+        // Settle the self-sizing passes.
+        for _ in 0..<4 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            list.collectionView.layoutIfNeeded()
         }
+
+        let row = try #require(rowView(in: list), "No session row in the list's cell")
+        let workspace = try #require(label("tools", in: row))
+        let gauge = try #require(label("32%", in: row))
+        let workspaceFrame = workspace.convert(workspace.bounds, to: row)
+        let gaugeFrame = gauge.convert(gauge.bounds, to: row)
+        #expect(
+            abs(workspaceFrame.midY - gaugeFrame.midY) < 1,
+            "Compact fits the details on one line at this width, but drew two: workspace \(workspaceFrame), gauge \(gaugeFrame)"
+        )
+
+        // The cell is as tall as the one-line row it holds.
+        let (portrait, portraitWindow) = makeList()
+        defer { portraitWindow.isHidden = true }
+        let oneLineHeight = itemHeight(portrait)
+        #expect(
+            abs(itemHeight(list) - oneLineHeight) < 0.5,
+            "The cell kept the two-line height: \(itemHeight(list)) vs one line \(oneLineHeight)"
+        )
     }
 }
