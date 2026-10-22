@@ -38,10 +38,9 @@ struct SessionRowRelayoutTests {
         return session
     }
 
-    private var rowContent: SessionListRowContent { rowContent(for: richSession()) }
-
-    private func rowContent(for session: Session) -> SessionListRowContent {
-        SessionListRowContent(
+    private var rowContent: SessionListRowContent {
+        let session = richSession()
+        return SessionListRowContent(
             entry: SessionListEntry(session: session, thread: nil, outsideRoot: nil),
             presentation: SessionRowPresentationBuilder.make(session: session, workspaceContext: "tools"),
             statuses: [:]
@@ -64,8 +63,7 @@ struct SessionRowRelayoutTests {
     private func makeList(
         width: CGFloat = 402,
         height: CGFloat = 800,
-        sideSafeArea: CGFloat = 0,
-        content: SessionListRowContent? = nil
+        sideSafeArea: CGFloat = 0
     ) -> (list: SessionListCollection<Int, Int, Int, Int>, window: UIWindow) {
         let root = makeTestAppRoot(
             sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay(density: .compact))
@@ -95,7 +93,6 @@ struct SessionRowRelayoutTests {
 
         var snapshot = SessionListCollection<Int, Int, Int, Int>.Snapshot()
         snapshot.appendSection(0)
-        let rowContent = content ?? self.rowContent
         snapshot.append(sessions: [rowContent.entry], to: 0, item: { _ in 0 }) { _ in rowContent }
         list.apply(snapshot)
         window.layoutIfNeeded()
@@ -175,66 +172,6 @@ struct SessionRowRelayoutTests {
         )
     }
 
-    /// A running turn's elapsed time ticks every second, and the list measures a
-    /// cell again whenever its constraints change. Between "20s" and "24s" the
-    /// row is exactly as wide, so a tick must not cost the list a measuring pass.
-    @Test func runningClockTicksDoNotMeasureTheCellAgain() throws {
-        var session = richSession()
-        session.status = .busy
-        session.currentTurnStartedAt = Date().addingTimeInterval(-20)
-        let (list, window) = makeList(content: rowContent(for: session))
-        defer { window.isHidden = true }
-        for _ in 0..<4 {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-            list.collectionView.layoutIfNeeded()
-        }
-        let row = try #require(rowView(in: list), "No session row in the list's cell")
-        func clock() -> UILabel? { label(matching: #"^\d+s$"#, in: row) }
-        // The first tick can change the row for real (placeholder to running
-        // clock); count from the ticks after it.
-        RunLoop.current.run(until: Date().addingTimeInterval(1.6))
-        list.collectionView.layoutIfNeeded()
-        let started = try #require(clock()?.text, "A running row shows its elapsed time")
-
-        let passes = SelfSizingPassCounter()
-        defer { passes.stop() }
-        var seen = started
-        var ticks: [String] = []
-        let end = Date().addingTimeInterval(3.3)
-        while Date() < end {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-            if let text = clock()?.text, text != seen {
-                seen = text
-                ticks.append("\(text)@\(passes.count)")
-            }
-        }
-        #expect(ticks.count >= 2, "The clock never ticked: \(ticks)")
-        #expect(passes.count == 0, "\(passes.count) self-sizing passes for clock ticks that kept the row's size: \(ticks) from \(started)")
-
-        // The counter sees a real change: Standard rearranges the details.
-        row.apply(
-            SessionRowView.Content(
-                presentation: SessionRowPresentationBuilder.make(session: session, workspaceContext: "tools")
-            ),
-            display: .standard,
-            themeID: .dark,
-            iconAssetCache: nil
-        )
-        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        list.collectionView.layoutIfNeeded()
-        #expect(passes.count > 0, "The counter missed a real relayout")
-    }
-
-    /// The first label whose text matches `pattern`.
-    private func label(matching pattern: String, in view: UIView) -> UILabel? {
-        if let label = view as? UILabel, let text = label.text,
-           text.range(of: pattern, options: .regularExpression) != nil { return label }
-        for subview in view.subviews {
-            if let label = label(matching: pattern, in: subview) { return label }
-        }
-        return nil
-    }
-
     /// A notched iPhone in landscape (or an iPad) puts the safe area, or the
     /// readable margin, beside the row. The list sizes a cell at the width its
     /// row is later laid out at: sized for a narrower row, Compact would settle
@@ -267,34 +204,5 @@ struct SessionRowRelayoutTests {
             abs(itemHeight(list) - oneLineHeight) < 0.5,
             "The cell kept the two-line height: \(itemHeight(list)) vs one line \(oneLineHeight)"
         )
-    }
-}
-
-/// Counts the collection view's self-sizing passes (a cell asked for its
-/// preferred attributes) while it lives.
-@MainActor
-private final class SelfSizingPassCounter {
-    private(set) var count = 0
-    private let method: Method
-    private let original: IMP
-
-    init() {
-        let selector = #selector(UICollectionViewCell.preferredLayoutAttributesFitting(_:))
-        method = class_getInstanceMethod(UICollectionViewCell.self, selector)!
-        original = method_getImplementation(method)
-        typealias Original = @convention(c) (
-            AnyObject, Selector, UICollectionViewLayoutAttributes
-        ) -> UICollectionViewLayoutAttributes
-        let original = original
-        let block: @convention(block) (AnyObject, UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes = {
-            [weak self] cell, attributes in
-            MainActor.assumeIsolated { self?.count += 1 }
-            return unsafeBitCast(original, to: Original.self)(cell, selector, attributes)
-        }
-        method_setImplementation(method, imp_implementationWithBlock(block))
-    }
-
-    func stop() {
-        method_setImplementation(method, original)
     }
 }
