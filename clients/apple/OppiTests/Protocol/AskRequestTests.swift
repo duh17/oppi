@@ -1009,6 +1009,8 @@ struct AskRequestTests {
             )
         }
 
+        // The opener refreshes the record before it prepares the open.
+        await conn.refreshSessionRecordIfPossible(sessionId: "child")
         await conn.prepareExternalSessionOpen(sessionId: "child")
 
         #expect(conn.focusedSessionId == "child")
@@ -1048,6 +1050,7 @@ struct AskRequestTests {
             )
         }
 
+        await conn.refreshSessionRecordIfPossible(sessionId: sessionId)
         await conn.prepareExternalSessionOpen(sessionId: sessionId)
 
         let cached: CachedTrace?

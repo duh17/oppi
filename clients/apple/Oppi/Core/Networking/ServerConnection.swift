@@ -2660,21 +2660,18 @@ final class ServerConnection {
     ///
     /// If `/dialogs` is the first place we learn the workspace, re-enter so a
     /// live session can bind its stream after the ask card is restored.
-    /// `recordRefreshed`: the caller already ran `refreshSessionRecordIfPossible`
-    /// (to learn the lock scope before anything focuses the session).
+    /// The caller refreshes the session record first
+    /// (`refreshSessionRecordIfPossible`), so its scoped-lock gate runs before
+    /// anything here focuses the session.
     func prepareExternalSessionOpen(
         sessionId: String,
-        workspaceIdHint: String? = nil,
-        recordRefreshed: Bool = false
+        workspaceIdHint: String? = nil
     ) async {
-        // Claim before the first await: the session record fetch and dialog
+        // Claim before the first await: the timeline prefetch and dialog
         // hydration below are exactly the window in which a still-mounted
         // ChatViewController for another session re-enters and steals the transport.
         beginExternalSessionOpenClaim(for: sessionId)
         sessionStore.activeSessionId = sessionId
-        if !recordRefreshed {
-            await refreshSessionRecordIfPossible(sessionId: sessionId)
-        }
         await prefetchSessionTimelineIfPossible(sessionId: sessionId)
         let initialWorkspaceId = sessionReentryWorkspaceId(
             for: sessionId,

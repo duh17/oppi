@@ -732,8 +732,7 @@ final class AppOpener {
         let previousFocusedSessionId = connection.focusedSessionId
         await connection.prepareExternalSessionOpen(
             sessionId: sessionId,
-            workspaceIdHint: workspaceIdHint,
-            recordRefreshed: true
+            workspaceIdHint: workspaceIdHint
         )
         guard isCurrent(generation) else { return .finished }
 
@@ -747,9 +746,10 @@ final class AppOpener {
         ))
         guard isCurrent(generation) else { return .finished }
         guard unlocked else {
-            // Cancel leaves everything where it was: the target's active
-            // session, claim, and focus, and the server this open switched
-            // away from.
+            // Cancel restores the target's active session, claim, and focus,
+            // and the server this open switched away from. Seen state is not
+            // undone: focusing the session already marked it seen, locally
+            // and on the server. Only dialogs naming the workspace reach here.
             connection.abandonExternalSessionOpen(
                 sessionId: sessionId,
                 restoringActiveSessionId: previousActiveSessionId,

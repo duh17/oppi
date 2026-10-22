@@ -1243,6 +1243,86 @@ struct AppOpenerTests {
         #expect(connection.sessionStore.viewingSessionId == "current")
     }
 
+    @Test func cancellingALockOnlyDialogsRevealReturnsFocusToTheVisibleChat() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            authOutcomes: [.cancelled]
+        )
+        harness.addSession("current", workspaceId: "w1", to: "server-a")
+        harness.navigation.openWorkspaceSession(.init(
+            serverId: "server-a",
+            sessionId: "current",
+            workspaceId: "w1"
+        ))
+        let connection = harness.connection("server-a")
+        connection.focusSession("current")
+        stubLockedWorkspaceOnlyInDialogs(on: connection, harness: harness)
+
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "locked",
+            origin: .externalURL
+        )))
+        await harness.settle()
+
+        // The open focused the locked session before its dialogs named the
+        // workspace; the cancel hands focus and the stream back.
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "current")
+        #expect(connection.focusedSessionId == "current")
+        #expect(connection.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/current/stream")
+    }
+
+    @Test func cancellingALockOnlyDialogsRevealClosesTheLockedStream() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a")],
+            authOutcomes: [.cancelled]
+        )
+        let connection = harness.connection("server-a")
+        #expect(connection.focusedSessionId == nil)
+        stubLockedWorkspaceOnlyInDialogs(on: connection, harness: harness)
+
+        harness.opener.open(.session(SessionOpen(
+            serverId: "server-a",
+            sessionId: "locked",
+            origin: .externalURL
+        )))
+        await harness.settle()
+
+        // Nothing was focused before: the locked session's focus and stream close.
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+        #expect(connection.focusedSessionId == nil)
+        #expect(connection.focusedSessionStreamURLForTesting == nil)
+        #expect(connection.sessionStore.viewingSessionId == nil)
+    }
+
+    /// The session's record and timeline do not load; only its pending ask
+    /// (from `/dialogs`) names its workspace, `w2`, which is locked.
+    private func stubLockedWorkspaceOnlyInDialogs(on connection: ServerConnection, harness: OpenerHarness) {
+        connection._connectStreamForTesting = { AsyncStream { _ in } }
+        connection._getSessionRecordForTesting = { _ in throw URLError(.timedOut) }
+        connection._getSessionTraceForTesting = { _ in throw URLError(.timedOut) }
+        connection._getSessionDialogsForTesting = { _ in
+            APIClient.SessionDialogsResponse(
+                dialogs: [
+                    ExtensionUIRequest.DialogSnapshot(
+                        id: "ask-locked",
+                        method: "ask",
+                        workspaceId: "w2",
+                        questions: [
+                            AskQuestion(id: "q1", question: "Answer me", options: [], multiSelect: false),
+                        ],
+                        allowCustom: true
+                    ),
+                ],
+                serverNow: 1
+            )
+        }
+        harness.scopedLock.sessionLookup = { [weak harness] serverId, sessionId in
+            harness?.connection(serverId).sessionStore.session(id: sessionId)
+        }
+        harness.scopedLock.lock(.workspace(serverId: "server-a", workspaceId: "w2"))
+    }
+
     @Test func aReceiptForAnUnreadableServerSurvivesLaunchAndParks() async throws {
         let harness = OpenerHarness(
             servers: [makeServer("server-a")],
