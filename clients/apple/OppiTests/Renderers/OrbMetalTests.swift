@@ -752,15 +752,13 @@ struct MicButtonOrbLayoutTests {
         }
     }
 
+    /// The idle button paints a solid disc; listening shows only the orb, so almost none of
+    /// that disc may remain. (The UIKit sibling asserts the same through `micFillIsClear`.)
     @Test func swiftUIListeningOmitsTheFillDiscWhenShowingAnOrb() throws {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appending(path: "Oppi/Features/Chat/Composer/MicButtonLabel.swift")
-        let source = try String(contentsOf: url, encoding: .utf8)
-        #expect(source.contains("if !showsOrb {"))
-        #expect(source.contains("Circle().fill(Color.themeBgHighlight)"))
+        let idle = try solidMicLabelPixelCount(isRecording: false)
+        let listening = try solidMicLabelPixelCount(isRecording: true)
+        #expect(idle > 1_000, "the idle button should paint its fill disc: \(idle) solid pixels")
+        #expect(listening * 4 < idle, "listening kept the fill disc: \(listening) solid pixels vs \(idle) idle")
     }
 }
 
@@ -992,6 +990,53 @@ private func micButtonFitSize(diameter: CGFloat) -> CGSize {
     let host = UIHostingController(rootView: label)
     host.safeAreaRegions = []
     return host.sizeThatFits(in: CGSize(width: 400, height: 400))
+}
+
+/// Pixels of a 44 pt composing-style `MicButtonLabel` (rendered at scale 1) that are
+/// almost fully opaque.
+@MainActor
+private func solidMicLabelPixelCount(isRecording: Bool) throws -> Int {
+    guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else {
+        throw TestHostError.missingScene
+    }
+    let window = UIWindow(windowScene: scene)
+    window.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+    let host = UIHostingController(
+        rootView: MicButtonLabel(
+            isRecording: isRecording,
+            isProcessing: false,
+            voiceSpectrum: VoiceSpectrumFrame(level: 0.4),
+            languageLabel: "EN",
+            accentColor: .blue,
+            engineBadge: .onDevice,
+            diameter: 44,
+            dictationStyle: .composing
+        )
+    )
+    host.view.backgroundColor = .clear
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    defer { window.rootViewController = nil; window.isHidden = true }
+    host.view.layoutIfNeeded()
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.opaque = false
+    let image = UIGraphicsImageRenderer(bounds: host.view.bounds, format: format).image { _ in
+        host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+    }
+    guard let cgImage = image.cgImage else { throw TestHostError.timeout("no mic label snapshot") }
+    var bytes = [UInt8](repeating: 0, count: cgImage.width * cgImage.height * 4)
+    let drew = bytes.withUnsafeMutableBytes { raw -> Bool in
+        guard let context = CGContext(
+            data: raw.baseAddress, width: cgImage.width, height: cgImage.height,
+            bitsPerComponent: 8, bytesPerRow: cgImage.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return false }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+        return true
+    }
+    guard drew else { throw TestHostError.timeout("no mic label bitmap context") }
+    return stride(from: 3, to: bytes.count, by: 4).reduce(0) { $0 + (bytes[$1] >= 250 ? 1 : 0) }
 }
 
 private func firstSubview<T: UIView>(of root: UIView, type: T.Type) -> T? {

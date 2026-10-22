@@ -1,5 +1,8 @@
 import Foundation
+import SwiftUI
 import Testing
+import UIKit
+import Vision
 @testable import Oppi
 
 @Suite("OrbGeometry")
@@ -513,21 +516,38 @@ struct ThinkingOrbAttributionTests {
         #expect(ThinkingOrbAttribution.originalDesignURLString == "https://github.com/Jakubantalik/thinking-orbs")
         #expect(ThinkingOrbAttribution.swiftPortURLString == "https://github.com/haplollc/ThinkingOrbs")
     }
+    /// Renders the Acknowledgments page and reads what is on screen: both contributors, their
+    /// roles, and both repositories must be visible to the user, not merely present in source.
+    @MainActor
     @Test func acknowledgmentsViewNamesRolesAndBothRepositories() throws {
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appending(path: "Shared/Renderers/Orbs/ThinkingOrbAcknowledgmentsView.swift")
-        let source = try String(contentsOf: url, encoding: .utf8)
-        #expect(source.contains("Jakub Antalik — original thinking-orbs designs and engine"))
-        #expect(source.contains("Haplo LLC — Swift ThinkingOrbs port"))
-        #expect(source.contains("originalDesignURL") && source.contains("swiftPortURL") && source.contains("licenseText"))
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 900)
+        let host = UIHostingController(rootView: ThinkingOrbAcknowledgmentsView())
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.rootViewController = nil; window.isHidden = true }
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+        let cgImage = try #require(image.cgImage)
+        let recognize = VNRecognizeTextRequest()
+        recognize.recognitionLevel = .accurate
+        try VNImageRequestHandler(cgImage: cgImage).perform([recognize])
+        let shown = (recognize.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: " ").lowercased()
+        #expect(shown.contains("jakub antalik"), "designer credit not visible: \(shown)")
+        #expect(shown.contains("original thinking-orbs designs"), "designer role not visible: \(shown)")
+        #expect(shown.contains("haplo llc"), "port credit not visible: \(shown)")
+        #expect(shown.contains("swift thinkingorbs port"), "port role not visible: \(shown)")
+        #expect(shown.contains("jakubantalik/thinking-orbs"), "original repository not visible: \(shown)")
+        #expect(shown.contains("haplollc/thinkingorbs"), "port repository not visible: \(shown)")
     }
+    /// `Shared/Renderers/Orbs/LICENSE` is copied into the test bundle (project.yml), so this reads
+    /// the file the repository ships rather than a path computed from this source file.
     @Test func bundledLicenseFileKeepsBothCopyrights() throws {
-        let appleRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let license = try String(
-            contentsOf: appleRoot.appending(path: "Shared/Renderers/Orbs/LICENSE"),
-            encoding: .utf8
-        )
+        let license = try String(contentsOf: TestFixtures.url("LICENSE"), encoding: .utf8)
         #expect(license.contains("Haplo LLC"))
         #expect(license.contains("Jakub Antalik"))
         #expect(license.contains("MIT License"))

@@ -351,12 +351,54 @@ struct MarkdownInlineAudioTests {
         #expect(FileBrowserContentRenderingPolicy.audioPlayerTitlePresentation == .hostOwnsTitle)
     }
 
-    @Test("full-screen audio exposes the standard share action when file bytes are available")
-    func fullScreenAudioShareContract() throws {
-        let markdownAudio = try nativeMarkdownAudioSource()
-        #expect(markdownAudio.contains("shareFileData:"))
-        #expect(markdownAudio.contains("source.loadFileData()"))
-        #expect(markdownAudio.contains("source = try await shareSourceProvider(embed)"))
+    @MainActor
+    @Test("full-screen audio exposes the standard share action and shares the embed's file bytes")
+    func fullScreenAudioSharesTheEmbedsFileBytes() async throws {
+        let fileBytes = Data("shared audio bytes".utf8)
+        let server = try AuthenticatedRangeHTTPServer(body: fileBytes, token: "Bearer audio-share", filename: "clip.m4a")
+        defer { server.stop() }
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
+        let embed = try #require(audioEmbeds(in: build("![[clip.m4a]]", baseURL: baseURL).segments).first)
+
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.rootViewController?.dismiss(animated: false); window.rootViewController = nil; window.isHidden = true }
+
+        let view = NativeMarkdownAudioView()
+        host.view.addSubview(view)
+        view.frame = CGRect(x: 0, y: 100, width: 320, height: 80)
+        view.apply(
+            embed: embed,
+            sourceProvider: { _ in
+                AuthenticatedMediaSource(
+                    url: server.url,
+                    authorizationHeaderValue: "Bearer audio-share",
+                    tlsCertFingerprint: nil,
+                    contentTypeHint: "audio/mp4",
+                    sourceFileExtension: "m4a"
+                )
+            },
+            audioPlayer: AudioPlayerService(),
+            renderingMode: .live,
+            preferredDisplayWidth: 320
+        )
+        view.layoutIfNeeded()
+        let expand = try #require(timelineAllViews(in: view).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier?.hasSuffix(".audio.expand") == true
+        })
+        expand.sendActions(for: .touchUpInside)
+
+        let player = try #require(host.presentedViewController as? AudioLyricsPlayerViewController)
+        player.loadViewIfNeeded()
+        let share = try #require(timelineAllViews(in: player.view).compactMap { $0 as? AudioFileShareButton }.first)
+        #expect(!share.isHidden, "the full-screen player must offer Share when the embed has file bytes")
+        #expect(share.filename == "clip.m4a")
+        let loadShareData = try #require(share.loadData)
+        #expect(try await loadShareData() == fileBytes)
     }
 
     @MainActor
@@ -850,15 +892,6 @@ struct MarkdownInlineAudioTests {
     }
 }
 
-private func nativeMarkdownAudioSource() throws -> String {
-    let sourceURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: "Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownAudioView.swift")
-    return try String(contentsOf: sourceURL, encoding: .utf8)
-}
-
 private func inlineAudioColor(_ lhs: UIColor?, approximatelyEquals rhs: UIColor, tolerance: CGFloat = 0.01) -> Bool {
     guard let lhs else { return false }
 
@@ -906,12 +939,5 @@ private func captionPlayerController(in host: UIViewController) -> AVPlayerViewC
 }
 
 private func knownGoodH264URL() throws -> URL {
-    let url = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appendingPathComponent("Fixtures/known-good-h264.mp4")
-    guard FileManager.default.fileExists(atPath: url.path) else {
-        throw CocoaError(.fileNoSuchFile)
-    }
-    return url
+    try TestFixtures.url("known-good-h264.mp4")
 }
