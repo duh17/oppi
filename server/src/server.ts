@@ -31,6 +31,7 @@ import { RouteHandler } from "./routes/index.js";
 import { SdkBackend } from "./sdk-backend.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
 import { httpOpsMetricSamples, observeHttpResponseBody } from "./http-request-metrics.js";
+import { markLegacyControlDomains } from "./legacy-app-compat.js";
 import { defaultModelRefFromGlobalSettings, ModelCatalog } from "./model-catalog.js";
 import { ExtensionProviderCatalog } from "./extension-model-discovery.js";
 import type { ProgramStatusSync } from "./program-status.js";
@@ -1646,6 +1647,7 @@ export class Server {
     const method = req.method || "GET";
 
     res.setHeader("X-Oppi-Protocol", "2");
+    markLegacyControlDomains(res, req);
 
     // Record HTTP duration and body bytes when the response finishes. One
     // gating decision covers both. Routine health, stats, capability, session
@@ -1918,6 +1920,7 @@ export class Server {
 
     const upgradeReceivedAt = Date.now();
     wss.handleUpgrade(req, socket, head, (ws) => {
+      markLegacyControlDomains(ws, req);
       this.socketPrincipals.set(ws, principal);
       ws.on("close", () => {
         this.clearAccessExpiryTimer(ws);

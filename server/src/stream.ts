@@ -33,6 +33,7 @@ import {
   type DictationClientMessage,
   type DictationServerMessage,
 } from "./dictation-types.js";
+import { stringifyForApp } from "./legacy-app-compat.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { admitSessionRoute } from "./session-route-scope.js";
@@ -525,7 +526,7 @@ export class BoundSessionStreamMux {
         return false;
       }
       msgSent += 1;
-      ws.send(JSON.stringify(msg));
+      ws.send(stringifyForApp(ws, msg));
       if (fromSession) {
         metrics?.record("server.ws_message_sent", 1, {
           type: msg.type,

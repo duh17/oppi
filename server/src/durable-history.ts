@@ -177,11 +177,14 @@ export async function readDurableTrace(
   entryRenderers?: LiveEntryRendererSet,
   /** Where user-message image bytes are stored; without it they stay data URIs. */
   images?: { dataDir: string; sessionId: string },
+  /** Keep user images as data URIs in `text` (`TraceReadOptions.inlineUserImages`). */
+  inlineUserImages?: boolean,
 ): Promise<TraceEvent[]> {
   return buildSessionContext(await projectEntries(harness, await allEntries(harness, id)), {
     view,
     entryRenderers,
     ...(images ? { attachmentDataDir: images.dataDir, attachmentSessionId: images.sessionId } : {}),
+    ...(inlineUserImages ? { inlineUserImages: true } : {}),
   });
 }
 

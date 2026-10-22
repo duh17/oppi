@@ -37,6 +37,17 @@ Oppi uses HTTP snapshots as the authority for workspace and session-list state. 
 
 The authenticated `/control-sessions` HTTP route family mirrors focused-session detail, trace page and outline, events, commands, stop, resume, delete, tool-output, and attachment operations. A session belongs to this scope only if it has no `workspaceId` and carries explicit `control` metadata with `domain`, `intent`, and optional target identity. A missing workspace alone never declares control scope.
 
+## App capabilities and older builds
+
+Apps update through TestFlight and the server through npm, so a server regularly talks to an older build. The current app sends `X-Oppi-Capabilities` (comma-separated, case-insensitive tokens) on every request and WebSocket upgrade from its API and stream clients (the Share extension, which reads no session or trace shapes, does not send it). Each token says the app understands one newer shape:
+
+| Token             | The app understands                                                                                         | Without it, an Apple URLSession client gets                                                                                          | Delete the fallback when     |
+| ----------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------- |
+| `user-image-refs` | A user trace event's images as `media[]` refs into the session attachment store                             | Images inline as `data:` URIs in the event's `text`, no `media`, and nothing stored. Applies to the app history routes (`/workspaces/…/sessions/:id` and `/trace-page`, and the `/control-sessions` mirrors), classic and durable. Build 55 and older read only data URIs. | Build 55 is unsupported      |
+| `control-domains` | Any `control.domain` string                                                                                 | A `control.domain` outside `agents`, `schedules`, `skills`, `workspaces` (`extensions`, `themes`) sent as `agents`, in every HTTP JSON body and in the bound-session and app-event WebSocket frames. Builds 53 and 54 decode the domain as a closed enum, so one unknown value fails the whole session list or drops a frame. | Build 54 is unsupported      |
+
+A request counts as an older app only when its token is absent **and** its `User-Agent` contains `CFNetwork/`, which URLSession sends by default on HTTP and on the WebSocket upgrade. The CLI, scripts, tests, and other clients keep the current shape, and a missing or unfamiliar user agent also gets the current shape. The build number is not used: unbumped development builds of the current app still report an older one. The generic `/sessions/:id/trace` route used by the CLI always sends refs. See `server/src/legacy-app-compat.ts`.
+
 ## Updating
 
 Ordinary protocol tests never write tracked JSON. They build the canonical examples in memory and fail when the committed bytes differ. The conversation stream golden is not compared by any server test; it changes only when regenerated. To deliberately regenerate the fixtures, run:

@@ -43,6 +43,7 @@ export function makeRequest(body?: unknown): IncomingMessage {
     socket?: { remoteAddress?: string };
   };
   req.socket = { remoteAddress: "127.0.0.1" };
+  req.headers = {};
   return req;
 }
 
@@ -51,6 +52,7 @@ export function makeRawRequest(body: Buffer | string): IncomingMessage {
     socket?: { remoteAddress?: string };
   };
   req.socket = { remoteAddress: "127.0.0.1" };
+  req.headers = {};
   return req;
 }
 

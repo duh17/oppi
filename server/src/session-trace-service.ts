@@ -129,6 +129,8 @@ export class SessionTraceService {
     session: Session;
     traceView?: SessionTraceViewMode;
     includePresentationSegments?: boolean;
+    /** Keep user images as data URIs in `text`, for an app that cannot read stored-image refs. */
+    inlineUserImages?: boolean;
   }): Promise<SessionTraceResult> {
     const traceView = params.traceView ?? "context";
     const live = await this.deps.sessionRuntimes.refreshSessionState(params.session.id);
@@ -139,8 +141,18 @@ export class SessionTraceService {
     const entryRenderers = this.liveEntryRenderers(params.session.id);
 
     let trace =
-      (await this.deps.sessionRuntimes.getServerDurableTrace?.(params.session.id, traceView)) ??
-      this.loadSessionTrace(hydratedSession, traceView, liveLeafId, entryRenderers);
+      (await this.deps.sessionRuntimes.getServerDurableTrace?.(
+        params.session.id,
+        traceView,
+        params.inlineUserImages,
+      )) ??
+      this.loadSessionTrace(
+        hydratedSession,
+        traceView,
+        liveLeafId,
+        entryRenderers,
+        params.inlineUserImages,
+      );
 
     if (!trace || trace.length === 0) {
       const traceOptions = this.traceReadOptions({
@@ -148,6 +160,7 @@ export class SessionTraceService {
         view: traceView,
         leafId: liveLeafId,
         entryRenderers,
+        inlineUserImages: params.inlineUserImages,
       });
 
       if (live?.sessionFile) {
@@ -165,7 +178,13 @@ export class SessionTraceService {
       const refreshed = this.deps.storage.getSession(params.session.id);
       if (refreshed && (!trace || trace.length === 0)) {
         this.deps.ensureSessionContextWindow(refreshed);
-        trace = this.loadSessionTrace(refreshed, traceView, liveLeafId, entryRenderers);
+        trace = this.loadSessionTrace(
+          refreshed,
+          traceView,
+          liveLeafId,
+          entryRenderers,
+          params.inlineUserImages,
+        );
       }
     }
 
@@ -187,6 +206,8 @@ export class SessionTraceService {
     targetEvents?: number;
     previewBytes?: number;
     includePresentationSegments?: boolean;
+    /** Keep user images as data URIs in `text`, for an app that cannot read stored-image refs. */
+    inlineUserImages?: boolean;
   }): Promise<SessionTracePageResult | null> {
     const live = await this.deps.sessionRuntimes.refreshSessionState(params.session.id);
     const refreshedSession = this.deps.storage.getSession(params.session.id) || params.session;
@@ -202,6 +223,7 @@ export class SessionTraceService {
         aroundEntryId: params.aroundEntryId,
         targetEvents: params.targetEvents,
         previewBytes: params.previewBytes,
+        ...(params.inlineUserImages ? { inlineUserImages: true } : {}),
       },
     );
     if (durablePage) {
@@ -252,6 +274,7 @@ export class SessionTraceService {
       previewBytes: params.previewBytes,
       attachmentDataDir: this.traceBaseDir(),
       attachmentSessionId: params.session.id,
+      ...(params.inlineUserImages ? { inlineUserImages: true } : {}),
       ...(!params.cursor && !params.aroundEntryId && live?.leafId !== undefined
         ? { leafId: live.leafId }
         : {}),
@@ -298,6 +321,7 @@ export class SessionTraceService {
     traceView: SessionTraceViewMode = "context",
     leafId?: string | null,
     entryRenderers?: LiveEntryRendererSet,
+    inlineUserImages?: boolean,
   ): TraceEvent[] | null {
     const baseDir = this.traceBaseDir();
     const traceOptions = this.traceReadOptions({
@@ -305,6 +329,7 @@ export class SessionTraceService {
       view: traceView,
       leafId,
       entryRenderers: entryRenderers ?? this.liveEntryRenderers(session.id),
+      inlineUserImages,
     });
     let trace = readSessionTrace(baseDir, session.id, session.workspaceId, traceOptions);
 
@@ -511,11 +536,13 @@ export class SessionTraceService {
     view?: SessionTraceViewMode;
     leafId?: string | null;
     entryRenderers?: LiveEntryRendererSet;
+    inlineUserImages?: boolean;
   }): TraceReadOptions {
     return {
       view: params.view ?? "context",
       attachmentDataDir: this.traceBaseDir(),
       attachmentSessionId: params.sessionId,
+      ...(params.inlineUserImages ? { inlineUserImages: true } : {}),
       ...(params.leafId !== undefined ? { leafId: params.leafId } : {}),
       ...(params.entryRenderers ? { entryRenderers: params.entryRenderers } : {}),
     };

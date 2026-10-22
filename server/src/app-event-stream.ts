@@ -20,6 +20,7 @@ import type {
   Session,
   SessionSummary,
 } from "./types.js";
+import { stringifyForApp } from "./legacy-app-compat.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 
@@ -183,7 +184,7 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
         return false;
       }
       msgSent += 1;
-      ws.send(JSON.stringify(message));
+      ws.send(stringifyForApp(ws, message));
       metrics?.record("server.ws_message_sent", 1, {
         type: message.type,
         level: "app_event",

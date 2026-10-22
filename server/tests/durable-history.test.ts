@@ -27,6 +27,8 @@ afterEach(async () => {
   await Promise.all(harnesses.splice(0).map((harness) => harness.close(context)));
 });
 
+const IMAGE_BASE64 = Buffer.from("durable-history-image-bytes").toString("base64");
+
 function assistant(
   text: string,
   stopReason: AssistantMessage["stopReason"],
@@ -68,6 +70,7 @@ async function history(options: {
   tool?: boolean;
   prefix?: number;
   card?: boolean;
+  image?: boolean;
 }) {
   const dir = mkdtempSync(join(tmpdir(), "oppi-durable-history-"));
   const storage = await openNodeSqliteStorage(join(dir, "history.sqlite"));
@@ -95,6 +98,17 @@ async function history(options: {
         content: [{ type: "text", text: "retained result" }],
         isError: false,
         timestamp: 2,
+      },
+    ]);
+  if (options.image)
+    await append([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "a photo" },
+          { type: "image", data: IMAGE_BASE64, mimeType: "image/png" },
+        ],
+        timestamp: 3,
       },
     ]);
   await append([{ role: "user", content: "between one", timestamp: 3 }]);
@@ -218,4 +232,42 @@ it("uses the same renderer set for cards and invalidates cursors when its versio
     entryRenderers: changed,
   });
   expect(stale.page.staleCursor).toBe(true);
+});
+
+it("keeps a user photo inline for an app that cannot read stored-image refs", async () => {
+  const f = await history({ stopped: false, image: true });
+  const dataDir = mkdtempSync(join(tmpdir(), "oppi-durable-history-images-"));
+  const images = { dataDir, sessionId: "session-1" };
+  const photo = (events: TraceEvent[]) => events.find((event) => event.text?.startsWith("a photo"));
+
+  const stored = photo(await readDurableTrace(f.harness, f.id, "full", undefined, images));
+  expect(stored?.text).toBe("a photo");
+  expect(stored?.media).toHaveLength(1);
+  const storedPage = photo(
+    (
+      await readDurableTracePage(f.harness, f.id, {
+        attachmentDataDir: dataDir,
+        attachmentSessionId: "session-1",
+      })
+    ).trace,
+  );
+  expect(storedPage?.media).toHaveLength(1);
+
+  const inline = `a photo\ndata:image/png;base64,${IMAGE_BASE64}`;
+  const inlineFull = photo(
+    await readDurableTrace(f.harness, f.id, "full", undefined, images, true),
+  );
+  expect(inlineFull?.text).toBe(inline);
+  expect(inlineFull?.media).toBeUndefined();
+  const inlinePage = photo(
+    (
+      await readDurableTracePage(f.harness, f.id, {
+        attachmentDataDir: dataDir,
+        attachmentSessionId: "session-1",
+        inlineUserImages: true,
+      })
+    ).trace,
+  );
+  expect(inlinePage?.text).toBe(inline);
+  expect(inlinePage?.media).toBeUndefined();
 });

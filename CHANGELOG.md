@@ -165,9 +165,9 @@ Example:
 
 - **Server:** Existing servers keep the `images.autoResize: false` saved in `config.json`. Run `oppi config set images.autoResize true` for faster image sends, or keep `false` to store full-size originals in sessions.
 - **Server:** The first start opens each durable store (`$OPPI_DATA_DIR/durable/`) with pi-durable 1.4.0, which migrates its SQLite file for good: an `oppi-server` built on Pi 1.3.0 or earlier cannot open it afterwards, so durable sessions do not survive a downgrade past this release. Classic sessions are unaffected.
-- **Compatibility:** Build 55 and older show no images in chat history for user messages once the server updates, because history now refers to stored attachments; update the app together with the server.
+- **Compatibility:** Build 55 and older keep showing user photos in chat history: the server sends them inline, as before, to apps that do not declare stored-image support, so those chats load at their previous size. Update to Build 56 to get the smaller history.
 - **Compatibility:** Build 56 requires `oppi-server@0.53.0` and `oppi-mirror@0.53.0`; update the app and the server together. Against 0.52.0, Live Voice fails to start, read aloud and Server Metrics are hidden, push alerts can show only "You have a new notification", durable chats miss streamed cards and older pages, and **Edit with Oppi** on an extension fails.
-- **Compatibility:** After an extension has had an **Edit with Oppi** session in the last 3 days, Builds 53 and 54 cannot load that server's session list or finish pairing from an invite.
+- **Compatibility:** Builds 53 and 54 load the session list and pair from an invite while an extension or theme **Edit with Oppi** session exists; they show it as an ordinary control session.
 - **Server:** Durable extensions found only by the file name `durable.ts`, or exported with `defineDurableExtension`, no longer load. Declare the entry in `package.json` and default-export the extension.
 - **Relay:** Deploy the push relay before shipping an app build with Live Activities: the app's Live Activity state upload and the server's Live Activity sends use endpoints an older relay does not have.
 - **Server:** `experimental.desktopLiveView` is gone. The server ignores it in an existing `config.json`, but `oppi config validate` reports it as an unknown key until you delete it.

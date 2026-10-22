@@ -1,10 +1,24 @@
 import Foundation
 
 enum ServerAuthorization {
+    /// Newer shapes this build decodes, sent by the app's API and stream clients (HTTP and
+    /// WebSocket upgrades) through `apply`.
+    /// Without them a server treats an Apple URLSession client as an older build and sends the
+    /// older shape: user images inline in `text` instead of stored `media` refs, and control
+    /// domains outside the four Builds 53 and 54 know rewritten to `agents`.
+    /// Server side: `server/src/legacy-app-compat.ts`; wire contract: `protocol/README.md`.
+    static let capabilitiesHeader = "X-Oppi-Capabilities"
+    static let capabilities = "user-image-refs, control-domains"
+
     static func headerValue(token: String) -> String { "Bearer \(token)" }
 
+    /// Sets the bearer and the capability header. `APIClient`, `WebSocketClient`,
+    /// `AppEventStreamClient`, and `DictationStreamClient` authorize through here, so every
+    /// session, trace, and stream request carries the header. The Share extension's sender sets
+    /// its own bearer and is treated as an older app; it reads no control domain or trace.
     static func apply(token: String, to request: inout URLRequest) {
         request.setValue(headerValue(token: token), forHTTPHeaderField: "Authorization")
+        request.setValue(capabilities, forHTTPHeaderField: capabilitiesHeader)
     }
 
     static func resolvedToken(_ resolved: String?, fallback: String) -> String {

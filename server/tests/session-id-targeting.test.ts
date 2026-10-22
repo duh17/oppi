@@ -82,7 +82,7 @@ describe("session targeting uses Pi-native Session.id", () => {
           method: "GET",
           path: `/sessions/${PI_SESSION_ID}`,
           url: new URL(`http://localhost/sessions/${PI_SESSION_ID}`),
-          req: {} as never,
+          req: makeRequest() as never,
           res: getRes as never,
         }),
       ).toBe(true);
@@ -97,7 +97,7 @@ describe("session targeting uses Pi-native Session.id", () => {
           method: "GET",
           path: `/workspaces/ws-1/sessions/${PI_SESSION_ID}`,
           url: new URL(`http://localhost/workspaces/ws-1/sessions/${PI_SESSION_ID}`),
-          req: {} as never,
+          req: makeRequest() as never,
           res: inspectRes as never,
         }),
       ).toBe(true);
@@ -111,7 +111,7 @@ describe("session targeting uses Pi-native Session.id", () => {
           method: "POST",
           path: `/workspaces/ws-1/sessions/${PI_SESSION_ID}/resume`,
           url: new URL(`http://localhost/workspaces/ws-1/sessions/${PI_SESSION_ID}/resume`),
-          req: {} as never,
+          req: makeRequest() as never,
           res: resumeRes as never,
         }),
       ).toBe(true);
@@ -146,7 +146,7 @@ describe("session targeting uses Pi-native Session.id", () => {
           method: "GET",
           path: `/control-sessions/${PI_SESSION_ID}`,
           url: new URL(`http://localhost/control-sessions/${PI_SESSION_ID}`),
-          req: {} as never,
+          req: makeRequest() as never,
           res: getRes as never,
         }),
       ).toBe(true);
@@ -160,7 +160,7 @@ describe("session targeting uses Pi-native Session.id", () => {
           method: "GET",
           path: `/control-sessions/${WRAPPER_ID}`,
           url: new URL(`http://localhost/control-sessions/${WRAPPER_ID}`),
-          req: {} as never,
+          req: makeRequest() as never,
           res: wrapperRes as never,
         }),
       ).toBe(true);
@@ -190,7 +190,7 @@ describe("session targeting uses Pi-native Session.id", () => {
           method: "GET",
           path: `/sessions/${WRAPPER_ID}`,
           url: new URL(`http://localhost/sessions/${WRAPPER_ID}`),
-          req: {} as never,
+          req: makeRequest() as never,
           res: wrapperRes as never,
         }),
       ).toBe(true);
@@ -204,7 +204,7 @@ describe("session targeting uses Pi-native Session.id", () => {
           method: "POST",
           path: `/workspaces/ws-1/sessions/${WRAPPER_ID}/resume`,
           url: new URL(`http://localhost/workspaces/ws-1/sessions/${WRAPPER_ID}/resume`),
-          req: {} as never,
+          req: makeRequest() as never,
           res: aliasRes as never,
         }),
       ).toBe(true);

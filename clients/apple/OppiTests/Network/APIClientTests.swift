@@ -939,6 +939,33 @@ struct APIClientTests {
         #expect(trace.count == 1)
     }
 
+    /// A server sends an Apple URLSession client without this header the older history shapes
+    /// (inline photos, four control domains); see `server/src/legacy-app-compat.ts`.
+    @Test func sessionHistoryRequestDeclaresStoredImageAndControlDomainSupport() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspaces/w1/sessions/s1/trace-page")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk_test")
+            #expect(
+                request.value(forHTTPHeaderField: "X-Oppi-Capabilities")
+                    == "user-image-refs, control-domains"
+            )
+            return self.mockResponse(json: """
+            {
+                "session":{"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0},
+                "trace":[],
+                "page":{"hasOlder":false,"olderCursor":null,"traceVersion":"","previewBytes":4096,"staleCursor":false},
+                "metrics":{"rawEntryCount":0,"traceEventCount":0,"selectedRawEntryCount":0,"jsonlBytes":0,"scannedBytes":0,"readMs":0,"parseMs":0,"selectMs":0,"formatMs":0,"previewMs":0}
+            }
+            """)
+        }
+
+        let response = try await client.getWorkspaceSessionTracePage(workspaceId: "w1", sessionId: "s1")
+        #expect(response.session.id == "s1")
+    }
+
     @Test func getSessionTracePageDecodesPageMetadataAndPreviewFields() async throws {
         let client = makeClient()
         defer { cleanup() }

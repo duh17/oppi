@@ -1319,7 +1319,7 @@ describe("sessions module", () => {
         method: "GET",
         path: "/workspaces/ws-1/sessions/mirror-1",
         url: new URL("http://localhost/workspaces/ws-1/sessions/mirror-1"),
-        req: {} as never,
+        req: makeRequest() as never,
         res: res as never,
       });
 
