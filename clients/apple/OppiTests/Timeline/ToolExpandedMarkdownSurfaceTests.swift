@@ -36,7 +36,7 @@ struct ToolExpandedMarkdownSurfaceTests {
         #expect(labelText.isEmpty)
     }
 
-    @Test func liveViewportDropsParsedContentOnCollapseAndOnASurfaceSwitch() throws {
+    @Test func liveViewportKeepsParsedContentThroughCollapseButNotASurfaceSwitch() throws {
         let text = (0..<40).map { "Paragraph \($0) of the streaming document." }.joined(separator: "\n\n")
         let view = ToolTimelineRowContentView(configuration: markdownConfiguration(text, isDone: false))
         _ = fittedTimelineSize(for: view, width: 360)
@@ -47,8 +47,8 @@ struct ToolExpandedMarkdownSurfaceTests {
         view.configuration = collapsedConfiguration()
         _ = fittedTimelineSize(for: view, width: 360)
         #expect(
-            stack.arrangedSubviews.isEmpty,
-            "Collapsing drops the parsed document: a reused cell must not inherit another tool call's parse"
+            !stack.arrangedSubviews.isEmpty,
+            "Collapsing keeps the parsed document so expanding again does not reparse it"
         )
 
         view.configuration = codeConfiguration()
@@ -59,24 +59,38 @@ struct ToolExpandedMarkdownSurfaceTests {
         )
     }
 
+    /// A reused tool cell can move to another item without a retirement. The
+    /// second call is longer than the first and repeats the first call's last 64
+    /// bytes at the same byte offset, which is exactly the parser's append
+    /// proof: with the item-id reset removed the first call's frozen prefix
+    /// survives and the second call's own opening text never renders.
     @Test func reusedCellDoesNotKeepAnotherItemsParsedContent() throws {
-        let firstText = (0..<20).map { "First tool call paragraph \($0) with prose." }.joined(separator: "\n\n")
+        // The closing line is what a longer second call repeats. It carries none
+        // of the first call's paragraph text, so a leaked prefix is unambiguous.
+        let firstText = (0..<20)
+            .map { "First tool call paragraph \($0) with prose." }
+            .joined(separator: "\n\n")
+            + "\n\nclosing line of the first call alpha bravo charlie delta echo foxtrot golf hotel"
+        let sharedTail = String(decoding: firstText.utf8.suffix(64), as: UTF8.self)
+        #expect(!sharedTail.contains("First tool call paragraph"))
+        let secondText = Self.padded(
+            "Second tool call opens with different text.",
+            toUTF8Count: firstText.utf8.count - sharedTail.utf8.count
+        ) + sharedTail + "\n\nSecond tool call closing paragraph."
+        #expect(secondText.utf8.count > firstText.utf8.count)
+
         let harness = SurfaceHarness()
         harness.apply(firstText, isStreaming: true)
         let stack = try #require(markdownStack(in: harness.surface.liveView))
         #expect(!stack.arrangedSubviews.isEmpty)
 
-        harness.apply(
-            "Second tool call paragraph with different text.",
-            itemID: "second-call",
-            isStreaming: true
-        )
+        harness.apply(secondText, itemID: "second-call", isStreaming: true)
         let rebuilt = try #require(markdownStack(in: harness.surface.liveView))
         let text = rebuilt.arrangedSubviews.compactMap { view -> String? in
             guard let textView = view as? UITextView else { return nil }
             return timelineRenderedText(of: textView)
         }.joined(separator: "\n")
-        #expect(text.contains("Second tool call paragraph"))
+        #expect(text.contains("Second tool call opens"))
         #expect(!text.contains("First tool call paragraph"))
     }
 
@@ -343,6 +357,17 @@ struct ToolExpandedMarkdownSurfaceTests {
 
     private func markdownStack(in view: AssistantMarkdownContentView) -> UIStackView? {
         Mirror(reflecting: view).children.first { $0.label == "stackView" }?.value as? UIStackView
+    }
+
+    /// Pads `text` with ASCII prose to an exact UTF-8 byte count.
+    private static func padded(_ text: String, toUTF8Count utf8Count: Int) -> String {
+        let filler = "prose padding "
+        var result = text
+        while result.utf8.count + filler.utf8.count <= utf8Count {
+            result += filler
+        }
+        result += String(repeating: "x", count: utf8Count - result.utf8.count)
+        return result
     }
 }
 

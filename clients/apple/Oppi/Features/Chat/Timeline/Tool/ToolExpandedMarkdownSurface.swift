@@ -57,8 +57,9 @@ final class ToolExpandedMarkdownSurface {
     enum Retirement {
         /// The row leaves the Markdown viewport without another surface taking
         /// it over: it collapsed, a Bash body took over the row, or its content
-        /// is not rendered. Parsed content goes too: the cell can be reused for
-        /// another tool call before this viewport comes back.
+        /// is not rendered. The same document can come back, so the live
+        /// viewport keeps its parsed content; `apply` resets it when the cell is
+        /// reused for another item.
         case collapsed
         /// Another surface took over the expanded viewport; parsed content goes.
         case replaced
@@ -283,10 +284,10 @@ final class ToolExpandedMarkdownSurface {
         removeCompletedViewport()
         switch retirement {
         case .collapsed:
-            // The cell can be reused for another item while collapsed, so the
-            // live viewport drops its parsed content instead of lending it on.
-            liveView.clearContent()
-            liveItemID = nil
+            // Collapsing only hides the viewport. Keeping the parsed document
+            // and the item it belongs to lets a re-expanded streaming call skip
+            // the reparse; `apply` drops both when the cell moves to another
+            // item, so a reused cell cannot inherit this call's parse.
             liveFollow = LiveStreamingPresentation.ViewportPolicy(followsTail: true)
         case .replaced:
             // Stale content would keep contributing intrinsic size.
