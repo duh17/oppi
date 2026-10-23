@@ -466,7 +466,9 @@ func makeTimelineConfiguration(
     renderWindowStep: Int = 50,
     isBusy: Bool = false,
     streamingAssistantID: String? = nil,
+    liveRowIDs: Set<String> = [],
     onShowEarlier: @escaping () -> Void = {},
+    onOpenChatReader: ((ChatReaderPayload) -> Void)? = nil,
     scrollCommand: ChatTimelineScrollCommand? = nil,
     sessionId: String,
     reducer: TimelineReducer,
@@ -493,7 +495,7 @@ func makeTimelineConfiguration(
     loadOlderPage: (@MainActor () async -> Bool)? = nil,
     readAloudAvailable: Bool = false
 ) -> ChatTimelineConfiguration {
-    ChatTimelineConfiguration(
+    var configuration = ChatTimelineConfiguration(
         items: items,
         displayRows: displayRows,
         workLineByID: workLineByID,
@@ -509,6 +511,7 @@ func makeTimelineConfiguration(
         readAloudAvailable: readAloudAvailable,
         routeScope: routeScope,
         onFork: { _ in },
+        onOpenChatReader: onOpenChatReader,
         onBackSwipe: onBackSwipe,
         onQuietWorkLineToggle: onQuietWorkLineToggle,
         onShowEarlier: onShowEarlier,
@@ -531,6 +534,8 @@ func makeTimelineConfiguration(
         workStripStyle: workStripStyle,
         sessionManager: sessionManager
     )
+    configuration.liveRowIDs = liveRowIDs
+    return configuration
 }
 
 @MainActor

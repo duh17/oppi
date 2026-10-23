@@ -30,6 +30,11 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     /// live tail can rewrite a thinking block that already reports done, so `isDone`
     /// alone cannot decide whether a full-screen reader holds a live trace.
     var isLive: Bool = false
+    /// The timeline's live traces, when this row belongs to one. A reader's trace
+    /// is fed from the apply's rows by item id; the row's own stream stops the
+    /// moment its cell leaves the viewport, which is exactly when a push covers
+    /// the chat (`ChatTimelineReaderTraces`).
+    weak var traceOwner: ChatTimelineReaderTraces? = nil
 
     init(
         isDone: Bool,
@@ -338,7 +343,11 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         sourceIsOmitted = renderWindow.omittedSource
         let sourceLabel = configuration.normalizedSourceLabel
         textLabel.accessibilityLabel = currentSourceText.isEmpty ? nil : "\(sourceLabel): \(currentSourceText)"
-        fullScreenThinkingStream.update(text: currentSourceText, isDone: configuration.traceIsComplete)
+        if configuration.traceOwner == nil {
+            // A timeline-owned trace is fed by the timeline's apply; this row's
+            // own stream is the fallback for a row built outside a timeline.
+            fullScreenThinkingStream.update(text: currentSourceText, isDone: configuration.traceIsComplete)
+        }
 
         let signature = Self.textSignature(
             text: text,
@@ -640,6 +649,20 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         currentSourceText
     }
 
+    /// The reader's trace: the timeline's when this row has one, so it keeps
+    /// growing while the row's cell is gone and finishes when the trace does.
+    private var fullScreenTraceStream: ThinkingTraceStream {
+        guard let owner = currentConfiguration.traceOwner,
+              let itemID = currentConfiguration.itemID else {
+            return fullScreenThinkingStream
+        }
+        return owner.thinkingTrace(
+            itemID: itemID,
+            text: trimmedDisplayText,
+            isDone: currentConfiguration.traceIsComplete
+        )
+    }
+
     private var canShowFullScreen: Bool {
         guard !trimmedDisplayText.isEmpty else { return false }
         guard !bubbleView.isHidden else { return false }
@@ -687,7 +710,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
         let content = FullScreenCodeContent.thinking(
             content: trimmedDisplayText,
-            stream: fullScreenThinkingStream
+            stream: fullScreenTraceStream
         )
         let reviewCommentSelectionContext = currentConfiguration.interactionContext?
             .reviewCommentSelectionContext?

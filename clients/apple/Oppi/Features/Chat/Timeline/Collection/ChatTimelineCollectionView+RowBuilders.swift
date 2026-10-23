@@ -293,6 +293,7 @@ extension ChatTimelineController {
         )
         configuration.openFullScreen = onOpenChatReader
         configuration.isLive = liveRowIDs.contains(itemID)
+        configuration.traceOwner = readerTraces
         return configuration
     }
 
@@ -374,6 +375,17 @@ extension ChatTimelineController {
     }
 
     func toolRowConfiguration(itemID: String, item: ChatItem) -> (any UIContentConfiguration)? {
+        let built = makeToolRowConfiguration(itemID: itemID, item: item)
+        guard var tool = built as? ToolTimelineRowConfiguration else { return built }
+        // A reader opened on this row follows the timeline's trace, not the cell.
+        tool.traceOwner = readerTraces
+        return tool
+    }
+
+    private func makeToolRowConfiguration(
+        itemID: String,
+        item: ChatItem
+    ) -> (any UIContentConfiguration)? {
         if case .customEvent(_, _, let card) = item, let output = card.terminalOutput {
             let expanded = reducer?.expandedItemIDs.contains(itemID) == true
             let inspection = ToolContentDescriptorBuilder.inspect(

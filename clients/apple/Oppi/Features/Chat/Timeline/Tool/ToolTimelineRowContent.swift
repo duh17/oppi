@@ -78,6 +78,11 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var toolOutputSidecarSource: ToolOutputSidecarWindowSource? = nil
     /// Copy/share fetches the complete sidecar. Expand must not use this path.
     var fetchCompleteToolOutput: (() async throws -> String?)? = nil
+    /// The timeline's live traces, when this row belongs to one. A running
+    /// call's reader is fed from the apply's rows by item id; the row's own
+    /// streams stop as soon as its cell leaves the viewport, which is exactly
+    /// when a push covers the chat (`ChatTimelineReaderTraces`).
+    weak var traceOwner: ChatTimelineReaderTraces? = nil
 
     func makeContentView() -> any UIView & UIContentView {
         ToolTimelineRowContentView(configuration: self)
@@ -1179,18 +1184,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         bashToolRowView.applyTheme(palette)
         fullScreenTerminalStream.completionSidecarSource = configuration.toolOutputSidecarSource
 
-        let terminalStreamOutput: String
-        if case .text(let text, _) = configuration.expandedContent {
-            // The stream drives full-screen display; keep its ANSI payload and
-            // strip only when the controller builds clipboard text.
-            terminalStreamOutput = text
-        } else {
-            terminalStreamOutput = configuration.copyOutputText ?? ""
-        }
+        let terminalTrace = ToolTimelineRowFullScreenSupport.terminalTraceUpdate(
+            configuration: configuration
+        )
         fullScreenTerminalStream.update(
-            output: terminalStreamOutput,
-            command: configuration.copyCommandText,
-            isDone: configuration.isDone
+            output: terminalTrace.output,
+            command: terminalTrace.command,
+            isDone: terminalTrace.isDone
         )
 
         // 2. Header: title, icon, badge, trailing, preview
@@ -2242,7 +2242,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func updateFullScreenSourceStream(configuration: ToolTimelineRowConfiguration) {
         guard let policy = currentInteractionPolicy,
               policy.supportsFullScreenPreview,
-              let snapshot = ToolTimelineRowFullScreenSupport.liveSourceSnapshot(
+              let trace = ToolTimelineRowFullScreenSupport.sourceTraceUpdate(
                 configuration: configuration,
                 outputCopyText: outputCopyText
               ) else {
@@ -2255,22 +2255,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             return
         }
 
-        let finalContent: FullScreenCodeContent?
-        if configuration.isDone {
-            finalContent = ToolTimelineRowFullScreenSupport.staticFullScreenContent(
-                configuration: configuration,
-                outputCopyText: outputCopyText,
-                terminalStream: nil
-            )
-        } else {
-            finalContent = snapshot.finalContent
-        }
-
         fullScreenSourceStream.update(
-            text: snapshot.text,
-            filePath: snapshot.filePath,
-            isDone: configuration.isDone,
-            finalContent: finalContent
+            text: trace.text,
+            filePath: trace.filePath,
+            isDone: trace.isDone,
+            finalContent: trace.finalContent
         )
     }
 
@@ -2314,7 +2303,16 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     func showFullScreenContent() {
-        guard let content = fullScreenContent else {
+        // Opening a reader is what claims the timeline's trace: from here on
+        // the apply feeds it, not this cell (`ChatTimelineReaderTraces`).
+        let traces = openFullScreenTraces()
+        guard let content = ToolTimelineRowFullScreenSupport.fullScreenContent(
+            configuration: currentConfiguration,
+            outputCopyText: outputCopyText,
+            interactionPolicy: currentInteractionPolicy,
+            terminalStream: traces.terminal,
+            sourceStream: traces.source
+        ) else {
             return
         }
         currentConfiguration.openFullScreen?(
@@ -2323,6 +2321,37 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 reviewCommentSelectionContext: reviewCommentSelectionContext
             )
         )
+    }
+
+    private func openFullScreenTraces() -> (terminal: TerminalTraceStream?, source: SourceTraceStream?) {
+        guard let owner = currentConfiguration.traceOwner else {
+            return (fullScreenTerminalStream, fullScreenSourceStream)
+        }
+        let itemID = currentConfiguration.itemID
+        let terminalTrace = ToolTimelineRowFullScreenSupport.terminalTraceUpdate(
+            configuration: currentConfiguration
+        )
+        let terminal = owner.terminalTrace(
+            itemID: itemID,
+            output: terminalTrace.output,
+            command: terminalTrace.command,
+            isDone: terminalTrace.isDone
+        )
+        terminal.completionSidecarSource = currentConfiguration.toolOutputSidecarSource
+        let sourceTrace = ToolTimelineRowFullScreenSupport.sourceTraceUpdate(
+            configuration: currentConfiguration,
+            outputCopyText: outputCopyText
+        )
+        let source = sourceTrace.map { trace in
+            owner.sourceTrace(
+                itemID: itemID,
+                text: trace.text,
+                filePath: trace.filePath,
+                isDone: trace.isDone,
+                finalContent: trace.finalContent
+            )
+        }
+        return (terminal, source)
     }
 
     func contextMenu(for target: ContextMenuTarget) -> UIMenu? {

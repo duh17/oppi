@@ -61,6 +61,47 @@ enum ToolTimelineRowFullScreenSupport {
         )
     }
 
+    /// The terminal stream's payload. The row and the timeline's open-reader
+    /// feed share it, so a reader shows the text the apply produced.
+    static func terminalTraceUpdate(
+        configuration: ToolTimelineRowConfiguration
+    ) -> (output: String, command: String?, isDone: Bool) {
+        let output: String
+        if case .text(let text, _) = configuration.expandedContent {
+            // The stream drives full-screen display; keep its ANSI payload and
+            // strip only when the controller builds clipboard text.
+            output = text
+        } else {
+            output = configuration.copyOutputText ?? ""
+        }
+        return (output, configuration.copyCommandText, configuration.isDone)
+    }
+
+    /// The snapshot a live-source reader shows, and the finished content that
+    /// replaces it. Nil when this row has no source reading to follow.
+    static func sourceTraceUpdate(
+        configuration: ToolTimelineRowConfiguration,
+        outputCopyText: String?
+    ) -> (text: String, filePath: String?, isDone: Bool, finalContent: FullScreenCodeContent?)? {
+        guard let snapshot = liveSourceSnapshot(
+            configuration: configuration,
+            outputCopyText: outputCopyText
+        ) else {
+            return nil
+        }
+        let finalContent: FullScreenCodeContent?
+        if configuration.isDone {
+            finalContent = staticFullScreenContent(
+                configuration: configuration,
+                outputCopyText: outputCopyText,
+                terminalStream: nil
+            )
+        } else {
+            finalContent = snapshot.finalContent
+        }
+        return (snapshot.text, snapshot.filePath, configuration.isDone, finalContent)
+    }
+
     static func staticFullScreenContent(
         configuration: ToolTimelineRowConfiguration,
         outputCopyText: String?,

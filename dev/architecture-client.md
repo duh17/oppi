@@ -184,6 +184,10 @@ Terminal colors come from the host's Ghostty config. `SSHTerminalColorLoader` (`
 
 Timeline rows paint terminal-kind tool output from `ToolOutputStore`. The server sends stripped text: a suffix under 8 KiB, or a throttled 16 KiB / 80-line tail replace after that. Opening the full log still uses the sidecar. SSH terminal sessions are a separate surface.
 
+## Full-screen readers from the timeline
+
+A row opens its reader through `ChatTimelineConfiguration.onOpenChatReader` (`ChatViewController+Timeline.openTimelineReader`), which pushes a `.chatReader` route, so the chat leaves the window while the reader is up. The timeline's own apply keeps running (the session runtime stays bound for a covered chat), but UIKit configures no cell for a row outside the viewport, and the thinking row or expanded tool row a reader follows usually sits just above the streaming tail. Live readers are therefore owned by `ChatTimelineReaderTraces` (`Features/Chat/Timeline/Collection/ChatTimelineReaderTraces.swift`): one stream per open reader keyed by item id, fed by every apply from the rows themselves (a thinking item's text; a running call's output and source snapshot through `ToolTimelineRowFullScreenSupport`). A row's own stream is the fallback for a row built outside a timeline. Completion follows the same rows: `TimelineReducer.liveRowIDs` and the item's done flag decide when a trace can no longer grow, and the reader switches to its settled body.
+
 Opening a busy session replays the server event ring over the freshly loaded trace. The replayed `agent_start` closes the running tool as inferred-interrupted; the replayed `tool_start` then revives it, because a start is authoritative evidence the call is executing. Canonically finished calls stay finished. The expanded row and full-screen reader use the stored text, and an explicit open loads the sidecar. They do not wait on a byte-log resync.
 
 ## Client boundary rules current code

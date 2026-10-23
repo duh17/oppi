@@ -288,6 +288,11 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
 
     // MARK: - Properties + Init
 
+    /// The live traces of the readers opened from this timeline's rows. Fed by
+    /// every apply from the rows themselves, so a reader keeps streaming while a
+    /// push covers the chat and UIKit configures no cell.
+    let readerTraces = ChatTimelineReaderTraces()
+
     var dataSource: UICollectionViewDiffableDataSource<Int, String>?
 
     private let context = ChatTimelineControllerContext()
@@ -1034,6 +1039,31 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         )
     }
 
+    /// A reader opened from a row is fed here, from the rows themselves. The
+    /// row's own cell is not a feed: opening a reader pushes a page, and UIKit
+    /// configures no cell for a row outside the viewport, which is where the
+    /// thinking row sits once the tail below it grows.
+    private func feedOpenReaderTraces(
+        configuration: ChatTimelineConfiguration,
+        sessionScopeChanged: Bool
+    ) {
+        if sessionScopeChanged {
+            readerTraces.reset()
+        }
+        guard !readerTraces.isEmpty else { return }
+
+        readerTraces.update(items: configuration.items, liveRowIDs: configuration.liveRowIDs)
+        readerTraces.retainRows(in: Set(configuration.fullTimelineItemIDs))
+        guard !readerTraces.runningToolItemIDs.isEmpty else { return }
+        readerTraces.updateToolTraces { [weak self] itemID in
+            guard let self,
+                  let item = configuration.items.first(where: { $0.id == itemID }) else {
+                return nil
+            }
+            return self.toolRowConfiguration(itemID: itemID, item: item) as? ToolTimelineRowConfiguration
+        }
+    }
+
     private func updateLiveTailItemIDsFromCurrentState(
         in collectionView: UICollectionView
     ) {
@@ -1078,6 +1108,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         // Rows that started or stopped being written; their readers follow the change.
         let liveRowsChanged = configuration.liveRowIDs.symmetricDifference(liveRowIDs)
         liveRowIDs = configuration.liveRowIDs
+        feedOpenReaderTraces(configuration: configuration, sessionScopeChanged: sessionScopeChanged)
         // Note: isTimelineBusy is updated AFTER the structurallyUnchanged
         // check so the comparison detects busy→idle transitions.
 
