@@ -1044,7 +1044,8 @@ struct FullScreenMarkdownStressCorpusTests {
     ///
     /// The anchor is captured before the wait, so this proves the passes the
     /// reader still owes at that moment (a render-ahead slice, a queued
-    /// visible-height flush, an image geometry commit, a forced remeasure)
+    /// visible-height flush, a forced remeasure, including one an image's
+    /// geometry commit schedules)
     /// leave the visible item and its screen Y alone. The wait is the reader's
     /// own "no deferred work left" state, not a delay: a fixed sleep either
     /// reads mid-pass under load or silently checks nothing.
