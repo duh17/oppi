@@ -196,12 +196,27 @@ function noContent(): Response {
   return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
 }
 
+/**
+ * The body, read only up to the cap: a chunked body has no length to check first, and the
+ * Worker would otherwise hold all of it (Cloudflare accepts up to 100 MB) before refusing it.
+ */
 async function readBody(request: Request): Promise<Uint8Array> {
   const declared = Number(request.headers.get("content-length") ?? "0");
   if (declared > MAX_BODY_BYTES) throw new HttpError(413, "body_too_large");
-  const bytes = new Uint8Array(await request.arrayBuffer());
-  if (bytes.length > MAX_BODY_BYTES) throw new HttpError(413, "body_too_large");
-  return bytes;
+  if (!request.body) return new Uint8Array(0);
+  const reader = request.body.getReader();
+  const body = new Uint8Array(MAX_BODY_BYTES);
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return body.subarray(0, size);
+    if (size + value.byteLength > MAX_BODY_BYTES) {
+      void reader.cancel().catch(() => {});
+      throw new HttpError(413, "body_too_large");
+    }
+    body.set(value, size);
+    size += value.byteLength;
+  }
 }
 
 function parseObject(bytes: Uint8Array, allowed: readonly string[]): Record<string, unknown> {

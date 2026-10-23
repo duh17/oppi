@@ -57,6 +57,10 @@ Example:
 - **Mirror:** `oppi-mirror` uses `ws` 8.22.0, the version `oppi-server` pins.
 - **Server:** A one-time (`at`) schedule moves to Archived after its run succeeds, so finished one-time schedules leave the Active list. A failed run keeps it active so you can see the failure and run it again.
 
+### Fixed
+
+- **Relay:** The push relay refuses a request body over 8 KiB as soon as it passes that size, including a chunked body with no length, instead of reading all of it first. A body that never ended used to hold a Cloudflare Worker request open.
+
 ## [0.53.0] - 2026-10-22
 
 Target: iOS `1.1.2` Build `56`, `oppi-server@0.53.0`, and `oppi-mirror@0.53.0` (Pi 1.4.0).

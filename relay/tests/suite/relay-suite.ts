@@ -5,6 +5,7 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { connect } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_QUOTA_LIMITS } from "../../src/core/store.js";
 
@@ -240,6 +241,35 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
         (await call(harness, "POST", "/v1/registrations", { rawBody: JSON.stringify({ ...base, pad: "x".repeat(9000) }) }))
           .status,
       ).toBe(413);
+    });
+
+    it("refuses a body without a length once it passes 8 KiB, without reading the rest", async () => {
+      // Chunked, no Content-Length, and the final chunk never comes: only a capped read can
+      // answer. A raw socket, so nothing keeps uploading after the answer.
+      const { hostname, port } = new URL(harness.url);
+      const address = nextAddress();
+      const socket = connect(Number(port), hostname);
+      try {
+        const head = await new Promise<string>((resolve, reject) => {
+          let received = "";
+          socket.on("data", (data: Buffer) => {
+            received += data.toString("latin1");
+            if (received.includes("\r\n\r\n")) resolve(received);
+          });
+          socket.on("error", reject);
+          const chunk = " ".repeat(1024);
+          socket.write(
+            `POST /v1/push HTTP/1.1\r\nHost: ${hostname}\r\nContent-Type: application/json\r\n` +
+              `X-Forwarded-For: ${address}\r\nCF-Connecting-IP: ${address}\r\n` +
+              `Transfer-Encoding: chunked\r\n\r\n` +
+              // Past the Node adapter's 16 KiB read limit as well as the 8 KiB body cap.
+              `${chunk.length.toString(16)}\r\n${chunk}\r\n`.repeat(24),
+          );
+        });
+        expect(head).toMatch(/^HTTP\/1\.1 413 /);
+      } finally {
+        socket.destroy();
+      }
     });
 
     it("mints send permissions only with the registration secret, up to 16", async () => {
