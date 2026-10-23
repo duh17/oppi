@@ -627,15 +627,20 @@ struct FullScreenMarkdownStressCorpusTests {
         body.layoutIfNeeded()
         await settleReservedHeights(body)
         await settleReservedHeights(body)
-        try await assertVisibleAnchorStaysPut(
+        try assertCurrentVisibleAnchor(
             in: body,
-            expected: finalAnchor,
+            equals: finalAnchor,
             stage: "gallery settlement after upward drag"
         )
         try assertReservedHeightsMatchFitting(
             in: body,
             items: [finalMermaidItem],
             stage: "final gallery Mermaid settlement"
+        )
+        try await assertVisibleAnchorStaysPut(
+            in: body,
+            expected: finalAnchor,
+            stage: "gallery settlement after upward drag"
         )
     }
 
@@ -826,13 +831,9 @@ struct FullScreenMarkdownStressCorpusTests {
         ] {
             body.debugScrollItemIntoViewForTesting(item)
             await settleReservedHeights(body)
-            // Capture the anchor before any settle: the deferred passes are
-            // still owed here, so the anchor assertion below proves they keep
-            // it put. Settling first would compare settled geometry with
-            // itself.
+            try assertReservedHeightsMatchFitting(in: body, items: [item], stage: stage)
             anchor = try #require(body.debugVisibleAnchorForTesting(), "missing visible anchor after \(stage)")
             try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: stage)
-            try assertReservedHeightsMatchFitting(in: body, items: [item], stage: stage)
         }
 
         body.debugScrollItemIntoViewForTesting(imageItem)
@@ -900,11 +901,9 @@ struct FullScreenMarkdownStressCorpusTests {
         await settleDeferredReaderWork(in: body, stage: "image reuse scroll")
         body.debugScrollItemIntoViewForTesting(imageItem)
         await settleReservedHeights(body)
-        // Anchor first, so the reuse assertion still covers the passes the
-        // reuse scroll queued; the reserved check runs on settled geometry.
+        try assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image reuse")
         anchor = try #require(body.debugVisibleAnchorForTesting(), "missing visible anchor after image reuse")
         try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "image reuse")
-        try assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image reuse")
         #expect(
             collectionView.indexPathsForVisibleItems.allSatisfy {
                 body.debugHasFinalGeometryForTesting($0.item)
