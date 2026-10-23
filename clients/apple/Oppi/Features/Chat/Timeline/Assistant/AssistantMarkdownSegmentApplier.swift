@@ -1172,8 +1172,19 @@ final class AssistantMarkdownSegmentApplier {
 
         if let cachedPlain = cachedStreamingTailPlain,
            cachedPlain.length == oldLength {
+            // A neutral append cannot restyle anything already on screen. Any
+            // other append keeps the delta only when the characters and the
+            // last paragraph's attributes both match: a setext underline
+            // restyles the line above it into a heading without changing one
+            // character, so characters alone would append the delta and leave
+            // the paragraph body-styled.
             let prefixValid = markdownNeutralAppend
-                || StreamingMarkdownDelta.renderedUTF16PrefixMatches(attributed, prefix: cachedPlain)
+                || (StreamingMarkdownDelta.renderedUTF16PrefixMatches(attributed, prefix: cachedPlain)
+                    && Self.streamedTailLastParagraphMatches(
+                        attributed,
+                        onScreen: textView.textStorage,
+                        plain: cachedPlain
+                    ))
 
             if prefixValid,
                let delta = StreamingMarkdownDelta.nsAttributedSuffix(
@@ -1213,6 +1224,26 @@ final class AssistantMarkdownSegmentApplier {
         } else {
             replaceStreamingText(attributed, in: textView)
         }
+    }
+
+    /// Whether the last paragraph already on screen renders with the same
+    /// attributes the new render gives it. Only the last paragraph is compared
+    /// (O(paragraph), from the tail's last blank line), which is where an
+    /// appended underline or marker lands.
+    private static func streamedTailLastParagraphMatches(
+        _ attributed: AttributedString,
+        onScreen textStorage: NSTextStorage,
+        plain: NSString
+    ) -> Bool {
+        let length = plain.length
+        guard textStorage.length == length else { return false }
+        let paragraphStart = StreamingMarkdownDelta.lastParagraphStart(in: plain)
+        guard paragraphStart < length else { return true }
+
+        let range = NSRange(location: paragraphStart, length: length - paragraphStart)
+        guard let renderedRange = Range(range, in: attributed) else { return false }
+        let rendered = NSAttributedString(AttributedString(attributed[renderedRange]))
+        return textStorage.attributedSubstring(from: range).isEqual(to: rendered)
     }
 
     private func replaceStreamingText(

@@ -294,11 +294,10 @@ struct StreamingMarkdownAppendTests {
 
             for prefix in Self.prefixes(of: fixture.source, chunkSize: 17) {
                 let parsed = parser.parse(prefix)
-                let endsInCodeBlock = Self.endsInCodeBlock(parsed.tailBlocks.last)
                 let verdict = AssistantMarkdownSegmentSource.hasUnclosedCodeFence(
                     prefix,
                     fromUTF8Offset: parsed.tailUTF8Offset,
-                    endsInCodeBlock: endsInCodeBlock
+                    endsInCodeBlock: AssistantMarkdownSegmentSource.endsInCodeBlock(parsed.tailBlocks.last)
                 )
                 #expect(
                     verdict == Self.cmarkEndsInsideAFence(prefix),
@@ -310,7 +309,7 @@ struct StreamingMarkdownAppendTests {
                     verdict == AssistantMarkdownSegmentSource.hasUnclosedCodeFence(
                         prefix,
                         fromUTF8Offset: 0,
-                        endsInCodeBlock: endsInCodeBlock
+                        endsInCodeBlock: AssistantMarkdownSegmentSource.endsInCodeBlock(parsed.tailBlocks.last)
                     ),
                     "\(fixture.name) tail offset changed the fence verdict at \(prefix.utf8.count) UTF-8 bytes"
                 )
@@ -362,20 +361,31 @@ struct StreamingMarkdownAppendTests {
         }
     }
 
-    private static func endsInCodeBlock(_ block: MarkdownBlock?) -> Bool {
-        guard let block else { return false }
-        switch block {
-        case .codeBlock:
-            return true
-        case .unorderedList(let items):
-            return endsInCodeBlock(items.last?.last)
-        case .orderedList(_, let items):
-            return endsInCodeBlock(items.last?.last)
-        case .taskList(let items):
-            return endsInCodeBlock(items.last?.content.last)
-        case .heading, .paragraph, .blockQuote, .thematicBreak, .table, .htmlBlock:
-            return false
+    /// `1. First step\n\n2` is a list plus the paragraph `2`. The next tick's `2.`
+    /// rejoins the list cmark already had, so freezing the list there makes the
+    /// stream show a second list (and a blank line a canonical build has none).
+    @Test func orderedListStaysInTheOpenTailWhileItsNextMarkerArrives() {
+        var parser = CommonMarkStreamingParser()
+        let started = "Steps:\n\n1. First step\n\n2"
+        #expect(
+            parser.parse(started).prefixBlocks.isEmpty,
+            "a lone ordinal after a blank line must not freeze the list above it"
+        )
+
+        let secondItem = started + ". Second step"
+        let grown = parser.parse(secondItem)
+        guard case .orderedList(_, let items)? = grown.tailBlocks.last else {
+            Issue.record("the two-item list is not the open tail: \(String(reflecting: grown.tailBlocks))")
+            return
         }
+        #expect(items.count == 2, "the second item rejoined the streamed list")
+        #expect(grown.blocks == parseCommonMark(secondItem))
+
+        // A paragraph after the list ends the ambiguity: the list is stable again.
+        let settledContent = secondItem + "\n\nAfter the list."
+        let settled = parser.parse(settledContent)
+        #expect(!settled.prefixBlocks.isEmpty)
+        #expect(settled.blocks == parseCommonMark(settledContent))
     }
 
     /// A fence inside the last list item keeps streaming as a `.codeBlock`, and
@@ -485,6 +495,46 @@ struct StreamingMarkdownAppendTests {
         view.apply(configuration: .make(content: plain + "\n===\n\nAfter", isStreaming: true, themeID: .dark))
         let grown = try #require(timelineAllTextViews(in: view).first)
         #expect(timelineRenderedText(of: grown).contains("After"))
+    }
+
+    /// One tick can carry the underline and the paragraph after it. The prefixes
+    /// match character for character, so only the last paragraph's attributes
+    /// reveal that the prose above turned into a heading.
+    @Test func singleTickSetextUnderlineRestylesTheStreamedTail() throws {
+        let view = AssistantMarkdownContentView()
+        let plain = "Prose line"
+        view.apply(configuration: .make(content: plain, isStreaming: true, themeID: .dark))
+        let body = try #require(timelineAllTextViews(in: view).first)
+        let bodySize = try #require(Self.firstFontSize(of: body))
+
+        view.apply(configuration: .make(content: plain + "\n===\n\nAfter", isStreaming: true, themeID: .dark))
+
+        let grown = try #require(timelineAllTextViews(in: view).first)
+        let headingSize = try #require(Self.firstFontSize(of: grown))
+        #expect(timelineRenderedText(of: grown) == plain + "\n\nAfter")
+        #expect(headingSize > bodySize, "a one-tick setext underline must restyle the streamed prose")
+    }
+
+    /// `-` is ordinary prose mid-line, so only a line-leading marker can restyle
+    /// anything already on screen. Treating every dash as markup would send most
+    /// ticks through the O(tail) comparison.
+    @Test func dashIsMarkupOnlyAtTheStartOfALine() {
+        func neutral(_ previous: String, _ appended: String) -> Bool {
+            let content = previous + appended
+            return StreamingMarkdownDelta.appendedSourceIsMarkdownNeutral(
+                content,
+                range: previous.utf8.count..<content.utf8.count
+            )
+        }
+
+        #expect(neutral("Some prose", " - and more prose"))
+        #expect(neutral("A clause", " - a second clause\nmore prose"))
+        #expect(neutral("Some prose\n", "\n- item") == false)
+        #expect(neutral("Some prose", "\n---") == false)
+        #expect(neutral("Some prose", "\n===") == false)
+        #expect(neutral("Some prose\n", "  - item") == false)
+        #expect(neutral("Some prose\n", "    - indented code"))
+        #expect(neutral("Some prose", " more *emphasis") == false)
     }
 
     // MARK: - Helpers

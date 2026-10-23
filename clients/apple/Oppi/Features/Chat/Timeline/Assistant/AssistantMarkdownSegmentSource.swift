@@ -235,7 +235,9 @@ final class AssistantMarkdownSegmentSource {
     ///
     /// Block quotes are not followed: `FlatSegment` renders a code block inside
     /// a quote as quoted text, so no trailing code view depends on the verdict.
-    private static func endsInCodeBlock(_ block: MarkdownBlock?) -> Bool {
+    /// Internal so the streaming suite can check the production verdict instead
+    /// of a copy.
+    static func endsInCodeBlock(_ block: MarkdownBlock?) -> Bool {
         guard let block else { return false }
         switch block {
         case .codeBlock:
@@ -583,8 +585,12 @@ enum StreamingMarkdownDelta {
     /// an append cannot restyle glyphs that are already rendered. Only the
     /// appended bytes are scanned; the parser already proved the append.
     ///
-    /// `-` and `=` count as markup: a setext underline restyles the line above
-    /// it into a heading without changing one of its characters.
+    /// `-` and `=` count as markup only at the start of a line (after a newline
+    /// plus up to 3 spaces): a setext underline or a bullet restyles the line
+    /// above it without changing one of its characters. Mid-line they are plain
+    /// prose — " - " is common enough that treating it as markup everywhere
+    /// would push most ticks onto the O(tail) comparison. Reading one byte back
+    /// across the tick boundary tells the two apart.
     ///
     /// An empty append is not neutral: the same content can arrive with a new
     /// reader text size, typography revision, or theme, and the tail still has to
@@ -597,15 +603,51 @@ enum StreamingMarkdownDelta {
             bytes.endIndex,
             offsetBy: range.lowerBound - bytes.count
         )
+        // Spaces seen since the line start, or nil when a non-space byte already
+        // rules the position out as a block-marker start.
+        var lineStartSpaces = lineStartSpaceCount(bytes, before: start)
         for byte in bytes[start...] {
             switch byte {
-            case 33, 36, 38, 40, 41, 42, 45, 60, 61, 62, 91, 92, 93, 95, 96, 124, 126:
+            case 33, 36, 38, 40, 41, 42, 60, 62, 91, 92, 93, 95, 96, 124, 126:
                 return false
+            case 45, 61:
+                // `-` and `=`: only markup at the start of a line.
+                if lineStartSpaces != nil { return false }
+            case 10:
+                lineStartSpaces = 0
+            case 32:
+                if let spaces = lineStartSpaces {
+                    lineStartSpaces = spaces < 3 ? spaces + 1 : nil
+                }
             default:
-                continue
+                lineStartSpaces = nil
             }
         }
         return true
+    }
+
+    /// Spaces before `index` on its line, or nil when the line already has
+    /// non-space content (or an indent wider than a block marker allows). Looks
+    /// back at most 4 bytes, across the tick boundary included.
+    private static func lineStartSpaceCount(
+        _ bytes: String.UTF8View,
+        before index: String.UTF8View.Index
+    ) -> Int? {
+        var spaces = 0
+        var cursor = index
+        while cursor > bytes.startIndex {
+            cursor = bytes.index(before: cursor)
+            switch bytes[cursor] {
+            case 10:
+                return spaces
+            case 32 where spaces < 3:
+                spaces += 1
+            default:
+                return nil
+            }
+        }
+        // The document starts here, which is also a line start.
+        return spaces
     }
 
     /// A rendering that extends the one a cached merge already ends with.
@@ -664,6 +706,22 @@ enum StreamingMarkdownDelta {
             return nil
         }
         return NSAttributedString(suffix)
+    }
+
+    /// UTF-16 offset where the tail's last paragraph starts, i.e. just past its
+    /// last blank line. Text blocks join with a blank line, so an appended
+    /// underline or marker lands in that paragraph. Zero when the tail is one
+    /// paragraph.
+    static func lastParagraphStart(in plain: NSString) -> Int {
+        let length = plain.length
+        guard length > 0 else { return 0 }
+        let separator = plain.range(
+            of: "\n\n",
+            options: .backwards,
+            range: NSRange(location: 0, length: length)
+        )
+        guard separator.location != NSNotFound else { return 0 }
+        return separator.location + separator.length
     }
 
     static func renderedUTF16PrefixMatches(

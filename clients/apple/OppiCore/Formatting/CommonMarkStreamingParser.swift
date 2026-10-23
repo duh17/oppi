@@ -147,6 +147,10 @@ struct CommonMarkStreamingParser: Sendable {
             blocks: tailBlocks,
             content: tailContent,
             lastBlockLine: tailLastBlockLine
+        ) || Self.shouldHoldOrderedListOpen(
+            blocks: tailBlocks,
+            content: tailContent,
+            lastBlockLine: tailLastBlockLine
         ) {
             state = previousState
             return
@@ -179,6 +183,10 @@ struct CommonMarkStreamingParser: Sendable {
             return (nil, [], blocks)
         }
         if Self.shouldHoldTableOpen(
+            blocks: blocks,
+            content: content,
+            lastBlockLine: lastBlockLine
+        ) || Self.shouldHoldOrderedListOpen(
             blocks: blocks,
             content: content,
             lastBlockLine: lastBlockLine
@@ -306,6 +314,49 @@ struct CommonMarkStreamingParser: Sendable {
             return trimmed.hasPrefix("|")
         }
         return false
+    }
+
+    /// `1. First step\n\n2` parses as an ordered list followed by the paragraph
+    /// `2`. Freezing the list here is wrong: the next tick's `2.` rejoins the list
+    /// cmark already had, so the streamed render shows a second list and a blank
+    /// line a canonical build does not. Hold the tail open while its last block is
+    /// a lone list ordinal — 1–9 digits on one line, indented up to 3 spaces —
+    /// which the next byte can turn into a marker. O(last line).
+    private static func shouldHoldOrderedListOpen(
+        blocks: [MarkdownBlock],
+        content: String,
+        lastBlockLine: Int
+    ) -> Bool {
+        guard blocks.count >= 2,
+              case .orderedList = blocks[blocks.count - 2],
+              case .paragraph = blocks.last else {
+            return false
+        }
+        let offset = utf8ByteOffset(forLine: lastBlockLine, in: content)
+        var line = content.utf8[
+            content.utf8.index(content.utf8.startIndex, offsetBy: offset)...
+        ]
+        // The last block's source; a multi-line paragraph is not an ordinal.
+        while line.last == UInt8(ascii: "\n") { line = line.dropLast() }
+        guard !line.contains(UInt8(ascii: "\n")) else { return false }
+
+        let space = UInt8(ascii: " ")
+        var index = line.startIndex
+        while index < line.endIndex, line[index] == space {
+            index = line.index(after: index)
+        }
+        guard index < line.endIndex else { return false }
+
+        let zero = UInt8(ascii: "0")
+        let nine = UInt8(ascii: "9")
+        var digits = 0
+        while index < line.endIndex, line[index] >= zero, line[index] <= nine {
+            digits += 1
+            index = line.index(after: index)
+        }
+        guard digits >= 1, digits <= 9 else { return false }
+        // Trailing spaces are allowed; anything else means this is prose.
+        return line[index...].allSatisfy { $0 == space }
     }
 
     private static func utf8ByteOffset(forLine targetLine: Int, in content: String) -> Int {
