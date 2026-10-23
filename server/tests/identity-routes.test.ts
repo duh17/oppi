@@ -571,7 +571,7 @@ describe("identity module", () => {
       return (JSON.parse(res.body) as { capabilities: Record<string, unknown> }).capabilities;
     }
 
-    // push.mode off (the default) advertises nothing, so apps never register or prompt.
+    // push.mode off advertises nothing, so apps never register or prompt.
     expect(await capabilities(undefined)).not.toHaveProperty("pushNotifications");
     expect(
       (await capabilities(["https://push.example.test", "https://standby.example.test"]))

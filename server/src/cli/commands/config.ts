@@ -81,11 +81,11 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
   push: { type: "json", desc: "Push config JSON object" },
   "push.mode": {
     type: "string",
-    desc: "Push notifications: off (default) or relay (end-to-end encrypted through push.relays)",
+    desc: "Push notifications: relay (default; end-to-end encrypted, sent only to phones that turn push on) or off",
   },
   "push.relays": {
     type: "json",
-    desc: "Push relay origins JSON array: [primary] or [primary, standby]",
+    desc: "Push relay origins JSON array: [primary] or [primary, standby] (default: Oppi's relay; only for self-signed app builds)",
   },
   asr: { type: "json", desc: "ASR config JSON object" },
   "asr.backend": { type: "string", desc: "STT backend: http" },

@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PUSH_ENVELOPE_BYTES, type SealedPushEnvelope } from "../src/push/envelope.js";
-import { PUSH_DEVICE_BUDGET, pushCollapseId, PushSender } from "../src/push/push-sender.js";
+import {
+  OPPI_PUSH_RELAY,
+  PUSH_DEVICE_BUDGET,
+  pushCollapseId,
+  PushSender,
+} from "../src/push/push-sender.js";
 import { RelayClient } from "../src/push/relay-client.js";
 import { Storage } from "../src/storage.js";
 import { openPushEnvelopeForTest } from "./helpers/push-envelope-open.js";
@@ -86,6 +91,7 @@ describe("PushSender", () => {
   };
 
   it("sends nothing while push is off, even to a registered device", async () => {
+    storage.updateConfig({ push: { mode: "off" } });
     const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
     const push = sender(fetchImpl);
 
@@ -226,8 +232,26 @@ describe("PushSender", () => {
     expect(quota.calls).toHaveLength(1);
   });
 
+  it("pushes through Oppi's relay unless the operator names another or turns push off", () => {
+    const { fetchImpl } = relayFetch({});
+    expect(sender(fetchImpl).relays()).toEqual([OPPI_PUSH_RELAY]);
+
+    // A push block without a mode, read back from config.json, is relay mode.
+    storage.updateConfig({ push: { relays: [PRIMARY] } } as never);
+    const reloaded = new Storage(dataDir);
+    expect(
+      new PushSender(reloaded, { signingKey: signing.privateKey, fetch: fetchImpl }).relays(),
+    ).toEqual([PRIMARY]);
+
+    storage.updateConfig({ push: { mode: "off" } });
+    const off = sender(fetchImpl);
+    expect(off.relays()).toBeUndefined();
+    expect(off.registrations()).toEqual([]);
+  });
+
   it("keeps the push config it started with, whatever config.json says later", async () => {
     const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
+    storage.updateConfig({ push: { mode: "off" } });
     const off = sender(fetchImpl);
     storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
     expect(off.relays()).toBeUndefined();

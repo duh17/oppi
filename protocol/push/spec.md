@@ -10,8 +10,9 @@ key that only the phone holds and signs it with the server's identity key. The r
 Apple Push Notification service (APNs) carry ciphertext they cannot read. There is no
 plaintext push path: a device without a registered push key gets no push.
 
-Push is opt-in on both ends. The server operator sets `push.mode` to `relay`
-(`off` is the default), and the user turns on push for that server in the app.
+Push is opt-in on the phone: the user turns on push for a server in the app. The server
+offers it by default (`push.mode` `relay`, through Oppi's relay); its operator can set
+`push.mode` to `off`.
 
 ```mermaid
 sequenceDiagram
@@ -537,8 +538,8 @@ removes them from Notification Center when it becomes active: they open nothing.
 
 ## 5. Server behavior
 
-- `push.mode`: `off` (default) or `relay`. `push.relays`: `[primary, standby]` HTTPS origins
-  (`http` only for loopback, for local testing).
+- `push.mode`: `relay` (default) or `off`. `push.relays`: `[primary, standby]` HTTPS origins
+  (`http` only for loopback, for local testing); default `["https://push.oppi.chaosdonkey.dev"]`.
 - The server advertises `capabilities.pushNotifications = {"version": 1, "relay":
   "<primary>"}` only in relay mode.
 - **`PUT /me/push-registration`** (paired device credential only):

@@ -6,9 +6,8 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Push
 
 /// Opt-in, end-to-end-encrypted push for each paired server (protocol/push/spec.md).
 ///
-/// Push needs both ends to opt in: the server operator sets `push.mode` to `relay`, so the
-/// server advertises `capabilities.pushNotifications.relay`, and the user turns on push for
-/// that server here (off by default). Then, once per connection, this:
+/// The server advertises `capabilities.pushNotifications.relay` unless its operator set
+/// `push.mode` to `off`, and the user turns on push for that server here (off by default). Then, once per connection, this:
 ///
 /// 1. gets this device's APNs token and notification permission;
 /// 2. registers the token with the relay, with App Attest when the device supports it;

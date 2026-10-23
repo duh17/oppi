@@ -6,12 +6,12 @@ export type SessionPushEvent = "blocked" | "error" | "notify";
 /** Every alert event (spec §2.4). */
 export type PushEvent = SessionPushEvent | "pairing_approval" | "device_enrolled";
 
-/** `off`: no pushes (default). `relay`: end-to-end-encrypted pushes through a push relay. */
+/** `relay` (default): end-to-end-encrypted pushes through a push relay. `off`: no pushes. */
 export type PushMode = "off" | "relay";
 
 export interface PushConfig {
   mode: PushMode;
-  /** `[primary, standby]` relay origins. Required in relay mode. */
+  /** `[primary, standby]` relay origins. Omitted means Oppi's relay (`OPPI_PUSH_RELAY`). */
   relays?: string[];
 }
 

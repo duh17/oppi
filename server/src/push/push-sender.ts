@@ -184,11 +184,20 @@ export interface PushSenderOptions {
   goneSendTokensMax?: number;
 }
 
-/** `[primary, standby]` when relay mode is on and configured; otherwise undefined. */
+/**
+ * Oppi's relay. Only it holds the APNs key of the team that signs App Store and TestFlight
+ * builds, so it is the default; `push.relays` is for people who sign the app themselves.
+ */
+export const OPPI_PUSH_RELAY = "https://push.oppi.chaosdonkey.dev";
+
+/**
+ * `[primary, standby]` unless the operator set `push.mode` to `off`. Relay mode is the default
+ * because the server sends nothing until a phone turns push on for it.
+ */
 export function activePushRelays(config: Pick<ServerConfig, "push">): string[] | undefined {
   const push = config.push;
-  if (push?.mode !== "relay" || !push.relays || push.relays.length === 0) return undefined;
-  return push.relays;
+  if (push?.mode === "off") return undefined;
+  return push?.relays && push.relays.length > 0 ? push.relays : [OPPI_PUSH_RELAY];
 }
 
 /**

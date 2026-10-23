@@ -151,8 +151,8 @@ OPPI_RELAY_APP_ID=AZAQMY4SPZ.dev.chenda.Oppi OPPI_RELAY_BUNDLE_ID=dev.chenda.Opp
   node dist/node/main.js --capture ./apns-capture.jsonl
 ```
 
-Point a server at it with `oppi config set push.relays '["http://127.0.0.1:8787"]'`, then
-`oppi config set push.mode relay`, and restart the server.
+Point a server at it with `oppi config set push.relays '["http://127.0.0.1:8787"]'` and
+restart the server.
 
 ## Deploy on Cloudflare
 

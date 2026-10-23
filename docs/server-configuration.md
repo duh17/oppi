@@ -145,24 +145,18 @@ Use `oppi config get runtimeEnv` and `oppi config get extensions.voice` to inspe
 
 ## Push notifications
 
-Push is off by default. When you turn it on, the server sends end-to-end-encrypted lock-screen alerts to paired iPhones and iPads through a push relay and Apple Push Notification service (APNs). The server never talks to APNs and holds no Apple key: the relay does. Content is encrypted on your server to a key that only the phone holds, so the relay and Apple see ciphertext, never titles, session names, or questions. [protocol/push/spec.md](../protocol/push/spec.md) is the full design, including what the relay can see.
+The server sends end-to-end-encrypted lock-screen alerts to paired iPhones and iPads through a push relay and Apple Push Notification service (APNs), once a phone turns push on for it. The server never talks to APNs and holds no Apple key: the relay does. Content is encrypted on your server to a key that only the phone holds, so the relay and Apple see ciphertext, never titles, session names, or questions. [protocol/push/spec.md](../protocol/push/spec.md) is the full design, including what the relay can see.
 
-Turn it on with the relay's origin, and optionally a standby. Set the relays first: relay mode without them is rejected.
-
-```bash
-oppi config set push.relays '["https://push.oppi.chaosdonkey.dev"]'
-oppi config set push.mode relay
-oppi server restart
-```
+The server needs no setup: it offers push through Oppi's relay by default, and sends nothing until a phone opts in (**Server Settings → Notifications**, **Push Notifications**, off by default). Only then does the app register with APNs and the relay, ask for notification permission, and send this server its push key. `/server/info` advertises `capabilities.pushNotifications` with the primary relay unless push is off.
 
 | Key | Value |
 | --- | --- |
-| `push.mode` | `off` (default) or `relay`. |
-| `push.relays` | `[primary]` or `[primary, standby]` origins: `https`, or `http` on loopback for local testing. No path. Required in relay mode. |
+| `push.mode` | `relay` (default) or `off`. `off` hides the phone's Push Notifications switch for this server. |
+| `push.relays` | `[primary]` or `[primary, standby]` origins: `https`, or `http` on loopback for local testing. No path. Default: `["https://push.oppi.chaosdonkey.dev"]`. |
 
-Restart the server after changing `push`. In relay mode, `/server/info` advertises `capabilities.pushNotifications` with the primary relay. Each user still opts in per server on the phone (**Server Settings → Notifications**, **Push Notifications**, off by default); only then does the app register with APNs and the relay, ask for notification permission, and send this server its push key.
+Restart the server after changing `push`.
 
-`https://push.oppi.chaosdonkey.dev` is Oppi's relay, and the only one that reaches App Store and TestFlight builds: a relay needs an APNs key from the Apple Developer team that signs the app. If you build and sign Oppi yourself, run the relay in `relay/` (Node, or Cloudflare Workers) with your team's key. See [relay/README.md](../relay/README.md).
+`https://push.oppi.chaosdonkey.dev` is Oppi's relay, and the only one that reaches App Store and TestFlight builds: a relay needs an APNs key from the Apple Developer team that signs the app. Set `push.relays` only if you build and sign Oppi yourself; then run the relay in `relay/` (Node, or Cloudflare Workers) with your team's key. See [relay/README.md](../relay/README.md).
 
 What the server does:
 
@@ -181,7 +175,7 @@ What the server does:
 
 ### Live Activity
 
-In relay mode the server also keeps each opted-in phone's Live Activity current while Oppi is closed. The card shows counts only, one per thread (a top-level session with all its subagents): how many threads need you (any session in it waits on an approval, question, or sign-in) and how many are running (any session in it is working). A lead that idles while its subagents work counts as running, once. Users turn it on per server on the phone (**Server Settings**, **Notifications**, **Live Activities**, off by default); with push off for that server the card updates only while Oppi is open. The phone, not the server, decides which servers may update its card: it tells the relay, and the relay answers any other server `409 no_activity`, which costs nothing from the budget below. There is no server setting beyond `push`.
+Unless push is off, the server also keeps each opted-in phone's Live Activity current while Oppi is closed. The card shows counts only, one per thread (a top-level session with all its subagents): how many threads need you (any session in it waits on an approval, question, or sign-in) and how many are running (any session in it is working). A lead that idles while its subagents work counts as running, once. Users turn it on per server on the phone (**Server Settings**, **Notifications**, **Live Activities**, off by default); with push off for that server the card updates only while Oppi is open. The phone, not the server, decides which servers may update its card: it tells the relay, and the relay answers any other server `409 no_activity`, which costs nothing from the budget below. There is no server setting beyond `push`.
 
 - **What is sent:** the event (`start`, `update`, or `end`) and the two counts, in plain text to the relay, which puts them into a fixed ActivityKit template. No session names, IDs, or text. Apple and the relay can read these counts and their timing; see the [spec](../protocol/push/spec.md#36-live-activity).
 - **When:** only when the counts on the card would change, at most once a minute per device (the latest counts win), and only while the device holds no app-event or session stream; an open app updates its own card. Work starting while the phone has no card starts one (with Apple's required alert, "Oppi: Agents are working."); nothing running or waiting ends it within about 30 seconds. Apple ends a card after 8 hours; while work continues the server ends it and starts a new one by then, counting from the earliest the card can have started (for a card the app started, from when work last began). The server starts a card only when it knows there is none, or when updates keep finding no card to update (work that began while the app was backgrounded but still connected has none, since the app cannot start one then): it then tries one start. The relay refuses that start for a dismissed card and for a server the phone did not list; the card is then left alone until nothing runs, and no start is sent again until then. The server keeps each device's card start time in `live-activity-state.json` in the data directory. A minute after the server starts it reconciles each device once: a card the last process started, under 7.5 hours old, is updated (no alert) or ended when nothing runs; an unknown or older card ends, or is restarted while work continues. When you stop the server (`oppi server stop`, `oppi server uninstall`, or Ctrl-C in a foreground `oppi serve`) it sends one `end` to each away device whose card is up, waiting at most 3 seconds in all, and it does the same for a device when you revoke it; both are best effort. A restart (`oppi server restart`, the in-app update, launchd restarting a crashed server, a Docker restart) keeps the cards: the CLI marks an explicit stop with a `server-stop-requested` file in the data directory, and a server that finds none treats the stop as a restart.

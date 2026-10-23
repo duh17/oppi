@@ -177,7 +177,7 @@ export interface ServerConfig {
   // Device-key auth state (issued during pairing)
   authDevices?: DeviceRecord[];
   authAccessTokens?: AccessTokenRecord[];
-  /** End-to-end-encrypted push through a relay. Omitted means `off`. */
+  /** End-to-end-encrypted push through a relay. Omitted means relay mode through Oppi's relay. */
   push?: PushConfig;
   // Push registrations (written by PUT /me/push-registration from paired devices)
   pushRegistrations?: PushRegistration[];

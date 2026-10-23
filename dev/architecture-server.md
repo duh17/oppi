@@ -128,7 +128,7 @@ graph TD
 
 ## Push
 
-Push is relay-only and end to end encrypted ([protocol/push/spec.md](../protocol/push/spec.md)); the server holds no APNs key and opens no connection to Apple. `push.mode` is `off` by default. `server/src/push/` owns it:
+Push is relay-only and end to end encrypted ([protocol/push/spec.md](../protocol/push/spec.md)); the server holds no APNs key and opens no connection to Apple. `push.mode` is `relay` through Oppi's relay by default; nothing is sent until a phone registers. `server/src/push/` owns it:
 
 - `envelope.ts`: the only way to make a `SealedPushEnvelope` (HPKE to the device's X25519 push key, Ed25519 signature by the server identity key, fixed 512-byte padded plaintext).
 - `hpke.ts`: RFC 9180 base mode, single shot, for DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / ChaCha20-Poly1305, composed from `node:crypto` primitives only; checked against RFC 9180 Appendix A.2.1. Push uses no third-party crypto package.

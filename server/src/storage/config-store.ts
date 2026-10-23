@@ -784,7 +784,7 @@ function normalizeConfig(
           if (key !== "mode" && key !== "relays") errors.push(`config.push.${key}: unknown key`);
         }
       }
-      const mode = pushObj.mode ?? "off";
+      const mode = pushObj.mode ?? "relay";
       if (mode !== "off" && mode !== "relay") {
         errors.push("config.push.mode: expected off or relay");
         changed = true;
@@ -798,10 +798,6 @@ function normalizeConfig(
             errors.push(`config.push.relays: ${parsed.error}`);
             changed = true;
           }
-        }
-        if (push.mode === "relay" && !push.relays) {
-          errors.push("config.push.relays: required when push.mode is relay");
-          changed = true;
         }
         config.push = push;
       }
