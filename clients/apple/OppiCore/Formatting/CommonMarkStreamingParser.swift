@@ -10,64 +10,75 @@ struct CommonMarkStreamingParseResult: Equatable, Sendable {
     let prefixBlocks: [MarkdownBlock]
     let tailBlocks: [MarkdownBlock]
     let strategy: CommonMarkStreamingParseStrategy
+    /// Previous content's UTF-8 byte count when this content appends to it;
+    /// `count ..< count` means the content is unchanged. Nil for the first
+    /// call, a shrink, or a replacement, all of which drop the frozen prefix.
+    let appendedUTF8Range: Range<Int>?
 }
 
 /// Incrementally parses a monotonically growing CommonMark document.
 ///
 /// The parser keeps finalized top-level blocks and reparses only the open tail
-/// while their UTF-8 prefix remains unchanged. Inputs that can retroactively
-/// rewrite earlier blocks deliberately use the canonical full-document parser.
+/// while the frozen UTF-8 prefix still belongs to this content. It also owns the
+/// single "was this tick an append?" verdict for the streaming path: an append is
+/// proved from the last bytes of the previous content, never from the whole
+/// document, so a tick costs O(appended bytes). Anything else is a replacement:
+/// the frozen state is dropped and the canonical full-document parser runs.
 struct CommonMarkStreamingParser: Sendable {
+    /// Bytes kept from the end of the previous content. Longer content is an
+    /// append only when it repeats them at the same offset.
+    private static let appendSampleByteCount = 64
+
     private struct State: Sendable {
         var prefixUTF8ByteCount: Int
-        var prefixContentHash: UInt64
         var prefixBlocks: [MarkdownBlock]
-        var lastContentUTF8ByteCount: Int
     }
 
-    private struct ReferenceDefinitionScanState: Sendable {
-        var contentUTF8ByteCount: Int
-        var hasPotentialDefinition: Bool
+    private struct SuffixScanState: Sendable {
+        var scannedUTF8ByteCount: Int
+        var hasCanonicalTrigger: Bool
     }
 
     private var state: State?
-    private var referenceDefinitionScanState: ReferenceDefinitionScanState?
+    private var suffixScanState: SuffixScanState?
+    private var trailingSample: [UInt8] = []
+    private var lastContentUTF8ByteCount: Int?
 
     mutating func reset() {
         state = nil
-        referenceDefinitionScanState = nil
+        suffixScanState = nil
+        trailingSample = []
+        lastContentUTF8ByteCount = nil
     }
 
     mutating func parse(_ content: String) -> CommonMarkStreamingParseResult {
         let contentUTF8 = content.utf8
+        let appended = appendedRange(in: contentUTF8)
+        defer { recordTrailingSample(contentUTF8) }
 
-        if let current = state {
-            let prefixStillMatches = current.prefixUTF8ByteCount <= contentUTF8.count
-                && Self.fnv1a64(bytes: contentUTF8, count: current.prefixUTF8ByteCount) == current.prefixContentHash
-            if !prefixStillMatches {
-                state = nil
-                referenceDefinitionScanState = nil
-            }
+        if appended == nil {
+            state = nil
         }
 
-        // Link-reference definitions can resolve links in finalized blocks, and
-        // display-math delimiters can combine earlier CommonMark blocks. False
-        // positives intentionally choose the slower canonical path.
-        if requiresCanonicalFullParse(content) {
+        // Display-math delimiters can combine earlier CommonMark blocks, and
+        // link-reference definitions can resolve links in finalized blocks.
+        // False positives intentionally choose the slower canonical path.
+        if requiresCanonicalFullParse(contentUTF8, appendedRange: appended) {
             state = nil
             let blocks = parseCommonMark(content)
             return CommonMarkStreamingParseResult(
                 blocks: blocks,
                 prefixBlocks: [],
                 tailBlocks: blocks,
-                strategy: .full
+                strategy: .full,
+                appendedUTF8Range: appended
             )
         }
 
         if let current = state,
+           appended != nil,
            current.prefixUTF8ByteCount > 0,
-           current.prefixUTF8ByteCount < contentUTF8.count,
-           Self.prefixIsUnchanged(contentUTF8: contentUTF8, state: current) {
+           current.prefixUTF8ByteCount < contentUTF8.count {
             let boundary = contentUTF8.index(
                 contentUTF8.startIndex,
                 offsetBy: current.prefixUTF8ByteCount
@@ -90,7 +101,8 @@ struct CommonMarkStreamingParser: Sendable {
                 blocks: blocks,
                 prefixBlocks: current.prefixBlocks,
                 tailBlocks: tailBlocks,
-                strategy: .tailOnly
+                strategy: .tailOnly,
+                appendedUTF8Range: appended
             )
         }
 
@@ -107,7 +119,8 @@ struct CommonMarkStreamingParser: Sendable {
             blocks: blocks,
             prefixBlocks: split.prefixBlocks,
             tailBlocks: split.tailBlocks,
-            strategy: .full
+            strategy: .full,
+            appendedUTF8Range: appended
         )
     }
 
@@ -144,9 +157,7 @@ struct CommonMarkStreamingParser: Sendable {
 
         state = State(
             prefixUTF8ByteCount: newPrefixByteCount,
-            prefixContentHash: Self.fnv1a64(bytes: contentUTF8, count: newPrefixByteCount),
-            prefixBlocks: previousState.prefixBlocks + tailBlocks.dropLast(),
-            lastContentUTF8ByteCount: contentUTF8.count
+            prefixBlocks: previousState.prefixBlocks + tailBlocks.dropLast()
         )
     }
 
@@ -176,50 +187,89 @@ struct CommonMarkStreamingParser: Sendable {
         return (
             State(
                 prefixUTF8ByteCount: byteOffset,
-                prefixContentHash: Self.fnv1a64(bytes: contentUTF8, count: byteOffset),
-                prefixBlocks: prefixBlocks,
-                lastContentUTF8ByteCount: contentUTF8.count
+                prefixBlocks: prefixBlocks
             ),
             prefixBlocks,
             Array(blocks.suffix(1))
         )
     }
 
-    private mutating func requiresCanonicalFullParse(_ content: String) -> Bool {
-        containsPotentialLinkReferenceDefinition(content)
-            || content.contains("$$")
-            || content.contains(#"\["#)
-            || content.contains(#"\]"#)
+    /// Append verdict for this tick, in O(1) index work: the previous content's
+    /// last bytes must repeat at the same offset. A shrink or a mismatch is a
+    /// replacement, which drops the frozen prefix. A replacement that happens to
+    /// repeat those bytes reads as an append by design; callers that can reuse a
+    /// parser across unrelated documents reset it instead (`reset()`).
+    private func appendedRange(in contentUTF8: String.UTF8View) -> Range<Int>? {
+        guard let lastContentUTF8ByteCount,
+              contentUTF8.count >= lastContentUTF8ByteCount else {
+            return nil
+        }
+        let sampleEnd = contentUTF8.index(
+            contentUTF8.endIndex,
+            offsetBy: lastContentUTF8ByteCount - contentUTF8.count
+        )
+        let sampleStart = contentUTF8.index(sampleEnd, offsetBy: -trailingSample.count)
+        guard contentUTF8[sampleStart..<sampleEnd].elementsEqual(trailingSample) else {
+            return nil
+        }
+        return lastContentUTF8ByteCount..<contentUTF8.count
     }
 
-    /// Streaming source is append-only. Scan only the appended UTF-8 suffix,
-    /// retaining one overlap byte so a delimiter split across ticks is found.
-    private mutating func containsPotentialLinkReferenceDefinition(_ content: String) -> Bool {
-        if referenceDefinitionScanState?.hasPotentialDefinition == true {
+    private mutating func recordTrailingSample(_ contentUTF8: String.UTF8View) {
+        lastContentUTF8ByteCount = contentUTF8.count
+        trailingSample = Array(contentUTF8.suffix(Self.appendSampleByteCount))
+    }
+
+    /// One pass over the appended UTF-8 bytes for every delimiter that can make
+    /// an earlier block stale: display math, LaTeX delimiters, and link-reference
+    /// definitions. One overlap byte catches a pair split across ticks, and the
+    /// trigger is sticky because content only grows while streaming. A
+    /// replacement rescans from the start.
+    private mutating func requiresCanonicalFullParse(
+        _ contentUTF8: String.UTF8View,
+        appendedRange: Range<Int>?
+    ) -> Bool {
+        // Sticky only while the document grows: a replacement rescans from the
+        // start, so an earlier delimiter no longer forces the canonical path.
+        if appendedRange != nil, suffixScanState?.hasCanonicalTrigger == true {
             return true
         }
 
-        let bytes = content.utf8
-        let previousByteCount = referenceDefinitionScanState?.contentUTF8ByteCount ?? 0
-        let isAppend = bytes.count >= previousByteCount
-        let startOffset = isAppend ? max(0, previousByteCount - 1) : 0
-        let start = bytes.index(bytes.startIndex, offsetBy: startOffset)
+        let resumedByteCount = appendedRange == nil ? 0 : suffixScanState?.scannedUTF8ByteCount ?? 0
+        let scanStartOffset = max(0, resumedByteCount - 1)
+        let start = contentUTF8.index(
+            contentUTF8.endIndex,
+            offsetBy: scanStartOffset - contentUTF8.count
+        )
 
         var previousByte: UInt8?
-        var found = false
-        for byte in bytes[start...] {
-            if previousByte == UInt8(ascii: "]"), byte == UInt8(ascii: ":") {
-                found = true
-                break
+        for byte in contentUTF8[start...] {
+            if let previousByte, Self.isCanonicalTriggerPair(previousByte, byte) {
+                suffixScanState = SuffixScanState(
+                    scannedUTF8ByteCount: contentUTF8.count,
+                    hasCanonicalTrigger: true
+                )
+                return true
             }
             previousByte = byte
         }
 
-        referenceDefinitionScanState = ReferenceDefinitionScanState(
-            contentUTF8ByteCount: bytes.count,
-            hasPotentialDefinition: found
+        suffixScanState = SuffixScanState(
+            scannedUTF8ByteCount: contentUTF8.count,
+            hasCanonicalTrigger: false
         )
-        return found
+        return false
+    }
+
+    private static func isCanonicalTriggerPair(_ previous: UInt8, _ byte: UInt8) -> Bool {
+        let dollar = UInt8(ascii: "$")
+        let backslash = UInt8(ascii: "\\")
+        let openBracket = UInt8(ascii: "[")
+        let closeBracket = UInt8(ascii: "]")
+        let colon = UInt8(ascii: ":")
+        return (previous == dollar && byte == dollar)
+            || (previous == backslash && (byte == openBracket || byte == closeBracket))
+            || (previous == closeBracket && byte == colon)
     }
 
     /// A mid-row chunk can make cmark emit a short table plus a pipe paragraph.
@@ -250,15 +300,6 @@ struct CommonMarkStreamingParser: Sendable {
         return false
     }
 
-    /// Skip FNV-1a when content only grew. Streaming appends leave the prefix
-    /// bytes unchanged; shrinking or replacement still needs a hash check.
-    private static func prefixIsUnchanged(contentUTF8: String.UTF8View, state: State) -> Bool {
-        if contentUTF8.count >= state.lastContentUTF8ByteCount {
-            return true
-        }
-        return fnv1a64(bytes: contentUTF8, count: state.prefixUTF8ByteCount) == state.prefixContentHash
-    }
-
     private static func utf8ByteOffset(forLine targetLine: Int, in content: String) -> Int {
         guard targetLine > 1 else { return 0 }
         var currentLine = 1
@@ -273,15 +314,5 @@ struct CommonMarkStreamingParser: Sendable {
             }
         }
         return content.utf8.count
-    }
-
-    private static func fnv1a64(bytes: String.UTF8View, count: Int) -> UInt64 {
-        var hash: UInt64 = 14_695_981_039_346_656_037
-        let end = bytes.index(bytes.startIndex, offsetBy: count)
-        for byte in bytes[..<end] {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
-        return hash
     }
 }

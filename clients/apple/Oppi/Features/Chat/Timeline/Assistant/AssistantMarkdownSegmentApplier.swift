@@ -277,14 +277,14 @@ final class AssistantMarkdownSegmentApplier {
     private var latexViews: [Int: NativeLatexBlockView] = [:]
     private var sourceLineRanges: [ClosedRange<Int>?] = []
 
-    /// Plain-text UTF-16 mirror of the streaming tail for prefix validation
-    /// and append eligibility. Reading `NSAttributedString.string` rebuilds a
-    /// Swift string; keep the append-only plain text instead.
+    /// Plain-text UTF-16 mirror of the streaming tail for prefix validation.
+    /// Reading `NSAttributedString.string` rebuilds a Swift string; keep the
+    /// append-only plain text instead.
     private var cachedStreamingTailPlain: NSMutableString?
-    /// Full raw markdown content that produced the cached streaming tail.
-    /// Used only to detect append-only prose deltas that cannot close inline
-    /// markdown syntax and therefore do not need rendered-prefix validation.
-    private var cachedStreamingSourceContent: String?
+    /// The parser's verdict for the tick being applied: it proved this content
+    /// appends to the previous content and the new bytes cannot restyle earlier
+    /// glyphs, so the rendered prefix needs no validation.
+    private var markdownNeutralAppend = false
     private let chunkSettleAnimator: MarkdownChunkSettleAnimator
     /// Extra TextKit 2 fragments to layout above and below the visible clip.
     private static let streamingLayoutRunway: CGFloat = 320
@@ -384,7 +384,7 @@ final class AssistantMarkdownSegmentApplier {
     func clear(preservingVideos: [NativeMarkdownVideoView] = []) {
         chunkSettleAnimator.cancelAndSnap()
         cachedStreamingTailPlain = nil
-        cachedStreamingSourceContent = nil
+        markdownNeutralAppend = false
 
         for view in imageViews.values {
             view.cancelPreparationDemand()
@@ -506,13 +506,14 @@ final class AssistantMarkdownSegmentApplier {
     func apply(
         segments: [FlatSegment],
         config: AssistantMarkdownContentView.Configuration,
-        sourceLineRanges: [ClosedRange<Int>?] = []
+        sourceLineRanges: [ClosedRange<Int>?] = [],
+        markdownNeutralAppend: Bool = false
     ) {
         self.sourceLineRanges = sourceLineRanges
+        self.markdownNeutralAppend = markdownNeutralAppend
         if !config.isStreaming {
             chunkSettleAnimator.cancelAndSnap()
             cachedStreamingTailPlain = nil
-            cachedStreamingSourceContent = nil
         }
 
         let signatures = segments.map(SegmentSignature.init)
@@ -591,7 +592,6 @@ final class AssistantMarkdownSegmentApplier {
         }), let tv = textViews[lastIdx] {
             let fullText = tv.attributedText ?? NSAttributedString()
             cachedStreamingTailPlain = NSMutableString(string: fullText.string)
-            cachedStreamingSourceContent = config.content
         }
     }
 
@@ -911,14 +911,12 @@ final class AssistantMarkdownSegmentApplier {
 
         // Reset incremental cache on structural change.
         cachedStreamingTailPlain = nil
-        cachedStreamingSourceContent = nil
 
         // Seed the incremental cache for the rebuilt tail.
         let lastTextIndex = segments.lastIndex(where: { if case .text = $0 { return true } else { return false } })
         if let lastIdx = lastTextIndex, let tv = textViews[lastIdx] {
             let fullText = tv.attributedText ?? NSAttributedString()
             cachedStreamingTailPlain = NSMutableString(string: fullText.string)
-            cachedStreamingSourceContent = config.content
         }
 
         ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: stackView)
@@ -937,7 +935,7 @@ final class AssistantMarkdownSegmentApplier {
            case .text(let attributed) = segments[lastTextIndex],
            let textView = textViews[lastTextIndex] {
             configureSourceLineResolver(textView, sourceLineRange: sourceLineRange(at: lastTextIndex))
-            updateStreamingTextTail(attributed, in: textView, config: config)
+            updateStreamingTextTail(attributed, in: textView)
             return
         }
 
@@ -964,7 +962,7 @@ final class AssistantMarkdownSegmentApplier {
                         }
 
                         if isStreamingTail {
-                            updateStreamingTextTail(attributed, in: textView, config: config)
+                            updateStreamingTextTail(attributed, in: textView)
                         } else {
                             // Non-streaming: re-enable data detectors if they were disabled
                             // during streaming, then do full replacement.
@@ -1154,8 +1152,7 @@ final class AssistantMarkdownSegmentApplier {
 
     private func updateStreamingTextTail(
         _ attributed: AttributedString,
-        in textView: BaselineSafeTextView,
-        config: AssistantMarkdownContentView.Configuration
+        in textView: BaselineSafeTextView
     ) {
         // Disable data detectors during streaming to avoid O(n) text
         // scanning on every textStorage change. Data detection runs
@@ -1171,13 +1168,8 @@ final class AssistantMarkdownSegmentApplier {
         let oldLength = textView.textStorage.length
 
         if let cachedPlain = cachedStreamingTailPlain,
-           cachedStreamingSourceContent != nil,
            cachedPlain.length == oldLength {
-            let markdownNeutral = StreamingMarkdownDelta.isNeutralSourceAppend(
-                previousContent: cachedStreamingSourceContent,
-                currentContent: config.content
-            )
-            let prefixValid = markdownNeutral
+            let prefixValid = markdownNeutralAppend
                 || StreamingMarkdownDelta.renderedUTF16PrefixMatches(attributed, prefix: cachedPlain)
 
             if prefixValid,
@@ -1186,11 +1178,12 @@ final class AssistantMarkdownSegmentApplier {
                    afterUTF16Offset: oldLength
                ) {
                 if delta.length == 0 {
-                    // Same rendered length: skip only when the source tick cannot
-                    // restyle earlier glyphs. Otherwise CommonMark closed markup
-                    // in place and the prefix needs a full replace.
-                    if markdownNeutral { return }
-                    replaceStreamingText(attributed, in: textView, config: config)
+                    // Same rendered length: skip only when the parser proved the
+                    // source tick cannot restyle earlier glyphs. Otherwise
+                    // CommonMark closed markup in place and the prefix needs a
+                    // full replace.
+                    if markdownNeutralAppend { return }
+                    replaceStreamingText(attributed, in: textView)
                     return
                 }
                 #if DEBUG
@@ -1201,7 +1194,6 @@ final class AssistantMarkdownSegmentApplier {
                 chunkSettleAnimator.cancelAndSnap()
                 appendStreamingDelta(delta, to: textView)
                 cachedPlain.append(delta.string)
-                cachedStreamingSourceContent = config.content
                 refreshTextViewLayoutAfterContentChange(textView)
                 // Layout the appended range (chunk fade) plus the on-screen
                 // runway. `layoutIfNeeded()` grows the text view inside a stale
@@ -1213,17 +1205,16 @@ final class AssistantMarkdownSegmentApplier {
                     in: textView
                 )
             } else {
-                replaceStreamingText(attributed, in: textView, config: config)
+                replaceStreamingText(attributed, in: textView)
             }
         } else {
-            replaceStreamingText(attributed, in: textView, config: config)
+            replaceStreamingText(attributed, in: textView)
         }
     }
 
     private func replaceStreamingText(
         _ attributed: AttributedString,
-        in textView: BaselineSafeTextView,
-        config: AssistantMarkdownContentView.Configuration
+        in textView: BaselineSafeTextView
     ) {
         chunkSettleAnimator.cancelAndSnap()
         let fullNS = NSAttributedString(attributed)
@@ -1233,7 +1224,6 @@ final class AssistantMarkdownSegmentApplier {
         textView.attributedText = fullNS
         refreshTextViewLayoutAfterContentChange(textView)
         cachedStreamingTailPlain = NSMutableString(string: fullNS.string)
-        cachedStreamingSourceContent = config.content
     }
 
     private func appendStreamingDelta(

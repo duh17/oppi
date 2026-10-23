@@ -272,6 +272,12 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
     }
 
     private func apply(configuration: AssistantTimelineRowConfiguration) {
+        // A reused cell must not hand another item's text to this row's
+        // incremental parser. Its append verdict only proves that the last bytes
+        // repeat at the same offset, not that the earlier text is the same item.
+        if currentConfiguration.itemID != configuration.itemID {
+            markdownView.clearContent()
+        }
         currentConfiguration = configuration
         accessibilityIdentifier = configuration.itemID.map { "chat.timeline.assistant.\($0)" }
 

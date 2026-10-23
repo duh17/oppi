@@ -1076,6 +1076,7 @@
 		7CBE58965D53D1897E35AB34 /* ANSIAttributedStringRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FB286B4533D13ED155B1967 /* ANSIAttributedStringRenderer.swift */; };
 		7CEF7F915C8B45F653F36A65 /* MermaidKanbanRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E223D33B9B7A41141B8D5B0 /* MermaidKanbanRenderer.swift */; };
 		7CF6D68316CED5E385ACD8EE /* JSONCodeBlockWrapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32FB3943A013F883DF00B81B /* JSONCodeBlockWrapTests.swift */; };
+		7CF84720B96BB7FF24D64CA9 /* StreamingMarkdownAppendTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1533E5915A7168B793865C61 /* StreamingMarkdownAppendTests.swift */; };
 		7D059C2B83E2DD30DBF3B50A /* FullScreenViewerPresentationPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD29C26FA3134582FFFF86D1 /* FullScreenViewerPresentationPolicyTests.swift */; };
 		7D12B3DD18E5A2914A50FF46 /* MermaidKanbanRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E223D33B9B7A41141B8D5B0 /* MermaidKanbanRenderer.swift */; };
 		7D294D644EE65AACEC0D62FC /* TimedText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F044BF09A23B7B08BFA8CE5 /* TimedText.swift */; };
@@ -2521,6 +2522,7 @@
 		15060C5B171CEDCBCFA1FEFC /* ChatViewController+Presentations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewController+Presentations.swift"; sourceTree = "<group>"; };
 		151193FBB066CCBFFF875D20 /* ReviewCommentSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewCommentSelection.swift; sourceTree = "<group>"; };
 		151CCC569D40E2CCF7559506 /* FileShareHTMLCanvasPerfTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileShareHTMLCanvasPerfTests.swift; sourceTree = "<group>"; };
+		1533E5915A7168B793865C61 /* StreamingMarkdownAppendTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingMarkdownAppendTests.swift; sourceTree = "<group>"; };
 		1548BB65A34EFE85F6DB642A /* SSHTerminalProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalProfile.swift; sourceTree = "<group>"; };
 		1558B61485C2084D8B980AF0 /* ConnectionTransportPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionTransportPath.swift; sourceTree = "<group>"; };
 		159A60643B3F79AD0FA799C3 /* MacInlineOutputFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacInlineOutputFormatter.swift; sourceTree = "<group>"; };
@@ -5406,6 +5408,7 @@
 				FC55D2B1108CBDA3F960B296 /* NativeMarkdownImageViewSVGTests.swift */,
 				65AA5864947B95EB7DED7115 /* StreamFinishFormattingTests.swift */,
 				E17BB3114E8F1F1CD4978B42 /* StreamingInlineReparseTests.swift */,
+				1533E5915A7168B793865C61 /* StreamingMarkdownAppendTests.swift */,
 				2D2D1A41291EA1313BB195AC /* TableBodyLeakRegressionTests.swift */,
 				A9F803DDFA51B18E1AE25AB4 /* TimedTextTests.swift */,
 				1902F5B6A921600AE703FCD0 /* WorkspaceFileURLTests.swift */,
@@ -9065,6 +9068,7 @@
 				03ABBEAC81245686CF6A0F1A /* StreamingAutoFollowTests.swift in Sources */,
 				157160D302C999CD0CDE3C41 /* StreamingFastPathTests.swift in Sources */,
 				5E60004C6B5A7E2220EB32EC /* StreamingInlineReparseTests.swift in Sources */,
+				7CF84720B96BB7FF24D64CA9 /* StreamingMarkdownAppendTests.swift in Sources */,
 				1C7A9F3199635A18374EB679 /* StreamingRenderPolicyResourcePressureTests.swift in Sources */,
 				E5CD1ACD20967FD5B7F628C9 /* StreamingRenderPolicyTests.swift in Sources */,
 				136ADC127D55D11B360F50D8 /* SyntaxHighlightOwnershipTests.swift in Sources */,

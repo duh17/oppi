@@ -332,7 +332,8 @@ final class AssistantMarkdownContentView: UIView {
         segmentApplier.apply(
             segments: build.segments,
             config: config,
-            sourceLineRanges: build.sourceLineRanges
+            sourceLineRanges: build.sourceLineRanges,
+            markdownNeutralAppend: segmentSource.lastStreamingAppendIsMarkdownNeutral
         )
         segmentApplier.applyLeadingHang(
             clearance: leadingHangClearance,

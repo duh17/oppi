@@ -33,10 +33,16 @@ final class AssistantMarkdownSegmentSource {
     private var streamingSegmentState: StreamingSegmentState?
     private var streamingTextMergeCache: StreamingTextMergeCache?
 
+    /// The parser's append verdict for the last streaming build, and whether the
+    /// appended bytes can leave earlier glyphs alone. The applier uses it instead
+    /// of re-deriving an append from the whole source text.
+    private(set) var lastStreamingAppendIsMarkdownNeutral = false
+
     func reset() {
         streamingParser.reset()
         streamingSegmentState = nil
         streamingTextMergeCache = nil
+        lastStreamingAppendIsMarkdownNeutral = false
     }
 
     func buildSegments(
@@ -46,6 +52,7 @@ final class AssistantMarkdownSegmentSource {
     ) -> [FlatSegment] {
         let content = config.content
         let identity = config.resourceAccess.identity
+        lastStreamingAppendIsMarkdownNeutral = false
 
         if !config.isStreaming,
            mergeAdjacentTextSegments,
@@ -133,6 +140,7 @@ final class AssistantMarkdownSegmentSource {
         // finish before same-key occurrence ordinals are assigned.
         let content = config.content
         let identity = config.resourceAccess.identity
+        lastStreamingAppendIsMarkdownNeutral = false
         let parseStart = MarkdownStreamingPerf.timestampNs()
         let blocks = parseCommonMarkLocated(content)
         let parseEnd = MarkdownStreamingPerf.timestampNs()
@@ -202,6 +210,9 @@ final class AssistantMarkdownSegmentSource {
         let parseStart = MarkdownStreamingPerf.timestampNs()
         let parsed = streamingParser.parse(config.content)
         let parseEnd = MarkdownStreamingPerf.timestampNs()
+        lastStreamingAppendIsMarkdownNeutral = parsed.appendedUTF8Range.map { appended in
+            StreamingMarkdownDelta.appendedSourceIsMarkdownNeutral(config.content, range: appended)
+        } ?? false
 
         let prefixSegments: [FlatSegment]
         let prefixReused: Bool
@@ -378,17 +389,18 @@ final class AssistantMarkdownSegmentSource {
 /// Slices a FlatSegment AttributedString without boxing the already-rendered prefix
 /// into NSAttributedString. UTF-16 offsets match TextKit / NSTextStorage.
 enum StreamingMarkdownDelta {
-    static func isNeutralSourceAppend(previousContent: String?, currentContent: String) -> Bool {
-        guard let previousContent else { return false }
+    /// True when the appended source bytes cannot open or close inline markup, so
+    /// an append cannot restyle glyphs that are already rendered. Only the
+    /// appended bytes are scanned; the parser already proved the append.
+    static func appendedSourceIsMarkdownNeutral(_ content: String, range: Range<Int>) -> Bool {
+        guard !range.isEmpty else { return true }
 
-        let previousBytes = previousContent.utf8
-        let currentBytes = currentContent.utf8
-        guard currentBytes.count > previousBytes.count,
-              currentBytes.starts(with: previousBytes) else {
-            return false
-        }
-
-        for byte in currentBytes.dropFirst(previousBytes.count) {
+        let bytes = content.utf8
+        let start = bytes.index(
+            bytes.endIndex,
+            offsetBy: range.lowerBound - bytes.count
+        )
+        for byte in bytes[start...] {
             switch byte {
             case 33, 36, 38, 40, 41, 42, 60, 62, 91, 92, 93, 95, 96, 124, 126:
                 return false
