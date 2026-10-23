@@ -632,7 +632,7 @@ struct FullScreenMarkdownStressCorpusTests {
             expected: finalAnchor,
             stage: "gallery settlement after upward drag"
         )
-        try await assertReservedHeightsMatchFitting(
+        try assertReservedHeightsMatchFitting(
             in: body,
             items: [finalMermaidItem],
             stage: "final gallery Mermaid settlement"
@@ -782,7 +782,7 @@ struct FullScreenMarkdownStressCorpusTests {
             "first paint applied the whole document (\(body.debugAppliedItemCountForTesting)/\(body.debugRenderedSegmentCountForTesting))"
         )
 
-        try await assertReservedHeightsMatchFitting(
+        try assertReservedHeightsMatchFitting(
             in: body,
             items: collectionView.indexPathsForVisibleItems.map(\.item),
             stage: "first paint"
@@ -826,9 +826,13 @@ struct FullScreenMarkdownStressCorpusTests {
         ] {
             body.debugScrollItemIntoViewForTesting(item)
             await settleReservedHeights(body)
-            try await assertReservedHeightsMatchFitting(in: body, items: [item], stage: stage)
+            // Capture the anchor before any settle: the deferred passes are
+            // still owed here, so the anchor assertion below proves they keep
+            // it put. Settling first would compare settled geometry with
+            // itself.
             anchor = try #require(body.debugVisibleAnchorForTesting(), "missing visible anchor after \(stage)")
             try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: stage)
+            try assertReservedHeightsMatchFitting(in: body, items: [item], stage: stage)
         }
 
         body.debugScrollItemIntoViewForTesting(imageItem)
@@ -882,7 +886,7 @@ struct FullScreenMarkdownStressCorpusTests {
         #expect(imageLoaded, "workspace image never settled after first layout")
         body.debugScrollItemIntoViewForTesting(imageItem)
         await settleReservedHeights(body)
-        try await assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image settlement")
+        try assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image settlement")
 
         collectionView.contentOffset.y = max(
             -collectionView.adjustedContentInset.top,
@@ -896,9 +900,11 @@ struct FullScreenMarkdownStressCorpusTests {
         await settleDeferredReaderWork(in: body, stage: "image reuse scroll")
         body.debugScrollItemIntoViewForTesting(imageItem)
         await settleReservedHeights(body)
-        try await assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image reuse")
+        // Anchor first, so the reuse assertion still covers the passes the
+        // reuse scroll queued; the reserved check runs on settled geometry.
         anchor = try #require(body.debugVisibleAnchorForTesting(), "missing visible anchor after image reuse")
         try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "image reuse")
+        try assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image reuse")
         #expect(
             collectionView.indexPathsForVisibleItems.allSatisfy {
                 body.debugHasFinalGeometryForTesting($0.item)
@@ -1016,12 +1022,7 @@ struct FullScreenMarkdownStressCorpusTests {
         in body: NativeFullScreenMarkdownBody,
         items: [Int],
         stage: String
-    ) async throws {
-        // Reserved heights only equal fitting heights once the reader's
-        // deferred passes (visible-height flush, image geometry commit,
-        // forced remeasure) have landed. Wait for that state instead of
-        // assuming a fixed delay covered it.
-        await settleDeferredReaderWork(in: body, stage: stage)
+    ) throws {
         let uniqueItems = Set(items).sorted()
         #expect(!uniqueItems.isEmpty, "\(stage) had no items to compare")
         for item in uniqueItems {

@@ -5191,12 +5191,18 @@ extension NativeFullScreenMarkdownBody {
         await renderAheadTask?.value
     }
 
-    /// True while a deferred reader pass can still change item heights or
-    /// write the viewport offset: the async document build, a render-ahead
-    /// slice, a queued visible-height flush, a forced item remeasure, or a
-    /// deferred interaction-end layout replace. A test waits on this instead
-    /// of sleeping, because under load those passes land much later than any
-    /// fixed delay and the anchor read races them.
+    /// True while one of the reader's deferred layout passes is queued or
+    /// running: the async document build (`sourcePreparationTask`,
+    /// `asyncRenderTask`, `deferredInitialRenderTask`), a render-ahead slice,
+    /// the `willDisplay` visible-height flush, a forced item remeasure, a
+    /// pending document layout, and the layout replace or height refresh that
+    /// interaction deferred.
+    ///
+    /// Not covered, because none of them runs on the stress suite's paths: the
+    /// line-anchor focus task, the pan-end main-queue hop, the viewport owner's
+    /// follow-tail and explicit-focus hops, and async block or image work
+    /// (Mermaid, LaTeX, images) until it schedules one of the passes above. A
+    /// test that depends on those waits on its own condition.
     var debugHasDeferredReaderWorkForTesting: Bool {
         sourcePreparationTask != nil
             || deferredInitialRenderTask != nil
