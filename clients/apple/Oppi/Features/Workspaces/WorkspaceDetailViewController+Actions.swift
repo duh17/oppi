@@ -7,7 +7,7 @@ extension WorkspaceDetailViewController {
         guard state.selectedWorktreeId != worktree.id else { return }
         state.selectedWorktreeId = worktree.id
         resetWorktreeScopedState()
-        refreshGitStatusContextBar()
+        refreshGitStatus()
         Task { await refreshWorkspaceData() }
     }
 
@@ -252,6 +252,59 @@ extension WorkspaceDetailViewController {
             let workspace = connection.map { currentWorkspace($0) } ?? routeWorkspace
             navigation.openWorkspaceFileBrowser(target, workspace: WorkspaceNavTarget(serverId: serverId, workspace: workspace))
         }
+    }
+
+    /// The Git panel (the chat's, `GitPanelViewController`) as a sheet: the
+    /// selected worktree's branch, changes, and commit graph. A session
+    /// started from it closes the panel and pushes onto this screen's stack.
+    func openWorkspaceGit() {
+        guard gitPanel == nil, let connection else { return }
+        let panel = GitPanelViewController(
+            context: { [weak self] in self?.gitPanelContext },
+            options: .init(
+                showCleanWorkspace: true,
+                initiallyExpanded: true,
+                isPanel: true,
+                pushChat: { [weak self] chat in
+                    guard let self else { return }
+                    if let gitPanel { Router.finish(gitPanel) }
+                    Router.push(chat, from: self)
+                }
+            ),
+            connection: connection,
+            apiClient: connection.apiClient,
+            navigation: navigation,
+            onClose: { [weak self] in
+                guard let gitPanel = self?.gitPanel else { return }
+                Router.finish(gitPanel)
+            }
+        )
+        gitPanel = panel
+        Router.present(
+            panel,
+            presentation: .sheet.detents([.medium(), .large()], grabber: true, selected: .large).inNavigation(),
+            from: self,
+            theme: root.themeStore
+        )
+    }
+
+    /// The Git panel's status, read in its `updateProperties()`, so it
+    /// follows the Git status store and the selected worktree.
+    private var gitPanelContext: WorkspaceContextBarView.Context? {
+        guard let connection else { return nil }
+        let store = connection.gitStatusStore
+        let worktreeId = state.selectedWorktreeId
+        let loaded = store.status(workspaceId: workspaceId, worktreeId: worktreeId)
+        return WorkspaceContextBarView.Context(
+            gitStatus: loaded,
+            // Another checkout's status in the store means this one's is on
+            // its way, not missing.
+            isLoading: loaded == nil
+                && (store.isLoading || !store.tracks(workspaceId: workspaceId, worktreeId: worktreeId)),
+            workspaceId: workspaceId,
+            worktreeId: worktreeId,
+            serverId: serverId
+        )
     }
 
     func openWorkspaceConfiguration() {

@@ -769,14 +769,18 @@ private struct ChatTopBarScreenshotPreview: View {
     var body: some View { ChatRoutesHarnessView() }
 }
 
-/// `SCREENSHOT_SCREEN=workspace-top-bar`: a workspace's bars, with its Terminal
-/// button beside Config when the folder can open in one.
+/// `SCREENSHOT_SCREEN=workspace-top-bar`: a workspace's bars, with its Git
+/// button (and its changed-file count) and Terminal beside Config.
 private struct WorkspaceTopBarScreenshotPreview: View {
     @State private var root: AppRootEnvironment
 
     init() {
         let coordinator = RouterModalSitesFixtures.makeCoordinator(playing: false)
         if let connection = coordinator.connection(for: RouterModalSitesFixtures.serverId) {
+            // A Git repository, so the bar offers Git; the stub answers its status.
+            var workspace = RouterModalSitesFixtures.workspaces[0]
+            workspace.gitStatusEnabled = true
+            connection.workspaceStore.upsert(workspace, serverId: RouterModalSitesFixtures.serverId)
             // Visible rows: the screen only raises its workspace load error
             // when it has nothing to show, and this capture is about the bar.
             connection.sessionStore.switchServer(to: RouterModalSitesFixtures.serverId)
@@ -1327,6 +1331,18 @@ private final class RouterModalSitesURLProtocol: URLProtocol {
                 WorkspaceWorktree(id: WorkspaceWorktree.mainId, name: "oppi", path: "~/workspace/oppi", branch: "main", headSha: nil, isMain: true, isGitRepo: true, sessionCount: nil),
                 WorkspaceWorktree(id: "router-fix", name: "router-fix", path: "~/workspace/oppi-router-fix", branch: "router-fix", headSha: nil, isMain: false, isGitRepo: true, sessionCount: nil),
             ]))
+        case ("GET", "/workspaces/oppi/git/status"):
+            try? encoder.encode(GitStatus(
+                isGitRepo: true, branch: "main", headSha: "7b42c0d", ahead: 3, behind: 0,
+                dirtyCount: 3, untrackedCount: 0, stagedCount: 0,
+                files: [
+                    GitFileStatus(status: " M", path: "clients/apple/Oppi/App/Router.swift", addedLines: 96, removedLines: 4),
+                    GitFileStatus(status: " M", path: "server/src/routes/workspaces.ts", addedLines: 12, removedLines: 3),
+                    GitFileStatus(status: " M", path: "docs/usage.md", addedLines: 5, removedLines: 1),
+                ],
+                totalFiles: 3, addedLines: 113, removedLines: 8, stashCount: 0,
+                lastCommitMessage: "Route fixture", lastCommitDate: nil, recentCommits: []
+            ))
         case ("GET", "/agents"):
             try? encoder.encode(Agents(agents: [
                 AgentDefinitionSummary(

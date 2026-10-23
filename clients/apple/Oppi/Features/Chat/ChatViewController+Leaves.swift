@@ -28,7 +28,7 @@ extension ChatViewController {
         .controller({ [weak self] in
             guard let self else { preconditionFailure("The Git panel presents only while its chat is alive") }
             let closePanel: () -> Void = { [weak self] in self?.model.showGit = false }
-            return ChatGitPanelViewController(
+            return GitPanelViewController(
                 context: { [weak self] in self?.gitPanelContext },
                 options: .init(
                     showCleanWorkspace: true,

@@ -184,7 +184,7 @@ extension WorkspaceDetailViewController {
     private static let hotStoppedRangeDays = 3
     private static let loadErrorPrefix = "Failed to load workspace:"
 
-    func refreshGitStatusContextBar() {
+    func refreshGitStatus() {
         // GitStatusStore is connection-scoped, so returning from a chat can leave
         // the workspace list showing the last pushed status until REST refreshes it.
         guard let connection, let api = connection.apiClient else { return }

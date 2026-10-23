@@ -54,6 +54,7 @@ Example:
 
 ### Changed
 
+- **Client:** A workspace's Git status moves from the strip over its session list to a **Git** button in the top bar, beside Terminal, with the changed-file count like a chat's. It opens the Git panel as a sheet. See [Git panel](docs/usage.md#git-panel).
 - **Mirror:** `oppi-mirror` uses `ws` 8.22.0, the version `oppi-server` pins.
 - **Server:** A one-time (`at`) schedule moves to Archived after its run succeeds, so finished one-time schedules leave the Active list. A failed run keeps it active so you can see the failure and run it again.
 

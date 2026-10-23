@@ -1,29 +1,11 @@
 import UIKit
 
-/// The screen's chrome: the git context bar and progress panel over the
-/// list, the rail and compact bars, and the worktree title and menu.
+/// The screen's chrome: the progress panel over the list, the rail and
+/// compact bars (with the Git button that opens the Git panel), and the
+/// worktree title and menu.
 extension WorkspaceDetailViewController {
-    /// The git context bar over the list (and its scrim while expanded), and
-    /// the creating / resuming progress panel.
-    func syncOverlays(_ detail: DetailState) {
-        if let gitStatus = detail.gitStatus, gitStatus.isGitRepo {
-            let context = WorkspaceContextBarView.Context(
-                gitStatus: gitStatus,
-                workspaceId: workspaceId,
-                worktreeId: state.selectedWorktreeId,
-                serverId: serverId,
-                collapseToken: state.contextBarCollapseToken
-            )
-            if let contextBar {
-                contextBar.context = context
-            } else {
-                installContextBar(context, connection: detail.connection)
-            }
-        } else {
-            removeContextBar()
-        }
-        scrim.isHidden = !(state.contextBarExpanded && contextBar != nil)
-
+    /// The creating / resuming progress panel.
+    func syncProgressPanel() {
         if state.isCreating || state.isImportingLocal {
             progressPanel.text = state.isImportingLocal
                 ? String(localized: "Resuming session...")
@@ -33,55 +15,6 @@ extension WorkspaceDetailViewController {
         } else {
             progressPanel.isHidden = true
         }
-    }
-
-    /// The bar sizes itself (collapsed or expanded) and reports each height.
-    private func installContextBar(_ context: WorkspaceContextBarView.Context, connection: ServerConnection) {
-        let bar = WorkspaceContextBarView(
-            context: context,
-            options: .init(showCleanWorkspace: true),
-            connection: connection,
-            apiClient: connection.apiClient,
-            navigation: navigation
-        )
-        bar.presenter = self
-        bar.onExpandedChanged = { [weak self] expanded in
-            self?.state.contextBarExpanded = expanded
-        }
-        bar.onHeightChange = { [weak self] height in
-            self?.setContextBarHeight(height)
-        }
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        view.insertSubview(bar, aboveSubview: scrim)
-        NSLayoutConstraint.activate([
-            bar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            bar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-        ])
-        contextBar = bar
-    }
-
-    func removeContextBar() {
-        guard let contextBar else { return }
-        contextBar.removeFromSuperview()
-        self.contextBar = nil
-        setContextBarHeight(0)
-        if state.contextBarExpanded {
-            state.contextBarExpanded = false
-        }
-    }
-
-    /// The list's content starts below the bar, as `contentMargins` did.
-    private func setContextBarHeight(_ height: CGFloat) {
-        let next = max(0, ceil(height))
-        guard abs(next - contextBarHeight) > 0.5 else { return }
-        contextBarHeight = next
-        list.collectionView.contentInset.top = next
-        list.collectionView.verticalScrollIndicatorInsets.top = next
-    }
-
-    @objc func scrimTapped() {
-        state.contextBarCollapseToken &+= 1
     }
 
     // MARK: Bars
@@ -135,6 +68,10 @@ extension WorkspaceDetailViewController {
             configurationLabel: Self.configurationAccessibilityLabel(detail.workspace),
             // Offered only where it can actually open: the workspace has a host
             // folder a shell can start in.
+            showsGit: ChatBarItems.mayOfferGit(
+                gitStatusEnabled: detail.workspace.gitStatusEnabled,
+                loadedStatus: detail.gitStatus
+            ),
             showsTerminal: SSHTerminalFolderTarget.workspace(detail.workspace) != nil,
             title: title
         )
@@ -142,6 +79,7 @@ extension WorkspaceDetailViewController {
             barState = bars
             installBarItems(bars, palette: palette)
         }
+        syncGit(detail, palette: palette)
         if title != titleState {
             titleState = title
             configureTitleButton(title, palette: palette)
@@ -149,6 +87,19 @@ extension WorkspaceDetailViewController {
         if let sidebarToggle {
             WorkspaceSplitSidebarToggle.sync(sidebarToggle, root: root)
         }
+    }
+
+    /// The Git button's count and value follow the status every pass, without
+    /// rebuilding the bar: the selected worktree's changed files, as the
+    /// chat's button counts a worktree session's.
+    private func syncGit(_ detail: DetailState, palette: ThemePalette) {
+        let gitStatus = detail.gitStatus.flatMap { $0.isGitRepo ? $0 : nil }
+        let changedFiles = gitStatus?.uncommittedCount ?? 0
+        let value = gitStatus.map { ChatBarItems.gitAccessibilityValue(($0.branch, changedFiles)) }
+        gitButton.apply(changedFiles: changedFiles, color: UIColor(palette.fg))
+        gitButton.tintColor = UIColor(palette.fg)
+        gitButton.accessibilityValue = value
+        gitRailItem?.accessibilityValue = value
     }
 
     private static func configurationAccessibilityLabel(_ workspace: Workspace) -> String {
@@ -202,7 +153,21 @@ extension WorkspaceDetailViewController {
                 trailing.append(SessionListBarItems.railItem(badge, priority: .keep))
             }
             trailing.append(SessionListBarItems.railItem(worktreeRailItem(bars.title, tint: tint), priority: .keep))
-            // Terminal sits next to Config: the same place in both bar shapes.
+            // Git, Terminal, then Config: the same order in both bar shapes.
+            if bars.showsGit {
+                let git = UIBarButtonItem(
+                    title: String(localized: "Git"),
+                    image: GitLogoImage.image(textStyle: .body),
+                    primaryAction: UIAction { [weak self] _ in self?.openWorkspaceGit() }
+                )
+                git.tintColor = railTint
+                git.accessibilityLabel = gitButton.accessibilityLabel
+                git.accessibilityIdentifier = gitButton.accessibilityIdentifier
+                gitRailItem = git
+                trailing.append(SessionListBarItems.railItem(git, priority: .keep))
+            } else {
+                gitRailItem = nil
+            }
             if bars.showsTerminal {
                 trailing.append(SessionListBarItems.railItem(terminalBarItem(tint: railTint, title: true, action: openTerminal), priority: .keep))
             }
@@ -244,6 +209,10 @@ extension WorkspaceDetailViewController {
             configuration.tintColor = tint
             configuration.accessibilityLabel = bars.configurationLabel
             configuration.accessibilityIdentifier = "workspace.edit.open"
+            gitRailItem = nil
+            if bars.showsGit {
+                trailing.append(UIBarButtonItem(customView: gitButton))
+            }
             if bars.showsTerminal {
                 trailing.append(terminalBarItem(tint: tint, title: false, action: openTerminal))
             }

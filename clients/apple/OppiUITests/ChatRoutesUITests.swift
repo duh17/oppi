@@ -1038,7 +1038,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(panel.exists, "Closing the review must leave the Git panel open")
         assertRunning()
 
-        app.buttons["chat.git.close"].tap()
+        app.buttons["git.panel.close"].tap()
         XCTAssertTrue(waitForDisappearance(of: panel), "Close must close the Git panel")
         if usesSheets {
             openGitPanel()

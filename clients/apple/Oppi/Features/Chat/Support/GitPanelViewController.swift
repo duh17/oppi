@@ -1,14 +1,15 @@
 import UIKit
 
-/// The chat's Git panel: the workspace context bar, always expanded
+/// The Git panel: the workspace context bar, always expanded
 /// (`WorkspaceContextBarView.Options.isPanel`), under a Git title with Close.
-/// A sheet in compact width and the trailing column in regular width, like
-/// Outline and Context.
+/// A chat's opens as a sheet in compact width and in the trailing column in
+/// regular width, like Outline and Context; a workspace's opens as a sheet
+/// from its top bar.
 ///
-/// It reads the chat's Git status and session live in `updateProperties()`.
-/// The bar presents its file reviews and commit details from this screen, so
-/// they stack over the panel, and a session they start pushes inside it.
-final class ChatGitPanelViewController: UIViewController {
+/// It reads its host's Git status (and a chat's session) live in
+/// `updateProperties()`. The bar presents its file reviews and commit details
+/// from this screen, so they stack over the panel.
+final class GitPanelViewController: UIViewController {
     private let readContext: () -> WorkspaceContextBarView.Context?
     private let bar: WorkspaceContextBarView
     private let onClose: () -> Void
@@ -47,7 +48,7 @@ final class ChatGitPanelViewController: UIViewController {
         let close = UIBarButtonItem(systemItem: .close, primaryAction: UIAction { [weak self] _ in
             self?.onClose()
         })
-        close.accessibilityIdentifier = "chat.git.close"
+        close.accessibilityIdentifier = "git.panel.close"
         navigationItem.leftBarButtonItem = close
 
         bar.presenter = self
@@ -59,7 +60,7 @@ final class ChatGitPanelViewController: UIViewController {
         statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.textAlignment = .center
         statusLabel.numberOfLines = 0
-        statusLabel.accessibilityIdentifier = "chat.git.status"
+        statusLabel.accessibilityIdentifier = "git.panel.status"
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(statusLabel)
 

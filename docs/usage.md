@@ -89,6 +89,8 @@ In a chat whose workspace is a Git repository, **Git** in the top bar's menu (or
 - A session in its own worktree lists every change in that worktree, including ones its shell commands or scripts made.
 - A session in the main checkout lists the files it edited (**This session**). **All changes** lists every change in the checkout, including other sessions' and your own. The panel opens on This session each time.
 
+A workspace's session list has the same **Git** button in its top bar, before Terminal and Config, with the selected worktree's changed-file count. It opens the same panel as a sheet, listing every change in that worktree.
+
 ## Voice
 
 **Settings → Voice & Dictation → Dictation Engine** is **On-device** or **Server**. **On-device** is the default; choose **Server** to send dictation audio to your server. If you never picked an engine, you are on **On-device**; a choice you made is kept.

@@ -79,7 +79,6 @@ final class WorkspaceDetailViewController: UIViewController {
     }()
     private let search = ScreenSearchController(prompt: String(localized: "Search sessions"))
     let titleButton = WorkspaceTitleButton()
-    let scrim = UIView()
     /// "Creating session..." or "Resuming session..." over the list.
     let progressPanel = FloatingProgressPanel()
 
@@ -124,9 +123,19 @@ final class WorkspaceDetailViewController: UIViewController {
 
     private var lastThemeID: ThemeID?
 
-    // Overlays and bars.
-    var contextBar: WorkspaceContextBarView?
-    var contextBarHeight: CGFloat = 0
+    // Bars.
+    /// The horizontal bar's Git button, kept across item rebuilds so its
+    /// changed-file count updates in place, as the chat's does.
+    lazy var gitButton: GitBarButton = {
+        let button = GitBarButton(textStyle: .subheadline, slot: GitBarButton.systemItemSlot) { [weak self] in self?.openWorkspaceGit() }
+        button.accessibilityIdentifier = "workspace.git.open"
+        button.accessibilityLabel = String(localized: "Open Git")
+        return button
+    }()
+    /// The rail's Git item while the rail shows one; its value follows the status.
+    weak var gitRailItem: UIBarButtonItem?
+    /// The open Git panel, closed when the content goes (the workspace locks).
+    weak var gitPanel: GitPanelViewController?
     var barState: BarState?
     var titleState: TitleState?
     lazy var bottomBar = SessionListBottomBar(
@@ -190,14 +199,10 @@ final class WorkspaceDetailViewController: UIViewController {
         let collectionView = list.collectionView
         list.refreshControl.addAction(UIAction { [weak self] _ in self?.pullToRefresh() }, for: .valueChanged)
 
-        scrim.isHidden = true
-        scrim.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(scrimTapped)))
         progressPanel.isHidden = true
 
-        for subview in [collectionView, scrim] {
-            subview.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(subview)
-        }
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(collectionView)
         progressPanel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(progressPanel)
         let safe = view.safeAreaLayoutGuide
@@ -206,10 +211,6 @@ final class WorkspaceDetailViewController: UIViewController {
             collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrim.topAnchor.constraint(equalTo: safe.topAnchor),
-            scrim.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
-            scrim.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
-            scrim.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
             progressPanel.centerXAnchor.constraint(equalTo: safe.centerXAnchor),
             progressPanel.centerYAnchor.constraint(equalTo: safe.centerYAnchor),
             progressPanel.widthAnchor.constraint(lessThanOrEqualTo: safe.widthAnchor, constant: -32),
@@ -299,7 +300,7 @@ final class WorkspaceDetailViewController: UIViewController {
         let detail = readState(connection)
         search.show(detail.search, toolbar: detail.toolbar)
         applySnapshot(detail)
-        syncOverlays(detail)
+        syncProgressPanel()
         syncBars(detail)
     }
 
@@ -307,7 +308,6 @@ final class WorkspaceDetailViewController: UIViewController {
         let background = UIColor(palette.bg)
         view.backgroundColor = background
         list.collectionView.backgroundColor = background
-        scrim.backgroundColor = background.withAlphaComponent(0.5)
         progressPanel.apply(palette)
     }
 
@@ -395,8 +395,9 @@ final class WorkspaceDetailViewController: UIViewController {
         if let alert = presentedViewController as? SessionListErrorAlert {
             alert.dismiss(animated: false)
         }
-        removeContextBar()
-        scrim.isHidden = true
+        if let gitPanel {
+            Router.finish(gitPanel)
+        }
         progressPanel.isHidden = true
         navigationItem.title = nil
         navigationItem.titleView = nil
@@ -437,9 +438,9 @@ final class WorkspaceDetailViewController: UIViewController {
         workspaceTask = Task { [weak self] in
             guard let self else { return }
             await loadWorktrees()
-            // Start git status immediately so the context bar does not wait for
+            // Start git status immediately so the Git button does not wait for
             // the workspace session-list refresh.
-            refreshGitStatusContextBar()
+            refreshGitStatus()
             await refreshWorkspaceData()
             guard !Task.isCancelled else { return }
             autoOpenE2ESessionIfRequested()
@@ -489,7 +490,7 @@ final class WorkspaceDetailViewController: UIViewController {
         let path = state.hasPresentedWorkspaceOnce ? "return_from_chat" : "open"
         beginWorkspaceLoadIfNeeded(path: path)
         state.hasPresentedWorkspaceOnce = true
-        refreshGitStatusContextBar()
+        refreshGitStatus()
         if hasSessionSearchQuery {
             refreshSearch(connection)
         }
@@ -627,7 +628,7 @@ final class WorkspaceDetailViewController: UIViewController {
             lockBadge: ScopedLockService.shared.badge(lockTarget),
             isNavigatingDeeper: isNavigatingDeeperInWorkspaceStack,
             isSplit: navigation.workspaceNavigationPresentation == .split,
-            gitStatus: connection.gitStatusStore.gitStatus
+            gitStatus: connection.gitStatusStore.status(workspaceId: workspaceId, worktreeId: state.selectedWorktreeId)
         )
     }
 
@@ -684,8 +685,6 @@ extension WorkspaceDetailViewController {
         var selectedWorktreeId = WorkspaceWorktree.mainId
         var isLoadingWorktrees = false
         var isImportingLocal = false
-        var contextBarCollapseToken = 0
-        var contextBarExpanded = false
         var archiveBuckets: [WorkspaceSessionArchiveBucket] = []
         var archiveStoppedSessionsByBucketID: [String: [Session]] = [:]
         var archiveLocalSessionsByBucketID: [String: [LocalSession]] = [:]
@@ -711,6 +710,8 @@ extension WorkspaceDetailViewController {
         /// A destination is pushed over this list: no compose, now playing, or files.
         let isNavigatingDeeper: Bool
         let isSplit: Bool
+        /// The selected worktree's Git status, or nil while the shared store
+        /// holds another checkout's (`GitStatusStore.status`).
         let gitStatus: GitStatus?
     }
 
@@ -794,6 +795,8 @@ extension WorkspaceDetailViewController {
         let showsDictation: Bool
         let showsUnlockedBadge: Bool
         let configurationLabel: String
+        /// The workspace may be a Git repository (`ChatBarItems.mayOfferGit`).
+        let showsGit: Bool
         /// SSH Terminal is on, so the bar offers "Open Terminal here".
         let showsTerminal: Bool
         /// The rail's worktree item carries the title's menu.

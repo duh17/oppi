@@ -55,19 +55,17 @@ final class ChatBarItems {
     ) { [weak self] in self?.chat?.navigateBackFromChat() }
 
     private lazy var files = ActionControls(rail: makeRailItem(.files), button: makeActionButton(.files))
-    private lazy var git = ActionControls(rail: makeRailItem(.git), button: makeGitButton())
-    /// The changed-file count on the horizontal bar's Git button. The rail
-    /// item has no room for one; its accessibility value carries the count.
-    private let gitBadge = InsetLabel(insets: .zero, capsule: false)
-    /// From the button's leading edge to the badge's: just past the logo.
-    private var gitBadgeLeading: NSLayoutConstraint?
-    /// The Git button's width: the standard side, plus the room a badge wider
-    /// than the space beside the logo needs (`layOutGitBadge`).
-    private var gitButtonWidth: NSLayoutConstraint?
+    /// The horizontal bar's Git button carries the changed-file count. The
+    /// rail item has no room for one; its accessibility value carries it.
+    private lazy var gitButton: GitBarButton = {
+        let button = GitBarButton(textStyle: .subheadline) { [weak self] in self?.chat?.runTopBarAction(.git) }
+        button.accessibilityIdentifier = ChatTopBarAction.git.accessibilityIdentifier
+        button.accessibilityLabel = ChatTopBarAction.git.accessibilityLabel
+        return button
+    }()
+    private lazy var git = ActionControls(rail: makeRailItem(.git), button: gitButton)
     /// Every bar button's side.
-    private static let barButtonSide: CGFloat = 36
-    /// Names a bar button's width constraint, so the Git button can widen.
-    private static let barButtonWidthIdentifier = "chat.bar.button.width"
+    private static let barButtonSide = GitBarButton.side
     private lazy var terminal = ActionControls(rail: makeRailItem(.terminal), button: makeActionButton(.terminal))
     private lazy var outline = ActionControls(rail: makeRailItem(.outline), button: makeActionButton(.outline))
 
@@ -183,13 +181,7 @@ final class ChatBarItems {
         let gitValue = gitSummary.map(Self.gitAccessibilityValue)
         git.rail.accessibilityValue = gitValue
         git.button.accessibilityValue = gitValue
-        let changedFiles = gitSummary?.changedFiles ?? 0
-        gitBadge.isHidden = changedFiles <= 0
-        gitBadge.text = changedFiles > 99 ? "99+" : "\(changedFiles)"
-        layOutGitBadge()
-        // Plain count, no fill: the bar's glass draws its content's colors
-        // monochrome, so a colored capsule reads as an empty grey dot.
-        gitBadge.textColor = colors.fg
+        gitButton.apply(changedFiles: gitSummary?.changedFiles ?? 0, color: colors.fg)
         backItem.tintColor = colors.fg
         backButton.tintColor = colors.fg
         moreItem.tintColor = colors.fg
@@ -451,10 +443,8 @@ final class ChatBarItems {
         configuration.contentInsets = .zero
         let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in action() })
         button.translatesAutoresizingMaskIntoConstraints = false
-        let width = button.widthAnchor.constraint(equalToConstant: barButtonSide)
-        width.identifier = barButtonWidthIdentifier
         NSLayoutConstraint.activate([
-            width,
+            button.widthAnchor.constraint(equalToConstant: barButtonSide),
             button.heightAnchor.constraint(equalToConstant: barButtonSide),
         ])
         button.accessibilityIdentifier = identifier
@@ -523,45 +513,6 @@ final class ChatBarItems {
             : .clear
         controls.button.configuration?.background.cornerRadius = barButtonSide / 2
         controls.button.accessibilityTraits = isOpen ? [.button, .selected] : .button
-    }
-
-    /// The badge starts just past the logo and grows away from it. The logo
-    /// stays where every bar icon sits (centered in the standard side); a
-    /// badge wider than the room right of the logo ("99+") widens the button
-    /// by the difference, so it pushes the next button over instead of
-    /// running into it.
-    private func layOutGitBadge() {
-        let side = Self.barButtonSide
-        let logoWidth = git.button.configuration?.image?.size.width ?? 20
-        let badgeStart = side / 2 + logoWidth / 2
-        let badgeWidth = gitBadge.isHidden ? 0 : ceil(gitBadge.intrinsicContentSize.width)
-        let extra = max(0, badgeStart + badgeWidth - side)
-        gitBadgeLeading?.constant = badgeStart
-        gitButtonWidth?.constant = side + extra
-        if git.button.configuration?.contentInsets.trailing != extra {
-            git.button.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: extra)
-        }
-    }
-
-    /// The Git bar button with its count badge at the top trailing corner.
-    private func makeGitButton() -> UIButton {
-        let button = makeActionButton(.git)
-        gitBadge.font = UIFont.scaled(.caption2, .semibold, monospacedDigits: true)
-        gitBadge.textAlignment = .center
-        gitBadge.isHidden = true
-        gitBadge.isUserInteractionEnabled = false
-        gitBadge.isAccessibilityElement = false
-        gitBadge.translatesAutoresizingMaskIntoConstraints = false
-        button.addSubview(gitBadge)
-        // Leading-anchored past the logo, so "99+" grows away from it.
-        let leading = gitBadge.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: Self.barButtonSide / 2 + 10)
-        gitBadgeLeading = leading
-        gitButtonWidth = button.constraints.first { $0.identifier == Self.barButtonWidthIdentifier }
-        NSLayoutConstraint.activate([
-            gitBadge.topAnchor.constraint(equalTo: button.topAnchor, constant: 1),
-            leading,
-        ])
-        return button
     }
 
     private func makeMoreItem() -> UIBarButtonItem {
