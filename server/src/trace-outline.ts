@@ -5,6 +5,7 @@ import { performance } from "node:perf_hooks";
 import { projectCustomEntry, type LiveEntryRendererSet, type SessionEntry } from "./trace.js";
 import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
 import { projectAssistantTimelineBlocks } from "./session-protocol.js";
+import { resolveToolArguments } from "./tool-call-arguments.js";
 import type { ToolInputPresentation, ToolOutputPresentation, ToolDisplay } from "./types.js";
 
 export type TraceOutlineEntryKind =
@@ -652,7 +653,7 @@ function projectAssistantEntry(
     if (block.kind === "tool") {
       const { id, block: record } = block;
       const tool = typeof record.name === "string" ? record.name : "unknown";
-      const args = asRecord(record.arguments) ?? tryParseJsonObject(record.partialJson);
+      const args = resolveToolArguments(record);
       const row: TraceOutlineEntry = {
         id,
         kind: "tool",
@@ -722,13 +723,4 @@ function summarizeArgs(args: Record<string, unknown>): string {
     parts.push(`${key}: ${previewText(String(value)) ?? ""}`.trim());
   }
   return previewText(parts.join(", ")) ?? "";
-}
-
-function tryParseJsonObject(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== "string") return undefined;
-  try {
-    return asRecord(JSON.parse(value)) ?? undefined;
-  } catch {
-    return undefined;
-  }
 }

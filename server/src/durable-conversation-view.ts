@@ -23,6 +23,7 @@ import { agentMessageOrigin } from "../extensions/durable/sessions/agent-message
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
 import { storeUserMessageImages } from "./session-attachments.js";
+import { resolveToolArguments } from "./tool-call-arguments.js";
 import type {
   ConversationEntryCard,
   ConversationEntryView,
@@ -118,7 +119,7 @@ export function toolCallsOf(message: unknown): Array<{ id: string; name: string;
     const record = asRecord(block);
     if (record?.type !== "toolCall") continue;
     if (typeof record.id !== "string" || typeof record.name !== "string") continue;
-    calls.push({ id: record.id, name: record.name, args: record.arguments });
+    calls.push({ id: record.id, name: record.name, args: resolveToolArguments(record) });
   }
   return calls;
 }
@@ -213,25 +214,6 @@ function pick(source: Record<string, unknown>, fields: readonly string[]): Recor
   const picked: Record<string, unknown> = {};
   for (const field of fields) if (source[field] !== undefined) picked[field] = source[field];
   return picked;
-}
-
-/**
- * A tool call's client arguments, the rule Pi's providers and classic trace history use
- * (`arguments || tryParseJson(partialJson)`): `arguments` unless it is falsy (absent, null,
- * false, 0, or an empty string), else the `partialJson` the provider streamed so far, parsed
- * to an object. Resolved once here so no client has to read `partialJson`; a call whose
- * partial text is not an object yet arrives without arguments, as it did when the client's
- * fallback failed.
- */
-function resolveToolArguments(record: Record<string, unknown>): unknown {
-  if (record.arguments) return record.arguments;
-  const partial = record.partialJson;
-  if (typeof partial !== "string") return undefined;
-  try {
-    return asRecord(JSON.parse(partial)) ?? undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /** `block` with only the fields clients read (`CLIENT_BLOCK_FIELDS`). */

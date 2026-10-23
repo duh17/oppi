@@ -9,6 +9,7 @@ import type { EntryRecord } from "@earendil-works/pi-durable";
 import {
   CONVERSATION_CLIENT_DOCS,
   projectEntry,
+  renderToolCall,
   type DocPresenter,
   type ToolPresenter,
 } from "../src/durable-conversation-view.js";
@@ -198,6 +199,41 @@ describe("conversation entry view: tool call arguments", () => {
     ]);
 
     expect(block).toEqual({ type: "toolCall", id: "call-3", name: "bash" });
+  });
+
+  it("renders a falsy call's row from its resolved arguments", () => {
+    const renderers = new MobileRendererRegistry();
+    const entry: EntryRecord = {
+      id: 9,
+      conversationId: 3,
+      kind: "pi.assistant",
+      model: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "call-4",
+              name: "bash",
+              arguments: "",
+              partialJson: '{"command":"ls -la"}',
+            },
+          ],
+          timestamp: 1_791_650_000_000,
+        } as never,
+      ],
+    };
+    const view = projectEntry(entry, renderers, {
+      call: (name, args) => renderToolCall(renderers, name, args),
+      committedCall: () => undefined,
+    });
+
+    // The block and the row presentation read the same resolved arguments.
+    expect(view.model?.[0]?.content).toEqual([
+      { type: "toolCall", id: "call-4", name: "bash", arguments: { command: "ls -la" } },
+    ]);
+    const segments = view.toolCalls?.["call-4"]?.callSegments?.map((segment) => segment.text);
+    expect(segments?.join("")).toContain("ls -la");
   });
 
   it("keeps text and thinking signatures on the server", () => {

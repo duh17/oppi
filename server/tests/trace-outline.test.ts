@@ -244,6 +244,29 @@ describe("trace outline projection", () => {
     expect(row?.display?.group?.length).toBe(160);
   });
 
+  it("summarizes a tool row whose arguments only arrived as partialJson", async () => {
+    const paths = tempJsonlFiles([
+      [
+        messageEntry("u1", null, "user", "list files"),
+        messageEntry("a1", "u1", "assistant", [
+          {
+            type: "toolCall",
+            id: "tc-partial",
+            name: "bash",
+            partialJson: '{"command":"ls -la"}',
+          },
+        ]),
+      ],
+    ]);
+    const result = await readSessionTraceOutlineFromFiles(paths, {
+      mobileRenderers: new MobileRendererRegistry(),
+    });
+
+    const row = result.outline.entries.find((entry) => entry.kind === "tool");
+    expect(row?.args).toEqual({ command: "ls -la" });
+    expect(row?.summary).toContain("ls -la");
+  });
+
   it("returns an explicit empty snapshot when no trace files exist", async () => {
     const result = await readSessionTraceOutlineFromFiles([], {
       mobileRenderers: new MobileRendererRegistry(),

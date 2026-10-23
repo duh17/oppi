@@ -42,6 +42,7 @@ import type {
   NestedToolCalls,
   ToolDisplay,
 } from "./types.js";
+import { resolveToolArguments } from "./tool-call-arguments.js";
 import { validatedNestedCalls } from "./tool-nested-calls.js";
 import {
   sessionAttachmentDetailsForToolCall,
@@ -1046,9 +1047,7 @@ function emitMessageEvents(
             type: "toolCall",
             timestamp,
             tool: (block.block.name as string) || "unknown",
-            args:
-              (block.block.arguments as Record<string, unknown>) ||
-              tryParseJson(block.block.partialJson),
+            args: resolveToolArguments(block.block),
           });
           break;
         case "boundary":
@@ -1581,13 +1580,4 @@ function extractText(
       .join("\n");
   }
   return "";
-}
-
-function tryParseJson(s: unknown): Record<string, unknown> | undefined {
-  if (typeof s !== "string") return undefined;
-  try {
-    return JSON.parse(s) as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
 }
