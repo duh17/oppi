@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -4478,6 +4478,47 @@ describe("server durable managed runtime", () => {
     expect(activeBackend.isDisposed).toBe(false);
     expect(activeBackend.messages()).toEqual([]);
     await activeBackend.detachForRestart();
+  });
+
+  it("keeps a main-checkout session's stored cwd when its workspace is gone", async () => {
+    const f = await fixture([]);
+    const checkout = join(f.dir, "gone-checkout");
+    mkdirSync(checkout, { recursive: true });
+    const harness = await openHarness(f.dir, f.models);
+    const conversation = await harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: {
+          model: { provider: "faux", modelId: "faux-1" },
+          tools: DurableAsk.tools ?? [],
+          cwd: checkout,
+        },
+      },
+      context,
+    );
+    const session = createDurableSession(f.storage, "Main checkout");
+    // An HTTP create stores the main checkout's id (`normalizeSessionWorktreeId`), and its
+    // workspace can disappear later, which resolves the work root to $HOME.
+    session.workspaceId = "ws-gone";
+    session.worktreeId = "main";
+    session.serverDurable = { storeId: session.id, conversationId: conversation.id };
+    f.storage.saveSession(session);
+    const previousHome = process.env.HOME;
+    const home = join(f.dir, "home");
+    mkdirSync(home, { recursive: true });
+    process.env.HOME = home;
+    try {
+      const bound = await backend(harness, f.models, session, f.dir);
+      const stored = await harness.snapshot(AgentDoc, conversation.id, context);
+      expect(homedir()).toBe(home);
+      // The attach kept the stored checkout instead of writing $HOME into the conversation.
+      expect(stored?.cwd).toBe(checkout);
+      expect(stored?.cwd).not.toBe(home);
+      await bound.detachForRestart();
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
   });
 
   it("keeps existing sessions on the SDK path without opening durable storage", async () => {

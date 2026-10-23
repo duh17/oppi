@@ -31,7 +31,6 @@ import {
   oppiHost,
   type DurableSessionsHost,
   type SessionSender,
-  type SubagentWorktreePlan,
   type SubagentWorktreeRequest,
 } from "oppi/durable";
 import { DurableJobs } from "../background-jobs/contract.js";
@@ -1048,26 +1047,16 @@ export function createDurableSessions(
           },
           await api.agent(context),
         );
-    // The child's own checkout: planned and checked first, then memoized before anything is
-    // created, so a spawn cut off by a crash takes back the worktree its first run made. A
-    // rerun's child already has the worktree its first run bound (or none): it is read from the
-    // record, never provisioned again.
+    // The child's own checkout: planned and checked first, then provisioned. A rerun's child
+    // already has the worktree its first run bound (or none): it is read from the record, never
+    // provisioned again. A `"new"` spawn never adopts a worktree, so a rerun after a crash
+    // before the child commit takes the next free branch; the orphaned untouched checkout is
+    // clean and merged, and the daily safe cleanup removes it.
     const earlier = rerun ? before?.children[name] : undefined;
     let worktree: SubagentWorktree | undefined = earlier?.worktree;
     if (earlier === undefined && request !== undefined) {
       const plan = await sessions.planWorktree(request, name, call);
-      const planned = (await api.memo<JsonValue>(
-        "worktree",
-        plan as unknown as JsonValue,
-        context,
-      )) as unknown as SubagentWorktreePlan;
-      // A `{branch}` request creates or adopts. A `"new"` one only takes back the branch a
-      // crashed earlier attempt of this same call made: the memoized plan then names another
-      // branch than the fresh one, which had to skip the ref that attempt left behind.
-      const adopt =
-        planned.mode === "create" &&
-        (request !== "new" || (plan.mode === "create" && planned.branch !== plan.branch));
-      worktree = await sessions.provisionWorktree(planned, { call, adopt });
+      worktree = await sessions.provisionWorktree(plan, { call, adopt: request !== "new" });
     }
     const conversationId = await api.commit(async (tx) => {
       const state = await tx.doc(Subagents, api.conversationId);

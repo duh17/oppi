@@ -22,7 +22,8 @@ import type {
   WorkspaceWorktreePreviewFile,
 } from "./types.js";
 
-const MAIN_WORKTREE_ID = "main";
+/** The main checkout's worktree id: the default an HTTP-created session stores. */
+export const MAIN_WORKTREE_ID = "main";
 const PROJECT_WORKTREES_DIR = ".pi/worktrees";
 const DATA_DIR_WORKTREES_DIR = "worktrees";
 

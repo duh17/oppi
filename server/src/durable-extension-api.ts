@@ -164,8 +164,9 @@ export type SubagentWorktreeRequest =
   | { id: string };
 
 /**
- * What a worktree spawn asks the host to provision. `api.memo` stores it before the external
- * create, so a rerun after a crash provisions the same branch instead of making a second one.
+ * What a worktree spawn asks the host to provision: the plan `planWorktree` made, before any
+ * checkout exists. A `"new"` plan is never adopted back: a rerun plans the next free branch and
+ * the untouched orphan stays for the daily safe cleanup.
  */
 export type SubagentWorktreePlan =
   { mode: "adopt"; id: string } | { mode: "create"; branch: string; base: string };
@@ -237,8 +238,8 @@ export interface DurableSessionsHost {
   /**
    * Check a spawn's `worktree` and return what to provision: it must be a host workspace that is
    * a git repository, and an adopted id must be a worktree of it. A `"new"` name stays held for
-   * `call` until `provisionWorktree`, so concurrent spawns cannot plan the same branch. Reads
-   * only.
+   * `call` until `provisionWorktree` settles, so concurrent spawns cannot plan the same branch.
+   * Reads only.
    */
   planWorktree(
     request: SubagentWorktreeRequest,
@@ -247,8 +248,8 @@ export interface DurableSessionsHost {
   ): Promise<SubagentWorktreePlan>;
   /**
    * Create the planned worktree and release the name `call` held. `adopt` takes the worktree a
-   * crashed earlier attempt of the same call made; without it, a worktree this spawn did not
-   * create is never adopted.
+   * branch already has (an explicit `{ branch }` request); without it, a worktree this spawn did
+   * not create is never adopted, so a `"new"` spawn cannot share another spawn's checkout.
    */
   provisionWorktree(
     plan: SubagentWorktreePlan,

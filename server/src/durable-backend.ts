@@ -115,6 +115,7 @@ import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { managedProjectTrustContext, resolveManagedProjectTrust } from "./project-trust.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
+import { MAIN_WORKTREE_ID } from "./worktrees.js";
 
 const log = createLogger({ base: { component: "durable-backend" } });
 
@@ -506,9 +507,10 @@ export class DurableBackend implements AgentBackend {
         );
       conversation = existing;
       // A session bound to a worktree runs where the row says: one that moved off a removed
-      // worktree must not keep writing in the old checkout. Main-checkout sessions keep the cwd
-      // their conversation stored (a missing workspace resolves to $HOME and must not be written).
-      if (session.worktreeId) {
+      // worktree must not keep writing in the old checkout. Main-checkout sessions (the id
+      // "main" an HTTP create stores) keep the cwd their conversation stored: a missing
+      // workspace resolves to $HOME and must not be written.
+      if (session.worktreeId && session.worktreeId !== MAIN_WORKTREE_ID) {
         const stored = await harness.snapshot(AgentDoc, existing.id, BACKGROUND_CONTEXT);
         if (stored?.cwd !== cwd)
           await conversation.commit(async (tx) => {

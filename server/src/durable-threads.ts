@@ -361,8 +361,8 @@ export class DurableThreads {
   /**
    * What a spawn's `worktree` asks for, checked before anything runs: a host workspace that is a
    * git repository, and an adopted id that is one of its worktrees. A `"new"` branch stays held
-   * for `call` until `provisionWorktree`, so a concurrent spawn plans another one. Reads only;
-   * the caller memoizes the plan before anything is created.
+   * for `call` until `provisionWorktree` settles, so a concurrent spawn plans another one.
+   * Reads only.
    */
   private async planWorktree(
     request: SubagentWorktreeRequest,
@@ -405,8 +405,8 @@ export class DurableThreads {
 
   /**
    * Create the planned worktree, or take the one `adopt` allows: an explicit branch creates or
-   * adopts, while a `"new"` branch is only ever taken back when this same call planned and made
-   * it before a crash.
+   * adopts it, while a `"new"` branch never adopts one, so a checkout another spawn made is a
+   * clear refusal instead of a shared checkout.
    */
   private async provisionWorktree(
     plan: SubagentWorktreePlan,
@@ -414,44 +414,48 @@ export class DurableThreads {
     host: SessionHost,
     caller: ConversationId,
   ): Promise<SubagentWorktree> {
-    const { workspace } = await this.worktreeCaller(host, caller);
-    const dataDir = this.deps.storage.getDataDir();
-    this.heldBranches.delete(options.call);
-    if (plan.mode === "adopt") {
-      const worktree = await resolveWorkspaceWorktree(workspace, plan.id, { dataDir });
-      if (!worktree) throw new Error(`Worktree ${plan.id} is no longer available`);
+    try {
+      const { workspace } = await this.worktreeCaller(host, caller);
+      const dataDir = this.deps.storage.getDataDir();
+      if (plan.mode === "adopt") {
+        const worktree = await resolveWorkspaceWorktree(workspace, plan.id, { dataDir });
+        if (!worktree) throw new Error(`Worktree ${plan.id} is no longer available`);
+        return {
+          id: worktree.id,
+          path: worktree.path,
+          branch: worktree.branch,
+          // An adopted worktree has no base of ours: its own HEAD is where this child starts.
+          base: (await headCommit(worktree.path)) ?? "",
+        };
+      }
+      const existing = (await listWorkspaceWorktrees(workspace, { dataDir })).find(
+        (worktree) => !worktree.isMain && worktree.branch === plan.branch,
+      );
+      if (existing && !options.adopt)
+        throw new Error(
+          `Worktree branch ${plan.branch} appeared while this spawn was planning; retry it`,
+        );
+      const worktree =
+        existing ??
+        (await ensureWorkspaceWorktree(
+          workspace,
+          { branch: plan.branch, base: plan.base },
+          {
+            dataDir,
+            reservedWorktreeIds: this.reservedWorktreeIds(workspace.id),
+            adoptExistingBranch: options.adopt,
+          },
+        ));
       return {
         id: worktree.id,
         path: worktree.path,
         branch: worktree.branch,
-        // An adopted worktree has no base of ours: its own HEAD is where this child starts.
-        base: (await headCommit(worktree.path)) ?? "",
+        base: plan.base,
       };
+    } finally {
+      // Released only once the create settles: a spawn planning meanwhile must not take it.
+      this.heldBranches.delete(options.call);
     }
-    const existing = (await listWorkspaceWorktrees(workspace, { dataDir })).find(
-      (worktree) => !worktree.isMain && worktree.branch === plan.branch,
-    );
-    if (existing && !options.adopt)
-      throw new Error(
-        `Worktree branch ${plan.branch} appeared while this spawn was planning; retry it`,
-      );
-    const worktree =
-      existing ??
-      (await ensureWorkspaceWorktree(
-        workspace,
-        { branch: plan.branch, base: plan.base },
-        {
-          dataDir,
-          reservedWorktreeIds: this.reservedWorktreeIds(workspace.id),
-          adoptExistingBranch: true,
-        },
-      ));
-    return {
-      id: worktree.id,
-      path: worktree.path,
-      branch: worktree.branch,
-      base: plan.base,
-    };
   }
 
   /**

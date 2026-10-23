@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { defineExtension } from "@earendil-works/pi-durable";
+import { defineExtension, type ToolRegistration } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import {
   resolveDurableAgent,
@@ -106,10 +106,56 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     });
     expect(change.tools.map((tool) => tool.name).sort()).toEqual(["ask", "read"]);
     // The policy is not an allow list: a tool this session only gets at attach still passes.
-    expect(doc.tools).toEqual({ excluded: ["write"] });
     expect(toolAllowed(doc.tools, "write")).toBe(false);
     expect(toolAllowed(doc.tools, "mcp_echo_run")).toBe(true);
     expect(toolAllowed(doc.tools, "notify")).toBe(true);
+    // What the parent did not offer is excluded by name, so nothing can widen the child later.
+    for (const absent of ["bash", "edit", "ls"])
+      expect(toolAllowed(doc.tools, absent), absent).toBe(false);
+  });
+
+  it("caps a saved Agent's package tool at spawn when the parent lacks it", () => {
+    // The child's own package offers `pkg_only`; the spawning session never had that tool.
+    const packageTool = { name: "pkg_only" } as unknown as ToolRegistration;
+    const pkg = defineExtension({ name: "pkg", tools: [packageTool] });
+    const extensionId = "pkg.ext";
+    const { change, doc } = resolveDurableAgent({
+      saved: {
+        id: "agent-1",
+        version: 1,
+        definition: {
+          name: "Packaged",
+          resources: { extensionIds: [extensionId] },
+          sessionDefaults: { excludeTools: ["write"] },
+        },
+      },
+      narrow: { parentTools: ["read", "ask"], excludeTools: ["bash"] },
+      runtime: "sandbox",
+      base: [CodingTools, DurableAsk],
+      loaded: [
+        {
+          extension: pkg,
+          runtimes: ["sandbox"],
+          root: "/tmp/pkg",
+          entry: "/tmp/pkg/durable.js",
+          extensionIds: [extensionId],
+        },
+      ],
+      classic: { bundled: new Set(), names: new Map() },
+      enabled: () => true,
+      sessions: defineExtension({ name: "oppi.sessions" }),
+      spawn: false,
+      grant: false,
+      notify: defineExtension({ name: "oppi.notify" }),
+      notifies: false,
+    });
+    // It starts with the parent's intersection only.
+    expect(change.tools.map((tool) => tool.name).sort()).toEqual(["ask", "read"]);
+    // The stored policy carries the cap, so an attach that loads `pkg` cannot add it back.
+    expect(toolAllowed(doc.tools, "pkg_only")).toBe(false);
+    expect(doc.tools?.excluded).toContain("pkg_only");
+    // A tool that only exists at attach is still allowed.
+    expect(toolAllowed(doc.tools, "mcp_echo_run")).toBe(true);
   });
 
   it("stores the narrowed list as the tool policy, so a later attach cannot widen it", async () => {

@@ -200,7 +200,9 @@ const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["read", "bash"]);
  * ask. `tools` and `readOnly` name an exact set (together, only their intersection), so the
  * document's policy becomes that allow list. `excludeTools` alone only adds exclusions: the
  * policy keeps its shape, so a tool the child gets later, such as an MCP or `notify` tool that
- * only exists at attach, is not dropped for being outside a list nobody asked for.
+ * only exists at attach, is not dropped for being outside a list nobody asked for. Either way
+ * every tool resolved here but absent from the parent is excluded by name, so the stored policy
+ * also caps the tools a saved Agent's packages would add at attach.
  */
 function narrowTools(
   tools: readonly ToolRegistration[],
@@ -214,7 +216,12 @@ function narrowTools(
       ? new Set([...READ_ONLY_TOOL_NAMES].filter((name) => named.has(name)))
       : READ_ONLY_TOOL_NAMES
     : named;
-  const excluded = [...new Set([...(policy?.excluded ?? []), ...(narrowing.excludeTools ?? [])])];
+  // A package extension the child starts with may offer tools the parent never had: the cap is
+  // the parent's set, so store them as exclusions too and a later attach cannot bring them back.
+  const unoffered = tools.filter((tool) => !offered.has(tool.name)).map((tool) => tool.name);
+  const excluded = [
+    ...new Set([...(policy?.excluded ?? []), ...(narrowing.excludeTools ?? []), ...unoffered]),
+  ];
   const kept = tools.filter(
     (tool) =>
       offered.has(tool.name) &&
