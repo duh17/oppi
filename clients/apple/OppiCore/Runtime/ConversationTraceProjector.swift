@@ -207,12 +207,9 @@ enum ConversationTraceProjector {
         let callId = block["id"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
         let eventId = callId ?? "\(entry.id)-tool-\(index)"
         let name = block["name"]?.stringValue ?? ""
-        let args: [String: JSONValue]? = switch block["arguments"] {
-        case .object(let arguments): arguments
-        // `arguments || tryParseJson(partialJson)`: only a falsy value falls back.
-        case .none, .null, .bool(false), .number(0), .string(""): parsedObject(block["partialJson"])
-        default: nil
-        }
+        // The server resolves `arguments` from `arguments` and `partialJson` once, so a
+        // tool call arrives with its arguments or with none.
+        let args = block["arguments"]?.objectValue
         let call = callId.flatMap { entry.toolCalls?[$0] }
         let presentation = callPresentation(call: call, result: results[eventId])
         return TraceEvent(
@@ -372,11 +369,6 @@ enum ConversationTraceProjector {
         let summary = text.firstMatch(of: /<summary>\n?([\s\S]*?)\n?<\/summary>/.matchingSemantics(.unicodeScalar))
             .map { String($0.output.1) } ?? text
         return summary.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    static func parsedObject(_ value: JSONValue?) -> [String: JSONValue]? {
-        guard let json = value?.stringValue, let data = json.data(using: .utf8) else { return nil }
-        return (try? JSONDecoder().decode(JSONValue.self, from: data))?.objectValue
     }
 
     // MARK: - Time

@@ -1,9 +1,8 @@
 /**
  * Client projection of a durable conversation for the conversation stream:
- * which documents clients replicate, the tool presentation the server adds
- * to entries and `pi.live`, and the queue `pi.inbox` shows. Pure functions over
- * committed values and decided presentation; the room in
- * `durable-conversation-stream.ts` owns state and delivery.
+ * which documents clients replicate, the fields entries and `pi.live` carry (tool presentation
+ * included), and the queue `pi.inbox` shows. Pure functions over committed values and decided
+ * presentation; the room in `durable-conversation-stream.ts` owns state and delivery.
  */
 import type { Message } from "@earendil-works/pi-ai";
 import {
@@ -88,7 +87,12 @@ function clientDoc<T extends JsonObject>(spec: ClientDoc<T>): ClientDocSpec {
  * private), then extension documents that declare themselves client-visible.
  */
 export const CONVERSATION_CLIENT_DOCS: readonly ClientDocSpec[] = [
-  clientDoc({ doc: LiveDoc, client: true, live: true, view: liveView }),
+  clientDoc({
+    doc: LiveDoc,
+    client: true,
+    live: true,
+    view: (value, presenter) => liveView(value, presenter, liveProjection),
+  }),
   clientDoc({ doc: InboxDoc, client: true, live: true, view: queueView }),
   clientDoc({ doc: AgentDoc, client: true }),
   clientDoc({ doc: UsageDoc, client: true }),
@@ -187,13 +191,15 @@ const CLIENT_MESSAGE_FIELDS = new Map<string, readonly string[]>([
 
 /**
  * Content block fields clients read, by block type. Thinking and text signatures are
- * provider replay state. Block types not listed (audio) arrive whole. A user message's image
- * block leaves as either its bytes or, once stored, a reference (`attachment`) to them.
+ * provider replay state. A tool call's arguments are resolved here from `arguments` and
+ * `partialJson`, so clients get one answer and never the raw stream text. Block types not
+ * listed (audio) arrive whole. A user message's image block leaves as either its bytes or,
+ * once stored, a reference (`attachment`) to them.
  */
 const CLIENT_BLOCK_FIELDS = new Map<string, readonly string[]>([
   ["text", ["type", "text"]],
   ["thinking", ["type", "thinking"]],
-  ["toolCall", ["type", "id", "name", "arguments", "partialJson"]],
+  ["toolCall", ["type", "id", "name", "arguments"]],
   ["image", ["type", "data", "mimeType", "attachment"]],
 ]);
 
@@ -209,6 +215,26 @@ function pick(source: Record<string, unknown>, fields: readonly string[]): Recor
   return picked;
 }
 
+/**
+ * A tool call's client arguments, the rule Pi's providers and classic trace history use
+ * (`arguments || tryParseJson(partialJson)`): `arguments` unless it is falsy (absent, null,
+ * false, 0, or an empty string), else the `partialJson` the provider streamed so far, parsed
+ * to an object. Resolved once here so no client has to read `partialJson`; a call whose
+ * partial text is not an object yet arrives without arguments, as it did when the client's
+ * fallback failed.
+ */
+function resolveToolArguments(record: Record<string, unknown>): unknown {
+  if (record.arguments) return record.arguments;
+  const partial = record.partialJson;
+  if (typeof partial !== "string") return undefined;
+  try {
+    return asRecord(JSON.parse(partial)) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `block` with only the fields clients read (`CLIENT_BLOCK_FIELDS`). */
 function projectBlock(block: unknown, attachment?: Record<string, unknown>): unknown {
   const record = asRecord(block);
   if (record && attachment) {
@@ -220,11 +246,24 @@ function projectBlock(block: unknown, attachment?: Record<string, unknown>): unk
     };
   }
   const fields = typeof record?.type === "string" && CLIENT_BLOCK_FIELDS.get(record.type);
-  return record && fields ? pick(record, fields) : block;
+  if (!record || !fields) return block;
+  const view = pick(record, fields);
+  if (record.type !== "toolCall") return view;
+  const args = resolveToolArguments(record);
+  if (args === undefined) delete view.arguments;
+  else view.arguments = args;
+  return view;
 }
 
+/** Projects one content block; the live tail passes a cached one (see `LiveProjection`). */
+type BlockProjector = (block: unknown, attachment?: Record<string, unknown>) => unknown;
+
 /** `message` with only the fields clients read (`CLIENT_MESSAGE_FIELDS`). */
-function projectMessage(message: Message, images?: UserImageStoreScope): ConversationMessageView {
+function projectMessage(
+  message: Message,
+  images?: UserImageStoreScope,
+  project: BlockProjector = projectBlock,
+): ConversationMessageView {
   const record = message as unknown as ConversationMessageView;
   const fields = CLIENT_MESSAGE_FIELDS.get(record.role);
   if (!fields) return record;
@@ -242,8 +281,54 @@ function projectMessage(message: Message, images?: UserImageStoreScope): Convers
           }).map((stored) => [stored.blockIndex, stored.details]),
         )
       : undefined;
-  view.content = view.content.map((block, index) => projectBlock(block, storedByIndex?.get(index)));
+  view.content = view.content.map((block, index) => project(block, storedByIndex?.get(index)));
   return view;
+}
+
+/**
+ * Identity-preserving projection of `pi.live` (`liveView`).
+ *
+ * A document goes out as `diffRevisions(previous, next)` and skips any subtree whose values
+ * are `===`, so a source block the commit did not touch must project to the identical object;
+ * otherwise every 100 ms frame would resend the whole answer instead of its new text.
+ * pi-durable revisions share structure (only the changed path is copied per commit), so a
+ * WeakMap keyed by the source block, message, and generation restores that sharing on the
+ * projected side. Keys are the committed values; nothing here keeps them alive.
+ */
+class LiveProjection {
+  private readonly blocks = new WeakMap<object, object>();
+  private readonly messages = new WeakMap<object, ConversationMessageView>();
+  private readonly generations = new WeakMap<object, object>();
+
+  block(block: unknown): unknown {
+    if (typeof block !== "object" || block === null) return block;
+    const cached = this.blocks.get(block);
+    if (cached) return cached;
+    const view = projectBlock(block) as object;
+    this.blocks.set(block, view);
+    return view;
+  }
+
+  message(message: Message): ConversationMessageView {
+    const cached = this.messages.get(message);
+    if (cached) return cached;
+    const view = projectMessage(message, undefined, (block) => this.block(block));
+    this.messages.set(message, view);
+    return view;
+  }
+
+  /** `generation` with its committed partial projected like an entry's message. */
+  generation(generation: object): object {
+    const cached = this.generations.get(generation);
+    if (cached) return cached;
+    const source = generation as { message?: unknown };
+    const message = asRecord(source.message);
+    const view = message
+      ? { ...source, message: this.message(source.message as Message) }
+      : { ...source };
+    this.generations.set(generation, view);
+    return view;
+  }
 }
 
 /**
@@ -322,7 +407,7 @@ function queueView(value: InboxState, presenter: DocPresenter): ConversationQueu
  * `pi.live` plus `toolCalls`: presentation by call id for the streaming answer's tool
  * calls and the running tool round. Slot `details` are sanitized like results.
  */
-function liveView(value: LiveState, tools: ToolPresenter): object {
+function liveView(value: LiveState, tools: ToolPresenter, live: LiveProjection): object {
   const toolCalls: Record<string, ConversationToolCallView> = {};
   for (const call of toolCallsOf(value.generation?.message))
     toolCalls[call.id] = tools.call(call.name, call.args);
@@ -337,10 +422,18 @@ function liveView(value: LiveState, tools: ToolPresenter): object {
     slots ??= [...committed];
     slots[index] = { ...slot, details: details as JsonValue };
   }
-  if (!Object.keys(toolCalls).length && !slots) return value;
+  // Projected like an entry's messages, so provider replay state (signatures) and the raw
+  // streaming `partialJson` stay on the server.
+  const projected: object = value.generation
+    ? { ...value, generation: live.generation(value.generation) }
+    : value;
+  if (!Object.keys(toolCalls).length && !slots) return projected;
   return {
-    ...value,
+    ...projected,
     ...(slots ? { tools: slots } : {}),
     ...(Object.keys(toolCalls).length ? { toolCalls } : {}),
   };
 }
+
+/** Shared by every room: the source values it keys on are the store's own revisions. */
+const liveProjection = new LiveProjection();

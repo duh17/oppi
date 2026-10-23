@@ -2,9 +2,16 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { diffRevisions } from "@earendil-works/chord/delta";
+import type { JsonObject } from "@earendil-works/chord";
 import type { EntryRecord } from "@earendil-works/pi-durable";
 
-import { projectEntry, type ToolPresenter } from "../src/durable-conversation-view.js";
+import {
+  CONVERSATION_CLIENT_DOCS,
+  projectEntry,
+  type DocPresenter,
+  type ToolPresenter,
+} from "../src/durable-conversation-view.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 
 const PNG_1X1 =
@@ -128,5 +135,161 @@ describe("conversation entry view: user message images", () => {
       readFileSync(join(dataDir, "session-attachments", "s-view", "manifest.json"), "utf8"),
     ) as { attachments: unknown[] };
     expect(manifest.attachments).toHaveLength(1);
+  });
+});
+
+/** The projected content blocks of an assistant entry. */
+function assistantBlocks(content: unknown[]): Array<Record<string, unknown>> {
+  const entry: EntryRecord = {
+    id: 9,
+    conversationId: 3,
+    kind: "pi.assistant",
+    model: [{ role: "assistant", content, timestamp: 1_791_650_000_000 } as never],
+  };
+  const view = projectEntry(entry, new MobileRendererRegistry(), tools);
+  const projected = view.model?.[0]?.content;
+  if (!Array.isArray(projected)) throw new Error("expected content blocks");
+  return projected as Array<Record<string, unknown>>;
+}
+
+describe("conversation entry view: tool call arguments", () => {
+  it("resolves a falsy call's arguments from its partialJson and drops the raw text", () => {
+    const [block] = assistantBlocks([
+      {
+        type: "toolCall",
+        id: "call-1",
+        name: "bash",
+        arguments: "",
+        partialJson: '{"command":"ls"}',
+      },
+    ]);
+
+    expect(block).toEqual({
+      type: "toolCall",
+      id: "call-1",
+      name: "bash",
+      arguments: { command: "ls" },
+    });
+    expect(block).not.toHaveProperty("partialJson");
+  });
+
+  it("keeps a call's arguments as they are and drops its streamed text", () => {
+    const [block] = assistantBlocks([
+      {
+        type: "toolCall",
+        id: "call-2",
+        name: "read",
+        arguments: { path: "a.ts" },
+        partialJson: '{"path":"a.ts"}',
+      },
+    ]);
+
+    expect(block).toEqual({
+      type: "toolCall",
+      id: "call-2",
+      name: "read",
+      arguments: { path: "a.ts" },
+    });
+  });
+
+  it("leaves a call without arguments when neither source is an object", () => {
+    const [block] = assistantBlocks([
+      { type: "toolCall", id: "call-3", name: "bash", partialJson: '{"comm' },
+    ]);
+
+    expect(block).toEqual({ type: "toolCall", id: "call-3", name: "bash" });
+  });
+
+  it("keeps text and thinking signatures on the server", () => {
+    const blocks = assistantBlocks([
+      { type: "thinking", thinking: "plan", signature: "c2ln" },
+      { type: "text", text: "hi", signature: "c2ln" },
+    ]);
+
+    expect(blocks).toEqual([
+      { type: "thinking", thinking: "plan" },
+      { type: "text", text: "hi" },
+    ]);
+  });
+});
+
+describe("conversation live view", () => {
+  const live = CONVERSATION_CLIENT_DOCS.find((spec) => spec.kind === "pi.live");
+  if (!live) throw new Error("pi.live has no client projection");
+  const presenter: DocPresenter = {
+    call: () => ({}),
+    committedCall: () => undefined,
+    queuedInput: () => undefined,
+  };
+  const project = (value: object) => live.project(value as JsonObject, presenter);
+
+  type Streaming = {
+    generation: { message: { content: Array<Record<string, unknown>> } };
+    [key: string]: unknown;
+  };
+  const blocksOf = (view: JsonObject) =>
+    ((view as Streaming).generation.message.content as Array<Record<string, unknown>>) ?? [];
+  /** A `pi.live` revision whose generation answers with `content`. */
+  const revision = (content: Array<Record<string, unknown>>, tools?: unknown[]): object => ({
+    run: { taskId: 7, inputs: [3] },
+    generation: {
+      attempt: 1,
+      message: { role: "assistant", content, stopReason: "pending", timestamp: 1_791_650_003_000 },
+    },
+    ...(tools ? { tools } : {}),
+  });
+
+  it("projects the streaming message like an entry and resolves a call's arguments", () => {
+    const view = project(
+      revision([
+        { type: "thinking", thinking: "plan", signature: "c2ln" },
+        {
+          type: "toolCall",
+          id: "call-1",
+          name: "bash",
+          arguments: "",
+          partialJson: '{"command":"ls"}',
+        },
+      ]),
+    );
+
+    const message = (view as Streaming).generation.message as Record<string, unknown>;
+    expect(Object.keys(message).sort()).toEqual(["content", "role", "stopReason", "timestamp"]);
+    expect(blocksOf(view)).toEqual([
+      { type: "thinking", thinking: "plan" },
+      { type: "toolCall", id: "call-1", name: "bash", arguments: { command: "ls" } },
+    ]);
+    expect(JSON.stringify(view)).not.toContain("partialJson");
+    expect(JSON.stringify(view)).not.toContain("signature");
+  });
+
+  it("projects an unchanged block and generation to the identical object", () => {
+    // What a pi-durable commit does: the unchanged paths are shared, the grown one is new.
+    const thinking = { type: "thinking", thinking: "plan", signature: "c2ln" };
+    const answer = (text: string) => revision([thinking, { type: "text", text }]);
+    const first = project(answer("Hel"));
+    const next = project(answer("Hello"));
+
+    expect(blocksOf(next)[0]).toBe(blocksOf(first)[0]);
+    expect(blocksOf(next)[1]).not.toBe(blocksOf(first)[1]);
+    // The changed block is still an append, so a frame costs the new text.
+    expect(diffRevisions(first, next)).toEqual([
+      ["a", ["generation", "message", "content", 1, "text"], "lo"],
+    ]);
+
+    // Nothing under the generation changed: a tool-round update reuses it whole.
+    const shared = {
+      attempt: 1,
+      message: { role: "assistant", content: [thinking], timestamp: 2 },
+    };
+    const withTools = project({
+      generation: shared,
+      tools: [{ callId: "a", name: "bash", status: "running" }],
+    });
+    const laterTools = project({
+      generation: shared,
+      tools: [{ callId: "a", name: "bash", status: "running", output: "x" }],
+    });
+    expect((laterTools as Streaming).generation).toBe((withTools as Streaming).generation);
   });
 });

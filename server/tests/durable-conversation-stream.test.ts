@@ -8,6 +8,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
   fauxAssistantMessage,
   fauxProvider,
+  fauxThinking,
   fauxToolCall,
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
@@ -56,7 +57,12 @@ const LONG_ANSWER = Array.from({ length: 40 }, (_, index) => `word${index}`).joi
 
 async function fixture(
   responses: FauxResponseStep[],
-  options?: { slow?: boolean; extensions?: Extension[] },
+  options?: {
+    slow?: boolean;
+    extensions?: Extension[];
+    /** Overrides the faux provider's streaming (default: instant). */
+    provider?: Parameters<typeof fauxProvider>[0];
+  },
 ) {
   const dir = mkdtempSync(join(tmpdir(), "oppi-conversation-stream-"));
   const models = await ModelRuntime.create({
@@ -66,7 +72,8 @@ async function fixture(
     refreshOnCreate: false,
   });
   const faux = fauxProvider(
-    options?.slow ? { tokensPerSecond: 60, tokenSize: { min: 3, max: 3 } } : {},
+    options?.provider ??
+      (options?.slow ? { tokensPerSecond: 60, tokenSize: { min: 3, max: 3 } } : {}),
   );
   faux.setResponses(responses);
   models.registerNativeProvider(faux.provider);
@@ -287,6 +294,60 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
       if (toolCalls?.["call-1"]) liveCalls.push(toolCalls["call-1"]);
     }
     expect(liveCalls[0]).toEqual(call?.toolCalls?.["call-1"]);
+    await expectConverged(f, client);
+  });
+
+  it("ships the live answer projected, with each tool call's arguments resolved once", async () => {
+    const f = await fixture(
+      [
+        fauxAssistantMessage(
+          [
+            fauxThinking("Plan the call."),
+            { type: "text", text: "Running it now." },
+            fauxToolCall("bash", { command: "echo streamed" }, { id: "call-1" }),
+          ],
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage("done"),
+      ],
+      // One character per tick: the tool call stays in the committed partials long enough
+      // that a client holds it before the answer lands.
+      { provider: { tokensPerSecond: 20, tokenSize: { min: 1, max: 1 } } },
+    );
+    const client = await attach(f);
+    await prompt(f.conversation, "run it");
+    await settle();
+
+    // Replay frame by frame: every `pi.live` a client can hold is projected like an entry.
+    const replay = new Client();
+    const messages: Array<Record<string, unknown>> = [];
+    const callBlocks: Array<Record<string, unknown>> = [];
+    for (const frame of client.frames) {
+      replay.apply(frame);
+      const generation = replay.live()?.generation as
+        { message?: Record<string, unknown> } | undefined;
+      const message = generation?.message;
+      if (!message) continue;
+      messages.push(message);
+      for (const block of (message.content as Array<Record<string, unknown>>) ?? [])
+        if (block.type === "toolCall") callBlocks.push(block);
+    }
+    expect(messages.length).toBeGreaterThan(0);
+    // The provider's own object never leaves the server: no api, provider, model, or usage.
+    for (const message of messages)
+      expect(Object.keys(message)).toEqual(["role", "content", "timestamp", "stopReason"]);
+    expect(callBlocks.length).toBeGreaterThan(0);
+    for (const block of callBlocks) {
+      expect(block).not.toHaveProperty("partialJson");
+      expect(typeof block.arguments).toBe("object");
+    }
+    expect(JSON.stringify(client.frames)).not.toContain("partialJson");
+    expect(JSON.stringify(client.frames)).not.toContain('"signature"');
+
+    // Projection keeps the sharing the room diffs: a growing text block is still an append.
+    const textOps = client.frames.flatMap(liveTextOps);
+    expect(textOps.filter((op) => op[0] === "a").length).toBeGreaterThan(0);
+    expect(textOps.filter((op) => op[0] !== "a")).toEqual([]);
     await expectConverged(f, client);
   });
 

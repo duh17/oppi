@@ -181,15 +181,12 @@ const CONVERSATION_STREAM_SERVER_MESSAGES = {
         run: { taskId: 14, inputs: [7] },
         generation: {
           attempt: 1,
+          // Projected like an entry's message: provider diagnostics and usage stay private.
           message: {
             role: "assistant",
             content: [{ type: "text", text: "There are" }],
-            api: "anthropic-messages",
-            provider: "anthropic",
-            model: "claude-sonnet-4-5",
-            usage,
-            stopReason: "pending",
             timestamp: 1_791_650_003_000,
+            stopReason: "pending",
           },
         },
       },

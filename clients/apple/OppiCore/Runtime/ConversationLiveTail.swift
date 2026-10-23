@@ -115,9 +115,8 @@ struct ConversationLiveProjector {
                 if type == "thinking", let thinking = block["thinking"]?.stringValue, !thinking.isEmpty {
                     blocks.append(.thinking(index: index, text: thinking))
                 } else if type == "toolCall", let id = block["id"]?.stringValue, !id.isEmpty {
-                    let args = block["arguments"]?.objectValue
-                        ?? ConversationTraceProjector.parsedObject(block["partialJson"])
-                        ?? [:]
+                    // The server resolves the call's arguments; clients read one field.
+                    let args = block["arguments"]?.objectValue ?? [:]
                     blocks.append(.toolCall(
                         id: id,
                         name: block["name"]?.stringValue ?? "",
