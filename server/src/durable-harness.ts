@@ -791,7 +791,7 @@ export class SessionHost {
                 // conversation's host bash and background jobs need it in the env so
                 // `oppi session create` run here is attributed to this conversation's own
                 // Session: parented, policy-checked, and unable to target itself. A conversation
-                // with no Session row adds none, so nothing is attributed for it.
+                // with no Session row adds none of its own (the server's process env still applies).
                 ...(callerSessionId
                   ? { shellEnv: { [OPPI_CALLER_SESSION_ID_ENV]: callerSessionId } }
                   : {}),
