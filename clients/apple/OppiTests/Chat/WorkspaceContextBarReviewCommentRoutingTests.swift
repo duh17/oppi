@@ -64,33 +64,6 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
                 "The open review should retain its original navigation files")
     }
 
-    @Test func commitReviewSheetSurvivesContextBecomingUnavailable() async throws {
-        let fixture = ContextBarFixture()
-        defer { fixture.tearDown() }
-
-        let row = try #require(fixture.button(labelContaining: "abc1234"))
-        row.sendActions(for: .primaryActionTriggered)
-
-        let presented = await waitForMainActorCondition {
-            fixture.screen.presentedViewController != nil
-        }
-        #expect(presented)
-        let container = try #require(fixture.screen.presentedViewController as? UINavigationController)
-        let commit = try #require(container.viewControllers.first as? CommitDetailViewController)
-        #expect(commit.configuration.commit.sha == "abc1234")
-
-        fixture.bar.context.gitStatus = nil
-        fixture.bar.updatePropertiesIfNeeded()
-
-        let remainsPresented = await waitForMainActorConditionToStayTrue(
-            for: .milliseconds(500),
-            poll: .milliseconds(10)
-        ) {
-            fixture.screen.presentedViewController === container
-        }
-        #expect(remainsPresented, "The same commit review sheet should remain presented")
-    }
-
     @Test func parentScopeKeepsInlineComposerVoiceInputForFileDetail() async throws {
         let voiceInputManager = VoiceInputManager()
         let parentScope = ReviewCommentSelectionScope.activeSession(ReviewCommentSelectionRouter(
@@ -116,8 +89,8 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
     }
 }
 
-/// An expanded bar on a workspace's Git status, pinned to the top of a screen
-/// in a window, presenting from that screen.
+/// A Git panel's bar on a workspace's Git status, filling a screen in a
+/// window, presenting from that screen.
 @MainActor
 private struct ContextBarFixture {
     let screen = UIViewController()
@@ -129,7 +102,7 @@ private struct ContextBarFixture {
         connection.sessionStore.switchServer(to: "srv1")
         bar = WorkspaceContextBarView(
             context: .init(gitStatus: makeReviewGitStatus(), workspaceId: "w1"),
-            options: .init(initiallyExpanded: true),
+            options: .init(),
             connection: connection,
             apiClient: nil,
             navigation: AppNavigation()
@@ -142,6 +115,13 @@ private struct ContextBarFixture {
             bar.topAnchor.constraint(equalTo: screen.view.safeAreaLayoutGuide.topAnchor),
             bar.leadingAnchor.constraint(equalTo: screen.view.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: screen.view.trailingAnchor),
+            // As `GitPanelViewController` pins it: an empty bar is 0 tall.
+            bar.bottomAnchor.constraint(lessThanOrEqualTo: screen.view.bottomAnchor),
+            {
+                let fill = bar.bottomAnchor.constraint(equalTo: screen.view.bottomAnchor)
+                fill.priority = .defaultHigh
+                return fill
+            }(),
         ])
         window.rootViewController = screen
         window.makeKeyAndVisible()

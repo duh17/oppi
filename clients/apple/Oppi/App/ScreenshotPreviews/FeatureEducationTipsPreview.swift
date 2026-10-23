@@ -35,15 +35,6 @@ struct FeatureEducationTipsPreview: View {
             stories: "IOS-034, IOS-042"
         ),
         FeatureEducationTipPreviewItem(
-            id: "open-changed-files-bar",
-            priority: "P0",
-            title: "Review changed files",
-            message: "Tap the changed-files bar to inspect this workspace's changes.",
-            trigger: "A workspace's session list shows its changed-files bar",
-            completion: "Changed-files bar expanded",
-            stories: "IOS-043, IOS-100"
-        ),
-        FeatureEducationTipPreviewItem(
             id: "answer-inline-asks-and-extension-prompts",
             priority: "P0",
             title: "Answer prompts here",
@@ -84,7 +75,7 @@ struct FeatureEducationTipsPreview: View {
             priority: "P1",
             title: "Select files quickly",
             message: "Tap Select, then drag down the file list to choose several files for a prompt template.",
-            trigger: "Changed-files bar is expanded with at least two files",
+            trigger: "Git panel is open with at least two changed files",
             completion: "First context-bar multi-select",
             stories: "IOS-043, IOS-048, IOS-050"
         ),

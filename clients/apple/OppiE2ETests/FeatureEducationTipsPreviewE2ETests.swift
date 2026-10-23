@@ -20,7 +20,6 @@ final class FeatureEducationTipsPreviewE2ETests: XCTestCase {
     private static let p0TipCases = [
         P0TipCase(id: "tool-details", expectedMessage: "Tap a tool row to inspect"),
         P0TipCase(id: "output-shortcuts", expectedMessage: "Double-tap or pinch expanded output"),
-        P0TipCase(id: "changed-files", expectedMessage: "Tap the changed-files bar"),
         P0TipCase(id: "prompt", expectedMessage: "Pick an option or type a response"),
         P0TipCase(id: "busy-send", expectedMessage: "Use Steer for this turn"),
         P0TipCase(id: "review-selection", expectedMessage: "Select text, then tap Comment"),
@@ -34,7 +33,6 @@ final class FeatureEducationTipsPreviewE2ETests: XCTestCase {
     private static let tipIDs = [
         "open-tool-details",
         "tool-output-shortcuts",
-        "open-changed-files-bar",
         "answer-inline-asks-and-extension-prompts",
         "steer-vs-follow-up-while-busy",
         "select-text-for-review-comments",
@@ -68,10 +66,10 @@ final class FeatureEducationTipsPreviewE2ETests: XCTestCase {
     func testFeatureEducationTipsCatalogVideo() throws {
         launchPreview(screen: "feature-tips")
 
-        XCTAssertEqual(Self.tipIDs.count, 24, "The fixture should cover every app-behavior tip candidate")
+        XCTAssertEqual(Self.tipIDs.count, 23, "The fixture should cover every app-behavior tip candidate")
         XCTAssertTrue(app.staticTexts["Feature education tips"].waitForExistence(timeout: 5), "Feature tip catalogue title missing")
         XCTAssertTrue(app.staticTexts["feature-tips.total"].waitForExistence(timeout: 5), "Feature tip count missing")
-        XCTAssertEqual(app.staticTexts["feature-tips.total"].label, "24 tips covered")
+        XCTAssertEqual(app.staticTexts["feature-tips.total"].label, "23 tips covered")
 
         let catalog = app.scrollViews["feature-tips.catalog"]
         XCTAssertTrue(catalog.waitForExistence(timeout: 5), "Feature tip catalogue scroll view missing")

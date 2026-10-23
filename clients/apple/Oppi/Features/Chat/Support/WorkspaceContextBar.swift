@@ -1,4 +1,3 @@
-import TipKit
 import UIKit
 
 // MARK: - Scoping logic (testable)
@@ -40,14 +39,6 @@ enum ContextBarScoping {
     static func sessionScope(gitStatus: GitStatus?, changedFiles: [String]?) -> SessionScopedGitStatus? {
         guard let gitStatus, let changedFiles, !changedFiles.isEmpty else { return nil }
         return SessionScopedGitStatus.filter(gitStatus: gitStatus, sessionChangedFiles: changedFiles)
-    }
-
-    /// A Git repository with changes, or any Git repository when the host
-    /// shows a clean one too. A session whose own files are none still has
-    /// content: its branch, commits, and the switch to every change.
-    static func hasContent(gitStatus: GitStatus?, showCleanWorkspace: Bool = false) -> Bool {
-        guard let gitStatus, gitStatus.isGitRepo else { return false }
-        return showCleanWorkspace || !gitStatus.isClean
     }
 
     static func displayFileCount(
@@ -103,18 +94,18 @@ enum ContextBarQuickActionRouting {
 
 // MARK: - Bar
 
-/// Expandable bar showing workspace git status, over the top of a workspace's
-/// sessions, and (always expanded) the whole of the chat's Git panel
-/// (`Options.isPanel`).
-///
-/// Collapsed shows branch + dirty count + repo-wide +/-. Expanded shows a
-/// tappable file list with file-type icons, per-file line stats, recent
-/// commits (a panel: the commit graph of every local branch and worktree,
-/// `CommitGraphView`), and select-for-review controls; a session in the main checkout
-/// also gets a This session / All changes switch (`ContextBarScoping`). A
-/// file opens its review and a commit its detail, each in a sheet presented
-/// from `presenter`. The sheet belongs to the presenter, not to this bar, so a
-/// transient loss of Git content (the bar empties) leaves an open review alone.
+/// The Git panel's content (`GitPanelViewController`, from a chat or a
+/// workspace): a summary header (branch, dirty count, +/-, ahead/behind) over
+/// a table of the tappable file list with file-type icons and per-file line
+/// stats, then the commit graph of every local branch and worktree
+/// (`CommitGraphView`), with select-for-review controls; a session in the main
+/// checkout also gets a This session / All changes switch
+/// (`ContextBarScoping`). It fills the panel with no card or outer padding;
+/// pin its bottom to the panel's below the required height of an empty bar
+/// (0). A file opens its review and a commit its detail, each in a sheet
+/// presented from `presenter`. The sheet belongs to the presenter, not to this
+/// bar, so a transient loss of Git content (the bar empties) leaves an open
+/// review alone.
 ///
 /// Supports swipe-to-select: in select mode, dragging vertically across rows
 /// selects or deselects them (Mail-style — first row touched determines direction).
@@ -128,31 +119,15 @@ final class WorkspaceContextBarView: UIView {
         var sessionId: String?
         var worktreeId: String?
         var serverId: String?
-        /// Incremented by the host to collapse an expanded bar (a tap on the
-        /// list or the scrim).
-        var collapseToken = 0
     }
 
     /// What stays fixed for the bar's life.
     struct Options {
-        var appliesOuterHorizontalPadding = true
-        /// A workspace with no changes still shows its branch and commits.
-        var showCleanWorkspace = false
-        var initiallyExpanded = false
-        /// The bar is a whole panel (the chat's Git panel): it stays expanded
-        /// with no collapse chevron, so collapsing can never leave an empty
-        /// sheet; it has no glass card, corners, or outer padding, so its
-        /// content fills the panel; and it scrolls a table (files, then the
-        /// commit graph) in the height the panel gives it instead of stopping
-        /// at the 480 pt an inline bar caps at. Pin its bottom to the panel's
-        /// below the required height of an empty bar (0).
-        var isPanel = false
         var onReviewInCurrentSession: ((String, [PendingFileReference]) -> Void)?
         var fileDetailReviewCommentScope: ReviewCommentSelectionScope?
         /// Shows a chat this bar's New Session or prompt template started. Nil
-        /// pushes it onto `presenter`'s stack, which suits a bar on its own
-        /// screen; a panel passes its chat's push, so the new chat does not
-        /// open inside the panel's sheet or column.
+        /// pushes it onto `presenter`'s stack; a panel passes its host's push,
+        /// so the new chat does not open inside the panel's sheet or column.
         var pushChat: ((ChatViewController) -> Void)?
     }
 
@@ -162,10 +137,6 @@ final class WorkspaceContextBarView: UIView {
             contextDidChange(from: oldValue)
         }
     }
-    /// Called when the bar expands or collapses. Hosts show a dismiss scrim.
-    var onExpandedChanged: ((Bool) -> Void)?
-    /// Called with the bar's height whenever it lays out at a new one.
-    var onHeightChange: ((CGFloat) -> Void)?
     /// The screen that shows the bar: presents its reviews and alerts and
     /// pushes the chats it starts.
     weak var presenter: UIViewController?
@@ -175,13 +146,6 @@ final class WorkspaceContextBarView: UIView {
     private let apiClient: APIClient?
     private let navigation: AppNavigation
 
-    private var isExpanded: Bool {
-        didSet {
-            guard isExpanded != oldValue else { return }
-            setNeedsUpdateProperties()
-            onExpandedChanged?(isExpanded)
-        }
-    }
     private var isSelecting = false {
         didSet {
             guard isSelecting != oldValue else { return }
@@ -202,19 +166,10 @@ final class WorkspaceContextBarView: UIView {
     private var isLoadingQuickActions = false {
         didSet { setNeedsUpdateProperties() }
     }
-    private var additionalCommits: [GitCommitSummary] = [] {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var hasMoreCommits = true {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var isLoadingMore = false {
-        didSet { setNeedsUpdateProperties() }
-    }
     private var dragSelect = DragSelectState()
     private weak var presentedReview: UIViewController?
 
-    /// A panel's commit graph (`Options.isPanel`): HEAD and every local
+    /// The panel's commit graph: HEAD and every local
     /// branch, with the worktrees that have them out. Nil until the first page
     /// arrives.
     private struct GraphState: Equatable {
@@ -276,19 +231,21 @@ final class WorkspaceContextBarView: UIView {
     private var filtersToSession = false
 
     // Views.
-    private let card = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
-    private let cardStack = UIStackView()
-    /// Expands and collapses the bar: branch, counts, upstream, chevron.
-    private lazy var toggleButton: PlainRowButton = {
+    /// The summary row over the table, then the selection bar. Hidden while
+    /// there is no Git content, and the bar is 0 tall.
+    private let contentStack = UIStackView()
+    /// The panel's header: branch, counts, upstream.
+    private lazy var summaryRow: UIStackView = {
         let spacer = UIView()
         spacer.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
-        let button = PlainRowButton(wrapping: Self.row(
-            [branchGroup, changedLabel, linesGroup, spacer, aheadGroup, chevron],
+        let row = Self.row(
+            [branchGroup, changedLabel, linesGroup, spacer, aheadGroup],
             spacing: 8,
             insets: NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)
-        )) { [weak self] in self?.toggleExpanded() }
-        button.accessibilityIdentifier = "workspace-context-bar.toggle"
-        return button
+        )
+        row.isAccessibilityElement = true
+        row.accessibilityTraits = .header
+        return row
     }()
     private let branchIcon = UIImageView()
     private let branchLabel = UILabel()
@@ -300,7 +257,6 @@ final class WorkspaceContextBarView: UIView {
     private let aheadLabel = UILabel()
     private let behindLabel = UILabel()
     private let aheadGroup = UIStackView()
-    private let chevron = UIImageView()
     private let selectDivider = UIView()
     private let selectionDividerSlot = UIView()
     private lazy var selectButton: PlainRowButton = {
@@ -320,7 +276,7 @@ final class WorkspaceContextBarView: UIView {
         control.addAction(UIAction { [weak self, weak control] _ in
             guard let self, let control else { return }
             let next: ContextBarScoping.FileScope = control.selectedSegmentIndex == 0 ? .session : .all
-            animateLayout(duration: 0.15) { self.fileScope = next }
+            self.fileScope = next
         }, for: .valueChanged)
         return control
     }()
@@ -328,17 +284,10 @@ final class WorkspaceContextBarView: UIView {
         scopeControl,
         NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 4, trailing: 12)
     )
-    private let tipHost = FeatureEducationTipHostView(
-        tip: FeatureEducationTips.ChangedFilesBarTip(),
-        descriptor: FeatureEducationTips.changedFilesBar,
-        insets: NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
-    )
-    private let expandedStack = UIStackView()
-    /// The expanded panel's scroller. A whole panel's is a table
-    /// (`graphTable`): its files in the header, a cell per commit of the graph,
-    /// then the graph's footer, so only the commits on screen have views.
-    private let scrollView: UIScrollView
-    private var graphTable: UITableView? { scrollView as? UITableView }
+    /// The panel's scroller: its files in the header, a cell per commit of
+    /// the graph, then the graph's footer, so only the commits on screen have
+    /// views.
+    private let table = PanelTableView(frame: .zero, style: .plain)
     /// A panel table's header: everything above the graph (`panelStack`).
     /// Header and footer are plain views, not cells, so VoiceOver reads their
     /// rebuilt rows; a table caches the accessibility of a cell it never
@@ -356,8 +305,6 @@ final class WorkspaceContextBarView: UIView {
     private let panelStack = UIStackView()
     private let selectionBar = UIStackView()
     private var emptyHeight: NSLayoutConstraint?
-    private var cardLeading: NSLayoutConstraint?
-    private var cardTrailing: NSLayoutConstraint?
     private weak var fileList: UIStackView?
     private var fileRows: [(path: String, view: UIView, mark: UIImageView?)] = []
     private weak var selectAllButton: UIButton?
@@ -366,8 +313,6 @@ final class WorkspaceContextBarView: UIView {
     private var panelKey: PanelKey?
     private var panelStatusKey: PanelStatusKey?
     private var selectionBarKey: SelectionBarKey?
-    private var lastReportedHeight: CGFloat = -1
-    private var tipStarted = false
 
     init(
         context: Context,
@@ -381,8 +326,6 @@ final class WorkspaceContextBarView: UIView {
         self.connection = connection
         self.apiClient = apiClient
         self.navigation = navigation
-        scrollView = options.isPanel ? PanelTableView(frame: .zero, style: .plain) : UIScrollView()
-        isExpanded = options.initiallyExpanded || options.isPanel
         super.init(frame: .zero)
         setUpViews()
         registerForTraitChanges(
@@ -418,17 +361,8 @@ final class WorkspaceContextBarView: UIView {
 
     // MARK: Derived state
 
-    private var hasContent: Bool {
-        ContextBarScoping.hasContent(gitStatus: context.gitStatus, showCleanWorkspace: options.showCleanWorkspace)
-    }
-
     private var offersFileScope: Bool {
         ContextBarScoping.offersFileScope(sessionId: context.sessionId, worktreeId: context.worktreeId)
-    }
-
-    /// All commits: recent from git status + any additionally loaded ones.
-    private var allCommits: [GitCommitSummary] {
-        (context.gitStatus?.recentCommits ?? []) + additionalCommits
     }
 
     private var canLaunch: Bool {
@@ -463,78 +397,39 @@ final class WorkspaceContextBarView: UIView {
     // MARK: Setup
 
     private func setUpViews() {
-        // A panel's content fills the panel like Outline and Context: glass
-        // is for floating controls, not content, so the card has no chrome.
-        if options.isPanel {
-            card.effect = nil
-        } else {
-            card.layer.cornerRadius = 10
-            card.layer.cornerCurve = .continuous
-        }
-        card.clipsToBounds = true
-        card.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(card)
-        cardStack.axis = .vertical
-        cardStack.translatesAutoresizingMaskIntoConstraints = false
-        card.contentView.addSubview(cardStack)
-
-        let leading = card.leadingAnchor.constraint(equalTo: leadingAnchor)
-        let trailing = card.trailingAnchor.constraint(equalTo: trailingAnchor)
-        let top = card.topAnchor.constraint(equalTo: topAnchor, constant: options.isPanel ? 0 : 4)
-        let bottom = card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: options.isPanel ? 0 : -2)
-        // An empty bar is 0 tall; the card's padding gives way.
+        // The content fills the panel like Outline and Context: no card.
+        contentStack.axis = .vertical
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(contentStack)
+        let top = contentStack.topAnchor.constraint(equalTo: topAnchor)
+        let bottom = contentStack.bottomAnchor.constraint(equalTo: bottomAnchor)
+        // An empty bar is 0 tall; the hidden content gives way.
         top.priority = .required - 1
         bottom.priority = .required - 1
-        let empty = heightAnchor.constraint(equalToConstant: 0)
-        emptyHeight = empty
-        cardLeading = leading
-        cardTrailing = trailing
+        emptyHeight = heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
-            leading, trailing, top, bottom,
-            cardStack.topAnchor.constraint(equalTo: card.contentView.topAnchor),
-            cardStack.bottomAnchor.constraint(equalTo: card.contentView.bottomAnchor),
-            cardStack.leadingAnchor.constraint(equalTo: card.contentView.leadingAnchor),
-            cardStack.trailingAnchor.constraint(equalTo: card.contentView.trailingAnchor),
+            top, bottom,
+            contentStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
 
-        setUpCollapsedRow()
-        // The tip says to tap the bar open; a panel is open already.
-        if !options.isPanel {
-            cardStack.addArrangedSubview(tipHost)
-        }
+        setUpSummaryRow()
 
-        expandedStack.axis = .vertical
-        scrollView.alwaysBounceVertical = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        table.alwaysBounceVertical = false
+        table.translatesAutoresizingMaskIntoConstraints = false
         panelStack.axis = .vertical
         panelStack.alignment = .fill
         panelStack.translatesAutoresizingMaskIntoConstraints = false
-        if let table = graphTable {
-            setUpPanelTable(table)
-        } else {
-            // An inline bar's panel hugs its rows up to 480 pt, then scrolls.
-            scrollView.addSubview(panelStack)
-            let hug = scrollView.frameLayoutGuide.heightAnchor.constraint(equalTo: panelStack.heightAnchor)
-            hug.priority = .defaultHigh
-            NSLayoutConstraint.activate([
-                panelStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-                panelStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-                panelStack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor),
-                panelStack.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor),
-                hug,
-                scrollView.frameLayoutGuide.heightAnchor.constraint(lessThanOrEqualToConstant: 480),
-            ])
-        }
-        expandedStack.addArrangedSubview(scrollView)
+        setUpPanelTable(table)
+        contentStack.addArrangedSubview(table)
         selectionBar.axis = .vertical
-        expandedStack.addArrangedSubview(selectionBar)
-        cardStack.addArrangedSubview(expandedStack)
+        contentStack.addArrangedSubview(selectionBar)
 
         dragSelectGesture.isEnabled = false
         dragSelectGesture.delegate = self
     }
 
-    private func setUpCollapsedRow() {
+    private func setUpSummaryRow() {
         for stack in [branchGroup, linesGroup, aheadGroup] {
             stack.axis = .horizontal
             stack.alignment = .center
@@ -556,8 +451,6 @@ final class WorkspaceContextBarView: UIView {
             label.setContentCompressionResistancePriority(.required, for: .horizontal)
             label.setContentHuggingPriority(.required, for: .horizontal)
         }
-        chevron.contentMode = .center
-        chevron.setContentHuggingPriority(.required, for: .horizontal)
 
         selectDivider.translatesAutoresizingMaskIntoConstraints = false
         selectionDividerSlot.addSubview(selectDivider)
@@ -570,10 +463,10 @@ final class WorkspaceContextBarView: UIView {
         ])
         selectLabel.adjustsFontForContentSizeCategory = true
 
-        let row = UIStackView(arrangedSubviews: [toggleButton, selectionDividerSlot, selectButton])
+        let row = UIStackView(arrangedSubviews: [summaryRow, selectionDividerSlot, selectButton])
         row.axis = .horizontal
         row.alignment = .fill
-        cardStack.addArrangedSubview(row)
+        contentStack.addArrangedSubview(row)
     }
 
     // MARK: Render
@@ -603,18 +496,13 @@ final class WorkspaceContextBarView: UIView {
             filtersToSession: filtersToSession,
             sessionScope: sessionScope
         )
-        let showsContent = !(context.isLoading && context.gitStatus == nil) && hasContent
-        card.isHidden = !showsContent
+        // A clean repository still shows its branch and commits.
+        let showsContent = !(context.isLoading && context.gitStatus == nil) && context.gitStatus?.isGitRepo == true
+        contentStack.isHidden = !showsContent
         emptyHeight?.isActive = !showsContent
-        let padding: CGFloat = options.appliesOuterHorizontalPadding && !options.isPanel ? 16 : 0
-        cardLeading?.constant = padding
-        cardTrailing?.constant = -padding
-        updateTip(showsContent: showsContent)
         guard showsContent else { return }
 
-        renderCollapsedRow(palette: palette)
-        expandedStack.isHidden = !isExpanded
-        guard isExpanded else { return }
+        renderSummaryRow(palette: palette)
         loadGraphIfNeeded()
         renderPanel(themeID: themeID)
         selectionBar.isHidden = !isSelecting
@@ -623,39 +511,12 @@ final class WorkspaceContextBarView: UIView {
         }
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let height = bounds.height
-        guard abs(height - lastReportedHeight) > 0.5 else { return }
-        lastReportedHeight = height
-        onHeightChange?(height)
-    }
-
     override func didMoveToWindow() {
         super.didMoveToWindow()
         setNeedsUpdateProperties()
-        if window == nil {
-            stopTip()
-        }
     }
 
-    private func updateTip(showsContent: Bool) {
-        if showsContent, window != nil, !options.isPanel {
-            guard !tipStarted else { return }
-            tipStarted = true
-            tipHost.start()
-        } else {
-            stopTip()
-        }
-    }
-
-    private func stopTip() {
-        guard tipStarted else { return }
-        tipStarted = false
-        tipHost.stop()
-    }
-
-    private func renderCollapsedRow(palette: ThemePalette) {
+    private func renderSummaryRow(palette: ThemePalette) {
         let gitStatus = context.gitStatus
         let fileCount = ContextBarScoping.displayFileCount(
             gitStatus: gitStatus,
@@ -707,17 +568,7 @@ final class WorkspaceContextBarView: UIView {
         behindLabel.font = upstreamFont
         behindLabel.textColor = UIColor(palette.orange)
 
-        // A panel's summary row is its header: nothing to collapse.
-        chevron.isHidden = options.isPanel
-        toggleButton.isUserInteractionEnabled = !options.isPanel
-        toggleButton.accessibilityTraits = options.isPanel ? .header : .button
-        chevron.image = UIImage(systemName: isExpanded ? "chevron.up" : "chevron.down")
-        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
-            font: font(fixed: 9, .bold, regular: .caption2, .bold)
-        )
-        chevron.tintColor = UIColor(palette.comment)
-
-        toggleButton.accessibilityLabel = [
+        summaryRow.accessibilityLabel = [
             branchGroup.isHidden ? nil : branchLabel.text,
             changedLabel.isHidden ? nil : changedLabel.text,
             addedLabel.isHidden || linesGroup.isHidden ? nil : addedLabel.text,
@@ -726,7 +577,7 @@ final class WorkspaceContextBarView: UIView {
             aheadGroup.isHidden || behindLabel.isHidden ? nil : behindLabel.text,
         ].compactMap { $0 }.joined(separator: ", ")
 
-        let showsSelect = isExpanded && context.workspaceId != nil
+        let showsSelect = context.workspaceId != nil
         selectionDividerSlot.isHidden = !showsSelect
         selectButton.isHidden = !showsSelect
         selectDivider.backgroundColor = .separator
@@ -743,21 +594,17 @@ final class WorkspaceContextBarView: UIView {
         return UIColor(palette.toolDiffRemoved)
     }
 
-    // MARK: Expanded panel
+    // MARK: Panel
 
-    /// Everything the expanded panel draws above the graph but the selection.
+    /// Everything the panel draws above the graph but the selection.
     /// It is rebuilt only when this changes, not on every session-store update;
     /// the selection updates the rows in place, so a drag across them keeps
     /// its gesture. The graph has its own keys (`renderGraph`).
     private struct PanelKey: Equatable {
         let files: [GitFileStatus]
         let isSelecting: Bool
-        let commits: [GitCommitSummary]
-        let hasMoreCommits: Bool
-        let isLoadingMore: Bool
-        /// The graph's section, or the commit list or HEAD row in its place.
+        /// The graph's section, or the HEAD row in its place.
         let showsGraph: Bool
-        let gitStatus: GitStatus?
         let sessionId: String?
         /// The switch's choice; nil when the bar offers no switch.
         let fileScope: ContextBarScoping.FileScope?
@@ -771,13 +618,7 @@ final class WorkspaceContextBarView: UIView {
         let key = PanelKey(
             files: displayFiles,
             isSelecting: isSelecting,
-            // A panel's commits are the graph's; the status's recent commits
-            // would rebuild it on every push.
-            commits: options.isPanel ? [] : allCommits,
-            hasMoreCommits: hasMoreCommits,
-            isLoadingMore: isLoadingMore,
             showsGraph: showsGraph,
-            gitStatus: options.isPanel ? nil : context.gitStatus,
             sessionId: context.sessionId,
             fileScope: offersFileScope ? fileScope : nil,
             canTap: context.workspaceId != nil,
@@ -786,13 +627,11 @@ final class WorkspaceContextBarView: UIView {
         )
         let palette = themeID.palette
         defer { applySelection(palette: palette) }
-        if graphTable != nil {
-            renderGraph(themeID: themeID, showsGraph: showsGraph)
-        }
-        // A panel's file rows read the status's counts through `files` and
-        // its totals below; its other fields change on every push.
+        renderGraph(themeID: themeID, showsGraph: showsGraph)
+        // The file rows read the status's counts through `files` and its
+        // totals below; its other fields change on every push.
         let panelStatus = context.gitStatus.map { PanelStatusKey($0) }
-        guard key != panelKey || (options.isPanel && panelStatus != panelStatusKey) else { return }
+        guard key != panelKey || panelStatus != panelStatusKey else { return }
         panelKey = key
         panelStatusKey = panelStatus
         // The scope switch stays put, so a tap on it finishes.
@@ -839,16 +678,13 @@ final class WorkspaceContextBarView: UIView {
             // The graph's rows follow in the table.
             add(divider(comment.withAlphaComponent(0.15)))
             add(Self.spacer(height: 6))
-        } else if !options.isPanel, !allCommits.isEmpty {
-            add(divider(comment.withAlphaComponent(0.15)))
-            add(commitList(palette: palette))
         } else if let gitStatus = context.gitStatus, gitStatus.isGitRepo {
             add(divider(comment.withAlphaComponent(0.15)))
             add(headCommitRow(gitStatus, palette: palette))
         }
         // The table resizes its header to the rebuilt files.
         panelChromeNeedsSizing = true
-        graphTable?.setNeedsLayout()
+        table.setNeedsLayout()
     }
 
     /// The fields of a pushed Git status a panel draws outside its file rows
@@ -919,7 +755,6 @@ final class WorkspaceContextBarView: UIView {
     /// its rows below the shown ones; anything else reloads the table), then
     /// its footer: a spinner, a retry, or Load more, and the stash count.
     private func renderGraph(themeID: ThemeID, showsGraph: Bool) {
-        guard graphTable != nil else { return }
         // A Git status push re-renders the panel; the rows' layout is redone
         // only when the graph or how it is drawn changed.
         let inputs = GraphRowInputs(
@@ -949,7 +784,6 @@ final class WorkspaceContextBarView: UIView {
     /// Lays the graph out and brings the table's rows up to date: a later
     /// page inserts its rows below the shown ones; anything else reloads.
     private func updateGraphRows(themeID: ThemeID, showsGraph: Bool) {
-        guard let table = graphTable else { return }
         let palette = themeID.palette
         let old = graphRows
         var new: (layout: CommitGraphLayout, context: CommitGraphView.Context, key: GraphStyleKey)?
@@ -1042,7 +876,7 @@ final class WorkspaceContextBarView: UIView {
             ))
         }
         panelChromeNeedsSizing = true
-        graphTable?.setNeedsLayout()
+        table.setNeedsLayout()
     }
 
     /// Sizes the panel table's header (`panelStack`) and footer
@@ -1239,67 +1073,6 @@ final class WorkspaceContextBarView: UIView {
         }
         row.accessibilityLabel = content.labelParts.joined(separator: ", ")
         return (row, mark)
-    }
-
-    private func commitList(palette: ThemePalette) -> UIView {
-        let list = UIStackView()
-        list.axis = .vertical
-        list.spacing = 2
-        list.isLayoutMarginsRelativeArrangement = true
-        list.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
-        for commit in allCommits {
-            let sha = Self.label(commit.sha, font: font(.caption2, .caption1, mono: true), color: UIColor(palette.comment))
-            sha.setContentCompressionResistancePriority(.required, for: .horizontal)
-            let message = Self.label(commit.message, font: font(.caption2, .caption1), color: UIColor(palette.fgDim))
-            message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            message.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            let chevron = ChangedFileRow.chevron(font: font(fixed: 8, .semibold, regular: .caption2, .semibold), palette: palette)
-            let content = Self.row([sha, message, chevron], spacing: 8, insets: .zero)
-            content.setCustomSpacing(20, after: message)
-            let row = PlainRowButton(wrapping: content) { [weak self] in self?.presentCommit(commit) }
-            row.accessibilityLabel = "\(commit.sha), \(commit.message)"
-            list.addArrangedSubview(row)
-        }
-
-        if hasMoreCommits {
-            let loadMore: UIView
-            if isLoadingMore {
-                let spinner = UIActivityIndicatorView(style: .medium)
-                spinner.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
-                spinner.startAnimating()
-                loadMore = spinner
-            } else {
-                var configuration = UIButton.Configuration.plain()
-                configuration.attributedTitle = AttributedString(
-                    String(localized: "Load more"),
-                    attributes: AttributeContainer([
-                        .font: font(.caption2, .caption1, .semibold),
-                        .foregroundColor: UIColor(palette.purple),
-                    ])
-                )
-                configuration.contentInsets = .zero
-                let button = UIButton(configuration: configuration)
-                button.addAction(UIAction { [weak self] _ in
-                    Task { await self?.loadMoreCommitsIfPossible() }
-                }, for: .primaryActionTriggered)
-                loadMore = button
-            }
-            let centered = UIStackView(arrangedSubviews: [loadMore])
-            centered.axis = .vertical
-            centered.alignment = .center
-            centered.isLayoutMarginsRelativeArrangement = true
-            centered.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 4, leading: 0, bottom: 0, trailing: 0)
-            list.addArrangedSubview(centered)
-        }
-
-        if let gitStatus = context.gitStatus, gitStatus.stashCount > 0 {
-            list.addArrangedSubview(Self.label(
-                "\(gitStatus.stashCount) stash",
-                font: font(.caption2, .caption1, mono: true),
-                color: UIColor(palette.purple)
-            ))
-        }
-        return list
     }
 
     private func headCommitRow(_ gitStatus: GitStatus, palette: ThemePalette) -> UIView {
@@ -1560,26 +1333,9 @@ final class WorkspaceContextBarView: UIView {
 
     // MARK: Actions
 
-    private func toggleExpanded() {
-        guard !options.isPanel else { return }
-        let wasExpanded = isExpanded
-        animateLayout {
-            self.isExpanded.toggle()
-            if !self.isExpanded {
-                self.isSelecting = false
-                self.selectedPaths.removeAll()
-            }
-        }
-        if !wasExpanded, isExpanded {
-            FeatureEducationTips.markChangedFilesBarExpanded()
-        }
-    }
-
     private func toggleSelecting() {
-        animateLayout(duration: 0.15) {
-            self.isSelecting.toggle()
-            if !self.isSelecting { self.selectedPaths.removeAll() }
-        }
+        isSelecting.toggle()
+        if !isSelecting { selectedPaths.removeAll() }
     }
 
     private func toggleSelection(_ path: String) {
@@ -1590,34 +1346,17 @@ final class WorkspaceContextBarView: UIView {
         }
     }
 
-    /// Collapses an expanded bar (the host's collapse token changed, or a
-    /// launch finished). A panel stays expanded and only leaves selection.
-    private func collapseBar() {
-        animateLayout {
-            self.isExpanded = self.options.isPanel
-            self.isSelecting = false
-            self.selectedPaths.removeAll()
-            self.dragSelect.reset()
-        }
-    }
-
-    /// Applies `changes` and animates the bar and its host to the new layout.
-    /// A panel fills its screen and has no size to animate; animating its
-    /// rebuilt rows would grow each one from a zero frame, a flicker.
-    private func animateLayout(duration: TimeInterval = 0.2, _ changes: @escaping () -> Void) {
-        changes()
-        guard window != nil, !options.isPanel else { return }
-        UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseInOut, .allowUserInteraction]) {
-            self.updatePropertiesIfNeeded()
-            (self.superview ?? self).layoutIfNeeded()
-        }
+    /// Leaves selection once a launch finished. Nothing animates: the panel
+    /// fills its screen, and animating its rebuilt rows would grow each one
+    /// from a zero frame, a flicker.
+    private func endSelecting() {
+        isSelecting = false
+        selectedPaths.removeAll()
+        dragSelect.reset()
     }
 
     private func contextDidChange(from old: Context) {
         setNeedsUpdateProperties()
-        if context.collapseToken != old.collapseToken, isExpanded {
-            collapseBar()
-        }
         if context.workspaceId != old.workspaceId
             || context.sessionId != old.sessionId
             || context.worktreeId != old.worktreeId {
@@ -1800,9 +1539,7 @@ final class WorkspaceContextBarView: UIView {
                 worktreeId: context.worktreeId,
                 promptTemplateName: option.promptTemplateName
             )
-            selectedPaths.removeAll()
-            isSelecting = false
-            collapseBar()
+            endSelecting()
             onReviewInCurrentSession(
                 response.visiblePrompt,
                 response.filePaths.map {
@@ -1838,7 +1575,7 @@ final class WorkspaceContextBarView: UIView {
 
     /// A panel with a workspace and a server loads a graph.
     private var canLoadGraph: Bool {
-        options.isPanel && context.workspaceId != nil && apiClient != nil
+        context.workspaceId != nil && apiClient != nil
     }
 
     /// Loads a panel's graph when it has none for this checkout and HEAD: on
@@ -1919,26 +1656,10 @@ final class WorkspaceContextBarView: UIView {
     /// Loads the next page once the panel scrolls within a screen of the end
     /// of the graph, the panel's last section.
     private func loadMoreGraphIfNearEnd() {
-        guard options.isPanel, graph?.hasMore == true, !graphFailed, !isLoadingMoreGraph else { return }
-        let remaining = scrollView.contentSize.height - scrollView.contentOffset.y - scrollView.bounds.height
-        if remaining < scrollView.bounds.height {
+        guard graph?.hasMore == true, !graphFailed, !isLoadingMoreGraph else { return }
+        let remaining = table.contentSize.height - table.contentOffset.y - table.bounds.height
+        if remaining < table.bounds.height {
             loadMoreGraph()
-        }
-    }
-
-    // MARK: Load more commits
-
-    private func loadMoreCommitsIfPossible() async {
-        guard let workspaceId = context.workspaceId, let api = apiClient, !isLoadingMore else { return }
-        isLoadingMore = true
-        defer { isLoadingMore = false }
-        let currentCount = allCommits.count
-        do {
-            let response = try await api.getCommitLog(workspaceId: workspaceId, offset: currentCount)
-            additionalCommits.append(contentsOf: response.commits)
-            hasMoreCommits = response.hasMore
-        } catch {
-            // Silently fail — not critical
         }
     }
 }
@@ -2009,7 +1730,7 @@ extension WorkspaceContextBarView: UIGestureRecognizerDelegate {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldBeRequiredToFailBy other: UIGestureRecognizer
     ) -> Bool {
-        gestureRecognizer === dragSelectGesture && other === scrollView.panGestureRecognizer
+        gestureRecognizer === dragSelectGesture && other === table.panGestureRecognizer
     }
 }
 

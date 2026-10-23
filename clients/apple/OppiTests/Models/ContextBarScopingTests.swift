@@ -14,25 +14,6 @@ import Testing
 @Suite("Context bar session scoping")
 struct ContextBarScopingTests {
 
-    // MARK: - hasContent
-
-    @Test func workspaceViewShowsBarWhenRepoDirty() {
-        #expect(ContextBarScoping.hasContent(gitStatus: makeDirtyGitStatus()))
-    }
-
-    @Test func workspaceViewHidesBarWhenRepoClean() {
-        #expect(!ContextBarScoping.hasContent(gitStatus: makeCleanGitStatus()))
-    }
-
-    @Test func workspaceSessionListCanShowBarWhenRepoClean() {
-        #expect(ContextBarScoping.hasContent(gitStatus: makeCleanGitStatus(), showCleanWorkspace: true))
-    }
-
-    @Test func barHasNoContentOutsideGit() {
-        #expect(!ContextBarScoping.hasContent(gitStatus: nil, showCleanWorkspace: true))
-        #expect(!ContextBarScoping.hasContent(gitStatus: makeNonGitStatus(), showCleanWorkspace: true))
-    }
-
     // MARK: - Which changes a bar lists
 
     @Test func workspaceBarListsEveryChange() {
@@ -128,7 +109,6 @@ struct ContextBarScopingTests {
         let filters = ContextBarScoping.filtersToSession(sessionId: "session-1", worktreeId: nil, fileScope: .session)
 
         #expect(scope == nil)
-        #expect(ContextBarScoping.hasContent(gitStatus: gitStatus, showCleanWorkspace: true))
         #expect(ContextBarScoping.displayFiles(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope).isEmpty)
         #expect(ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope) == 0)
         #expect(ContextBarScoping.displayAddedLines(gitStatus: gitStatus, filtersToSession: filters, sessionScope: scope) == 0)
@@ -205,26 +185,6 @@ struct ContextBarScopingTests {
             files: resolvedFiles, totalFiles: totalFiles,
             addedLines: addedLines, removedLines: removedLines,
             stashCount: 0, lastCommitMessage: "test", lastCommitDate: nil, recentCommits: []
-        )
-    }
-
-    private func makeCleanGitStatus() -> GitStatus {
-        GitStatus(
-            isGitRepo: true, branch: "main", headSha: "abc1234",
-            ahead: 0, behind: 0, dirtyCount: 0, untrackedCount: 0, stagedCount: 0,
-            files: [], totalFiles: 0,
-            addedLines: 0, removedLines: 0,
-            stashCount: 0, lastCommitMessage: "test", lastCommitDate: nil, recentCommits: []
-        )
-    }
-
-    private func makeNonGitStatus() -> GitStatus {
-        GitStatus(
-            isGitRepo: false, branch: nil, headSha: nil,
-            ahead: nil, behind: nil, dirtyCount: 0, untrackedCount: 0, stagedCount: 0,
-            files: [], totalFiles: 0,
-            addedLines: 0, removedLines: 0,
-            stashCount: 0, lastCommitMessage: nil, lastCommitDate: nil, recentCommits: []
         )
     }
 

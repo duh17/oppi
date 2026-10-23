@@ -1,7 +1,7 @@
 import UIKit
 
-/// The Git panel: the workspace context bar, always expanded
-/// (`WorkspaceContextBarView.Options.isPanel`), under a Git title with Close.
+/// The Git panel: the workspace context bar (`WorkspaceContextBarView`),
+/// under a Git title with Close.
 /// A chat's opens as a sheet in compact width and in the trailing column in
 /// regular width, like Outline and Context; a workspace's opens as a sheet
 /// from its top bar.

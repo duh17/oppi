@@ -262,9 +262,6 @@ extension WorkspaceDetailViewController {
         let panel = GitPanelViewController(
             context: { [weak self] in self?.gitPanelContext },
             options: .init(
-                showCleanWorkspace: true,
-                initiallyExpanded: true,
-                isPanel: true,
                 pushChat: { [weak self] chat in
                     guard let self else { return }
                     if let gitPanel { Router.finish(gitPanel) }

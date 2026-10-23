@@ -52,7 +52,7 @@ struct FeatureEducationTipPresentationCoordinatorTests {
         let tipIDs = [
             FeatureEducationTips.openToolDetails.id,
             FeatureEducationTips.toolOutputShortcuts.id,
-            FeatureEducationTips.changedFilesBar.id,
+            FeatureEducationTips.topBarMoreTools.id,
             FeatureEducationTips.answerPrompt.id,
             FeatureEducationTips.busySendMode.id,
             FeatureEducationTips.reviewCommentSelection.id,

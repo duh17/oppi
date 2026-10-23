@@ -1,12 +1,5 @@
 import Foundation
 
-/// Response from GET /workspaces/:id/git/commits (paginated)
-struct GitCommitLogResponse: Codable, Sendable {
-    let commits: [GitCommitSummary]
-    let total: Int
-    let hasMore: Bool
-}
-
 /// Detailed view of a single commit with changed files.
 struct GitCommitDetail: Codable, Sendable, Equatable {
     let sha: String

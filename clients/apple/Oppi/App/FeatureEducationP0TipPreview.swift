@@ -5,7 +5,6 @@ import UIKit
 private enum FeatureEducationP0TipPreviewCase: String, CaseIterable {
     case toolDetails = "tool-details"
     case outputShortcuts = "output-shortcuts"
-    case changedFiles = "changed-files"
     case prompt = "prompt"
     case busySend = "busy-send"
     case reviewSelection = "review-selection"
@@ -19,7 +18,6 @@ private enum FeatureEducationP0TipPreviewCase: String, CaseIterable {
         switch self {
         case .toolDetails: "Open tool details"
         case .outputShortcuts: "Use output shortcuts"
-        case .changedFiles: "Review changed files"
         case .prompt: "Answer prompts here"
         case .busySend: "Choose how to send"
         case .reviewSelection: "Comment from code"
@@ -32,8 +30,6 @@ private enum FeatureEducationP0TipPreviewCase: String, CaseIterable {
             "Collapsed native tool row"
         case .outputShortcuts:
             "Expanded native tool output"
-        case .changedFiles:
-            "Session changed-files bar"
         case .prompt:
             "Inline ask card"
         case .busySend:
@@ -58,8 +54,6 @@ struct FeatureEducationP0TipPreview: View {
                     toolRow(isExpanded: false)
                 case .outputShortcuts:
                     toolRow(isExpanded: true)
-                case .changedFiles:
-                    changedFilesBar
                 case .prompt:
                     promptCard
                 case .busySend:
@@ -101,13 +95,6 @@ struct FeatureEducationP0TipPreview: View {
         FeatureEducationToolRowRepresentable(configuration: Self.toolConfiguration(isExpanded: isExpanded), width: 360)
             .frame(width: 360)
             .accessibilityIdentifier(isExpanded ? "feature-tip-p0.output-shortcuts.surface" : "feature-tip-p0.tool-details.surface")
-    }
-
-    private var changedFilesBar: some View {
-        // Room for the bar and the tip it shows under its collapsed row.
-        FeatureEducationChangedFilesBarRepresentable(connection: connection, gitStatus: Self.gitStatus)
-            .frame(height: 160)
-            .accessibilityIdentifier("feature-tip-p0.changed-files.surface")
     }
 
     private var promptCard: some View {
@@ -159,27 +146,6 @@ struct FeatureEducationP0TipPreview: View {
         )
     }
 
-    private static let gitStatus = GitStatus(
-        isGitRepo: true,
-        branch: "main",
-        headSha: "7b42c0d",
-        ahead: 0,
-        behind: 0,
-        dirtyCount: 2,
-        untrackedCount: 0,
-        stagedCount: 0,
-        files: [
-            GitFileStatus(status: " M", path: "clients/apple/Oppi/Features/Chat/ChatView.swift", addedLines: 12, removedLines: 3),
-            GitFileStatus(status: " M", path: "clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift", addedLines: 8, removedLines: 2),
-        ],
-        totalFiles: 2,
-        addedLines: 20,
-        removedLines: 5,
-        stashCount: 0,
-        lastCommitMessage: "Wire feature tips",
-        lastCommitDate: nil,
-        recentCommits: []
-    )
 }
 
 private struct FeatureEducationPromptCardPreview: View {
@@ -284,34 +250,6 @@ private struct FeatureEducationReviewSelectionRepresentable: UIViewRepresentable
     }
 
     func updateUIView(_ uiView: FullScreenReviewCommentTextView, context: Context) {}
-}
-
-/// The production context bar (UIKit), pinned to the top of its slot at its
-/// natural height, as the chat pins it.
-private struct FeatureEducationChangedFilesBarRepresentable: UIViewRepresentable {
-    let connection: ServerConnection
-    let gitStatus: GitStatus
-
-    func makeUIView(context: Context) -> UIView {
-        let slot = UIView()
-        let bar = WorkspaceContextBarView(
-            context: .init(gitStatus: gitStatus, workspaceId: "feature-tip-workspace"),
-            options: .init(appliesOuterHorizontalPadding: false),
-            connection: connection,
-            apiClient: connection.apiClient,
-            navigation: AppNavigation()
-        )
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        slot.addSubview(bar)
-        NSLayoutConstraint.activate([
-            bar.topAnchor.constraint(equalTo: slot.topAnchor),
-            bar.leadingAnchor.constraint(equalTo: slot.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: slot.trailingAnchor),
-        ])
-        return slot
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {}
 }
 
 private struct FeatureEducationToolRowRepresentable: UIViewRepresentable {

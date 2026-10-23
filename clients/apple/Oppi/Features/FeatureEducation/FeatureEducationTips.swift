@@ -46,13 +46,6 @@ enum FeatureEducationTips {
         systemImageName: "arrow.up.left.and.arrow.down.right"
     )
 
-    static let changedFilesBar = FeatureEducationTipDescriptor(
-        id: "changed-files-bar",
-        title: "Review changed files",
-        message: "Tap the changed-files bar to inspect this workspace's changes.",
-        systemImageName: "doc.text.magnifyingglass"
-    )
-
     static let answerPrompt = FeatureEducationTipDescriptor(
         id: "answer-prompt",
         title: "Answer prompts here",
@@ -90,7 +83,6 @@ enum FeatureEducationTips {
     static let p0TipTypes: [any Tip.Type] = [
         OpenToolDetailsTip.self,
         ToolOutputShortcutsTip.self,
-        ChangedFilesBarTip.self,
         AnswerPromptTip.self,
         BusySendModeTip.self,
         ReviewCommentSelectionTip.self,
@@ -108,12 +100,6 @@ enum FeatureEducationTips {
     static func markToolOutputShortcutUsed() {
         ToolOutputShortcutsTip().invalidate(reason: .actionPerformed)
         FeatureEducationTipPresentationCoordinator.shared.markCompleted(tipID: toolOutputShortcuts.id)
-    }
-
-    @MainActor
-    static func markChangedFilesBarExpanded() {
-        ChangedFilesBarTip().invalidate(reason: .actionPerformed)
-        FeatureEducationTipPresentationCoordinator.shared.markCompleted(tipID: changedFilesBar.id)
     }
 
     @MainActor
@@ -152,13 +138,6 @@ enum FeatureEducationTips {
         var title: Text { Text(FeatureEducationTips.toolOutputShortcuts.title) }
         var message: Text? { Text(FeatureEducationTips.toolOutputShortcuts.message) }
         var image: Image? { Image(systemName: FeatureEducationTips.toolOutputShortcuts.systemImageName) }
-        var options: [any TipOption] { MaxDisplayCount(1) }
-    }
-
-    struct ChangedFilesBarTip: Tip {
-        var title: Text { Text(FeatureEducationTips.changedFilesBar.title) }
-        var message: Text? { Text(FeatureEducationTips.changedFilesBar.message) }
-        var image: Image? { Image(systemName: FeatureEducationTips.changedFilesBar.systemImageName) }
         var options: [any TipOption] { MaxDisplayCount(1) }
     }
 

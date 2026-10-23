@@ -20,7 +20,7 @@ extension ChatViewController {
     }
 
     /// The Git panel (UIKit), as a sheet or in the trailing column: the
-    /// workspace context bar, always expanded, on this chat's server and
+    /// workspace context bar, on this chat's server and
     /// navigation. A review staged for this session, or a comment started in a
     /// file review, closes the panel so it reaches the composer; a session
     /// started from it closes the panel and pushes onto this chat's stack.
@@ -31,9 +31,6 @@ extension ChatViewController {
             return GitPanelViewController(
                 context: { [weak self] in self?.gitPanelContext },
                 options: .init(
-                    showCleanWorkspace: true,
-                    initiallyExpanded: true,
-                    isPanel: true,
                     onReviewInCurrentSession: { [weak self] prompt, files in
                         closePanel()
                         self?.stageWorkspaceReviewInCurrentSession(prompt: prompt, files: files)

@@ -994,12 +994,6 @@ actor APIClient: ClientLogUploading {
 
     // MARK: - Git Commits
 
-    /// Fetch paginated commit log for a workspace.
-    func getCommitLog(workspaceId: String, offset: Int = 0, limit: Int = 20) async throws -> GitCommitLogResponse {
-        let data = try await get("/workspaces/\(workspaceId)/git/commits?offset=\(offset)&limit=\(limit)")
-        return try JSONDecoder().decode(GitCommitLogResponse.self, from: data)
-    }
-
     /// Fetch a page of a checkout's commit graph: HEAD and every local branch,
     /// with the repository's worktrees on the first page.
     func getGitGraph(
