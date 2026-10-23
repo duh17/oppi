@@ -50,8 +50,9 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     var differentiateWithoutColor: Bool = false
     var chromeStyle: ChatTimelineChromeStyle = .standard
     /// Set for an agent message: another session sent this input. The row drops the
-    /// user card fill and prompt glyph and captions the sender instead.
-    var origin: MessageOrigin? = nil
+    /// user card fill and prompt glyph, names the sender in a card header, and folds
+    /// a long message behind a preview.
+    var agentMessage: AgentMessageCard? = nil
 
     func makeContentView() -> any UIView & UIContentView {
         UserTimelineRowContentView(configuration: self)
@@ -151,10 +152,32 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         }
     }
 
+    /// The agent card's header: one control over the icon, intent, and chevron so a
+    /// tap anywhere on it folds the card, with the sender's name as its own control
+    /// on top that opens the sender's session.
+    private final class AgentCardHeaderControl: UIControl {
+        var onActivate: (() -> Void)?
+
+        override func accessibilityActivate() -> Bool {
+            guard let onActivate else { return false }
+            onActivate()
+            return true
+        }
+    }
+
     private let outerStack = UIStackView()
     private let bubbleContainer = TimelineChromeSurfaceView()
     private let accentBar = UIView()
     private let youCaption = UILabel()
+    private let agentHeader = UIView()
+    private let agentHeaderToggle = AgentCardHeaderControl()
+    private let agentHeaderStack = UIStackView()
+    private let agentIconView = UIImageView()
+    private let agentTitleStack = UIStackView()
+    private let agentSenderButton = UIButton(type: .custom)
+    private let agentIntentLabel = UILabel()
+    private let agentChevronView = UIImageView()
+    private let agentPreviewLabel = UILabel()
     private let bubbleStack = UIStackView()
     private var bubbleStackEdges: TimelineEdgeConstraints?
     /// Conversation chrome only: the trailing bubble's width, resolved from
@@ -298,6 +321,75 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         pathPillRow.alignment = .leading
         pathPillRow.spacing = 6
 
+        // Agent message header: sender glyph, sender name, intent, fold chevron.
+        // The fold control sits under the row so a tap on the icon, the intent, or
+        // the chevron lands on it, while the name above it opens the sender.
+        agentHeader.translatesAutoresizingMaskIntoConstraints = false
+        agentHeaderToggle.translatesAutoresizingMaskIntoConstraints = false
+        agentHeaderToggle.accessibilityIdentifier = "chat.agent-message.header"
+        agentHeaderToggle.onActivate = { [weak self] in self?.toggleAgentCard() }
+        agentHeaderToggle.addAction(
+            UIAction { [weak self] _ in self?.toggleAgentCard() },
+            for: .touchUpInside
+        )
+        agentHeaderStack.translatesAutoresizingMaskIntoConstraints = false
+        agentHeaderStack.axis = .horizontal
+        agentHeaderStack.alignment = .center
+        agentHeaderStack.spacing = 10
+        agentHeaderStack.isUserInteractionEnabled = true
+
+        agentIconView.translatesAutoresizingMaskIntoConstraints = false
+        agentIconView.contentMode = .scaleAspectFit
+        agentIconView.isAccessibilityElement = false
+        agentIconView.image = UIImage.scaledSymbol("person.crop.circle", style: .subheadline)
+
+        agentTitleStack.axis = .vertical
+        agentTitleStack.alignment = .fill
+        agentTitleStack.spacing = 2
+
+        agentSenderButton.translatesAutoresizingMaskIntoConstraints = false
+        agentSenderButton.titleLabel?.font = .preferredFont(forTextStyle: .subheadline)
+        agentSenderButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        agentSenderButton.titleLabel?.lineBreakMode = .byTruncatingTail
+        agentSenderButton.titleLabel?.numberOfLines = 2
+        agentSenderButton.contentHorizontalAlignment = .leading
+        agentSenderButton.accessibilityIdentifier = "chat.agent-message.open-sender"
+        agentSenderButton.addAction(
+            UIAction { [weak self] _ in self?.currentConfiguration.agentMessage?.onOpenSender?() },
+            for: .touchUpInside
+        )
+
+        agentIntentLabel.translatesAutoresizingMaskIntoConstraints = false
+        agentIntentLabel.font = .preferredFont(forTextStyle: .caption1)
+        agentIntentLabel.adjustsFontForContentSizeCategory = true
+        agentIntentLabel.numberOfLines = 1
+        agentIntentLabel.lineBreakMode = .byTruncatingTail
+        agentIntentLabel.isAccessibilityElement = false
+
+        agentChevronView.translatesAutoresizingMaskIntoConstraints = false
+        agentChevronView.contentMode = .scaleAspectFit
+        agentChevronView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        agentChevronView.isAccessibilityElement = false
+        agentChevronView.isHidden = true
+
+        agentPreviewLabel.translatesAutoresizingMaskIntoConstraints = false
+        agentPreviewLabel.font = AppFont.messageBody
+        agentPreviewLabel.adjustsFontForContentSizeCategory = true
+        agentPreviewLabel.numberOfLines = AgentMessageCard.collapsedLineLimit
+        agentPreviewLabel.lineBreakMode = .byTruncatingTail
+        agentPreviewLabel.accessibilityIdentifier = "chat.agent-message.preview"
+        agentPreviewLabel.isHidden = true
+        agentHeader.isHidden = true
+
+        agentTitleStack.addArrangedSubview(agentSenderButton)
+        agentTitleStack.addArrangedSubview(agentIntentLabel)
+        agentHeaderStack.addArrangedSubview(agentIconView)
+        agentHeaderStack.addArrangedSubview(agentTitleStack)
+        agentHeaderStack.addArrangedSubview(UIView())
+        agentHeaderStack.addArrangedSubview(agentChevronView)
+        agentHeader.addSubview(agentHeaderToggle)
+        agentHeader.addSubview(agentHeaderStack)
+
         // Text row (❯ + message).
         textRow.translatesAutoresizingMaskIntoConstraints = false
         textRow.axis = .horizontal
@@ -331,9 +423,11 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         textRow.addArrangedSubview(iconLabel)
         textRow.addArrangedSubview(bodyStack)
 
+        bubbleStack.addArrangedSubview(agentHeader)
         bubbleStack.addArrangedSubview(youCaption)
         bubbleStack.addArrangedSubview(attachmentBadgeRow)
         bubbleStack.addArrangedSubview(pathPillRow)
+        bubbleStack.addArrangedSubview(agentPreviewLabel)
         bubbleStack.addArrangedSubview(textRow)
         bubbleContainer.addSubview(bubbleStack)
         bubbleContainer.addSubview(accentBar)
@@ -347,6 +441,21 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             accentBar.topAnchor.constraint(equalTo: bubbleContainer.topAnchor),
             accentBar.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor),
             accentBar.widthAnchor.constraint(equalToConstant: TimelineSpeakerChrome.accentBarWidth),
+
+            agentHeaderToggle.leadingAnchor.constraint(equalTo: agentHeader.leadingAnchor),
+            agentHeaderToggle.trailingAnchor.constraint(equalTo: agentHeader.trailingAnchor),
+            agentHeaderToggle.topAnchor.constraint(equalTo: agentHeader.topAnchor),
+            agentHeaderToggle.bottomAnchor.constraint(equalTo: agentHeader.bottomAnchor),
+
+            agentHeaderStack.leadingAnchor.constraint(equalTo: agentHeader.leadingAnchor),
+            agentHeaderStack.trailingAnchor.constraint(equalTo: agentHeader.trailingAnchor),
+            agentHeaderStack.topAnchor.constraint(equalTo: agentHeader.topAnchor),
+            agentHeaderStack.bottomAnchor.constraint(equalTo: agentHeader.bottomAnchor),
+
+            agentIconView.widthAnchor.constraint(equalToConstant: 17),
+            agentIconView.heightAnchor.constraint(equalToConstant: 17),
+            agentChevronView.widthAnchor.constraint(equalToConstant: 14),
+            agentChevronView.heightAnchor.constraint(equalToConstant: 14),
         ])
 
         outerStack.addArrangedSubview(imageStrip)
@@ -368,7 +477,11 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         let applyStartNs = ChatTimelinePerf.timestampNs()
         let previousConfiguration = currentConfiguration
         currentConfiguration = configuration
-        accessibilityIdentifier = configuration.itemID.map { "chat.timeline.user.\($0)" }
+        accessibilityIdentifier = configuration.itemID.map {
+            configuration.agentMessage == nil
+                ? "chat.timeline.user.\($0)"
+                : "chat.agent-message.\($0)"
+        }
 
         let palette = ThemeRuntimeState.currentPalette()
         iconLabel.textColor = bodyTextColor(palette)
@@ -378,14 +491,22 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             text: configuration.text,
             images: configuration.images
         )
-        applyMarkdownBody(content.displayText, palette: palette)
+        // A folded message draws only its preview, so the Markdown body (tables and
+        // all) is not built until the reader opens it.
+        let isFoldedAgentMessage = configuration.agentMessage.map { !$0.showsWholeMessage } ?? false
+        if isFoldedAgentMessage {
+            clearMarkdownBody()
+        } else {
+            applyMarkdownBody(content.displayText, palette: palette)
+        }
         updateAttachmentBadges(content.visibleBadges, palette: palette)
         updatePathPills(content.nonImagePathPills, palette: palette)
-        textRow.isHidden = !content.showsTextRow
+        applyAgentCard(palette: palette)
+        textRow.isHidden = !content.showsTextRow || isFoldedAgentMessage
         bubbleContainer.isHidden = !content.showsBubble(hasImages: !configuration.images.isEmpty)
         iconLabel.isHidden = !content.showsTextRow
             || configuration.chromeStyle == .conversation
-            || configuration.origin != nil
+            || configuration.agentMessage != nil
         applyChromeGeometry(content: content)
 
         updateReviewCommentSelectionPolicy()
@@ -435,12 +556,103 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
     /// User text sits on the user fill; an agent message has no fill, so it uses body text.
     private func bodyTextColor(_ palette: ThemePalette) -> UIColor {
-        UIColor(currentConfiguration.origin == nil ? palette.userMessageText : palette.fg)
+        UIColor(currentConfiguration.agentMessage == nil ? palette.userMessageText : palette.fg)
+    }
+
+    /// The agent message card's header, its folded preview, and the fold state.
+    /// A plain user message hides all of it, including the accessibility identity
+    /// of a row this cell drew before reuse.
+    private func applyAgentCard(palette: ThemePalette) {
+        guard let card = currentConfiguration.agentMessage else {
+            resetAgentCard()
+            return
+        }
+        let senderName = AgentMessageCard.senderName(card.origin)
+        let isFolded = !card.showsWholeMessage
+
+        agentHeader.isHidden = false
+        agentIconView.tintColor = UIColor(palette.purple)
+
+        agentSenderButton.setTitle(senderName, for: .normal)
+        agentSenderButton.setTitleColor(UIColor(palette.fg), for: .normal)
+        agentSenderButton.setTitleColor(
+            UIColor(palette.fg).withAlphaComponent(0.6),
+            for: .highlighted
+        )
+        // A sender with no session to open still reads as the card's title.
+        agentSenderButton.setTitleColor(UIColor(palette.fg), for: .disabled)
+        agentSenderButton.isEnabled = card.onOpenSender != nil
+
+        agentIntentLabel.text = AgentMessageCard.intentTitle(card.origin.intent)
+        agentIntentLabel.textColor = UIColor(palette.fgDim)
+
+        agentChevronView.isHidden = !card.canExpand
+        agentChevronView.tintColor = UIColor(palette.comment)
+        agentChevronView.image = card.canExpand
+            ? UIImage.scaledSymbol(
+                card.isExpanded ? "chevron.up" : "chevron.down",
+                style: .caption1,
+                weight: .semibold
+            )
+            : nil
+
+        agentPreviewLabel.isHidden = !isFolded
+        agentPreviewLabel.text = isFolded ? card.preview : nil
+        agentPreviewLabel.textColor = bodyTextColor(palette)
+        agentPreviewLabel.isAccessibilityElement = isFolded
+        agentPreviewLabel.accessibilityLabel = isFolded ? card.preview : nil
+
+        agentHeaderToggle.isAccessibilityElement = true
+        agentHeaderToggle.accessibilityIdentifier = "chat.agent-message.header"
+        agentHeaderToggle.accessibilityLabel = AgentMessageCard.headerLabel(card.origin)
+        agentHeaderToggle.accessibilityValue = card.canExpand
+            ? (card.isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
+            : nil
+        agentHeaderToggle.accessibilityTraits = card.canExpand && card.onToggleExpand != nil
+            ? .button
+            : .staticText
+
+        agentSenderButton.accessibilityIdentifier = "chat.agent-message.open-sender"
+        agentSenderButton.accessibilityLabel = String(localized: "Open \(senderName)")
+        agentSenderButton.accessibilityHint = card.onOpenSender == nil
+            ? nil
+            : String(localized: "Opens that session")
+        // The card's identity and fold state read first, then the sender's link:
+        // the name sits on top of the fold control, and neither frame overlaps the
+        // expanded message's own content.
+        agentHeader.accessibilityElements = [agentHeaderToggle, agentSenderButton]
+    }
+
+    private func resetAgentCard() {
+        agentHeader.isHidden = true
+        agentHeader.accessibilityElements = nil
+        agentChevronView.image = nil
+        agentChevronView.isHidden = true
+        agentPreviewLabel.isHidden = true
+        agentPreviewLabel.text = nil
+        agentPreviewLabel.isAccessibilityElement = false
+        agentPreviewLabel.accessibilityLabel = nil
+
+        agentHeaderToggle.accessibilityIdentifier = nil
+        agentHeaderToggle.accessibilityLabel = nil
+        agentHeaderToggle.accessibilityValue = nil
+        agentHeaderToggle.accessibilityTraits = []
+
+        agentSenderButton.accessibilityIdentifier = nil
+        agentSenderButton.accessibilityLabel = nil
+        agentSenderButton.accessibilityHint = nil
+    }
+
+    /// The card's header and the card itself fold through one owner action, so a
+    /// tap on the header and an accessibility activation cannot disagree.
+    private func toggleAgentCard() {
+        guard let card = currentConfiguration.agentMessage, card.canExpand else { return }
+        card.onToggleExpand?()
     }
 
     private func applySpeakerChrome(palette: ThemePalette) {
-        if let origin = currentConfiguration.origin {
-            // Not the user's card: outlined, unfilled, captioned with the sender.
+        if currentConfiguration.agentMessage != nil {
+            // Not the user's card: outlined, unfilled, with the sender in its header.
             bubbleContainer.backgroundColor = TimelineSpeakerChrome.assistantFill(from: palette)
             bubbleContainer.layer.borderWidth = currentConfiguration.increasedContrast
                 ? TimelineSpeakerChrome.increasedContrastBorderWidth
@@ -448,12 +660,10 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             bubbleContainer.layer.borderColor = UIColor(palette.comment)
                 .withAlphaComponent(currentConfiguration.increasedContrast ? 1 : 0.5).cgColor
             accentBar.isHidden = true
-            youCaption.text = "\u{21B3} \(origin.caption)"
-            youCaption.textColor = UIColor(palette.purple)
-            youCaption.isHidden = false
-            youCaption.isAccessibilityElement = true
-            youCaption.accessibilityLabel = origin.caption
-            youCaption.accessibilityIdentifier = "chat.agent-message.caption"
+            // The header names the sender, so the caption and the prompt glyph go.
+            youCaption.isHidden = true
+            youCaption.isAccessibilityElement = false
+            youCaption.accessibilityLabel = nil
             outerStack.directionalLayoutMargins = NSDirectionalEdgeInsets(
                 top: TimelineSpeakerChrome.userTurnSpacingAbove,
                 leading: 0,
@@ -502,13 +712,16 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         let bubble = style.userBubble
         // Only the user's own messages trail; another session's sit on the leading side.
         outerStack.alignment = isConversation
-            ? (currentConfiguration.origin == nil ? .trailing : .leading)
+            ? (currentConfiguration.agentMessage == nil ? .trailing : .leading)
             : .fill
         bubbleContainer.shape = bubble.shape
         bubbleStackEdges?.inset(by: bubble.padding)
-        conversationBubbleWidthConstraint?.isActive = isConversation
+        // An agent card spans the row in every style: reports carry tables and wide
+        // code, and the conversation cap clipped them. It still sits leading-aligned.
+        let capsWidth = isConversation && currentConfiguration.agentMessage == nil
+        conversationBubbleWidthConstraint?.isActive = capsWidth
         conversationImageStripWidthConstraint?.isActive = isConversation
-        conversationNaturalTextWidth = isConversation
+        conversationNaturalTextWidth = capsWidth
             ? Self.naturalTextWidth(
                 textView: messageTextView,
                 hasExtraBlocks: !extraMarkdownTextViews.isEmpty || !tableBlockViews.isEmpty,
@@ -710,6 +923,16 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         }
     }
 
+    /// A folded agent message shows its preview instead of the body, so the
+    /// rendered Markdown goes; reopening it renders again from the message text.
+    private func clearMarkdownBody() {
+        renderedMarkdownBody = nil
+        resetMarkdownBodyToSingleTextView()
+        messageTextView.attributedText = nil
+        messageTextView.isHidden = true
+        messageTextView.isSelectable = false
+    }
+
     private func clearExtraMarkdownViews() {
         for view in extraMarkdownTextViews {
             bodyStack.removeArrangedSubview(view)
@@ -745,7 +968,20 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         for textView in extraMarkdownTextViews {
             textView.isSelectable = selectionEnabled && !textView.isHidden
         }
-
+        // An agent message's own text is not selectable, so it must not eat the
+        // tap that folds the card. Review-comment selection keeps the text view's
+        // touches, exactly as the row had them before the card existed.
+        if currentConfiguration.agentMessage != nil {
+            messageTextView.isUserInteractionEnabled = selectionEnabled
+            for textView in extraMarkdownTextViews {
+                textView.isUserInteractionEnabled = selectionEnabled
+            }
+        } else {
+            messageTextView.isUserInteractionEnabled = true
+            for textView in extraMarkdownTextViews {
+                textView.isUserInteractionEnabled = true
+            }
+        }
         let tableContext = currentConfiguration.interactionContext?.sourceContext(
             surface: .userMessage,
             timelineItemId: currentConfiguration.itemID

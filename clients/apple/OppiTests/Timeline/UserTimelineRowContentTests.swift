@@ -214,8 +214,20 @@ struct UserTimelineRowContentTests {
         | P3-1 menu rebuilt on every pass | Fixed. |
         """
         let origin = MessageOrigin(kind: "session", sessionId: "child", name: "Review", intent: "report")
+        // Opened: the report's table is the row's own Markdown body.
         func configuration(_ text: String) -> UserTimelineRowConfiguration {
-            UserTimelineRowConfiguration(text: text, images: [], canFork: false, onFork: nil, origin: origin)
+            UserTimelineRowConfiguration(
+                text: text,
+                images: [],
+                canFork: false,
+                onFork: nil,
+                agentMessage: AgentMessageCard(
+                    origin: origin,
+                    preview: AgentMessageCard.previewText(forMarkdown: text),
+                    isExpanded: true,
+                    canExpand: true
+                )
+            )
         }
         let view = UserTimelineRowContentView(configuration: configuration(report))
         let table = try #require(firstSubview(ofType: NativeTableBlockView.self, in: view))

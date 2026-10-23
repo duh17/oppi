@@ -150,12 +150,16 @@ extension ChatTimelineController {
     func userRowConfiguration(itemID: String, item: ChatItem) -> UserTimelineRowConfiguration? {
         let text: String
         let images: [ImageAttachment]
-        let origin: MessageOrigin?
+        let agentMessage: AgentMessageCard?
         switch item {
         case .userMessage(_, let userText, let userImages, _):
-            (text, images, origin) = (userText, userImages, nil)
+            (text, images, agentMessage) = (userText, userImages, nil)
         case .agentMessage(_, let agentText, let agentOrigin, _):
-            (text, images, origin) = (agentText, [], agentOrigin)
+            (text, images, agentMessage) = (
+                agentText,
+                [],
+                agentMessageCard(itemID: itemID, origin: agentOrigin, text: agentText)
+            )
         default:
             return nil
         }
@@ -198,8 +202,45 @@ extension ChatTimelineController {
             increasedContrast: speakerIncreasedContrast,
             differentiateWithoutColor: speakerDifferentiateWithoutColor,
             chromeStyle: chromeStyle,
-            origin: origin
+            agentMessage: agentMessage
         )
+    }
+
+    /// The sender, fold state, and folded preview of an agent message. The preview
+    /// is measured here, at the row's width, so the row and the fold agree before
+    /// the cell is sized, and both actions resolve the row by item ID when they run.
+    private func agentMessageCard(itemID: String, origin: MessageOrigin, text: String) -> AgentMessageCard {
+        let preview = AgentMessageCard.previewText(forMarkdown: text)
+        return AgentMessageCard(
+            origin: origin,
+            preview: preview,
+            isExpanded: reducer?.expandedItemIDs.contains(itemID) == true,
+            canExpand: AgentMessageCard.canExpand(
+                preview: preview,
+                width: agentMessageBodyWidth(),
+                font: AppFont.messageBody
+            ),
+            onToggleExpand: { [weak self] in
+                guard let self, let collectionView = self.collectionView,
+                      let index = self.currentIDs.firstIndex(of: itemID) else { return }
+                self.collectionView(
+                    collectionView,
+                    didSelectItemAt: IndexPath(item: index, section: 0)
+                )
+            },
+            onOpenSender: { [weak self] in
+                self?.onOpenSession?(origin.sessionId)
+            }
+        )
+    }
+
+    /// Width the folded preview is measured at: the row column inside the card's
+    /// padding. The card spans the row in every style, so the conversation cap
+    /// does not apply.
+    private func agentMessageBodyWidth() -> CGFloat {
+        let rowWidth = timelineRowWidth() ?? 375
+        let padding = chromeStyle.userBubble.padding
+        return max(1, rowWidth - padding.leading - padding.trailing)
     }
 
     /// Maps a pill tap to a typed destination request. Building and presenting the destination

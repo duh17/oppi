@@ -1737,6 +1737,25 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             // with double-tap copy gestures.
             return
 
+        case .agentMessage:
+            // An agent message folds like a long custom card: the card tap, the
+            // header's accessibility activation, and this selection share the owner.
+            guard let row = userRowConfiguration(itemID: itemID, item: item),
+                  row.agentMessage?.canExpand == true else { return }
+            AppHaptics.toolbarExpansion()
+            if reducer.expandedItemIDs.contains(itemID) {
+                reducer.expandedItemIDs.remove(itemID)
+            } else {
+                reducer.expandedItemIDs.insert(itemID)
+            }
+            updateLiveTailItemIDsFromCurrentState(in: collectionView)
+            anchoredReconfigureToolRow(
+                itemID: itemID,
+                anchorIndexPath: indexPath,
+                in: collectionView,
+                preserveTopEdge: true
+            )
+
         case .customEvent(_, _, let presentation):
             if presentation.terminalOutput != nil {
                 activateToolHeader(itemID: itemID, in: collectionView)

@@ -1,0 +1,285 @@
+import UIKit
+
+/// A user-role input another session sent (a subagent's report, the task it was
+/// handed at spawn, or a `session_send` message), as the timeline draws it: a
+/// card that names the sender and folds a long message behind a short preview.
+///
+/// The row is `UserTimelineRowContentView` — an agent message is a user message
+/// with speaker chrome and a fold, so it reuses that row's Markdown body rather
+/// than a second renderer. This type owns the facts the row and the timeline
+/// share: who sent it, the plain-text fold, and whether the message fits.
+struct AgentMessageCard {
+    /// Lines the collapsed card shows before it stops.
+    static let collapsedLineLimit = 3
+
+    let origin: MessageOrigin
+    /// The message as plain text for the folded card, derived from the same
+    /// Markdown the expanded card renders, so no `#` marker or `|---|` divider
+    /// reaches the preview.
+    let preview: String
+    /// The reader opened the card. Only meaningful when `canExpand`.
+    let isExpanded: Bool
+    /// The message needs more than the preview's lines. Measured at the row's
+    /// width when the row is configured; a message that fits is shown whole
+    /// and has no fold.
+    let canExpand: Bool
+    /// Asked when the card is tapped or its header is activated.
+    var onToggleExpand: (() -> Void)?
+    /// Asked when the sender's name is tapped.
+    var onOpenSender: (() -> Void)?
+
+    /// False only for a long message the reader has not opened.
+    var showsWholeMessage: Bool { !canExpand || isExpanded }
+
+    // MARK: - Identity
+
+    /// The sender's session name, or `another session` when it has none.
+    static func senderName(_ origin: MessageOrigin) -> String {
+        guard let name = origin.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty else {
+            return String(localized: "another session")
+        }
+        return name
+    }
+
+    /// What the message is: a child's answer, the task handed over at spawn, or
+    /// a message another session sent. Unknown intents read as a message.
+    static func intentTitle(_ intent: String) -> String {
+        switch intent {
+        case "report": return String(localized: "Report")
+        case "task": return String(localized: "Task")
+        default: return String(localized: "Message")
+        }
+    }
+
+    /// The header's spoken identity, e.g. "Report from Review".
+    static func headerLabel(_ origin: MessageOrigin) -> String {
+        String(localized: "\(intentTitle(origin.intent)) from \(senderName(origin))")
+    }
+
+    // MARK: - Fold
+
+    /// Whether the message is taller than the folded card's line budget at the
+    /// width it is drawn.
+    static func canExpand(preview: String, width: CGFloat, font: UIFont) -> Bool {
+        let trimmed = preview.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        // More lines than the budget can never fit, and deciding that without
+        // measuring keeps a long report's preview cheap on every configure.
+        let lineCount = trimmed.reduce(1) { count, character in
+            character == "\n" ? count + 1 : count
+        }
+        guard lineCount <= collapsedLineLimit else { return true }
+        let height = (trimmed as NSString).boundingRect(
+            with: CGSize(width: max(1, width), height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font],
+            context: nil
+        ).height
+        return height > font.lineHeight * CGFloat(collapsedLineLimit) + 1
+    }
+
+    /// The folded card's text for a Markdown message: structure markers that
+    /// only mean something once rendered are gone, and a table keeps its cells
+    /// as rows of text instead of its pipes.
+    ///
+    /// This is a line-level reading, not a second Markdown parser: the expanded
+    /// card is the source of truth and this preview only has to be readable.
+    /// Emphasis markers are left alone on purpose, because reports carry glob
+    /// patterns and `snake_case` identifiers that would read worse without them.
+    static func previewText(forMarkdown markdown: String) -> String {
+        let lines = markdown.components(separatedBy: .newlines)
+        let tableLines = tableLineIndexes(in: lines)
+        var rendered: [String] = []
+        var insideFence = false
+
+        for (index, rawLine) in lines.enumerated() {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if isFence(line) {
+                insideFence.toggle()
+                continue
+            }
+            if insideFence {
+                rendered.append(line)
+                continue
+            }
+            if line.isEmpty {
+                rendered.append("")
+                continue
+            }
+            if tableLines.isDivider.contains(index) {
+                continue
+            }
+            if tableLines.isContent.contains(index) {
+                rendered.append(tableRowText(line))
+                continue
+            }
+            rendered.append(plainLineText(line))
+        }
+
+        return joiningPreviewLines(rendered)
+    }
+
+    /// A line's text without the markers of the block it belongs to.
+    private static func plainLineText(_ line: String) -> String {
+        var text = line
+        if text.hasPrefix(">") {
+            text = String(text.dropFirst()).trimmingCharacters(in: .whitespaces)
+        }
+        text = removingHeadingMarker(text)
+        text = replacingListMarker(text)
+        text = removingInlineMarkers(text)
+        return text
+    }
+
+    private static func isFence(_ line: String) -> Bool {
+        line.hasPrefix("```") || line.hasPrefix("~~~")
+    }
+
+    private static func removingHeadingMarker(_ line: String) -> String {
+        var markerCount = 0
+        var index = line.startIndex
+        while index < line.endIndex, line[index] == "#", markerCount < 6 {
+            markerCount += 1
+            index = line.index(after: index)
+        }
+        guard markerCount > 0 else { return line }
+        // `#tag` is not a heading; CommonMark wants a space after the markers.
+        guard index == line.endIndex || line[index] == " " else { return line }
+        return String(line[index...]).trimmingCharacters(in: .whitespaces)
+    }
+
+    private static func replacingListMarker(_ line: String) -> String {
+        for marker in ["- ", "* ", "+ "] where line.hasPrefix(marker) {
+            let rest = String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+            return "\u{2022} " + rest
+        }
+        return line
+    }
+
+    private static func removingInlineMarkers(_ line: String) -> String {
+        var text = line.replacingOccurrences(of: "`", with: "")
+        text = replacingLinks(text)
+        text = text.replacingOccurrences(of: "**", with: "")
+        text = text.replacingOccurrences(of: "__", with: "")
+        text = text.replacingOccurrences(of: "~~", with: "")
+        return text
+    }
+
+    /// `[text](url)`, `[text][ref]`, and `![alt](url)` keep their visible words.
+    private static func replacingLinks(_ line: String) -> String {
+        var result = ""
+        var rest = Substring(line)
+        while let open = rest.firstIndex(of: "[") {
+            result += rest[rest.startIndex..<open]
+            let afterOpen = rest.index(after: open)
+            guard let close = rest[afterOpen...].firstIndex(of: "]") else {
+                result += rest[open...]
+                return result
+            }
+            let label = rest[afterOpen..<close]
+            let afterClose = rest.index(after: close)
+            let target: Substring
+            if afterClose < rest.endIndex, rest[afterClose] == "(" {
+                guard let end = rest[rest.index(after: afterClose)...].firstIndex(of: ")") else {
+                    result += rest[open...]
+                    return result
+                }
+                target = rest[rest.index(after: end)...]
+            } else if afterClose < rest.endIndex, rest[afterClose] == "[" {
+                guard let end = rest[rest.index(after: afterClose)...].firstIndex(of: "]") else {
+                    result += rest[open...]
+                    return result
+                }
+                target = rest[rest.index(after: end)...]
+            } else {
+                // A bare `[bracket]` in prose is text, not a link.
+                result += rest[open...]
+                return result
+            }
+            // An image's alt text is its visible words; without any, drop it.
+            if result.hasSuffix("!") {
+                result.removeLast()
+            }
+            result += label
+            rest = target
+        }
+        result += rest
+        return result
+    }
+
+    /// A table row as its cells, left to right.
+    private static func tableRowText(_ line: String) -> String {
+        var cells = line.split(separator: "|", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        if cells.first?.isEmpty == true { cells.removeFirst() }
+        if cells.last?.isEmpty == true { cells.removeLast() }
+        let text = cells.filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
+        return removingInlineMarkers(text)
+    }
+
+    /// Which lines belong to a table: the divider, the header above it, and the
+    /// rows below it. Read first, so prose with a stray pipe stays prose.
+    private static func tableLineIndexes(
+        in lines: [String]
+    ) -> (isDivider: Set<Int>, isContent: Set<Int>) {
+        var dividers: Set<Int> = []
+        var content: Set<Int> = []
+        for index in lines.indices where isTableDivider(lines[index]) {
+            dividers.insert(index)
+            if index > 0 {
+                content.insert(index - 1)
+            }
+            var next = index + 1
+            while next < lines.count, isTableRow(lines[next]) {
+                content.insert(next)
+                next += 1
+            }
+        }
+        return (dividers, content.subtracting(dividers))
+    }
+
+    private static func isTableRow(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return !trimmed.isEmpty && trimmed.contains("|")
+    }
+
+    private static func isTableDivider(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return false }
+        var sawDash = false
+        var sawPipe = false
+        for character in trimmed {
+            switch character {
+            case "-":
+                sawDash = true
+            case "|":
+                sawPipe = true
+            case ":", " ", "\t":
+                continue
+            default:
+                return false
+            }
+        }
+        return sawDash && sawPipe
+    }
+
+    /// One blank line between blocks however many the source had, and none at
+    /// either end: the folded card's height should not be markdown's spacing.
+    private static func joiningPreviewLines(_ lines: [String]) -> String {
+        var result: [String] = []
+        var pendingBlank = false
+        for line in lines {
+            if line.isEmpty {
+                pendingBlank = !result.isEmpty
+                continue
+            }
+            if pendingBlank {
+                result.append("")
+                pendingBlank = false
+            }
+            result.append(line)
+        }
+        return result.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}

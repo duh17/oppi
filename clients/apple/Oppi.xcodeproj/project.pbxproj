@@ -1452,6 +1452,7 @@
 		A5C483A7BAE7A66BAE716F02 /* ToolFileInspection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9920180F42588F5A1C5B901A /* ToolFileInspection.swift */; };
 		A5DCDFF0C38ADCD73C1FD7F2 /* ExtensionSurfaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72E2180FABF6409D30AF3EB4 /* ExtensionSurfaceState.swift */; };
 		A612502A7810BD421E95FA21 /* ChatComposerOwner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A74264DAD2273403E24616DF /* ChatComposerOwner.swift */; };
+		A61643571094B9EB25D92EFF /* AgentMessageCardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 692201FC1C142E5287DC94B2 /* AgentMessageCardTests.swift */; };
 		A6184B5838A0A0931528F237 /* ExtensionSurfaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72E2180FABF6409D30AF3EB4 /* ExtensionSurfaceState.swift */; };
 		A6296648FCCABC5106390447 /* MermaidKanbanParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B231D97AE677A326B334E5 /* MermaidKanbanParser.swift */; };
 		A649A71151AF35B90AC5BBB9 /* GhosttyVt-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = AA3C5BD17F50BE4A484BAE1C /* GhosttyVt-LICENSE.txt */; };
@@ -1637,6 +1638,7 @@
 		BB6BF1D67D2D368370532654 /* FileIndexStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 585CE55C9F00B5EFE4A62B78 /* FileIndexStoreTests.swift */; };
 		BB7DBF697D8BF10FA87636D5 /* Base64URL.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99E150814904F2C7D20629C9 /* Base64URL.swift */; };
 		BB893B2FC79736CFD0E1208B /* MermaidTimelineRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABA140AF9F8B77AC781BB50C /* MermaidTimelineRenderer.swift */; };
+		BB8B6650BFF64226F430BDB4 /* AgentMessageCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B34A6AE0C5E12BFF286D308D /* AgentMessageCard.swift */; };
 		BBA54BCDABDFB541F27A09BA /* CodeBlockWrappingHarnessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F2CA632DE148695D6776950 /* CodeBlockWrappingHarnessView.swift */; };
 		BBB806142CCE625FEFF53C6B /* ToolContentDescriptorBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69278C2C473AFFA85909BF8A /* ToolContentDescriptorBuilder.swift */; };
 		BBB83203B36D9DA37924B581 /* ProcessRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 297E2FFAD1C0ED1218CE1704 /* ProcessRunnerTests.swift */; };
@@ -3112,6 +3114,7 @@
 		68D97ED7255A013BCD0F274D /* ImageSaveAndPermissionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageSaveAndPermissionsTests.swift; sourceTree = "<group>"; };
 		691331E025055B2A0A43B01F /* McpServerModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpServerModelTests.swift; sourceTree = "<group>"; };
 		6914382AA466B95F54DC9F4F /* PairingApprovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingApprovalTests.swift; sourceTree = "<group>"; };
+		692201FC1C142E5287DC94B2 /* AgentMessageCardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentMessageCardTests.swift; sourceTree = "<group>"; };
 		69278C2C473AFFA85909BF8A /* ToolContentDescriptorBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolContentDescriptorBuilder.swift; sourceTree = "<group>"; };
 		692A4747C46B99B0BF61915E /* TimelineStreamingScrollMatrixSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineStreamingScrollMatrixSupport.swift; sourceTree = "<group>"; };
 		6967D1470CC713AF430A8877 /* MacServerLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacServerLifecycleTests.swift; sourceTree = "<group>"; };
@@ -3655,6 +3658,7 @@
 		B30E5AA009B4EAC528E81DCE /* ghostty-vt.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = "ghostty-vt.xcframework"; path = "Vendor/GhosttyVt/ghostty-vt.xcframework"; sourceTree = "<group>"; };
 		B31A172424752AE059AF0DEF /* LANEndpointSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LANEndpointSelection.swift; sourceTree = "<group>"; };
 		B3207837735E4C0576579638 /* ExtensionNativeBlockViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionNativeBlockViews.swift; sourceTree = "<group>"; };
+		B34A6AE0C5E12BFF286D308D /* AgentMessageCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentMessageCard.swift; sourceTree = "<group>"; };
 		B34BA805926E8D883DBC19B5 /* StoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreTests.swift; sourceTree = "<group>"; };
 		B351494904652EBE606B1991 /* SyntaxKeywords.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyntaxKeywords.swift; sourceTree = "<group>"; };
 		B36A131CB76FEA3D6B6B5501 /* ToolTimelineRowContent+FullScreenActivation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ToolTimelineRowContent+FullScreenActivation.swift"; sourceTree = "<group>"; };
@@ -5249,6 +5253,7 @@
 		4C2A24057BB2FF27CEE2B7F3 /* Rows */ = {
 			isa = PBXGroup;
 			children = (
+				B34A6AE0C5E12BFF286D308D /* AgentMessageCard.swift */,
 				12CDF38046F87C7683392A38 /* AssistantTimelineRowContent.swift */,
 				2DCA50BD67AB2B3F967E6FF0 /* AudioClipTimelineRowContent.swift */,
 				8EA495A039FCFC65EB77A0B0 /* ChildTailTimelineRowContent.swift */,
@@ -5525,6 +5530,7 @@
 		70CE5ECA881DCD84B7D8895B /* Timeline */ = {
 			isa = PBXGroup;
 			children = (
+				692201FC1C142E5287DC94B2 /* AgentMessageCardTests.swift */,
 				7E9D8A278707F292FF2D6101 /* AnchoredCollectionViewTests.swift */,
 				2CDA3B379C6FFBFBB72E43D1 /* AssistantLongMarkdownBlankTailTests.swift */,
 				AE2DB5A35CE3392CD825A4A0 /* AssistantMarkdownLayoutTests.swift */,
@@ -8678,6 +8684,7 @@
 				1C0A5548DE14E940C35E7425 /* APIClientWorkspaceFileEditingTests.swift in Sources */,
 				827CD388548802B708F82A73 /* AdjacentFileNavigatorLayoutTests.swift in Sources */,
 				1031406D3334B500752F41FC /* AgentManagementPresentationTests.swift in Sources */,
+				A61643571094B9EB25D92EFF /* AgentMessageCardTests.swift in Sources */,
 				79D950EC8B40F8ECEA5D1874 /* AgentScheduleAPIClientTests.swift in Sources */,
 				40C2CF81FC1519FC1568C914 /* AnchoredCollectionViewTests.swift in Sources */,
 				9820D1C5F18B482E4D05BAC3 /* AppEventMessageTests.swift in Sources */,
@@ -9233,6 +9240,7 @@
 				CC25C63CF9B74937951A2BC9 /* AgentListViewController.swift in Sources */,
 				15F0EDDE0593C87639DF2EED /* AgentManagement.swift in Sources */,
 				2647E79E186CE80382D255A0 /* AgentManagementPresentation.swift in Sources */,
+				BB8B6650BFF64226F430BDB4 /* AgentMessageCard.swift in Sources */,
 				CB017093B694DD4D70012F2F /* AgentNativeEditPages.swift in Sources */,
 				4E7E5890CB537A271082F096 /* AgentNativeEditViewController.swift in Sources */,
 				6C4BF92133C0B85A956B73AE /* AnchoredCollectionView.swift in Sources */,
