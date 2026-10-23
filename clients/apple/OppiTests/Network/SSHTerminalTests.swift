@@ -196,6 +196,25 @@ struct SSHTerminalTests {
         channel.close(reason: "done")
     }
 
+    /// A keyboard transition holds layout resizes and reports the settled size again
+    /// when it releases. A repeat is not a change: resizing the engine on one forces a
+    /// full rebuild and bumps `changeCount`, so the grid repaints and every reader of
+    /// a picture moves on a frame where nothing changed.
+    @Test func aRepeatedSizeDoesNotResizeTheEngineAgain() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let size = SSHTerminalGeometry(columns: 44, rows: 28, cellWidth: 18, cellHeight: 34)
+        var resizes = fixture.resizes.makeAsyncIterator()
+        channel.resize(size)
+        #expect(await resizes.next() == size)
+        let settled = channel.engine.changeCount
+        channel.resize(size)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(channel.engine.changeCount == settled, "a repeated size must not repaint the grid")
+        channel.close(reason: "done")
+    }
+
     @Test func backpressurePreservesInputOrderWithinOneSession() async throws {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()

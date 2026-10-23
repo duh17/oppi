@@ -269,6 +269,8 @@ final class SSHTerminalChannel {
     private var resizeTask: Task<Void, Never>?
     /// Last size sent on this connection.
     private var remoteGeometry: SSHTerminalGeometry?
+    /// Last size handed to the engine: a repeat is not a change.
+    private var appliedGeometry: SSHTerminalGeometry?
     /// Latest size a terminal screen laid out. Nil until one has: the PTY
     /// opened at its own default, and the screen's first layout sends the size.
     private var requestedGeometry: SSHTerminalGeometry?
@@ -476,7 +478,15 @@ final class SSHTerminalChannel {
         resizeTask = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(80)) } catch { return }
             guard let self else { return }
-            self.engine.resize(geometry)
+            // A size the grid already has is not a change. Resizing the engine on a
+            // repeat forces a full rebuild and bumps `changeCount`, so the grid
+            // repaints and every reader of a picture moves on a frame where nothing
+            // changed: the password-prompt latch turns off when a keyboard
+            // transition releases its held resize and reports the settled size again.
+            if geometry != self.appliedGeometry {
+                self.appliedGeometry = geometry
+                self.engine.resize(geometry)
+            }
             // The remote shell already has this size: a repeat would only
             // send another window-change request.
             guard self.connected, let connection = self.connection, geometry != self.remoteGeometry else { return }
