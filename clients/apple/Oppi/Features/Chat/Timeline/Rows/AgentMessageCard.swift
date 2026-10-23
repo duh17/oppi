@@ -36,9 +36,26 @@ struct AgentMessageCard {
     var onToggleExpand: (() -> Void)?
     /// Asked when the sender's name is tapped.
     var onOpenSender: (() -> Void)?
+    /// The sending session's launch snapshot, as the client's session store holds
+    /// it. Its saved Agent gives the header the same icon an assistant row draws for
+    /// that session; nil, or a session with no Agent, draws the same global avatar an
+    /// assistant row shows for a session launched without one. Resolved when the row
+    /// is configured, so a sender the store learns later reaches the card on the row's
+    /// next configure, not on a store change of its own.
+    var sender: SessionLaunchMetadata? = nil
 
     /// False only for a long message the reader has not opened.
     var showsWholeMessage: Bool { !canExpand || isExpanded }
+
+    /// What the header's identity slot draws: the sender's Agent icon, or the global
+    /// avatar when the sender is unknown or launched without an Agent. One precedence
+    /// rule, shared with assistant rows and the empty chat.
+    var senderIdentity: AssistantIdentityPresentation {
+        AssistantIdentityPresentation.resolve(
+            agentId: sender?.agentId,
+            agentIcon: sender?.agentIcon
+        )
+    }
 
     // MARK: - Fold
 

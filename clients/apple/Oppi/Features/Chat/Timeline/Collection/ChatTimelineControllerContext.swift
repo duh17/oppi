@@ -7,6 +7,9 @@ final class ChatTimelineControllerContext {
     var workspaceId: String?
     var agentId: String?
     var agentIcon: IconChoice?
+    /// The sending session's launch snapshot, by session id: read when an agent
+    /// message row is built, so the card header can draw the sender's identity.
+    var senderLaunch: (@MainActor (String) -> SessionLaunchMetadata?)?
     var readAloudAvailable = false
     var chromeStyle: ChatTimelineChromeStyle = .standard
     var routeScope: SessionRouteScope?
@@ -57,6 +60,7 @@ final class ChatTimelineControllerContext {
         workspaceId = configuration.workspaceId
         agentId = configuration.agentId
         agentIcon = configuration.agentIcon
+        senderLaunch = configuration.senderLaunch
         readAloudAvailable = configuration.readAloudAvailable
         chromeStyle = configuration.chromeStyle
         routeScope = configuration.routeScope

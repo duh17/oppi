@@ -49,6 +49,9 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     var increasedContrast: Bool = false
     var differentiateWithoutColor: Bool = false
     var chromeStyle: ChatTimelineChromeStyle = .standard
+    /// Loads the Genmoji an Agent icon names, so an agent message card draws its
+    /// sender's icon exactly as an assistant row draws its own.
+    var iconAssetCache: IconAssetCache? = nil
     /// Set for an agent message: another session sent this input. The row drops the
     /// user card fill and prompt glyph, names the sender in a card header, and folds
     /// a long message behind a preview.
@@ -177,7 +180,19 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private let agentHeader = UIView()
     private let agentHeaderToggle = AgentCardHeaderControl()
     private let agentHeaderStack = UIStackView()
-    private let agentIconView = UIImageView()
+    /// The sender's identity: its saved Agent's emoji, symbol, or Genmoji, or the
+    /// global avatar. The same view the chat title and the empty chat draw it with.
+    private let agentIconView = IconChoiceUIView(
+        size: UserTimelineRowContentView.agentCardIconSize,
+        frameSize: UserTimelineRowContentView.agentCardIconSize
+    )
+    /// Keeps the mark level with the sender's name instead of centred on the
+    /// header's two text lines; it takes the title stack's height, so the header
+    /// is no taller than its text.
+    private let agentIconSlot = UIView()
+    /// Whether the header drew a sender's identity, so a row reused for something
+    /// else puts the global avatar back instead of keeping the last sender's Genmoji.
+    private var agentIconShowsSender = false
     private let agentTitleStack = UIStackView()
     private let agentSenderButton = UIButton(type: .custom)
     private let agentIntentLabel = UILabel()
@@ -206,6 +221,9 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private let imageStrip = UIScrollView()
     private let imageStack = UIStackView()
 
+    /// The identity mark's size: the assistant row's avatar (`avatarSize`), so one
+    /// session reads the same in its own reply and in a card it sent to another.
+    static let agentCardIconSize: CGFloat = 18
     private static let thumbnailSize: CGFloat = 80
     private static let thumbnailCornerRadius: CGFloat = TimelineBubbleStyle.thumbnailCornerRadius
     private static let maxDisplayCharacters = 12_000
@@ -329,7 +347,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         pathPillRow.alignment = .leading
         pathPillRow.spacing = 6
 
-        // Agent message header: sender glyph, sender name, intent, fold chevron.
+        // Agent message header: sender identity, sender name, intent, fold chevron.
         // The fold control is the header's accessible element; the sender name is a
         // touch target inside it, offered to assistive tech as a custom action.
         agentHeader.translatesAutoresizingMaskIntoConstraints = false
@@ -340,10 +358,10 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         agentHeaderStack.spacing = 10
         agentHeaderStack.isUserInteractionEnabled = true
 
+        agentIconSlot.translatesAutoresizingMaskIntoConstraints = false
         agentIconView.translatesAutoresizingMaskIntoConstraints = false
-        agentIconView.contentMode = .scaleAspectFit
-        agentIconView.isAccessibilityElement = false
-        agentIconView.image = UIImage.scaledSymbol("person.crop.circle", style: .subheadline)
+        // Decorative inside the header: the header's label already names the sender.
+        agentIconSlot.isUserInteractionEnabled = false
 
         agentTitleStack.axis = .vertical
         agentTitleStack.alignment = .fill
@@ -386,7 +404,8 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
         agentTitleStack.addArrangedSubview(agentSenderButton)
         agentTitleStack.addArrangedSubview(agentIntentLabel)
-        agentHeaderStack.addArrangedSubview(agentIconView)
+        agentIconSlot.addSubview(agentIconView)
+        agentHeaderStack.addArrangedSubview(agentIconSlot)
         agentHeaderStack.addArrangedSubview(agentTitleStack)
         agentHeaderStack.addArrangedSubview(UIView())
         agentHeaderStack.addArrangedSubview(agentChevronView)
@@ -456,8 +475,10 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             agentHeaderStack.topAnchor.constraint(equalTo: agentHeader.topAnchor),
             agentHeaderStack.bottomAnchor.constraint(equalTo: agentHeader.bottomAnchor),
 
-            agentIconView.widthAnchor.constraint(equalToConstant: 17),
-            agentIconView.heightAnchor.constraint(equalToConstant: 17),
+            agentIconSlot.widthAnchor.constraint(equalToConstant: Self.agentCardIconSize),
+            agentIconSlot.heightAnchor.constraint(equalTo: agentTitleStack.heightAnchor),
+            agentIconView.topAnchor.constraint(equalTo: agentIconSlot.topAnchor),
+            agentIconView.centerXAnchor.constraint(equalTo: agentIconSlot.centerXAnchor),
             agentChevronView.widthAnchor.constraint(equalToConstant: 14),
             agentChevronView.heightAnchor.constraint(equalToConstant: 14),
         ])
@@ -567,7 +588,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     /// of a row this cell drew before reuse.
     private func applyAgentCard(palette: ThemePalette) {
         guard let card = currentConfiguration.agentMessage else {
-            resetAgentCard()
+            resetAgentCard(palette: palette)
             return
         }
         let senderName = card.origin.senderName
@@ -576,7 +597,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         let scope = currentConfiguration.itemID.map { "chat.agent-message.\($0)" }
 
         agentHeader.isHidden = false
-        agentIconView.tintColor = UIColor(palette.purple)
+        applySenderIdentity(card, palette: palette)
 
         agentSenderButton.setTitle(senderName, for: .normal)
         // The name is the one tappable thing in the header: it reads in the
@@ -628,6 +649,32 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         ]
     }
 
+    /// The header's identity slot. A sender the store knows draws its saved Agent's
+    /// icon; an unknown sender, or one launched without an Agent, draws the same
+    /// global avatar an assistant row shows for that session. Precedence is
+    /// `AssistantIdentityPresentation`'s, not a rule invented here.
+    private func applySenderIdentity(_ card: AgentMessageCard, palette: ThemePalette) {
+        let colors = ComposerThemeColors(palette: palette)
+        let icon = card.sender?.agentIcon
+        switch card.senderIdentity {
+        case .globalAvatar:
+            agentIconView.apply(.piAvatar, colors: colors)
+            agentIconView.transform = .identity
+        case .agent:
+            agentIconView.apply(
+                .choice(icon, purpose: .agent, sandbox: false),
+                colors: colors,
+                assetCache: currentConfiguration.iconAssetCache
+            )
+            // Agent artwork carries more internal whitespace than the Pi mark.
+            agentIconView.transform = CGAffineTransform(
+                scaleX: ChatAgentIconStyle.compactVisualScale,
+                y: ChatAgentIconStyle.compactVisualScale
+            )
+        }
+        agentIconShowsSender = true
+    }
+
     /// The header's custom action: the same owner action as tapping the name.
     @objc private func openAgentSender() -> Bool {
         guard let open = currentConfiguration.agentMessage?.onOpenSender else { return false }
@@ -635,8 +682,15 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         return true
     }
 
-    private func resetAgentCard() {
+    private func resetAgentCard(palette: ThemePalette) {
         agentHeader.isHidden = true
+        if agentIconShowsSender {
+            // Reuse must not carry this sender's Agent icon, or leave its Genmoji
+            // request running, under whatever this row draws next.
+            agentIconShowsSender = false
+            agentIconView.apply(.piAvatar, colors: ComposerThemeColors(palette: palette))
+            agentIconView.transform = .identity
+        }
         agentChevronView.image = nil
         agentChevronView.isHidden = true
         agentPreviewLabel.isHidden = true

@@ -181,6 +181,12 @@ extension ChatViewController {
             workspaceId: timelineWorkspaceId,
             agentId: session?.launch?.agentId,
             agentIcon: session?.launch?.agentIcon,
+            // A message card names another session, so its header draws that
+            // session's identity: the same launch snapshot an assistant row reads
+            // for this one. An unknown sender stays nil and reads as the global avatar.
+            senderLaunch: { [sessionStore] sessionId in
+                sessionStore.session(id: sessionId)?.launch
+            },
             readAloudAvailable: connection.speechAvailable,
             routeScope: focusedRouteScope,
             onFork: { [weak self] in self?.forkFromMessage($0) },

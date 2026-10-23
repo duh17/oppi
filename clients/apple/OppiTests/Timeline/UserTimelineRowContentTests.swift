@@ -324,6 +324,67 @@ struct UserTimelineRowContentTests {
         ) == nil)
     }
 
+    /// The header's mark is the sender's identity, and a row reused for a plain
+    /// user message keeps neither the agent's icon nor its pending Genmoji.
+    @MainActor
+    @Test("agent card header draws the sender's Agent icon and drops it on reuse")
+    func agentCardHeaderDrawsSenderIdentityAndDropsItOnReuse() throws {
+        let origin = MessageOrigin(kind: "session", sessionId: "child", name: "Review", intent: "report")
+        let text = "Verdict: the change is ready."
+
+        func configuration(sender: SessionLaunchMetadata?) -> UserTimelineRowConfiguration {
+            UserTimelineRowConfiguration(
+                text: text,
+                images: [],
+                canFork: false,
+                onFork: nil,
+                itemID: "agent-1",
+                agentMessage: AgentMessageCard(
+                    origin: origin,
+                    preview: AgentMessageCard.preview(forMarkdown: text).text,
+                    isExpanded: true,
+                    canExpand: false,
+                    sender: sender
+                )
+            )
+        }
+
+        // A sender launched from a saved Agent draws that Agent's emoji.
+        let view = UserTimelineRowContentView(
+            configuration: configuration(
+                sender: SessionLaunchMetadata(agentId: "agent-reviewer", agentIcon: .emoji("\u{1F98A}"))
+            )
+        )
+        let identity = try #require(firstSubview(ofType: IconChoiceUIView.self, in: view))
+        let emoji = try #require(
+            allSubviews(ofType: UILabel.self, in: identity).first { $0.text == "\u{1F98A}" }
+        )
+        #expect(!emoji.isHidden)
+        // Decorative: the header's label already names the sender.
+        #expect(!identity.isAccessibilityElement)
+
+        // A sender the store holds without an Agent reads as the global avatar,
+        // not as the previous card's Agent.
+        view.configuration = configuration(sender: SessionLaunchMetadata(agentId: nil, agentIcon: nil))
+        #expect(emoji.isHidden)
+
+        // The same view drawn again for a sender with an Agent, then for a plain
+        // user message: reuse leaves no sender identity behind.
+        view.configuration = configuration(
+            sender: SessionLaunchMetadata(agentId: "agent-reviewer", agentIcon: .emoji("\u{1F98A}"))
+        )
+        #expect(!emoji.isHidden)
+        view.configuration = UserTimelineRowConfiguration(
+            text: "Ship it",
+            images: [],
+            canFork: false,
+            onFork: nil,
+            itemID: "user-1"
+        )
+        #expect(emoji.isHidden)
+        #expect(firstSubview(ofType: IconChoiceUIView.self, in: view) === identity)
+    }
+
     @MainActor
     @Test("user row keeps reloaded skill-only turns visible as /skill:name")
     func userRowKeepsReloadedSkillOnlyTurnsVisibleAsSlashCommand() throws {

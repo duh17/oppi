@@ -616,6 +616,9 @@ private enum ChatRoutesFixture {
             routesSession.engine = .durable
         }
         connection.sessionStore.upsert(routesSession)
+        if let sender = agentMessageSenderSession() {
+            connection.sessionStore.upsert(sender)
+        }
         enableShare(on: connection)
         connection.chatState.cachedModels = models
         if environment["CHAT_ROUTES_ASK"] == "1" {
@@ -806,6 +809,25 @@ private enum ChatRoutesFixture {
     }
 
     private static let agentMessageId = "chat-routes-agent-message"
+    /// The session `agentMessageEvents()` says sent that message.
+    static let agentMessageSenderId = "chat-routes-child"
+
+    /// `CHAT_ROUTES_AGENT_SENDER=icon`: the sending session is in the store and was
+    /// launched from a saved Agent with an emoji icon, so the card header draws that
+    /// icon. `=plain`: it is in the store with no Agent, so the header draws the
+    /// global avatar. Unset: the sender is unknown, which draws the same avatar.
+    @MainActor private static func agentMessageSenderSession() -> Session? {
+        switch environment["CHAT_ROUTES_AGENT_SENDER"] {
+        case "icon":
+            var sender = session(id: agentMessageSenderId, status: .ready)
+            sender.launch = SessionLaunchMetadata(agentId: "agent-reviewer", agentIcon: .emoji("\u{1F98A}"))
+            return sender
+        case "plain":
+            return session(id: agentMessageSenderId, status: .ready)
+        default:
+            return nil
+        }
+    }
 
     /// `CHAT_ROUTES_AGENT_MESSAGE=report` (a long report with a heading and a
     /// table) or `=short` (one line): what a child session's message looks like

@@ -45,6 +45,11 @@ struct ChatTimelineConfiguration {
     let workspaceId: String?
     let agentId: String?
     let agentIcon: IconChoice?
+    /// The launch snapshot of the session that sent an agent message, looked up by
+    /// `MessageOrigin.sessionId` in this client's session store. Nil means the store
+    /// does not hold that session, so the card draws the global avatar; the row never
+    /// reaches a store of its own.
+    let senderLaunch: (@MainActor (String) -> SessionLaunchMetadata?)?
     /// The server reads replies aloud (`capabilities.speech`): finished assistant rows show
     /// the speaker. A change reconfigures them.
     let readAloudAvailable: Bool
@@ -112,6 +117,7 @@ struct ChatTimelineConfiguration {
         workspaceId: String?,
         agentId: String? = nil,
         agentIcon: IconChoice? = nil,
+        senderLaunch: (@MainActor (String) -> SessionLaunchMetadata?)? = nil,
         readAloudAvailable: Bool = false,
         routeScope: SessionRouteScope? = nil,
         onFork: @escaping (String) -> Void,
@@ -165,6 +171,7 @@ struct ChatTimelineConfiguration {
         self.workspaceId = workspaceId
         self.agentId = agentId
         self.agentIcon = agentIcon
+        self.senderLaunch = senderLaunch
         self.readAloudAvailable = readAloudAvailable
         self.routeScope = routeScope
             ?? workspaceId.map(SessionRouteScope.workspace)
@@ -391,6 +398,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
 
     var agentId: String? { context.agentId }
     var agentIcon: IconChoice? { context.agentIcon }
+    /// The sending session's launch snapshot, resolved by chat composition.
+    var senderLaunch: (@MainActor (String) -> SessionLaunchMetadata?)? { context.senderLaunch }
     var chromeStyle: ChatTimelineChromeStyle { context.chromeStyle }
 
     var routeScope: SessionRouteScope? {

@@ -202,11 +202,14 @@ extension ChatTimelineController {
             increasedContrast: speakerIncreasedContrast,
             differentiateWithoutColor: speakerDifferentiateWithoutColor,
             chromeStyle: chromeStyle,
+            iconAssetCache: iconAssetCache,
             agentMessage: agentMessage
         )
     }
 
-    /// The sender, fold state, and folded preview of an agent message. The preview
+    /// The sender, fold state, and folded preview of an agent message. The sender's
+    /// saved Agent (its emoji, symbol, or Genmoji icon) comes from the session store
+    /// through `senderLaunch`, exactly as an assistant row reads its own; the preview
     /// is read and measured here, at the row's width, so the row and the fold agree
     /// before the cell is sized, and both actions resolve the row by item ID when
     /// they run. Reading stops at the card's own cap, so a long report never costs
@@ -233,7 +236,8 @@ extension ChatTimelineController {
                     didSelectItemAt: IndexPath(item: index, section: 0)
                 )
             },
-            onOpenSender: openSender
+            onOpenSender: openSender,
+            sender: senderLaunch?(origin.sessionId)
         )
     }
 
