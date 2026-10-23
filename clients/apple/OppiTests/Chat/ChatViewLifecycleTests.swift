@@ -102,6 +102,76 @@ struct ChatViewLifecycleTests {
         connection.disconnectStream()
     }
 
+    /// An already-busy session is busy on its first layout, before it appears: the
+    /// runtime is bound to the app's store when the chat is built, so the composer
+    /// offers Stop and the timeline shows the working row from the first frame. The
+    /// session status stays an Observation dependency after that.
+    @Test func alreadyBusySessionShowsStopAndWorkingRowFromTheFirstLayout() async throws {
+        let sessionId = "session-\(UUID().uuidString)"
+        let workspaceId = "w1"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection.sessionStore.upsert(
+            makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy)
+        )
+        let frames = ScriptedFrameStreamFactory()
+        connection._connectStreamForTesting = { [weak connection] in
+            connection?.wsClient?._setStatusForTesting(.connected)
+            return frames.makeStream()
+        }
+
+        let chat = ChatViewController(
+            sessionId: sessionId,
+            connection: connection,
+            navigation: AppNavigation()
+        )
+        chat.sessionManager._loadHistoryForTesting = { _, _ in nil }
+        chat.loadViewIfNeeded()
+
+        #expect(!chat.sessionManager.hasAppeared, "The busy read must not wait for appearance")
+        #expect(
+            chat.sessionManager.isBusy,
+            "A session the server already reports busy read as idle before the chat appeared"
+        )
+
+        // The chat's leaves and timeline need the app root; a window in the app's
+        // scene runs `updateProperties()` for the stores the screen reads.
+        let window = makeSceneWindow()
+        window.traitOverrides.appRootEnvironment = makeTestAppRoot()
+        window.rootViewController = chat
+        window.makeKeyAndVisible()
+        chat.view.setNeedsLayout()
+        chat.view.layoutIfNeeded()
+        defer {
+            window.rootViewController = UIViewController()
+            window.isHidden = true
+            chat.sessionManager.cleanup()
+            frames.finish(index: 0)
+            connection.disconnectStream()
+        }
+
+        let collectionView = try #require(chat.timelineView)
+        let coordinator = try #require(collectionView.delegate as? ChatTimelineController)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            coordinator.currentIDs.contains(ChatTimelineController.workingIndicatorID)
+        }, "The busy session never showed its working row")
+        #expect(
+            timelineAllViews(in: chat.view).contains { $0.accessibilityIdentifier == "chat.stop" },
+            "The composer offered Send instead of Stop for a session that was already busy"
+        )
+
+        // Not a value read once at bind time: the status itself is observed.
+        connection.sessionStore.upsert(
+            makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready)
+        )
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            !coordinator.isTimelineBusy
+        }, "The timeline did not follow the session status to idle")
+        #expect(await waitForMainActorCondition {
+            timelineAllViews(in: chat.view).contains { $0.accessibilityIdentifier == "chat.send" }
+        }, "The composer did not return to Send when the run ended")
+    }
+
     @Test func onDisappearWithoutPlaybackDisconnectsFocusedSession() async {
         let sessionId = "session-\(UUID().uuidString)"
         let (connection, _) = makeTestConnection(sessionId: sessionId)

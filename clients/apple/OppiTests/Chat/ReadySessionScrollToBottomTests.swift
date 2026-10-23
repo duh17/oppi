@@ -186,7 +186,8 @@ struct ReadySessionScrollToBottomTests {
             controller: controller,
             collectionView: collectionView,
             reducer: reducer,
-            sessionManager: sessionManager
+            sessionManager: sessionManager,
+            connection: connection
         )
     }
 
@@ -244,6 +245,9 @@ private struct HostedTimelineFixture {
     let collectionView: UICollectionView
     let reducer: TimelineReducer
     let sessionManager: ChatSessionManager
+    /// The runtime binds its store weakly: keep the connection, and so the
+    /// session status the busy owner reads, alive for the test.
+    let connection: ServerConnection
 }
 
 private struct ScrollMetrics {

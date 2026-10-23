@@ -40,7 +40,6 @@ final class ChatTimelineOwnedClockState {
         static let applySnapshotLimit = 64
 
         func recordApplySnapshot(_ snapshot: ChatTimelineOwnedApplySnapshot) {
-            guard isRecordingApplySnapshots else { return }
             applySnapshots.append(snapshot)
             if applySnapshots.count > Self.applySnapshotLimit {
                 applySnapshots.removeFirst(applySnapshots.count - Self.applySnapshotLimit)
@@ -213,14 +212,16 @@ extension ChatTimelineController {
 
         apply(configuration: config, to: collectionView)
         #if DEBUG
-            ownedClock.recordApplySnapshot(
-                ChatTimelineOwnedApplySnapshot(
-                    itemIDs: config.items.map(\.id),
-                    renderVersion: reducer.renderVersion,
-                    isBusy: config.isBusy,
-                    showsWorkingIndicator: config.showsWorkingIndicator
+            if ownedClock.isRecordingApplySnapshots {
+                ownedClock.recordApplySnapshot(
+                    ChatTimelineOwnedApplySnapshot(
+                        itemIDs: config.items.map(\.id),
+                        renderVersion: reducer.renderVersion,
+                        isBusy: config.isBusy,
+                        showsWorkingIndicator: config.showsWorkingIndicator
+                    )
                 )
-            )
+            }
         #endif
         config.scrollController.itemCount = visibleRows.count
         _ = config.scrollController.consumeHasNewItems()

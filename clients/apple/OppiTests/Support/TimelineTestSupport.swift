@@ -820,14 +820,11 @@ func makeOwnedTimelineConfiguration(
     )
 }
 
-/// Stores `bindSessionStatus` pointed a runtime at, kept for the test process.
-/// The runtime adapter holds its connection and store weakly, so a fixture's
-/// connection going out of scope must not silently reset the busy owner to idle.
-@MainActor private var retainedTestSessionStores: [SessionStore] = []
-
 /// Points a chat runtime at a connection and a session status, the way the chat
-/// screen does on appear: the busy owner reads that status until a durable
-/// replica's first frame says otherwise.
+/// screen does when it is built: the busy owner reads that status until a durable
+/// replica's first frame says otherwise. The runtime holds the adapter's store
+/// weakly, so a fixture keeps its connection alive for as long as it needs the
+/// bound status.
 @MainActor
 func bindSessionStatus(
     _ status: SessionStatus,
@@ -842,7 +839,6 @@ func bindSessionStatus(
     connection.sessionStore.upsert(
         makeTestSession(id: sessionManager.sessionId, workspaceId: "ws-test", status: status)
     )
-    retainedTestSessionStores.append(connection.sessionStore)
 }
 
 /// A 390×844 window in the test host's scene. UIKit services a controller's

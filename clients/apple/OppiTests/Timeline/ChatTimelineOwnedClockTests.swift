@@ -890,6 +890,9 @@ private struct HostedOwnedTimelineFixture {
     let host: UIViewController
     let reducer: TimelineReducer
     let sessionId: String
+    /// The runtime binds its store weakly: keep the connection, and so the
+    /// session status the busy owner reads, alive for the test.
+    let connection: ServerConnection
 
     var hostedController: ChatTimelineController? {
         guard let collectionView = timelineFirstView(ofType: UICollectionView.self, in: host.view) else {
@@ -937,7 +940,8 @@ private func makeHostedOwnedTimeline(
         window: window,
         host: host,
         reducer: reducer,
-        sessionId: sessionId
+        sessionId: sessionId,
+        connection: connection
     )
 }
 

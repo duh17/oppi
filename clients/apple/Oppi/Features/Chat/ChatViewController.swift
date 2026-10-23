@@ -209,6 +209,9 @@ final class ChatViewController: UIViewController {
             routeScope: routeScope
         )
         sessionManager = manager
+        // Busy comes from this session's status before any appearance or stream:
+        // bind the store now so the first layout reads it and Observation tracks it.
+        manager.bindRuntime(connection: connection, sessionStore: connection.sessionStore)
         sessionRuntimeLease = ChatSessionManagerLease(manager: manager)
         composerDraftController = ChatComposerDraftController(
             initialText: initialInputText,

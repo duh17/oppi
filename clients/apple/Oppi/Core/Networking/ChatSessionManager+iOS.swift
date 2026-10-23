@@ -26,6 +26,17 @@ extension ChatSessionManager {
         }
     }
 
+    /// Bind the runtime to the app's store without claiming focus or connecting. The
+    /// chat reads this session's status (busy) on its first layout — before any
+    /// appearance, connect, or first stream frame — and the read must already reach
+    /// the store so Observation registers it as a dependency.
+    func bindRuntime(
+        connection: ServerConnection,
+        sessionStore: SessionStore
+    ) {
+        bindIOSRuntime(connection: connection, sessionStore: sessionStore)
+    }
+
     func connect(
         connection: ServerConnection,
         sessionStore: SessionStore
