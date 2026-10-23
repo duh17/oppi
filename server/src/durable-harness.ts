@@ -71,6 +71,7 @@ import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { DurableThreads } from "./durable-threads.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
+import { OPPI_CALLER_SESSION_ID_ENV } from "./session-caller-identity.js";
 import { properLockfile } from "./pi-lockfile.js";
 import { requireDurableStoreId } from "./session-runtime-capabilities.js";
 import type { ConversationStreamServerMessage, Session } from "./types.js";
@@ -215,6 +216,11 @@ const NOTIFY_EXTENSION = "oppi.notify";
 
 /** `SessionNotifyPort` plus the Session bound to a store's conversation. */
 export interface DurableNotifyBinding extends SessionNotifyPort {
+  sessionIdOf(storeId: string, conversationId: ConversationId): string | undefined;
+}
+
+/** Where the env factory finds the Session a store's conversation is bound to. */
+export interface DurableSessionIdentity {
   sessionIdOf(storeId: string, conversationId: ConversationId): string | undefined;
 }
 
@@ -778,7 +784,17 @@ export class SessionHost {
           env: async ({ conversationId, cwd, read }, context) => {
             const runtime = await read.snapshot(DurableRuntime, conversationId, context);
             if (runtime?.kind !== "sandbox") {
-              const env = new NodeExecutionEnv({ cwd: cwd ?? homedir() });
+              const callerSessionId = this.runtime.callerSessionIdOf(this.storeId, conversationId);
+              const env = new NodeExecutionEnv({
+                cwd: cwd ?? homedir(),
+                // Classic bash exports this from its shell prefix. Host bash and background jobs
+                // of a durable conversation need it in the env so `oppi session create` run from
+                // here is attributed to this conversation's own Session: parented, policy-checked,
+                // and unable to target itself. No row means no identity, never a borrowed one.
+                ...(callerSessionId
+                  ? { shellEnv: { [OPPI_CALLER_SESSION_ID_ENV]: callerSessionId } }
+                  : {}),
+              });
               conversationsByEnv.set(env, { host: this, conversationId });
               return env;
             }
@@ -1226,6 +1242,7 @@ export class DurableHarness {
   private threads?: DurableThreads;
   private control?: DurableControlCli;
   private notifyBinding?: DurableNotifyBinding;
+  private sessionIdentity?: DurableSessionIdentity;
   /** Extensions from Oppi's bundled packages, in install order. */
   private bundled: readonly LoadedDurableExtension[] = [];
   /** Extensions from the durable entries of enabled Pi packages, in load order. */
@@ -1386,6 +1403,17 @@ export class DurableHarness {
   }
   bindNotify(binding: DurableNotifyBinding): void {
     this.notifyBinding = binding;
+  }
+  /** The Session each conversation's host env gives its bash as caller identity. */
+  bindSessionIdentity(binding: DurableSessionIdentity): void {
+    this.sessionIdentity = binding;
+  }
+  /**
+   * The Session bound to `conversationId` of `storeId`, as the caller identity of that
+   * conversation's host bash; undefined when no row is bound (nothing is attributed).
+   */
+  callerSessionIdOf(storeId: string, conversationId: ConversationId): string | undefined {
+    return this.sessionIdentity?.sessionIdOf(storeId, conversationId);
   }
   get boundNotify(): DurableNotifyBinding | undefined {
     return this.notifyBinding;

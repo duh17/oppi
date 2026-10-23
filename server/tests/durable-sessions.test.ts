@@ -43,6 +43,7 @@ import {
   durableStoreSqlitePath,
 } from "../src/durable-harness.js";
 import { ProjectContextDoc } from "../extensions/durable/project-context/contract.js";
+import { AgentLaunchService, DelegationPolicyError } from "../src/agent-launch-service.js";
 import { createAgentRoutes } from "../src/routes/agents.js";
 import { createAgentScheduleDispatchHooks } from "../src/agent-schedule-dispatch.js";
 import type { NewSessionDispatchInput } from "../src/agent-schedules.js";
@@ -2945,6 +2946,108 @@ describe("durable-native threads", () => {
     expect(existsSync(treeStore)).toBe(false);
     expect(existsSync(siblingStore)).toBe(true);
     expect(await transcript(sibling.id)).toEqual(["SIBLING_ANSWER"]);
+  });
+});
+
+describe("durable host caller identity", () => {
+  /** The model of these tests: bash prints the caller identity its env carries; "Delegate" spawns. */
+  const probingModel = (spawnArgs: Record<string, unknown> = {}) =>
+    model(({ last, text }) => {
+      const toolName = (last as { toolName?: string }).toolName;
+      if (toolName === "bash") return fauxAssistantMessage("CHECKED");
+      if (toolName === "subagent") return fauxAssistantMessage("PARENT_DONE");
+      if (text.includes("Delegate"))
+        return spawnCall({ name: "Probe", task: "PROBE_TASK", ...spawnArgs });
+      return toolCall("bash", { command: 'printf "%s" "$OPPI_CALLER_SESSION_ID"' });
+    });
+
+  /** The launch service `oppi session create` goes through, over the fixture's Storage. */
+  const launchService = (f: Fixture) =>
+    new AgentLaunchService({
+      storage: f.storage,
+      sessions: {
+        startSession: (sessionId, workspace) => f.manager.startSession(sessionId, workspace),
+        sendPrompt: (sessionId, message) => f.manager.sendPrompt(sessionId, message),
+      },
+      ensureSessionContextWindow: (session) => session,
+    });
+
+  /**
+   * Run the parent's bash, spawn a child, and return both sessions with the caller identity each
+   * host env gave its bash. The parent's bash runs first so the child's id can only be its own.
+   */
+  async function probe(f: Fixture) {
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    const parentBash = async () =>
+      (await toolResults(harness, parentConversation)).find((result) => result.toolName === "bash");
+    await f.manager.sendPrompt(f.parent.id, "Check the caller");
+    await until(async () => (await parentBash()) !== undefined, "the parent's bash");
+    await f.manager.sendPrompt(f.parent.id, "Delegate the check");
+    await until(() => f.storage.listSessions().length === 2, "the child session");
+    const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    const childConversation = conversationOf(f.storage, child);
+    const childBash = async () =>
+      (await toolResults(harness, childConversation)).find((result) => result.toolName === "bash");
+    await until(async () => (await childBash()) !== undefined, "the child's bash");
+    return {
+      child,
+      parentCaller: (await parentBash())!.text,
+      childCaller: (await childBash())!.text,
+    };
+  }
+
+  it("gives a conversation's host bash its own session's caller identity, not its owner's", async () => {
+    const f = await fixture(probingModel());
+    const { child, parentCaller, childCaller } = await probe(f);
+
+    expect(parentCaller).toBe(f.parent.id);
+    // The child's bash attributes a launch to the child, not to the session that spawned it.
+    expect(childCaller).toBe(child.id);
+    expect(childCaller).not.toBe(parentCaller);
+  });
+
+  it("refuses the launch a child without the grant asks for through its bash", async () => {
+    const f = await fixture(probingModel());
+    const { child, childCaller } = await probe(f);
+    expect(childCaller).toBe(child.id);
+
+    // `oppi session create` run from that bash: the caller id is the parent of the launch.
+    await expect(
+      launchService(f).launch({
+        agent: { name: "Grandchild" },
+        target: { workspace: f.workspace },
+        parentSessionId: childCaller,
+        prompt: "no",
+      }),
+    ).rejects.toThrow(DelegationPolicyError);
+    expect(
+      f.storage
+        .listSessions()
+        .map((session) => session.id)
+        .sort(),
+    ).toEqual([f.parent.id, child.id].sort());
+  });
+
+  it("parents the launch a child with the grant asks for through its bash", async () => {
+    const f = await fixture(probingModel({ allowNestedDelegation: true }));
+    const { child, childCaller } = await probe(f);
+    expect(childCaller).toBe(child.id);
+
+    const result = await launchService(f).launch({
+      agent: { name: "Grandchild" },
+      target: { workspace: f.workspace },
+      parentSessionId: childCaller,
+    });
+    if (result.kind !== "created") throw new Error(`unexpected ${result.kind}`);
+    // The caller is the child, so the launch is parented and takes the child's auto-stop default.
+    expect(result.session.launch).toMatchObject({
+      parentSessionId: child.id,
+      allowsNestedDelegation: true,
+      autoStop: true,
+    });
+    expect(f.storage.listSessions().map((session) => session.id)).toContain(result.session.id);
   });
 });
 

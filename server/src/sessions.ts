@@ -189,6 +189,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
           sessionIdOf: (storeId, conversationId) =>
             storage.findSessionByDurableConversation(storeId, conversationId)?.id,
         });
+        runtime.bindSessionIdentity({
+          sessionIdOf: (storeId, conversationId) =>
+            storage.findSessionByDurableConversation(storeId, conversationId)?.id,
+        });
         runtime.bindControl(
           new DurableControlCli({
             dataDir: storage.getDataDir(),
