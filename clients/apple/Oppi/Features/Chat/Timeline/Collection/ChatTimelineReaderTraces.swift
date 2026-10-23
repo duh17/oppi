@@ -10,22 +10,26 @@ import UIKit
 /// reader shows is fed from the apply's rows by item id, one trace per open
 /// reader, never from whichever cell happens to be configured.
 ///
-/// Work per apply is bounded by the readers that are actually open: entries are
-/// released once their reader lets go of the stream, and a trace that has
-/// reported done is never fed again.
+/// Work per apply is bounded by the readers that are actually open: a payload or
+/// a mounted reader owns each trace, so an entry whose trace nobody holds is
+/// dropped, and a trace that has reported done is never fed again.
 @MainActor
 final class ChatTimelineReaderTraces {
+    /// One reader's traces. They are held weakly: the reader and the payload it
+    /// was opened from own them (`ChatReaderPayloadStore` keeps a payload across
+    /// a split or stack swap, so a rebuilt reader observes the same stream). A
+    /// trace with no owner left is a reader nobody can see, and its entry goes.
     private final class Entry {
-        var thinking: ThinkingTraceStream?
-        var terminal: TerminalTraceStream?
-        var source: SourceTraceStream?
+        weak var thinking: ThinkingTraceStream?
+        weak var terminal: TerminalTraceStream?
+        weak var source: SourceTraceStream?
         /// The last row this entry was fed, so an unchanged row costs one compare.
         var lastPreview: String?
         var lastIsLive: Bool?
-        /// Opened, but no reader has attached yet. One apply may pass between
-        /// handing a stream to a reader and that reader observing it, so the
-        /// first pass without observers only clears this.
-        var isPendingMount = true
+
+        var hasLiveTrace: Bool {
+            thinking != nil || terminal != nil || source != nil
+        }
     }
 
     private var entries: [String: Entry] = [:]
@@ -34,14 +38,6 @@ final class ChatTimelineReaderTraces {
 
     /// Item ids with an open reader; a test and diagnostic surface.
     var openItemIDs: [String] { entries.keys.sorted() }
-
-    var hasObservers: Bool {
-        entries.values.contains { entry in
-            entry.thinking?.hasObservers == true
-                || entry.terminal?.hasObservers == true
-                || entry.source?.hasObservers == true
-        }
-    }
 
     // MARK: - Opening
 
@@ -109,16 +105,18 @@ final class ChatTimelineReaderTraces {
     /// Called by every apply. A reader with no entry costs nothing; otherwise
     /// each open reader looks its own row up by id.
     ///
-    /// `itemExists` answers for the whole timeline, not the rendered rows, so a
-    /// row folded into a collapsed work line keeps its reader instead of being
-    /// treated as gone.
+    /// `itemExists` answers for the whole timeline, not the rendered rows: a row
+    /// folds into its work line whenever that strip is collapsed, a running turn
+    /// included, and folding must not end its reader.
     func update(
         items: [ChatItem],
         liveRowIDs: Set<String>,
         itemExists: (String) -> Bool,
         toolConfiguration: (String, ChatItem) -> ToolTimelineRowConfiguration?
     ) {
-        releaseClosedReaders()
+        for itemID in Array(entries.keys) where entries[itemID]?.hasLiveTrace == false {
+            entries[itemID] = nil
+        }
         guard !entries.isEmpty else { return }
 
         var unresolved = Set(entries.keys)
@@ -194,21 +192,6 @@ final class ChatTimelineReaderTraces {
                 isDone: trace?.isDone ?? true,
                 finalContent: trace?.finalContent
             )
-        }
-    }
-
-    /// Released readers cost nothing: a stream nobody observes cannot be a
-    /// reader's, and every apply would otherwise feed it forever.
-    private func releaseClosedReaders() {
-        for (itemID, entry) in entries {
-            let observed = entry.thinking?.hasObservers == true
-                || entry.terminal?.hasObservers == true
-                || entry.source?.hasObservers == true
-            if observed || entry.isPendingMount {
-                entry.isPendingMount = false
-            } else {
-                entries[itemID] = nil
-            }
         }
     }
 

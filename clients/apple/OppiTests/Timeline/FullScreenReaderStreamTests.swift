@@ -143,40 +143,9 @@ struct FullScreenReaderStreamTests {
         #expect(finished.contains("Build complete"), "the reader shows the finished call's output")
     }
 
-    @Test("a folded row keeps its reader instead of being treated as gone")
+    @Test("a folded row's reader keeps streaming once the row is shown again")
     func foldedRowKeepsItsReader() throws {
         let fixture = ReaderTimelineFixture(sessionId: "session-reader-folded")
-        defer { fixture.window.isHidden = true }
-
-        let opening = thinkingText(lines: 30)
-        let trailer = trailerRows(count: 60)
-        fixture.apply(
-            items: [.thinking(id: "think-1", preview: opening, hasMore: false, isDone: true)] + trailer,
-            liveRowIDs: ["think-1"]
-        )
-        let row = try fixture.thinkingRow(at: 0)
-        row.showFullScreen()
-        let payload = try #require(fixture.opened)
-        guard case .document(let content, _) = payload.kind else {
-            Issue.record("expected a document reader, got \(payload.kind)")
-            return
-        }
-        _ = fixture.presentReader(content: content)
-
-        // Quiet mode folds the finished turn: the row leaves the rendered rows
-        // but its item is still in the timeline, so its reader survives.
-        fixture.apply(
-            items: trailer,
-            fullTimelineItemIDs: ["think-1"] + trailer.map(\.id),
-            liveRowIDs: ["think-1"]
-        )
-
-        #expect(fixture.controller.readerTraces.openItemIDs == ["think-1"])
-    }
-
-    @Test("a reader that closes is released and stops being fed")
-    func closedReaderIsReleased() async throws {
-        let fixture = ReaderTimelineFixture(sessionId: "session-reader-closed")
         defer { fixture.window.isHidden = true }
 
         let opening = thinkingText(lines: 30)
@@ -194,30 +163,126 @@ struct FullScreenReaderStreamTests {
             return
         }
         let stream = try #require(openedStream)
+        _ = fixture.presentReader(content: content)
 
-        var reader: FullScreenCodeViewController? = fixture.presentReader(content: content)
-        #expect(stream.hasObservers)
+        // A collapsed work line folds this row out of the rendered rows while
+        // its item is still in the timeline: the reader must survive that.
+        fixture.apply(
+            items: trailer,
+            fullTimelineItemIDs: ["think-1"] + trailer.map(\.id),
+            liveRowIDs: ["think-1"]
+        )
+        #expect(
+            fixture.controller.readerTraces.openItemIDs == ["think-1"],
+            "folding must not end the reader"
+        )
 
-        // The timeline keeps applying while the reader is up: the entry is live
-        // and observed, not pending a mount.
+        // Unfolded again with more text: the reader follows it.
+        let grown = opening + "\nReasoning line 31"
+        fixture.apply(
+            items: [.thinking(id: "think-1", preview: grown, hasMore: false, isDone: true)] + trailer,
+            liveRowIDs: ["think-1"]
+        )
+        #expect(stream.snapshot.text == grown)
+    }
+
+    @Test("a stored payload keeps its trace for a reader rebuilt from it")
+    func storedPayloadKeepsTheTraceAlive() throws {
+        let fixture = ReaderTimelineFixture(sessionId: "session-reader-store")
+        defer { fixture.window.isHidden = true }
+
+        let opening = thinkingText(lines: 30)
+        let trailer = trailerRows(count: 60)
         fixture.apply(
             items: [.thinking(id: "think-1", preview: opening, hasMore: false, isDone: true)] + trailer,
             liveRowIDs: ["think-1"]
         )
-        #expect(fixture.controller.readerTraces.openItemIDs == ["think-1"])
+        let row = try fixture.thinkingRow(at: 0)
+        row.showFullScreen()
+        // A split or stack swap rebuilds the reader from the store's payload, so
+        // the store is the owner that keeps the trace alive in between.
+        let store = ChatReaderPayloadStore()
+        let target = store.store(try #require(fixture.opened))
+        fixture.discardOpenedPayload()
 
-        fixture.closeReader(reader)
-        reader = nil
-        let released = await waitForMainActorCondition(timeout: .seconds(2)) {
-            !stream.hasObservers
+        let grown = opening + "\nReasoning line 31"
+        fixture.apply(
+            items: [.thinking(id: "think-1", preview: grown, hasMore: false, isDone: true)] + trailer,
+            liveRowIDs: ["think-1"]
+        )
+
+        #expect(
+            fixture.controller.readerTraces.openItemIDs == ["think-1"],
+            "the store's payload still holds the trace"
+        )
+        // Scoped so this test holds no reference of its own: the store is the
+        // only owner the trace has left.
+        var rebuiltText: String?
+        do {
+            guard case .document(let rebuilt, _)? = store.payload(for: target.id)?.kind,
+                  case let .thinking(_, stream) = rebuilt else {
+                Issue.record("expected the stored payload to still be a thinking reader")
+                return
+            }
+            rebuiltText = stream?.snapshot.text
         }
-        #expect(released, "the popped reader must let go of the trace")
+        #expect(rebuiltText == grown, "a rebuilt reader observes the same live trace")
+
+        store.remove(target)
+        fixture.apply(
+            items: [.thinking(id: "think-1", preview: grown, hasMore: false, isDone: true)] + trailer,
+            liveRowIDs: ["think-1"]
+        )
+        #expect(fixture.controller.readerTraces.isEmpty, "no owner left, no reader to feed")
+    }
+
+    @Test("a reader that closes releases its trace and is not fed again")
+    func closedReaderIsReleased() async throws {
+        let fixture = ReaderTimelineFixture(sessionId: "session-reader-closed")
+        defer { fixture.window.isHidden = true }
+
+        let opening = thinkingText(lines: 30)
+        let trailer = trailerRows(count: 60)
+        fixture.apply(
+            items: [.thinking(id: "think-1", preview: opening, hasMore: false, isDone: true)] + trailer,
+            liveRowIDs: ["think-1"]
+        )
+        // The payload a reader was opened from is what keeps its trace alive, so
+        // closing the reader and dropping the payload is the exact release.
+        weak var releasedTrace: ThinkingTraceStream?
+        var reader: FullScreenCodeViewController?
+        do {
+            let row = try fixture.thinkingRow(at: 0)
+            row.showFullScreen()
+            let payload = try #require(fixture.opened)
+            guard case .document(let content, _) = payload.kind,
+                  case let .thinking(_, openedStream) = content else {
+                Issue.record("expected a thinking reader, got \(payload.kind)")
+                return
+            }
+            releasedTrace = openedStream
+            reader = fixture.presentReader(content: content)
+
+            // The timeline keeps applying while the reader is up.
+            fixture.apply(
+                items: [.thinking(id: "think-1", preview: opening, hasMore: false, isDone: true)] + trailer,
+                liveRowIDs: ["think-1"]
+            )
+            #expect(fixture.controller.readerTraces.openItemIDs == ["think-1"])
+            fixture.closeReader(reader)
+        }
+        reader = nil
+        fixture.discardOpenedPayload()
+
+        let released = await waitForMainActorCondition(timeout: .seconds(2)) {
+            releasedTrace == nil
+        }
+        #expect(released, "closing the reader and dropping its payload releases the trace")
 
         fixture.apply(
             items: [.thinking(id: "think-1", preview: opening, hasMore: false, isDone: true)] + trailer,
             liveRowIDs: ["think-1"]
         )
-
         #expect(fixture.controller.readerTraces.isEmpty, "a closed reader is not fed")
     }
 
@@ -307,6 +372,12 @@ private final class ReaderTimelineFixture {
         navigation.pushViewController(reader, animated: false)
         window.layoutIfNeeded()
         return reader
+    }
+
+    /// Drops the payload a reader was opened from. With it goes the last owner
+    /// of the trace (`ChatReaderPayloadStore` holds one the same way).
+    func discardOpenedPayload() {
+        opened = nil
     }
 
     /// The reader's own back action: the page pops and its body is released.
