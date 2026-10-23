@@ -15,13 +15,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveSdkSessionCwdAsync } from "../src/sdk-backend.js";
 import {
+  availableWorktreeBranch,
   createWorkspaceWorktree,
   ensureWorkspaceWorktree,
   hasManagedWorkspaceWorktreeDirectory,
   listWorkspaceWorktrees,
   managedWorktreesRoot,
   previewWorkspaceWorktree,
-  releaseCleanWorkspaceWorktree,
   removeWorkspaceWorktree,
   resolveWorkspaceWorktree,
 } from "../src/worktrees.js";
@@ -303,53 +303,23 @@ describe("workspace worktrees", async () => {
     ).rejects.toThrow("Worktree id is still referenced by session history");
   });
 
-  it("releases a clean worktree of its branch and keeps one with work", async () => {
+  it("skips a branch whose worktree id session history still references", async () => {
     const { root, workspace } = makeGitWorkspace();
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-release-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-skip-reserved-"));
     roots.push(dataDir);
-    const base = git(root, ["rev-parse", "HEAD"]);
-    const untouched = await createWorkspaceWorktree(
-      workspace,
-      { branch: "feature/release-untouched" },
-      { dataDir },
-    );
-    expect(
-      await releaseCleanWorkspaceWorktree(workspace, {
-        dataDir,
-        worktreeId: untouched.id,
-        base,
-        branch: untouched.branch,
-      }),
-    ).toBe("removed");
-    expect(existsSync(untouched.path)).toBe(false);
-    expect(git(join(workspace.hostMount), ["branch", "--list", "feature/release-untouched"])).toBe(
-      "",
-    );
-    // Idempotent: a rerun finds it gone.
-    expect(
-      await releaseCleanWorkspaceWorktree(workspace, {
-        dataDir,
-        worktreeId: untouched.id,
-      }),
-    ).toBe("missing");
+    // What a landed and already cleaned worktree leaves behind: its id in a Session row, no
+    // worktree, and once the branch is gone too, no ref.
+    const landed = await createWorkspaceWorktree(workspace, { branch: "subagent/x" }, { dataDir });
+    await removeWorkspaceWorktree(workspace, { dataDir, worktreeId: landed.id });
+    git(root, ["branch", "-D", "subagent/x"]);
 
-    const worked = await createWorkspaceWorktree(
-      workspace,
-      { branch: "feature/release-worked" },
-      { dataDir },
-    );
-    writeFileSync(join(worked.path, "work.txt"), "work\n");
-    git(worked.path, ["add", "work.txt"]);
-    git(worked.path, ["commit", "-m", "work"]);
+    expect(await availableWorktreeBranch(workspace, "subagent/x", { dataDir })).toBe("subagent/x");
     expect(
-      await releaseCleanWorkspaceWorktree(workspace, {
+      await availableWorktreeBranch(workspace, "subagent/x", {
         dataDir,
-        worktreeId: worked.id,
-        base,
-        branch: worked.branch,
+        reservedWorktreeIds: new Set([landed.id]),
       }),
-    ).toBe("kept");
-    expect(existsSync(worked.path)).toBe(true);
+    ).toBe("subagent/x-2");
   });
 
   it("rejects managed worktree ids reserved by retained session history", async () => {

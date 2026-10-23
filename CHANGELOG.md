@@ -54,7 +54,7 @@ Example:
 
 ### Added
 
-- **Server:** A durable session's `subagent` children can work in a git worktree of their own: `spawn` takes `worktree` (`"new"` for a branch named after the child, `{ branch }` to create or adopt that branch, or an existing worktree id to adopt), so an editing child never touches the parent's checkout. A worktree child's answer and `list` row name its branch, commits ahead of its base, and whether it is dirty, and one the spawn made is removed once the child ends with nothing in it. `spawn` also takes `tools`, `excludeTools`, and `readOnly` to narrow a child's tools; a child can never gain one its parent lacks. See [Durable Sessions](docs/usage.md#durable-sessions-experiment).
+- **Server:** A durable session's `subagent` children can work in a git worktree of their own: `spawn` takes `worktree` (`"new"` for a branch named after the child, `{ branch }` to create or adopt that branch, or an existing worktree id to adopt), so an editing child never touches the parent's checkout. A worktree child's answer and `list` row name its branch, commits ahead of its base, and whether it is dirty; the worktree stays while the child works, so a follow-up message still reaches it there, and it is removed when you land it or by the daily safe cleanup once it is clean, landed, and unused. `spawn` also takes `tools`, `excludeTools`, and `readOnly` to narrow a child's tools; a child can never gain one its parent lacks. See [Durable Sessions](docs/usage.md#durable-sessions-experiment).
 
 ### Changed
 

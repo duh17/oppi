@@ -704,13 +704,14 @@ export function subagentWorktreeBranch(name: string): string {
 }
 
 /**
- * The first branch of `base`, `base-2`, … that neither a ref nor a worktree of this workspace
- * uses. A child named like an earlier one gets its own branch instead of adopting a stranger's.
+ * The first branch of `base`, `base-2`, … that no ref, worktree, pending removal, or retained
+ * worktree id of this workspace holds. A child named like an earlier one gets its own branch
+ * instead of adopting a stranger's, and never one whose id a create would refuse.
  */
 export async function availableWorktreeBranch(
   workspace: Workspace,
   base: string,
-  options: { dataDir: string },
+  options: { dataDir: string; reservedWorktreeIds?: ReadonlySet<string> },
 ): Promise<string> {
   const workspaceRoot = await workspaceGitRoot(workspace);
   const worktrees = await listWorkspaceWorktrees(workspace, { dataDir: options.dataDir });
@@ -718,6 +719,11 @@ export async function availableWorktreeBranch(
     const candidate = attempt === 1 ? base : `${base}-${attempt}`;
     if (worktrees.some((worktree) => worktree.branch === candidate)) continue;
     if (await branchExists(workspaceRoot, candidate)) continue;
+    // The managed id follows from the branch: an id that session history still references, or
+    // one whose removal is under way, would make the create fail instead of making this child.
+    const id = worktreeIdForBranch(candidate);
+    if (options.reservedWorktreeIds?.has(id)) continue;
+    if (pendingWorktreeRemovalKeys.has(pendingRemovalKey(workspace.id, id))) continue;
     return candidate;
   }
   throw new WorkspaceWorktreeError(409, `No free branch name for ${base}`);
@@ -758,51 +764,6 @@ export async function worktreeProgress(
   const status = await runGitAsync(path, ["status", "--porcelain=v1"], 60_000);
   const ahead = base ? await countCommits(path, `${base}..HEAD`) : 0;
   return { ahead, dirty: status.status !== 0 || status.stdout.trim().length > 0 };
-}
-
-export type WorktreeRelease = "removed" | "kept" | "missing";
-
-/**
- * Remove a worktree an Oppi-managed create made, with its branch, when the work in it is nothing
- * anyone needs to review: clean, and no commit past `base`. Anything else stays, and so does a
- * worktree Oppi did not create (an adopted one). Idempotent: a second call finds it gone.
- */
-export async function releaseCleanWorkspaceWorktree(
-  workspace: Workspace,
-  options: {
-    dataDir: string;
-    worktreeId: string;
-    base?: string;
-    branch?: string | null;
-  },
-): Promise<WorktreeRelease> {
-  const worktree = await resolveWorkspaceWorktree(workspace, options.worktreeId, {
-    dataDir: options.dataDir,
-  });
-  if (!worktree) return "missing";
-  if (worktree.isMain || !worktree.managedByOppi) return "kept";
-  const { ahead, dirty } = await worktreeProgress(worktree.path, options.base);
-  if (ahead > 0 || dirty) return "kept";
-  try {
-    await removeWorkspaceWorktree(workspace, {
-      dataDir: options.dataDir,
-      worktreeId: worktree.id,
-    });
-  } catch (error: unknown) {
-    if (error instanceof WorkspaceWorktreeError) {
-      if (error.statusCode === 404) return "missing";
-      // A change that landed between the check and the removal keeps the worktree.
-      if (error.statusCode === 409) return "kept";
-    }
-    throw error;
-  }
-  // The worktree is gone, so its branch is not checked out anywhere Oppi owns: drop it too.
-  const branch = options.branch ?? worktree.branch;
-  if (branch) {
-    const workspaceRoot = await workspaceGitRoot(workspace);
-    await runGitResult(workspaceRoot, ["branch", "-D", branch]);
-  }
-  return "removed";
 }
 
 export async function openWorkspaceWorktree(

@@ -32,9 +32,8 @@ export type Child = {
   /** The reporter that reports this child's later answers, which no parent message caused. */
   follower?: TaskId;
   /**
-   * The worktree this child runs in, when its spawn asked for one. `created` marks the ones this
-   * spawn made: they are removed again when the child ends with nothing to review, while an
-   * adopted one always stays.
+   * The worktree this child runs in, when its spawn asked for one. Nothing removes it while the
+   * child works: landing takes it, or Oppi's daily cleanup once it is clean, landed, and unused.
    */
   worktree?: SubagentWorktree;
 };
@@ -46,10 +45,6 @@ export type SubagentWorktree = {
   branch: string | null;
   /** The commit it branched from; commits ahead are counted from it. */
   base: string;
-  /** This spawn created it (so it is a cleanup candidate), rather than adopting it. */
-  created: boolean;
-  /** Already removed once the child ended with nothing in it: a rerun must not remove again. */
-  released?: boolean;
 };
 
 /** The children of a conversation by name, and which spawn call made which, so a rerun finds it. */

@@ -196,9 +196,11 @@ export type DurableToolNarrowing = {
 const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["read", "bash"]);
 
 /**
- * The child's tools: those the parent offers and the child's own policy allows, then the
- * spawn's `tools`/`excludeTools`/`readOnly`. The document's policy becomes the exact resulting
- * list, so a tool the child gains at a later attach is still filtered by it.
+ * The child's tools: those the parent offers and the child's own policy allows, then the spawn's
+ * ask. `tools` and `readOnly` name an exact set (together, only their intersection), so the
+ * document's policy becomes that allow list. `excludeTools` alone only adds exclusions: the
+ * policy keeps its shape, so a tool the child gets later, such as an MCP or `notify` tool that
+ * only exists at attach, is not dropped for being outside a list nobody asked for.
  */
 function narrowTools(
   tools: readonly ToolRegistration[],
@@ -206,20 +208,26 @@ function narrowTools(
   narrowing: DurableToolNarrowing,
 ): { tools: ToolRegistration[]; policy: DurableToolPolicy } {
   const offered = new Set(narrowing.parentTools);
+  const named = narrowing.tools === undefined ? undefined : new Set(narrowing.tools);
   const wanted = narrowing.readOnly
-    ? READ_ONLY_TOOL_NAMES
-    : narrowing.tools
-      ? new Set(narrowing.tools)
-      : undefined;
-  const excluded = new Set(narrowing.excludeTools ?? []);
+    ? named
+      ? new Set([...READ_ONLY_TOOL_NAMES].filter((name) => named.has(name)))
+      : READ_ONLY_TOOL_NAMES
+    : named;
+  const excluded = [...new Set([...(policy?.excluded ?? []), ...(narrowing.excludeTools ?? [])])];
   const kept = tools.filter(
     (tool) =>
       offered.has(tool.name) &&
       toolAllowed(policy, tool.name) &&
       (wanted === undefined || wanted.has(tool.name)) &&
-      !excluded.has(tool.name),
+      !excluded.includes(tool.name),
   );
-  return { tools: kept, policy: { allowed: kept.map((tool) => tool.name) } };
+  return {
+    tools: kept,
+    policy: wanted
+      ? { allowed: kept.map((tool) => tool.name) }
+      : { ...policy, ...(excluded.length ? { excluded } : {}) },
+  };
 }
 
 /**

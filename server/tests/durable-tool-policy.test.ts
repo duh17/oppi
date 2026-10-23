@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defineExtension } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { resolveDurableAgent, type DurableToolNarrowing } from "../src/durable-agent.js";
+import {
+  resolveDurableAgent,
+  toolAllowed,
+  type DurableToolNarrowing,
+} from "../src/durable-agent.js";
 import { DurableMcp } from "../src/durable-mcp.js";
 import { bindOppiHost } from "../src/durable-extension-api.js";
 import { sandboxHost } from "../src/durable-sandbox-host.js";
@@ -72,10 +76,40 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
       "read",
     ]);
     expect(toolsFor({}, { parentTools: ["read", "ask"], excludeTools: ["ask"] })).toEqual(["read"]);
-    // readOnly outranks a wider `tools` list.
+    // readOnly and tools intersect: readOnly never adds the tools the caller did not name.
     expect(
-      toolsFor({}, { parentTools: ["read", "bash", "ask"], tools: ["ask"], readOnly: true }),
-    ).toEqual(["bash", "read"]);
+      toolsFor(
+        {},
+        { parentTools: ["read", "bash", "ask"], tools: ["read", "ask"], readOnly: true },
+      ),
+    ).toEqual(["read"]);
+  });
+
+  it("excludeTools removes only what it names, so a later MCP tool is not dropped", () => {
+    const narrow: DurableToolNarrowing = {
+      parentTools: ["read", "write", "ask"],
+      excludeTools: ["write"],
+    };
+    expect(toolsFor({}, narrow)).toEqual(["ask", "read"]);
+    const { change, doc } = resolveDurableAgent({
+      narrow,
+      runtime: "sandbox",
+      base: [CodingTools, DurableSandboxTools, DurableAsk],
+      loaded: [],
+      classic: { bundled: new Set(), names: new Map() },
+      enabled: () => true,
+      sessions: defineExtension({ name: "oppi.sessions" }),
+      spawn: false,
+      grant: false,
+      notify: defineExtension({ name: "oppi.notify" }),
+      notifies: false,
+    });
+    expect(change.tools.map((tool) => tool.name).sort()).toEqual(["ask", "read"]);
+    // The policy is not an allow list: a tool this session only gets at attach still passes.
+    expect(doc.tools).toEqual({ excluded: ["write"] });
+    expect(toolAllowed(doc.tools, "write")).toBe(false);
+    expect(toolAllowed(doc.tools, "mcp_echo_run")).toBe(true);
+    expect(toolAllowed(doc.tools, "notify")).toBe(true);
   });
 
   it("stores the narrowed list as the tool policy, so a later attach cannot widen it", async () => {

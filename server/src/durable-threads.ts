@@ -16,7 +16,6 @@ import type {
   ResolvedSubagent,
   SessionSender,
   SubagentRequest,
-  SubagentWorktreeBinding,
   SubagentWorktreePlan,
   SubagentWorktreeRequest,
 } from "./durable-extension-api.js";
@@ -43,7 +42,6 @@ import {
   ensureWorkspaceWorktree,
   headCommit,
   listWorkspaceWorktrees,
-  releaseCleanWorkspaceWorktree,
   resolveCreateBase,
   resolveWorkspaceWorktree,
   subagentWorktreeBranch,
@@ -88,9 +86,18 @@ export interface DurableThreadsDeps {
 /** Owner edges a subtree check follows at most; spawning nests far less deep. */
 const MAX_THREAD_DEPTH = 64;
 
+/** A `"new"` branch a spawn planned but never provisioned is free again after this. */
+const HELD_BRANCH_MAX_AGE_MS = 10 * 60_000;
+
 export class DurableThreads {
   /** Concurrent materializations of one child (tool rerun, reporter) share one result. */
   private readonly materializing = new Map<string, Promise<string>>();
+  /**
+   * `"new"` worktree branches held from planning until provisioning, keyed by the tool call that
+   * asked: two spawns can plan at once, and neither may take the other's branch. Entries older
+   * than a call that never provisioned are dropped at the next plan.
+   */
+  private readonly heldBranches = new Map<string, { branch: string; at: number }>();
 
   constructor(private readonly deps: DurableThreadsDeps) {}
 
@@ -134,11 +141,9 @@ export class DurableThreads {
         return this.activate(sessionId, submit);
       },
       resolveAgent: (request, agent) => this.resolveAgent(request, host, caller, agent),
-      planWorktree: (request, name) => this.planWorktree(request, name, host, caller),
-      provisionWorktree: (plan) => this.provisionWorktree(plan, host, caller),
+      planWorktree: (request, name, call) => this.planWorktree(request, name, call, host, caller),
+      provisionWorktree: (plan, options) => this.provisionWorktree(plan, options, host, caller),
       worktreeState: (worktree) => this.worktreeState(worktree),
-      releaseWorktree: (worktree, sessionId) =>
-        this.releaseWorktree(worktree, sessionId, host, caller),
     };
   }
 
@@ -355,12 +360,14 @@ export class DurableThreads {
 
   /**
    * What a spawn's `worktree` asks for, checked before anything runs: a host workspace that is a
-   * git repository, and an adopted id that is one of its worktrees. Reads only; the caller
-   * memoizes the plan before `provisionWorktree` creates anything.
+   * git repository, and an adopted id that is one of its worktrees. A `"new"` branch stays held
+   * for `call` until `provisionWorktree`, so a concurrent spawn plans another one. Reads only;
+   * the caller memoizes the plan before anything is created.
    */
   private async planWorktree(
     request: SubagentWorktreeRequest,
     name: string,
+    call: string,
     host: SessionHost,
     caller: ConversationId,
   ): Promise<SubagentWorktreePlan> {
@@ -387,27 +394,29 @@ export class DurableThreads {
       root.root,
       typeof request === "string" ? undefined : request.base,
     );
-    if (request === "new")
-      return {
-        mode: "create",
-        branch: await availableWorktreeBranch(workspace, subagentWorktreeBranch(name), {
-          dataDir,
-        }),
-        base,
-      };
+    if (request === "new") {
+      const branch = await this.holdBranch(workspace, call, subagentWorktreeBranch(name), dataDir);
+      return { mode: "create", branch, base };
+    }
     const branch = typeof request === "string" ? "" : request.branch.trim();
     if (!branch) throw new Error('worktree needs a branch name or "new"');
     return { mode: "create", branch, base };
   }
 
-  /** Create the planned worktree, or adopt the one its branch (or id) already has. */
+  /**
+   * Create the planned worktree, or take the one `adopt` allows: an explicit branch creates or
+   * adopts, while a `"new"` branch is only ever taken back when this same call planned and made
+   * it before a crash.
+   */
   private async provisionWorktree(
     plan: SubagentWorktreePlan,
+    options: { call: string; adopt: boolean },
     host: SessionHost,
     caller: ConversationId,
-  ): Promise<SubagentWorktreeBinding> {
+  ): Promise<SubagentWorktree> {
     const { workspace } = await this.worktreeCaller(host, caller);
     const dataDir = this.deps.storage.getDataDir();
+    this.heldBranches.delete(options.call);
     if (plan.mode === "adopt") {
       const worktree = await resolveWorkspaceWorktree(workspace, plan.id, { dataDir });
       if (!worktree) throw new Error(`Worktree ${plan.id} is no longer available`);
@@ -417,12 +426,15 @@ export class DurableThreads {
         branch: worktree.branch,
         // An adopted worktree has no base of ours: its own HEAD is where this child starts.
         base: (await headCommit(worktree.path)) ?? "",
-        created: false,
       };
     }
     const existing = (await listWorkspaceWorktrees(workspace, { dataDir })).find(
       (worktree) => !worktree.isMain && worktree.branch === plan.branch,
     );
+    if (existing && !options.adopt)
+      throw new Error(
+        `Worktree branch ${plan.branch} appeared while this spawn was planning; retry it`,
+      );
     const worktree =
       existing ??
       (await ensureWorkspaceWorktree(
@@ -439,8 +451,49 @@ export class DurableThreads {
       path: worktree.path,
       branch: worktree.branch,
       base: plan.base,
-      created: existing === undefined,
     };
+  }
+
+  /**
+   * The first free branch from `base` this call may take, held until it provisions. The claim is
+   * synchronous and comes first, so two spawns planning at once cannot both choose one branch;
+   * the git check then only moves the claim on when the checkout already has that name.
+   */
+  private async holdBranch(
+    workspace: Workspace,
+    call: string,
+    base: string,
+    dataDir: string,
+  ): Promise<string> {
+    const now = Date.now();
+    for (const [key, held] of this.heldBranches)
+      if (key !== call && now - held.at > HELD_BRANCH_MAX_AGE_MS) this.heldBranches.delete(key);
+    let start = base;
+    for (let round = 0; round < 99; round += 1) {
+      const claimed = this.claimBranch(call, start);
+      const free = await availableWorktreeBranch(workspace, claimed, {
+        dataDir,
+        reservedWorktreeIds: this.reservedWorktreeIds(workspace.id),
+      });
+      if (free === claimed) return free;
+      // The checkout already has that name: claim the one the check moved on to.
+      start = free;
+    }
+    throw new Error(`No free branch name for ${base}`);
+  }
+
+  /** Claim the next branch from `start` no other call holds, synchronously. */
+  private claimBranch(call: string, start: string): string {
+    for (let attempt = 1; attempt <= 99; attempt += 1) {
+      const candidate = attempt === 1 ? start : `${start}-${attempt}`;
+      const holder = [...this.heldBranches].find(
+        ([key, held]) => key !== call && held.branch === candidate,
+      );
+      if (holder) continue;
+      this.heldBranches.set(call, { branch: candidate, at: Date.now() });
+      return candidate;
+    }
+    throw new Error(`No free branch name for ${start}`);
   }
 
   /** One compact line of where a child's worktree stands: branch, id, path, ahead, clean/dirty. */
@@ -455,35 +508,6 @@ export class DurableThreads {
       ahead === 1 ? "1 commit ahead" : `${ahead} commits ahead`,
       dirty ? "dirty" : "clean",
     ].join(" \u00b7 ");
-  }
-
-  /**
-   * Remove a worktree this spawn created when its child ends with nothing to review, and its
-   * branch. A worktree another Session still runs in, one with changes or commits, and one the
-   * spawn adopted all stay.
-   */
-  private async releaseWorktree(
-    worktree: SubagentWorktree,
-    sessionId: string | undefined,
-    host: SessionHost,
-    caller: ConversationId,
-  ): Promise<"removed" | "kept" | "missing"> {
-    if (!worktree.created) return "kept";
-    const { workspace } = await this.worktreeCaller(host, caller);
-    // A nested child inherits its parent's worktree: it keeps the tree in use.
-    const inUse = this.deps.storage
-      .listAllWorkspaceSessionSnapshots(workspace.id, worktree.id)
-      .some(
-        (session) =>
-          session.id !== sessionId && session.status !== "stopped" && session.status !== "error",
-      );
-    if (inUse) return "kept";
-    return releaseCleanWorkspaceWorktree(workspace, {
-      dataDir: this.deps.storage.getDataDir(),
-      worktreeId: worktree.id,
-      ...(worktree.base ? { base: worktree.base } : {}),
-      branch: worktree.branch,
-    });
   }
 
   /** The Session bound to `child`, a conversation of `storeId`; created and attached on first use. */

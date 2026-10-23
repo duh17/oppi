@@ -1391,21 +1391,17 @@ describe("durable-native threads", () => {
     expect(gitIn(f.repo, ["branch", "--list", "subagent/worker"])).toContain("subagent/worker");
   });
 
-  it("removes an untouched worktree when its child ends, and keeps an adopted one", async () => {
-    let adoptedId = "";
+  it("keeps a worktree child's checkout so a later message still runs there", async () => {
     const f = await fixture(
       model(async ({ last, text }) => {
         const toolName = (last as { toolName?: string }).toolName;
+        if (toolName === "bash") return fauxAssistantMessage("CHILD_OK");
         if (toolName === "subagent") return fauxAssistantMessage("PARENT_DONE");
-        if (text.includes("Spawn Quiet"))
+        if (text.includes("Spawn"))
           return spawnCall({ name: "Quiet", task: "QUIET_TASK", worktree: "new" });
-        if (text.includes("Review it"))
-          return spawnCall({
-            name: "Reviewer",
-            task: "REVIEW_TASK",
-            worktree: adoptedId,
-            wait: true,
-          });
+        if (text.includes("Again"))
+          return subagentCall("send", { name: "Quiet", message: "AGAIN_TASK" });
+        if (text.includes("AGAIN_TASK")) return toolCall("bash", { command: "pwd" });
         return fauxAssistantMessage("CHILD_OK");
       }),
       { git: true },
@@ -1413,35 +1409,99 @@ describe("durable-native threads", () => {
     await f.manager.startSession(f.parent.id, f.workspace);
     const harness = await f.harness();
     const parentConversation = conversationOf(f.storage, f.parent);
-    await f.manager.sendPrompt(f.parent.id, "Spawn Quiet");
+    await f.manager.sendPrompt(f.parent.id, "Spawn it");
     await until(
       async () => (await reports(harness, parentConversation)).length === 1,
-      "the quiet child's report",
+      "the child's report",
     );
-    // A background child that wrote nothing: its worktree and branch are gone.
+    // Its first answer wrote nothing, and nothing takes the checkout away: the worktree and
+    // the branch are still there for the correction that may follow.
     const quiet = f.storage.listSessions().find((session) => session.name === "Quiet")!;
-    expect(quiet.worktreeId).toMatch(/^wt_/);
-    // The catalog hides a worktree while its removal runs: the branch goes last.
-    await until(
-      () => gitIn(f.repo, ["branch", "--list", "subagent/quiet"]) === "",
-      "the untouched worktree and its branch to be removed",
-    );
-    expect(await listWorkspaceWorktrees(f.workspace, { dataDir: f.dir })).toHaveLength(1);
+    const worktree = (await listWorkspaceWorktrees(f.workspace, { dataDir: f.dir })).find(
+      (candidate) => candidate.id === quiet.worktreeId,
+    )!;
+    expect(worktree.branch).toBe("subagent/quiet");
+    expect(existsSync(worktree.path)).toBe(true);
     await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
 
-    // An adopted worktree is never removed, whatever the child did.
-    const adopted = await createWorkspaceWorktree(
-      f.workspace,
-      { branch: "review/given" },
-      { dataDir: f.dir },
+    await f.manager.sendPrompt(f.parent.id, "Again please");
+    await until(
+      async () =>
+        (await userTexts(harness, parentConversation)).some((text) =>
+          text.includes("could not start:"),
+        ) === false && (await toolResults(harness, conversationOf(f.storage, quiet))).length === 1,
+      "the follow-up run in the child's worktree",
     );
-    adoptedId = adopted.id;
-    await f.manager.sendPrompt(f.parent.id, "Review it");
-    await until(async () => (await toolResults(harness, parentConversation)).length === 2, "adopt");
-    expect(existsSync(adopted.path)).toBe(true);
-    expect(
-      (await listWorkspaceWorktrees(f.workspace, { dataDir: f.dir })).map((tree) => tree.id),
-    ).toContain(adopted.id);
+    // The correction ran in the same checkout, not in the parent's.
+    expect((await toolResults(harness, conversationOf(f.storage, quiet)))[0]!.text.trim()).toBe(
+      worktree.path,
+    );
+    expect(existsSync(worktree.path)).toBe(true);
+    expect(gitIn(f.repo, ["status", "--porcelain"])).toBe("");
+  });
+
+  it("gives concurrent spawns of one name distinct worktrees", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        const toolName = (last as { toolName?: string }).toolName;
+        if (toolName === "subagent") return fauxAssistantMessage("PARENT_DONE");
+        if (text.includes("Twins"))
+          return fauxAssistantMessage(
+            [
+              fauxToolCall("subagent", {
+                action: "spawn",
+                name: "Twin",
+                task: "TWIN_A",
+                worktree: "new",
+                wait: true,
+              }),
+              fauxToolCall("subagent", {
+                action: "spawn",
+                name: "twin",
+                task: "TWIN_B",
+                worktree: "new",
+                wait: true,
+              }),
+            ],
+            { stopReason: "toolUse" },
+          );
+        return fauxAssistantMessage("CHILD_OK");
+      }),
+      { git: true },
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await f.manager.sendPrompt(f.parent.id, "Twins, please");
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await until(
+      async () => (await toolResults(harness, parentConversation)).length === 2,
+      "both spawns",
+    );
+    const children = f.storage
+      .listSessions()
+      .filter((session) => session.id !== f.parent.id)
+      .sort((lhs, rhs) => (lhs.name < rhs.name ? -1 : 1));
+    // Both names slug to `subagent/twin`; each spawn holds its branch, so neither takes the
+    // other's checkout.
+    expect(children.map((session) => session.name)).toEqual(["Twin", "twin"]);
+    expect(new Set(children.map((session) => session.worktreeId)).size).toBe(2);
+    const worktrees = await listWorkspaceWorktrees(f.workspace, { dataDir: f.dir });
+    const branches = worktrees
+      .filter((tree) => !tree.isMain)
+      .map((tree) => tree.branch)
+      .sort();
+    expect(branches).toEqual(["subagent/twin", "subagent/twin-2"]);
+    const paths: string[] = [];
+    for (const session of children) {
+      const worktree = worktrees.find((tree) => tree.id === session.worktreeId)!;
+      expect(worktree.path).toContain(join("worktrees", f.workspace.id));
+      // Each child was bound to its own checkout, not to the one the other spawn made.
+      expect(
+        (await harness.snapshot(AgentDoc, conversationOf(f.storage, session), context))?.cwd,
+      ).toBe(worktree.path);
+      paths.push(worktree.path);
+    }
+    expect(new Set(paths).size).toBe(2);
   });
 
   it("lists a worktree child's branch, commits ahead, and dirt", async () => {

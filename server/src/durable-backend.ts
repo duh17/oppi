@@ -505,9 +505,10 @@ export class DurableBackend implements AgentBackend {
           "A bound server durable session cannot switch execution runtime or sandbox workspace",
         );
       conversation = existing;
-      // The Session row's work root, not the document, decides where a bound conversation
-      // runs: a session that rebound to another checkout must not keep writing in the old one.
-      if (!sandbox) {
+      // A session bound to a worktree runs where the row says: one that moved off a removed
+      // worktree must not keep writing in the old checkout. Main-checkout sessions keep the cwd
+      // their conversation stored (a missing workspace resolves to $HOME and must not be written).
+      if (session.worktreeId) {
         const stored = await harness.snapshot(AgentDoc, existing.id, BACKGROUND_CONTEXT);
         if (stored?.cwd !== cwd)
           await conversation.commit(async (tx) => {

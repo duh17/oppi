@@ -170,16 +170,6 @@ export type SubagentWorktreeRequest =
 export type SubagentWorktreePlan =
   { mode: "adopt"; id: string } | { mode: "create"; branch: string; base: string };
 
-/** The worktree a spawn bound its child to. */
-export interface SubagentWorktreeBinding {
-  id: string;
-  path: string;
-  branch: string | null;
-  base: string;
-  /** This spawn created it, so it is a cleanup candidate once the child ends. */
-  created: boolean;
-}
-
 /** A spawn the host resolved: how the child conversation is configured. */
 export interface ResolvedSubagent {
   /** The saved Agent's name, for `list`. */
@@ -191,7 +181,7 @@ export interface ResolvedSubagent {
    * `oppi.agent` documents, so it never exists unconfigured; plus, for a worktree spawn, where
    * it runs.
    */
-  apply(tx: Tx, child: ConversationId, worktree?: SubagentWorktreeBinding): Promise<void>;
+  apply(tx: Tx, child: ConversationId, worktree?: SubagentWorktree): Promise<void>;
 }
 
 /**
@@ -246,21 +236,26 @@ export interface DurableSessionsHost {
   resolveAgent(request: SubagentRequest, agent: Agent): Promise<ResolvedSubagent>;
   /**
    * Check a spawn's `worktree` and return what to provision: it must be a host workspace that is
-   * a git repository, and an adopted id must be a worktree of it. Reads only.
+   * a git repository, and an adopted id must be a worktree of it. A `"new"` name stays held for
+   * `call` until `provisionWorktree`, so concurrent spawns cannot plan the same branch. Reads
+   * only.
    */
-  planWorktree(request: SubagentWorktreeRequest, name: string): Promise<SubagentWorktreePlan>;
-  /** Create or adopt the planned worktree. Idempotent: the same plan adopts what it made. */
-  provisionWorktree(plan: SubagentWorktreePlan): Promise<SubagentWorktreeBinding>;
+  planWorktree(
+    request: SubagentWorktreeRequest,
+    name: string,
+    call: string,
+  ): Promise<SubagentWorktreePlan>;
+  /**
+   * Create the planned worktree and release the name `call` held. `adopt` takes the worktree a
+   * crashed earlier attempt of the same call made; without it, a worktree this spawn did not
+   * create is never adopted.
+   */
+  provisionWorktree(
+    plan: SubagentWorktreePlan,
+    options: { call: string; adopt: boolean },
+  ): Promise<SubagentWorktree>;
   /** One compact line of a child's worktree state, or undefined when it has none. */
   worktreeState(worktree: SubagentWorktree): Promise<string | undefined>;
-  /**
-   * Remove a worktree this spawn created when the child ends with nothing to review (clean, and
-   * no commit past its base). Anything else stays, and so does an adopted worktree.
-   */
-  releaseWorktree(
-    worktree: SubagentWorktree,
-    sessionId: string | undefined,
-  ): Promise<"removed" | "kept" | "missing">;
 }
 
 // --- control (`oppi.control`) ----------------------------------------------------------------
