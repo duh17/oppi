@@ -116,9 +116,27 @@ final class ChatFilePanelViewController: UIViewController {
     private var allBrowser: FileBrowserViewController?
     private var changedSearchText = ""
     private var allSearchText = ""
-    private var allChrome = FileBrowserEmbeddedChrome(title: String(localized: "Files"), showsInlineBack: false)
+    private var allChrome = FileBrowserEmbeddedChrome.allRoot
     private var lastThemeID: ThemeID?
     private var barKey: BarKey?
+    private lazy var backItem: UIBarButtonItem = {
+        let item = UIBarButtonItem(
+            title: String(localized: "Back"),
+            image: UIImage(systemName: "chevron.left"),
+            primaryAction: UIAction { [weak self] _ in self?.allBrowser?.showParentDirectory() }
+        )
+        item.accessibilityIdentifier = "fileBrowser.inlineBack"
+        return item
+    }()
+    private lazy var forwardItem: UIBarButtonItem = {
+        let item = UIBarButtonItem(
+            title: String(localized: "Forward"),
+            image: UIImage(systemName: "chevron.right"),
+            primaryAction: UIAction { [weak self] _ in self?.allBrowser?.showForwardDirectory() }
+        )
+        item.accessibilityIdentifier = "fileBrowser.inlineForward"
+        return item
+    }()
 
     init(
         root: AppRootEnvironment,
@@ -263,7 +281,7 @@ final class ChatFilePanelViewController: UIViewController {
             changedList = list
         case .all:
             allSearchText = ""
-            allChrome = FileBrowserEmbeddedChrome(title: String(localized: "Files"), showsInlineBack: false)
+            allChrome = .allRoot
             if let workspaceId = inputs.workspaceId {
                 let browser = Self.makeAllFilesBrowser(
                     root: root,
@@ -339,34 +357,29 @@ final class ChatFilePanelViewController: UIViewController {
         setNeedsUpdateProperties()
     }
 
-    /// "Files" over the panel, or the All tab's folder; Done, and the All
-    /// tab's Back to the parent folder; each tab's search in the bar.
+    /// "Files" over the panel, or the All tab's folder; Done leading; the
+    /// All tab's Back and Forward trailing, always there while it browses
+    /// folders and disabled when there is nowhere to go, so the bar holds
+    /// still; each tab's search in the bar.
     private func syncBar(tab: ChatFileBrowserPanelTab, inputs: ChatFilePanelInputs) {
         let browsesFolders = tab == .all && inputs.workspaceId != nil
         let key = BarKey(
             title: browsesFolders ? allChrome.title : String(localized: "Files"),
-            showsInlineBack: browsesFolders && allChrome.showsInlineBack,
+            browsesFolders: browsesFolders,
             themeID: root.themeStore.activeThemeID
         )
         if key != barKey {
             barKey = key
             navigationItem.title = key.title
-            let done = UIBarButtonItem(
+            navigationItem.leftBarButtonItems = [UIBarButtonItem(
                 title: String(localized: "Done"),
                 primaryAction: UIAction { [weak self] _ in self?.onClose() }
-            )
-            var leading = [done]
-            if key.showsInlineBack {
-                let back = UIBarButtonItem(
-                    title: String(localized: "Back"),
-                    image: UIImage(systemName: "chevron.left"),
-                    primaryAction: UIAction { [weak self] _ in self?.allBrowser?.showParentDirectory() }
-                )
-                back.accessibilityIdentifier = "fileBrowser.inlineBack"
-                leading.append(back)
-            }
-            navigationItem.leftBarButtonItems = leading
+            )]
+            // Rightmost first: Back sits left of Forward.
+            navigationItem.rightBarButtonItems = browsesFolders ? [forwardItem, backItem] : nil
         }
+        backItem.isEnabled = browsesFolders && allChrome.canGoBack
+        forwardItem.isEnabled = browsesFolders && allChrome.canGoForward
 
         // Changed and a workspace's All search; All without a workspace has
         // nothing to search.
@@ -399,7 +412,7 @@ final class ChatFilePanelViewController: UIViewController {
 
     private struct BarKey: Equatable {
         let title: String
-        let showsInlineBack: Bool
+        let browsesFolders: Bool
         let themeID: ThemeID
     }
 
@@ -414,6 +427,13 @@ final class ChatFilePanelViewController: UIViewController {
             worktreeId = inputs.worktreeId
             serverId = inputs.serverId
         }
+    }
+}
+
+private extension FileBrowserEmbeddedChrome {
+    /// The All tab before its browser reports: the workspace root.
+    static var allRoot: Self {
+        Self(title: String(localized: "Files"), canGoBack: false, canGoForward: false)
     }
 }
 

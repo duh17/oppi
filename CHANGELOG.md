@@ -55,6 +55,7 @@ Example:
 ### Changed
 
 - **Client:** A workspace's Git status moves from the strip over its session list to a **Git** button in the top bar, beside Terminal, with the changed-file count like a chat's. It opens the Git panel as a sheet. See [Git panel](docs/usage.md#git-panel).
+- **Client:** The chat Files panel's All tab puts folder Back and Forward together on the trailing side, away from Done. Forward goes back down the folders you backed out of.
 - **Mirror:** `oppi-mirror` uses `ws` 8.22.0, the version `oppi-server` pins.
 - **Server:** A one-time (`at`) schedule moves to Archived after its run succeeds, so finished one-time schedules leave the Active list. A failed run keeps it active so you can see the failure and run it again.
 - **Server:** A durable session's streaming tool call reaches the app once: the server resolves its arguments and sends them a single time instead of also sending the provider's raw streaming text, and the answer in flight carries only the fields the app shows. A long call such as writing a large file sends roughly 30% fewer bytes while it streams.

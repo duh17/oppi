@@ -24,7 +24,10 @@ struct FileBrowserServices {
 /// reach that screen's bar, so the panel applies it.
 struct FileBrowserEmbeddedChrome: Equatable {
     var title: String
-    var showsInlineBack: Bool
+    /// Back opens the parent folder.
+    var canGoBack: Bool
+    /// Forward opens the next folder down the trail Back left.
+    var canGoForward: Bool
 }
 
 /// The keyed markdown viewport store the tree pane and pushed readers share,
@@ -201,10 +204,17 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         setSearchText(searchText)
     }
 
-    /// The panel's inline Back: the parent folder.
+    /// The panel's Back: the parent folder.
     func showParentDirectory() {
-        guard showsInlineBack else { return }
+        guard canGoBack else { return }
         popToBreadcrumbDepth(max(0, currentDepth - 1))
+    }
+
+    /// The panel's Forward: one folder deeper along the trail Back (or a
+    /// breadcrumb) left.
+    func showForwardDirectory() {
+        guard let path = forwardDirectoryPath else { return }
+        openDirectory(path: path)
     }
 
     // MARK: Lifecycle
@@ -520,8 +530,16 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         return state.selectedFile == nil ? .list : .selectedFile
     }
 
-    private var showsInlineBack: Bool {
+    private var canGoBack: Bool {
         usesInlineCompactNavigation && !isRoot && state.selectedFile == nil
+    }
+
+    /// The trail's next folder below this one, while the trail runs deeper.
+    private var forwardDirectoryPath: String? {
+        guard usesInlineCompactNavigation, state.selectedFile == nil,
+              let trail = state.forwardTrailPath,
+              trail != currentDirectoryPath, trail.hasPrefix(currentDirectoryPath) else { return nil }
+        return Self.directoryPrefix(of: trail, depth: currentDepth + 1)
     }
 
     private var trimmedQuery: String {
@@ -759,6 +777,13 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     private func showDirectoryInPlace(_ mutation: FileBrowserTreeNavigationMutation) {
         var next = state
+        if usesInlineCompactNavigation {
+            // Moving up keeps the deepest folder for Forward; opening a folder
+            // off that trail starts a new one.
+            let path = mutation.treeDirectoryPath
+            let trail = state.forwardTrailPath ?? currentDirectoryPath
+            next.forwardTrailPath = trail.hasPrefix(path) ? trail : path
+        }
         next.treeDirectoryPath = mutation.treeDirectoryPath
         next.selectedFile = mutation.selectedFile
         next.error = nil
@@ -793,8 +818,13 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     }
 
     private func breadcrumbPath(for depth: Int) -> String {
+        Self.directoryPrefix(of: currentDirectoryPath, depth: depth)
+    }
+
+    /// The folder `depth` segments into `path`: "" for the root, else "a/b/".
+    private static func directoryPrefix(of path: String, depth: Int) -> String {
         guard depth > 0 else { return "" }
-        let trimmed = currentDirectoryPath.hasSuffix("/") ? String(currentDirectoryPath.dropLast()) : currentDirectoryPath
+        let trimmed = path.hasSuffix("/") ? String(path.dropLast()) : path
         let parts = trimmed.split(separator: "/").prefix(depth).map(String.init)
         guard !parts.isEmpty else { return "" }
         return parts.joined(separator: "/") + "/"
@@ -1629,7 +1659,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private func syncBars(layout: Layout) {
         let title = barTitle
         guard isShellRoute else {
-            let chrome = FileBrowserEmbeddedChrome(title: title, showsInlineBack: showsInlineBack)
+            let chrome = FileBrowserEmbeddedChrome(
+                title: title,
+                canGoBack: canGoBack,
+                canGoForward: forwardDirectoryPath != nil
+            )
             if chrome != lastChrome {
                 lastChrome = chrome
                 onEmbeddedChromeChange?(chrome)
@@ -1748,6 +1782,9 @@ private extension FileBrowserViewController {
         var treeDirectoryPath: String?
         var selectedFile: FileBrowserSelection?
         var didRecordColumnRoute = false
+        /// The chat panel's deepest folder on the current branch, where
+        /// Forward leads back to.
+        var forwardTrailPath: String?
     }
 
     enum Section: Hashable {
