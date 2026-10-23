@@ -624,7 +624,7 @@ final class ChatJumpToBottomView: UIView {
         super.updateProperties()
         guard let chat else { return }
         let visible = chat.scrollController.isJumpToBottomHintVisible
-        let busy = chat.isBusy
+        let busy = chat.sessionManager.isBusy
         let palette = chat.chromeThemeID.palette
         let provider = UIColor(ProviderColor.color(for: chat.session?.model, palette: palette))
         idleArrow.image = UIImage.scaledSymbol("arrow.down", style: .caption1, weight: .bold, color: UIColor(palette.fg))

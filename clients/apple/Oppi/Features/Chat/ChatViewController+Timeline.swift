@@ -168,14 +168,13 @@ extension ChatViewController {
     // MARK: - Timeline
 
     func makeTimelineConfiguration() -> ChatTimelineConfiguration {
-        let isBusy = isBusy
         let extensionLayout = extensionSurfaceState
         return ChatTimelineConfiguration(
             items: [],
             hiddenCount: 0,
             renderWindowStep: TimelineRenderWindowPolicy.renderWindowStep,
-            isBusy: isBusy,
-            showsWorkingIndicator: isBusy && (extensionLayout.working?.visible ?? true),
+            // Busy is not chrome: the timeline reads `sessionManager.isBusy` on
+            // every apply so it lands with the rows.
             streamingAssistantID: nil,
             sessionId: sessionId,
             serverId: resolvedServerId,
@@ -222,13 +221,12 @@ extension ChatViewController {
     }
 
     /// Pushes chrome to the timeline when a value it shows changed. Streaming
-    /// is not this clock: the timeline observes the reducer itself, and this
-    /// never reads `reducer.items`.
+    /// and busy are not this clock: the timeline observes the reducer and the
+    /// session runtime itself, and this never reads `reducer.items`.
     func updateTimelineChrome() {
         guard let timelineView else { return }
         let extensionLayout = extensionSurfaceState
         let key = ChatTimelineChromeKey(
-            isBusy: isBusy,
             workingVisible: extensionLayout.working?.visible,
             hiddenThinkingLabel: extensionLayout.hiddenThinkingLabel,
             serverId: resolvedServerId,
@@ -253,7 +251,6 @@ extension ChatViewController {
 }
 
 struct ChatTimelineChromeKey: Equatable {
-    let isBusy: Bool
     let workingVisible: Bool?
     let hiddenThinkingLabel: String?
     let serverId: String?

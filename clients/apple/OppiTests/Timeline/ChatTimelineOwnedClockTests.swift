@@ -482,7 +482,9 @@ struct ChatTimelineOwnedClockTests {
     }
 
     @Test func quietProjectionAndSettledEndsLiveOnController() async {
+        let manager = ChatSessionManager(sessionId: "owned-quiet")
         let windowed = makeWindowedTimelineHarness(sessionId: "owned-quiet")
+        bindSessionStatus(.busy, sessionManager: manager, connection: windowed.connection)
         windowed.reducer.processBatch([
             .agentStart(sessionId: "owned-quiet"),
             .thinkingDelta(sessionId: "owned-quiet", delta: "plan"),
@@ -497,7 +499,6 @@ struct ChatTimelineOwnedClockTests {
 
         let busy = makeTimelineConfiguration(
             items: [],
-            isBusy: true,
             sessionId: windowed.sessionId,
             reducer: windowed.reducer,
             toolOutputStore: windowed.reducer.toolOutputStore,
@@ -507,7 +508,8 @@ struct ChatTimelineOwnedClockTests {
             scrollController: windowed.scrollController,
             audioPlayer: windowed.audioPlayer,
             ownsTimelineProjection: true,
-            quietModeEnabled: true
+            quietModeEnabled: true,
+            sessionManager: manager
         )
         windowed.coordinator.updateHostChrome(configuration: busy, to: windowed.collectionView)
 
@@ -519,23 +521,13 @@ struct ChatTimelineOwnedClockTests {
         #expect(folded)
         #expect(windowed.coordinator.ownedQuietSettledEndsForTesting.isEmpty)
 
-        let idle = makeTimelineConfiguration(
-            items: [],
-            isBusy: false,
-            sessionId: windowed.sessionId,
-            reducer: windowed.reducer,
-            toolOutputStore: windowed.reducer.toolOutputStore,
-            toolArgsStore: windowed.reducer.toolArgsStore,
-            toolSegmentStore: windowed.reducer.toolSegmentStore,
-            connection: windowed.connection,
-            scrollController: windowed.scrollController,
-            audioPlayer: windowed.audioPlayer,
-            ownsTimelineProjection: true,
-            quietModeEnabled: true
-        )
-        windowed.coordinator.updateHostChrome(configuration: idle, to: windowed.collectionView)
+        // The run ends: the runtime says so and the timeline settles the quiet
+        // work in an apply of its own, with no chrome push.
+        bindSessionStatus(.ready, sessionManager: manager, connection: windowed.connection)
 
-        #expect(!windowed.coordinator.ownedQuietSettledEndsForTesting.isEmpty)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            !windowed.coordinator.ownedQuietSettledEndsForTesting.isEmpty
+        }, "the ended run never settled its quiet work")
         #expect(windowed.coordinator.currentIDs.contains { $0.hasPrefix("quiet-work-line:") })
         #expect(!windowed.coordinator.currentIDs.contains("tool-1"))
     }

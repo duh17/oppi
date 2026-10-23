@@ -168,6 +168,17 @@ final class ChatSessionManager {
         return tracePage?.hasOlder == true && tracePage?.olderCursor != nil
     }
 
+    /// The one busy rule for this chat, read by the timeline, composer, stop
+    /// button, and footer: an attached durable replica's `pi.live.run` once this
+    /// socket has shown it, else the session status. The status fallback covers
+    /// the time before a socket's first frame, between sockets, and classic
+    /// sessions, which have no replica. A run that ended on the replica is
+    /// finished even while the session row still says busy.
+    var isBusy: Bool {
+        if let running = conversationStream?.isRunning { return running }
+        return effectsStatePort.session(id: sessionId)?.status.isRunning == true
+    }
+
     /// Test seam: inject a scripted bare message stream to exercise lifecycle
     /// races without opening a real WebSocket. Production streams use
     /// `SessionStreamEvent` so metadata travels in-band.

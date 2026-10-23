@@ -771,6 +771,10 @@ final class OwnedTimelineHostController: UIViewController {
 }
 
 /// What the chat screen hands an owned timeline, with test defaults.
+///
+/// `isBusy` binds the runtime to a session of that status, which is what the
+/// busy owner reads before a durable replica's first frame. Pass nil to leave
+/// the runtime's own state (a scripted stream) as the busy input.
 @MainActor
 func makeOwnedTimelineConfiguration(
     sessionManager: ChatSessionManager,
@@ -778,19 +782,20 @@ func makeOwnedTimelineConfiguration(
     scrollController: ChatScrollController,
     connection: ServerConnection,
     audioPlayer: AudioPlayerService,
-    isBusy: Bool,
+    isBusy: Bool? = nil,
     serverId: String? = nil,
     workspaceId: String? = nil,
     quietModeEnabled: Bool = false,
     topOverlap: CGFloat = 0,
     onOpenChatReader: ((ChatReaderPayload) -> Void)? = nil
 ) -> ChatTimelineConfiguration {
-    ChatTimelineConfiguration(
+    if let isBusy {
+        bindSessionStatus(isBusy ? .busy : .ready, sessionManager: sessionManager, connection: connection)
+    }
+    return ChatTimelineConfiguration(
         items: [],
         hiddenCount: 0,
         renderWindowStep: TimelineRenderWindowPolicy.renderWindowStep,
-        isBusy: isBusy,
-        showsWorkingIndicator: isBusy,
         streamingAssistantID: nil,
         sessionId: sessionManager.sessionId,
         serverId: serverId,
@@ -813,6 +818,31 @@ func makeOwnedTimelineConfiguration(
         quietModeEnabled: quietModeEnabled,
         sessionManager: sessionManager
     )
+}
+
+/// Stores `bindSessionStatus` pointed a runtime at, kept for the test process.
+/// The runtime adapter holds its connection and store weakly, so a fixture's
+/// connection going out of scope must not silently reset the busy owner to idle.
+@MainActor private var retainedTestSessionStores: [SessionStore] = []
+
+/// Points a chat runtime at a connection and a session status, the way the chat
+/// screen does on appear: the busy owner reads that status until a durable
+/// replica's first frame says otherwise.
+@MainActor
+func bindSessionStatus(
+    _ status: SessionStatus,
+    sessionManager: ChatSessionManager,
+    connection: ServerConnection
+) {
+    guard let adapter = sessionManager.historyPort as? IOSChatSessionRuntimeAdapter else {
+        Issue.record("ChatSessionManager was not built with the iOS runtime adapter")
+        return
+    }
+    adapter.bind(connection: connection, sessionStore: connection.sessionStore)
+    connection.sessionStore.upsert(
+        makeTestSession(id: sessionManager.sessionId, workspaceId: "ws-test", status: status)
+    )
+    retainedTestSessionStores.append(connection.sessionStore)
 }
 
 /// A 390×844 window in the test host's scene. UIKit services a controller's

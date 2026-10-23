@@ -33,6 +33,19 @@ final class ChatTimelineOwnedClockState {
         var outlineAvailabilityMutationCount: UInt64 = 0
         var outlinePublicationCompletionGeneration: UInt64 = 0
         var sourceChangeCompletionGeneration: UInt64 = 0
+        /// Off until a test asks: recording allocates per apply. On, it keeps the
+        /// last applies' rows and busy state, bounded so a long run cannot grow it.
+        var isRecordingApplySnapshots = false
+        var applySnapshots: [ChatTimelineOwnedApplySnapshot] = []
+        static let applySnapshotLimit = 64
+
+        func recordApplySnapshot(_ snapshot: ChatTimelineOwnedApplySnapshot) {
+            guard isRecordingApplySnapshots else { return }
+            applySnapshots.append(snapshot)
+            if applySnapshots.count > Self.applySnapshotLimit {
+                applySnapshots.removeFirst(applySnapshots.count - Self.applySnapshotLimit)
+            }
+        }
     #endif
 
     func resetPresentationState() {
@@ -99,6 +112,15 @@ extension ChatTimelineController {
         guard let collectionView = collectionView ?? self.collectionView else { return }
         guard var config = ownedClock.lastConfiguration else { return }
         let reducer = config.reducer
+
+        // Busy is the runtime's answer, read here beside the rows: a frame that
+        // ends a run and the answer it landed then paint in one apply, so the
+        // working indicator never outlives the row it was waiting on.
+        if let sessionManager = config.sessionManager {
+            let isBusy = sessionManager.isBusy
+            config.isBusy = isBusy
+            config.showsWorkingIndicator = isBusy && (config.extensionSurface?.layout.working?.visible ?? true)
+        }
 
         ChatTimelinePerf.recordControllerOwnedApply()
 
@@ -190,6 +212,16 @@ extension ChatTimelineController {
         }
 
         apply(configuration: config, to: collectionView)
+        #if DEBUG
+            ownedClock.recordApplySnapshot(
+                ChatTimelineOwnedApplySnapshot(
+                    itemIDs: config.items.map(\.id),
+                    renderVersion: reducer.renderVersion,
+                    isBusy: config.isBusy,
+                    showsWorkingIndicator: config.showsWorkingIndicator
+                )
+            )
+        #endif
         config.scrollController.itemCount = visibleRows.count
         _ = config.scrollController.consumeHasNewItems()
         updateOwnedEmptyOverlay(
@@ -221,8 +253,27 @@ extension ChatTimelineController {
             ownedClock.outlineAvailabilityPublishedDuringHostUpdate = false
             ownedClock.outlineAvailabilityMutationCount = 0
         }
+
+        var ownedApplySnapshotsForTesting: [ChatTimelineOwnedApplySnapshot] { ownedClock.applySnapshots }
+
+        /// Records this apply and every later one until the test ends.
+        func startRecordingOwnedApplySnapshotsForTesting() {
+            ownedClock.applySnapshots.removeAll()
+            ownedClock.isRecordingApplySnapshots = true
+        }
     #endif
 }
+
+#if DEBUG
+    /// One owned apply: the rows it pushed, the reducer version they came from,
+    /// and the busy state stamped on that same apply.
+    struct ChatTimelineOwnedApplySnapshot {
+        let itemIDs: [String]
+        let renderVersion: Int
+        let isBusy: Bool
+        let showsWorkingIndicator: Bool
+    }
+#endif
 
 extension ChatTimelineController {
     private func startOwnedTimelineObservationIfNeeded() {
@@ -252,6 +303,7 @@ extension ChatTimelineController {
                 _ = sessionManager.needsInitialScroll
                 _ = sessionManager.hasOlderTracePage
                 _ = sessionManager.inlineChildTails
+                _ = sessionManager.isBusy
             }
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
@@ -334,8 +386,8 @@ extension ChatTimelineController {
         to next: ChatTimelineConfiguration
     ) -> Bool {
         guard let previous else { return true }
-        return previous.isBusy != next.isBusy
-            || previous.showsWorkingIndicator != next.showsWorkingIndicator
+        return previous.extensionSurface?.layout.working?.visible
+            != next.extensionSurface?.layout.working?.visible
             || previous.quietModeEnabled != next.quietModeEnabled
             || previous.workStripStyle != next.workStripStyle
             || previous.chromeStyle != next.chromeStyle

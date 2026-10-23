@@ -341,13 +341,8 @@ final class ChatViewController: UIViewController {
         session?.displayTitle ?? "Session \(String(sessionId.prefix(8)))"
     }
 
-    /// An attached durable session is busy exactly while its replica holds `pi.live.run`;
-    /// others, and a durable session between sockets, read the session status.
-    var isBusy: Bool {
-        if let running = sessionManager.conversationStream?.isRunning { return running }
-        return session?.status == .busy || session?.status == .stopping
-    }
-
+    /// A stop the user asked for, or the server's own. Busy is not derived here:
+    /// `sessionManager.isBusy` owns that rule.
     var isStopping: Bool {
         actionHandler.isStopping || session?.status == .stopping
     }

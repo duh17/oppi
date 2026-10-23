@@ -30,8 +30,13 @@ struct ChatTimelineConfiguration {
     var hiddenCount: Int
     var hasOlderServerPage: Bool
     let renderWindowStep: Int
-    let isBusy: Bool
-    let showsWorkingIndicator: Bool
+    /// Stamped by the timeline on every owned apply from `sessionManager.isBusy`,
+    /// beside the rows, so a run ending and its landed answer arrive together.
+    /// Only a host that projects its own rows passes a value here.
+    var isBusy: Bool
+    /// `isBusy` and the extension working surface's visibility. Stamped with
+    /// `isBusy`; the host still pushes when the working surface changes.
+    var showsWorkingIndicator: Bool
     var streamingAssistantID: String?
     /// `TimelineReducer.liveRowIDs`: rows whose content is still being written.
     var liveRowIDs: Set<String> = []
@@ -99,7 +104,7 @@ struct ChatTimelineConfiguration {
         hiddenCount: Int,
         hasOlderServerPage: Bool = false,
         renderWindowStep: Int,
-        isBusy: Bool,
+        isBusy: Bool = false,
         showsWorkingIndicator: Bool? = nil,
         streamingAssistantID: String?,
         sessionId: String,

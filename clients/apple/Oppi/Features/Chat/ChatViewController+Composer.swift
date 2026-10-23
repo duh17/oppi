@@ -723,7 +723,7 @@ extension ChatViewController {
                     uploadedAttachments: attachments
                 )
                 let optimisticImages = sourceAttachments.compactMap(\.imageAttachment)
-                let dispatchIsBusy = self.isBusy
+                let dispatchIsBusy = self.sessionManager.isBusy
                 let sendBehavior = ComposerAutocomplete.streamingBehavior(
                     for: rawTrimmedInput,
                     isBusy: dispatchIsBusy,

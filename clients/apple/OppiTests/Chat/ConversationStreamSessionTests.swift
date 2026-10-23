@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import Oppi
 
 /// A durable session on a server with `capabilities.conversationStream`: the chat runtime
@@ -510,6 +511,135 @@ struct ConversationStreamSessionTests {
         ])))
         #expect(await waitForMainActorCondition { queues.isConversationQueue(sessionId) })
         #expect(queues.queue(for: sessionId).steering.map(\.id) == ["31"])
+        await harness.finish()
+    }
+
+    /// One rule for the whole screen: the replica's run state once this socket has shown
+    /// it, else the session status. A run that ended on the replica is finished even while
+    /// the session row still says busy, and a socket that has shown nothing yet lets the
+    /// status decide.
+    @Test func busyRulePrefersTheReplicaThenFallsBackToTheSessionStatus() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let sessionId = harness.sessionId
+        func setStatus(_ status: SessionStatus) {
+            harness.store.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: status))
+        }
+
+        // Before this socket's first frame, and for a classic session, the status decides.
+        #expect(harness.manager.conversationStream?.isRunning == nil)
+        setStatus(.busy)
+        #expect(harness.manager.isBusy)
+        setStatus(.stopping)
+        #expect(harness.manager.isBusy)
+        setStatus(.ready)
+        #expect(!harness.manager.isBusy)
+
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "go")], docs: [
+            "pi.live": Wire.live(text: "Working"),
+        ])))
+        #expect(await waitForMainActorCondition { harness.manager.isBusy })
+
+        // The replica wins over a session row the server still calls busy.
+        setStatus(.busy)
+        harness.frame(.update(.init(conversationId: 7, entries: [Wire.assistant(2, [Wire.text("Done.")])], docs: [
+            "pi.live": [.replace([:])],
+        ])))
+        #expect(await waitForMainActorCondition { harness.manager.conversationStream?.isRunning == false })
+        #expect(!harness.manager.isBusy, "a run the replica ended is not busy, whatever the session row says")
+
+        // A socket replaced in place reports nothing until its first frame: the status decides.
+        harness.yield(.connected(session: harness.session))
+        _ = try await harness.attach(2)
+        #expect(harness.manager.conversationStream?.isRunning == nil)
+        setStatus(.busy)
+        #expect(harness.manager.isBusy, "between sockets the session status decides")
+        await harness.finish()
+    }
+
+    @Test func classicSessionBusyFollowsTheSessionStatus() async {
+        let harness = Harness(engine: .classic)
+        await harness.connect()
+        #expect(harness.manager.conversationStream == nil)
+        let sessionId = harness.sessionId
+        func setStatus(_ status: SessionStatus) {
+            #expect(harness.store.session(id: sessionId)?.status != status)
+            harness.store.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: status))
+        }
+        setStatus(.busy)
+        #expect(harness.manager.isBusy)
+        setStatus(.stopping)
+        #expect(harness.manager.isBusy)
+        setStatus(.ready)
+        #expect(!harness.manager.isBusy)
+        await harness.finish()
+    }
+
+    /// Busy and the rows share one clock: the frame that ends the run and lands the
+    /// answer stamps `isBusy`/`showsWorkingIndicator` false on the same owned apply that
+    /// shows the answer, with no chrome push behind it.
+    @Test func endedRunReachesTheTimelineInTheApplyThatLandsItsAnswer() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let manager = harness.manager
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "go")], docs: [
+            "pi.live": Wire.live(text: "Working"),
+        ])))
+        #expect(await harness.waitForRows(["1", "pi.live-0-text-0"]))
+
+        let host = OwnedTimelineHostController(configuration: makeOwnedTimelineConfiguration(
+            sessionManager: manager,
+            reducer: manager.reducer,
+            scrollController: ChatScrollController(),
+            connection: harness.connection,
+            audioPlayer: AudioPlayerService(),
+            serverId: "server-test",
+            workspaceId: "w1"
+        ))
+        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.layoutIfNeeded()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let collectionView = try #require(timelineFirstView(ofType: UICollectionView.self, in: host.view))
+        let coordinator = try #require(collectionView.delegate as? ChatTimelineController)
+        // Busy reached the timeline through the runtime's own observation.
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in coordinator.isTimelineBusy })
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            coordinator.currentIDs.contains("pi.live-0-text-0")
+        })
+        coordinator.startRecordingOwnedApplySnapshotsForTesting()
+
+        harness.frame(.update(.init(
+            conversationId: 7,
+            entries: [Wire.assistant(2, [Wire.text("Done.")])],
+            docs: ["pi.live": [.replace([:])]]
+        )))
+        #expect(await harness.waitForCommitted(["1", "2-text-0"]))
+        #expect(await waitForMainActorCondition { harness.assistantText("pi.live-0-text-0") == "Done." })
+        // The landed answer keeps the live row's id; the reducer's version is what
+        // separates the apply that carried it from the streaming applies before it.
+        let landingVersion = manager.reducer.renderVersion
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { @MainActor in
+            coordinator.ownedApplySnapshotsForTesting.contains {
+                $0.renderVersion >= landingVersion && $0.itemIDs.contains("pi.live-0-text-0")
+            }
+        }, "the landed answer never painted")
+
+        let landingApplies = coordinator.ownedApplySnapshotsForTesting
+            .filter { $0.renderVersion >= landingVersion && $0.itemIDs.contains("pi.live-0-text-0") }
+        #expect(!landingApplies.isEmpty, "no tracked apply carried the landed answer")
+        #expect(
+            landingApplies.allSatisfy { !$0.isBusy && !$0.showsWorkingIndicator },
+            "an apply showed the landed answer while the run still read busy"
+        )
         await harness.finish()
     }
 
