@@ -5190,6 +5190,25 @@ extension NativeFullScreenMarkdownBody {
         await asyncRenderTask?.value
         await renderAheadTask?.value
     }
+
+    /// True while a deferred reader pass can still change item heights or
+    /// write the viewport offset: the async document build, a render-ahead
+    /// slice, a queued visible-height flush, a forced item remeasure, or a
+    /// deferred interaction-end layout replace. A test waits on this instead
+    /// of sleeping, because under load those passes land much later than any
+    /// fixed delay and the anchor read races them.
+    var debugHasDeferredReaderWorkForTesting: Bool {
+        sourcePreparationTask != nil
+            || deferredInitialRenderTask != nil
+            || asyncRenderTask != nil
+            || renderAheadTask != nil
+            || pendingHeightFlush
+            || pendingForcedItemRemeasure
+            || pendingLayoutReplaceAfterInteractionRetry
+            || needsDocumentLayoutPreparation
+            || needsLayoutReplaceAfterInteraction
+            || needsVisibleHeightRefreshAfterInteraction
+    }
     var debugAppliedItemCountForTesting: Int { debugAppliedItems.count }
     var debugLayoutReplaceCountForTesting: Int { debugLayoutReplaceCount }
     var debugLayoutReplacementReasonsForTesting: [MarkdownReaderLayoutReplacementReason] {

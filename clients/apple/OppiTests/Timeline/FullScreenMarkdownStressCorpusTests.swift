@@ -627,12 +627,12 @@ struct FullScreenMarkdownStressCorpusTests {
         body.layoutIfNeeded()
         await settleReservedHeights(body)
         await settleReservedHeights(body)
-        try assertCurrentVisibleAnchor(
+        try await assertVisibleAnchorStaysPut(
             in: body,
-            equals: finalAnchor,
+            expected: finalAnchor,
             stage: "gallery settlement after upward drag"
         )
-        try assertReservedHeightsMatchFitting(
+        try await assertReservedHeightsMatchFitting(
             in: body,
             items: [finalMermaidItem],
             stage: "final gallery Mermaid settlement"
@@ -782,7 +782,7 @@ struct FullScreenMarkdownStressCorpusTests {
             "first paint applied the whole document (\(body.debugAppliedItemCountForTesting)/\(body.debugRenderedSegmentCountForTesting))"
         )
 
-        try assertReservedHeightsMatchFitting(
+        try await assertReservedHeightsMatchFitting(
             in: body,
             items: collectionView.indexPathsForVisibleItems.map(\.item),
             stage: "first paint"
@@ -826,7 +826,7 @@ struct FullScreenMarkdownStressCorpusTests {
         ] {
             body.debugScrollItemIntoViewForTesting(item)
             await settleReservedHeights(body)
-            try assertReservedHeightsMatchFitting(in: body, items: [item], stage: stage)
+            try await assertReservedHeightsMatchFitting(in: body, items: [item], stage: stage)
             anchor = try #require(body.debugVisibleAnchorForTesting(), "missing visible anchor after \(stage)")
             try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: stage)
         }
@@ -882,7 +882,7 @@ struct FullScreenMarkdownStressCorpusTests {
         #expect(imageLoaded, "workspace image never settled after first layout")
         body.debugScrollItemIntoViewForTesting(imageItem)
         await settleReservedHeights(body)
-        try assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image settlement")
+        try await assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image settlement")
 
         collectionView.contentOffset.y = max(
             -collectionView.adjustedContentInset.top,
@@ -891,10 +891,12 @@ struct FullScreenMarkdownStressCorpusTests {
                 + collectionView.adjustedContentInset.bottom
         )
         collectionView.layoutIfNeeded()
-        try await Task.sleep(for: .milliseconds(150))
+        // The bottom jump re-displays cells and queues the reader's own
+        // settlement for it; finish that before reusing the image cell.
+        await settleDeferredReaderWork(in: body, stage: "image reuse scroll")
         body.debugScrollItemIntoViewForTesting(imageItem)
         await settleReservedHeights(body)
-        try assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image reuse")
+        try await assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image reuse")
         anchor = try #require(body.debugVisibleAnchorForTesting(), "missing visible anchor after image reuse")
         try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "image reuse")
         #expect(
@@ -1014,7 +1016,12 @@ struct FullScreenMarkdownStressCorpusTests {
         in body: NativeFullScreenMarkdownBody,
         items: [Int],
         stage: String
-    ) throws {
+    ) async throws {
+        // Reserved heights only equal fitting heights once the reader's
+        // deferred passes (visible-height flush, image geometry commit,
+        // forced remeasure) have landed. Wait for that state instead of
+        // assuming a fixed delay covered it.
+        await settleDeferredReaderWork(in: body, stage: stage)
         let uniqueItems = Set(items).sorted()
         #expect(!uniqueItems.isEmpty, "\(stage) had no items to compare")
         for item in uniqueItems {
@@ -1033,14 +1040,47 @@ struct FullScreenMarkdownStressCorpusTests {
         }
     }
 
+    /// Prove a deferred reader pass keeps the visible anchor put.
+    ///
+    /// The anchor is captured before the wait, so this proves the passes the
+    /// reader still owes at that moment (a render-ahead slice, a queued
+    /// visible-height flush, an image geometry commit, a forced remeasure)
+    /// leave the visible item and its screen Y alone. The wait is the reader's
+    /// own "no deferred work left" state, not a delay: a fixed sleep either
+    /// reads mid-pass under load or silently checks nothing.
     private func assertVisibleAnchorStaysPut(
         in body: NativeFullScreenMarkdownBody,
         expected: (item: Int, screenY: CGFloat),
         stage: String
     ) async throws {
-        try await Task.sleep(for: .milliseconds(120))
-        body.debugLayoutVisibleMarkdownCellsForTesting()
+        await settleDeferredReaderWork(in: body, stage: stage)
         try assertCurrentVisibleAnchor(in: body, equals: expected, stage: stage)
+    }
+
+    /// Wait until the reader has no queued or running deferred pass left, then
+    /// take the layout turn UIKit would run next.
+    ///
+    /// The condition is the body's own work state, so this cannot paper over a
+    /// moved anchor: the assertion still runs once, against settled geometry.
+    private func settleDeferredReaderWork(
+        in body: NativeFullScreenMarkdownBody,
+        stage: String,
+        timeoutMs: Int = 5_000
+    ) async {
+        let settled = await waitForTimelineCondition(timeoutMs: timeoutMs) { @MainActor in
+            guard !body.debugHasDeferredReaderWorkForTesting else { return false }
+            // Taking the layout pass can display cells and queue a height
+            // flush of its own, and the reader queues closures on the main
+            // queue that no task handle covers, so re-check after the pass and
+            // after the main queue has drained them.
+            body.debugLayoutVisibleMarkdownCellsForTesting()
+            guard !body.debugHasDeferredReaderWorkForTesting else { return false }
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                DispatchQueue.main.async { continuation.resume() }
+            }
+            return !body.debugHasDeferredReaderWorkForTesting
+        }
+        #expect(settled, "\(stage) still had deferred reader work after \(timeoutMs) ms")
     }
 
     private func assertCurrentVisibleAnchor(
