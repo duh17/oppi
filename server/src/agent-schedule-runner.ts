@@ -1,9 +1,5 @@
 import { cronMatchesNow } from "./agent-schedule-cron.js";
-import {
-  atSlotKey,
-  type AgentSchedule,
-  type AgentScheduleTrigger,
-} from "./agent-schedules.js";
+import { atSlotKey, type AgentSchedule, type AgentScheduleTrigger } from "./agent-schedules.js";
 import { recordScheduleRun } from "./schedule-run-metrics.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {

@@ -363,7 +363,7 @@ const SESSION_NAME_MAX_BYTES = 96;
  */
 function clip(text: string, maxCodePoints: number, maxBytes = Infinity): string {
   const points = Array.from(text).slice(0, maxCodePoints);
-  const jsonBytes = (value: string) => Buffer.byteLength(JSON.stringify(value), "utf8") - 2;
+  const jsonBytes = (value: string): number => Buffer.byteLength(JSON.stringify(value), "utf8") - 2;
   while (points.length > 0 && jsonBytes(points.join("")) > maxBytes) points.pop();
   return points.join("").trim();
 }
