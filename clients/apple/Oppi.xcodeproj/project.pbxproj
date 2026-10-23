@@ -1279,6 +1279,7 @@
 		93BB430F4844F978AF401FD9 /* MacHomeSessionList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 822CD50A6E86FDC8931A86FD /* MacHomeSessionList.swift */; };
 		93C55769AC0E90B3E1E1E8ED /* String+Path.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5A08CDC411F41CBF7121CC4 /* String+Path.swift */; };
 		93F684D0405C5A88D5F37142 /* ServerSettingsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84F5CDD077E7CA4EFD418622 /* ServerSettingsModel.swift */; };
+		948D80BE3EECA6917881E760 /* StreamingSegmentSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA2BB0559D98FBED47D72C8 /* StreamingSegmentSourceTests.swift */; };
 		94C9F32AA4896723E0AC0A0C /* StreamingFlickerPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47CAC8ECD6BD1D7C1B7CF4F0 /* StreamingFlickerPreviewView.swift */; };
 		94EB90868D848721C449B4A8 /* ToolTimelineRowContent+FullScreenActivation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B36A131CB76FEA3D6B6B5501 /* ToolTimelineRowContent+FullScreenActivation.swift */; };
 		95149F324EA5B4EDEE8F671C /* CrossProcessFileLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81B1D557257E0246F9E92149 /* CrossProcessFileLock.swift */; };
@@ -3592,6 +3593,7 @@
 		AC06E2570ABC83D9DF608A12 /* ScheduleListViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleListViewController.swift; sourceTree = "<group>"; };
 		AC07DC076BD473A1B1276EAA /* MacWorkspaceClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWorkspaceClientTests.swift; sourceTree = "<group>"; };
 		AC399D324DD3612A1953272D /* GameOfLifeBenchmark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameOfLifeBenchmark.swift; sourceTree = "<group>"; };
+		ACA2BB0559D98FBED47D72C8 /* StreamingSegmentSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingSegmentSourceTests.swift; sourceTree = "<group>"; };
 		ACC3F681DE7BFDB5229A93E1 /* MacSessionFilePreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionFilePreviewTests.swift; sourceTree = "<group>"; };
 		ACC79E91DB825A9B99333FA1 /* AudioScreenshotPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioScreenshotPreview.swift; sourceTree = "<group>"; };
 		ACFA2F0F3A47DE22F1B1CD32 /* WorkspaceSettingsModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSettingsModelTests.swift; sourceTree = "<group>"; };
@@ -5409,6 +5411,7 @@
 				65AA5864947B95EB7DED7115 /* StreamFinishFormattingTests.swift */,
 				E17BB3114E8F1F1CD4978B42 /* StreamingInlineReparseTests.swift */,
 				1533E5915A7168B793865C61 /* StreamingMarkdownAppendTests.swift */,
+				ACA2BB0559D98FBED47D72C8 /* StreamingSegmentSourceTests.swift */,
 				2D2D1A41291EA1313BB195AC /* TableBodyLeakRegressionTests.swift */,
 				A9F803DDFA51B18E1AE25AB4 /* TimedTextTests.swift */,
 				1902F5B6A921600AE703FCD0 /* WorkspaceFileURLTests.swift */,
@@ -9071,6 +9074,7 @@
 				7CF84720B96BB7FF24D64CA9 /* StreamingMarkdownAppendTests.swift in Sources */,
 				1C7A9F3199635A18374EB679 /* StreamingRenderPolicyResourcePressureTests.swift in Sources */,
 				E5CD1ACD20967FD5B7F628C9 /* StreamingRenderPolicyTests.swift in Sources */,
+				948D80BE3EECA6917881E760 /* StreamingSegmentSourceTests.swift in Sources */,
 				136ADC127D55D11B360F50D8 /* SyntaxHighlightOwnershipTests.swift in Sources */,
 				05C47EF82AF08017E1FC242C /* SyntaxHighlightSchedulingTests.swift in Sources */,
 				47BF1B5BF7C2A810F076F680 /* SyntaxHighlighterTests.swift in Sources */,

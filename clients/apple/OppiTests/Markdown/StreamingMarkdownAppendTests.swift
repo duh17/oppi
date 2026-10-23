@@ -228,23 +228,83 @@ struct StreamingMarkdownAppendTests {
 
     // MARK: - Tail-scoped work
 
+    /// Fence fixtures the byte scan cannot answer on its own: a fence opened
+    /// inside a list item that the list's end closes, and a `~~~` fence whose
+    /// content holds ``` lines. cmark's parse decides both, so the streaming
+    /// verdict is checked against it rather than against a second scan.
+    private static let fenceFixtures: [(name: String, source: String)] = [
+        (
+            "fence in a list item closed by the list end",
+            """
+            - The item introduces a fence
+
+              ```
+              code that never closes inside the item
+
+            A following paragraph ends the list and the fence with it.
+            """
+        ),
+        (
+            "tilde fence holding backtick lines",
+            """
+            Before the tilde fence.
+
+            ~~~
+            ```
+            not a closer
+            ~~~
+
+            After the tilde fence.
+            """
+        ),
+    ]
+
     /// Streaming reads only the open tail for fence parity. The frozen prefix
-    /// ends at a top-level block boundary, so the tail decides on its own.
-    @Test func tailFenceScanMatchesWholeDocumentScan() {
-        for fixture in Self.fixtures {
+    /// ends at a top-level block boundary, so the tail decides on its own — and
+    /// it has to agree with cmark, not just with the whole-document scan.
+    @Test func tailFenceScanMatchesWhatCmarkParses() {
+        for fixture in Self.fixtures + Self.fenceFixtures {
             var parser = CommonMarkStreamingParser()
 
             for prefix in Self.prefixes(of: fixture.source, chunkSize: 17) {
                 let parsed = parser.parse(prefix)
+                let endsInCodeBlock = Self.endsInCodeBlock(parsed.tailBlocks.last)
+                let verdict = AssistantMarkdownSegmentSource.hasUnclosedCodeFence(
+                    prefix,
+                    fromUTF8Offset: parsed.tailUTF8Offset,
+                    endsInCodeBlock: endsInCodeBlock
+                )
                 #expect(
-                    AssistantMarkdownSegmentSource.hasUnclosedCodeFence(
-                        prefix,
-                        fromUTF8Offset: parsed.tailUTF8Offset
-                    ) == AssistantMarkdownSegmentSource.hasUnclosedCodeFence(prefix),
+                    verdict == Self.cmarkEndsInsideAFence(prefix),
                     "\(fixture.name) fence parity diverged at \(prefix.utf8.count) UTF-8 bytes"
+                )
+                // Reading from the open tail must agree with reading the whole
+                // document under the same parse verdict.
+                #expect(
+                    verdict == AssistantMarkdownSegmentSource.hasUnclosedCodeFence(
+                        prefix,
+                        fromUTF8Offset: 0,
+                        endsInCodeBlock: endsInCodeBlock
+                    ),
+                    "\(fixture.name) tail offset changed the fence verdict at \(prefix.utf8.count) UTF-8 bytes"
                 )
             }
         }
+    }
+
+    /// Fence parity as cmark sees it: content ends inside a fence only when its
+    /// last block is a code block and a following paragraph is swallowed by that
+    /// block instead of starting a new one.
+    private static func cmarkEndsInsideAFence(_ content: String) -> Bool {
+        let blocks = parseCommonMark(content)
+        guard case .codeBlock = blocks.last else { return false }
+        return parseCommonMark(content + "\nprobe paragraph\n").count == blocks.count
+    }
+
+    private static func endsInCodeBlock(_ block: MarkdownBlock?) -> Bool {
+        guard let block else { return false }
+        if case .codeBlock = block { return true }
+        return false
     }
 
     // MARK: - Applier

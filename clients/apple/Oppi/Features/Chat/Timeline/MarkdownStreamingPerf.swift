@@ -35,6 +35,10 @@ enum MarkdownStreamingPerf {
 
     // MARK: - Public API
 
+    /// Whether signposts are recording. Callers use it to skip work whose only
+    /// consumer is the signpost payload, such as a whole-document line count.
+    static var isEnabled: Bool { signposter.isEnabled }
+
     static func timestampNs() -> UInt64 {
         DispatchTime.now().uptimeNanoseconds
     }
@@ -44,7 +48,8 @@ enum MarkdownStreamingPerf {
     /// - Parameters:
     ///   - parseDurationNs: Wall-clock nanoseconds spent in `parseCommonMark`.
     ///   - buildDurationNs: Wall-clock nanoseconds spent in `FlatSegment.build`.
-    ///   - lineCount: Number of lines in the parsed region (tail or full doc).
+    ///   - lineCount: Number of lines in the parsed region (whole document for a
+    ///     full parse, the open tail otherwise).
     ///   - isTailOnly: `true` when only the tail (last block) was re-parsed.
     ///   - isStreaming: `true` when called from the streaming path.
     static func record(
