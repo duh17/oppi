@@ -643,8 +643,9 @@ const GUIDANCE =
   "children only when you pass allowNestedDelegation. worktree gives a child a checkout of its " +
   "own, branched from your HEAD or an existing worktree id, so editing workers never touch your " +
   "files; their answers and list rows add the worktree's branch, commits ahead of its base, and " +
-  "whether it is dirty, and one the spawn made is removed when the child ends with nothing in " +
-  "it. tools, excludeTools, and readOnly only narrow a child's tools.";
+  "whether it is dirty; one the spawn made stays until it lands, and spawn never removes it, " +
+  "landing or Oppi's daily cleanup does. tools, excludeTools, and readOnly only narrow a " +
+  "child's tools.";
 
 type ReplyDetails = Record<string, JsonValue>;
 
@@ -749,7 +750,8 @@ export function createDurableSessions(
       "{ branch } to create or adopt that branch, or an existing worktree id to adopt; work " +
       "that may land should use worktree, so the parent's checkout stays untouched. Those " +
       "children's answers and list rows also report their worktree, commits ahead and whether " +
-      "they are dirty. Nothing removes the worktree while the child works; landing takes it. " +
+      "they are dirty. spawn never removes the worktree it made; landing or the daily cleanup " +
+      "does. " +
       "Tools narrow only: tools and readOnly name an exact set (readOnly keeps read and bash, " +
       "and bash is not a sandbox), while excludeTools only removes the tools it names. " +
       "send (name, message; " +
