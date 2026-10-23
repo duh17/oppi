@@ -36,26 +36,33 @@ struct ToolExpandedMarkdownSurfaceTests {
         #expect(labelText.isEmpty)
     }
 
+    /// Collapsing only hides the viewport: coming back to the same streaming call
+    /// must not convert or lay out the document again. Another surface taking the
+    /// viewport drops the parse, so coming back from it does.
     @Test func liveViewportKeepsParsedContentThroughCollapseButNotASurfaceSwitch() throws {
         let text = (0..<40).map { "Paragraph \($0) of the streaming document." }.joined(separator: "\n\n")
         let view = ToolTimelineRowContentView(configuration: markdownConfiguration(text, isDone: false))
         _ = fittedTimelineSize(for: view, width: 360)
         let live = try #require(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: view))
-        let stack = try #require(markdownStack(in: live))
-        #expect(!stack.arrangedSubviews.isEmpty, "The streaming viewport should hold parsed segments")
+        let rendered = timelineAllTextViews(in: live)
+        #expect(!rendered.isEmpty, "The streaming viewport should hold parsed segments")
 
         view.configuration = collapsedConfiguration()
         _ = fittedTimelineSize(for: view, width: 360)
+        view.configuration = markdownConfiguration(text, isDone: false)
+        _ = fittedTimelineSize(for: view, width: 360)
         #expect(
-            !stack.arrangedSubviews.isEmpty,
-            "Collapsing keeps the parsed document so expanding again does not reparse it"
+            timelineAllTextViews(in: live).first === rendered.first,
+            "Collapsing keeps the parsed document, so expanding again must not render it from scratch"
         )
 
         view.configuration = codeConfiguration()
         _ = fittedTimelineSize(for: view, width: 360)
+        view.configuration = markdownConfiguration(text, isDone: false)
+        _ = fittedTimelineSize(for: view, width: 360)
         #expect(
-            stack.arrangedSubviews.isEmpty,
-            "Another surface taking the viewport must drop the streaming content"
+            timelineAllTextViews(in: live).first !== rendered.first,
+            "Another surface taking the viewport drops the parse, so coming back renders it again"
         )
     }
 
@@ -81,15 +88,12 @@ struct ToolExpandedMarkdownSurfaceTests {
 
         let harness = SurfaceHarness()
         harness.apply(firstText, isStreaming: true)
-        let stack = try #require(markdownStack(in: harness.surface.liveView))
-        #expect(!stack.arrangedSubviews.isEmpty)
+        #expect(!timelineAllTextViews(in: harness.surface.liveView).isEmpty)
 
         harness.apply(secondText, itemID: "second-call", isStreaming: true)
-        let rebuilt = try #require(markdownStack(in: harness.surface.liveView))
-        let text = rebuilt.arrangedSubviews.compactMap { view -> String? in
-            guard let textView = view as? UITextView else { return nil }
-            return timelineRenderedText(of: textView)
-        }.joined(separator: "\n")
+        let text = timelineAllTextViews(in: harness.surface.liveView)
+            .map { timelineRenderedText(of: $0) }
+            .joined(separator: "\n")
         #expect(text.contains("Second tool call opens"))
         #expect(!text.contains("First tool call paragraph"))
     }
@@ -353,10 +357,6 @@ struct ToolExpandedMarkdownSurfaceTests {
             isExpanded: false,
             isDone: false
         )
-    }
-
-    private func markdownStack(in view: AssistantMarkdownContentView) -> UIStackView? {
-        Mirror(reflecting: view).children.first { $0.label == "stackView" }?.value as? UIStackView
     }
 
     /// Pads `text` with ASCII prose to an exact UTF-8 byte count.

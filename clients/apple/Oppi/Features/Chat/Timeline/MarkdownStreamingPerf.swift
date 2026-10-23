@@ -35,10 +35,6 @@ enum MarkdownStreamingPerf {
 
     // MARK: - Public API
 
-    /// Whether signposts are recording. Callers use it to skip work whose only
-    /// consumer is the signpost payload, such as a whole-document line count.
-    static var isEnabled: Bool { signposter.isEnabled }
-
     static func timestampNs() -> UInt64 {
         DispatchTime.now().uptimeNanoseconds
     }
@@ -49,20 +45,27 @@ enum MarkdownStreamingPerf {
     ///   - parseDurationNs: Wall-clock nanoseconds spent in `parseCommonMark`.
     ///   - buildDurationNs: Wall-clock nanoseconds spent in `FlatSegment.build`.
     ///   - lineCount: Number of lines in the parsed region (whole document for a
-    ///     full parse, the open tail otherwise).
+    ///     full parse, the open tail otherwise). Evaluated at most once, and only
+    ///     when a recording or the slow-path log actually reads it: counting a
+    ///     full document is O(answer).
     ///   - isTailOnly: `true` when only the tail (last block) was re-parsed.
     ///   - isStreaming: `true` when called from the streaming path.
     static func record(
         parseDurationNs: UInt64,
         buildDurationNs: UInt64,
-        lineCount: Int,
+        lineCount: @autoclosure () -> Int,
         isTailOnly: Bool,
         isStreaming: Bool
     ) {
-        signposter.emitEvent(
-            "markdown.parse",
-            "\(isTailOnly ? "tail" : "full") lines=\(lineCount)"
-        )
+        var resolvedLineCount: Int?
+        if signposter.isEnabled {
+            let lines = lineCount()
+            resolvedLineCount = lines
+            signposter.emitEvent(
+                "markdown.parse",
+                "\(isTailOnly ? "tail" : "full") lines=\(lines)"
+            )
+        }
 
         let parseMs = Int(parseDurationNs / 1_000_000)
         let buildMs = Int(buildDurationNs / 1_000_000)
@@ -77,7 +80,7 @@ enum MarkdownStreamingPerf {
             metadata: [
                 "parseMs": String(parseMs),
                 "buildMs": String(buildMs),
-                "lineCount": String(lineCount),
+                "lineCount": String(resolvedLineCount ?? lineCount()),
                 "tailOnly": isTailOnly ? "1" : "0",
                 "streaming": isStreaming ? "1" : "0",
             ]

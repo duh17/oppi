@@ -84,6 +84,34 @@ struct StreamingSegmentSourceTests {
             """
         ),
         (
+            // One item only. A paragraph break followed by a new list marker makes
+            // cmark re-join a list the parser already froze, so a two-item stream
+            // renders a blank line where a canonical build has none. That split is
+            // pre-existing (the pre-change pipeline splits at the same tick) and
+            // unrelated to the nested-fence verdict the append suite covers.
+            "fence inside a list item",
+            """
+            1. First step
+
+               ```swift
+               let a = 1
+               let b = 2
+               ```
+            """
+        ),
+        (
+            "setext headings",
+            """
+            Prose line
+            ==========
+
+            Wrapped prose that sits above the next underline
+            ---
+
+            After the setext headings.
+            """
+        ),
+        (
             "table",
             """
             | Key | Value |

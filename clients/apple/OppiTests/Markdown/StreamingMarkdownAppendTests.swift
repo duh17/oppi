@@ -229,9 +229,10 @@ struct StreamingMarkdownAppendTests {
     // MARK: - Tail-scoped work
 
     /// Fence fixtures the byte scan cannot answer on its own: a fence opened
-    /// inside a list item that the list's end closes, and a `~~~` fence whose
-    /// content holds ``` lines. cmark's parse decides both, so the streaming
-    /// verdict is checked against it rather than against a second scan.
+    /// inside a list item that the list's end closes, a fence still open inside
+    /// the last list item, and a `~~~` fence whose content holds ``` lines.
+    /// cmark's parse decides all of them, so the streaming verdict is checked
+    /// against it rather than against a second scan.
     private static let fenceFixtures: [(name: String, source: String)] = [
         (
             "fence in a list item closed by the list end",
@@ -242,6 +243,31 @@ struct StreamingMarkdownAppendTests {
               code that never closes inside the item
 
             A following paragraph ends the list and the fence with it.
+            """
+        ),
+        (
+            "fence open inside the last list item",
+            """
+            1. First step
+
+            2. Second step
+
+               ```swift
+               let a = 1
+               let b = 2
+               ```
+            """
+        ),
+        (
+            "fence open inside a nested list item",
+            """
+            - Outer item
+
+              - Inner item
+
+                ~~~
+                nested fence content
+                ~~~
             """
         ),
         (
@@ -292,19 +318,100 @@ struct StreamingMarkdownAppendTests {
         }
     }
 
-    /// Fence parity as cmark sees it: content ends inside a fence only when its
-    /// last block is a code block and a following paragraph is swallowed by that
-    /// block instead of starting a new one.
+    /// Fence parity as cmark sees it: the content ends inside an open fence when
+    /// a sentinel line at the last line's own indentation is swallowed by the
+    /// trailing code block instead of starting another block. The sentinel keeps
+    /// that indentation so a fence nested in the final list item is judged inside
+    /// its item, not at column zero where the list would end.
+    ///
+    /// Assumes a fenced block: an indented code block would also swallow it.
     private static func cmarkEndsInsideAFence(_ content: String) -> Bool {
-        let blocks = parseCommonMark(content)
-        guard case .codeBlock = blocks.last else { return false }
-        return parseCommonMark(content + "\nprobe paragraph\n").count == blocks.count
+        guard trailingCodeBlockText(parseCommonMark(content)) != nil else { return false }
+
+        let sentinel = containerPrefix(ofLastLineIn: content) + "probe paragraph"
+        let probed = parseCommonMark(content + "\n" + sentinel + "\n")
+        guard let code = trailingCodeBlockText(probed) else { return false }
+        return code.contains("probe paragraph")
+    }
+
+    /// Leading whitespace of the last non-blank line: the depth a following line
+    /// must keep to stay inside the same list item.
+    private static func containerPrefix(ofLastLineIn content: String) -> String {
+        let lastLine = content
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .last { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard let lastLine else { return "" }
+        return String(lastLine.prefix { $0 == " " || $0 == "\t" })
+    }
+
+    /// Code text of the block the region ends with, following the last item of a
+    /// trailing list.
+    private static func trailingCodeBlockText(_ blocks: [MarkdownBlock]) -> String? {
+        guard let block = blocks.last else { return nil }
+        switch block {
+        case .codeBlock(_, let code):
+            return code
+        case .unorderedList(let items):
+            return trailingCodeBlockText(items.last ?? [])
+        case .orderedList(_, let items):
+            return trailingCodeBlockText(items.last ?? [])
+        case .taskList(let items):
+            return trailingCodeBlockText(items.last?.content ?? [])
+        case .heading, .paragraph, .blockQuote, .thematicBreak, .table, .htmlBlock:
+            return nil
+        }
     }
 
     private static func endsInCodeBlock(_ block: MarkdownBlock?) -> Bool {
         guard let block else { return false }
-        if case .codeBlock = block { return true }
-        return false
+        switch block {
+        case .codeBlock:
+            return true
+        case .unorderedList(let items):
+            return endsInCodeBlock(items.last?.last)
+        case .orderedList(_, let items):
+            return endsInCodeBlock(items.last?.last)
+        case .taskList(let items):
+            return endsInCodeBlock(items.last?.content.last)
+        case .heading, .paragraph, .blockQuote, .thematicBreak, .table, .htmlBlock:
+            return false
+        }
+    }
+
+    /// A fence inside the last list item keeps streaming as a `.codeBlock`, and
+    /// the applier only updates that trailing code view while the content still
+    /// ends inside the fence: the verdict has to follow the last item down, and
+    /// the streamed code text has to grow tick by tick.
+    @Test(arguments: [
+        // The review's own shape: one item whose fence stays open to the end.
+        "1. step\n\n   ```swift\n   let a = 1\n   let b = 2\n   ```\n",
+        // A fence in the last item of a longer list.
+        "1. First step\n\n2. Second step\n\n   ```swift\n   let a = 1\n   let b = 2\n   ```\n\n3. Third step\n",
+    ])
+    func fenceNestedInTheLastListItemKeepsStreaming(document: String) {
+        let source = AssistantMarkdownSegmentSource()
+        var previousCode: String?
+
+        for prefix in Self.prefixes(of: document, chunkSize: 3) {
+            let segments = source.buildSegments(.make(content: prefix, isStreaming: true, themeID: .dark))
+            let open = Self.cmarkEndsInsideAFence(prefix)
+            #expect(
+                source.lastBuildHasUnclosedCodeFence == open,
+                "nested fence verdict diverged at \(prefix.utf8.count) UTF-8 bytes"
+            )
+            guard open else { continue }
+
+            guard case .codeBlock(_, let code)? = segments.last else {
+                Issue.record("the last segment of an open nested fence is not a code block: \(String(reflecting: prefix))")
+                continue
+            }
+            if let previousCode {
+                #expect(code.hasPrefix(previousCode), "the streamed code block restarted at \(prefix.utf8.count) UTF-8 bytes")
+            }
+            previousCode = code
+        }
+
+        #expect(previousCode?.contains("let b = 2") == true)
     }
 
     // MARK: - Applier
@@ -357,6 +464,27 @@ struct StreamingMarkdownAppendTests {
             "an unchanged tick with new styling must replace the tail"
         )
         #expect(timelineRenderedText(of: restyled) == content)
+    }
+
+    /// A setext underline restyles the line above it without changing one
+    /// character, so that tick is not a neutral append: the tail has to be
+    /// rebuilt as a heading.
+    @Test func setextUnderlineRestylesTheStreamedTail() throws {
+        let view = AssistantMarkdownContentView()
+        let plain = "Prose line"
+        view.apply(configuration: .make(content: plain, isStreaming: true, themeID: .dark))
+        let body = try #require(timelineAllTextViews(in: view).first)
+        let bodySize = try #require(Self.firstFontSize(of: body))
+
+        view.apply(configuration: .make(content: plain + "\n===", isStreaming: true, themeID: .dark))
+        let heading = try #require(timelineAllTextViews(in: view).first)
+        let headingSize = try #require(Self.firstFontSize(of: heading))
+        #expect(timelineRenderedText(of: heading) == plain)
+        #expect(headingSize > bodySize, "a setext underline must restyle the tail as a heading")
+
+        view.apply(configuration: .make(content: plain + "\n===\n\nAfter", isStreaming: true, themeID: .dark))
+        let grown = try #require(timelineAllTextViews(in: view).first)
+        #expect(timelineRenderedText(of: grown).contains("After"))
     }
 
     // MARK: - Helpers

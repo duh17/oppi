@@ -82,18 +82,12 @@ final class AssistantMarkdownSegmentSource {
             return Self.applyReaderPreferences(to: buildSegmentsIncremental(config), config: config)
         }
 
-        // The flag only steers live streaming rendering; non-streaming
-        // callers ignore it, and a cache hit rebuilds no segment.
+        // The flag only steers live streaming rendering, which the incremental
+        // path above already answered; no other caller reads it.
         lastBuildHasUnclosedCodeFence = false
 
-        if !config.isStreaming,
-           mergeAdjacentTextSegments,
+        if mergeAdjacentTextSegments,
            let preparedBlocks {
-            lastBuildHasUnclosedCodeFence = Self.hasUnclosedCodeFence(
-                content,
-                fromUTF8Offset: 0,
-                endsInCodeBlock: Self.endsInCodeBlock(preparedBlocks.last)
-            )
             let segments = FlatSegment.build(
                 from: preparedBlocks,
                 themeID: config.themeID,
@@ -107,8 +101,7 @@ final class AssistantMarkdownSegmentSource {
             return Self.applyReaderPreferences(to: segments, config: config)
         }
 
-        if !config.isStreaming,
-           mergeAdjacentTextSegments,
+        if mergeAdjacentTextSegments,
            let cached = MarkdownSegmentCache.shared.get(
                content,
                themeID: config.themeID,
@@ -126,11 +119,6 @@ final class AssistantMarkdownSegmentSource {
         let parseStart = MarkdownStreamingPerf.timestampNs()
         let blocks = parseCommonMark(content)
         let parseEnd = MarkdownStreamingPerf.timestampNs()
-        lastBuildHasUnclosedCodeFence = Self.hasUnclosedCodeFence(
-            content,
-            fromUTF8Offset: 0,
-            endsInCodeBlock: Self.endsInCodeBlock(blocks.last)
-        )
         let segments = FlatSegment.build(
             from: blocks,
             themeID: config.themeID,
@@ -182,11 +170,6 @@ final class AssistantMarkdownSegmentSource {
         let parseStart = MarkdownStreamingPerf.timestampNs()
         let blocks = parseCommonMarkLocated(content)
         let parseEnd = MarkdownStreamingPerf.timestampNs()
-        lastBuildHasUnclosedCodeFence = Self.hasUnclosedCodeFence(
-            content,
-            fromUTF8Offset: 0,
-            endsInCodeBlock: Self.endsInCodeBlock(blocks.last?.block)
-        )
         let build = FlatSegment.buildWithSourceLineRanges(
             from: blocks,
             themeID: config.themeID,
@@ -245,10 +228,27 @@ final class AssistantMarkdownSegmentSource {
         return endsInsideOpenFence(bytes[start...])
     }
 
+    /// Whether the region's last renderable block is a code block, following the
+    /// last item of a trailing list: a fence inside the final list item still
+    /// streams as a `.codeBlock` segment, so the region ends inside one even
+    /// though its last *top-level* block is a list.
+    ///
+    /// Block quotes are not followed: `FlatSegment` renders a code block inside
+    /// a quote as quoted text, so no trailing code view depends on the verdict.
     private static func endsInCodeBlock(_ block: MarkdownBlock?) -> Bool {
         guard let block else { return false }
-        if case .codeBlock = block { return true }
-        return false
+        switch block {
+        case .codeBlock:
+            return true
+        case .unorderedList(let items):
+            return endsInCodeBlock(items.last?.last)
+        case .orderedList(_, let items):
+            return endsInCodeBlock(items.last?.last)
+        case .taskList(let items):
+            return endsInCodeBlock(items.last?.content.last)
+        case .heading, .paragraph, .blockQuote, .thematicBreak, .table, .htmlBlock:
+            return false
+        }
     }
 
     /// Walks fence lines tracking the open marker: a closing fence repeats the
@@ -384,23 +384,16 @@ final class AssistantMarkdownSegmentSource {
                 prefixTextRevision: prefixTextRevision
             )
 
-        // A full parse still covers the whole document even when a stable prefix
-        // was split off, so its line count must not describe the tail alone.
-        // Only telemetry reads it: the whole-document scan is O(answer), so run
-        // it only when a recording can observe the result and keep the cheap
-        // tail scan otherwise (it is exact for a canonical full parse, where the
-        // tail starts at zero).
-        let lineCount: Int
-        if parsed.strategy == .full, MarkdownStreamingPerf.isEnabled {
-            lineCount = Self.countNewlines(config.content) + 1
-        } else {
-            lineCount = Self.countNewlines(config.content, fromUTF8Offset: parsed.tailUTF8Offset) + 1
-        }
-
+        // A full parse covers the whole document even when a stable prefix was
+        // split off, so its line count must not describe the tail alone. The
+        // count is only read by telemetry, and the whole-document scan is
+        // O(answer): `record` evaluates it lazily.
         MarkdownStreamingPerf.record(
             parseDurationNs: parseEnd - parseStart,
             buildDurationNs: buildEnd - parseEnd,
-            lineCount: lineCount,
+            lineCount: parsed.strategy == .full
+                ? Self.countNewlines(config.content) + 1
+                : Self.countNewlines(config.content, fromUTF8Offset: parsed.tailUTF8Offset) + 1,
             isTailOnly: parsed.strategy == .tailOnly,
             isStreaming: true
         )
@@ -473,9 +466,9 @@ final class AssistantMarkdownSegmentSource {
                var cache = streamingTextMergeCache,
                cache.prefixCount == prefix.count,
                cache.prefixTextRevision == prefixTextRevision,
-               let suffix = StreamingMarkdownDelta.attributedSuffix(
+               let appended = StreamingMarkdownDelta.appendedRendering(
                    tailText,
-                   matching: cache.tail
+                   after: cache.tail
                ) {
                 // Take the merged run out of the cache before appending. The
                 // previous tick's segment array is gone by now (the applier
@@ -484,10 +477,10 @@ final class AssistantMarkdownSegmentSource {
                 // local is the sole owner of the storage and `append` mutates
                 // it in place instead of copying the whole run.
                 streamingTextMergeCache = nil
-                if !suffix.characters.isEmpty {
-                    cache.merged.append(suffix)
+                if !appended.suffix.characters.isEmpty {
+                    cache.merged.append(appended.suffix)
                 }
-                cache.tail = NSAttributedString(tailText)
+                cache.tail = appended.rendered
                 streamingTextMergeCache = cache
                 return assembleMergedText(
                     prefix: prefix,
@@ -590,6 +583,9 @@ enum StreamingMarkdownDelta {
     /// an append cannot restyle glyphs that are already rendered. Only the
     /// appended bytes are scanned; the parser already proved the append.
     ///
+    /// `-` and `=` count as markup: a setext underline restyles the line above
+    /// it into a heading without changing one of its characters.
+    ///
     /// An empty append is not neutral: the same content can arrive with a new
     /// reader text size, typography revision, or theme, and the tail still has to
     /// be restyled.
@@ -603,7 +599,7 @@ enum StreamingMarkdownDelta {
         )
         for byte in bytes[start...] {
             switch byte {
-            case 33, 36, 38, 40, 41, 42, 60, 62, 91, 92, 93, 95, 96, 124, 126:
+            case 33, 36, 38, 40, 41, 42, 45, 60, 61, 62, 91, 92, 93, 95, 96, 124, 126:
                 return false
             default:
                 continue
@@ -612,17 +608,25 @@ enum StreamingMarkdownDelta {
         return true
     }
 
-    /// The rendering of `attributed` after `rendered` when `attributed` starts
-    /// with exactly that content and those attributes; nil when it does not.
+    /// A rendering that extends the one a cached merge already ends with.
+    struct AppendedRendering {
+        /// The part after the cached rendering.
+        let suffix: AttributedString
+        /// The whole rendering, boxed once so it can become the next cache tail.
+        let rendered: NSAttributedString
+    }
+
+    /// The new part of `attributed` when it starts with exactly `rendered`'s
+    /// content and attributes; nil when it does not.
     ///
     /// Characters alone are not enough to reuse a cached merge: a setext
     /// underline turns prose that already streamed into a heading without
     /// changing one character, and a plain-text comparison would keep the old
     /// styling on every later tick.
-    static func attributedSuffix(
+    static func appendedRendering(
         _ attributed: AttributedString,
-        matching rendered: NSAttributedString
-    ) -> AttributedString? {
+        after rendered: NSAttributedString
+    ) -> AppendedRendering? {
         let candidate = NSAttributedString(attributed)
         guard candidate.length >= rendered.length else { return nil }
         guard candidate.attributedSubstring(
@@ -630,10 +634,12 @@ enum StreamingMarkdownDelta {
         ).isEqual(to: rendered) else { return nil }
 
         let suffixLength = candidate.length - rendered.length
-        guard suffixLength > 0 else { return AttributedString() }
-        return AttributedString(candidate.attributedSubstring(
-            from: NSRange(location: rendered.length, length: suffixLength)
-        ))
+        let suffix = suffixLength > 0
+            ? AttributedString(candidate.attributedSubstring(
+                from: NSRange(location: rendered.length, length: suffixLength)
+            ))
+            : AttributedString()
+        return AppendedRendering(suffix: suffix, rendered: candidate)
     }
 
     static func attributedSuffix(
