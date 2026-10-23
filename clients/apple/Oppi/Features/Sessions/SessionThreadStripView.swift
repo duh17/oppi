@@ -112,25 +112,25 @@ final class SessionThreadStripView: UIControl {
         let working = rollup.descendants.filter(SessionThreadGrouping.isWorking)
         if let blocked = content.blockedMember {
             let status = content.status(blocked)
-            headline.isHidden = false
+            headline.setHiddenIfChanged(false)
             headline.attributedText = SessionRowText.symbolAndText(
                 status.badgeSymbol, "\(status.label) · \(blocked.displayTitle)", style: .footnote,
                 symbolWeight: .semibold, textWeight: .semibold, spacing: 5, color: style.tint(status)
             )
             headline.lineBreakMode = .byTruncatingTail
         } else if !working.isEmpty {
-            headline.isHidden = false
+            headline.setHiddenIfChanged(false)
             headline.attributedText = NSAttributedString(
                 string: working.map(\.displayTitle).joined(separator: " · ") + " working",
                 attributes: [.font: UIFont.scaled(.footnote, .medium), .foregroundColor: colors.blue]
             )
             headline.lineBreakMode = .byTruncatingTail
         } else {
-            headline.isHidden = true
+            headline.setHiddenIfChanged(true)
         }
 
         let showsGraph = display.showsThreadLaneGraph && !content.hidesDetails
-        graphRow.isHidden = !showsGraph
+        graphRow.setHiddenIfChanged(!showsGraph)
         if showsGraph {
             let layout = SessionThreadLaneGraph.layout(
                 members: rollup.members,
@@ -139,13 +139,13 @@ final class SessionThreadStripView: UIControl {
                 status: content.status
             )
             graph.apply(layout, style: style)
-            hiddenLanesLabel.isHidden = layout.hiddenLaneCount == 0
+            hiddenLanesLabel.setHiddenIfChanged(layout.hiddenLaneCount == 0)
             hiddenLanesLabel.text = "+\(layout.hiddenLaneCount)"
             hiddenLanesLabel.textColor = colors.comment
         }
 
         let showsAgents = display.showsThreadAgentSummary && !content.hidesDetails
-        agents.isHidden = !showsAgents
+        agents.setHiddenIfChanged(!showsAgents)
         if showsAgents {
             agents.apply(SessionThreadAgentGroup.groups(rollup.members), maxGroups: 3, colors: colors, iconAssetCache: iconAssetCache)
         }
@@ -217,7 +217,7 @@ final class SessionThreadAgentClusterView: UIStackView {
             items.append((stack, icon, count))
         }
         for (index, item) in items.enumerated() {
-            item.stack.isHidden = index >= shown.count
+            item.stack.setHiddenIfChanged(index >= shown.count)
             guard index < shown.count else { continue }
             let group = shown[index]
             item.icon.configure(
@@ -226,11 +226,11 @@ final class SessionThreadAgentClusterView: UIStackView {
                 agentIcon: group.agentIcon,
                 iconAssetCache: iconAssetCache
             )
-            item.count.isHidden = group.count <= 1
+            item.count.setHiddenIfChanged(group.count <= 1)
             item.count.text = "×\(group.count)"
             item.count.textColor = colors.comment
         }
-        overflow.isHidden = groups.count <= maxGroups
+        overflow.setHiddenIfChanged(groups.count <= maxGroups)
         overflow.text = "+\(groups.count - maxGroups)"
         overflow.textColor = colors.comment
     }

@@ -898,9 +898,9 @@ final class SessionListSectionHeaderView: UICollectionReusableView {
     func configure(title: String, palette: ThemePalette) {
         apply(title: title, palette: palette)
         onToggle = nil
-        detailLabel.isHidden = true
-        chevron.isHidden = true
-        button.isHidden = true
+        detailLabel.setHiddenIfChanged(true)
+        chevron.setHiddenIfChanged(true)
+        button.setHiddenIfChanged(true)
         button.accessibilityIdentifier = nil
         button.accessibilityValue = nil
         row.accessibilityElementsHidden = false
@@ -922,11 +922,11 @@ final class SessionListSectionHeaderView: UICollectionReusableView {
         self.onToggle = onToggle
         detailLabel.text = detail
         detailLabel.textColor = UIColor(palette.comment)
-        detailLabel.isHidden = detail == nil
-        chevron.isHidden = false
+        detailLabel.setHiddenIfChanged(detail == nil)
+        chevron.setHiddenIfChanged(false)
         chevron.image = UIImage(systemName: isExpanded ? "chevron.down" : "chevron.right")
         chevron.tintColor = UIColor(palette.comment)
-        button.isHidden = false
+        button.setHiddenIfChanged(false)
         button.accessibilityLabel = detail.map { "\(title), \($0)" } ?? title
         button.accessibilityValue = isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed")
         button.accessibilityIdentifier = accessibilityIdentifier

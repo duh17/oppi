@@ -128,15 +128,15 @@ final class LocalSessionRowContentView: UIView, UIContentView {
         badgeLabel.backgroundColor = colors.comment.withAlphaComponent(0.15)
 
         let model = SessionModelSummaryBuilder.summaries(primaryModel: session.model).first
-        modelLabel.isHidden = model == nil
-        providerIcon.isHidden = model?.provider.isEmpty ?? true
+        modelLabel.setHiddenIfChanged(model == nil)
+        providerIcon.setHiddenIfChanged(model?.provider.isEmpty ?? true)
         if let model {
             modelLabel.text = model.label
             if !model.provider.isEmpty {
                 providerIcon.image = style.providerIcon(model.provider)
             }
         }
-        countLabel.isHidden = session.messageCount == 0
+        countLabel.setHiddenIfChanged(session.messageCount == 0)
         countLabel.text = "\(session.messageCount) msgs"
         for label in [modelLabel, countLabel] { label.textColor = colors.fgDim }
 

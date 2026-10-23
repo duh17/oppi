@@ -141,7 +141,7 @@ final class SessionListEntryContentView: UIView, UIContentView {
         if let thread = entry.thread {
             let stripView = stripView ?? addThreadControl(SessionThreadStripView())
             self.stripView = stripView
-            stripView.isHidden = false
+            stripView.setHiddenIfChanged(false)
             stripView.accessibilityIdentifier = "thread.nav.\(thread.root.id)"
             stripView.apply(
                 SessionThreadStripView.Content(
@@ -155,13 +155,13 @@ final class SessionListEntryContentView: UIView, UIContentView {
                 iconAssetCache: configuration.iconAssetCache
             )
         } else {
-            stripView?.isHidden = true
+            stripView?.setHiddenIfChanged(true)
         }
 
         if entry.thread == nil, let root = entry.outsideRoot {
             let linkView = linkView ?? addThreadControl(SessionThreadLinkView())
             self.linkView = linkView
-            linkView.isHidden = false
+            linkView.setHiddenIfChanged(false)
             linkView.apply(
                 root: root,
                 workspaceName: row.foreignWorkspaceNames[root.id],
@@ -171,7 +171,7 @@ final class SessionListEntryContentView: UIView, UIContentView {
             )
             linkView.accessibilityIdentifier = "thread.link.\(session.id)"
         } else {
-            linkView?.isHidden = true
+            linkView?.setHiddenIfChanged(true)
         }
         accessibilityElements = ([rowView, stripView, linkView] as [UIView?]).compactMap { $0 }.filter { !$0.isHidden }
     }

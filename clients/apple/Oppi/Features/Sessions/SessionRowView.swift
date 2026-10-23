@@ -121,10 +121,10 @@ final class SessionRowView: UIView {
         titleLabel.text = session.displayTitle
         titleLabel.textColor = colors.fg
         SessionRowText.setLockBadge(content.lockBadge, on: lockLabel, color: colors.comment)
-        durableLabel.isHidden = !content.isDurable
+        durableLabel.setHiddenIfChanged(!content.isDurable)
         durableLabel.attributedText = SessionRowText.symbol("infinity", style: .caption2, weight: .semibold, color: colors.comment)
         durableLabel.accessibilityIdentifier = "session.durableMarker.\(session.id)"
-        timeLabel.isHidden = !display.showsTime
+        timeLabel.setHiddenIfChanged(!display.showsTime)
         timeLabel.textColor = colors.comment
         updateTime()
 
@@ -144,15 +144,15 @@ final class SessionRowView: UIView {
     }
 
     private func applyLocked(status: SessionStatusKind, isIncognito: Bool) {
-        snippetLabel.isHidden = true
-        contextCluster.isHidden = true
-        mirrorIndicator.isHidden = true
-        gauge.isHidden = true
-        costLabel.isHidden = true
-        filesLabel.isHidden = true
-        incognitoBadge.isHidden = !isIncognito
+        snippetLabel.setHiddenIfChanged(true)
+        contextCluster.setHiddenIfChanged(true)
+        mirrorIndicator.setHiddenIfChanged(true)
+        gauge.setHiddenIfChanged(true)
+        costLabel.setHiddenIfChanged(true)
+        filesLabel.setHiddenIfChanged(true)
+        incognitoBadge.setHiddenIfChanged(!isIncognito)
         applyIncognito()
-        metricsCluster.isHidden = !isIncognito
+        metricsCluster.setHiddenIfChanged(!isIncognito)
         applyStatus(status)
     }
 
@@ -161,24 +161,24 @@ final class SessionRowView: UIView {
         let colors = style.colors
 
         if let snippet = presentation.searchSnippet {
-            snippetLabel.isHidden = false
+            snippetLabel.setHiddenIfChanged(false)
             snippetLabel.attributedText = SessionRowText.snippet(snippet, color: colors.fgDim, highlight: colors.yellow)
         } else {
-            snippetLabel.isHidden = true
+            snippetLabel.setHiddenIfChanged(true)
         }
 
         // Context: workspace, model, compactions, worktree, the ask prompt.
         if let workspace = presentation.workspaceContext, !workspace.isEmpty {
-            workspaceLabel.isHidden = false
+            workspaceLabel.setHiddenIfChanged(false)
             workspaceLabel.apply(workspace, color: colors.fgDim)
         } else {
-            workspaceLabel.isHidden = true
+            workspaceLabel.setHiddenIfChanged(true)
         }
 
         let model = display.showsModel ? presentation.visibleModelSummaries.first : nil
-        modelStack.isHidden = model == nil
+        modelStack.setHiddenIfChanged(model == nil)
         if let model {
-            providerIcon.isHidden = model.provider.isEmpty
+            providerIcon.setHiddenIfChanged(model.provider.isEmpty)
             if !model.provider.isEmpty {
                 providerIcon.image = style.providerIcon(model.provider)
                 providerIcon.accessibilityLabel = ProviderIcon.logoAssetName(for: model.provider) == nil
@@ -190,7 +190,7 @@ final class SessionRowView: UIView {
         }
 
         let compactions = display.showsCompactions ? (session.changeStats?.compactionCount ?? 0) : 0
-        compactionLabel.isHidden = compactions == 0
+        compactionLabel.setHiddenIfChanged(compactions == 0)
         if compactions > 0 {
             compactionLabel.attributedText = SessionRowText.symbolAndText(
                 "arrow.triangle.2.circlepath", "\(compactions)", style: .caption2, symbolWeight: .semibold,
@@ -200,7 +200,7 @@ final class SessionRowView: UIView {
         }
 
         let worktree = SessionWorktreeIndicatorPresentation(session: session)
-        worktreeIcon.isHidden = worktree == nil
+        worktreeIcon.setHiddenIfChanged(worktree == nil)
         if let worktree {
             worktreeIcon.image = UIImage.scaledSymbol("arrow.triangle.branch", style: .caption2, weight: .semibold)
             worktreeIcon.tintColor = colors.purple
@@ -209,36 +209,36 @@ final class SessionRowView: UIView {
         }
 
         if let attention = presentation.attentionText, !attention.isEmpty {
-            attentionLabel.isHidden = false
+            attentionLabel.setHiddenIfChanged(false)
             attentionLabel.text = attention
             attentionLabel.textColor = colors.fgDim
             attentionLabel.accessibilityIdentifier = "session.attentionPreview.\(session.id)"
         } else {
-            attentionLabel.isHidden = true
+            attentionLabel.setHiddenIfChanged(true)
         }
-        contextCluster.isHidden = contextCluster.arrangedSubviews.allSatisfy(\.isHidden)
+        contextCluster.setHiddenIfChanged(contextCluster.arrangedSubviews.allSatisfy(\.isHidden))
 
         let mirror = TerminalMirrorIndicatorPresentation(session: session)
-        mirrorIndicator.isHidden = mirror == nil
+        mirrorIndicator.setHiddenIfChanged(mirror == nil)
         if let mirror { mirrorIndicator.apply(mirror) }
 
         // Metrics: context usage, Incognito, cost, files touched.
         let percent = display.showsContextUsage ? contextPercent(session) : nil
-        gauge.isHidden = percent == nil
+        gauge.setHiddenIfChanged(percent == nil)
         if let percent { gauge.apply(percent: percent, colors: colors) }
 
-        incognitoBadge.isHidden = session.ephemeral != true
+        incognitoBadge.setHiddenIfChanged(session.ephemeral != true)
         applyIncognito()
 
         let showsCost = display.showsCost && session.cost > 0
-        costLabel.isHidden = !showsCost
+        costLabel.setHiddenIfChanged(!showsCost)
         if showsCost {
             costLabel.text = SessionFormatting.costString(session.cost)
             costLabel.textColor = colors.fgDim
         }
 
         let files = display.showsFilesTouched ? (session.changeStats?.filesChanged ?? 0) : 0
-        filesLabel.isHidden = files == 0
+        filesLabel.setHiddenIfChanged(files == 0)
         if files > 0 {
             filesLabel.attributedText = SessionRowText.symbolAndText(
                 "doc", "\(files)", style: .caption2, textStyle: .caption1, symbolWeight: .semibold,
@@ -246,14 +246,14 @@ final class SessionRowView: UIView {
             )
             filesLabel.accessibilityLabel = SessionRowMetricsFormatting.filesTouchedAccessibilityLabel(files)
         }
-        metricsCluster.isHidden = metricsCluster.arrangedSubviews.allSatisfy(\.isHidden)
+        metricsCluster.setHiddenIfChanged(metricsCluster.arrangedSubviews.allSatisfy(\.isHidden))
 
         applyStatus(status)
     }
 
     private func applyStatus(_ status: SessionStatusKind) {
         let tint = style.tint(status)
-        blockedBadge.isHidden = !status.isBlocked
+        blockedBadge.setHiddenIfChanged(!status.isBlocked)
         if status.isBlocked {
             blockedBadge.image = UIImage.scaledSymbol(status.badgeSymbol, style: .caption1, weight: .regular)
             blockedBadge.tintColor = tint
@@ -341,8 +341,13 @@ final class SessionRowView: UIView {
             second.forEach(secondRow.addArrangedSubview)
             joinsDetailRows = joined
         }
-        firstRow.isHidden = firstHidden
-        secondRow.isHidden = secondHidden
+        // Arranged subviews flip through `setHiddenIfChanged`: rows configure
+        // inside the list's animated updates, and a repeated animated hide
+        // leaves a stack view collapsing the subview after it is shown again.
+        // That drew both detail lines squeezed under the title, in a cell
+        // measured for the title alone.
+        firstRow.setHiddenIfChanged(firstHidden)
+        secondRow.setHiddenIfChanged(secondHidden)
         return rearranged
     }
 
@@ -832,10 +837,10 @@ enum SessionRowText {
     static func setLockBadge(_ state: ScopedLockState, on label: UILabel, color: UIColor) {
         switch state {
         case .none:
-            label.isHidden = true
+            label.setHiddenIfChanged(true)
             label.accessibilityIdentifier = nil
         case .locked, .unlocked:
-            label.isHidden = false
+            label.setHiddenIfChanged(false)
             let locked = state == .locked
             label.attributedText = symbol(locked ? "lock.fill" : "lock.open.fill", style: .caption2, weight: .semibold, color: color)
             label.accessibilityLabel = locked ? "Locked" : "Unlocked"

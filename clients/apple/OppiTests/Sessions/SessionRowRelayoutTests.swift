@@ -172,6 +172,63 @@ struct SessionRowRelayoutTests {
         )
     }
 
+    /// A list configures its rows inside animated updates: a row moving into
+    /// Working, a reconfigure while a section inserts. Configured twice there
+    /// with details that fit one line, a Compact row must still split them
+    /// onto two lines once they grow. A repeated animated hide used to leave
+    /// the stack view collapsing the second line after it was shown again, so
+    /// the row kept its one-line height and drew the details squeezed.
+    @Test func rowConfiguredInsideAnimationsStillGrowsItsDetails() {
+        let row = SessionRowView(combinesAccessibility: true)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 300))
+        window.addSubview(row)
+        row.frame = CGRect(x: 0, y: 0, width: 370, height: 60)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        var shortSession = richSession()
+        shortSession.model = nil
+        shortSession.changeStats = nil
+        shortSession.cost = 0
+        let short = SessionRowView.Content(
+            presentation: SessionRowPresentationBuilder.make(session: shortSession, workspaceContext: "tools")
+        )
+        var longSession = richSession()
+        longSession.model = "omlx/glm-5.3-flash-with-a-long-name"
+        let long = SessionRowView.Content(
+            presentation: SessionRowPresentationBuilder.make(session: longSession, workspaceContext: "nozomi-web")
+        )
+        let compact = SessionRowDisplay(density: .compact)
+        func configure(_ content: SessionRowView.Content) {
+            UIView.animate(withDuration: 0.2) {
+                row.apply(content, display: compact, themeID: .dark, iconAssetCache: nil)
+                row.layoutIfNeeded()
+            }
+        }
+        func height() -> CGFloat {
+            row.systemLayoutSizeFitting(
+                CGSize(width: 370, height: 0),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        }
+
+        row.apply(long, display: compact, themeID: .dark, iconAssetCache: nil)
+        let twoLines = height()
+        configure(short)
+        configure(short)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        let oneLine = height()
+        #expect(oneLine < twoLines - 0.5, "The short details should share one line: \(oneLine) vs \(twoLines)")
+
+        configure(long)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        #expect(
+            abs(height() - twoLines) < 0.5,
+            "The row kept its one-line height after its details grew: \(height()) vs \(twoLines)"
+        )
+    }
+
     /// A notched iPhone in landscape (or an iPad) puts the safe area, or the
     /// readable margin, beside the row. The list sizes a cell at the width its
     /// row is later laid out at: sized for a narrower row, Compact would settle

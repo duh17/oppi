@@ -59,6 +59,7 @@ Example:
 
 ### Fixed
 
+- **iOS:** A session row that moves or updates while the list animates, such as a session starting a new turn and moving into Working, no longer gets stuck as a squeezed title with its details drawn on top of each other until you scroll it away.
 - **Relay:** The push relay refuses a request body over 8 KiB as soon as it passes that size, including a chunked body with no length, instead of reading all of it first. A body that never ended used to hold a Cloudflare Worker request open.
 
 ## [0.53.0] - 2026-10-22
