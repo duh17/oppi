@@ -196,8 +196,8 @@ struct LiveStreamingPresentationTests {
         #expect(applier.debugRenderingAlphaForTesting(at: 5) == nil)
     }
 
-    @Test("neutral streaming append converts only the attributed suffix")
-    func streamingNeutralAppendConvertsDeltaNotWholeTail() throws {
+    @Test("streaming append converts only the attributed suffix")
+    func streamingAppendConvertsDeltaNotWholeTail() throws {
         let stack = UIStackView()
         let applier = makeMarkdownApplier(stackView: stack, motionAllowed: { false })
 
@@ -212,7 +212,7 @@ struct LiveStreamingPresentationTests {
         )
         #expect(
             applier.debugStreamingFullNSConversionCountForTesting == 0,
-            "Markdown-neutral append must not rebuild NSAttributedString for the prefix"
+            "An unchanged-prefix append must not rebuild NSAttributedString for the prefix"
         )
 
         let textView = try #require(firstTextView(in: stack))
@@ -353,14 +353,32 @@ struct LiveStreamingPresentationTests {
         view.debugTextContentStorageIdentifierForTesting
     }
 
+    /// One segment source per applier, as `AssistantMarkdownContentView`
+    /// pairs them: the applier only appends on the source's proof that the
+    /// streamed text is unchanged.
+    private let segmentSources = NSMapTable<AssistantMarkdownSegmentApplier, AssistantMarkdownSegmentSource>
+        .weakToStrongObjects()
+
     private func apply(
         _ content: String,
         isStreaming: Bool,
         to applier: AssistantMarkdownSegmentApplier
     ) {
+        let source = segmentSources.object(forKey: applier) ?? {
+            let source = AssistantMarkdownSegmentSource()
+            segmentSources.setObject(source, forKey: applier)
+            return source
+        }()
+        let config = AssistantMarkdownContentView.Configuration.make(
+            content: content,
+            isStreaming: isStreaming,
+            themeID: .dark
+        )
         applier.apply(
-            segments: FlatSegment.build(from: parseCommonMark(content), themeID: .dark),
-            config: .make(content: content, isStreaming: isStreaming, themeID: .dark)
+            segments: source.buildSegments(config),
+            config: config,
+            hasUnclosedCodeFence: source.lastBuildHasUnclosedCodeFence,
+            unchangedStreamingTextUTF16Length: source.lastStreamingTextUnchangedUTF16Length
         )
     }
 

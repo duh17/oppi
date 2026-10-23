@@ -4,11 +4,10 @@ import UIKit
 
 @testable import Oppi
 
-/// The streaming parser owns the append verdict for the whole markdown path: a
-/// tick is proved an append from the previous content's last bytes (never the
-/// whole document) and anything else takes the canonical parse. These tests pin
-/// the rendering contract (streamed == canonical at every tick) and the verdict
-/// semantics the segment source and applier rely on.
+/// The streaming parser proves a tick is an append from the previous content's
+/// last bytes (never the whole document); anything else takes the canonical
+/// parse. These tests pin the rendering contract: streamed == canonical at every
+/// tick, whatever the parser decided.
 @Suite("Streaming markdown append verdict")
 @MainActor
 struct StreamingMarkdownAppendTests {
@@ -83,12 +82,12 @@ struct StreamingMarkdownAppendTests {
     ]
 
     /// Every streamed prefix must render exactly like a canonical parse of the
-    /// same content, and each longer prefix must report itself as an append.
+    /// same content.
     @Test(arguments: [1, 3, 8, 32, 4096])
     func streamedPrefixesMatchCanonicalParse(chunkSize: Int) {
         for fixture in Self.fixtures {
             var parser = CommonMarkStreamingParser()
-            var previousUTF8Count: Int?
+            var lastUTF8Count = 0
 
             for prefix in Self.prefixes(of: fixture.source, chunkSize: chunkSize) {
                 let parsed = parser.parse(prefix)
@@ -96,46 +95,26 @@ struct StreamingMarkdownAppendTests {
                     parsed.blocks == parseCommonMark(prefix),
                     "\(fixture.name) diverged at \(prefix.utf8.count) UTF-8 bytes"
                 )
-                if let previousUTF8Count {
-                    #expect(
-                        parsed.appendedUTF8Range == previousUTF8Count..<prefix.utf8.count,
-                        "\(fixture.name) lost the append verdict at \(prefix.utf8.count) UTF-8 bytes"
-                    )
-                } else {
-                    #expect(parsed.appendedUTF8Range == nil)
-                }
-                previousUTF8Count = prefix.utf8.count
+                lastUTF8Count = prefix.utf8.count
             }
 
-            #expect(previousUTF8Count == fixture.source.utf8.count)
+            #expect(lastUTF8Count == fixture.source.utf8.count)
         }
     }
 
-    // MARK: - Verdict semantics
+    // MARK: - Replacements
 
-    @Test func unchangedContentIsAnEmptyAppend() {
-        var parser = CommonMarkStreamingParser()
-        let source = "Alpha paragraph.\n\nStreaming tail."
-        _ = parser.parse(source)
-
-        let repeated = parser.parse(source)
-
-        #expect(repeated.appendedUTF8Range == source.utf8.count..<source.utf8.count)
-        #expect(repeated.blocks == parseCommonMark(source))
-    }
-
-    @Test func shorterContentIsNotAnAppend() {
+    @Test func shorterContentParsesCanonically() {
         var parser = CommonMarkStreamingParser()
         let source = "Alpha paragraph.\n\nStreaming tail that gets truncated."
         _ = parser.parse(source)
 
         let shrunk = parser.parse("Alpha paragraph.\n\nStreaming")
 
-        #expect(shrunk.appendedUTF8Range == nil)
         #expect(shrunk.blocks == parseCommonMark("Alpha paragraph.\n\nStreaming"))
     }
 
-    @Test func longerReplacementWithoutSharedPrefixIsNotAnAppend() {
+    @Test func longerReplacementWithoutSharedPrefixParsesCanonically() {
         var parser = CommonMarkStreamingParser()
         let first = "Finalized paragraph.\n\nStreaming tail"
         _ = parser.parse(first)
@@ -149,7 +128,6 @@ struct StreamingMarkdownAppendTests {
 
         let parsed = parser.parse(replacement)
 
-        #expect(parsed.appendedUTF8Range == nil)
         #expect(parsed.blocks == parseCommonMark(replacement))
     }
 
@@ -218,7 +196,6 @@ struct StreamingMarkdownAppendTests {
 
         let replacement = "Plain prose.\n\nSecond paragraph.\n"
         let replaced = parser.parse(replacement)
-        #expect(replaced.appendedUTF8Range == nil)
         #expect(replaced.blocks == parseCommonMark(replacement))
 
         let grown = parser.parse(replacement + "\nThird paragraph.\n")
@@ -424,119 +401,6 @@ struct StreamingMarkdownAppendTests {
         #expect(previousCode?.contains("let b = 2") == true)
     }
 
-    // MARK: - Applier
-
-    /// The applier trusts the parser's verdict: a neutral append converts only
-    /// the new suffix, while a tick that rewrites earlier text replaces the tail.
-    @Test func neutralAppendAppliesDeltaAndEarlierRewriteReplaces() throws {
-        let view = AssistantMarkdownContentView()
-        view.apply(configuration: .make(content: "Hello", isStreaming: true, themeID: .dark))
-        #expect(view.debugStreamingFullNSConversionCountForTesting == 0)
-
-        view.apply(configuration: .make(content: "Hello world", isStreaming: true, themeID: .dark))
-        #expect(view.debugStreamingDeltaNSConversionCountForTesting == 1)
-        #expect(view.debugStreamingFullNSConversionCountForTesting == 0)
-
-        view.apply(configuration: .make(content: "Hello world and then some", isStreaming: true, themeID: .dark))
-        #expect(view.debugStreamingDeltaNSConversionCountForTesting == 2)
-        #expect(view.debugStreamingFullNSConversionCountForTesting == 0)
-
-        view.apply(configuration: .make(content: "Jello world and then some", isStreaming: true, themeID: .dark))
-        #expect(view.debugStreamingFullNSConversionCountForTesting == 1)
-
-        let textView = try #require(timelineAllTextViews(in: view).first)
-        #expect(timelineRenderedText(of: textView) == "Jello world and then some")
-    }
-
-    /// The same content can arrive with a new reader text size (or typography
-    /// revision) while a row streams. An unchanged tick is not a neutral append:
-    /// the tail still has to be restyled.
-    @Test func unchangedTickRestylesTailWhenReaderTextSizeChanges() throws {
-        let view = AssistantMarkdownContentView()
-        let content = "Streaming prose that stays put."
-        view.apply(configuration: .make(content: content, isStreaming: true, themeID: .dark))
-        let initial = try #require(timelineAllTextViews(in: view).first)
-        let initialSize = try #require(Self.firstFontSize(of: initial))
-        let fullBefore = view.debugStreamingFullNSConversionCountForTesting
-
-        view.apply(configuration: .make(
-            content: content,
-            isStreaming: true,
-            themeID: .dark,
-            readerPreferences: FullScreenReaderPreferences(textScale: 1.3)
-        ))
-
-        let restyled = try #require(timelineAllTextViews(in: view).first)
-        let restyledSize = try #require(Self.firstFontSize(of: restyled))
-        #expect(restyledSize > initialSize, "reader text size did not reach the tail")
-        #expect(
-            view.debugStreamingFullNSConversionCountForTesting == fullBefore + 1,
-            "an unchanged tick with new styling must replace the tail"
-        )
-        #expect(timelineRenderedText(of: restyled) == content)
-    }
-
-    /// A setext underline restyles the line above it without changing one
-    /// character, so that tick is not a neutral append: the tail has to be
-    /// rebuilt as a heading.
-    @Test func setextUnderlineRestylesTheStreamedTail() throws {
-        let view = AssistantMarkdownContentView()
-        let plain = "Prose line"
-        view.apply(configuration: .make(content: plain, isStreaming: true, themeID: .dark))
-        let body = try #require(timelineAllTextViews(in: view).first)
-        let bodySize = try #require(Self.firstFontSize(of: body))
-
-        view.apply(configuration: .make(content: plain + "\n===", isStreaming: true, themeID: .dark))
-        let heading = try #require(timelineAllTextViews(in: view).first)
-        let headingSize = try #require(Self.firstFontSize(of: heading))
-        #expect(timelineRenderedText(of: heading) == plain)
-        #expect(headingSize > bodySize, "a setext underline must restyle the tail as a heading")
-
-        view.apply(configuration: .make(content: plain + "\n===\n\nAfter", isStreaming: true, themeID: .dark))
-        let grown = try #require(timelineAllTextViews(in: view).first)
-        #expect(timelineRenderedText(of: grown).contains("After"))
-    }
-
-    /// One tick can carry the underline and the paragraph after it. The prefixes
-    /// match character for character, so only the last paragraph's attributes
-    /// reveal that the prose above turned into a heading.
-    @Test func singleTickSetextUnderlineRestylesTheStreamedTail() throws {
-        let view = AssistantMarkdownContentView()
-        let plain = "Prose line"
-        view.apply(configuration: .make(content: plain, isStreaming: true, themeID: .dark))
-        let body = try #require(timelineAllTextViews(in: view).first)
-        let bodySize = try #require(Self.firstFontSize(of: body))
-
-        view.apply(configuration: .make(content: plain + "\n===\n\nAfter", isStreaming: true, themeID: .dark))
-
-        let grown = try #require(timelineAllTextViews(in: view).first)
-        let headingSize = try #require(Self.firstFontSize(of: grown))
-        #expect(timelineRenderedText(of: grown) == plain + "\n\nAfter")
-        #expect(headingSize > bodySize, "a one-tick setext underline must restyle the streamed prose")
-    }
-
-    /// `-` is ordinary prose mid-line, so only a line-leading marker can restyle
-    /// anything already on screen. Treating every dash as markup would send most
-    /// ticks through the O(tail) comparison.
-    @Test func dashIsMarkupOnlyAtTheStartOfALine() {
-        func neutral(_ previous: String, _ appended: String) -> Bool {
-            let content = previous + appended
-            return StreamingMarkdownDelta.appendedSourceIsMarkdownNeutral(
-                content,
-                range: previous.utf8.count..<content.utf8.count
-            )
-        }
-
-        #expect(neutral("Some prose", " - and more prose"))
-        #expect(neutral("A clause", " - a second clause\nmore prose"))
-        #expect(neutral("Some prose\n", "\n- item") == false)
-        #expect(neutral("Some prose", "\n---") == false)
-        #expect(neutral("Some prose", "\n===") == false)
-        #expect(neutral("Some prose\n", "  - item") == false)
-        #expect(neutral("Some prose\n", "    - indented code"))
-        #expect(neutral("Some prose", " more *emphasis") == false)
-    }
-
     // MARK: - Helpers
 
     private static func prefixes(of source: String, chunkSize: Int) -> [String] {
@@ -562,11 +426,6 @@ struct StreamingMarkdownAppendTests {
             text + String(repeating: "x", count: width - text.utf8.count)
         }
         return (pad(alpha), pad(bravo))
-    }
-
-    private static func firstFontSize(of textView: UITextView) -> CGFloat? {
-        guard let attributed = textView.attributedText, attributed.length > 0 else { return nil }
-        return (attributed.attribute(.font, at: 0, effectiveRange: nil) as? UIFont)?.pointSize
     }
 
     private static func plainText(of segments: [FlatSegment]) -> String {
