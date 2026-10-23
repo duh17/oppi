@@ -334,7 +334,7 @@ final class AssistantMarkdownContentView: UIView {
             config: config,
             sourceLineRanges: build.sourceLineRanges,
             hasUnclosedCodeFence: segmentSource.lastBuildHasUnclosedCodeFence,
-            unchangedStreamingTextUTF16Length: segmentSource.lastStreamingTextUnchangedUTF16Length
+            streamingTextEdit: segmentSource.lastStreamingTextEdit
         )
         segmentApplier.applyLeadingHang(
             clearance: leadingHangClearance,
@@ -646,6 +646,10 @@ extension AssistantMarkdownContentView {
 
     var debugStreamingDeltaNSConversionCountForTesting: Int {
         segmentApplier.debugStreamingDeltaNSConversionCountForTesting
+    }
+
+    var debugStreamingPartialReplaceCountForTesting: Int {
+        segmentApplier.debugStreamingPartialReplaceCountForTesting
     }
 
     var debugStreamingDocumentLayoutCountForTesting: Int {

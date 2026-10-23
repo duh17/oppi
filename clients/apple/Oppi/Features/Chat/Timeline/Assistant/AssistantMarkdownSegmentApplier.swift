@@ -285,6 +285,8 @@ final class AssistantMarkdownSegmentApplier {
     private(set) var debugInPlaceMermaidApplyCountForTesting = 0
     private(set) var debugStreamingFullNSConversionCountForTesting = 0
     private(set) var debugStreamingDeltaNSConversionCountForTesting = 0
+    /// Streaming edits that replaced a restyled open tail in place.
+    private(set) var debugStreamingPartialReplaceCountForTesting = 0
     private var debugStreamingDocumentLayoutCount = 0
     private(set) var debugStreamingPartialLayoutCountForTesting = 0
     var debugStreamingDocumentLayoutCountForTesting: Int {
@@ -498,7 +500,7 @@ final class AssistantMarkdownSegmentApplier {
         config: AssistantMarkdownContentView.Configuration,
         sourceLineRanges: [ClosedRange<Int>?] = [],
         hasUnclosedCodeFence knownFenceState: Bool? = nil,
-        unchangedStreamingTextUTF16Length: Int? = nil
+        streamingTextEdit: StreamingTextEdit? = nil
     ) {
         self.sourceLineRanges = sourceLineRanges
         if !config.isStreaming {
@@ -527,7 +529,7 @@ final class AssistantMarkdownSegmentApplier {
                 segments: segments,
                 config: config,
                 hasUnclosedCodeFence: hasUnclosedCodeFence,
-                unchangedStreamingTextUTF16Length: unchangedStreamingTextUTF16Length
+                streamingTextEdit: streamingTextEdit
             )
         } else if config.isStreaming {
             // Streaming structural change: find the common prefix of segment
@@ -900,7 +902,7 @@ final class AssistantMarkdownSegmentApplier {
         segments: [FlatSegment],
         config: AssistantMarkdownContentView.Configuration,
         hasUnclosedCodeFence: Bool,
-        unchangedStreamingTextUTF16Length: Int?
+        streamingTextEdit: StreamingTextEdit?
     ) {
         let lastTextIndex = segments.lastIndex(where: { if case .text = $0 { return true } else { return false } })
 
@@ -913,7 +915,7 @@ final class AssistantMarkdownSegmentApplier {
             updateStreamingTextTail(
                 attributed,
                 in: textView,
-                unchangedUTF16Length: unchangedStreamingTextUTF16Length
+                edit: streamingTextEdit
             )
             return
         }
@@ -944,7 +946,7 @@ final class AssistantMarkdownSegmentApplier {
                             updateStreamingTextTail(
                                 attributed,
                                 in: textView,
-                                unchangedUTF16Length: unchangedStreamingTextUTF16Length
+                                edit: streamingTextEdit
                             )
                         } else {
                             // Non-streaming: re-enable data detectors if they were disabled
@@ -1133,15 +1135,17 @@ final class AssistantMarkdownSegmentApplier {
         }
     }
 
-    /// Appends only past `unchangedUTF16Length`, the segment source's proof that
-    /// the new text is the previous tick's text plus a suffix, attributes
-    /// included. Without that proof, or when the view no longer shows the
-    /// previous tick's text (a tick built but not applied, a reused cell), the
-    /// whole text is replaced: a stale style is never kept.
+    /// Edits only what `edit` says changed: the segment source's proof that
+    /// the first `unchangedUTF16Length` characters are the previous tick's,
+    /// attributes included. A plain append replaces nothing; a tick that
+    /// restyled the open tail (a closing span, a setext underline) replaces
+    /// only that tail. Without the proof, or when the view no longer shows
+    /// the previous tick's text (a tick built but not applied, a reused cell),
+    /// the whole text is replaced: a stale style is never kept.
     private func updateStreamingTextTail(
         _ attributed: AttributedString,
         in textView: BaselineSafeTextView,
-        unchangedUTF16Length: Int?
+        edit: StreamingTextEdit?
     ) {
         // Disable data detectors during streaming to avoid O(n) text
         // scanning on every textStorage change. Data detection runs
@@ -1151,34 +1155,54 @@ final class AssistantMarkdownSegmentApplier {
         if !textView.dataDetectorTypes.isEmpty {
             textView.dataDetectorTypes = []
         }
-        // Convert only the new suffix to NSAttributedString. Boxing the whole
-        // tail on every 50ms tick is the cost this path avoids.
-        guard let oldLength = unchangedUTF16Length,
-              textView.textStorage.length == oldLength,
-              let delta = StreamingMarkdownDelta.nsAttributedSuffix(
+        // Convert only the changed suffix to NSAttributedString. Boxing the
+        // whole tail on every 50ms tick is the cost this path avoids.
+        guard let edit,
+              textView.textStorage.length == edit.previousUTF16Length,
+              let replacement = StreamingMarkdownDelta.nsAttributedSuffix(
                   attributed,
-                  afterUTF16Offset: oldLength
+                  afterUTF16Offset: edit.unchangedUTF16Length
               )
         else {
             replaceStreamingText(attributed, in: textView)
             return
         }
-        guard delta.length > 0 else { return }
+        let replacedRange = NSRange(
+            location: edit.unchangedUTF16Length,
+            length: edit.previousUTF16Length - edit.unchangedUTF16Length
+        )
+        guard replacedRange.length > 0 || replacement.length > 0 else { return }
         #if DEBUG
         debugStreamingDeltaNSConversionCountForTesting += 1
+        if replacedRange.length > 0 {
+            debugStreamingPartialReplaceCountForTesting += 1
+        }
         #endif
 
-        let appendedRange = NSRange(location: oldLength, length: delta.length)
         chunkSettleAnimator.cancelAndSnap()
-        appendStreamingDelta(delta, to: textView)
+        editStreamingText(in: textView, replacing: replacedRange, with: replacement)
         refreshTextViewLayoutAfterContentChange(textView)
-        // Layout the appended range (chunk fade) plus the on-screen
-        // runway. `layoutIfNeeded()` grows the text view inside a stale
+        // Only what lies past the old text is new to the reader and fades in;
+        // a restyled stretch they already saw stays put.
+        let newLength = edit.unchangedUTF16Length + replacement.length
+        let appendedRange = NSRange(
+            location: min(edit.previousUTF16Length, newLength),
+            length: max(0, newLength - edit.previousUTF16Length)
+        )
+        // Layout the appended range (chunk fade) plus the on-screen runway.
+        // `layoutIfNeeded()` grows the text view inside a stale
         // collection-view frame between self-sizing passes.
         layoutStreamingText(in: textView, appendedRange: appendedRange)
+        guard appendedRange.length > 0 else { return }
+        let appendedInReplacement = NSRange(
+            location: edit.previousUTF16Length - edit.unchangedUTF16Length,
+            length: appendedRange.length
+        )
         chunkSettleAnimator.animateAppendedRange(
             appendedRange,
-            attributedText: delta,
+            attributedText: appendedInReplacement.location == 0
+                ? replacement
+                : replacement.attributedSubstring(from: appendedInReplacement),
             in: textView
         )
     }
@@ -1196,20 +1220,21 @@ final class AssistantMarkdownSegmentApplier {
         refreshTextViewLayoutAfterContentChange(textView)
     }
 
-    private func appendStreamingDelta(
-        _ delta: NSAttributedString,
-        to textView: BaselineSafeTextView
+    private func editStreamingText(
+        in textView: BaselineSafeTextView,
+        replacing range: NSRange,
+        with replacement: NSAttributedString
     ) {
         if let contentStorage = textView.textLayoutManager?.textContentManager as? NSTextContentStorage,
            let storage = contentStorage.textStorage {
             contentStorage.performEditingTransaction(for: storage) {
-                storage.append(delta)
+                storage.replaceCharacters(in: range, with: replacement)
             }
             return
         }
 
         textView.textStorage.beginEditing()
-        textView.textStorage.append(delta)
+        textView.textStorage.replaceCharacters(in: range, with: replacement)
         textView.textStorage.endEditing()
     }
 

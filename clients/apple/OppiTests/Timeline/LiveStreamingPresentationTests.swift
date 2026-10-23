@@ -378,7 +378,7 @@ struct LiveStreamingPresentationTests {
             segments: source.buildSegments(config),
             config: config,
             hasUnclosedCodeFence: source.lastBuildHasUnclosedCodeFence,
-            unchangedStreamingTextUTF16Length: source.lastStreamingTextUnchangedUTF16Length
+            streamingTextEdit: source.lastStreamingTextEdit
         )
     }
 
@@ -397,7 +397,6 @@ struct LiveStreamingPresentationTests {
         let rendered = timelineRenderedText(of: textView)
         #expect(rendered == expected, "Expected \(expected), got \(rendered)")
         #expect(!rendered.contains(forbidden), "Rewrite left markup glyphs in \(rendered)")
-        #expect(applier.debugStreamingFullNSConversionCountForTesting >= 1)
     }
 
     @Test("thinking overflow follow uses the shared policy")

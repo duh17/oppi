@@ -87,6 +87,21 @@ struct StreamingTextAppendDifferentialTests {
         #expect(view.debugStreamingDeltaNSConversionCountForTesting > ticks.count / 2)
     }
 
+    /// A closing code or bold span restyles text already on screen, but only
+    /// in the open tail: the frozen paragraphs above it stay as they are and
+    /// the document is never reboxed.
+    @Test func closingSpanReplacesOnlyTheOpenTail() {
+        let lead = (0..<4).map { "Paragraph \($0) streams plain prose first." }.joined(separator: "\n\n")
+        let view = AssistantMarkdownContentView()
+
+        for prefix in Self.prefixes(of: lead + "\n\nThen `inline code` and **bold** close mid-stream.", chunkSize: 3) {
+            view.apply(configuration: .make(content: prefix, isStreaming: true, themeID: .dark))
+        }
+
+        #expect(view.debugStreamingPartialReplaceCountForTesting >= 2)
+        #expect(view.debugStreamingFullNSConversionCountForTesting == 0)
+    }
+
     private func stream(
         _ content: String,
         preferences: FullScreenReaderPreferences?,
