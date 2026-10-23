@@ -57,8 +57,8 @@ final class ToolExpandedMarkdownSurface {
     enum Retirement {
         /// The row leaves the Markdown viewport without another surface taking
         /// it over: it collapsed, a Bash body took over the row, or its content
-        /// is not rendered. The same document can come back, so the live
-        /// viewport keeps its parsed content.
+        /// is not rendered. Parsed content goes too: the cell can be reused for
+        /// another tool call before this viewport comes back.
         case collapsed
         /// Another surface took over the expanded viewport; parsed content goes.
         case replaced
@@ -74,6 +74,11 @@ final class ToolExpandedMarkdownSurface {
     private(set) var completedBody: NativeFullScreenMarkdownBody?
     /// Text `completedBody` was built from.
     private var completedText: String?
+    /// Item the live viewport last parsed. A reused tool cell can move to another
+    /// item without a retirement, and the incremental parser's append verdict
+    /// only proves the last bytes repeat, not that the earlier text is the same
+    /// tool call.
+    private var liveItemID: String?
 
     /// Theme captured by the mounted viewport; nil while none is installed.
     private(set) var themeID: ThemeID?
@@ -175,6 +180,10 @@ final class ToolExpandedMarkdownSurface {
     @discardableResult
     func apply(_ input: Input) -> Outcome {
         let themeID = ThemeRuntimeState.currentThemeID()
+        if liveItemID != input.itemID {
+            liveView.clearContent()
+            liveItemID = input.itemID
+        }
         // Capture before the mode flag flips: a completed install that replaces
         // a live viewport carries the reader position across.
         let handoffIntent = (!input.isStreaming && usesIncrementalViewport)
@@ -274,6 +283,10 @@ final class ToolExpandedMarkdownSurface {
         removeCompletedViewport()
         switch retirement {
         case .collapsed:
+            // The cell can be reused for another item while collapsed, so the
+            // live viewport drops its parsed content instead of lending it on.
+            liveView.clearContent()
+            liveItemID = nil
             liveFollow = LiveStreamingPresentation.ViewportPolicy(followsTail: true)
         case .replaced:
             // Stale content would keep contributing intrinsic size.

@@ -507,6 +507,7 @@ final class AssistantMarkdownSegmentApplier {
         segments: [FlatSegment],
         config: AssistantMarkdownContentView.Configuration,
         sourceLineRanges: [ClosedRange<Int>?] = [],
+        hasUnclosedCodeFence knownFenceState: Bool? = nil,
         markdownNeutralAppend: Bool = false
     ) {
         self.sourceLineRanges = sourceLineRanges
@@ -518,9 +519,11 @@ final class AssistantMarkdownSegmentApplier {
 
         let signatures = segments.map(SegmentSignature.init)
         let buildContext = SegmentRenderContext(config)
-        // One full-document fence scan per apply. Per-segment scans starve the
-        // 50ms streaming clock on mermaid-heavy documents.
-        let hasUnclosedCodeFence = AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
+        // One fence scan per apply. Per-segment scans starve the 50ms streaming
+        // clock on mermaid-heavy documents. The segment source already read it
+        // from the open tail while streaming; callers without a source scan here.
+        let hasUnclosedCodeFence = knownFenceState
+            ?? AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
         if renderedBuildContext != buildContext {
             rebuild(
                 segments: segments,

@@ -36,7 +36,7 @@ struct ToolExpandedMarkdownSurfaceTests {
         #expect(labelText.isEmpty)
     }
 
-    @Test func liveViewportKeepsParsedContentThroughCollapseButNotASurfaceSwitch() throws {
+    @Test func liveViewportDropsParsedContentOnCollapseAndOnASurfaceSwitch() throws {
         let text = (0..<40).map { "Paragraph \($0) of the streaming document." }.joined(separator: "\n\n")
         let view = ToolTimelineRowContentView(configuration: markdownConfiguration(text, isDone: false))
         _ = fittedTimelineSize(for: view, width: 360)
@@ -47,8 +47,8 @@ struct ToolExpandedMarkdownSurfaceTests {
         view.configuration = collapsedConfiguration()
         _ = fittedTimelineSize(for: view, width: 360)
         #expect(
-            !stack.arrangedSubviews.isEmpty,
-            "Collapsing keeps the parsed document so expanding again does not reparse it"
+            stack.arrangedSubviews.isEmpty,
+            "Collapsing drops the parsed document: a reused cell must not inherit another tool call's parse"
         )
 
         view.configuration = codeConfiguration()
@@ -57,6 +57,27 @@ struct ToolExpandedMarkdownSurfaceTests {
             stack.arrangedSubviews.isEmpty,
             "Another surface taking the viewport must drop the streaming content"
         )
+    }
+
+    @Test func reusedCellDoesNotKeepAnotherItemsParsedContent() throws {
+        let firstText = (0..<20).map { "First tool call paragraph \($0) with prose." }.joined(separator: "\n\n")
+        let harness = SurfaceHarness()
+        harness.apply(firstText, isStreaming: true)
+        let stack = try #require(markdownStack(in: harness.surface.liveView))
+        #expect(!stack.arrangedSubviews.isEmpty)
+
+        harness.apply(
+            "Second tool call paragraph with different text.",
+            itemID: "second-call",
+            isStreaming: true
+        )
+        let rebuilt = try #require(markdownStack(in: harness.surface.liveView))
+        let text = rebuilt.arrangedSubviews.compactMap { view -> String? in
+            guard let textView = view as? UITextView else { return nil }
+            return timelineRenderedText(of: textView)
+        }.joined(separator: "\n")
+        #expect(text.contains("Second tool call paragraph"))
+        #expect(!text.contains("First tool call paragraph"))
     }
 
     @Test func collapsingWhileTheReaderPreparesReleasesIt() async throws {
@@ -339,9 +360,13 @@ private final class SurfaceHarness {
     }
 
     @discardableResult
-    func apply(_ text: String, isStreaming: Bool) -> ToolExpandedMarkdownSurface.Outcome {
+    func apply(
+        _ text: String,
+        itemID: String = "surface-harness",
+        isStreaming: Bool
+    ) -> ToolExpandedMarkdownSurface.Outcome {
         surface.apply(ToolExpandedMarkdownSurface.Input(
-            itemID: "surface-harness",
+            itemID: itemID,
             text: text,
             isStreaming: isStreaming,
             textSelectionEnabled: false,

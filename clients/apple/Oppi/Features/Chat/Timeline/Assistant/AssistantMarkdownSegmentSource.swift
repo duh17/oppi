@@ -33,16 +33,21 @@ final class AssistantMarkdownSegmentSource {
     private var streamingSegmentState: StreamingSegmentState?
     private var streamingTextMergeCache: StreamingTextMergeCache?
 
-    /// The parser's append verdict for the last streaming build, and whether the
-    /// appended bytes can leave earlier glyphs alone. The applier uses it instead
-    /// of re-deriving an append from the whole source text.
+    /// The parser's append verdict for the last build, and whether the appended
+    /// bytes can leave earlier glyphs alone. The applier uses it instead of
+    /// re-deriving an append from the whole source text.
     private(set) var lastStreamingAppendIsMarkdownNeutral = false
+    /// Whether the content of the last build ends inside an unclosed fence. The
+    /// streaming path reads only the open tail, which is the only place an
+    /// unclosed fence can start: a frozen prefix ends at a block boundary.
+    private(set) var lastBuildHasUnclosedCodeFence = false
 
     func reset() {
         streamingParser.reset()
         streamingSegmentState = nil
         streamingTextMergeCache = nil
         lastStreamingAppendIsMarkdownNeutral = false
+        lastBuildHasUnclosedCodeFence = false
     }
 
     func buildSegments(
@@ -53,6 +58,7 @@ final class AssistantMarkdownSegmentSource {
         let content = config.content
         let identity = config.resourceAccess.identity
         lastStreamingAppendIsMarkdownNeutral = false
+        lastBuildHasUnclosedCodeFence = Self.hasUnclosedCodeFence(content)
 
         if !config.isStreaming,
            mergeAdjacentTextSegments,
@@ -141,6 +147,7 @@ final class AssistantMarkdownSegmentSource {
         let content = config.content
         let identity = config.resourceAccess.identity
         lastStreamingAppendIsMarkdownNeutral = false
+        lastBuildHasUnclosedCodeFence = Self.hasUnclosedCodeFence(content)
         let parseStart = MarkdownStreamingPerf.timestampNs()
         let blocks = parseCommonMarkLocated(content)
         let parseEnd = MarkdownStreamingPerf.timestampNs()
@@ -177,8 +184,18 @@ final class AssistantMarkdownSegmentSource {
     }
 
     static func hasUnclosedCodeFence(_ content: String) -> Bool {
+        hasUnclosedCodeFence(content, fromUTF8Offset: 0)
+    }
+
+    /// Fence parity of the region starting at `offset`. The frozen streaming
+    /// prefix ends at a top-level block boundary, so it holds no open fence and
+    /// the tail alone decides; scanning it keeps a tick O(appended text).
+    static func hasUnclosedCodeFence(_ content: String, fromUTF8Offset offset: Int) -> Bool {
+        let bytes = content.utf8
+        let start = bytes.index(bytes.endIndex, offsetBy: offset - bytes.count)
         var openFences = 0
-        for line in content.split(separator: "\n", omittingEmptySubsequences: false) {
+        for line in String(decoding: bytes[start...], as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: false) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
                 if openFences > 0 {
@@ -213,6 +230,10 @@ final class AssistantMarkdownSegmentSource {
         lastStreamingAppendIsMarkdownNeutral = parsed.appendedUTF8Range.map { appended in
             StreamingMarkdownDelta.appendedSourceIsMarkdownNeutral(config.content, range: appended)
         } ?? false
+        lastBuildHasUnclosedCodeFence = Self.hasUnclosedCodeFence(
+            config.content,
+            fromUTF8Offset: parsed.tailUTF8Offset
+        )
 
         let prefixSegments: [FlatSegment]
         let prefixReused: Bool
@@ -258,7 +279,7 @@ final class AssistantMarkdownSegmentSource {
         MarkdownStreamingPerf.record(
             parseDurationNs: parseEnd - parseStart,
             buildDurationNs: buildEnd - parseEnd,
-            lineCount: Self.countNewlines(config.content) + 1,
+            lineCount: Self.countNewlines(config.content, fromUTF8Offset: parsed.tailUTF8Offset) + 1,
             isTailOnly: parsed.strategy == .tailOnly,
             isStreaming: true
         )
@@ -378,8 +399,16 @@ final class AssistantMarkdownSegmentSource {
 
     /// Count newlines via UTF-8 byte scan. Avoids the `components(separatedBy:)` array allocation.
     private static func countNewlines(_ string: String) -> Int {
+        countNewlines(string, fromUTF8Offset: 0)
+    }
+
+    /// Newlines from `offset` to the end. Streaming telemetry wants the open
+    /// tail, and indexing from the end keeps that scan O(tail).
+    private static func countNewlines(_ string: String, fromUTF8Offset offset: Int) -> Int {
+        let bytes = string.utf8
+        let start = bytes.index(bytes.endIndex, offsetBy: offset - bytes.count)
         var count = 0
-        for byte in string.utf8 where byte == UInt8(ascii: "\n") {
+        for byte in bytes[start...] where byte == UInt8(ascii: "\n") {
             count += 1
         }
         return count
@@ -392,8 +421,12 @@ enum StreamingMarkdownDelta {
     /// True when the appended source bytes cannot open or close inline markup, so
     /// an append cannot restyle glyphs that are already rendered. Only the
     /// appended bytes are scanned; the parser already proved the append.
+    ///
+    /// An empty append is not neutral: the same content can arrive with a new
+    /// reader text size, typography revision, or theme, and the tail still has to
+    /// be restyled.
     static func appendedSourceIsMarkdownNeutral(_ content: String, range: Range<Int>) -> Bool {
-        guard !range.isEmpty else { return true }
+        guard !range.isEmpty else { return false }
 
         let bytes = content.utf8
         let start = bytes.index(

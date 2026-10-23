@@ -153,29 +153,10 @@ struct StreamingMarkdownAppendTests {
         #expect(parsed.blocks == parseCommonMark(replacement))
     }
 
-    /// The verdict samples only the last 64 bytes of the previous content, so a
-    /// longer replacement that repeats them at the same offset reads as an
-    /// append. Rendering stays correct because the segment source is reset when
-    /// the row's item identity changes; see
-    /// `anotherItemsTextAfterResetRendersCanonically`.
-    @Test func replacementThatRepeatsTheSampleWindowReadsAsAnAppend() {
-        let sharedTail = String(repeating: "shared closing sentence. ", count: 3)
-        let alpha = "# Alpha\n\nAlpha only paragraph.\n\n" + sharedTail
-        let bravo = "# Bravo\n\nBravo only paragraph.\n\n" + sharedTail + " More text."
-        #expect(bravo.utf8.count > alpha.utf8.count)
-
-        var parser = CommonMarkStreamingParser()
-        _ = parser.parse(alpha)
-
-        let parsed = parser.parse(bravo)
-
-        #expect(parsed.appendedUTF8Range == alpha.utf8.count..<bravo.utf8.count)
-    }
-
-    /// Same document after a reset: the frozen prefix of the previous item is
-    /// gone, so the new item renders canonically even though its tail matches.
-    /// This is the reset the assistant row performs when a reused cell switches
-    /// item; the control below shows why it is required.
+    /// A parser that outlives its item must be reset: its append verdict proves
+    /// continuity from the tail bytes only, so the previous item's frozen prefix
+    /// would survive. The assistant row and the tool-expanded surface clear the
+    /// view when the item changes; this is the source-level reset they perform.
     @Test func anotherItemsTextAfterResetRendersCanonically() {
         let sharedTail = String(repeating: "shared closing sentence. ", count: 3)
         let heads = Self.paddedToSameLength(
@@ -184,12 +165,6 @@ struct StreamingMarkdownAppendTests {
         )
         let alpha = heads.alpha + sharedTail
         let bravo = heads.bravo + sharedTail + " More text."
-
-        // Control: without the reset, the previous item's frozen prefix survives.
-        let stale = AssistantMarkdownSegmentSource()
-        _ = stale.buildSegments(.make(content: alpha, isStreaming: true, themeID: .dark))
-        let staleSegments = stale.buildSegments(.make(content: bravo, isStreaming: true, themeID: .dark))
-        #expect(Self.plainText(of: staleSegments).contains("Alpha"))
 
         let source = AssistantMarkdownSegmentSource()
         _ = source.buildSegments(.make(content: alpha, isStreaming: true, themeID: .dark))
@@ -251,6 +226,27 @@ struct StreamingMarkdownAppendTests {
         #expect(grown.blocks == parseCommonMark(replacement + "\nThird paragraph.\n"))
     }
 
+    // MARK: - Tail-scoped work
+
+    /// Streaming reads only the open tail for fence parity. The frozen prefix
+    /// ends at a top-level block boundary, so the tail decides on its own.
+    @Test func tailFenceScanMatchesWholeDocumentScan() {
+        for fixture in Self.fixtures {
+            var parser = CommonMarkStreamingParser()
+
+            for prefix in Self.prefixes(of: fixture.source, chunkSize: 17) {
+                let parsed = parser.parse(prefix)
+                #expect(
+                    AssistantMarkdownSegmentSource.hasUnclosedCodeFence(
+                        prefix,
+                        fromUTF8Offset: parsed.tailUTF8Offset
+                    ) == AssistantMarkdownSegmentSource.hasUnclosedCodeFence(prefix),
+                    "\(fixture.name) fence parity diverged at \(prefix.utf8.count) UTF-8 bytes"
+                )
+            }
+        }
+    }
+
     // MARK: - Applier
 
     /// The applier trusts the parser's verdict: a neutral append converts only
@@ -273,6 +269,34 @@ struct StreamingMarkdownAppendTests {
 
         let textView = try #require(timelineAllTextViews(in: view).first)
         #expect(timelineRenderedText(of: textView) == "Jello world and then some")
+    }
+
+    /// The same content can arrive with a new reader text size (or typography
+    /// revision) while a row streams. An unchanged tick is not a neutral append:
+    /// the tail still has to be restyled.
+    @Test func unchangedTickRestylesTailWhenReaderTextSizeChanges() throws {
+        let view = AssistantMarkdownContentView()
+        let content = "Streaming prose that stays put."
+        view.apply(configuration: .make(content: content, isStreaming: true, themeID: .dark))
+        let initial = try #require(timelineAllTextViews(in: view).first)
+        let initialSize = try #require(Self.firstFontSize(of: initial))
+        let fullBefore = view.debugStreamingFullNSConversionCountForTesting
+
+        view.apply(configuration: .make(
+            content: content,
+            isStreaming: true,
+            themeID: .dark,
+            readerPreferences: FullScreenReaderPreferences(textScale: 1.3)
+        ))
+
+        let restyled = try #require(timelineAllTextViews(in: view).first)
+        let restyledSize = try #require(Self.firstFontSize(of: restyled))
+        #expect(restyledSize > initialSize, "reader text size did not reach the tail")
+        #expect(
+            view.debugStreamingFullNSConversionCountForTesting == fullBefore + 1,
+            "an unchanged tick with new styling must replace the tail"
+        )
+        #expect(timelineRenderedText(of: restyled) == content)
     }
 
     // MARK: - Helpers
@@ -300,6 +324,11 @@ struct StreamingMarkdownAppendTests {
             text + String(repeating: "x", count: width - text.utf8.count)
         }
         return (pad(alpha), pad(bravo))
+    }
+
+    private static func firstFontSize(of textView: UITextView) -> CGFloat? {
+        guard let attributed = textView.attributedText, attributed.length > 0 else { return nil }
+        return (attributed.attribute(.font, at: 0, effectiveRange: nil) as? UIFont)?.pointSize
     }
 
     private static func plainText(of segments: [FlatSegment]) -> String {

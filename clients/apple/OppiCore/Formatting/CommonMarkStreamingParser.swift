@@ -14,6 +14,11 @@ struct CommonMarkStreamingParseResult: Equatable, Sendable {
     /// `count ..< count` means the content is unchanged. Nil for the first
     /// call, a shrink, or a replacement, all of which drop the frozen prefix.
     let appendedUTF8Range: Range<Int>?
+    /// UTF-8 byte offset where the open tail starts. The frozen prefix ends at a
+    /// top-level block boundary, so tail-only work (fence parity, line counts)
+    /// can start here instead of re-reading the whole answer. Zero when the
+    /// whole document was the tail.
+    let tailUTF8Offset: Int
 }
 
 /// Incrementally parses a monotonically growing CommonMark document.
@@ -71,7 +76,8 @@ struct CommonMarkStreamingParser: Sendable {
                 prefixBlocks: [],
                 tailBlocks: blocks,
                 strategy: .full,
-                appendedUTF8Range: appended
+                appendedUTF8Range: appended,
+                tailUTF8Offset: 0
             )
         }
 
@@ -102,7 +108,8 @@ struct CommonMarkStreamingParser: Sendable {
                 prefixBlocks: current.prefixBlocks,
                 tailBlocks: tailBlocks,
                 strategy: .tailOnly,
-                appendedUTF8Range: appended
+                appendedUTF8Range: appended,
+                tailUTF8Offset: current.prefixUTF8ByteCount
             )
         }
 
@@ -120,7 +127,8 @@ struct CommonMarkStreamingParser: Sendable {
             prefixBlocks: split.prefixBlocks,
             tailBlocks: split.tailBlocks,
             strategy: .full,
-            appendedUTF8Range: appended
+            appendedUTF8Range: appended,
+            tailUTF8Offset: split.state?.prefixUTF8ByteCount ?? 0
         )
     }
 
