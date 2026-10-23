@@ -670,6 +670,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
 
     deinit {
         MainActor.assumeIsolated {
+            readerTraces.settleAll()
             ownedClock.isObserving = false
             ownedClock.emptyOverlay = nil
             let observedAudioPlayer = audioPlayer
@@ -1042,7 +1043,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     /// A reader opened from a row is fed here, from the rows themselves. The
     /// row's own cell is not a feed: opening a reader pushes a page, and UIKit
     /// configures no cell for a row outside the viewport, which is where the
-    /// thinking row sits once the tail below it grows.
+    /// thinking row sits once the tail below it grows. With no reader open this
+    /// costs one emptiness check.
     private func feedOpenReaderTraces(
         configuration: ChatTimelineConfiguration,
         sessionScopeChanged: Bool
@@ -1052,16 +1054,21 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         }
         guard !readerTraces.isEmpty else { return }
 
-        readerTraces.update(items: configuration.items, liveRowIDs: configuration.liveRowIDs)
-        readerTraces.retainRows(in: Set(configuration.fullTimelineItemIDs))
-        guard !readerTraces.runningToolItemIDs.isEmpty else { return }
-        readerTraces.updateToolTraces { [weak self] itemID in
-            guard let self,
-                  let item = configuration.items.first(where: { $0.id == itemID }) else {
-                return nil
+        var timelineIDs: Set<String>?
+        readerTraces.update(
+            items: configuration.items,
+            liveRowIDs: configuration.liveRowIDs,
+            itemExists: { itemID in
+                // Only a reader whose row left the rendered rows asks, so the
+                // full-timeline set is built on that path alone.
+                let ids = timelineIDs ?? Set(configuration.fullTimelineItemIDs)
+                timelineIDs = ids
+                return ids.contains(itemID)
+            },
+            toolConfiguration: { [weak self] itemID, item in
+                self?.toolRowConfiguration(itemID: itemID, item: item) as? ToolTimelineRowConfiguration
             }
-            return self.toolRowConfiguration(itemID: itemID, item: item) as? ToolTimelineRowConfiguration
-        }
+        )
     }
 
     private func updateLiveTailItemIDsFromCurrentState(

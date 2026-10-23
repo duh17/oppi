@@ -123,6 +123,114 @@ struct FullScreenReaderStreamTests {
             .map(timelineRenderedText)
             .joined(separator: "\n")
         #expect(rendered.contains("Build complete"))
+        #expect(!stream.snapshot.isDone, "a running call's reader is still live")
+
+        // The call finishing reaches the reader once, even without its cell, and
+        // the reader mounts the finished body.
+        fixture.apply(
+            items: [completedTool(output: "Compiling module 1\nBuild complete")] + trailer,
+            liveRowIDs: [],
+            isBusy: false
+        )
+        await drainMainQueue()
+        fixture.window.layoutIfNeeded()
+
+        #expect(stream.snapshot.isDone)
+        #expect(stream.snapshot.output.contains("Build complete"))
+        let finished = timelineAllTextViews(in: reader.view)
+            .map(timelineRenderedText)
+            .joined(separator: "\n")
+        #expect(finished.contains("Build complete"), "the reader shows the finished call's output")
+    }
+
+    @Test("a folded row keeps its reader instead of being treated as gone")
+    func foldedRowKeepsItsReader() throws {
+        let fixture = ReaderTimelineFixture(sessionId: "session-reader-folded")
+        defer { fixture.window.isHidden = true }
+
+        let opening = thinkingText(lines: 30)
+        let trailer = trailerRows(count: 60)
+        fixture.apply(
+            items: [.thinking(id: "think-1", preview: opening, hasMore: false, isDone: true)] + trailer,
+            liveRowIDs: ["think-1"]
+        )
+        let row = try fixture.thinkingRow(at: 0)
+        row.showFullScreen()
+        let payload = try #require(fixture.opened)
+        guard case .document(let content, _) = payload.kind else {
+            Issue.record("expected a document reader, got \(payload.kind)")
+            return
+        }
+        _ = fixture.presentReader(content: content)
+
+        // Quiet mode folds the finished turn: the row leaves the rendered rows
+        // but its item is still in the timeline, so its reader survives.
+        fixture.apply(
+            items: trailer,
+            fullTimelineItemIDs: ["think-1"] + trailer.map(\.id),
+            liveRowIDs: ["think-1"]
+        )
+
+        #expect(fixture.controller.readerTraces.openItemIDs == ["think-1"])
+    }
+
+    @Test("a reader that closes is released and stops being fed")
+    func closedReaderIsReleased() async throws {
+        let fixture = ReaderTimelineFixture(sessionId: "session-reader-closed")
+        defer { fixture.window.isHidden = true }
+
+        let opening = thinkingText(lines: 30)
+        let trailer = trailerRows(count: 60)
+        fixture.apply(
+            items: [.thinking(id: "think-1", preview: opening, hasMore: false, isDone: true)] + trailer,
+            liveRowIDs: ["think-1"]
+        )
+        let row = try fixture.thinkingRow(at: 0)
+        row.showFullScreen()
+        let payload = try #require(fixture.opened)
+        guard case .document(let content, _) = payload.kind,
+              case let .thinking(_, openedStream) = content else {
+            Issue.record("expected a thinking reader, got \(payload.kind)")
+            return
+        }
+        let stream = try #require(openedStream)
+
+        var reader: FullScreenCodeViewController? = fixture.presentReader(content: content)
+        #expect(stream.hasObservers)
+
+        // The timeline keeps applying while the reader is up: the entry is live
+        // and observed, not pending a mount.
+        fixture.apply(
+            items: [.thinking(id: "think-1", preview: opening, hasMore: false, isDone: true)] + trailer,
+            liveRowIDs: ["think-1"]
+        )
+        #expect(fixture.controller.readerTraces.openItemIDs == ["think-1"])
+
+        fixture.closeReader(reader)
+        reader = nil
+        let released = await waitForMainActorCondition(timeout: .seconds(2)) {
+            !stream.hasObservers
+        }
+        #expect(released, "the popped reader must let go of the trace")
+
+        fixture.apply(
+            items: [.thinking(id: "think-1", preview: opening, hasMore: false, isDone: true)] + trailer,
+            liveRowIDs: ["think-1"]
+        )
+
+        #expect(fixture.controller.readerTraces.isEmpty, "a closed reader is not fed")
+    }
+
+    private func completedTool(output: String) -> ChatItem {
+        .toolCall(
+            id: "tool-1",
+            tool: "bash",
+            argsSummary: "swift build",
+            outputPreview: output,
+            outputByteCount: output.utf8.count,
+            isError: false,
+            isDone: true
+        )
     }
 
     private func runningTool(output: String) -> ChatItem {
@@ -201,10 +309,23 @@ private final class ReaderTimelineFixture {
         return reader
     }
 
-    func apply(items: [ChatItem], liveRowIDs: Set<String>, isBusy: Bool = true) {
+    /// The reader's own back action: the page pops and its body is released.
+    func closeReader(_ reader: FullScreenCodeViewController?) {
+        navigation.popViewController(animated: false)
+        reader?.view.removeFromSuperview()
+        window.layoutIfNeeded()
+    }
+
+    func apply(
+        items: [ChatItem],
+        fullTimelineItemIDs: [String]? = nil,
+        liveRowIDs: Set<String>,
+        isBusy: Bool = true
+    ) {
         itemCount = items.count
         let configuration = makeTimelineConfiguration(
             items: items,
+            fullTimelineItemIDs: fullTimelineItemIDs,
             isBusy: isBusy,
             liveRowIDs: liveRowIDs,
             onOpenChatReader: { [weak self] in self?.opened = $0 },

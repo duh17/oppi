@@ -248,8 +248,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var expandedViewportHeightCache = ToolTimelineRowViewportHeightCache()
     private var expandedPinchDidTriggerFullScreen = false
     nonisolated(unsafe) private var elapsedTimer: Timer?
-    private let fullScreenTerminalStream: TerminalTraceStream
-    private let fullScreenSourceStream: SourceTraceStream
 
     private lazy var commandDoubleTapGesture = DoubleTapCopyGesture.makeGesture(
         target: self,
@@ -288,17 +286,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         self.currentConfiguration = configuration
         self.markdownSurface = ToolExpandedMarkdownSurface(viewport: expandedScrollView)
         self.hostedSurface = ToolExpandedHostedSurface(viewport: expandedScrollView)
-        self.fullScreenTerminalStream = TerminalTraceStream(
-            output: configuration.copyOutputText ?? "",
-            command: configuration.copyCommandText,
-            isDone: configuration.isDone
-        )
-        self.fullScreenSourceStream = SourceTraceStream(
-            text: "",
-            filePath: nil,
-            isDone: configuration.isDone,
-            finalContent: nil
-        )
         super.init(frame: .zero)
         setupViews()
         apply(configuration: configuration)
@@ -1182,16 +1169,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             expandedContainer: expandedContainer
         )
         bashToolRowView.applyTheme(palette)
-        fullScreenTerminalStream.completionSidecarSource = configuration.toolOutputSidecarSource
-
-        let terminalTrace = ToolTimelineRowFullScreenSupport.terminalTraceUpdate(
-            configuration: configuration
-        )
-        fullScreenTerminalStream.update(
-            output: terminalTrace.output,
-            command: terminalTrace.command,
-            isDone: terminalTrace.isDone
-        )
 
         // 2. Header: title, icon, badge, trailing, preview
         let showPreview = applyHeader(configuration: configuration)
@@ -1209,7 +1186,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedNeedsFollowTail = false
         setExpandedContainerGestureInterceptionEnabled(true)
         currentInteractionPolicy = renderPlan.interactionPolicy
-        updateFullScreenSourceStream(configuration: configuration)
 
         var showExpanded = false
         var showCommand = false
@@ -2239,37 +2215,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
     }
 
-    private func updateFullScreenSourceStream(configuration: ToolTimelineRowConfiguration) {
-        guard let policy = currentInteractionPolicy,
-              policy.supportsFullScreenPreview,
-              let trace = ToolTimelineRowFullScreenSupport.sourceTraceUpdate(
-                configuration: configuration,
-                outputCopyText: outputCopyText
-              ) else {
-            fullScreenSourceStream.update(
-                text: "",
-                filePath: nil,
-                isDone: true,
-                finalContent: nil
-            )
-            return
-        }
-
-        fullScreenSourceStream.update(
-            text: trace.text,
-            filePath: trace.filePath,
-            isDone: trace.isDone,
-            finalContent: trace.finalContent
-        )
-    }
-
+    /// Availability only: a live trace belongs to the timeline and is attached
+    /// when the reader opens (`openFullScreenTraces`).
     private var fullScreenContent: FullScreenCodeContent? {
         ToolTimelineRowFullScreenSupport.fullScreenContent(
             configuration: currentConfiguration,
             outputCopyText: outputCopyText,
             interactionPolicy: currentInteractionPolicy,
-            terminalStream: fullScreenTerminalStream,
-            sourceStream: fullScreenSourceStream
+            terminalStream: nil,
+            sourceStream: nil
         )
     }
 
@@ -2323,9 +2277,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
     }
 
+    /// The timeline's traces for this row. Without a timeline (a preview or a
+    /// standalone row) the reader is static, like a finished row's.
     private func openFullScreenTraces() -> (terminal: TerminalTraceStream?, source: SourceTraceStream?) {
         guard let owner = currentConfiguration.traceOwner else {
-            return (fullScreenTerminalStream, fullScreenSourceStream)
+            return (nil, nil)
         }
         let itemID = currentConfiguration.itemID
         let terminalTrace = ToolTimelineRowFullScreenSupport.terminalTraceUpdate(

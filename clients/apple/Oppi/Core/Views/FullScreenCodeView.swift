@@ -59,6 +59,10 @@ final class ThinkingTraceStream {
     private var snapshotStorage: Snapshot
     private var observers: [UUID: (Snapshot) -> Void] = [:]
 
+    /// A reader is showing this trace. Its owner may drop the trace once the
+    /// last reader lets go (`ChatTimelineReaderTraces`).
+    var hasObservers: Bool { !observers.isEmpty }
+
     init(text: String, isDone: Bool) {
         snapshotStorage = Snapshot(text: text, isDone: isDone)
     }
@@ -115,6 +119,10 @@ final class TerminalTraceStream {
     private var snapshotStorage: Snapshot
     private var observers: [UUID: (Snapshot) -> Void] = [:]
 
+    /// A reader is showing this output. Its owner may drop the trace once the
+    /// last reader lets go (`ChatTimelineReaderTraces`).
+    var hasObservers: Bool { !observers.isEmpty }
+
     init(output: String, command: String?, isDone: Bool) {
         snapshotStorage = Snapshot(output: output, command: command, isDone: isDone)
     }
@@ -157,6 +165,10 @@ final class SourceTraceStream {
 
     private var snapshotStorage: Snapshot
     private var observers: [UUID: (Snapshot) -> Void] = [:]
+
+    /// A reader is showing this source. Its owner may drop the trace once the
+    /// last reader lets go (`ChatTimelineReaderTraces`).
+    var hasObservers: Bool { !observers.isEmpty }
 
     init(text: String, filePath: String?, isDone: Bool, finalContent: FullScreenCodeContent?) {
         snapshotStorage = Snapshot(

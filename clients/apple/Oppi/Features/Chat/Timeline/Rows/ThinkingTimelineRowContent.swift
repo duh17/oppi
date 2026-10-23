@@ -56,6 +56,12 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     /// stopped writing it. Only then may a full-screen reader mount the finished
     /// body instead of a live one; `isDone` on its own is a spinner flag.
     var traceIsComplete: Bool {
+        Self.traceIsComplete(isDone: isDone, isLive: isLive)
+    }
+
+    /// The rule on its own, for the timeline that feeds a reader's trace
+    /// (`ChatTimelineReaderTraces`): one place decides what "finished" means.
+    static func traceIsComplete(isDone: Bool, isLive: Bool) -> Bool {
         isDone && !isLive
     }
 
@@ -128,7 +134,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     #endif
 
     private var currentConfiguration: ThinkingTimelineRowConfiguration
-    private let fullScreenThinkingStream: ThinkingTraceStream
 
     // MARK: - TimelineRowInteractionProvider
 
@@ -153,12 +158,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
 
     init(configuration: ThinkingTimelineRowConfiguration) {
         self.currentConfiguration = configuration
-        let initialText = configuration.previewText.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.currentSourceText = initialText
-        self.fullScreenThinkingStream = ThinkingTraceStream(
-            text: initialText,
-            isDone: configuration.traceIsComplete
-        )
+        self.currentSourceText = configuration.previewText.trimmingCharacters(in: .whitespacesAndNewlines)
         super.init(frame: .zero)
         setupViews()
         apply(configuration: configuration)
@@ -343,11 +343,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         sourceIsOmitted = renderWindow.omittedSource
         let sourceLabel = configuration.normalizedSourceLabel
         textLabel.accessibilityLabel = currentSourceText.isEmpty ? nil : "\(sourceLabel): \(currentSourceText)"
-        if configuration.traceOwner == nil {
-            // A timeline-owned trace is fed by the timeline's apply; this row's
-            // own stream is the fallback for a row built outside a timeline.
-            fullScreenThinkingStream.update(text: currentSourceText, isDone: configuration.traceIsComplete)
-        }
 
         let signature = Self.textSignature(
             text: text,
@@ -649,12 +644,13 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         currentSourceText
     }
 
-    /// The reader's trace: the timeline's when this row has one, so it keeps
-    /// growing while the row's cell is gone and finishes when the trace does.
-    private var fullScreenTraceStream: ThinkingTraceStream {
+    /// The reader's trace belongs to the timeline, which keeps feeding it while
+    /// the row's cell is gone. Without a timeline (a preview or a standalone
+    /// row) the reader is static, like a finished trace's.
+    private var fullScreenTraceStream: ThinkingTraceStream? {
         guard let owner = currentConfiguration.traceOwner,
               let itemID = currentConfiguration.itemID else {
-            return fullScreenThinkingStream
+            return nil
         }
         return owner.thinkingTrace(
             itemID: itemID,

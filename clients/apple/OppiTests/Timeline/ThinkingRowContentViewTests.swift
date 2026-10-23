@@ -428,7 +428,9 @@ struct ThinkingRowContentViewTests {
             return
         }
         #expect(fullSource == source)
-        #expect(stream?.snapshot.text == source)
+        // Outside a timeline a standalone row has no live trace: the timeline
+        // owns and feeds it (`ChatTimelineReaderTraces`).
+        #expect(stream == nil)
     }
 
     @Test func largeStreamingThinkingRendersOnlyBoundedTail() throws {
