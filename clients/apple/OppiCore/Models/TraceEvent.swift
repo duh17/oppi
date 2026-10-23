@@ -218,15 +218,29 @@ struct MessageOrigin: Codable, Equatable, Sendable {
     /// or `message` (session_send). Unknown values still decode.
     let intent: String
 
-    /// Row caption: what it is and who sent it, e.g. "Report from Review".
-    var caption: String {
-        let sender = name.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "another session")
-        switch intent {
-        case "report": return String(localized: "Report from \(sender)")
-        case "task": return String(localized: "Task from \(sender)")
-        case "message": return String(localized: "Message from \(sender)")
-        default: return String(localized: "From \(sender)")
+    /// The sender's session name, or `another session` when it has none.
+    var senderName: String {
+        guard let name = name?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty else {
+            return String(localized: "another session")
         }
+        return name
+    }
+
+    /// What the input is: a child's answer, the task handed over at spawn, or a
+    /// message another session sent. An unknown intent still reads as a message.
+    var intentTitle: String {
+        switch intent {
+        case "report": return String(localized: "Report")
+        case "task": return String(localized: "Task")
+        default: return String(localized: "Message")
+        }
+    }
+
+    /// Row caption: what it is and who sent it, e.g. "Report from Review".
+    /// The chat's agent message card and the Session Outline both read this.
+    var caption: String {
+        String(localized: "\(intentTitle) from \(senderName)")
     }
 }
 

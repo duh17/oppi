@@ -582,6 +582,9 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     private var speakerIncreasedContrastOverride: Bool?
     private var speakerDifferentiateWithoutColorOverride: Bool?
     private var lastHandledScrollCommandNonce = 0
+    /// Row width the agent message cards' folds were last decided at, so a width
+    /// change can ask them again (see `apply`).
+    private var lastFoldDecisionRowWidth: CGFloat = 0
     var lastObservedContentOffsetY: CGFloat?
     var lastObservedContentHeight: CGFloat?
     var isTimelineBusy = false
@@ -1432,6 +1435,21 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             forceReconfigureIDs.append(finalAssistantID)
         }
         forceReconfigureIDs.append(contentsOf: liveRowsChanged.filter { applyPlan.nextItemByID[$0] != nil })
+        // An agent message's fold is decided at the row's width. A width change
+        // (rotation, a panel opening, an iPad column resize) re-measures rows but
+        // reconfigures none of them, so the card is asked again here.
+        let rowWidthNow = timelineRowWidth() ?? 0
+        if rowWidthNow > 1, lastFoldDecisionRowWidth > 1,
+           abs(rowWidthNow - lastFoldDecisionRowWidth) > 0.5 {
+            forceReconfigureIDs.append(contentsOf: applyPlan.nextIDs.filter { id in
+                guard let item = applyPlan.nextItemByID[id] else { return false }
+                if case .agentMessage = item { return true }
+                return false
+            })
+        }
+        if rowWidthNow > 1 {
+            lastFoldDecisionRowWidth = rowWidthNow
+        }
         forceReconfigureIDs.append(
             contentsOf: ChatTimelineApplyPlan.workLineReconfigureIDs(
                 previous: previousWorkLineByID,
@@ -1749,11 +1767,14 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
                 reducer.expandedItemIDs.insert(itemID)
             }
             updateLiveTailItemIDsFromCurrentState(in: collectionView)
+            // Folding from a tap deep inside an open report must not carry the
+            // card above the viewport: the header stays at or below its top.
             anchoredReconfigureToolRow(
                 itemID: itemID,
                 anchorIndexPath: indexPath,
                 in: collectionView,
-                preserveTopEdge: true
+                preserveTopEdge: true,
+                clampedToVisibleTop: true
             )
 
         case .customEvent(_, _, let presentation):
@@ -2041,11 +2062,16 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     /// the reconfigure, restores it after, and sets the anchored
     /// collection view's expand/collapse anchor for any deferred async
     /// layout passes (e.g. `invalidateEnclosingCollectionViewLayout`).
+    ///
+    /// `clampedToVisibleTop` keeps the restored edge at or below the visible top:
+    /// a tap deep inside a tall row would otherwise hold that edge above the
+    /// viewport, and folding it would land the card's header off screen.
     func anchoredReconfigureToolRow(
         itemID: String,
         anchorIndexPath: IndexPath,
         in collectionView: UICollectionView,
-        preserveTopEdge: Bool = true
+        preserveTopEdge: Bool = true,
+        clampedToVisibleTop: Bool = false
     ) {
         // Callers mutate expandedItemIDs first. Refresh live-tail
         // membership here so collapse can shrink: resolvedHeight uses
@@ -2061,8 +2087,11 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         // available for an immediate second tap.
         let anchorScreenYBefore: CGFloat?
         if let attrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) {
-            anchorScreenYBefore = (preserveTopEdge ? attrs.frame.minY : attrs.frame.maxY)
+            let rawAnchorY = (preserveTopEdge ? attrs.frame.minY : attrs.frame.maxY)
                 - collectionView.contentOffset.y
+            anchorScreenYBefore = clampedToVisibleTop
+                ? max(rawAnchorY, collectionView.adjustedContentInset.top)
+                : rawAnchorY
         } else {
             anchorScreenYBefore = nil
         }

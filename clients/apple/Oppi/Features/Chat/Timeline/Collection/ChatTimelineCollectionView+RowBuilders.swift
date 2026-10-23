@@ -207,16 +207,21 @@ extension ChatTimelineController {
     }
 
     /// The sender, fold state, and folded preview of an agent message. The preview
-    /// is measured here, at the row's width, so the row and the fold agree before
-    /// the cell is sized, and both actions resolve the row by item ID when they run.
+    /// is read and measured here, at the row's width, so the row and the fold agree
+    /// before the cell is sized, and both actions resolve the row by item ID when
+    /// they run. Reading stops at the card's own cap, so a long report never costs
+    /// its whole text per configure.
     private func agentMessageCard(itemID: String, origin: MessageOrigin, text: String) -> AgentMessageCard {
-        let preview = AgentMessageCard.previewText(forMarkdown: text)
+        let preview = AgentMessageCard.preview(forMarkdown: text)
+        let openSender: (() -> Void)? = onOpenSession.map { open in
+            { open(origin.sessionId) }
+        }
         return AgentMessageCard(
             origin: origin,
-            preview: preview,
+            preview: preview.text,
             isExpanded: reducer?.expandedItemIDs.contains(itemID) == true,
-            canExpand: AgentMessageCard.canExpand(
-                preview: preview,
+            canExpand: preview.isTruncated || AgentMessageCard.canExpand(
+                preview: preview.text,
                 width: agentMessageBodyWidth(),
                 font: AppFont.messageBody
             ),
@@ -228,9 +233,7 @@ extension ChatTimelineController {
                     didSelectItemAt: IndexPath(item: index, section: 0)
                 )
             },
-            onOpenSender: { [weak self] in
-                self?.onOpenSession?(origin.sessionId)
-            }
+            onOpenSender: openSender
         )
     }
 

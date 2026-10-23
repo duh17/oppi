@@ -7,21 +7,30 @@ import UIKit
 /// The row is `UserTimelineRowContentView` — an agent message is a user message
 /// with speaker chrome and a fold, so it reuses that row's Markdown body rather
 /// than a second renderer. This type owns the facts the row and the timeline
-/// share: who sent it, the plain-text fold, and whether the message fits.
+/// share: the fold state and the folded preview. Who sent it and what it is come
+/// from `MessageOrigin`, which the Session Outline reads too.
 struct AgentMessageCard {
     /// Lines the collapsed card shows before it stops.
     static let collapsedLineLimit = 3
+    /// Source lines read before the fold stops reading and calls the message long.
+    static let previewSourceLineCap = 40
+    /// Source characters read before the same cap applies.
+    static let previewSourceCharacterCap = 4_096
+    /// What the folded card keeps: enough to fill its lines and no more, so the
+    /// label and its spoken text never carry a whole report.
+    static let previewLineCap = 12
+    static let previewCharacterCap = 800
 
     let origin: MessageOrigin
     /// The message as plain text for the folded card, derived from the same
     /// Markdown the expanded card renders, so no `#` marker or `|---|` divider
-    /// reaches the preview.
+    /// reaches the preview. Already limited to what the folded card shows.
     let preview: String
     /// The reader opened the card. Only meaningful when `canExpand`.
     let isExpanded: Bool
-    /// The message needs more than the preview's lines. Measured at the row's
-    /// width when the row is configured; a message that fits is shown whole
-    /// and has no fold.
+    /// The message needs more than the preview's lines. Decided at the row's
+    /// width when the row is configured; a message that fits is shown whole and
+    /// has no fold.
     let canExpand: Bool
     /// Asked when the card is tapped or its header is activated.
     var onToggleExpand: (() -> Void)?
@@ -31,33 +40,15 @@ struct AgentMessageCard {
     /// False only for a long message the reader has not opened.
     var showsWholeMessage: Bool { !canExpand || isExpanded }
 
-    // MARK: - Identity
-
-    /// The sender's session name, or `another session` when it has none.
-    static func senderName(_ origin: MessageOrigin) -> String {
-        guard let name = origin.name?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !name.isEmpty else {
-            return String(localized: "another session")
-        }
-        return name
-    }
-
-    /// What the message is: a child's answer, the task handed over at spawn, or
-    /// a message another session sent. Unknown intents read as a message.
-    static func intentTitle(_ intent: String) -> String {
-        switch intent {
-        case "report": return String(localized: "Report")
-        case "task": return String(localized: "Task")
-        default: return String(localized: "Message")
-        }
-    }
-
-    /// The header's spoken identity, e.g. "Report from Review".
-    static func headerLabel(_ origin: MessageOrigin) -> String {
-        String(localized: "\(intentTitle(origin.intent)) from \(senderName(origin))")
-    }
-
     // MARK: - Fold
+
+    /// What reading a message for the folded card produced.
+    struct Preview: Equatable {
+        let text: String
+        /// Reading stopped before the message ended, so it is certainly longer
+        /// than the folded card's lines.
+        let isTruncated: Bool
+    }
 
     /// Whether the message is taller than the folded card's line budget at the
     /// width it is drawn.
@@ -79,45 +70,53 @@ struct AgentMessageCard {
         return height > font.lineHeight * CGFloat(collapsedLineLimit) + 1
     }
 
-    /// The folded card's text for a Markdown message: structure markers that
-    /// only mean something once rendered are gone, and a table keeps its cells
-    /// as rows of text instead of its pipes.
+    /// The folded card's text for a Markdown message: structure markers that only
+    /// mean something once rendered are gone, and a table keeps its cells as rows
+    /// of text instead of its pipes.
     ///
     /// This is a line-level reading, not a second Markdown parser: the expanded
     /// card is the source of truth and this preview only has to be readable.
     /// Emphasis markers are left alone on purpose, because reports carry glob
     /// patterns and `snake_case` identifiers that would read worse without them.
-    static func previewText(forMarkdown markdown: String) -> String {
-        let lines = markdown.components(separatedBy: .newlines)
-        let tableLines = tableLineIndexes(in: lines)
-        var rendered: [String] = []
+    /// Reading stops at `previewSourceLineCap` lines, `previewSourceCharacterCap`
+    /// characters, or the display cap, whichever comes first.
+    static func preview(forMarkdown markdown: String) -> Preview {
+        var lines: [String] = []
+        var consumedCharacters = 0
+        var isTruncated = false
         var insideFence = false
 
-        for (index, rawLine) in lines.enumerated() {
+        for rawLine in markdown.components(separatedBy: .newlines) {
+            consumedCharacters += rawLine.count + 1
+            if lines.count >= previewSourceLineCap
+                || consumedCharacters > previewSourceCharacterCap {
+                isTruncated = true
+                break
+            }
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             if isFence(line) {
                 insideFence.toggle()
                 continue
             }
-            if insideFence {
-                rendered.append(line)
-                continue
-            }
-            if line.isEmpty {
-                rendered.append("")
-                continue
-            }
-            if tableLines.isDivider.contains(index) {
-                continue
-            }
-            if tableLines.isContent.contains(index) {
-                rendered.append(tableRowText(line))
-                continue
-            }
-            rendered.append(plainLineText(line))
+            lines.append(insideFence ? line : plainLineText(line))
         }
 
-        return joiningPreviewLines(rendered)
+        let tables = tableLineIndexes(in: lines)
+        var renderedLines: [String] = []
+        renderedLines.reserveCapacity(lines.count)
+        for (index, line) in lines.enumerated() {
+            if tables.isDivider.contains(index) {
+                continue
+            }
+            if tables.isContent.contains(index) {
+                renderedLines.append(tableRowText(line))
+                continue
+            }
+            renderedLines.append(line)
+        }
+
+        let display = capping(joiningPreviewLines(renderedLines))
+        return Preview(text: display.text, isTruncated: isTruncated || display.didCut)
     }
 
     /// A line's text without the markers of the block it belongs to.
@@ -264,22 +263,41 @@ struct AgentMessageCard {
         return sawDash && sawPipe
     }
 
-    /// One blank line between blocks however many the source had, and none at
-    /// either end: the folded card's height should not be markdown's spacing.
+    /// One line per block, no blank lines between them: the folded card's three
+    /// lines are the message, not Markdown's paragraph spacing.
     private static func joiningPreviewLines(_ lines: [String]) -> String {
-        var result: [String] = []
-        var pendingBlank = false
-        for line in lines {
-            if line.isEmpty {
-                pendingBlank = !result.isEmpty
-                continue
+        lines
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The folded card shows three lines; keeping a few more keeps a narrow
+    /// card's wrapped lines honest without carrying the whole message.
+    private static func capping(_ text: String) -> (text: String, didCut: Bool) {
+        var kept: [String] = []
+        var characters = 0
+        var didCut = false
+        for line in text.components(separatedBy: "\n") {
+            guard kept.count < previewLineCap else {
+                didCut = true
+                break
             }
-            if pendingBlank {
-                result.append("")
-                pendingBlank = false
+            let remaining = previewCharacterCap - characters
+            guard remaining > 0 else {
+                didCut = true
+                break
             }
-            result.append(line)
+            guard line.count <= remaining else {
+                // A single long line is cut, never dropped: an empty preview
+                // would hide the message it is standing in for.
+                kept.append(String(line.prefix(remaining)))
+                didCut = true
+                break
+            }
+            kept.append(line)
+            characters += line.count + 1
         }
-        return result.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return (kept.joined(separator: "\n"), didCut)
     }
 }

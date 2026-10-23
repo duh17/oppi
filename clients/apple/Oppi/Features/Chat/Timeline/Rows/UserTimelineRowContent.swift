@@ -152,11 +152,16 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         }
     }
 
-    /// The agent card's header: one control over the icon, intent, and chevron so a
-    /// tap anywhere on it folds the card, with the sender's name as its own control
-    /// on top that opens the sender's session.
+    /// The agent card's header. It is the accessible fold control (a button whose
+    /// value is Expanded/Collapsed) and carries the sender's session as a custom
+    /// action; touches belong to the cell, which folds on selection, so the control
+    /// never takes a tap of its own.
     private final class AgentCardHeaderControl: UIControl {
         var onActivate: (() -> Void)?
+
+        override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+            false
+        }
 
         override func accessibilityActivate() -> Bool {
             guard let onActivate else { return false }
@@ -183,6 +188,9 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     /// Conversation chrome only: the trailing bubble's width, resolved from
     /// the row width at layout (`updateConversationBubbleWidth`).
     private var conversationBubbleWidthConstraint: NSLayoutConstraint?
+    /// Conversation chrome only: an agent card that can fold spans the row in
+    /// both states, so folding never changes its width.
+    private var agentCardFullWidthConstraint: NSLayoutConstraint?
     private var conversationImageStripWidthConstraint: NSLayoutConstraint?
     /// Unwrapped width of a single-text-view body, or nil when the bubble
     /// holds a table, badges, or path pills and takes the full bubble width.
@@ -322,16 +330,10 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         pathPillRow.spacing = 6
 
         // Agent message header: sender glyph, sender name, intent, fold chevron.
-        // The fold control sits under the row so a tap on the icon, the intent, or
-        // the chevron lands on it, while the name above it opens the sender.
+        // The fold control is the header's accessible element; the sender name is a
+        // touch target inside it, offered to assistive tech as a custom action.
         agentHeader.translatesAutoresizingMaskIntoConstraints = false
         agentHeaderToggle.translatesAutoresizingMaskIntoConstraints = false
-        agentHeaderToggle.accessibilityIdentifier = "chat.agent-message.header"
-        agentHeaderToggle.onActivate = { [weak self] in self?.toggleAgentCard() }
-        agentHeaderToggle.addAction(
-            UIAction { [weak self] _ in self?.toggleAgentCard() },
-            for: .touchUpInside
-        )
         agentHeaderStack.translatesAutoresizingMaskIntoConstraints = false
         agentHeaderStack.axis = .horizontal
         agentHeaderStack.alignment = .center
@@ -353,7 +355,9 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         agentSenderButton.titleLabel?.lineBreakMode = .byTruncatingTail
         agentSenderButton.titleLabel?.numberOfLines = 2
         agentSenderButton.contentHorizontalAlignment = .leading
-        agentSenderButton.accessibilityIdentifier = "chat.agent-message.open-sender"
+        // A touch target inside the header element, not a second element: the
+        // header offers the same action as a custom action.
+        agentSenderButton.isAccessibilityElement = false
         agentSenderButton.addAction(
             UIAction { [weak self] _ in self?.currentConfiguration.agentMessage?.onOpenSender?() },
             for: .touchUpInside
@@ -377,7 +381,6 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         agentPreviewLabel.adjustsFontForContentSizeCategory = true
         agentPreviewLabel.numberOfLines = AgentMessageCard.collapsedLineLimit
         agentPreviewLabel.lineBreakMode = .byTruncatingTail
-        agentPreviewLabel.accessibilityIdentifier = "chat.agent-message.preview"
         agentPreviewLabel.isHidden = true
         agentHeader.isHidden = true
 
@@ -435,6 +438,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         let edges = TimelineEdgeConstraints(pinning: bubbleStack, to: bubbleContainer)
         bubbleStackEdges = edges
         conversationBubbleWidthConstraint = bubbleContainer.widthAnchor.constraint(equalToConstant: 0)
+        agentCardFullWidthConstraint = bubbleContainer.widthAnchor.constraint(equalTo: outerStack.widthAnchor)
         conversationImageStripWidthConstraint = imageStrip.widthAnchor.constraint(equalTo: outerStack.widthAnchor)
         NSLayoutConstraint.activate(edges.all + [
             accentBar.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor),
@@ -482,7 +486,6 @@ final class UserTimelineRowContentView: UIView, UIContentView {
                 ? "chat.timeline.user.\($0)"
                 : "chat.agent-message.\($0)"
         }
-
         let palette = ThemeRuntimeState.currentPalette()
         iconLabel.textColor = bodyTextColor(palette)
         applySpeakerChrome(palette: palette)
@@ -567,23 +570,25 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             resetAgentCard()
             return
         }
-        let senderName = AgentMessageCard.senderName(card.origin)
+        let senderName = card.origin.senderName
         let isFolded = !card.showsWholeMessage
+        let canFold = card.canExpand && card.onToggleExpand != nil
+        let scope = currentConfiguration.itemID.map { "chat.agent-message.\($0)" }
 
         agentHeader.isHidden = false
         agentIconView.tintColor = UIColor(palette.purple)
 
         agentSenderButton.setTitle(senderName, for: .normal)
-        agentSenderButton.setTitleColor(UIColor(palette.fg), for: .normal)
-        agentSenderButton.setTitleColor(
-            UIColor(palette.fg).withAlphaComponent(0.6),
-            for: .highlighted
-        )
-        // A sender with no session to open still reads as the card's title.
+        // The name is the one tappable thing in the header: it reads in the
+        // caption's accent while it opens a session, and as plain text otherwise.
+        let nameColor = card.onOpenSender == nil ? UIColor(palette.fg) : UIColor(palette.purple)
+        agentSenderButton.setTitleColor(nameColor, for: .normal)
+        agentSenderButton.setTitleColor(nameColor.withAlphaComponent(0.6), for: .highlighted)
         agentSenderButton.setTitleColor(UIColor(palette.fg), for: .disabled)
         agentSenderButton.isEnabled = card.onOpenSender != nil
+        agentSenderButton.accessibilityIdentifier = scope.map { "\($0).open-sender" }
 
-        agentIntentLabel.text = AgentMessageCard.intentTitle(card.origin.intent)
+        agentIntentLabel.text = card.origin.intentTitle
         agentIntentLabel.textColor = UIColor(palette.fgDim)
 
         agentChevronView.isHidden = !card.canExpand
@@ -601,53 +606,53 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         agentPreviewLabel.textColor = bodyTextColor(palette)
         agentPreviewLabel.isAccessibilityElement = isFolded
         agentPreviewLabel.accessibilityLabel = isFolded ? card.preview : nil
+        agentPreviewLabel.accessibilityIdentifier = isFolded
+            ? scope.map { "\($0).preview" }
+            : nil
 
         agentHeaderToggle.isAccessibilityElement = true
-        agentHeaderToggle.accessibilityIdentifier = "chat.agent-message.header"
-        agentHeaderToggle.accessibilityLabel = AgentMessageCard.headerLabel(card.origin)
-        agentHeaderToggle.accessibilityValue = card.canExpand
+        agentHeaderToggle.accessibilityIdentifier = scope.map { "\($0).header" }
+        agentHeaderToggle.accessibilityLabel = card.origin.caption
+        agentHeaderToggle.accessibilityValue = canFold
             ? (card.isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
             : nil
-        agentHeaderToggle.accessibilityTraits = card.canExpand && card.onToggleExpand != nil
-            ? .button
-            : .staticText
+        // A header with nothing to fold does not advertise one.
+        agentHeaderToggle.accessibilityTraits = canFold ? .button : .staticText
+        agentHeaderToggle.onActivate = canFold ? card.onToggleExpand : nil
+        agentHeaderToggle.accessibilityCustomActions = card.onOpenSender == nil ? nil : [
+            UIAccessibilityCustomAction(
+                name: String(localized: "Open \(senderName)"),
+                target: self,
+                selector: #selector(openAgentSender)
+            )
+        ]
+    }
 
-        agentSenderButton.accessibilityIdentifier = "chat.agent-message.open-sender"
-        agentSenderButton.accessibilityLabel = String(localized: "Open \(senderName)")
-        agentSenderButton.accessibilityHint = card.onOpenSender == nil
-            ? nil
-            : String(localized: "Opens that session")
-        // The card's identity and fold state read first, then the sender's link:
-        // the name sits on top of the fold control, and neither frame overlaps the
-        // expanded message's own content.
-        agentHeader.accessibilityElements = [agentHeaderToggle, agentSenderButton]
+    /// The header's custom action: the same owner action as tapping the name.
+    @objc private func openAgentSender() -> Bool {
+        guard let open = currentConfiguration.agentMessage?.onOpenSender else { return false }
+        open()
+        return true
     }
 
     private func resetAgentCard() {
         agentHeader.isHidden = true
-        agentHeader.accessibilityElements = nil
         agentChevronView.image = nil
         agentChevronView.isHidden = true
         agentPreviewLabel.isHidden = true
         agentPreviewLabel.text = nil
         agentPreviewLabel.isAccessibilityElement = false
         agentPreviewLabel.accessibilityLabel = nil
+        agentPreviewLabel.accessibilityIdentifier = nil
 
         agentHeaderToggle.accessibilityIdentifier = nil
         agentHeaderToggle.accessibilityLabel = nil
         agentHeaderToggle.accessibilityValue = nil
         agentHeaderToggle.accessibilityTraits = []
+        agentHeaderToggle.accessibilityCustomActions = nil
+        agentHeaderToggle.onActivate = nil
 
         agentSenderButton.accessibilityIdentifier = nil
-        agentSenderButton.accessibilityLabel = nil
-        agentSenderButton.accessibilityHint = nil
-    }
-
-    /// The card's header and the card itself fold through one owner action, so a
-    /// tap on the header and an accessibility activation cannot disagree.
-    private func toggleAgentCard() {
-        guard let card = currentConfiguration.agentMessage, card.canExpand else { return }
-        card.onToggleExpand?()
     }
 
     private func applySpeakerChrome(palette: ThemePalette) {
@@ -718,8 +723,15 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         bubbleStackEdges?.inset(by: bubble.padding)
         // An agent card spans the row in every style: reports carry tables and wide
         // code, and the conversation cap clipped them. It still sits leading-aligned.
-        let capsWidth = isConversation && currentConfiguration.agentMessage == nil
+        // A card that fits may hug, so one that folds — or that holds a table or code
+        // block — is held at the full width in both states and never changes width.
+        let isAgentCard = currentConfiguration.agentMessage != nil
+        let hasBlocks = !extraMarkdownTextViews.isEmpty || !tableBlockViews.isEmpty
+        let spansRow = isAgentCard
+            && (currentConfiguration.agentMessage?.canExpand == true || hasBlocks)
+        let capsWidth = isConversation && !isAgentCard
         conversationBubbleWidthConstraint?.isActive = capsWidth
+        agentCardFullWidthConstraint?.isActive = isConversation && spansRow
         conversationImageStripWidthConstraint?.isActive = isConversation
         conversationNaturalTextWidth = capsWidth
             ? Self.naturalTextWidth(

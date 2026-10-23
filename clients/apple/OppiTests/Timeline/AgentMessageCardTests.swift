@@ -9,15 +9,8 @@ import UIKit
 @Suite("AgentMessageCard")
 @MainActor
 struct AgentMessageCardTests {
-    private let origin = MessageOrigin(
-        kind: "session",
-        sessionId: "child-session",
-        name: "Review",
-        intent: "report"
-    )
-
     @Test func previewDropsHeadingMarkersAndKeepsTheirWords() {
-        let preview = AgentMessageCard.previewText(forMarkdown: """
+        let preview = AgentMessageCard.preview(forMarkdown: """
         ## Verdict
 
         The change is ready.
@@ -25,7 +18,7 @@ struct AgentMessageCardTests {
         ### Details
         - one fix
         * second fix
-        """)
+        """).text
 
         #expect(!preview.contains("#"))
         #expect(preview.contains("Verdict"))
@@ -35,12 +28,12 @@ struct AgentMessageCardTests {
     }
 
     @Test func previewReadsTableCellsWithoutItsPipes() {
-        let preview = AgentMessageCard.previewText(forMarkdown: """
+        let preview = AgentMessageCard.preview(forMarkdown: """
         | Finding | Status |
         |---|---|
         | P2-1 stale summary | Fixed |
         | P3-1 rebuilt menu | Fixed |
-        """)
+        """).text
 
         #expect(!preview.contains("|"))
         #expect(!preview.contains("---"))
@@ -49,19 +42,19 @@ struct AgentMessageCardTests {
     }
 
     @Test func proseThatHappensToContainAPipeIsNotATable() {
-        let preview = AgentMessageCard.previewText(forMarkdown: "Run `grep a | sort` first.")
+        let preview = AgentMessageCard.preview(forMarkdown: "Run `grep a | sort` first.").text
         #expect(!preview.contains("\u{00B7}"))
         #expect(preview.contains("grep a | sort"))
     }
 
     @Test func previewKeepsFencedCodeAndLinkText() {
-        let preview = AgentMessageCard.previewText(forMarkdown: """
+        let preview = AgentMessageCard.preview(forMarkdown: """
         Read [the plan](https://example.com/plan) first.
 
         ```swift
         let ready = true
         ```
-        """)
+        """).text
 
         #expect(preview.contains("Read the plan first."))
         #expect(preview.contains("let ready = true"))
@@ -69,49 +62,39 @@ struct AgentMessageCardTests {
         #expect(!preview.contains("https://example.com/plan"))
     }
 
-    @Test func previewCollapsesBlankRunsAndTrimsEnds() {
-        let preview = AgentMessageCard.previewText(forMarkdown: "\n\nFirst.\n\n\n\nSecond.\n\n")
-        #expect(preview == "First.\n\nSecond.")
+    @Test func previewJoinsBlocksWithoutBlankLines() {
+        let preview = AgentMessageCard.preview(forMarkdown: "\n\nFirst.\n\n\n\nSecond.\n\n").text
+        #expect(preview == "First.\nSecond.")
+    }
+
+    @Test func previewStopsReadingALongReport() {
+        // A 127 KB report is one configure away from being read in full; the cap
+        // keeps the fold and the label bounded and says the message is long.
+        let report = (1...4_000).map { "Line \($0) of a very long report." }.joined(separator: "\n")
+        let preview = AgentMessageCard.preview(forMarkdown: report)
+
+        #expect(preview.isTruncated)
+        #expect(preview.text.count <= AgentMessageCard.previewCharacterCap)
+        #expect(preview.text.components(separatedBy: "\n").count <= AgentMessageCard.previewLineCap)
+        #expect(!preview.text.isEmpty)
     }
 
     @Test func messageThatFitsThePreviewShowsWholeWithoutAFold() {
         let width: CGFloat = 320
-        let preview = AgentMessageCard.previewText(forMarkdown: "Verdict: correct.")
+        let preview = AgentMessageCard.preview(forMarkdown: "Verdict: correct.").text
         #expect(!AgentMessageCard.canExpand(preview: preview, width: width, font: AppFont.messageBody))
     }
 
     @Test func messageTallerThanThePreviewCanExpand() {
         let width: CGFloat = 320
         let long = (1...12).map { "Line \($0) of the report." }.joined(separator: "\n")
-        let preview = AgentMessageCard.previewText(forMarkdown: long)
+        let preview = AgentMessageCard.preview(forMarkdown: long).text
         #expect(AgentMessageCard.canExpand(preview: preview, width: width, font: AppFont.messageBody))
     }
 
     @Test func shortLinesPastTheBudgetStillExpand() {
         // Four short lines do not fit three, however wide the card is.
-        let preview = AgentMessageCard.previewText(forMarkdown: "One\nTwo\nThree\nFour")
+        let preview = AgentMessageCard.preview(forMarkdown: "One\nTwo\nThree\nFour").text
         #expect(AgentMessageCard.canExpand(preview: preview, width: 2_000, font: AppFont.messageBody))
-    }
-
-    @Test func foldFollowsTheLineBudgetAndTheOpenedState() {
-        let folded = AgentMessageCard(origin: origin, preview: "long", isExpanded: false, canExpand: true)
-        let opened = AgentMessageCard(origin: origin, preview: "long", isExpanded: true, canExpand: true)
-        let short = AgentMessageCard(origin: origin, preview: "short", isExpanded: false, canExpand: false)
-
-        #expect(!folded.showsWholeMessage)
-        #expect(opened.showsWholeMessage)
-        #expect(short.showsWholeMessage)
-    }
-
-    @Test func identityNamesTheIntentAndFallsBackToAnotherSession() {
-        #expect(AgentMessageCard.intentTitle("report") == "Report")
-        #expect(AgentMessageCard.intentTitle("task") == "Task")
-        #expect(AgentMessageCard.intentTitle("message") == "Message")
-        #expect(AgentMessageCard.intentTitle("something-new") == "Message")
-        #expect(AgentMessageCard.senderName(origin) == "Review")
-
-        let named = MessageOrigin(kind: "session", sessionId: "s", name: "  ", intent: "task")
-        #expect(AgentMessageCard.senderName(named) == "another session")
-        #expect(AgentMessageCard.headerLabel(named) == "Task from another session")
     }
 }

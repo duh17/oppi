@@ -223,7 +223,7 @@ struct UserTimelineRowContentTests {
                 onFork: nil,
                 agentMessage: AgentMessageCard(
                     origin: origin,
-                    preview: AgentMessageCard.previewText(forMarkdown: text),
+                    preview: AgentMessageCard.preview(forMarkdown: text).text,
                     isExpanded: true,
                     canExpand: true
                 )
@@ -239,6 +239,89 @@ struct UserTimelineRowContentTests {
         let replaced = try #require(firstSubview(ofType: NativeTableBlockView.self, in: view))
         #expect(replaced !== table)
         #expect(table.superview == nil)
+    }
+
+    /// The agent card's header is the fold control assistive tech drives, the
+    /// sender's session is its custom action, and a cell reused for a plain user
+    /// message keeps none of it.
+    @MainActor
+    @Test("agent card header folds on activation and leaves nothing behind on reuse")
+    func agentCardHeaderFoldsOnActivationAndResetsOnReuse() throws {
+        let origin = MessageOrigin(kind: "session", sessionId: "child", name: "Review", intent: "report")
+        var toggles = 0
+        var opens = 0
+        let report = "## Verdict\n\nThe change is ready.\n\n| Finding | Status |\n|---|---|\n| P2-1 | Fixed |"
+
+        func card(canExpand: Bool) -> AgentMessageCard {
+            var card = AgentMessageCard(
+                origin: origin,
+                preview: AgentMessageCard.preview(forMarkdown: report).text,
+                isExpanded: false,
+                canExpand: canExpand
+            )
+            card.onToggleExpand = { toggles += 1 }
+            card.onOpenSender = { opens += 1 }
+            return card
+        }
+
+        func configuration(card: AgentMessageCard?) -> UserTimelineRowConfiguration {
+            UserTimelineRowConfiguration(
+                text: report,
+                images: [],
+                canFork: false,
+                onFork: nil,
+                itemID: "agent-1",
+                agentMessage: card
+            )
+        }
+
+        let view = UserTimelineRowContentView(configuration: configuration(card: card(canExpand: true)))
+        let header = try #require(
+            firstSubview(withAccessibilityIdentifier: "chat.agent-message.agent-1.header", in: view)
+        )
+        #expect(header.accessibilityLabel == "Report from Review")
+        #expect(header.accessibilityValue == "Collapsed")
+        #expect(header.accessibilityTraits.contains(.button))
+        let openAction = try #require(header.accessibilityCustomActions?.first)
+        #expect(openAction.name == "Open Review")
+        #expect(header.accessibilityActivate())
+        #expect(toggles == 1)
+        _ = openAction.target?.perform(openAction.selector)
+        #expect(opens == 1)
+        // The sender's name is a touch target, not a second element over the header.
+        let sender = try #require(
+            firstSubview(withAccessibilityIdentifier: "chat.agent-message.agent-1.open-sender", in: view)
+        )
+        #expect(!sender.isAccessibilityElement)
+        #expect(firstSubview(
+            withAccessibilityIdentifier: "chat.agent-message.agent-1.preview",
+            in: view
+        )?.isAccessibilityElement == true)
+
+        // A message that fits has nothing to fold, so its header is not a button.
+        view.configuration = configuration(card: card(canExpand: false))
+        #expect(!header.accessibilityActivate())
+        #expect(!header.accessibilityTraits.contains(.button))
+        #expect(header.accessibilityValue == nil)
+
+        // The same view drawn again for a plain user message keeps no card identity.
+        view.configuration = UserTimelineRowConfiguration(
+            text: "Ship it",
+            images: [],
+            canFork: false,
+            onFork: nil,
+            itemID: "user-1"
+        )
+        #expect(view.accessibilityIdentifier == "chat.timeline.user.user-1")
+        #expect(header.accessibilityIdentifier == nil)
+        #expect(header.accessibilityLabel == nil)
+        #expect(header.accessibilityValue == nil)
+        #expect(header.accessibilityCustomActions == nil)
+        #expect(header.accessibilityTraits == [])
+        #expect(firstSubview(
+            withAccessibilityIdentifier: "chat.agent-message.agent-1.preview",
+            in: view
+        ) == nil)
     }
 
     @MainActor
