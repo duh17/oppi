@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   applyHostEnv,
@@ -121,6 +121,23 @@ describe("applyHostEnv", () => {
     expect(process.env.PATH).toBe("/other/bin");
     expect(process.env.RUNTIME_ONLY).toBeUndefined();
     expect(process.env.RUNTIME_OVERRIDE).toBe("base");
+  });
+});
+
+describe("host env startup", () => {
+  it("drops a caller identity the server inherited from the shell that started it", async () => {
+    process.env.OPPI_CALLER_SESSION_ID = "inherited-session";
+    try {
+      // A fresh module is a fresh startup: the import takes the base environment.
+      vi.resetModules();
+      const fresh = await import("../src/host-env.js");
+      expect(process.env.OPPI_CALLER_SESSION_ID).toBeUndefined();
+      // Reloading runtime env copies the base back, so the inherited value is gone for good.
+      fresh.applyHostEnv(makeConfig());
+      expect(process.env.OPPI_CALLER_SESSION_ID).toBeUndefined();
+    } finally {
+      delete process.env.OPPI_CALLER_SESSION_ID;
+    }
   });
 });
 

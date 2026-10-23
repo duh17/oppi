@@ -10,7 +10,13 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ServerConfig } from "./types.js";
+import { OPPI_CALLER_SESSION_ID_ENV } from "./session-caller-identity.js";
 
+// This process is not a session's bash, whatever started it: an `oppi serve` launched from one
+// inherits that session's identity, and every durable conversation without a bound Session would
+// then be attributed to it. Drop it before the base environment is taken, so `applyHostEnv`
+// cannot put it back either.
+delete process.env[OPPI_CALLER_SESSION_ID_ENV];
 const initialHostEnv = { ...process.env } as Record<string, string>;
 let lastAppliedRuntimeEnvKeys = new Set<string>();
 

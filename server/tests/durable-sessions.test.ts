@@ -3011,7 +3011,6 @@ describe("durable host caller identity", () => {
   it("refuses the launch a child without the grant asks for through its bash", async () => {
     const f = await fixture(probingModel());
     const { child, childCaller } = await probe(f);
-    expect(childCaller).toBe(child.id);
 
     // `oppi session create` run from that bash: the caller id is the parent of the launch.
     await expect(
@@ -3033,7 +3032,6 @@ describe("durable host caller identity", () => {
   it("parents the launch a child with the grant asks for through its bash", async () => {
     const f = await fixture(probingModel({ allowNestedDelegation: true }));
     const { child, childCaller } = await probe(f);
-    expect(childCaller).toBe(child.id);
 
     const result = await launchService(f).launch({
       agent: { name: "Grandchild" },

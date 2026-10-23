@@ -214,13 +214,11 @@ const SESSIONS_EXTENSION = "oppi.sessions";
 /** Offers `notify`; a session selects it only while the server offers it (`offersNotify`). */
 const NOTIFY_EXTENSION = "oppi.notify";
 
-/** `SessionNotifyPort` plus the Session bound to a store's conversation. */
-export interface DurableNotifyBinding extends SessionNotifyPort {
-  sessionIdOf(storeId: string, conversationId: ConversationId): string | undefined;
-}
-
-/** Where the env factory finds the Session a store's conversation is bound to. */
-export interface DurableSessionIdentity {
+/**
+ * The Session bound to a store's conversation. Both answers that depend on it ask here: the
+ * caller identity a conversation's host bash gets, and which Session `notify` sends for.
+ */
+export interface DurableSessionBinding {
   sessionIdOf(storeId: string, conversationId: ConversationId): string | undefined;
 }
 
@@ -243,9 +241,11 @@ const durableHost: OppiDurableHost = {
   },
   notify: (env) => {
     const caller = conversationOfEnv(env);
-    const notify = caller?.host.runtime.boundNotify;
-    const sessionId = caller && notify?.sessionIdOf(caller.host.storeId, caller.conversationId);
-    return notify && sessionId ? (input) => notify.notify(sessionId, input) : undefined;
+    if (!caller) return undefined;
+    const { runtime } = caller.host;
+    const port = runtime.boundNotify;
+    const sessionId = runtime.sessionIdOf(caller.host.storeId, caller.conversationId);
+    return port && sessionId ? (input) => port.notify(sessionId, input) : undefined;
   },
   sandbox: sandboxHost,
 };
@@ -784,13 +784,14 @@ export class SessionHost {
           env: async ({ conversationId, cwd, read }, context) => {
             const runtime = await read.snapshot(DurableRuntime, conversationId, context);
             if (runtime?.kind !== "sandbox") {
-              const callerSessionId = this.runtime.callerSessionIdOf(this.storeId, conversationId);
+              const callerSessionId = this.runtime.sessionIdOf(this.storeId, conversationId);
               const env = new NodeExecutionEnv({
                 cwd: cwd ?? homedir(),
-                // Classic bash exports this from its shell prefix. Host bash and background jobs
-                // of a durable conversation need it in the env so `oppi session create` run from
-                // here is attributed to this conversation's own Session: parented, policy-checked,
-                // and unable to target itself. No row means no identity, never a borrowed one.
+                // Classic bash exports `OPPI_CALLER_SESSION_ID` from its shell prefix; a durable
+                // conversation's host bash and background jobs need it in the env so
+                // `oppi session create` run here is attributed to this conversation's own
+                // Session: parented, policy-checked, and unable to target itself. A conversation
+                // with no row adds none, so the process env decides (see host-env.ts).
                 ...(callerSessionId
                   ? { shellEnv: { [OPPI_CALLER_SESSION_ID_ENV]: callerSessionId } }
                   : {}),
@@ -1241,8 +1242,8 @@ export class DurableHarness {
   private registry?: Registry;
   private threads?: DurableThreads;
   private control?: DurableControlCli;
-  private notifyBinding?: DurableNotifyBinding;
-  private sessionIdentity?: DurableSessionIdentity;
+  private notifyBinding?: SessionNotifyPort;
+  private sessionBinding?: DurableSessionBinding;
   /** Extensions from Oppi's bundled packages, in install order. */
   private bundled: readonly LoadedDurableExtension[] = [];
   /** Extensions from the durable entries of enabled Pi packages, in load order. */
@@ -1401,21 +1402,21 @@ export class DurableHarness {
   bindControl(control: DurableControlCli): void {
     this.control = control;
   }
-  bindNotify(binding: DurableNotifyBinding): void {
+  bindNotify(binding: SessionNotifyPort): void {
     this.notifyBinding = binding;
   }
-  /** The Session each conversation's host env gives its bash as caller identity. */
-  bindSessionIdentity(binding: DurableSessionIdentity): void {
-    this.sessionIdentity = binding;
+  /** The Session each store's conversations belong to (caller identity and `notify`'s target). */
+  bindSessions(binding: DurableSessionBinding): void {
+    this.sessionBinding = binding;
   }
   /**
-   * The Session bound to `conversationId` of `storeId`, as the caller identity of that
-   * conversation's host bash; undefined when no row is bound (nothing is attributed).
+   * The Session bound to `conversationId` of `storeId`; undefined when no row is bound, and then
+   * the env attributes nothing (startup drops any caller identity the server inherited).
    */
-  callerSessionIdOf(storeId: string, conversationId: ConversationId): string | undefined {
-    return this.sessionIdentity?.sessionIdOf(storeId, conversationId);
+  sessionIdOf(storeId: string, conversationId: ConversationId): string | undefined {
+    return this.sessionBinding?.sessionIdOf(storeId, conversationId);
   }
-  get boundNotify(): DurableNotifyBinding | undefined {
+  get boundNotify(): SessionNotifyPort | undefined {
     return this.notifyBinding;
   }
   get boundThreads(): DurableThreads | undefined {

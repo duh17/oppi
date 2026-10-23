@@ -182,16 +182,14 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
             onCreated: (session) => this.emit("session_created", session),
           }),
         );
+        runtime.bindSessions({
+          sessionIdOf: (storeId, conversationId) =>
+            storage.findSessionByDurableConversation(storeId, conversationId)?.id,
+        });
         runtime.bindNotify({
           offersNotify: (sessionId) => this.notifyPort?.offersNotify(sessionId) ?? false,
           notify: async (sessionId, input) =>
             this.notifyPort ? this.notifyPort.notify(sessionId, input) : { status: "off" },
-          sessionIdOf: (storeId, conversationId) =>
-            storage.findSessionByDurableConversation(storeId, conversationId)?.id,
-        });
-        runtime.bindSessionIdentity({
-          sessionIdOf: (storeId, conversationId) =>
-            storage.findSessionByDurableConversation(storeId, conversationId)?.id,
         });
         runtime.bindControl(
           new DurableControlCli({
