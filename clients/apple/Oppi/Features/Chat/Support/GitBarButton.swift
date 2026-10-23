@@ -6,23 +6,34 @@ import UIKit
 /// bar's glass draws its content's colors monochrome, so a colored capsule
 /// reads as an empty grey dot.
 ///
-/// The logo stays where every bar icon sits (centered in its slot: the chat
-/// bar's 36 pt side, or `systemItemSlot` among system items). The count starts just past the logo and grows away from it; a count wider
-/// than the room beside the logo ("99+") widens the button by the difference,
-/// so it pushes the next button over instead of running into it.
+/// The button keeps its slot's width whatever the count says, so the bar's
+/// controls stay on one pitch: the logo and its count are centered in the
+/// slot together (the logo alone when there is no count), and the count tops
+/// out at "99+", which fits a slot. Only an accessibility text size can make
+/// the pair wider than its slot; then the button widens by the difference
+/// rather than run into the next control.
 @MainActor
 final class GitBarButton: UIButton {
-    /// A chat bar button's side.
-    static let side: CGFloat = 36
+    /// A chat bar control's slot width, the same for every control in the bar
+    /// so they sit on one even pitch. 44 pt slots squeezed the session title
+    /// out of an iPhone bar with four buttons pinned; 38 keeps the pitch the
+    /// old 36 pt buttons and 2 pt gaps had.
+    static let side: CGFloat = 38
+    /// Every control's height: Apple's 44 pt minimum hit target.
+    static let height: CGFloat = 44
     /// The slot among a system bar's symbol items. The system spaces its own
     /// items' symbols about 59 pt apart and keeps them about 15 pt in from the
     /// glass group's edge, but places a custom view flush, at its fitting
     /// size. About 11 pt either side of the logo puts it on the same pitch
     /// (measured on iOS 27.1 iPhone).
     static let systemItemSlot: CGFloat = 42
+    /// From the logo's trailing edge to its count's leading edge. Negative:
+    /// the count tucks into the empty top trailing corner of the logo's
+    /// diamond, so "99+" and the logo fit one slot together.
+    private static let badgeGap: CGFloat = -4
 
     private let textStyle: UIFont.TextStyle
-    /// The button's width without a badge, the logo centered in it.
+    /// The button's width, the logo and count centered in it.
     private let slot: CGFloat
     private let badge = InsetLabel(insets: .zero, capsule: false)
     private lazy var badgeLeading = badge.leadingAnchor.constraint(equalTo: leadingAnchor)
@@ -48,8 +59,10 @@ final class GitBarButton: UIButton {
         addSubview(badge)
         NSLayoutConstraint.activate([
             width,
-            heightAnchor.constraint(equalToConstant: Self.side),
-            badge.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            heightAnchor.constraint(equalToConstant: Self.height),
+            // A superscript: the count's baseline sits a little above the
+            // logo's middle, whatever the button's height.
+            badge.bottomAnchor.constraint(equalTo: centerYAnchor, constant: -4),
             badgeLeading,
         ])
     }
@@ -69,15 +82,17 @@ final class GitBarButton: UIButton {
 
     private func layOutBadge() {
         let logoWidth = configuration?.image?.size.width ?? 20
-        let badgeStart = slot / 2 + logoWidth / 2
-        let badgeWidth = badge.isHidden ? 0 : ceil(badge.intrinsicContentSize.width)
-        let extra = max(0, badgeStart + badgeWidth - slot)
-        badgeLeading.constant = badgeStart
-        width.constant = slot + extra
-        // The slot is content insets, not only the width: a system bar sizes
+        let badgeWidth = badge.isHidden ? 0 : max(0, ceil(badge.intrinsicContentSize.width) + Self.badgeGap)
+        let pair = logoWidth + badgeWidth
+        let buttonWidth = max(slot, pair)
+        let start = ((buttonWidth - pair) / 2).rounded()
+        badgeLeading.constant = start + logoWidth + Self.badgeGap
+        width.constant = buttonWidth
+        // The layout is content insets, not only the width: a system bar sizes
         // a custom view to its fitting size and drops the width constraint.
-        let pad = max(0, (slot - logoWidth) / 2)
-        let insets = NSDirectionalEdgeInsets(top: 0, leading: pad, bottom: 0, trailing: pad + extra)
+        let insets = NSDirectionalEdgeInsets(
+            top: 0, leading: start, bottom: 0, trailing: buttonWidth - start - logoWidth
+        )
         if configuration?.contentInsets != insets {
             configuration?.contentInsets = insets
         }

@@ -101,9 +101,9 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
     }
 
-    /// A three-character count ("99+") widens the Git button instead of
-    /// running into the button beside it, and the button still says the full
-    /// count.
+    /// A three-character count ("99+") fits the Git button's slot: every
+    /// control in the bar keeps one even pitch, Git does not run into the
+    /// button beside it, and the button still says the full count.
     func testGitBadgeOfHundredsStaysClearOfTheNextButton() {
         launchScreen("chat-top-bar-all", environment: ["CHAT_ROUTES_MANY_CHANGES": "1"])
         dismissMicrophonePrompt()
@@ -115,7 +115,13 @@ final class ChatRoutesUITests: XCTestCase {
             "The Git button must say the full count: \(git.value ?? "nil")"
         )
         XCTAssertLessThanOrEqual(git.frame.maxX, outline.frame.minX, "The badge's button must end before Outline starts")
-        XCTAssertGreaterThan(git.frame.width, outline.frame.width, "A 99+ badge must widen the Git button")
+        let controls = ["files", "git", "outline", "context", "terminal", "more"].map { app.buttons["chat.toolbar.\($0)"] }
+        let centers = controls.map(\.frame.midX).sorted()
+        let pitches = zip(centers.dropFirst(), centers).map { $0 - $1 }
+        XCTAssertLessThan(
+            (pitches.max() ?? 0) - (pitches.min() ?? 0), 1,
+            "The bar's controls must sit on one pitch: \(pitches)"
+        )
         attachScreenshot("chat-top-bar-git-badge-99")
         assertRunning()
     }

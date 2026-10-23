@@ -51,7 +51,8 @@ final class ChatBarItems {
     private lazy var backItem = makeBackItem()
     private lazy var backButton = Self.barButton(
         image: UIImage(systemName: "chevron.left"), textStyle: .headline, weight: .semibold,
-        identifier: "chat.toolbar.back", label: "Back"
+        identifier: "chat.toolbar.back", label: "Back",
+        size: CGSize(width: Self.backButtonSide, height: Self.backButtonSide)
     ) { [weak self] in self?.chat?.navigateBackFromChat() }
 
     private lazy var files = ActionControls(rail: makeRailItem(.files), button: makeActionButton(.files))
@@ -64,14 +65,21 @@ final class ChatBarItems {
         return button
     }()
     private lazy var git = ActionControls(rail: makeRailItem(.git), button: gitButton)
-    /// Every bar button's side.
-    private static let barButtonSide = GitBarButton.side
+    /// Every trailing control's slot, the ring's included: one pitch with no
+    /// spacing between slots, so the icons sit evenly apart however many are
+    /// shown and whatever Git's count says (`GitBarButton`), each 44 pt tall.
+    private static let barButtonSize = CGSize(width: GitBarButton.side, height: GitBarButton.height)
+    /// Back alone in its own glass circle.
+    private static let backButtonSide: CGFloat = 36
+    /// The selected platter: a 36 pt circle centered in the slot, the ring's
+    /// size (`ContextUsageRingButton`).
+    private static let platterSide: CGFloat = 36
     private lazy var terminal = ActionControls(rail: makeRailItem(.terminal), button: makeActionButton(.terminal))
     private lazy var outline = ActionControls(rail: makeRailItem(.outline), button: makeActionButton(.outline))
 
     /// Back alone on the left; the chosen buttons and … on the right.
     private lazy var leadingStack = Self.group([backButton], spacing: 10)
-    private lazy var trailingStack = Self.group([], spacing: 2)
+    private lazy var trailingStack = Self.group([], spacing: 0)
     private lazy var leadingGroup = UIBarButtonItem(customView: leadingStack)
     private lazy var trailingGroup = UIBarButtonItem(customView: trailingStack)
     let titleControl = ChatTitleControl()
@@ -429,6 +437,7 @@ final class ChatBarItems {
         weight: UIImage.SymbolWeight,
         identifier: String,
         label: String,
+        size: CGSize = barButtonSize,
         action: @escaping () -> Void
     ) -> UIButton {
         var configuration = UIButton.Configuration.plain()
@@ -444,8 +453,8 @@ final class ChatBarItems {
         let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in action() })
         button.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: barButtonSide),
-            button.heightAnchor.constraint(equalToConstant: barButtonSide),
+            button.widthAnchor.constraint(equalToConstant: size.width),
+            button.heightAnchor.constraint(equalToConstant: size.height),
         ])
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = label
@@ -511,7 +520,12 @@ final class ChatBarItems {
         controls.button.configuration?.background.backgroundColor = isOpen
             ? colors.fg.withAlphaComponent(0.14)
             : .clear
-        controls.button.configuration?.background.cornerRadius = barButtonSide / 2
+        let horizontal = (barButtonSize.width - platterSide) / 2
+        let vertical = (barButtonSize.height - platterSide) / 2
+        controls.button.configuration?.background.backgroundInsets = NSDirectionalEdgeInsets(
+            top: vertical, leading: horizontal, bottom: vertical, trailing: horizontal
+        )
+        controls.button.configuration?.background.cornerRadius = platterSide / 2
         controls.button.accessibilityTraits = isOpen ? [.button, .selected] : .button
     }
 
@@ -630,7 +644,7 @@ final class ContextUsageRingButton: UIControl {
     }
 
     override init(frame: CGRect) {
-        super.init(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
+        super.init(frame: CGRect(origin: .zero, size: Self.size))
         translatesAutoresizingMaskIntoConstraints = false
         isAccessibilityElement = true
         accessibilityTraits = .button
@@ -656,15 +670,18 @@ final class ContextUsageRingButton: UIControl {
             self?.onTap?()
         }, for: .touchUpInside)
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 44),
-            heightAnchor.constraint(equalToConstant: 44),
+            widthAnchor.constraint(equalToConstant: Self.size.width),
+            heightAnchor.constraint(equalToConstant: Self.size.height),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    override var intrinsicContentSize: CGSize { CGSize(width: 44, height: 44) }
+    /// A bar control's slot, so the ring sits on the bar's pitch.
+    private static let size = CGSize(width: GitBarButton.side, height: GitBarButton.height)
+
+    override var intrinsicContentSize: CGSize { Self.size }
 
     func apply(usage: ContextUsageSnapshot, colors: ComposerThemeColors) {
         track.strokeColor = colors.comment.withAlphaComponent(0.35).cgColor
