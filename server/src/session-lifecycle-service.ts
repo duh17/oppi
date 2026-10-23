@@ -1062,6 +1062,14 @@ export class SessionLifecycleService {
     if (binding === "main-missing" || !workspace) {
       throw new SessionLifecycleError("Workspace main checkout is unavailable", 409);
     }
+    // A delegated child was launched into its worktree's source; moving it to the main checkout
+    // would run work somewhere nobody asked for, so it fails closed instead.
+    if (session.launch?.parentSessionId !== undefined) {
+      throw new SessionLifecycleError(
+        "This subagent's worktree is no longer available; it cannot continue in the main checkout",
+        409,
+      );
+    }
     return this.persistMainCheckoutRebind({ session, workspace });
   }
 

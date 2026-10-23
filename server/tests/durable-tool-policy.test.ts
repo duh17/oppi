@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defineExtension } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { resolveDurableAgent } from "../src/durable-agent.js";
+import { resolveDurableAgent, type DurableToolNarrowing } from "../src/durable-agent.js";
 import { DurableMcp } from "../src/durable-mcp.js";
 import { bindOppiHost } from "../src/durable-extension-api.js";
 import { sandboxHost } from "../src/durable-sandbox-host.js";
@@ -28,9 +28,10 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/** The tools a sandbox session launched with `policy` starts with. */
-function toolsFor(policy: Policy): string[] {
+/** The tools a sandbox session launched with `policy` starts with, narrowed as a spawn asks. */
+function toolsFor(policy: Policy, narrow?: DurableToolNarrowing): string[] {
   const { change } = resolveDurableAgent({
+    ...(narrow ? { narrow } : {}),
     policy,
     runtime: "sandbox",
     base: [CodingTools, DurableSandboxTools, DurableAsk],
@@ -57,6 +58,42 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     expect(toolsFor({ noTools: "builtin", allowed: ["read", "ask"], excluded: ["ask"] })).toEqual([
       "read",
     ]);
+  });
+
+  it("narrows a spawn's tools and never widens them past the parent's", () => {
+    // readOnly keeps Pi's read and bash, whatever the parent offers beyond them.
+    expect(toolsFor({}, { parentTools: ["read", "bash", "ask", "ls"], readOnly: true })).toEqual([
+      "bash",
+      "read",
+    ]);
+    // An intersection: a tool the parent lacks is dropped, an excluded one is dropped.
+    expect(toolsFor({}, { parentTools: ["read", "ask"], tools: ["read", "ask", "ls"] })).toEqual([
+      "ask",
+      "read",
+    ]);
+    expect(toolsFor({}, { parentTools: ["read", "ask"], excludeTools: ["ask"] })).toEqual(["read"]);
+    // readOnly outranks a wider `tools` list.
+    expect(
+      toolsFor({}, { parentTools: ["read", "bash", "ask"], tools: ["ask"], readOnly: true }),
+    ).toEqual(["bash", "read"]);
+  });
+
+  it("stores the narrowed list as the tool policy, so a later attach cannot widen it", async () => {
+    const { doc, change } = resolveDurableAgent({
+      narrow: { parentTools: ["read", "bash", "ask"], readOnly: true },
+      runtime: "sandbox",
+      base: [CodingTools, DurableSandboxTools, DurableAsk],
+      loaded: [],
+      classic: { bundled: new Set(), names: new Map() },
+      enabled: () => true,
+      sessions: defineExtension({ name: "oppi.sessions" }),
+      spawn: false,
+      grant: false,
+      notify: defineExtension({ name: "oppi.notify" }),
+      notifies: false,
+    });
+    expect(change.tools.map((tool) => tool.name).sort()).toEqual(["bash", "read"]);
+    expect(doc.tools).toEqual({ allowed: ["read", "bash"] });
   });
 
   it("opens MCP for noTools builtin and for an allow list under noTools all, not for all alone", async () => {

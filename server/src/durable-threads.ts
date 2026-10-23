@@ -1,12 +1,14 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { ModelRegistry, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
+  AgentDoc,
   configure,
   type Agent,
   type ConversationId,
   type Harness,
   type ModelRef,
 } from "@earendil-works/pi-durable";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type {
   Activated,
@@ -14,9 +16,17 @@ import type {
   ResolvedSubagent,
   SessionSender,
   SubagentRequest,
+  SubagentWorktreeBinding,
+  SubagentWorktreePlan,
+  SubagentWorktreeRequest,
 } from "./durable-extension-api.js";
 import { childDelegationGrant } from "./agent-launch-service.js";
-import { OppiAgentDoc, resolveDurableAgent, type SavedAgent } from "./durable-agent.js";
+import {
+  OppiAgentDoc,
+  resolveDurableAgent,
+  retargetInstructions,
+  type SavedAgent,
+} from "./durable-agent.js";
 import { DurableRuntime, type DurableHarness, type SessionHost } from "./durable-harness.js";
 import { durableStoreId } from "./session-runtime-capabilities.js";
 import { DURABLE_THREAD_KEY_PREFIX } from "./reserved-launch-keys.js";
@@ -25,7 +35,21 @@ import { safeErrorMessage } from "./log-utils.js";
 import { resolveSessionSeedModel } from "./sdk-backend.js";
 import type { Storage } from "./storage.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
+import type { SubagentWorktree } from "../extensions/durable/sessions/contract.js";
+import { resolveSessionWorkRoot } from "./session-work-root.js";
 import type { Session, Workspace } from "./types.js";
+import {
+  availableWorktreeBranch,
+  ensureWorkspaceWorktree,
+  headCommit,
+  listWorkspaceWorktrees,
+  releaseCleanWorkspaceWorktree,
+  resolveCreateBase,
+  resolveWorkspaceWorktree,
+  subagentWorktreeBranch,
+  workspaceGitRoot,
+  worktreeProgress,
+} from "./worktrees.js";
 
 export interface DurableThreadsDeps {
   runtime: DurableHarness;
@@ -34,8 +58,10 @@ export interface DurableThreadsDeps {
     | "findSessionByDurableConversation"
     | "findSessionByLaunchIdempotencyKey"
     | "getAgentDefinitionStore"
+    | "getDataDir"
     | "getSession"
     | "getWorkspace"
+    | "listAllWorkspaceSessionSnapshots"
     | "listDurableStoreConversations"
     | "saveSession"
   >;
@@ -108,6 +134,11 @@ export class DurableThreads {
         return this.activate(sessionId, submit);
       },
       resolveAgent: (request, agent) => this.resolveAgent(request, host, caller, agent),
+      planWorktree: (request, name) => this.planWorktree(request, name, host, caller),
+      provisionWorktree: (plan) => this.provisionWorktree(plan, host, caller),
+      worktreeState: (worktree) => this.worktreeState(worktree),
+      releaseWorktree: (worktree, sessionId) =>
+        this.releaseWorktree(worktree, sessionId, host, caller),
     };
   }
 
@@ -224,6 +255,19 @@ export class DurableThreads {
       notify: this.deps.runtime.notifyExtension,
       notifies: false,
       grant,
+      // Narrow-only: a spawn may take tools away from its child, never add one.
+      ...(request.tools !== undefined ||
+      request.excludeTools !== undefined ||
+      request.readOnly !== undefined
+        ? {
+            narrow: {
+              parentTools: agent.tools.map((tool) => tool.name),
+              ...(request.tools !== undefined ? { tools: request.tools } : {}),
+              ...(request.excludeTools !== undefined ? { excludeTools: request.excludeTools } : {}),
+              ...(request.readOnly !== undefined ? { readOnly: request.readOnly } : {}),
+            },
+          }
+        : {}),
       ...(saved
         ? {
             instructions: {
@@ -237,14 +281,22 @@ export class DurableThreads {
     return {
       ...(saved ? { agent: saved.definition.name } : {}),
       ...(icon?.kind === "emoji" ? { icon: icon.value } : {}),
-      apply: async (tx, child) => {
+      apply: async (tx, child, worktree) => {
         await configure(tx, child, change);
-        // The child runs where its parent runs.
+        // The child runs where its parent runs, unless its spawn gave it a worktree of its own.
         const from = await tx.doc(DurableRuntime, parentId);
         const to = await tx.doc(DurableRuntime, child);
         to.kind = from.kind;
         if (from.workspaceId !== undefined) to.workspaceId = from.workspaceId;
+        if (worktree) to.worktreeId = worktree.id;
         Object.assign(await tx.doc(OppiAgentDoc, child), structuredClone(doc));
+        if (!worktree) return;
+        // Its `pi.agent` cwd is where the Harness runs it: the worktree, and the instructions
+        // say so too (a child copies its parent's, which names the parent's checkout).
+        const agentDoc = await tx.doc(AgentDoc, child);
+        agentDoc.cwd = worktree.path;
+        const instructions = retargetInstructions(agentDoc.instructions, worktree.path);
+        if (instructions !== undefined) agentDoc.instructions = instructions;
       },
     };
   }
@@ -270,6 +322,168 @@ export class DurableThreads {
       model: { provider: found.provider, modelId: found.id },
       ...(thinkingLevel ? { thinkingLevel } : {}),
     };
+  }
+
+  /** The spawning conversation's Session, workspace, and runtime documents. */
+  private async worktreeCaller(
+    host: SessionHost,
+    caller: ConversationId,
+  ): Promise<{
+    parent: Session;
+    workspace: Workspace;
+    runtime: { kind: "host" | "sandbox"; worktreeId?: string } | undefined;
+  }> {
+    const { harness } = await host.open();
+    const runtime = await harness.snapshot(DurableRuntime, caller, BACKGROUND_CONTEXT);
+    const parent = this.deps.storage.findSessionByDurableConversation(host.storeId, caller);
+    const workspace = parent?.workspaceId
+      ? this.deps.storage.getWorkspace(parent.workspaceId)
+      : undefined;
+    if (!parent || !workspace) throw new Error("Only a workspace session can spawn child sessions");
+    return { parent, workspace, runtime };
+  }
+
+  /** Worktree ids a Session of this workspace still references: reusing one would move history. */
+  private reservedWorktreeIds(workspaceId: string): Set<string> {
+    const ids = new Set<string>();
+    for (const session of this.deps.storage.listAllWorkspaceSessionSnapshots(workspaceId)) {
+      const id = session.worktreeId?.trim();
+      if (id) ids.add(id);
+    }
+    return ids;
+  }
+
+  /**
+   * What a spawn's `worktree` asks for, checked before anything runs: a host workspace that is a
+   * git repository, and an adopted id that is one of its worktrees. Reads only; the caller
+   * memoizes the plan before `provisionWorktree` creates anything.
+   */
+  private async planWorktree(
+    request: SubagentWorktreeRequest,
+    name: string,
+    host: SessionHost,
+    caller: ConversationId,
+  ): Promise<SubagentWorktreePlan> {
+    const { parent, workspace, runtime } = await this.worktreeCaller(host, caller);
+    if (runtime?.kind === "sandbox")
+      throw new Error(
+        "A sandbox session cannot spawn a worktree child: worktrees need the host's git repository",
+      );
+    await workspaceGitRoot(workspace);
+    const dataDir = this.deps.storage.getDataDir();
+    if (typeof request !== "string" && "id" in request) {
+      const worktree = await resolveWorkspaceWorktree(workspace, request.id, { dataDir });
+      if (!worktree || worktree.isMain)
+        throw new Error(`Worktree ${request.id} is not a worktree of workspace ${workspace.name}`);
+      return { mode: "adopt", id: worktree.id };
+    }
+    const root = await resolveSessionWorkRoot(parent, workspace, dataDir, { create: false });
+    if (root.kind !== "ok")
+      throw new Error(
+        `The spawning session's checkout is unavailable (${root.kind}); a worktree child needs one`,
+      );
+    const base = await resolveCreateBase(
+      workspace,
+      root.root,
+      typeof request === "string" ? undefined : request.base,
+    );
+    if (request === "new")
+      return {
+        mode: "create",
+        branch: await availableWorktreeBranch(workspace, subagentWorktreeBranch(name), {
+          dataDir,
+        }),
+        base,
+      };
+    const branch = typeof request === "string" ? "" : request.branch.trim();
+    if (!branch) throw new Error('worktree needs a branch name or "new"');
+    return { mode: "create", branch, base };
+  }
+
+  /** Create the planned worktree, or adopt the one its branch (or id) already has. */
+  private async provisionWorktree(
+    plan: SubagentWorktreePlan,
+    host: SessionHost,
+    caller: ConversationId,
+  ): Promise<SubagentWorktreeBinding> {
+    const { workspace } = await this.worktreeCaller(host, caller);
+    const dataDir = this.deps.storage.getDataDir();
+    if (plan.mode === "adopt") {
+      const worktree = await resolveWorkspaceWorktree(workspace, plan.id, { dataDir });
+      if (!worktree) throw new Error(`Worktree ${plan.id} is no longer available`);
+      return {
+        id: worktree.id,
+        path: worktree.path,
+        branch: worktree.branch,
+        // An adopted worktree has no base of ours: its own HEAD is where this child starts.
+        base: (await headCommit(worktree.path)) ?? "",
+        created: false,
+      };
+    }
+    const existing = (await listWorkspaceWorktrees(workspace, { dataDir })).find(
+      (worktree) => !worktree.isMain && worktree.branch === plan.branch,
+    );
+    const worktree =
+      existing ??
+      (await ensureWorkspaceWorktree(
+        workspace,
+        { branch: plan.branch, base: plan.base },
+        {
+          dataDir,
+          reservedWorktreeIds: this.reservedWorktreeIds(workspace.id),
+          adoptExistingBranch: true,
+        },
+      ));
+    return {
+      id: worktree.id,
+      path: worktree.path,
+      branch: worktree.branch,
+      base: plan.base,
+      created: existing === undefined,
+    };
+  }
+
+  /** One compact line of where a child's worktree stands: branch, id, path, ahead, clean/dirty. */
+  private async worktreeState(worktree: SubagentWorktree): Promise<string | undefined> {
+    if (!existsSync(worktree.path))
+      return `${worktree.branch ?? "detached"} \u00b7 ${worktree.id} \u00b7 gone`;
+    const { ahead, dirty } = await worktreeProgress(worktree.path, worktree.base || undefined);
+    return [
+      worktree.branch ?? "detached",
+      worktree.id,
+      worktree.path,
+      ahead === 1 ? "1 commit ahead" : `${ahead} commits ahead`,
+      dirty ? "dirty" : "clean",
+    ].join(" \u00b7 ");
+  }
+
+  /**
+   * Remove a worktree this spawn created when its child ends with nothing to review, and its
+   * branch. A worktree another Session still runs in, one with changes or commits, and one the
+   * spawn adopted all stay.
+   */
+  private async releaseWorktree(
+    worktree: SubagentWorktree,
+    sessionId: string | undefined,
+    host: SessionHost,
+    caller: ConversationId,
+  ): Promise<"removed" | "kept" | "missing"> {
+    if (!worktree.created) return "kept";
+    const { workspace } = await this.worktreeCaller(host, caller);
+    // A nested child inherits its parent's worktree: it keeps the tree in use.
+    const inUse = this.deps.storage
+      .listAllWorkspaceSessionSnapshots(workspace.id, worktree.id)
+      .some(
+        (session) =>
+          session.id !== sessionId && session.status !== "stopped" && session.status !== "error",
+      );
+    if (inUse) return "kept";
+    return releaseCleanWorkspaceWorktree(workspace, {
+      dataDir: this.deps.storage.getDataDir(),
+      worktreeId: worktree.id,
+      ...(worktree.base ? { base: worktree.base } : {}),
+      branch: worktree.branch,
+    });
   }
 
   /** The Session bound to `child`, a conversation of `storeId`; created and attached on first use. */
@@ -355,6 +569,10 @@ export class DurableThreads {
     if (!conversation) throw new Error(`Durable conversation ${conversationId} is missing`);
     // The spawn configured the child in its creating commit; the row shows what it launched as.
     const launched = await harness.snapshot(OppiAgentDoc, conversationId, BACKGROUND_CONTEXT);
+    // A worktree spawn bound the child's worktree on its runtime document, so the row (and a
+    // crash re-bind that reaches this without new arguments) reads it from there.
+    const childRuntime = await harness.snapshot(DurableRuntime, conversationId, BACKGROUND_CONTEXT);
+    const worktreeId = childRuntime?.worktreeId ?? parent.worktreeId;
     const agent = await conversation.agent(BACKGROUND_CONTEXT);
     const model = agent.model ? `${agent.model.provider}/${agent.model.modelId}` : parent.model;
     const now = Date.now();
@@ -370,7 +588,7 @@ export class DurableThreads {
       cost: 0,
       runtime: "oppi",
       workspaceId: parent.workspaceId,
-      ...(parent.worktreeId ? { worktreeId: parent.worktreeId } : {}),
+      ...(worktreeId ? { worktreeId } : {}),
       thinkingLevel: agent.thinkingLevel,
       // Bound before anything is submitted, so a restart finds the conversation in `resumeIds`.
       serverDurable: { storeId, conversationId },
@@ -393,7 +611,7 @@ export class DurableThreads {
         autoStop: true,
         target: {
           workspaceId: parent.workspaceId,
-          ...(parent.worktreeId ? { worktreeId: parent.worktreeId } : {}),
+          ...(worktreeId ? { worktreeId } : {}),
           runtime: workspace.runtime === "sandbox" ? "sandbox" : "host",
         },
         ...(model ? { model } : {}),

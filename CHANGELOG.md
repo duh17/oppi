@@ -52,6 +52,10 @@ Example:
 
 ## [Unreleased]
 
+### Added
+
+- **Server:** A durable session's `subagent` children can work in a git worktree of their own: `spawn` takes `worktree` (`"new"` for a branch named after the child, `{ branch }` to create or adopt that branch, or an existing worktree id to adopt), so an editing child never touches the parent's checkout. A worktree child's answer and `list` row name its branch, commits ahead of its base, and whether it is dirty, and one the spawn made is removed once the child ends with nothing in it. `spawn` also takes `tools`, `excludeTools`, and `readOnly` to narrow a child's tools; a child can never gain one its parent lacks. See [Durable Sessions](docs/usage.md#durable-sessions-experiment).
+
 ### Changed
 
 - **Client:** A workspace's Git status moves from the strip over its session list to a **Git** button in the top bar, beside Terminal, with the changed-file count like a chat's. It opens the Git panel as a sheet. See [Git panel](docs/usage.md#git-panel).

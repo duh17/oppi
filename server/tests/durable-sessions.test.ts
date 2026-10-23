@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +34,7 @@ import { DurableJobs } from "../extensions/durable/background-jobs/contract.js";
 import { ACTIVITY_INTERVAL_MS, WAITING_ACTIVITY } from "../extensions/durable/sessions/widget.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import { OppiAgentDoc } from "../src/durable-agent.js";
+import { createWorkspaceWorktree, listWorkspaceWorktrees } from "../src/worktrees.js";
 import {
   DurableHarness,
   DurableRuntime,
@@ -123,9 +125,14 @@ const subagentCall = (action: string, args: Record<string, unknown> = {}) =>
   toolCall("subagent", { action, ...args });
 const spawnCall = (args: Record<string, unknown>) => subagentCall("spawn", args);
 
+/** Run git in `cwd` for a test fixture's repo, as the worktree tests do. */
+function gitIn(cwd: string, args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
 async function fixture(
   responses: FauxResponseStep[],
-  options?: { serverDurable?: boolean; tokensPerSecond?: number },
+  options?: { serverDurable?: boolean; tokensPerSecond?: number; git?: boolean },
 ) {
   const dir = mkdtempSync(join(tmpdir(), "oppi-durable-sessions-test-"));
   const models = await ModelRuntime.create({
@@ -151,9 +158,24 @@ async function fixture(
       compaction: { enabled: false },
     }),
   );
+  // A git workspace: its own checkout inside the data dir, so the worktrees Oppi manages
+  // (`<dataDir>/worktrees/...`) stay outside the repo.
+  const repo = join(dir, "repo");
+  if (options?.git) {
+    mkdirSync(repo, { recursive: true });
+    gitIn(repo, ["init", "--initial-branch=main"]);
+    gitIn(repo, ["config", "user.email", "oppi-test@example.invalid"]);
+    gitIn(repo, ["config", "user.name", "Oppi Test"]);
+    writeFileSync(join(repo, "README.md"), "main checkout\n");
+    gitIn(repo, ["add", "README.md"]);
+    gitIn(repo, ["commit", "-m", "initial"]);
+  }
   const storage = new Storage(dir);
   storage.updateConfig({ experimental: { serverDurable: options?.serverDurable ?? true } });
-  const workspace = storage.createWorkspace({ name: "Durable threads", hostMount: dir });
+  const workspace = storage.createWorkspace({
+    name: "Durable threads",
+    hostMount: options?.git ? repo : dir,
+  });
   const session = (name: string) => {
     const created = storage.createSession(name, "faux/faux-1");
     created.serverDurable = { storeId: created.id };
@@ -179,6 +201,7 @@ async function fixture(
     (await (await openHost(sessionId)).open()).harness;
   return {
     dir,
+    repo,
     storage,
     workspace,
     manager,
@@ -1153,6 +1176,61 @@ describe("durable-native threads", () => {
     expect(childCalls).toBe(2);
   });
 
+  it("reruns a worktree spawn after a restart into one child and one worktree", async () => {
+    let childCalls = 0;
+    const firstCall = gate();
+    const f = await fixture(
+      model(async ({ last, text, signal }) => {
+        const toolName = (last as { toolName?: string }).toolName;
+        if (toolName === "subagent") return fauxAssistantMessage("PARENT_DONE");
+        if (toolName === "bash") return fauxAssistantMessage("TREE_RESUMED");
+        if (text.includes("Delegate"))
+          return spawnCall({ name: "Tree", task: "TREE_TASK", worktree: "new", wait: true });
+        childCalls += 1;
+        if (childCalls === 1) {
+          await firstCall.wait(signal);
+          throw new Error("interrupted by shutdown");
+        }
+        // A file the worktree keeps, so it survives the end of the child and can be counted.
+        return toolCall("bash", { command: "printf 'kept\\n' > resume.txt" });
+      }),
+      { git: true },
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await f.manager.sendPrompt(f.parent.id, "Delegate it");
+    await until(() => childCalls === 1, "the child's first model call");
+    const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    const parentConversation = conversationOf(f.storage, f.parent);
+    expect(child.worktreeId).toMatch(/^wt_/);
+
+    recordLiveSessionsForRestart(f.storage, [
+      f.manager.getActiveSession(f.parent.id)!,
+      f.manager.getActiveSession(child.id)!,
+    ]);
+    await f.manager.close();
+    managers.splice(managers.indexOf(f.manager), 1);
+    const reopened = new Storage(f.dir);
+    const restarted = new SessionManager(reopened);
+    managers.push(restarted);
+    await restarted.resumeDurableSessions();
+    const harness = await f.harness();
+    await until(
+      async () => (await toolResults(harness, parentConversation)).length === 1,
+      "tool result",
+    );
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+
+    expect((await toolResults(harness, parentConversation))[0]).toMatchObject({
+      text: expect.stringContaining("TREE_RESUMED"),
+      details: { sessionId: child.id },
+    });
+    // One child, one Session, one worktree: the rerun found the child instead of branching again.
+    expect(reopened.listSessions().filter((session) => session.id !== f.parent.id)).toHaveLength(1);
+    const worktrees = await listWorkspaceWorktrees(f.workspace, { dataDir: f.dir });
+    expect(worktrees.map((tree) => tree.id)).toEqual(["main", child.worktreeId]);
+    expect(existsSync(join(worktrees[1]!.path, "resume.txt"))).toBe(true);
+  });
+
   it("gives a child no subagent tool without the grant; a granted child's subtree spawns two levels down", async () => {
     const f = await fixture(
       model(async ({ last, text }) => {
@@ -1259,6 +1337,388 @@ describe("durable-native threads", () => {
       text: expect.stringContaining("Sandbox sessions cannot authorize nested delegation"),
     });
     expect(f.storage.listSessions().map((session) => session.id)).toEqual([f.parent.id]);
+  });
+
+  it("runs a worktree child in its own checkout and leaves the parent's clean", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        const toolName = (last as { toolName?: string }).toolName;
+        if (toolName === "bash") return fauxAssistantMessage("WORKER_DONE");
+        if (toolName === "subagent") return fauxAssistantMessage("PARENT_DONE");
+        if (text.includes("Delegate"))
+          return spawnCall({ name: "Worker", task: "WORK_COMMIT", worktree: "new", wait: true });
+        return toolCall("bash", {
+          command:
+            "pwd && printf 'work\\n' > work.txt && git add work.txt && " +
+            "git commit -qm work && git rev-parse --short HEAD",
+        });
+      }),
+      { git: true },
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await f.manager.sendPrompt(f.parent.id, "Delegate it");
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await until(async () => (await toolResults(harness, parentConversation)).length === 1, "spawn");
+    const [result] = await toolResults(harness, parentConversation);
+    const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    const childConversation = conversationOf(f.storage, child);
+    const worktreeId = child.worktreeId!;
+    expect(worktreeId).toMatch(/^wt_/);
+    expect(child.launch?.target?.worktreeId).toBe(worktreeId);
+    const worktree = (await listWorkspaceWorktrees(f.workspace, { dataDir: f.dir })).find(
+      (candidate) => candidate.id === worktreeId,
+    )!;
+    expect(worktree.branch).toBe("subagent/worker");
+    expect(worktree.path).toContain(join("worktrees", f.workspace.id));
+    // The child ran in the worktree: its bash `pwd` is there, and the file it committed is not
+    // in the parent's checkout.
+    expect((await toolResults(harness, childConversation))[0]!.text.trim().split("\n")[0]).toBe(
+      worktree.path,
+    );
+    expect((await harness.snapshot(AgentDoc, childConversation, context))?.cwd).toBe(worktree.path);
+    expect(existsSync(join(worktree.path, "work.txt"))).toBe(true);
+    expect(existsSync(join(f.repo, "work.txt"))).toBe(false);
+    expect(gitIn(f.repo, ["status", "--porcelain"])).toBe("");
+    // Its answer reports the worktree, one commit past its base, clean, and it stays: a commit
+    // is something to review or land.
+    expect(result).toMatchObject({ toolName: "subagent" });
+    expect(result!.text).toContain("WORKER_DONE");
+    expect(result!.text).toContain(`worktree: ${worktree.branch} \u00b7 ${worktreeId}`);
+    expect(result!.text).toContain("1 commit ahead");
+    expect(result!.text).toContain("clean");
+    expect(existsSync(worktree.path)).toBe(true);
+    expect(gitIn(f.repo, ["branch", "--list", "subagent/worker"])).toContain("subagent/worker");
+  });
+
+  it("removes an untouched worktree when its child ends, and keeps an adopted one", async () => {
+    let adoptedId = "";
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        const toolName = (last as { toolName?: string }).toolName;
+        if (toolName === "subagent") return fauxAssistantMessage("PARENT_DONE");
+        if (text.includes("Spawn Quiet"))
+          return spawnCall({ name: "Quiet", task: "QUIET_TASK", worktree: "new" });
+        if (text.includes("Review it"))
+          return spawnCall({
+            name: "Reviewer",
+            task: "REVIEW_TASK",
+            worktree: adoptedId,
+            wait: true,
+          });
+        return fauxAssistantMessage("CHILD_OK");
+      }),
+      { git: true },
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await f.manager.sendPrompt(f.parent.id, "Spawn Quiet");
+    await until(
+      async () => (await reports(harness, parentConversation)).length === 1,
+      "the quiet child's report",
+    );
+    // A background child that wrote nothing: its worktree and branch are gone.
+    const quiet = f.storage.listSessions().find((session) => session.name === "Quiet")!;
+    expect(quiet.worktreeId).toMatch(/^wt_/);
+    // The catalog hides a worktree while its removal runs: the branch goes last.
+    await until(
+      () => gitIn(f.repo, ["branch", "--list", "subagent/quiet"]) === "",
+      "the untouched worktree and its branch to be removed",
+    );
+    expect(await listWorkspaceWorktrees(f.workspace, { dataDir: f.dir })).toHaveLength(1);
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+
+    // An adopted worktree is never removed, whatever the child did.
+    const adopted = await createWorkspaceWorktree(
+      f.workspace,
+      { branch: "review/given" },
+      { dataDir: f.dir },
+    );
+    adoptedId = adopted.id;
+    await f.manager.sendPrompt(f.parent.id, "Review it");
+    await until(async () => (await toolResults(harness, parentConversation)).length === 2, "adopt");
+    expect(existsSync(adopted.path)).toBe(true);
+    expect(
+      (await listWorkspaceWorktrees(f.workspace, { dataDir: f.dir })).map((tree) => tree.id),
+    ).toContain(adopted.id);
+  });
+
+  it("lists a worktree child's branch, commits ahead, and dirt", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        const toolName = (last as { toolName?: string }).toolName;
+        if (toolName === "bash") return fauxAssistantMessage("CHILD_OK");
+        if (toolName === "subagent") return fauxAssistantMessage("PARENT_DONE");
+        if (text.includes("Spawn"))
+          return spawnCall({ name: "Dirty", task: "DIRTY_TASK", worktree: "new" });
+        if (text.includes("Show them")) return subagentCall("list");
+        if (text.includes("DIRTY_TASK")) return fauxAssistantMessage("CHILD_OK");
+        return fauxAssistantMessage("PARENT_DONE");
+      }),
+      { git: true },
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await f.manager.sendPrompt(f.parent.id, "Spawn it");
+    await until(
+      async () => (await toolResults(harness, parentConversation)).length === 1,
+      "the child's report",
+    );
+    const child = f.storage.listSessions().find((session) => session.name === "Dirty")!;
+    const worktree = (await listWorkspaceWorktrees(f.workspace, { dataDir: f.dir })).find(
+      (candidate) => candidate.id === child.worktreeId,
+    )!;
+    writeFileSync(join(worktree.path, "dirty.txt"), "x\n");
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    await f.manager.sendPrompt(f.parent.id, "Show them");
+    await until(async () => (await toolResults(harness, parentConversation)).length === 2, "list");
+    const [listed] = (await toolResults(harness, parentConversation)).filter((result) =>
+      result.text.includes("Dirty |"),
+    );
+    expect(listed!.text).toContain(`worktree: subagent/dirty \u00b7 ${worktree.id}`);
+    expect(listed!.text).toContain("0 commits ahead");
+    expect(listed!.text).toContain("dirty");
+    expect(existsSync(worktree.path)).toBe(true);
+  });
+
+  it("narrows a child's tools and never widens them", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        const toolName = (last as { toolName?: string }).toolName;
+        if (toolName === "subagent") return fauxAssistantMessage("PARENT_DONE");
+        if (text.includes("RO_TASK") || text.includes("NARROW_TASK"))
+          return fauxAssistantMessage("CHILD_OK");
+        if (text.includes("Read only"))
+          return spawnCall({ name: "Solo", task: "RO_TASK", readOnly: true, wait: true });
+        if (text.includes("Narrow"))
+          return spawnCall({
+            name: "Narrow",
+            task: "NARROW_TASK",
+            tools: ["edit", "subagent", "not_a_tool"],
+            excludeTools: ["write"],
+            wait: true,
+          });
+        return fauxAssistantMessage("PARENT_DONE");
+      }),
+      { git: true },
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    const toolsOf = async (session: Session) =>
+      (
+        await (await harness.conversation(conversationOf(f.storage, session), context))!.agent(
+          context,
+        )
+      ).tools
+        .map((tool) => tool.name)
+        .sort();
+    await f.manager.sendPrompt(f.parent.id, "Read only please");
+    await until(async () => (await toolResults(harness, parentConversation)).length === 1, "solo");
+    const solo = f.storage.listSessions().find((session) => session.name === "Solo")!;
+    expect(await toolsOf(solo)).toEqual(["bash", "read"]);
+    // The task says what readOnly means, and that bash is not a sandbox.
+    const [soloTask] = await userTexts(harness, conversationOf(f.storage, solo));
+    expect(soloTask).toContain("[Read-only subagent:");
+    expect(soloTask).toContain("not a sandbox");
+    expect(soloTask).toContain("RO_TASK");
+    // The parent keeps its own tools; a named tool it lacks is dropped, never added.
+    expect(await toolsOf(f.parent)).toEqual(
+      expect.arrayContaining(["read", "bash", "edit", "write"]),
+    );
+    await f.manager.sendPrompt(f.parent.id, "Narrow it");
+    await until(
+      async () => (await toolResults(harness, parentConversation)).length === 2,
+      "narrow",
+    );
+    const narrow = f.storage.listSessions().find((session) => session.name === "Narrow")!;
+    expect(await toolsOf(narrow)).toEqual(["edit"]);
+  });
+
+  it("adopts a worktree by id and refuses another workspace's", async () => {
+    const other = join(mkdtempSync(join(tmpdir(), "oppi-durable-other-ws-")), "repo");
+    mkdirSync(other, { recursive: true });
+    gitIn(other, ["init", "--initial-branch=main"]);
+    gitIn(other, ["config", "user.email", "oppi-test@example.invalid"]);
+    gitIn(other, ["config", "user.name", "Oppi Test"]);
+    writeFileSync(join(other, "README.md"), "other\n");
+    gitIn(other, ["add", "README.md"]);
+    gitIn(other, ["commit", "-m", "initial"]);
+    let adoptedId = "";
+    let strangerId = "";
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        const toolName = (last as { toolName?: string }).toolName;
+        if (toolName === "bash") return fauxAssistantMessage("REVIEWER_DONE");
+        if (toolName === "subagent") return fauxAssistantMessage("PARENT_DONE");
+        if (text.includes("Review the worker"))
+          return spawnCall({
+            name: "Reviewer",
+            task: "REVIEW_TASK",
+            worktree: adoptedId,
+            wait: true,
+          });
+        if (text.includes("Borrow the stranger"))
+          return spawnCall({ name: "Stranger", task: "T", worktree: strangerId, wait: true });
+        if (text.includes("REVIEW_TASK")) return toolCall("bash", { command: "pwd" });
+        return fauxAssistantMessage("PARENT_DONE");
+      }),
+      { git: true },
+    );
+    const adopted = await createWorkspaceWorktree(
+      f.workspace,
+      { branch: "review/worker-source" },
+      { dataDir: f.dir },
+    );
+    const otherWorkspace = f.storage.createWorkspace({ name: "Other", hostMount: other });
+    const stranger = await createWorkspaceWorktree(
+      otherWorkspace,
+      { branch: "review/stranger" },
+      { dataDir: f.dir },
+    );
+    adoptedId = adopted.id;
+    strangerId = stranger.id;
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await f.manager.sendPrompt(f.parent.id, "Review the worker's source");
+    await until(async () => (await toolResults(harness, parentConversation)).length === 1, "adopt");
+    const reviewer = f.storage.listSessions().find((session) => session.name === "Reviewer")!;
+    expect(reviewer.worktreeId).toBe(adopted.id);
+    expect((await toolResults(harness, conversationOf(f.storage, reviewer)))[0]!.text.trim()).toBe(
+      adopted.path,
+    );
+    expect(existsSync(adopted.path)).toBe(true);
+
+    await f.manager.sendPrompt(f.parent.id, "Borrow the stranger's");
+    await until(
+      async () => (await toolResults(harness, parentConversation)).length === 2,
+      "refusal",
+    );
+    const refused = (await toolResults(harness, parentConversation))[1]!;
+    expect(refused).toMatchObject({ toolName: "subagent", isError: true });
+    expect(refused.text).toContain("is not a worktree of workspace");
+    expect(existsSync(stranger.path)).toBe(true);
+  });
+
+  it("gives a nested child its parent's worktree", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        const toolName = (last as { toolName?: string }).toolName;
+        if (toolName === "subagent") return fauxAssistantMessage("LEAD_ANSWER");
+        if (text.includes("Delegate lead"))
+          return spawnCall({
+            name: "Lead",
+            task: "LEAD_TASK",
+            worktree: "new",
+            wait: true,
+            allowNestedDelegation: true,
+          });
+        if (text.includes("LEAD_TASK"))
+          return spawnCall({ name: "Mid", task: "MID_TASK", wait: true });
+        return fauxAssistantMessage("MID_ANSWER");
+      }),
+      { git: true },
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await f.manager.sendPrompt(f.parent.id, "Delegate lead");
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await until(async () => (await toolResults(harness, parentConversation)).length === 1, "lead");
+    const lead = f.storage.listSessions().find((session) => session.name === "Lead")!;
+    const mid = f.storage.listSessions().find((session) => session.name === "Mid")!;
+    const cwdOf = async (session: Session) =>
+      (await harness.snapshot(AgentDoc, conversationOf(f.storage, session), context))?.cwd;
+    expect(lead.worktreeId).toMatch(/^wt_/);
+    expect(mid.worktreeId).toBe(lead.worktreeId);
+    expect(mid.launch?.parentSessionId).toBe(lead.id);
+    // The nested child runs in the same checkout, under the same path.
+    expect(await cwdOf(mid)).toBe(await cwdOf(lead));
+    expect(await cwdOf(mid)).toContain(join("worktrees", f.workspace.id));
+  });
+
+  it("refuses a worktree from a sandbox parent before any child exists", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
+        if (text.includes("Worktree it"))
+          return spawnCall({ name: "Sand", task: "SAND_TASK", worktree: "new" });
+        return fauxAssistantMessage("OK");
+      }),
+      { git: true },
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await harness.commit(async (tx) => {
+      const runtime = await tx.doc(DurableRuntime, parentConversation);
+      runtime.kind = "sandbox";
+      runtime.workspaceId = f.workspace.id;
+    }, context);
+    (await f.owner()).bindSandboxEnv(parentConversation, new NodeExecutionEnv({ cwd: f.dir }));
+
+    await f.manager.sendPrompt(f.parent.id, "Worktree it");
+    await until(
+      async () => (await toolResults(harness, parentConversation)).length === 1,
+      "worktree refusal",
+    );
+    expect((await toolResults(harness, parentConversation))[0]).toMatchObject({
+      toolName: "subagent",
+      isError: true,
+      text: expect.stringContaining("sandbox session cannot spawn a worktree child"),
+    });
+    expect(f.storage.listSessions().map((session) => session.id)).toEqual([f.parent.id]);
+    expect(await listWorkspaceWorktrees(f.workspace, { dataDir: f.dir })).toHaveLength(1);
+  });
+
+  it("fails a worktree child closed when its worktree is gone, never in the main checkout", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        const toolName = (last as { toolName?: string }).toolName;
+        if (toolName === "subagent") return fauxAssistantMessage("PARENT_DONE");
+        if (text.includes("Spawn"))
+          return spawnCall({ name: "Gone", task: "GONE_TASK", worktree: "new" });
+        if (text.includes("Message it"))
+          return subagentCall("send", { name: "Gone", message: "AGAIN" });
+        return fauxAssistantMessage("CHILD_OK");
+      }),
+      { git: true },
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await f.manager.sendPrompt(f.parent.id, "Spawn it");
+    await until(
+      async () => (await reports(harness, parentConversation)).length === 1,
+      "the child's report",
+    );
+    const child = f.storage.listSessions().find((session) => session.name === "Gone")!;
+    const worktree = (await listWorkspaceWorktrees(f.workspace, { dataDir: f.dir })).find(
+      (candidate) => candidate.id === child.worktreeId,
+    )!;
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    rmSync(worktree.path, { recursive: true, force: true });
+
+    await f.manager.sendPrompt(f.parent.id, "Message it");
+    await until(
+      async () =>
+        (await userTexts(harness, parentConversation)).some((text) =>
+          text.includes("could not start:"),
+        ),
+      "the failure report",
+    );
+    const failure = (await userTexts(harness, parentConversation)).find((text) =>
+      text.includes("could not start:"),
+    )!;
+    expect(failure).toContain("Gone");
+    expect(failure).toContain("worktree is no longer available");
+    // Nothing ran in the main checkout instead.
+    expect(gitIn(f.repo, ["status", "--porcelain"])).toBe("");
+    expect(existsSync(join(f.repo, "work.txt"))).toBe(false);
   });
 
   it("steers a busy child or queues after its answer, and reports each answer once", async () => {

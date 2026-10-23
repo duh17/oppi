@@ -17,7 +17,7 @@ import { hostMountValidationError } from "../host.js";
 import {
   assertWorkspaceSupportsWorktrees,
   claimInFlightWorkspaceCreate,
-  createWorkspaceWorktree,
+  ensureWorkspaceWorktree,
   hasManagedWorkspaceWorktreeDirectory,
   listWorkspaceWorktrees,
   openWorkspaceWorktree,
@@ -339,16 +339,16 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    // parseBody and the git checks before the per-id claim are awaits. Hold a
-    // workspace sentinel across them so delete cannot pass its post-await
-    // re-check and leave the later checkout orphaned. Do not claim the real
-    // id here: requireAvailableCreateTarget would treat it as already existing.
+    // Reading the body is an await too: hold a workspace sentinel across it, so a delete cannot
+    // pass its post-await re-check and leave the later checkout orphaned.
     const createKey = claimInFlightWorkspaceCreate(wsId);
     try {
       const body = await helpers.parseBody<unknown>(req);
       if (!rejectNonObjectBody(body, res)) return;
+      // The shared function holds the claim again across the git checks and the create; the
+      // route keeps refusing a branch that already has a worktree instead of adopting it.
       try {
-        const worktree = await createWorkspaceWorktree(
+        const worktree = await ensureWorkspaceWorktree(
           workspace,
           body as CreateWorkspaceWorktreeRequest,
           {

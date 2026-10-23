@@ -31,6 +31,25 @@ export type Child = {
   reported?: EntryId[];
   /** The reporter that reports this child's later answers, which no parent message caused. */
   follower?: TaskId;
+  /**
+   * The worktree this child runs in, when its spawn asked for one. `created` marks the ones this
+   * spawn made: they are removed again when the child ends with nothing to review, while an
+   * adopted one always stays.
+   */
+  worktree?: SubagentWorktree;
+};
+
+/** A child's worktree, as its spawn bound it and as `list` and its answers report it. */
+export type SubagentWorktree = {
+  id: string;
+  path: string;
+  branch: string | null;
+  /** The commit it branched from; commits ahead are counted from it. */
+  base: string;
+  /** This spawn created it (so it is a cleanup candidate), rather than adopting it. */
+  created: boolean;
+  /** Already removed once the child ended with nothing in it: a rerun must not remove again. */
+  released?: boolean;
 };
 
 /** The children of a conversation by name, and which spawn call made which, so a rerun finds it. */

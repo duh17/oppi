@@ -76,7 +76,16 @@ import { requireDurableStoreId } from "./session-runtime-capabilities.js";
 import type { ConversationStreamServerMessage, Session } from "./types.js";
 
 /** Persist the execution boundary so a resumed conversation cannot change runtime. */
-export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?: string }>({
+export const DurableRuntime = defineDoc<{
+  kind: "host" | "sandbox";
+  workspaceId?: string;
+  /**
+   * The worktree this conversation's files live in, when it runs in one: a `subagent spawn`
+   * with `worktree`. The child's Session row takes its `worktreeId` from here, so the crash
+   * re-bind finds it without a new argument.
+   */
+  worktreeId?: string;
+}>({
   kind: "oppi.execution-runtime",
   version: 1,
   scope: "conversation",
@@ -1014,6 +1023,7 @@ export class SessionHost {
       const doc = await tx.doc(DurableRuntime, id);
       doc.kind = runtime.kind;
       if (runtime.workspaceId !== undefined) doc.workspaceId = runtime.workspaceId;
+      if (runtime.worktreeId !== undefined) doc.worktreeId = runtime.worktreeId;
     };
     const ownership = { kind: "ownerless" } as const;
     // A compaction entry carries a user-role summary but is not a user message: branch at it,

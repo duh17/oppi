@@ -178,6 +178,64 @@ export function resolveDurableExtensionSelection(
   return { packages, mcp, skipped: [...skipped] };
 }
 
+/**
+ * How `subagent spawn` narrows the tools a child gets: an intersection only, never a widening.
+ * `parentTools` is what the spawning session's own agent offers.
+ */
+export type DurableToolNarrowing = {
+  readonly parentTools: readonly string[];
+  /** Only these tools. */
+  readonly tools?: readonly string[];
+  /** Never these tools. */
+  readonly excludeTools?: readonly string[];
+  /** Read and run commands only. */
+  readonly readOnly?: boolean;
+};
+
+/** What `readOnly: true` leaves: Pi's `read` and `bash` (`bash` is not a sandbox). */
+const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["read", "bash"]);
+
+/**
+ * The child's tools: those the parent offers and the child's own policy allows, then the
+ * spawn's `tools`/`excludeTools`/`readOnly`. The document's policy becomes the exact resulting
+ * list, so a tool the child gains at a later attach is still filtered by it.
+ */
+function narrowTools(
+  tools: readonly ToolRegistration[],
+  policy: DurableToolPolicy | undefined,
+  narrowing: DurableToolNarrowing,
+): { tools: ToolRegistration[]; policy: DurableToolPolicy } {
+  const offered = new Set(narrowing.parentTools);
+  const wanted = narrowing.readOnly
+    ? READ_ONLY_TOOL_NAMES
+    : narrowing.tools
+      ? new Set(narrowing.tools)
+      : undefined;
+  const excluded = new Set(narrowing.excludeTools ?? []);
+  const kept = tools.filter(
+    (tool) =>
+      offered.has(tool.name) &&
+      toolAllowed(policy, tool.name) &&
+      (wanted === undefined || wanted.has(tool.name)) &&
+      !excluded.has(tool.name),
+  );
+  return { tools: kept, policy: { allowed: kept.map((tool) => tool.name) } };
+}
+
+/**
+ * `instructions` with its `Working directory` line pointing at `cwd`. A child inherits its
+ * parent's instructions; a worktree child says where it really runs.
+ */
+export function retargetInstructions(
+  instructions: string | undefined,
+  cwd: string,
+): string | undefined {
+  if (instructions === undefined) return undefined;
+  const line = /^Working directory: .*$/m;
+  if (line.test(instructions)) return instructions.replace(line, `Working directory: ${cwd}`);
+  return `${instructions}\n\nWorking directory: ${cwd}`;
+}
+
 interface DurableAgentInput {
   /** The saved Agent to launch as; without one a child is a copy of `inherited`. */
   saved?: SavedAgent;
@@ -188,6 +246,8 @@ interface DurableAgentInput {
   policy?: DurableToolPolicy;
   /** The parent's document, for a child without a saved Agent. */
   inherited?: OppiAgentState;
+  /** A `subagent spawn`'s narrow-only asks; their result is never wider than the parent's tools. */
+  narrow?: DurableToolNarrowing;
   runtime: "host" | "sandbox";
   /**
    * The extensions to start from: the parent's for a child, Oppi's defaults (built-ins and every
@@ -267,9 +327,12 @@ export function resolveDurableAgent(input: DurableAgentInput): {
     input.policy ??
     (saved ? savedPolicy(definition?.sessionDefaults) : undefined) ??
     input.inherited?.tools;
-  const tools: ToolRegistration[] = extensions
+  const resolved: ToolRegistration[] = extensions
     .flatMap((extension) => extension.tools ?? [])
     .filter((tool) => toolAllowed(policy, tool.name));
+  const narrowed = input.narrow ? narrowTools(resolved, policy, input.narrow) : undefined;
+  const tools: ToolRegistration[] = narrowed?.tools ?? resolved;
+  const toolPolicy: DurableToolPolicy | undefined = narrowed?.policy ?? policy;
 
   const preset = definition?.sessionDefaults;
   const thinkingLevel = input.thinkingLevel ?? preset?.thinkingLevel;
@@ -313,14 +376,14 @@ export function resolveDurableAgent(input: DurableAgentInput): {
               },
             }
           : {}),
-        ...(policy ? { tools: policy } : {}),
+        ...(toolPolicy ? { tools: toolPolicy } : {}),
       }
     : {
         // A copy of the parent, with its own delegation.
         ...structuredClone(input.inherited ?? {}),
         spawn: input.spawn,
         grant: input.grant,
-        ...(policy ? { tools: policy } : {}),
+        ...(toolPolicy ? { tools: toolPolicy } : {}),
       };
   return { change, doc };
 }

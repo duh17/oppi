@@ -974,6 +974,39 @@ describe("SessionLifecycleService", () => {
       }
     });
 
+    it("refuses to move a removed-worktree subagent child onto main", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-child-worktree-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-child-data-"));
+      try {
+        const workspace = makeGitWorkspace(root);
+        const session = makeSession({
+          runtime: "oppi",
+          status: "stopped",
+          worktreeId: "wt_removed",
+          launch: {
+            status: "accepted",
+            requestedAt: 1,
+            parentSessionId: "parent-1",
+            target: { workspaceId: "ws-1", worktreeId: "wt_removed", runtime: "host" },
+          },
+        });
+        const { service, startSession, saveSession } = makeService({
+          // Attaching in the main checkout is exactly what must not happen.
+          started: makeSession({ ...session, status: "ready", worktreeId: "main" }),
+          dataDir,
+        });
+
+        await expect(service.resumeWorkspaceSession({ session, workspace })).rejects.toThrow(
+          "cannot continue in the main checkout",
+        );
+        expect(saveSession).not.toHaveBeenCalled();
+        expect(startSession).not.toHaveBeenCalled();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
     it("does not notice a second resume after the session is already on main", async () => {
       const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-second-"));
       const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-second-data-"));
@@ -1913,9 +1946,7 @@ describe("SessionLifecycleService", () => {
         );
         expect(
           saveSession.mock.calls.some(
-            ([saved]) =>
-              saved.id === "fork-1" &&
-              saved.warnings?.includes(WORKTREE_REBIND_NOTICE),
+            ([saved]) => saved.id === "fork-1" && saved.warnings?.includes(WORKTREE_REBIND_NOTICE),
           ),
         ).toBe(false);
         expect(startSession).toHaveBeenCalledWith(

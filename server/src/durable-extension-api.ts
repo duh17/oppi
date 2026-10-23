@@ -10,6 +10,7 @@ import type {
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import type { TSchema } from "typebox";
 import type { Job } from "../extensions/durable/background-jobs/contract.js";
+import type { SubagentWorktree } from "../extensions/durable/sessions/contract.js";
 import type { NotifyInput, NotifyOutcome } from "../extensions/durable/notify/contract.js";
 
 /**
@@ -146,7 +147,38 @@ export type SubagentRequest = {
   /** Overrides the saved Agent's. */
   thinking?: string;
   allowNestedDelegation?: boolean;
+  /** Narrow the child's tools; a child never gains one its parent lacks. */
+  tools?: string[];
+  excludeTools?: string[];
+  /** Read and run commands only (`bash` is not a sandbox). */
+  readOnly?: boolean;
 };
+
+/** `subagent spawn`'s `worktree`, which runs the child in a checkout of its own. */
+export type SubagentWorktreeRequest =
+  /** A new branch named from the child, based on the parent's HEAD. */
+  | "new"
+  /** Create or adopt the worktree of a branch; `base` defaults to the parent's HEAD. */
+  | { branch: string; base?: string }
+  /** Adopt an existing worktree of this workspace by id (`wt_…`). */
+  | { id: string };
+
+/**
+ * What a worktree spawn asks the host to provision. `api.memo` stores it before the external
+ * create, so a rerun after a crash provisions the same branch instead of making a second one.
+ */
+export type SubagentWorktreePlan =
+  { mode: "adopt"; id: string } | { mode: "create"; branch: string; base: string };
+
+/** The worktree a spawn bound its child to. */
+export interface SubagentWorktreeBinding {
+  id: string;
+  path: string;
+  branch: string | null;
+  base: string;
+  /** This spawn created it, so it is a cleanup candidate once the child ends. */
+  created: boolean;
+}
 
 /** A spawn the host resolved: how the child conversation is configured. */
 export interface ResolvedSubagent {
@@ -156,9 +188,10 @@ export interface ResolvedSubagent {
   icon?: string;
   /**
    * Configure the new child inside its creating commit: its agent (`configure`), runtime, and
-   * `oppi.agent` documents, so it never exists unconfigured.
+   * `oppi.agent` documents, so it never exists unconfigured; plus, for a worktree spawn, where
+   * it runs.
    */
-  apply(tx: Tx, child: ConversationId): Promise<void>;
+  apply(tx: Tx, child: ConversationId, worktree?: SubagentWorktreeBinding): Promise<void>;
 }
 
 /**
@@ -211,6 +244,23 @@ export interface DurableSessionsHost {
    * message for the model.
    */
   resolveAgent(request: SubagentRequest, agent: Agent): Promise<ResolvedSubagent>;
+  /**
+   * Check a spawn's `worktree` and return what to provision: it must be a host workspace that is
+   * a git repository, and an adopted id must be a worktree of it. Reads only.
+   */
+  planWorktree(request: SubagentWorktreeRequest, name: string): Promise<SubagentWorktreePlan>;
+  /** Create or adopt the planned worktree. Idempotent: the same plan adopts what it made. */
+  provisionWorktree(plan: SubagentWorktreePlan): Promise<SubagentWorktreeBinding>;
+  /** One compact line of a child's worktree state, or undefined when it has none. */
+  worktreeState(worktree: SubagentWorktree): Promise<string | undefined>;
+  /**
+   * Remove a worktree this spawn created when the child ends with nothing to review (clean, and
+   * no commit past its base). Anything else stays, and so does an adopted worktree.
+   */
+  releaseWorktree(
+    worktree: SubagentWorktree,
+    sessionId: string | undefined,
+  ): Promise<"removed" | "kept" | "missing">;
 }
 
 // --- control (`oppi.control`) ----------------------------------------------------------------

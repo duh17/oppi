@@ -656,6 +656,155 @@ export async function createWorkspaceWorktree(
   }
 }
 
+export interface EnsureWorkspaceWorktreeOptions extends WorkspaceWorktreeLifecycleOptions {
+  /**
+   * Return the worktree of the branch an earlier create made instead of refusing the id as
+   * taken. A `subagent spawn` that reruns after a crash adopts the worktree its first run made.
+   */
+  adoptExistingBranch?: boolean;
+}
+
+/**
+ * Create a managed worktree for a branch, or adopt the one that branch already has. The HTTP
+ * route and `subagent spawn` share this so both hold the workspace's in-flight-create claim
+ * across the awaits before the id is known (a workspace delete cannot pass it), and both refuse
+ * an id that session history still references.
+ */
+export async function ensureWorkspaceWorktree(
+  workspace: Workspace,
+  request: CreateWorkspaceWorktreeRequest,
+  options: EnsureWorkspaceWorktreeOptions,
+): Promise<WorkspaceWorktree> {
+  // Not the real id: `requireAvailableCreateTarget` would read that as an existing worktree.
+  const claim = claimInFlightWorkspaceCreate(workspace.id);
+  try {
+    if (options.adoptExistingBranch) {
+      const workspaceRoot = await requireWorkspaceGitRoot(workspace);
+      const branch = await requireBranch(workspaceRoot, request.branch);
+      const adopted = (await listWorkspaceWorktrees(workspace, { dataDir: options.dataDir })).find(
+        (worktree) => !worktree.isMain && worktree.branch === branch,
+      );
+      if (adopted) return adopted;
+      return await createWorkspaceWorktree(workspace, { ...request, branch }, options);
+    }
+    return await createWorkspaceWorktree(workspace, request, options);
+  } finally {
+    releaseInFlightWorkspaceCreate(claim);
+  }
+}
+
+/** The host path of the workspace's git repository; refuses a sandbox or non-git workspace. */
+export function workspaceGitRoot(workspace: Workspace): Promise<string> {
+  return requireWorkspaceGitRoot(workspace);
+}
+
+/** A session branch for a subagent worktree, made from the child's name (`subagent/scout`). */
+export function subagentWorktreeBranch(name: string): string {
+  return `subagent/${pathSegment(name.toLowerCase(), "child", 40)}`;
+}
+
+/**
+ * The first branch of `base`, `base-2`, … that neither a ref nor a worktree of this workspace
+ * uses. A child named like an earlier one gets its own branch instead of adopting a stranger's.
+ */
+export async function availableWorktreeBranch(
+  workspace: Workspace,
+  base: string,
+  options: { dataDir: string },
+): Promise<string> {
+  const workspaceRoot = await workspaceGitRoot(workspace);
+  const worktrees = await listWorkspaceWorktrees(workspace, { dataDir: options.dataDir });
+  for (let attempt = 1; attempt <= 99; attempt += 1) {
+    const candidate = attempt === 1 ? base : `${base}-${attempt}`;
+    if (worktrees.some((worktree) => worktree.branch === candidate)) continue;
+    if (await branchExists(workspaceRoot, candidate)) continue;
+    return candidate;
+  }
+  throw new WorkspaceWorktreeError(409, `No free branch name for ${base}`);
+}
+
+/** The commit `path` has checked out, or undefined when it is not a git checkout. */
+export async function headCommit(path: string): Promise<string | undefined> {
+  const out = (
+    await runGit(safeRealpath(path), ["rev-parse", "--verify", "HEAD^{commit}"])
+  )?.trim();
+  return out ? out : undefined;
+}
+
+/** The commit a new worktree branches from: `base` resolved in the workspace, else `fallbackPath`'s HEAD. */
+export async function resolveCreateBase(
+  workspace: Workspace,
+  fallbackPath: string,
+  base: string | undefined,
+): Promise<string> {
+  const workspaceRoot = await workspaceGitRoot(workspace);
+  if (!base) {
+    const head = await headCommit(fallbackPath);
+    if (!head)
+      throw new WorkspaceWorktreeError(
+        400,
+        "The spawning session's checkout has no commit to branch from",
+      );
+    return head;
+  }
+  return requireCommit(workspaceRoot, base, "Base commit");
+}
+
+/** What a worktree holds beyond its base: commits on top of it, and whether files changed. */
+export async function worktreeProgress(
+  path: string,
+  base: string | undefined,
+): Promise<{ ahead: number; dirty: boolean }> {
+  const status = await runGitAsync(path, ["status", "--porcelain=v1"], 60_000);
+  const ahead = base ? await countCommits(path, `${base}..HEAD`) : 0;
+  return { ahead, dirty: status.status !== 0 || status.stdout.trim().length > 0 };
+}
+
+export type WorktreeRelease = "removed" | "kept" | "missing";
+
+/**
+ * Remove a worktree an Oppi-managed create made, with its branch, when the work in it is nothing
+ * anyone needs to review: clean, and no commit past `base`. Anything else stays, and so does a
+ * worktree Oppi did not create (an adopted one). Idempotent: a second call finds it gone.
+ */
+export async function releaseCleanWorkspaceWorktree(
+  workspace: Workspace,
+  options: {
+    dataDir: string;
+    worktreeId: string;
+    base?: string;
+    branch?: string | null;
+  },
+): Promise<WorktreeRelease> {
+  const worktree = await resolveWorkspaceWorktree(workspace, options.worktreeId, {
+    dataDir: options.dataDir,
+  });
+  if (!worktree) return "missing";
+  if (worktree.isMain || !worktree.managedByOppi) return "kept";
+  const { ahead, dirty } = await worktreeProgress(worktree.path, options.base);
+  if (ahead > 0 || dirty) return "kept";
+  try {
+    await removeWorkspaceWorktree(workspace, {
+      dataDir: options.dataDir,
+      worktreeId: worktree.id,
+    });
+  } catch (error: unknown) {
+    if (error instanceof WorkspaceWorktreeError) {
+      if (error.statusCode === 404) return "missing";
+      // A change that landed between the check and the removal keeps the worktree.
+      if (error.statusCode === 409) return "kept";
+    }
+    throw error;
+  }
+  // The worktree is gone, so its branch is not checked out anywhere Oppi owns: drop it too.
+  const branch = options.branch ?? worktree.branch;
+  if (branch) {
+    const workspaceRoot = await workspaceGitRoot(workspace);
+    await runGitResult(workspaceRoot, ["branch", "-D", branch]);
+  }
+  return "removed";
+}
+
 export async function openWorkspaceWorktree(
   workspace: Workspace,
   request: OpenWorkspaceWorktreeRequest,

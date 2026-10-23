@@ -16,10 +16,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveSdkSessionCwdAsync } from "../src/sdk-backend.js";
 import {
   createWorkspaceWorktree,
+  ensureWorkspaceWorktree,
   hasManagedWorkspaceWorktreeDirectory,
   listWorkspaceWorktrees,
   managedWorktreesRoot,
   previewWorkspaceWorktree,
+  releaseCleanWorkspaceWorktree,
   removeWorkspaceWorktree,
   resolveWorkspaceWorktree,
 } from "../src/worktrees.js";
@@ -258,6 +260,96 @@ describe("workspace worktrees", async () => {
         { dataDir },
       ),
     ).rejects.toThrow("path must be a string");
+  });
+
+  it("adopts the worktree an earlier create made for the same branch", async () => {
+    const { workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-adopt-branch-"));
+    roots.push(dataDir);
+    const created = await createWorkspaceWorktree(
+      workspace,
+      { branch: "feature/adopt-branch" },
+      { dataDir },
+    );
+
+    const adopted = await ensureWorkspaceWorktree(
+      workspace,
+      { branch: "feature/adopt-branch" },
+      { dataDir, adoptExistingBranch: true },
+    );
+
+    expect(adopted.id).toBe(created.id);
+    expect(adopted.path).toBe(created.path);
+    // Without adoption the route keeps refusing the taken id, as it always has.
+    await expect(
+      ensureWorkspaceWorktree(workspace, { branch: "feature/adopt-branch" }, { dataDir }),
+    ).rejects.toMatchObject({ statusCode: 409, message: "Worktree id already exists" });
+  });
+
+  it("refuses an id that retained session history still references", async () => {
+    const { workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-ensure-reserved-"));
+    roots.push(dataDir);
+    const branch = "feature/ensure-reserved";
+    const created = await createWorkspaceWorktree(workspace, { branch }, { dataDir });
+    await removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id });
+
+    await expect(
+      ensureWorkspaceWorktree(
+        workspace,
+        { branch },
+        { dataDir, adoptExistingBranch: true, reservedWorktreeIds: new Set([created.id]) },
+      ),
+    ).rejects.toThrow("Worktree id is still referenced by session history");
+  });
+
+  it("releases a clean worktree of its branch and keeps one with work", async () => {
+    const { root, workspace } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-release-"));
+    roots.push(dataDir);
+    const base = git(root, ["rev-parse", "HEAD"]);
+    const untouched = await createWorkspaceWorktree(
+      workspace,
+      { branch: "feature/release-untouched" },
+      { dataDir },
+    );
+    expect(
+      await releaseCleanWorkspaceWorktree(workspace, {
+        dataDir,
+        worktreeId: untouched.id,
+        base,
+        branch: untouched.branch,
+      }),
+    ).toBe("removed");
+    expect(existsSync(untouched.path)).toBe(false);
+    expect(git(join(workspace.hostMount), ["branch", "--list", "feature/release-untouched"])).toBe(
+      "",
+    );
+    // Idempotent: a rerun finds it gone.
+    expect(
+      await releaseCleanWorkspaceWorktree(workspace, {
+        dataDir,
+        worktreeId: untouched.id,
+      }),
+    ).toBe("missing");
+
+    const worked = await createWorkspaceWorktree(
+      workspace,
+      { branch: "feature/release-worked" },
+      { dataDir },
+    );
+    writeFileSync(join(worked.path, "work.txt"), "work\n");
+    git(worked.path, ["add", "work.txt"]);
+    git(worked.path, ["commit", "-m", "work"]);
+    expect(
+      await releaseCleanWorkspaceWorktree(workspace, {
+        dataDir,
+        worktreeId: worked.id,
+        base,
+        branch: worked.branch,
+      }),
+    ).toBe("kept");
+    expect(existsSync(worked.path)).toBe(true);
   });
 
   it("rejects managed worktree ids reserved by retained session history", async () => {

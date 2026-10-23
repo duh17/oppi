@@ -22,6 +22,7 @@ import {
   type Task,
   type TaskId,
   type TaskRecord,
+  type TaskRuntime,
   type ToolExecutionApi,
   type ToolExecutionResult,
   type Tx,
@@ -31,10 +32,12 @@ import {
   oppiHost,
   type DurableSessionsHost,
   type SessionSender,
+  type SubagentWorktreePlan,
+  type SubagentWorktreeRequest,
 } from "oppi/durable";
 import { DurableJobs } from "../background-jobs/contract.js";
 import { agentMessageEntry, type MessageOrigin } from "./agent-message.js";
-import { Subagents, ensureSubagentWidget, type Child } from "./contract.js";
+import { Subagents, ensureSubagentWidget, type Child, type SubagentWorktree } from "./contract.js";
 import { isLive, liveTasks } from "./wakers.js";
 import { SubagentWidget } from "./widget.js";
 
@@ -312,6 +315,34 @@ const COMPLETED = { status: "terminal", outcome: { status: "completed", result: 
 const SUBAGENT_TOOL = "subagent";
 
 /**
+ * What a `readOnly` child reads before its task. `bash` is not a sandbox: a command can still
+ * write, so the line says so instead of promising more than the tools do.
+ */
+const READ_ONLY_PREFIX =
+  "[Read-only subagent: you have `read` and `bash` only. `bash` is not a sandbox, so a command " +
+  "can still change files: do not edit, commit, or run anything that writes.]";
+
+/** `spawn`'s `worktree`: `"new"`, a branch request, or an existing worktree's id. */
+function worktreeRequest(
+  value: string | { branch: string; base?: string } | undefined,
+): SubagentWorktreeRequest | undefined {
+  if (value === undefined) return undefined;
+  if (value === "new") return "new";
+  if (typeof value === "string") return { id: value.trim() };
+  return { branch: value.branch.trim(), ...(value.base ? { base: value.base } : {}) };
+}
+
+/** The one line a child with a worktree adds to `list` and to its answers. */
+async function worktreeLine(
+  sessions: DurableSessionsHost,
+  worktree: SubagentWorktree | undefined,
+): Promise<string | undefined> {
+  if (!worktree) return undefined;
+  const state = await sessions.worktreeState(worktree);
+  return state === undefined ? undefined : `worktree: ${state}`;
+}
+
+/**
  * The submission a reporter makes of its message. `wait` submits the same draft to wait for a
  * message not delivered yet; the request id makes both one submission.
  */
@@ -408,6 +439,30 @@ async function undelivered(
 function defineReporter(
   host: (env: ExecutionEnv | undefined) => DurableSessionsHost,
 ): Task<ReporterInput, ReporterState, null, object> {
+  /**
+   * The child's work is over: a worktree the spawn created and nothing landed in is removed with
+   * its branch, and anything with changes or commits stays for review. A reporter has already
+   * committed its last decision by the time this runs, so it writes no state: the removal itself
+   * is idempotent (a rerun finds the worktree gone), and a cleanup that fails must not turn a
+   * finished child into an error.
+   */
+  const releaseWorktree = async (
+    name: string,
+    sessionId: string,
+    runtime: TaskRuntime<ReporterInput, ReporterState, null, object>,
+    context: Context,
+  ): Promise<void> => {
+    try {
+      const child = (await runtime.snapshot(Subagents, runtime.conversationId, context))?.children[
+        name
+      ];
+      const worktree = child?.worktree;
+      if (!worktree || worktree.released) return;
+      await host(await runtime.env(context)).releaseWorktree(worktree, sessionId);
+    } catch {
+      // A worktree left behind is safer than a reporter that fails after its report.
+    }
+  };
   return defineTask<ReporterInput, ReporterState, null>({
     name: SESSION_REPORTER_TASK,
     version: 1,
@@ -448,6 +503,13 @@ function defineReporter(
           return;
         }
         const settled = await delivered.submitted.wait(context);
+        // Read outside the commit: where a worktree child's tree stands is git work, not a
+        // document read, and the Session line must not wait on it.
+        const state = await worktreeLine(
+          host(await runtime.env(context)),
+          (await runtime.snapshot(Subagents, runtime.conversationId, context))?.children[name]
+            ?.worktree,
+        );
         // One commit decides the report and records the answer, so a restart does not decide again.
         await runtime.commit(async (tx) => {
           const next = (after: EntryId, report?: string, textOffset?: number, answer?: EntryId) =>
@@ -480,7 +542,8 @@ function defineReporter(
           const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0] as
             AssistantMessage | undefined;
           const header = reportHeader(name, sessionId);
-          return next(settled.answer, `${header}${textOf(answer)}`, header.length, settled.answer);
+          const report = `${header}${textOf(answer)}${state ? `\n\n[${state}]` : ""}`;
+          return next(settled.answer, report, header.length, settled.answer);
         }, context);
       },
       report: async (reporter, runtime, context) => {
@@ -508,6 +571,9 @@ function defineReporter(
             context,
           );
         }
+        // The report is out and nothing follows: the child's work is over. Before the commit
+        // that ends this reporter, which no write may follow.
+        if (after === undefined) await releaseWorktree(name, sessionId, runtime, context);
         await runtime.commit(
           () =>
             after === undefined
@@ -535,6 +601,11 @@ function defineReporter(
             // reporter.
             decide: async (check) => {
               let pending = [] as "again" | TaskId[];
+              const state = await worktreeLine(
+                sessions,
+                (await runtime.snapshot(Subagents, runtime.conversationId, context))?.children[name]
+                  ?.worktree,
+              );
               await runtime.commit(async (tx) => {
                 pending = [];
                 const record = (await tx.doc(Subagents, runtime.conversationId)).children[name];
@@ -555,11 +626,12 @@ function defineReporter(
                 if (answer && answer.id > after && !record.reported.includes(answer.id)) {
                   record.reported.push(answer.id);
                   const header = reportHeader(name, sessionId);
+                  const report = `${header}${textOf(answer.message)}${state ? `\n\n[${state}]` : ""}`;
                   return {
                     status: "running",
                     checkpoint: {
                       phase: "report",
-                      report: `${header}${textOf(answer.message)}`,
+                      report,
                       textOffset: header.length,
                       after: answer.id,
                       answer: answer.id,
@@ -576,6 +648,8 @@ function defineReporter(
           },
           context,
         );
+        // Idle with nothing pending: whatever ran in the child's worktree is all there is.
+        await releaseWorktree(name, sessionId, runtime, context);
       },
     },
     abort: (_reporter, runtime, context) =>
@@ -597,7 +671,11 @@ const GUIDANCE =
   "running (a dev server, a watcher) does not hold wait or spawn: its answer comes back with a " +
   "note naming those jobs, and it answers again when one ends. stop aborts " +
   "a child's current work (it stays usable), list shows them. A child can spawn its own " +
-  "children only when you pass allowNestedDelegation.";
+  "children only when you pass allowNestedDelegation. worktree gives a child a checkout of its " +
+  "own, branched from your HEAD or an existing worktree id, so editing workers never touch your " +
+  "files; their answers and list rows add the worktree's branch, commits ahead of its base, and " +
+  "whether it is dirty, and one the spawn made is removed when the child ends with nothing in " +
+  "it. tools, excludeTools, and readOnly only narrow a child's tools.";
 
 type ReplyDetails = Record<string, JsonValue>;
 
@@ -695,9 +773,17 @@ export function createDurableSessions(
     name: SUBAGENT_TOOL,
     description:
       "Manage child sessions by name. spawn (name, task; optional agent, model, thinking, wait, " +
-      "allowNestedDelegation) starts one: in the background by default, its answer arrives later " +
-      "as a follow-up message; wait: true returns its final answer instead, once it has no " +
-      "background work of its own pending. send (name, message; " +
+      "allowNestedDelegation, worktree, tools, excludeTools, readOnly) starts one: in the " +
+      "background by default, its answer arrives later as a follow-up message; wait: true " +
+      "returns its final answer instead, once it has no background work of its own pending. " +
+      'worktree runs the child in a checkout of its own: "new" for a branch named after it, a ' +
+      "{ branch } to create or adopt that branch, or an existing worktree id to adopt; work " +
+      "that may land should use worktree, so the parent's checkout stays untouched. Those " +
+      "children's answers and list rows also report their worktree, commits ahead and whether " +
+      "they are dirty. A worktree the spawn made is removed once the child ends with nothing in " +
+      "it; one with commits or changes stays for review. tools, excludeTools, and readOnly only " +
+      "narrow the child's tools (readOnly keeps read and bash, and bash is not a sandbox). " +
+      "send (name, message; " +
       "followUp: true queues after its current answer instead of steering) messages one; its " +
       "answer arrives later as a follow-up message too, as do a child's later answers after " +
       "background work of its own. wait (names) blocks until they answered your messages and " +
@@ -732,6 +818,40 @@ export function createDurableSessions(
       ),
       allowNestedDelegation: Type.Optional(
         Type.Boolean({ description: "spawn: let the child spawn children of its own." }),
+      ),
+      worktree: Type.Optional(
+        Type.Union(
+          [
+            Type.Literal("new"),
+            Type.String({ description: "An existing worktree id (wt_…), to adopt it." }),
+            Type.Object({
+              branch: Type.String(),
+              base: Type.Optional(Type.String()),
+            }),
+          ],
+          {
+            description:
+              'spawn: run the child in its own worktree. "new" branches from your HEAD with a ' +
+              "branch named after the child; { branch } creates or adopts that branch, based on " +
+              '`base` or your HEAD; a "wt_…" id adopts that worktree of this workspace. Use it ' +
+              "for work that may land.",
+          },
+        ),
+      ),
+      tools: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "spawn: only these tools; a child never gains one you lack.",
+        }),
+      ),
+      excludeTools: Type.Optional(
+        Type.Array(Type.String(), { description: "spawn: never these tools." }),
+      ),
+      readOnly: Type.Optional(
+        Type.Boolean({
+          description:
+            "spawn: read and bash only, and the task says so. bash is not a sandbox: it can " +
+            "still write.",
+        }),
       ),
     }),
     // A rerun after a crash finds the same child, Session, and submissions; stop records its
@@ -836,11 +956,21 @@ export function createDurableSessions(
             idle.map(({ name, ids }) => ({ name, conversationId: ids.conversationId })),
             context,
           );
-          const lines = waited.map((result) =>
-            result.error === undefined
-              ? `${result.name}: ${answerWithNote(answers[idle.indexOf(result)], result.note)}`
-              : `${result.name}: ${result.error}`,
+          const states = await Promise.all(
+            waited.map((result) =>
+              result.error === undefined
+                ? worktreeLine(sessions, known[result.name]?.worktree)
+                : undefined,
+            ),
           );
+          const lines = waited.map((result, index) => {
+            const line =
+              result.error === undefined
+                ? `${result.name}: ${answerWithNote(answers[idle.indexOf(result)], result.note)}`
+                : `${result.name}: ${result.error}`;
+            const state = states[index];
+            return state ? `${line}\n[${state}]` : line;
+          });
           const failed = waited.some((result) => result.error !== undefined);
           return reply(lines.join("\n\n"), { children: waited.map((r) => r.ids) }, failed);
         }
@@ -875,6 +1005,7 @@ export function createDurableSessions(
                 await Promise.all(wakers.map((id) => api.getTask(id, context)))
               ).some(isLive);
               const model = (await api.snapshot(AgentDoc, child.conversationId, context))?.model;
+              const worktree = await worktreeLine(sessions, child.worktree);
               return {
                 line: [
                   name,
@@ -882,6 +1013,7 @@ export function createDurableSessions(
                   `agent: ${child.agent ?? "none"}`,
                   `model: ${model ? `${model.provider}/${model.modelId}` : "default"}`,
                   `session: ${child.sessionId ?? "pending"}`,
+                  ...(worktree ? [worktree] : []),
                 ].join(" | "),
                 ids: {
                   name,
@@ -908,6 +1040,10 @@ export function createDurableSessions(
       thinking?: string;
       wait?: boolean;
       allowNestedDelegation?: boolean;
+      worktree?: string | { branch: string; base?: string };
+      tools?: string[];
+      excludeTools?: string[];
+      readOnly?: boolean;
     },
     api: ToolExecutionApi,
     context: Context,
@@ -917,12 +1053,16 @@ export function createDurableSessions(
     const task = args.task?.trim();
     if (!name) return reply("spawn needs a name.", {}, true);
     if (!task) return reply("spawn needs a task.", { name }, true);
+    const request = worktreeRequest(args.worktree);
+    if (typeof args.worktree === "string" && args.worktree.trim() === "")
+      return reply(`worktree needs "new", a branch, or a worktree id.`, { name }, true);
     const call = String(api.taskId);
     const before = await api.snapshot(Subagents, api.conversationId, context);
     const rerun = before?.calls[call] === name;
     if (!rerun && before?.children[name])
       return reply(`${name} already exists; use send.`, { name }, true);
     const foreground = args.wait === true;
+    const prompt = args.readOnly === true ? `${READ_ONLY_PREFIX}\n\n${task}` : task;
     // A rerun finds its child below; only a new spawn resolves the Agent.
     const resolved = rerun
       ? undefined
@@ -932,37 +1072,62 @@ export function createDurableSessions(
             ...(args.model ? { model: args.model } : {}),
             ...(args.thinking ? { thinking: args.thinking } : {}),
             ...(args.allowNestedDelegation ? { allowNestedDelegation: true } : {}),
+            ...(args.tools ? { tools: args.tools } : {}),
+            ...(args.excludeTools ? { excludeTools: args.excludeTools } : {}),
+            ...(args.readOnly ? { readOnly: true } : {}),
           },
           await api.agent(context),
         );
-    const conversationId = await api.commit(async (tx) => {
-      const state = await tx.doc(Subagents, api.conversationId);
-      const existing = state.calls[call];
-      const earlier = existing === undefined ? undefined : state.children[existing];
-      if (earlier) return earlier.conversationId;
-      if (!resolved) throw new Error(`Subagent ${name} spawn record disappeared`);
-      if (Object.hasOwn(state.children, name)) throw new Error(`${name} already exists; use send.`);
-      // First: it reads the task table, which a commit cannot do after a table write.
-      await ensureSubagentWidget(tx, api.conversationId, SubagentWidget);
-      // Foreground: the child belongs to this call, so aborting the call aborts it and the
-      // parent stays busy until it is idle. Background: an anchor owns it.
-      const owner = foreground
-        ? api.taskId
-        : await tx.createTask(Anchor, null, {
-            ownership: { kind: "conversation" },
-            background: true,
-          });
-      const child = await tx.createConversation({ ownership: { kind: "task", taskId: owner } });
-      await resolved.apply(tx, child.id);
-      state.children[name] = {
-        conversationId: child.id,
-        background: !foreground,
-        ...(resolved.agent ? { agent: resolved.agent } : {}),
-        ...(resolved.icon ? { icon: resolved.icon } : {}),
-      };
-      state.calls[call] = name;
-      return child.id;
-    }, context);
+    // The child's own checkout: planned and checked first, then memoized before it is created,
+    // so a spawn cut off by a crash adopts the worktree its first run made instead of a second.
+    // A rerun's child already has the worktree its first run bound (or none): it is read from
+    // the record, never provisioned again, so a released one is not made a second time.
+    const earlier = rerun ? before?.children[name] : undefined;
+    let worktree: SubagentWorktree | undefined = earlier?.worktree;
+    if (earlier === undefined && request !== undefined) {
+      const plan = await sessions.planWorktree(request, name);
+      const planned = await api.memo<JsonValue>("worktree", plan as unknown as JsonValue, context);
+      worktree = await sessions.provisionWorktree(planned as unknown as SubagentWorktreePlan);
+    }
+    const created = worktree;
+    let conversationId: ConversationId;
+    try {
+      conversationId = await api.commit(async (tx) => {
+        const state = await tx.doc(Subagents, api.conversationId);
+        const existing = state.calls[call];
+        const earlier = existing === undefined ? undefined : state.children[existing];
+        if (earlier) return earlier.conversationId;
+        if (!resolved) throw new Error(`Subagent ${name} spawn record disappeared`);
+        if (Object.hasOwn(state.children, name))
+          throw new Error(`${name} already exists; use send.`);
+        // First: it reads the task table, which a commit cannot do after a table write.
+        await ensureSubagentWidget(tx, api.conversationId, SubagentWidget);
+        // Foreground: the child belongs to this call, so aborting the call aborts it and the
+        // parent stays busy until it is idle. Background: an anchor owns it.
+        const owner = foreground
+          ? api.taskId
+          : await tx.createTask(Anchor, null, {
+              ownership: { kind: "conversation" },
+              background: true,
+            });
+        const child = await tx.createConversation({ ownership: { kind: "task", taskId: owner } });
+        await resolved.apply(tx, child.id, worktree);
+        state.children[name] = {
+          conversationId: child.id,
+          background: !foreground,
+          ...(resolved.agent ? { agent: resolved.agent } : {}),
+          ...(resolved.icon ? { icon: resolved.icon } : {}),
+          ...(worktree ? { worktree } : {}),
+        };
+        state.calls[call] = name;
+        return child.id;
+      }, context);
+    } catch (error) {
+      // Nothing was created after all: a worktree this spawn made must not linger.
+      if (created?.created)
+        await sessions.releaseWorktree(created, undefined).catch(() => undefined);
+      throw error;
+    }
     const sessionId = await sessions.materialize({ conversationId, name });
     await api.commit(async (tx) => {
       const child = (await tx.doc(Subagents, api.conversationId)).children[name];
@@ -979,7 +1144,7 @@ export function createDurableSessions(
         if (child.reporter !== undefined) return;
         child.reporter = await tx.createTask(
           Reporter,
-          { conversationId, sessionId, name, task, ...(parent ? { parent } : {}) },
+          { conversationId, sessionId, name, task: prompt, ...(parent ? { parent } : {}) },
           background,
         );
       }, context);
@@ -996,7 +1161,7 @@ export function createDurableSessions(
       child.submit(
         {
           type: "input",
-          content: task,
+          content: prompt,
           requestId: `oppi-spawn:${api.taskId}`,
           ...sentBy(parent, "task"),
         },
@@ -1019,7 +1184,23 @@ export function createDurableSessions(
     );
     if (error !== undefined) throw new Error(`Subagent ${name} (${sessionId}): ${error}`);
     const latest = await api.commit((tx) => latestText(tx, conversationId), context);
-    return reply(answerWithNote(latest, note), {
+    if (worktree && !worktree.released) {
+      // The answer is in this call's result: a worktree the spawn made and nothing landed in
+      // goes away with its branch, and one with changes or commits stays for review. The line
+      // below then reads the state it ends in.
+      const outcome = await sessions.releaseWorktree(worktree, sessionId);
+      if (outcome !== "kept")
+        await api.commit(async (tx) => {
+          const child = (await tx.doc(Subagents, api.conversationId)).children[name];
+          if (child?.worktree) child.worktree.released = true;
+        }, context);
+    }
+    const state = await worktreeLine(
+      sessions,
+      (await api.snapshot(Subagents, api.conversationId, context))?.children[name]?.worktree,
+    );
+    const answer = answerWithNote(latest, note);
+    return reply(state ? `${answer}\n\n[${state}]` : answer, {
       name,
       conversationId,
       sessionId,

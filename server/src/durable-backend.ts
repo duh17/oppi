@@ -505,6 +505,15 @@ export class DurableBackend implements AgentBackend {
           "A bound server durable session cannot switch execution runtime or sandbox workspace",
         );
       conversation = existing;
+      // The Session row's work root, not the document, decides where a bound conversation
+      // runs: a session that rebound to another checkout must not keep writing in the old one.
+      if (!sandbox) {
+        const stored = await harness.snapshot(AgentDoc, existing.id, BACKGROUND_CONTEXT);
+        if (stored?.cwd !== cwd)
+          await conversation.commit(async (tx) => {
+            (await tx.doc(AgentDoc, existing.id)).cwd = cwd;
+          }, BACKGROUND_CONTEXT);
+      }
       // Bound conversations store exact extension/tool names. Enroll the native
       // UI ports and this attachment's MCP extension too, without overriding
       // their launch tool policy. The control conversation instead re-asserts its exact
