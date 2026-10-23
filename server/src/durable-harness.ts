@@ -791,7 +791,7 @@ export class SessionHost {
                 // conversation's host bash and background jobs need it in the env so
                 // `oppi session create` run here is attributed to this conversation's own
                 // Session: parented, policy-checked, and unable to target itself. A conversation
-                // with no row adds none, so the process env decides (see host-env.ts).
+                // with no Session row adds none, so nothing is attributed for it.
                 ...(callerSessionId
                   ? { shellEnv: { [OPPI_CALLER_SESSION_ID_ENV]: callerSessionId } }
                   : {}),
@@ -1411,7 +1411,7 @@ export class DurableHarness {
   }
   /**
    * The Session bound to `conversationId` of `storeId`; undefined when no row is bound, and then
-   * the env attributes nothing (startup drops any caller identity the server inherited).
+   * the env attributes nothing.
    */
   sessionIdOf(storeId: string, conversationId: ConversationId): string | undefined {
     return this.sessionBinding?.sessionIdOf(storeId, conversationId);
