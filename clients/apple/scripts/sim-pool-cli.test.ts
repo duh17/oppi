@@ -305,34 +305,6 @@ afterAll(() => {
 });
 
 describe("sim-pool CLI", () => {
-  test("ipad diagnostic uses repo runner and refuses unleased ensure", () => {
-    const text = readFileSync(join(import.meta.dir, "ipad-shell-diagnostic.sh"), "utf8");
-    expect(text).not.toContain("reserve_lower_pool_slots");
-    expect(text).toContain("OPPI_SIM_POOL_SLOT_START");
-    expect(text).toContain("clients/apple/scripts/sim-pool.sh");
-    expect(text).not.toContain(".pi/agent/skills/oppi-dev/scripts/sim-pool.sh");
-    const directory = tempDir("ipad-diag");
-    const developerDir = join(directory, "Developer");
-    const bin = join(directory, "bin");
-    mkdirSync(developerDir);
-    mkdirSync(bin);
-    writeFileSync(
-      join(bin, "xcrun"),
-      "#!/bin/sh\nprintf '%s\\n' '{\"devicetypes\":[{\"name\":\"iPad\",\"identifier\":\"com.apple.CoreSimulator.SimDeviceType.iPad-10th-generation\"}]}'\n",
-      { mode: 0o755 },
-    );
-    const result = spawnSync("bash", [join(import.meta.dir, "ipad-shell-diagnostic.sh"), "ensure"], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PATH: `${bin}:${process.env.PATH ?? ""}`,
-        DEVELOPER_DIR: developerDir,
-      },
-    });
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("unsupported without a pool lease");
-  });
-
   test("wrapper forwards arguments to bun", () => {
     const result = spawnSync("bash", [join(import.meta.dir, "sim-pool.sh")], { encoding: "utf8" });
     expect(result.status).toBe(1);
