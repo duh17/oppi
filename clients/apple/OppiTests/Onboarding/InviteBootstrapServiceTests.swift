@@ -48,7 +48,8 @@ struct InviteBootstrapServiceTests {
 
         await #expect(throws: InviteBootstrapError(
             message: "Server returned an invalid pairing response. Request a fresh invite and try again.",
-            recovery: .newCode
+            recovery: .newCode,
+            codeProblem: .invalidResponse
         )) {
             _ = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: credentials(),

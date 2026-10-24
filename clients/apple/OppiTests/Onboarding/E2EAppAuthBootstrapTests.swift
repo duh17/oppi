@@ -81,7 +81,8 @@ struct E2EAppAuthBootstrapTests {
 
         await #expect(throws: InviteBootstrapError(
             message: "Server returned an invalid pairing response. Request a fresh invite and try again.",
-            recovery: .newCode
+            recovery: .newCode,
+            codeProblem: .invalidResponse
         )) {
             _ = try await E2EAppAuthBootstrap.pairInvite(
                 credentials: inviteCredentials(),
@@ -93,7 +94,21 @@ struct E2EAppAuthBootstrapTests {
         #expect(await log.snapshot() == ["pair:pt_e2e"])
     }
 
-    private func inviteCredentials() -> ServerCredentials {
+    @Test func unsignedInviteSendsNothing() async throws {
+        let log = E2EAppAuthBootstrapCallLog()
+
+        await #expect(throws: InviteBootstrapService.unsignedFailure) {
+            _ = try await E2EAppAuthBootstrap.pairInvite(
+                credentials: inviteCredentials(signed: false),
+                deviceKeyProvider: { InMemoryP256DeviceKey() },
+                apiFactory: { _, _, _ in E2EAppAuthRecordingAPI(log: log) }
+            )
+        }
+
+        #expect(await log.snapshot().isEmpty)
+    }
+
+    private func inviteCredentials(signed: Bool = true) -> ServerCredentials {
         ServerCredentials(
             host: "127.0.0.1",
             port: 17760,
@@ -101,7 +116,7 @@ struct E2EAppAuthBootstrapTests {
             name: "E2E Server",
             scheme: .http,
             pairingToken: "pt_e2e",
-            serverFingerprint: fingerprint
+            serverFingerprint: signed ? fingerprint : nil
         )
     }
 

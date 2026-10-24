@@ -2305,6 +2305,16 @@
         }
       }
     },
+    "Pairing failed." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对失败。"
+          }
+        }
+      }
+    },
     "Pairing was denied on your other device." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3282,6 +3292,16 @@
     },
     "The selected server has no cached Skills catalog." : {
 
+    },
+    "The server sent a pairing answer Oppi could not use." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务器返回的配对响应无法使用。"
+          }
+        }
+      }
     },
     "The server refused this code after too many invalid pairing attempts. Wait a moment before you use a new one." : {
       "localizations" : {

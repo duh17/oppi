@@ -72,13 +72,24 @@ final class ManualEntryViewController: UIViewController, UICollectionViewDelegat
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// Only a signed code can pair (`InviteBootstrapService` refuses the rest),
+    /// so an unsigned one is flagged here instead of after Connect.
     private var credentials: ServerCredentials? {
         ManualPairingEntry.credentials(fromPasted: linkText)
+            .flatMap { $0.normalizedServerFingerprint == nil ? nil : $0 }
     }
 
-    private var linkIsInvalid: Bool {
-        !linkText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && credentials == nil
+    /// Why the pasted text cannot pair, or nil while it is empty or usable.
+    private var linkProblem: String? {
+        guard !linkText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, credentials == nil else {
+            return nil
+        }
+        return ManualPairingEntry.credentials(fromPasted: linkText) == nil
+            ? String(localized: "This is not an Oppi pairing link.")
+            : OnboardingPairingFailure.message(for: .unsigned)
     }
+
+    private var linkIsInvalid: Bool { linkProblem != nil }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -110,7 +121,7 @@ final class ManualEntryViewController: UIViewController, UICollectionViewDelegat
         let notice = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, _ in
             guard let self else { return }
             var content = UIListContentConfiguration.cell()
-            content.text = String(localized: "This is not an Oppi pairing link.")
+            content.text = linkProblem
             content.textProperties.color = UIColor(root.themeStore.activeThemeID.palette.red)
             content.textProperties.font = .scaled(.footnote)
             content.textProperties.numberOfLines = 0
@@ -180,6 +191,10 @@ final class ManualEntryViewController: UIViewController, UICollectionViewDelegat
     private func inputChanged() {
         if dataSource?.snapshot().itemIdentifiers.contains(.invalidLink) != linkIsInvalid {
             applySnapshot()
+        } else if linkIsInvalid, var snapshot = dataSource?.snapshot() {
+            // The problem can change while the notice stays (not a link, then unsigned).
+            snapshot.reconfigureItems([.invalidLink])
+            dataSource?.apply(snapshot, animatingDifferences: false)
         }
         updateConnectItem()
     }

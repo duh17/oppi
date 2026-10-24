@@ -116,6 +116,10 @@ struct OnboardingPairingFailure: Equatable {
             String(localized: "Pairing may have finished, but the server\u{2019}s answer was lost.")
         case .unsigned:
             String(localized: "This pairing code is not signed by an Oppi server, so Oppi cannot verify it.")
+        case .invalidResponse:
+            String(localized: "The server sent a pairing answer Oppi could not use.")
+        case .unexplained:
+            String(localized: "Pairing failed.")
         }
     }
 

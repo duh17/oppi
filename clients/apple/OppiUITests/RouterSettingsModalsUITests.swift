@@ -452,9 +452,8 @@ final class RouterSettingsModalsUITests: XCTestCase {
         XCTAssertTrue(waitForDisappearance(of: entry), "Swipe-down must close manual entry")
         assertRunning()
 
-        // Connect hands the credentials back and onboarding shows the
-        // outcome. An unsigned link names no server identity, so pairing
-        // stops before sending anything and asks for a new code.
+        // An unsigned link names no server identity, so it cannot pair: the
+        // field flags it and Connect stays off, so nothing is sent.
         manual.tap()
         XCTAssertTrue(entry.waitForExistence(timeout: 5), "Manual entry did not reopen after the swipe")
         let connect = app.buttons["onboarding.manual.connect"]
@@ -465,13 +464,13 @@ final class RouterSettingsModalsUITests: XCTestCase {
             "oppi://connect?v=3&payload=%7B%22v%22:3,%22host%22:%22127.0.0.1%22,%22port%22:1,"
                 + "%22token%22:%22%22,%22pairingToken%22:%22pt_none%22,%22name%22:%22Unsigned%22%7D"
         )
-        tapBarButton(connect)
-        XCTAssertTrue(waitForDisappearance(of: entry), "Connect must close manual entry")
-        let failure = app.staticTexts["onboarding.failure.message"]
-        XCTAssertTrue(failure.waitForExistence(timeout: 10), "Onboarding must show why the link failed")
-        XCTAssertTrue(failure.label.contains("not signed"), "Unexpected failure: \(failure.label)")
-        XCTAssertFalse(app.buttons["onboarding.retry"].exists, "An unusable code must not offer Try Again")
-        XCTAssertTrue(app.buttons["onboarding.manual"].exists, "The pairing choices stay under the failure")
+        XCTAssertTrue(
+            app.descendants(matching: .any)["onboarding.manual.invalidLink"].waitForExistence(timeout: 5),
+            "An unsigned link must be flagged in the field"
+        )
+        XCTAssertFalse(connect.isEnabled, "An unsigned link must not enable Connect")
+        XCTAssertTrue(entry.exists, "Manual entry stays open on an unsigned link")
+        XCTAssertFalse(app.descendants(matching: .any)["onboarding.failure"].exists, "Nothing was sent, so nothing failed")
         assertRunning()
     }
 

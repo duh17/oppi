@@ -29,6 +29,9 @@ enum PairingEnrollment {
             }
         }
 
+        /// A server answer pairing cannot use; screens that word it themselves match on it.
+        static let invalidResponseMessage = "Server returned an invalid pairing response. Request a fresh invite and try again."
+
         static func classify(_ error: Error) -> Failure {
             if error is CancellationError { return .cancelled }
             if let failure = error as? Failure { return failure }
@@ -47,7 +50,7 @@ enum PairingEnrollment {
                     }
                     return .server(UserFacingErrorText.normalize(message))
                 case .invalidResponse:
-                    return .server("Server returned an invalid pairing response. Request a fresh invite and try again.")
+                    return .server(invalidResponseMessage)
                 }
             }
             if let urlError = error as? URLError {
@@ -82,7 +85,7 @@ enum PairingEnrollment {
             guard required.status == "approval_required",
                   !required.approvalId.isEmpty,
                   !required.pendingToken.isEmpty else {
-                throw Failure.server("Server returned an invalid pairing response. Request a fresh invite and try again.")
+                throw Failure.server(Failure.invalidResponseMessage)
             }
             onWaiting?(required.expiresAt)
             while true {

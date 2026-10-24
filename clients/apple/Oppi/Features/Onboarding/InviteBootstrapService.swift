@@ -47,6 +47,10 @@ enum PairingCodeProblem: Equatable, Sendable {
     case responseLost
     /// No signed server identity, so Oppi cannot tell which server this is.
     case unsigned
+    /// The server answered pairing with something Oppi cannot use.
+    case invalidResponse
+    /// Pairing failed without a reason to show.
+    case unexplained
 }
 
 /// A pairing failure: the message to show and what the person can do next.
@@ -109,11 +113,7 @@ enum InviteBootstrapService {
         // tell which server it pairs or warn when a known one changed, so an
         // unsigned payload (QR, link, or paste) is refused before anything is sent.
         guard let inviteFingerprint = credentials.normalizedServerFingerprint else {
-            throw InviteBootstrapError(
-                message: "This pairing code is not signed by an Oppi server, so Oppi cannot verify it. Run `oppi pair` on the server for a new one.",
-                recovery: .newCode,
-                codeProblem: .unsigned
-            )
+            throw unsignedFailure
         }
         guard credentials.resolvedScheme == .https, let baseURL = credentials.baseURL else {
             throw InviteBootstrapError(
@@ -188,10 +188,7 @@ enum InviteBootstrapService {
                 )
             }
             guard let deviceCredential = pairResult.deviceCredential else {
-                throw InviteBootstrapError(
-                    message: "Server returned an invalid pairing response. Request a fresh invite and try again.",
-                    recovery: .newCode
-                )
+                throw invalidResponseFailure
             }
             let effective = credentials.withDeviceCredential(deviceCredential)
             let pairedAPI = apiFactory(baseURL, deviceCredential.accessToken, credentials.normalizedTLSCertFingerprint)
@@ -216,6 +213,18 @@ enum InviteBootstrapService {
         let sessions = try await bootstrapSessions(using: api)
         return InviteBootstrapResult(effectiveCredentials: credentials, sessions: sessions)
     }
+
+    static let unsignedFailure = InviteBootstrapError(
+        message: "This pairing code is not signed by an Oppi server, so Oppi cannot verify it. Run `oppi pair` on the server for a new one.",
+        recovery: .newCode,
+        codeProblem: .unsigned
+    )
+
+    static let invalidResponseFailure = InviteBootstrapError(
+        message: PairingEnrollment.Failure.invalidResponseMessage,
+        recovery: .newCode,
+        codeProblem: .invalidResponse
+    )
 
     /// Reaches the server before the single-use code goes out, so a network
     /// or certificate failure leaves the code usable and says so.
@@ -300,7 +309,8 @@ enum InviteBootstrapService {
         case .expired, .unknownApproval: .approvalEnded
         case .disconnected: .lostContactDuringApproval
         case .cancelled: .cancelled
-        case .server: nil
+        case .server(let message):
+            message == PairingEnrollment.Failure.invalidResponseMessage ? .invalidResponse : nil
         }
     }
 
@@ -316,16 +326,13 @@ enum InviteBootstrapService {
             return InviteBootstrapError(
                 message: failure.errorDescription ?? "Pairing failed. Request a fresh invite and try again.",
                 recovery: .newCode,
-                codeProblem: codeProblem(for: failure)
+                codeProblem: failure.errorDescription == nil ? .unexplained : codeProblem(for: failure)
             )
         }
         if let apiError = error as? APIError {
             switch apiError {
             case .invalidResponse:
-                return InviteBootstrapError(
-                    message: "Server returned an invalid pairing response. Request a fresh invite and try again.",
-                    recovery: .newCode
-                )
+                return invalidResponseFailure
             case .server(401, let message) where message.localizedCaseInsensitiveContains("invalid or expired pairing token"):
                 return InviteBootstrapError(
                     message: "Invite link expired or was already used. Request a fresh invite.",
@@ -361,10 +368,14 @@ enum InviteBootstrapService {
             }
         }
         let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-        return InviteBootstrapError(
-            message: message.isEmpty ? "Pairing failed. Request a fresh invite and try again." : "Pairing failed: \(message)",
-            recovery: .newCode
-        )
+        guard !message.isEmpty else {
+            return InviteBootstrapError(
+                message: "Pairing failed. Request a fresh invite and try again.",
+                recovery: .newCode,
+                codeProblem: .unexplained
+            )
+        }
+        return InviteBootstrapError(message: "Pairing failed: \(message)", recovery: .newCode)
     }
 
     private static func displayTarget(_ credentials: ServerCredentials) -> String {
@@ -521,6 +532,10 @@ enum E2EAppAuthBootstrap {
             APIClient(baseURL: baseURL, token: token, tlsCertFingerprint: tlsCertFingerprint)
         }
     ) async throws -> InviteBootstrapResult {
+        // The same signed-identity rule as `validateAndBootstrap`, before anything is sent.
+        guard credentials.normalizedServerFingerprint != nil else {
+            throw InviteBootstrapService.unsignedFailure
+        }
         guard let pairingToken = credentials.pairingToken, !pairingToken.isEmpty else {
             throw InviteBootstrapError(message: "E2E invite is missing a pairing token", recovery: .newCode)
         }
@@ -561,10 +576,7 @@ enum E2EAppAuthBootstrap {
             throw InviteBootstrapService.pairingFailure(for: error, host: credentials.host)
         }
         guard let deviceCredential = pairResult.deviceCredential else {
-            throw InviteBootstrapError(
-                message: "Server returned an invalid pairing response. Request a fresh invite and try again.",
-                recovery: .newCode
-            )
+            throw InviteBootstrapService.invalidResponseFailure
         }
         let effective = credentials.withDeviceCredential(deviceCredential)
         let authed = apiFactory(
