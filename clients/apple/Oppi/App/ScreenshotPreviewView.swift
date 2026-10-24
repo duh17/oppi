@@ -260,7 +260,7 @@ struct ScreenshotPreviewView: View {
 /// settings go in the volatile argument domain, never the simulator's defaults.
 /// `SCREENSHOT_EDITOR_KEYS` types its characters after focus, through the same
 /// `insertText` path as the keyboard (in `-vim`, e.g. `Vj` shows Visual Line).
-/// Run with `ui-validate --screen workspace-file-editor[-markdown|-vim]`.
+/// Dump with `UIValidateTests` (dev/testing/apple.md) and `SCREENSHOT_SCREEN=workspace-file-editor[-markdown|-vim]`.
 private struct WorkspaceFileEditorScreenshotPreview: UIViewControllerRepresentable {
     let screen: String
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared iOS Simulator daemon slimming. Source this file; do not execute it.
 #
-# Source from sim-pool, ci-simulator, or sim-lab, or run: sim-slim.sh apply <udid>
+# Source from sim-pool or ci-simulator, or run: sim-slim.sh apply <udid>
 #
 # Requires: die (defined here when executed as apply)
 # Optional: wait_for_boot_ready_with_retries — used after the slim reboot when present.
@@ -119,6 +119,6 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     slim_simulator "$udid"
     exit 0
   fi
-  echo "error: source sim-slim.sh from sim-pool, ci-simulator, or sim-lab, or run: sim-slim.sh apply <udid>" >&2
+  echo "error: source sim-slim.sh from sim-pool or ci-simulator, or run: sim-slim.sh apply <udid>" >&2
   exit 1
 fi

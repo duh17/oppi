@@ -10,7 +10,7 @@ import UIKit
 /// production resource loader. They prove `currentTime` advancement, item
 /// retention, and hide/fullscreen ownership. They do **not** prove native AVKit
 /// Play tap delivery, ancestor-gesture arbitration, or actual fullscreen
-/// presentation. Native tap belongs on the sim-lab / sim-test lever.
+/// presentation. Native tap belongs on a paired-server E2E (`clients/apple/scripts/e2e.sh`).
 @Suite("Markdown inline video authenticated transport diagnosis", .serialized)
 struct MarkdownInlineVideoNativePlayTests {
     @MainActor

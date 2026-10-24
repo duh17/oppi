@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 
 /// Paired-server proof that workspace video files open in the file browser and
-/// can play through the system video player. Run this through sim-lab with
+/// can play through the system video player. Run this through `clients/apple/scripts/e2e.sh --native` with
 /// `--record-video=always` to keep the simulator playback artifact.
 @MainActor
 final class FileBrowserVideoPlaybackE2ETests: E2ETestCase {

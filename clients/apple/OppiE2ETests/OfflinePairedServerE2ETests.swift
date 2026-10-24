@@ -2,7 +2,7 @@ import XCTest
 
 /// Two real isolated HTTPS servers: pair both, make only the second unreachable,
 /// then exercise the user-visible offline selection and local-only removal path.
-/// Run with `bun server/scripts/e2e-two-server.ts`, not plain sim-test.
+/// Run with `bun server/scripts/e2e-two-server.ts`, not plain `clients/apple/scripts/e2e.sh`.
 @MainActor
 final class OfflinePairedServerE2ETests: E2ETestCase {
     override var e2eLaunchesSessionsInboxOnly: Bool { true }

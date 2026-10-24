@@ -6,7 +6,7 @@ import UIKit
 // MARK: - Tree-sitter vs line-scanner paint preview
 
 /// Same samples through production tree-sitter tokens or the leftover line scanner.
-/// DEBUG-only; paints synchronously so ui-validate captures colors.
+/// DEBUG-only; paints synchronously so the UIValidateTests dump captures colors.
 struct SyntaxLanguagesPreview: View {
     enum Page {
         case webAndDynamic

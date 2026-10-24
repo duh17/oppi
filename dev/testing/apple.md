@@ -407,6 +407,18 @@ Mock screenshot-preview surfaces launch the app with `--screenshot-preview` for 
 
 Post-run UI checks belong on an existing preview or paired-server lab scenario, not in a new XCUITest. Do not add another preview test method just to look at a screen; add a fixture to an existing named preview instead.
 
+`OppiUITests/UIValidateTests/testDumpNamedPreview` is the one generic dump: it launches a named preview and writes Apple's accessibility tree, an accessibility audit, and one PNG.
+
+```bash
+cd clients/apple
+TEST_RUNNER_SCREENSHOT_SCREEN=mermaid-rendering \
+TEST_RUNNER_OPPI_UI_VALIDATE_DIR=/tmp/oppi-ui-validate/mermaid-rendering \
+  ./scripts/sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi test \
+  -only-testing:OppiUITests/UIValidateTests/testDumpNamedPreview
+```
+
+The test reads these inputs from the `TEST_RUNNER_`-prefixed environment (xcodebuild strips the prefix): `SCREENSHOT_SCREEN` (required; the test skips without it), `OPPI_UI_VALIDATE_DIR` (output directory; default `$TMPDIR/oppi-ui-validate/<screen>`), `OPPI_UI_VALIDATE_READY` (accessibility identifier to wait for; default `screenshot.ready`), `OPPI_UI_VALIDATE_FIXTURE`, `OPPI_UI_VALIDATE_TAPS` (comma-separated identifiers to drive first, with `doubletap:`, `swipeup:`, `scrollto:` prefixes or `x:y` normalized points; each step writes `step-N.png`), and every other `SCREENSHOT_*` variable, which is passed to the app. It writes `tree.md`, `audit.md`, `screen.png`, and `manifest.json` to the output directory and a copy to `/tmp/oppi-ui-validate/<screen>/`. Review those files; read the sim-pool summary and log paths it prints.
+
 The workspace code editor has `workspace-file-editor` (Swift), `workspace-file-editor-markdown`, and `workspace-file-editor-vim`: the production editor over an offline session, focused so the key bar and status line show. `TEST_RUNNER_SCREENSHOT_EDITOR_KEYS=wVj` (xcodebuild strips the prefix) types keys through the keyboard's `insertText` path first, so the Vim screen can show Visual Line or any other state.
 
 Live Voice in the chat input bar has no simulator microphone path, so its visuals use a synthetic meter: `live-voice-composer` walks a whole call for a recording, and `live-voice-composer-{connecting,listening,talking,speaking,muted,restored}` hold one step. `SCREENSHOT_DICTATION_STYLE=ring|breathing|composing` picks the indicator.

@@ -14,7 +14,7 @@
  * subscription requests on this machine; the lane links it into the isolated
  * agent dir. Native mode only: Docker cannot follow the host link.
  *
- * Shell callers (the Apple e2e/sim-lab wrappers) run:
+ * Shell callers (`clients/apple/scripts/e2e.sh`) run:
  *   node server/e2e/model-lane.ts write <pi-agent-dir>
  * which prints the model ref on success.
  */
