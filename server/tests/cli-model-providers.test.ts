@@ -55,6 +55,28 @@ describe("listAuthenticatedModelProviders", () => {
     expect(await listAuthenticatedModelProviders(withPath, true)).toContain("anthropic");
   });
 
+  it("adds the installer Node's directory to the service PATH, last", async () => {
+    const nodeDir = join(root, "installer-node");
+    mkdirSync(nodeDir);
+    writeFileSync(join(nodeDir, "oppi-test-key"), "#!/bin/sh\necho sk-ant-from-node-dir\n", {
+      mode: 0o755,
+    });
+    const serviceAgentDir = join(root, ".pi", "agent");
+    mkdirSync(serviceAgentDir, { recursive: true });
+    writeFileSync(
+      join(serviceAgentDir, "auth.json"),
+      JSON.stringify({ anthropic: { type: "api_key", key: "!oppi-test-key" } }),
+      { mode: 0o600 },
+    );
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.OPPI_NODE = join(nodeDir, "node");
+
+    const config = ConfigStore.getDefaultConfig(root);
+    expect(await listAuthenticatedModelProviders(config, true)).toContain("anthropic");
+    // The lookup restores the shell environment it started from.
+    expect(process.env.OPPI_NODE).toBe(join(nodeDir, "node"));
+  });
+
   it("counts a key the service receives through runtimeEnv", async () => {
     const config = {
       ...ConfigStore.getDefaultConfig(root),
