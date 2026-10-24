@@ -107,9 +107,9 @@ export interface QuotaLimits {
  * Sized for normal use within the Workers Free plan (100,000 Worker requests, Durable Object
  * requests, and rows written a day each). An alert or Live Activity update costs one of each;
  * a Live Activity `start` that replaces a card's token and a delivered `end` cost two Durable
- * Object requests and two rows; each phone Live Activity upload two requests and one row (the
- * per-endpoint table is in relay/README.md, "What each request costs"). One daily pool covers
- * alerts and Live Activity, so a phone that sends few alerts gives its Live Activity the rest;
+ * Object requests and two rows; each phone Live Activity upload two requests and one row. One
+ * daily pool covers alerts and Live Activity, so a phone that sends few alerts gives its Live
+ * Activity the rest;
  * alerts keep the last 30. A phone at the cap (100 pushes, a few card starts and ends, 10
  * uploads) is about 130 Durable Object requests a day, so about 750 such phones fill the plan;
  * the pushes alone would allow about 1,000. The quotas are per phone and shared by every

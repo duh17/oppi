@@ -352,7 +352,7 @@ server it is paired with. They fit normal use within the Cloudflare Workers Free
 Live Activity update costs one Worker request, one Durable Object request, and one row; a
 delivered Live Activity `end`, or a `start` that replaces a card's token, two Durable Object
 requests and two rows; each Live Activity upload from the phone two requests and one row;
-a challenge no Durable Object work at all (`relay/README.md`, "What each request costs"). A
+a challenge no Durable Object work at all. A
 phone at the cap uses about 130 Durable Object requests a day (100 pushes, a few card
 starts and ends, its uploads), so about 750 such phones fill the plan. A refused push writes
 nothing. Unattested
@@ -681,7 +681,8 @@ practice.
    without `mutable-content`. iOS shows that alert as sent; the extension never runs, so no
    signature check applies. The text can say anything, for example "Approve the deploy now".
    Encryption cannot prevent this. Mitigations:
-   - key and account hygiene for the relay operator (`relay/README.md`, "Operator security");
+   - key and account hygiene for the relay operator: a topic-specific APNs key kept only as a
+     deployment secret, and a hosting account protected by a phishing-resistant second factor;
    - **app invariant: nothing in an alert the extension did not open can act.** Session
      notification categories register no actions, and a tap only opens Oppi to the session;
      it never approves, answers, or replies. A forged alert can mislead a person, but tapping

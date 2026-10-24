@@ -4,7 +4,7 @@
  * per APNs token naming that phone's current registration. Challenges need no storage
  * (core/challenge.ts). APNs is reached with `fetch`.
  *
- * Secrets (`wrangler secret put`): APNS_KEY_P8, APNS_KEY_ID, APNS_TEAM_ID. APNS_KEY_P8 also
+ * Secrets: APNS_KEY_P8, APNS_KEY_ID, APNS_TEAM_ID. APNS_KEY_P8 also
  * keys the challenges, through HKDF with its own label.
  * Vars (wrangler.toml): APP_ID, BUNDLE_ID.
  */

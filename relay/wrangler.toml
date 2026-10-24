@@ -1,13 +1,12 @@
 # Cloudflare Worker for the Oppi push relay. No account ID and no secrets live here.
-# Secrets: wrangler secret put APNS_KEY_P8 | APNS_KEY_ID | APNS_TEAM_ID (see README.md).
+# Secrets: APNS_KEY_P8 (the .p8 file's contents), APNS_KEY_ID, APNS_TEAM_ID (see README.md).
 # APNS_KEY_P8 also keys registration challenges (HKDF, its own label); no other secret.
 name = "oppi-push-relay"
 main = "src/cloudflare/worker.ts"
 compatibility_date = "2026-10-01"
 
-# Custom domain on the duhChen account's chaosdonkey.dev zone; deploy creates its DNS record
-# and certificate. One relay per app (each has its own APNs topic and App Attest app ID), so
-# each app gets its own push.<app>.chaosdonkey.dev hostname.
+# Custom domain; deploy creates its DNS record and certificate. One relay per app: each has its
+# own APNs topic and App Attest app ID, so each gets its own hostname.
 routes = [{ pattern = "push.oppi.chaosdonkey.dev", custom_domain = true }]
 # Served only at that hostname, not also at a *.workers.dev address.
 workers_dev = false
