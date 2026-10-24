@@ -283,9 +283,6 @@
     "clients/apple/Oppi/Features/Onboarding/OnboardingView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Onboarding/QRScannerView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Onboarding/WaitingForPairingApprovalView.swift": {
       "import SwiftUI": 1
     },

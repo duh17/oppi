@@ -1,6 +1,9 @@
 import SwiftUI
+import UIKit
 
 /// Waiting chrome while another paired device approves this enrollment.
+/// `PairingApprovalWaitingView` draws the same chrome, with the same
+/// identifiers, on UIKit screens.
 struct WaitingForPairingApprovalView: View {
     let expiresAt: Int64
     var onCancel: (() -> Void)? = nil
@@ -36,5 +39,90 @@ struct WaitingForPairingApprovalView: View {
             return "Expires in \(minutes):\(String(format: "%02d", remainder))"
         }
         return "Expires in \(remainder)s"
+    }
+}
+
+/// UIKit waiting chrome while another paired device approves this enrollment:
+/// a spinner, the message, a countdown that ticks while the view is in a
+/// window, and Cancel when `onCancel` is set.
+@MainActor
+final class PairingApprovalWaitingView: UIView {
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let messageLabel = UILabel()
+    private let countdownLabel = UILabel()
+    private let cancelButton = UIButton(configuration: .plain())
+    private var expiresAt: Int64 = 0
+    private var timer: Timer?
+
+    var onCancel: (() -> Void)? {
+        didSet { cancelButton.isHidden = onCancel == nil }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        accessibilityIdentifier = "pairing.waiting"
+
+        spinner.startAnimating()
+
+        messageLabel.text = String(localized: "Waiting for approval on your other device")
+        messageLabel.font = .scaled(.headline, .semibold)
+        messageLabel.adjustsFontForContentSizeCategory = true
+        messageLabel.numberOfLines = 0
+        messageLabel.textAlignment = .center
+        messageLabel.accessibilityIdentifier = "pairing.waiting.message"
+
+        countdownLabel.font = .scaled(.subheadline, monospacedDigits: true)
+        countdownLabel.adjustsFontForContentSizeCategory = true
+        countdownLabel.textAlignment = .center
+        countdownLabel.accessibilityIdentifier = "pairing.waiting.countdown"
+
+        cancelButton.configuration?.title = String(localized: "Cancel")
+        cancelButton.accessibilityIdentifier = "pairing.waiting.cancel"
+        cancelButton.isHidden = true
+        cancelButton.addAction(UIAction { [weak self] _ in self?.onCancel?() }, for: .primaryActionTriggered)
+
+        let stack = UIStackView(arrangedSubviews: [spinner, messageLabel, countdownLabel, cancelButton])
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 16),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    /// The approval's expiry, in epoch milliseconds.
+    func show(expiresAt: Int64) {
+        self.expiresAt = expiresAt
+        tick()
+    }
+
+    func apply(colors: ComposerThemeColors) {
+        spinner.color = colors.comment
+        messageLabel.textColor = colors.fg
+        countdownLabel.textColor = colors.comment
+        cancelButton.configuration?.baseForegroundColor = colors.blue
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        timer?.invalidate()
+        timer = nil
+        guard window != nil else { return }
+        tick()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+    }
+
+    private func tick() {
+        countdownLabel.text = WaitingForPairingApprovalView.countdown(until: expiresAt, now: Date())
     }
 }

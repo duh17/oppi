@@ -214,7 +214,9 @@ struct SettingsSweepScreenshotPreview: View {
             }
             .ignoresSafeArea()
         case "onboarding-add-server", "onboarding-tailscale":
-            OnboardingView(mode: .addServer, previewCanScan: true)
+            // The simulator has no camera; show Scan QR Code as a phone would.
+            OnboardingPreviewHost(root: root)
+                .ignoresSafeArea()
         case "pairing-approval":
             Text("Pairing approval host")
                 .modifier(PairingApprovalPromptHost(root: root, controller: PairingApprovalController()))
@@ -540,6 +542,18 @@ struct SettingsSweepScreenshotPreview: View {
             "/mcp/auth/flows/mcp-flow/cancel": Data(#"{"flow":{"flowId":"mcp-flow","scopeId":"global","serverName":"github","launchMode":"phone_browser","status":"cancelled","createdAt":1,"updatedAt":2,"expiresAt":9999999999999}}"#.utf8),
         ]
     }
+}
+
+/// Add Server onboarding embedded the way the app root embeds first-run
+/// onboarding, with Scan QR Code offered.
+private struct OnboardingPreviewHost: UIViewControllerRepresentable {
+    let root: AppRootEnvironment
+
+    func makeUIViewController(context: Context) -> OnboardingViewController {
+        OnboardingViewController(root: root, mode: .addServer, canScan: true)
+    }
+
+    func updateUIViewController(_ controller: OnboardingViewController, context: Context) {}
 }
 
 /// Shows `content` after the client has read `/server/info`, the way a

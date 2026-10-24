@@ -185,7 +185,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
              deviceCredential: credential)
     }
 
-    private func withServerFingerprint(_ fingerprint: String) -> Self {
+    func withServerFingerprint(_ fingerprint: String) -> Self {
         Self(host: host, port: port, token: token, name: name, scheme: scheme,
              pairingToken: pairingToken, serverFingerprint: fingerprint,
              tlsCertFingerprint: tlsCertFingerprint, deviceCredential: deviceCredential)

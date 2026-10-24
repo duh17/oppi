@@ -389,9 +389,10 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
 
     private func presentAddServer() {
         Router.present(
-            HostFactory.screen(root: root, bars: ScreenBars()) { OnboardingView(mode: .addServer) },
+            OnboardingViewController(root: root, mode: .addServer),
             presentation: .sheet,
-            from: self
+            from: self,
+            theme: root.themeStore
         )
     }
 

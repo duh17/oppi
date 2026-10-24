@@ -10,6 +10,7 @@ struct ServerView: View {
     @Environment(ServerStore.self) private var serverStore
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.appRootEnvironment) private var root
 
     @State private var stats: ServerStats?
     @State private var selectedRange: UsageRange = .week
@@ -90,8 +91,11 @@ struct ServerView: View {
                 }
             }
         }
-        .routerModal(isPresented: $showAddServer) {
-            OnboardingView(mode: .addServer)
+        .routerScreenModal(isPresented: $showAddServer) {
+            .controller {
+                guard let root else { preconditionFailure("Usage needs the app root above it") }
+                return OnboardingViewController(root: root, mode: .addServer)
+            }
         }
     }
 

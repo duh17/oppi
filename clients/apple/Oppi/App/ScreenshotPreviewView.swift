@@ -70,8 +70,6 @@ struct ScreenshotPreviewView: View {
         switch ScreenshotPreviewConfig.screen {
         case "workspace-settings":
             WorkspaceSettingsScreenshotPreview()
-        case "onboarding":
-            OnboardingScreenshotPreview()
         case "settings-sweep":
             SettingsSweepScreenshotPreview()
         case "ssh-terminal":
@@ -695,21 +693,6 @@ private final class RouterRoutesURLProtocol: URLProtocol {
             }
         }
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-    }
-}
-
-/// First-run pairing choices, including Connect through Tailscale.
-private struct OnboardingScreenshotPreview: View {
-    private let coordinator = ConnectionCoordinator(serverStore: ServerStore())
-
-    var body: some View {
-        OnboardingView(previewCanScan: true)
-            .environment(coordinator)
-            .environment(coordinator.serverStore)
-            .environment(coordinator.activeConnection)
-            .environment(AppNavigation())
-            .environment(ThemeStore())
-            .accessibilityIdentifier("screenshot.ready")
     }
 }
 

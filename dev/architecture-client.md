@@ -137,7 +137,7 @@ UIKit owns every iOS view and all app structure (decided 2026-10-15). The target
 
 ### Remaining SwiftUI
 
-- **Untouched for now:** Settings and admin screens (servers, agents, schedules, MCP, skills, workspace settings), onboarding, the thread detail, the full-screen reader's content router, debug and screenshot previews, and the session lists' Message capsule (`SessionInboxCompactComposeBar`, shared with the thread detail).
+- **Untouched for now:** Settings and admin screens (servers, agents, schedules, MCP, skills, workspace settings), the thread detail, the full-screen reader's content router, debug and screenshot previews, and the session lists' Message capsule (`SessionInboxCompactComposeBar`, shared with the thread detail).
 - **Framework-required:** the USDZ preview, because RealityKit's `RealityView` is SwiftUI-only, and the Apple-required surfaces in rule 6.
 
 ### HostFactory: the transitional seam

@@ -30,6 +30,7 @@ struct InviteBootstrapServiceTests {
 
         #expect(await log.snapshot() == [
             "trust:Trust pairing.example.test (sha256:abcdef1234567890)",
+            "health",
             "pair:one-time-token",
             "health",
             "me",
@@ -45,8 +46,9 @@ struct InviteBootstrapServiceTests {
         let pairingAPI = RecordingInviteBootstrapAPI(log: log, incompleteResponse: true)
         var factoryTokens: [String] = []
 
-        await #expect(throws: InviteBootstrapError.message(
-            "Server returned an invalid pairing response. Request a fresh invite and try again."
+        await #expect(throws: InviteBootstrapError(
+            message: "Server returned an invalid pairing response. Request a fresh invite and try again.",
+            recovery: .newCode
         )) {
             _ = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: credentials(),
@@ -60,14 +62,14 @@ struct InviteBootstrapServiceTests {
             )
         }
         #expect(factoryTokens == [""])
-        #expect(await log.snapshot() == ["pair:one-time-token"])
+        #expect(await log.snapshot() == ["health", "pair:one-time-token"])
     }
 
     @Test func cancelledTrustDoesNotProbeOrExchangePairingToken() async throws {
         let log = InviteBootstrapCallLog()
         var factoryCalled = false
 
-        await #expect(throws: InviteBootstrapError.message("Trust confirmation cancelled")) {
+        await #expect(throws: InviteBootstrapError(message: "Trust confirmation cancelled", recovery: .retry)) {
             _ = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: credentials(),
                 existingCredentials: nil,
@@ -88,9 +90,10 @@ struct InviteBootstrapServiceTests {
         var factoryCalled = false
         let tailnetHost = "my-server.tail00000.ts.net"
 
-        await #expect(throws: InviteBootstrapError.message(
-            "\(tailnetHost) uses a self-signed certificate, which iOS does not allow on Tailscale names. "
-                + "On the server, run `oppi config set tls.mode tailscale`, restart, and create a new invite."
+        await #expect(throws: InviteBootstrapError(
+            message: "\(tailnetHost) uses a self-signed certificate, which iOS does not allow on Tailscale names. "
+                + "On the server, run `oppi config set tls.mode tailscale`, restart, and create a new invite.",
+            recovery: .serverSetup
         )) {
             _ = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: credentials(host: tailnetHost, tlsCertFingerprint: "sha256:leafpin"),
@@ -115,8 +118,9 @@ struct InviteBootstrapServiceTests {
         let failing = FailingInviteBootstrapAPI(log: log, error: URLError(.networkConnectionLost))
         var factoryCalls = 0
 
-        await #expect(throws: InviteBootstrapError.message(
-            "Pairing may have completed, but its response was lost. Open Oppi to check, or request a fresh invite before trying again."
+        await #expect(throws: InviteBootstrapError(
+            message: "Pairing may have completed, but its response was lost. Open Oppi to check, or request a fresh invite before trying again.",
+            recovery: .newCode
         )) {
             _ = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: credentials(),
@@ -131,7 +135,99 @@ struct InviteBootstrapServiceTests {
         }
 
         #expect(factoryCalls == 1)
-        #expect(await log.snapshot() == ["pair:one-time-token"])
+        #expect(await log.snapshot() == ["health", "pair:one-time-token"])
+    }
+
+    /// A server that does not answer never sees the single-use code, so the
+    /// same code can be tried again.
+    @Test func unreachableServerKeepsTheCodeForTryAgain() async throws {
+        let log = InviteBootstrapCallLog()
+        let unreachable = FailingInviteBootstrapAPI(log: log, error: URLError(.timedOut), failsHealth: true)
+
+        await #expect(throws: InviteBootstrapError(
+            message: "Could not reach pairing.example.test. Check the address, VPN, or network and try again.",
+            recovery: .reachability
+        )) {
+            _ = try await InviteBootstrapService.validateAndBootstrap(
+                credentials: credentials(),
+                existingCredentials: nil,
+                confirmTrust: { _ in true },
+                apiFactory: { _, _, _ in unreachable },
+                deviceKeyProvider: { InMemoryP256DeviceKey() }
+            )
+        }
+
+        #expect(await log.snapshot() == ["health"])
+    }
+
+    @Test func spentCodeAsksForANewCode() async throws {
+        let log = InviteBootstrapCallLog()
+        let spent = FailingInviteBootstrapAPI(
+            log: log,
+            error: APIError.server(status: 401, message: "Invalid or expired pairing token")
+        )
+
+        await #expect(throws: InviteBootstrapError(
+            message: "Invite link expired or was already used. Request a fresh invite.",
+            recovery: .newCode
+        )) {
+            _ = try await InviteBootstrapService.validateAndBootstrap(
+                credentials: credentials(),
+                existingCredentials: nil,
+                confirmTrust: { _ in true },
+                apiFactory: { _, _, _ in spent },
+                deviceKeyProvider: { InMemoryP256DeviceKey() }
+            )
+        }
+    }
+
+    /// Host-and-token entry carries no server identity: pairing reads it from
+    /// the server it just paired with and asks the person to trust it.
+    @Test func hostAndTokenEntryConfirmsTheIdentityTheServerReports() async throws {
+        let log = InviteBootstrapCallLog()
+        var apis = [
+            RecordingInviteBootstrapAPI(log: log, accessToken: "at_paired"),
+            RecordingInviteBootstrapAPI(log: log),
+        ]
+        var reasons: [String] = []
+
+        let result = try await InviteBootstrapService.validateAndBootstrap(
+            credentials: credentials(serverFingerprint: nil),
+            existingCredentials: nil,
+            confirmTrust: { reason in
+                reasons.append(reason)
+                return true
+            },
+            apiFactory: { _, _, _ in apis.removeFirst() },
+            deviceKeyProvider: { InMemoryP256DeviceKey() }
+        )
+
+        #expect(reasons == ["Trust pairing.example.test (sha256:read-from-server)"])
+        #expect(result.effectiveCredentials.normalizedServerFingerprint == "sha256:read-from-server")
+        #expect(await log.snapshot() == [
+            "health", "pair:one-time-token", "serverInfo", "health", "me", "listSessions:3",
+        ])
+    }
+
+    @Test func declinedHostAndTokenIdentityRevokesTheEnrolledDevice() async throws {
+        let log = InviteBootstrapCallLog()
+        var apis = [
+            RecordingInviteBootstrapAPI(log: log, accessToken: "at_paired"),
+            RecordingInviteBootstrapAPI(log: log, bearer: "at_paired"),
+        ]
+
+        await #expect(throws: InviteBootstrapError(message: "Trust confirmation cancelled", recovery: .newCode)) {
+            _ = try await InviteBootstrapService.validateAndBootstrap(
+                credentials: credentials(serverFingerprint: nil),
+                existingCredentials: nil,
+                confirmTrust: { _ in false },
+                apiFactory: { _, _, _ in apis.removeFirst() },
+                deviceKeyProvider: { InMemoryP256DeviceKey() }
+            )
+        }
+
+        let calls = try await waitForCalls(log, count: 4)
+        #expect(calls == ["health", "pair:one-time-token", "serverInfo", "revoke:dev_https bearer:at_paired"])
     }
 
     @Test func TLSFailureMessageRemainsActionable() {
@@ -233,12 +329,13 @@ struct InviteBootstrapServiceTests {
             )
         }
 
-        await #expect(throws: InviteBootstrapError.message("Pairing cancelled.")) {
+        await #expect(throws: InviteBootstrapError(message: "Pairing cancelled.", recovery: .newCode)) {
             _ = try await task.value
         }
         // No authenticated bootstrap: the caller gets no credential to save.
-        let calls = try await waitForCalls(log, count: 3)
+        let calls = try await waitForCalls(log, count: 4)
         #expect(calls == [
+            "health",
             "pair:one-time-token",
             "poll:pa_test",
             "revoke:dev_https bearer:at_paired",
@@ -259,14 +356,14 @@ struct InviteBootstrapServiceTests {
                 deviceKeyProvider: { InMemoryP256DeviceKey() }
             )
         }
-        _ = try await waitForCalls(log, count: 1)
+        _ = try await waitForCalls(log, count: 2)
         task.cancel()
 
-        await #expect(throws: InviteBootstrapError.message("Pairing cancelled.")) {
+        await #expect(throws: InviteBootstrapError(message: "Pairing cancelled.", recovery: .newCode)) {
             _ = try await task.value
         }
         try await Task.sleep(for: .milliseconds(100))
-        #expect(await log.snapshot() == ["pair:one-time-token"])
+        #expect(await log.snapshot() == ["health", "pair:one-time-token"])
     }
 
     /// An older attempt is approved after a newer attempt paired the same server:
@@ -391,7 +488,7 @@ struct InviteBootstrapServiceTests {
         var reasons: [String] = []
         var factoryCalled = false
 
-        await #expect(throws: InviteBootstrapError.message("Trust confirmation cancelled")) {
+        await #expect(throws: InviteBootstrapError(message: "Trust confirmation cancelled", recovery: .retry)) {
             _ = try await InviteBootstrapService.enroll(
                 credentials: invite,
                 serverStore: coordinator.serverStore,
@@ -435,7 +532,7 @@ struct InviteBootstrapServiceTests {
 
     private func credentials(
         host: String? = nil,
-        serverFingerprint: String = "sha256:abcdef1234567890",
+        serverFingerprint: String? = "sha256:abcdef1234567890",
         tlsCertFingerprint: String? = nil
     ) -> ServerCredentials {
         ServerCredentials(
@@ -503,7 +600,7 @@ struct WhatsNewManagerTests {
     }
 }
 
-private func pairingTestServerInfo() -> ServerInfo {
+private func pairingTestServerInfo(identityFingerprint: String? = nil) -> ServerInfo {
     ServerInfo(
         name: "Test",
         version: "1.0.0",
@@ -514,7 +611,7 @@ private func pairingTestServerInfo() -> ServerInfo {
         nodeVersion: "22",
         piVersion: "1",
         configVersion: 1,
-        identity: nil,
+        identity: identityFingerprint.map { .init(fingerprint: $0, keyId: "key", algorithm: "ed25519") },
         uploadProtocol: nil,
         images: nil,
         capabilities: .init(
@@ -658,6 +755,11 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
         return User(user: "owner", name: "Owner")
     }
 
+    func serverInfo() async throws -> ServerInfo {
+        await log.append("serverInfo")
+        return pairingTestServerInfo(identityFingerprint: "sha256:read-from-server")
+    }
+
     func listSessionsFromWorkspaces(recentDays: Int) async throws -> [Session] {
         await log.append("listSessions:\(recentDays)")
         return []
@@ -668,13 +770,17 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
     }
 }
 
+/// Answers the reachability check, then fails `/pair` with `error`; with
+/// `failsHealth` the reachability check fails instead.
 private actor FailingInviteBootstrapAPI: InviteBootstrapAPI {
     private let log: InviteBootstrapCallLog
     private let error: Error
+    private let failsHealth: Bool
 
-    init(log: InviteBootstrapCallLog, error: Error) {
+    init(log: InviteBootstrapCallLog, error: Error, failsHealth: Bool = false) {
         self.log = log
         self.error = error
+        self.failsHealth = failsHealth
     }
 
     func startPairDevice(
@@ -693,8 +799,13 @@ private actor FailingInviteBootstrapAPI: InviteBootstrapAPI {
         throw error
     }
 
-    func health() async throws -> Bool { throw error }
+    func health() async throws -> Bool {
+        await log.append("health")
+        if failsHealth { throw error }
+        return true
+    }
     func me() async throws -> User { throw error }
+    func serverInfo() async throws -> ServerInfo { throw error }
     func listSessionsFromWorkspaces(recentDays _: Int) async throws -> [Session] { throw error }
     func revokeAuthDevice(id _: String) async throws { throw error }
 }

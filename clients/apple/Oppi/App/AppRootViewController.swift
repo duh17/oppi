@@ -111,7 +111,7 @@ final class AppRootViewController: UIViewController {
         case .pairedServersUnavailable: Self.pairedServersUnavailableScreen { [weak app] in
             app?.retryPairedServerLoad()
         }
-        case .onboarding: HostFactory.screen(root: root) { OnboardingView() }
+        case .onboarding: OnboardingViewController(root: root)
         case .shell: WorkspaceShellController(root: root)
         }
         content = next

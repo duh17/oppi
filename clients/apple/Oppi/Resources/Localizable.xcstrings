@@ -647,6 +647,16 @@
     "Cancel Sign-In" : {
 
     },
+    "Can’t Reach the Server" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法连接服务器"
+          }
+        }
+      }
+    },
     "Cancelling…" : {
 
     },
@@ -1059,6 +1069,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "复制会话 ID"
+          }
+        }
+      }
+    },
+    "Check that this %@ and the computer are on the same network, or that Tailscale is on for both. Then try again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请确认这台 %@ 和电脑在同一网络中，或两者都已开启 Tailscale，然后重试。"
+          }
+        }
+      }
+    },
+    "Couldn’t Pair" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对失败"
           }
         }
       }
@@ -2073,6 +2103,16 @@
         }
       }
     },
+    "On your computer, run oppi pair for a new code, or choose Set Up a Computer." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在电脑上运行 oppi pair 获取新的配对码，或选择“设置电脑”。"
+          }
+        }
+      }
+    },
     "On the machine, `ssh-keygen -lf /etc/ssh/ssh_host_%@_key.pub` prints the same value." : {
 
     },
@@ -2571,6 +2611,16 @@
         }
       }
     },
+    "Run AI coding agents on your own computer. Follow and approve their work from your %@." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在你自己的电脑上运行 AI 编程智能体，并在 %@ 上跟进和批准它们的工作。"
+          }
+        }
+      }
+    },
     "Runs in an isolated micro-VM. Secrets and network are controlled by the host." : {
 
     },
@@ -2787,6 +2837,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "会话"
+          }
+        }
+      }
+    },
+    "Set Up a Computer" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置电脑"
           }
         }
       }
@@ -3087,6 +3147,16 @@
     },
     "That’s okay. Enter an existing folder path or leave the folder empty and Oppi creates one." : {
 
+    },
+    "The agents run in the Oppi server on your Mac or Linux computer, not on this %@. Set it up from here, or install it yourself and scan the pairing code it shows." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能体运行在你的 Mac 或 Linux 电脑上的 Oppi 服务器中，而不是在这台 %@ 上。你可以在这里设置，也可以自行安装后扫描它显示的配对码。"
+          }
+        }
+      }
     },
     "The configuration entry will be removed. Stored OAuth credentials are not deleted; sign out first if needed." : {
 

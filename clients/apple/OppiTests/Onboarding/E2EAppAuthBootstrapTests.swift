@@ -79,8 +79,9 @@ struct E2EAppAuthBootstrapTests {
         let log = E2EAppAuthBootstrapCallLog()
         let pairingAPI = E2EAppAuthRecordingAPI(log: log, incompleteResponse: true)
 
-        await #expect(throws: InviteBootstrapError.message(
-            "Server returned an invalid pairing response. Request a fresh invite and try again."
+        await #expect(throws: InviteBootstrapError(
+            message: "Server returned an invalid pairing response. Request a fresh invite and try again.",
+            recovery: .newCode
         )) {
             _ = try await E2EAppAuthBootstrap.pairInvite(
                 credentials: inviteCredentials(),
@@ -169,6 +170,10 @@ private actor E2EAppAuthRecordingAPI: InviteBootstrapAPI {
     func me() async throws -> User {
         await log.append("me")
         return User(user: "owner", name: "Owner")
+    }
+
+    func serverInfo() async throws -> ServerInfo {
+        throw APIError.invalidResponse
     }
 
     func listSessionsFromWorkspaces(recentDays: Int) async throws -> [Session] {

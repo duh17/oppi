@@ -438,9 +438,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
 
     func testOnboardingManualEntrySheet() {
         launch(page: "onboarding-add-server")
-        // By label: the harness root's ready identifier replaces identifiers
-        // in the same SwiftUI host.
-        let manual = app.buttons["Enter manually"]
+        let manual = app.buttons["onboarding.manual"]
         XCTAssertTrue(manual.waitForExistence(timeout: 10), "Onboarding did not load")
         let entry = app.navigationBars["Connect Manually"]
 
@@ -455,22 +453,28 @@ final class RouterSettingsModalsUITests: XCTestCase {
         assertRunning()
 
         // Connect hands the credentials back: onboarding starts pairing and
-        // shows its outcome (no server answers here).
+        // shows its outcome. Nothing listens on port 1, so the code is never
+        // sent and Try Again is offered.
         manual.tap()
         XCTAssertTrue(entry.waitForExistence(timeout: 5), "Manual entry did not reopen after the swipe")
-        let host = app.textFields["Host (e.g. my-mac.local)"]
+        let connect = app.buttons["onboarding.manual.connect"]
+        XCTAssertFalse(connect.isEnabled, "Connect needs a pairing link or host fields")
+        app.buttons["onboarding.manual.hostFields"].tap()
+        let host = app.textFields["onboarding.manual.host"]
+        XCTAssertTrue(host.waitForExistence(timeout: 5), "The host fields did not appear")
         host.tap()
-        host.typeText("127.0.0.1")
-        let token = app.secureTextFields["Token"]
+        // A host typed as a URL brings its own port.
+        host.typeText("https://127.0.0.1:1")
+        let token = app.textFields["onboarding.manual.token"]
         token.tap()
-        token.typeText("sk_none")
-        tapBarButton(app.buttons["Connect"].firstMatch)
+        token.typeText("pt_none")
+        tapBarButton(connect)
         XCTAssertTrue(waitForDisappearance(of: entry), "Connect must close manual entry")
         XCTAssertTrue(
-            app.staticTexts["Connection failed"].waitForExistence(timeout: 30)
-                || app.staticTexts["Pairing…"].exists,
-            "Onboarding must receive the entered credentials"
+            app.buttons["onboarding.retry"].waitForExistence(timeout: 30),
+            "An unreachable server must offer Try Again with the same code"
         )
+        XCTAssertTrue(app.buttons["onboarding.manual"].exists, "The pairing choices stay under the failure")
         assertRunning()
     }
 
@@ -478,7 +482,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
     /// Set Up a Computer row pushes inside the sheet, and Cancel closes it.
     func testOnboardingTailscaleSheetPushesSetUpAComputer() {
         launch(page: "onboarding-tailscale")
-        let connect = app.buttons["Connect through Tailscale"]
+        let connect = app.buttons["onboarding.tailscale"]
         XCTAssertTrue(connect.waitForExistence(timeout: 10), "Onboarding did not load")
         connect.tap()
         let tailscale = app.navigationBars["Tailscale"]
@@ -630,10 +634,12 @@ final class RouterSettingsModalsUITests: XCTestCase {
     /// `Button(role: .cancel)` draws the system cancel control. Bar items can
     /// sit outside the navigation bar element: the iPhone Duo moves them to a
     /// vertical rail.
-    /// The front-most one: presented controllers come last in the tree.
+    /// The front-most one: presented controllers come last in the tree, and a
+    /// presenter's own Cancel (Add Server onboarding) sits under the sheet.
     private var cancelButton: XCUIElement {
         let matches = app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"]))
-        return matches.element(boundBy: max(matches.count - 1, 0))
+        let candidates = matches.allElementsBoundByIndex
+        return candidates.last(where: \.isHittable) ?? matches.element(boundBy: max(matches.count - 1, 0))
     }
 
     private func assertRunning(file: StaticString = #filePath, line: UInt = #line) {
