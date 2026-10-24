@@ -149,16 +149,35 @@ async function runShard(index: number, xctestrun: string, flags: string[], outDi
   return { index, label, code, tests: executedTests(summary), seconds: Math.round((Date.now() - started) / 1000), output, summary };
 }
 
+/** Failed test ids, or why they cannot be read. */
+export type Failures = { ids: string[] } | { reason: string };
+
+// `xcresulttool get test-results tests` prints ~0.7 KB of JSON per test: a shard of a few thousand
+// tests is several MB. Bun's default 1 MiB maxBuffer fails that spawn with ENOBUFS, so no failure
+// was ever readable and no gate reran anything.
+const XCRESULT_MAX_BYTES = 256 * 1024 * 1024;
+
+/** Run an xcresulttool-style command that prints the tests JSON and extract its failed test ids. */
+export function readFailures(command: string, args: string[]): Failures {
+  const tool = spawnSync(command, args, { encoding: "utf8", timeout: 60_000, maxBuffer: XCRESULT_MAX_BYTES });
+  if (tool.error) return { reason: `xcresulttool did not finish: ${tool.error.message}` };
+  if (tool.status !== 0) {
+    const stderr = tool.stderr.trim().split("\n").slice(-3).join(" | ");
+    return { reason: `xcresulttool ${tool.signal ? `killed by ${tool.signal}` : `exit ${tool.status}`}${stderr ? `: ${stderr}` : ""}` };
+  }
+  const ids = failedTestIds(tool.stdout);
+  return ids ? { ids } : { reason: `xcresulttool output (${tool.stdout.length} chars) is not test-results JSON` };
+}
+
 /** Failed tests of a finished run, read from the xcresult in its run directory. */
-function runFailures(summary: string | undefined): string[] | undefined {
-  if (!summary || !existsSync(summary)) return undefined;
+function runFailures(summary: string | undefined): Failures {
+  if (!summary || !existsSync(summary)) return { reason: "no sim-pool summary" };
   const derivedData = JSON.parse(readFileSync(summary, "utf8")).derived_data_path as string | undefined;
   const testLogs = derivedData ? join(derivedData, "Logs", "Test") : "";
-  if (!testLogs || !existsSync(testLogs)) return undefined;
+  if (!testLogs || !existsSync(testLogs)) return { reason: `no test logs directory (${testLogs || "no derived data path"})` };
   const bundle = readdirSync(testLogs).filter((name) => name.endsWith(".xcresult")).sort().at(-1);
-  if (!bundle) return undefined;
-  const tool = spawnSync("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", join(testLogs, bundle)], { encoding: "utf8", timeout: 60_000 });
-  return tool.status === 0 ? failedTestIds(tool.stdout) : undefined;
+  if (!bundle) return { reason: `no .xcresult in ${testLogs}` };
+  return readFailures("xcrun", ["xcresulttool", "get", "test-results", "tests", "--path", join(testLogs, bundle)]);
 }
 
 /** Append a pass-on-rerun to the repository's flake log; returns how many gates saw this test flake. */
@@ -258,9 +277,14 @@ async function main(argv: string[]): Promise<number> {
  * unreadable results, zero tests, or more than RERUN_LIMIT failures stay red.
  */
 async function rerunFailures(result: ShardResult, xctestrun: string, outDir: string): Promise<boolean> {
-  const ids = result.tests > 0 ? runFailures(result.summary) : undefined;
-  if (!ids || ids.length === 0 || ids.length > RERUN_LIMIT) {
-    console.log(`[unit-shards] ${result.label}: no rerun (${ids ? `${ids.length} failed tests` : "failures unreadable"})`);
+  const failures: Failures = result.tests > 0 ? runFailures(result.summary) : { reason: "shard ran no tests" };
+  if ("reason" in failures) {
+    console.log(`[unit-shards] ${result.label}: no rerun (failures unreadable: ${failures.reason})`);
+    return false;
+  }
+  const ids = failures.ids;
+  if (ids.length === 0 || ids.length > RERUN_LIMIT) {
+    console.log(`[unit-shards] ${result.label}: no rerun (${ids.length} failed tests)`);
     return false;
   }
   const rerun = await runShard(result.index, xctestrun, ids.map((id) => `-only-testing:${BUNDLE}/${id}`), outDir, `${result.label}-rerun`);

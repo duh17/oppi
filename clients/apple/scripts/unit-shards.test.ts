@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { failedTestIds, partition, recordWeights, scanTestTypes, shardFlags, splitQuarantine, type TestType } from "./unit-shards";
+import { failedTestIds, partition, readFailures, recordWeights, scanTestTypes, shardFlags, splitQuarantine, type TestType } from "./unit-shards";
 
 const source = `import Testing
 
@@ -70,6 +70,24 @@ describe("unit shards", () => {
     });
     expect(failedTestIds(tree)).toEqual(["SSHTerminalTests/aPasswordPrompt()", "Outer/Inner/x()"]);
     expect(failedTestIds("Error: bundle is incomplete")).toBeUndefined();
+  });
+
+  test("reads the failures of a full shard's tests JSON, which is several MiB", () => {
+    // ~0.7 KB per test, 4,300 tests: more than Bun's default 1 MiB spawn buffer.
+    const printTree = `
+      const cases = Array.from({ length: 4300 }, (_, i) => ({
+        nodeType: "Test Case", result: i === 4000 ? "Failed" : "Passed", nodeIdentifier: "Suite/test" + i + "()",
+        name: "test" + i + "()", details: "x".repeat(600),
+      }));
+      process.stdout.write(JSON.stringify({ testNodes: [{ nodeType: "Test Suite", children: cases }] }));`;
+    const failures = readFailures(process.execPath, ["-e", printTree]);
+    expect(failures).toEqual({ ids: ["Suite/test4000()"] });
+  });
+
+  test("an unreadable xcresulttool result says why", () => {
+    expect(readFailures(process.execPath, ["-e", "console.error('bad bundle'); process.exit(3)"])).toEqual({ reason: "xcresulttool exit 3: bad bundle" });
+    const garbled = readFailures(process.execPath, ["-e", "process.stdout.write('Error: incomplete')"]);
+    expect(garbled).toEqual({ reason: "xcresulttool output (17 chars) is not test-results JSON" });
   });
 
   test("recorded seconds map suite display names to types and skip ambiguous names", () => {
