@@ -690,6 +690,27 @@ struct SSHInstallTransportTests {
         #expect(fixture.channelRequests == ["exec:\(SSHInstallScript.command)"])
     }
 
+    @Test func losingTheConnectionMidInstallSaysSetupWasInterrupted() async throws {
+        let installer = FixtureExecReply(
+            chunks: [Self.data("oppi-install: step=node status=begin detail=downloading Node.js\n")],
+            exitStatus: nil, staysOpen: true, answersOnFirstInput: true
+        )
+        let fixture = try await SSHFixture.start(auth: .passwordOnly, execReply: Self.machine(installer: installer))
+        defer { fixture.close() }
+        let (progress, reported) = AsyncStream.makeStream(of: Void.self)
+        let installing = Task {
+            try await SSHPreflightClient.install(
+                Self.request(fixture), script: Self.data("#!/bin/sh\n"), socket: fixture.clientSocket
+            ) { _ in reported.yield() }
+        }
+        // Mid-install: the first step has started and the script is still running.
+        for await _ in progress { break }
+        fixture.dropConnection()
+        // The screen shows "The connection closed before setup finished" with Try
+        // Again, not "Setup ended before it finished", which means the script stopped.
+        await #expect(throws: SSHPreflightFailure.installInterrupted) { _ = try await installing.value }
+    }
+
     @Test func cancellingAnInstallClosesItsChannel() async throws {
         let fixture = try await SSHFixture.start(
             auth: .passwordOnly,
@@ -859,6 +880,12 @@ private final class SSHFixture: @unchecked Sendable {
         )
     }
 
+    /// Closes the server's end of the whole SSH connection, as when the
+    /// network drops or the app is suspended.
+    func dropConnection() {
+        state.parent.withLock { $0 }?.close(promise: nil)
+    }
+
     func send(_ bytes: Data) async throws {
         let terminal = try #require(state.terminal.withLock { $0 })
         var buffer = terminal.allocator.buffer(capacity: bytes.count)
@@ -1024,6 +1051,7 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
         for chunk in reply.chunks {
             channel.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(channel.allocator.buffer(bytes: chunk))), promise: nil)
         }
+        guard !reply.staysOpen else { return }
         if !reply.stderr.isEmpty {
             channel.writeAndFlush(SSHChannelData(type: .stdErr, data: .byteBuffer(channel.allocator.buffer(bytes: reply.stderr))), promise: nil)
         }
@@ -1139,6 +1167,8 @@ private struct FixtureExecReply: Sendable {
     var exitStatus: Int? = 0
     /// Never answer: only the client closing the channel ends it.
     var hold = false
+    /// Write the chunks and then nothing more: a command still running.
+    var staysOpen = false
     /// Answer on the first stdin bytes, before the client's EOF arrives. A
     /// NIOSSH server cannot send a request once both sides sent EOF, so this
     /// is how its exit status can follow its own EOF, as OpenSSH may send it.

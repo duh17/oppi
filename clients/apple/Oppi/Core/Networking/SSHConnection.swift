@@ -52,6 +52,10 @@ enum SSHConnectionError: Error, Equatable, Sendable {
             self = .keyExchangeFailed(SSHIdentityKeyStoreError.authenticationExpired.localizedDescription)
         } else if let ssh = error as? NIOSSHError, ssh.type == .keyExchangeNegotiationFailure {
             self = .unsupportedAlgorithms
+        } else if let ssh = error as? NIOSSHError, ssh.type == .tcpShutdown {
+            // The connection dropped under an open channel (network loss, a
+            // suspended app): NIOSSH fails each child channel with this.
+            self = .connectionClosed
         } else if error is ChannelError || error is NIOFcntlFailedError {
             // Darwin fails fcntl with EINVAL on a socket whose peer already hung up.
             self = .connectionClosed
@@ -419,8 +423,18 @@ private final class ExecHandler: ChannelInboundHandler {
             // Any real channel error still arrives through `errorCaught`.
             let data = SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(bytes: input)))
             let channel = context.channel
-            context.writeAndFlush(wrapOutboundOut(data)).assumeIsolated().whenSuccess { [self] in
-                closeStdin(channel)
+            context.writeAndFlush(wrapOutboundOut(data)).assumeIsolated().whenComplete { [self] outcome in
+                switch outcome {
+                case .success:
+                    closeStdin(channel)
+                case .failure where !remoteSentEOF && channel.isActive:
+                    // The command still waits for the rest of its stdin and
+                    // would sit until the deadline. End it; `channelInactive`
+                    // reports what it printed.
+                    channel.close(promise: nil)
+                case .failure:
+                    break
+                }
             }
         case ChannelEvent.inputClosed:
             remoteSentEOF = true
