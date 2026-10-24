@@ -240,9 +240,9 @@ struct HerdrMultiplexerTests {
             }
         }
         // The focus call itself refuses them too, for the agent list.
-        #expect(HerdrRemote.focusCommand(.workspace("-rf")) == nil)
-        #expect(HerdrRemote.focusCommand(.agent("")) == nil)
-        #expect(HerdrRemote.focusCommand(.workspace("w1:p2")) != nil)
+        #expect(HerdrRemote.focusCommand(.workspace("-rf"), machine: nil) == nil)
+        #expect(HerdrRemote.focusCommand(.agent(""), machine: nil) == nil)
+        #expect(HerdrRemote.focusCommand(.workspace("w1:p2"), machine: nil) != nil)
     }
 
     @Test func aTildeFolderBecomesTheHostsOwnAbsolutePath() {
@@ -520,11 +520,33 @@ struct SSHTerminalMultiplexerQuotingTests {
 
     @Test func aFocusCallIsOneSafeWordToo() throws {
         for id in ["w1", "wY:p7", "w1:p2", "agent_x-1"] {
-            let command = try #require(HerdrRemote.focusCommand(.workspace(id)))
+            let command = try #require(HerdrRemote.focusCommand(.workspace(id), machine: nil))
             try assertSafeWord(command, "focus \(id)")
             #expect(command.contains("exec herdr workspace focus \"$i\""), "\(id)")
             #expect(command.contains(SSHTerminalRemoteShell.octalEncoded(id)), "\(id)")
             #expect(!command.contains(id), "\(id): the ID is not literal shell text")
+        }
+    }
+
+    /// A saved machine's profile ID comes from the host's machine list and goes
+    /// back to the host the same way a workspace ID does: escaped, never in the
+    /// clear, and refused when it is not an ID.
+    @Test func aSavedMachineIsNamedByItsEscapedProfileID() throws {
+        let machine = "9511532e7f5df1473bb50f692fc87810"
+        let snapshot = try #require(HerdrRemote.snapshotCommand(machine: machine))
+        try assertSafeWord(snapshot, "snapshot")
+        #expect(snapshot.contains("exec herdr --machine \"$m\" api snapshot"))
+        #expect(snapshot.contains(SSHTerminalRemoteShell.octalEncoded(machine)))
+        #expect(!snapshot.contains(machine))
+        #expect(HerdrRemote.snapshotCommand(machine: nil) == "herdr api snapshot")
+
+        let focus = try #require(HerdrRemote.focusCommand(.agent("w1:p2"), machine: machine))
+        try assertSafeWord(focus, "remote focus")
+        #expect(focus.contains("exec herdr --machine \"$m\" agent focus \"$i\""))
+
+        for hostile in ["mac-mini; rm -rf ~", "--session", "", "build machine"] {
+            #expect(HerdrRemote.snapshotCommand(machine: hostile) == nil, "\(hostile)")
+            #expect(HerdrRemote.focusCommand(.workspace("w1"), machine: hostile) == nil, "\(hostile)")
         }
     }
 

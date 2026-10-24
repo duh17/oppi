@@ -9,9 +9,9 @@ enum SSHTerminalInputMode: Equatable {
 }
 
 /// Picks the input mode and key strip from what the host declares: the
-/// program's own OSC 7501 report, or a Run on Connect command that starts
-/// Herdr (`SSHTerminalMultiplexerKind`). Oppi never inspects the host's
-/// process table to guess.
+/// program's own OSC 7501 report. Oppi never inspects the host's process table
+/// to guess, and a Herdr client gets direct typing whatever its panes run;
+/// the chat bar is one tap away on the terminal keyboard's bar.
 enum SSHTerminalAgentDetection {
     /// OSC 7501 `app` ids of coding agents. An id also matches by its first
     /// `-`/`_`/`.` segment, so `claude-code` reads as `claude`.
@@ -20,31 +20,16 @@ enum SSHTerminalAgentDetection {
         "crush", "droid", "cursor-agent", "qwen", "kimi", "copilot", "kilo", "grok",
     ]
 
-    /// The OSC 7501 root, then Herdr's focused pane when this connection runs
-    /// Herdr. Nil means nothing has decided; the terminal view treats that as
-    /// direct typing. The view controller's `inputMode` owns the manual override.
-    static func mode(
-        root: SSHTerminalProgramStatusStore.Record?,
-        app: String,
-        herdrAttached: Bool,
-        herdr: HerdrSnapshot?
-    ) -> SSHTerminalInputMode? {
-        if agentApp(root: root, app: app) != nil { return .chat }
-        guard herdrAttached else { return nil }
-        return herdr?.focusedAgent == nil ? .terminal : .chat
+    /// The OSC 7501 root. Nil means nothing has decided; the terminal view
+    /// treats that as direct typing. The view controller's `inputMode` owns the
+    /// manual override.
+    static func mode(root: SSHTerminalProgramStatusStore.Record?, app: String) -> SSHTerminalInputMode? {
+        agentApp(root: root, app: app) != nil ? .chat : nil
     }
 
-    /// Whose key bindings the strips offer: the reporting agent, the agent in
-    /// Herdr's focused pane, or the shell.
-    static func keymapProgram(
-        root: SSHTerminalProgramStatusStore.Record?,
-        app: String,
-        herdrAttached: Bool,
-        herdr: HerdrSnapshot?
-    ) -> String {
-        if let agent = agentApp(root: root, app: app) { return agent }
-        if herdrAttached, let agent = herdr?.focusedAgent?.agent { return agent }
-        return "shell"
+    /// Whose key bindings the strips offer: the reporting agent, or the shell.
+    static func keymapProgram(root: SSHTerminalProgramStatusStore.Record?, app: String) -> String {
+        agentApp(root: root, app: app) ?? "shell"
     }
 
     /// The agent named by the root record when its app is a coding agent and

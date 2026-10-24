@@ -228,29 +228,25 @@ struct SSHTerminalProgramStatusPresentationTests {
         #expect(SSHTerminalDisplayText.sanitized(tower, limit: 4) == "a\u{0301}\u{0301}b")
     }
 
-    @Test func inputModePrefersTheRootRecordThenHerdr() throws {
+    /// Only an agent's own root report picks the chat bar. Herdr reports no
+    /// root, so a Herdr client stays in direct typing whatever its panes run.
+    @Test func inputModeFollowsOnlyTheRootRecord() {
         let agent = record(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, app: "pi")
         let shell = record(GHOSTTY_PROGRAM_STATUS_STATE_IDLE, app: "fish")
         let other = record(GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED, kind: GHOSTTY_PROGRAM_STATUS_KIND_PERMISSION, app: "terraform")
         let prefixed = record(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, app: "claude-code")
-        let focused = try herdr(focused: true)
-        let unfocused = try herdr(focused: false)
         typealias Detection = SSHTerminalAgentDetection
 
-        #expect(Detection.mode(root: agent, app: "pi", herdrAttached: true, herdr: unfocused) == .chat)
-        #expect(Detection.mode(root: prefixed, app: "claude-code", herdrAttached: false, herdr: nil) == .chat)
-        #expect(Detection.mode(root: shell, app: "fish", herdrAttached: false, herdr: nil) == nil)
-        #expect(Detection.mode(root: other, app: "terraform", herdrAttached: false, herdr: nil) == nil)
-        #expect(Detection.mode(root: other, app: "terraform", herdrAttached: true, herdr: focused) == .chat)
-        #expect(Detection.mode(root: nil, app: "", herdrAttached: true, herdr: unfocused) == .terminal)
-        #expect(Detection.mode(root: nil, app: "", herdrAttached: true, herdr: nil) == .terminal)
-        // Herdr running on the host does not mean this terminal shows it.
-        #expect(Detection.mode(root: nil, app: "", herdrAttached: false, herdr: focused) == nil)
+        #expect(Detection.mode(root: agent, app: "pi") == .chat)
+        #expect(Detection.mode(root: prefixed, app: "claude-code") == .chat)
+        #expect(Detection.mode(root: shell, app: "fish") == nil)
+        #expect(Detection.mode(root: other, app: "terraform") == nil)
+        #expect(Detection.mode(root: nil, app: "") == nil)
 
-        // The key strip follows the same order; `claude-code` uses Claude's.
-        #expect(Detection.keymapProgram(root: prefixed, app: "claude-code", herdrAttached: true, herdr: focused) == "claude")
-        #expect(Detection.keymapProgram(root: nil, app: "", herdrAttached: true, herdr: focused) == "pi")
-        #expect(Detection.keymapProgram(root: other, app: "terraform", herdrAttached: false, herdr: focused) == "shell")
+        // The key strip follows the same report; `claude-code` uses Claude's.
+        #expect(Detection.keymapProgram(root: prefixed, app: "claude-code") == "claude")
+        #expect(Detection.keymapProgram(root: nil, app: "") == "shell")
+        #expect(Detection.keymapProgram(root: other, app: "terraform") == "shell")
     }
 
     /// A live report keeps the chat bar. Once the shell shows its next prompt,
@@ -259,7 +255,7 @@ struct SSHTerminalProgramStatusPresentationTests {
         let engine = try SSHTerminalEngine { _ in }
         func mode() -> SSHTerminalInputMode? {
             SSHTerminalAgentDetection.mode(
-                root: engine.programStatus.liveRoot, app: engine.programStatus.app(of: ""), herdrAttached: false, herdr: nil
+                root: engine.programStatus.liveRoot, app: engine.programStatus.app(of: "")
             )
         }
         engine.receive(Data("\u{1b}]7501;state=done:app=pi\u{1b}\\".utf8))
@@ -303,8 +299,4 @@ struct SSHTerminalProgramStatusPresentationTests {
         #expect(snapshot.needsAttention == 3)
     }
 
-    private func herdr(focused: Bool) throws -> HerdrSnapshot {
-        let json = #"{"workspaces":[],"tabs":[],"agents":[{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","agent":"pi","agent_status":"working","focused":\#(focused)}]}"#
-        return try JSONDecoder().decode(HerdrSnapshot.self, from: Data(json.utf8))
-    }
 }

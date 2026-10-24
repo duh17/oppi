@@ -39,7 +39,8 @@ enum SSHTerminalScreenshotGhosttyTheme: String {
 
 /// The real terminal surface over an in-memory connection: a Herdr-like
 /// screen in the grid, and `herdr api snapshot` answered with one blocked agent
-/// so the toolbar overview and its badge render. Status variants also feed
+/// so the toolbar overview and its badge render, beside two saved machines:
+/// `mac-mini` with a working agent and `build box`, which cannot be reached. Status variants also feed
 /// real OSC 7501 bytes through libghostty.
 struct SSHTerminalScreenshotPreview: View {
     var status: SSHTerminalScreenshotStatus = .none
@@ -120,9 +121,9 @@ struct SSHTerminalScreenshotPreview: View {
         guard !channel.connected else { return }
         // Echo what the composer and key strip send, escaped, so a driven run
         // (OPPI_UI_VALIDATE_TAPS) shows the bytes that reached the "PTY".
-        // The default preview is a Herdr client whose focused pane runs pi.
-        // Status variants run a login shell, so only the root record can
-        // pick the input mode.
+        // The default preview is a Herdr client, which starts in direct
+        // typing. Status variants run a login shell, so only the root record
+        // can pick the input mode.
         channel.opened(PreviewConnection(status: status, ghosttyTheme: ghosttyTheme) { [weak channel] bytes in
             let shown = String(decoding: bytes, as: UTF8.self).unicodeScalars.map { scalar -> String in
                 switch scalar.value {
@@ -468,6 +469,17 @@ private actor PreviewConnection: SSHTerminalConnection {
         }
         if command == "sh -s" { // a keybinding file read: none here, so defaults
             return SSHExecResult(output: Data(), errorOutput: Data("No such file".utf8), exitStatus: 1)
+        }
+        if command == HerdrRemote.machinesCommand {
+            let machines = #"[{"id":"aa11","label":"mac-mini","enabled":true},{"id":"bb22","label":"build box","enabled":true}]"#
+            return SSHExecResult(output: Data(machines.utf8), errorOutput: Data(), exitStatus: 0)
+        }
+        if command == HerdrRemote.snapshotCommand(machine: "aa11") {
+            let json = #"{"result":{"snapshot":{"workspaces":[{"workspace_id":"w1","label":"tools","focused":true}],"tabs":[{"tab_id":"w1:t1","workspace_id":"w1","label":"1"}],"agents":[{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","agent":"pi","agent_status":"working","focused":true,"terminal_title_stripped":"Adding skill frontmatter"}]}}}"#
+            return SSHExecResult(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0)
+        }
+        if command == HerdrRemote.snapshotCommand(machine: "bb22") {
+            return SSHExecResult(output: Data(), errorOutput: Data("ssh: connect to host build port 22: Operation timed out".utf8), exitStatus: 255)
         }
         let json = #"{"result":{"snapshot":{"workspaces":[{"workspace_id":"w1","label":"dotfiles","focused":true},{"workspace_id":"w2","label":"oppi","focused":false}],"tabs":[{"tab_id":"w1:t1","workspace_id":"w1","label":"1"},{"tab_id":"w2:t1","workspace_id":"w2","label":"1"}],"agents":[{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","agent":"pi","agent_status":"blocked","focused":true,"terminal_title_stripped":"Allow running rg?"},{"pane_id":"w2:p1","workspace_id":"w2","tab_id":"w2:t1","agent":"claude","agent_status":"working","focused":false,"terminal_title_stripped":"Fixing the build"},{"pane_id":"w2:p2","workspace_id":"w2","tab_id":"w2:t1","agent":"grok","agent_status":"done","focused":false,"terminal_title_stripped":"Summarized the diff"},{"pane_id":"w2:p3","workspace_id":"w2","tab_id":"w2:t1","agent":"codex","agent_status":"idle","focused":false,"terminal_title_stripped":"Ready"}]}}}"#
         return SSHExecResult(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0)

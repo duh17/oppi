@@ -153,7 +153,7 @@ struct HerdrMultiplexer: SSHTerminalMultiplexer {
         snapshot: HerdrSnapshot
     ) throws -> [String] {
         if let workspace = snapshot.workspace(withPaneInAny: matching) {
-            guard let focus = HerdrRemote.focusCommand(.workspace(workspace.workspaceID)) else {
+            guard let focus = HerdrRemote.focusCommand(.workspace(workspace.workspaceID), machine: nil) else {
                 throw HerdrRemoteError.unusableID
             }
             return [focus]

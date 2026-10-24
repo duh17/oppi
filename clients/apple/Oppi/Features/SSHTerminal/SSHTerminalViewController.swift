@@ -326,9 +326,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         _ = channel.workingDirectory
         _ = channel.alerts.notification
         _ = channel.alerts.bell
-        _ = herdr.snapshot
-        _ = herdr.failure
-        _ = herdr.available
+        _ = herdr.machines
         _ = keymap.actions
         _ = keymap.profile
         _ = keymap.userFile
@@ -772,7 +770,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         morePill.apply(
             themeID: themeID,
             herdrAvailable: herdr.available,
-            herdrWaiting: herdr.snapshot?.needsAttention,
+            herdrWaiting: herdr.available ? herdr.needsAttention : nil,
             showsStatus: showsStatus,
             openTerminals: session?.openTerminals().count ?? 0,
             foreground: lastTerminalColors?.foreground.map(UIColor.init)
@@ -840,7 +838,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     private func attentionPending() -> Bool {
         SSHTerminalFloatingControls.attentionPending(
-            herdrWaiting: herdr.snapshot?.needsAttention ?? 0,
+            herdrWaiting: herdr.needsAttention,
             blockedProgram: SSHTerminalProgramStatusPresentation.blockedNotice(
                 store: channel.programStatus,
                 isStopped: programIsStopped
@@ -1325,19 +1323,12 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     // MARK: - Mode
 
-    private var herdrAttached: Bool { SSHTerminalMultiplexerKind.detected(in: channel.command) == .herdr }
     private var detectedMode: SSHTerminalInputMode? {
-        SSHTerminalAgentDetection.mode(
-            root: channel.programStatus.liveRoot, app: channel.programStatus.app(of: ""),
-            herdrAttached: herdrAttached, herdr: herdr.snapshot
-        )
+        SSHTerminalAgentDetection.mode(root: channel.programStatus.liveRoot, app: channel.programStatus.app(of: ""))
     }
     private var inputMode: SSHTerminalInputMode { modeOverride ?? detectedMode ?? .terminal }
     private var keymapProgram: String {
-        SSHTerminalAgentDetection.keymapProgram(
-            root: channel.programStatus.liveRoot, app: channel.programStatus.app(of: ""),
-            herdrAttached: herdrAttached, herdr: herdr.snapshot
-        )
+        SSHTerminalAgentDetection.keymapProgram(root: channel.programStatus.liveRoot, app: channel.programStatus.app(of: ""))
     }
 
     private var programIsStopped: Bool { !channel.connected && !channel.connecting }
@@ -1890,7 +1881,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         if channel.connected {
             openMultiplexerFolderIfNeeded()
             if herdrTask == nil {
-                herdr.attached = herdrAttached
                 herdrTask = Task { [weak self] in
                     guard let self else { return }
                     await self.herdr.run(on: self.channel)

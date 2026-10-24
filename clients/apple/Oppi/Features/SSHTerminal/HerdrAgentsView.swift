@@ -1,8 +1,9 @@
 import UIKit
 
-/// Native overview of the host's Herdr session: workspaces and their agents
-/// with live lifecycle state. Selecting a row asks Herdr to focus it; the
-/// attached Herdr client in the terminal follows.
+/// Native overview of the host's Herdr session and the machines saved in it:
+/// each machine's workspaces and their agents with live lifecycle state.
+/// Selecting a row asks the Herdr server that owns it to focus it; a Herdr
+/// client showing that machine follows.
 final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegate {
     private let monitor: HerdrMonitor
     private let channel: SSHTerminalChannel
@@ -11,12 +12,16 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
     private var isVisible = false
     private var themeID: ThemeID { HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID() }
 
+    /// `machine` is the saved machine's profile ID, nil for Local. Workspace
+    /// and pane IDs are only unique within one machine.
     private enum Item: Hashable {
-        case failure(String)
+        case machine(id: String?, label: String, note: String?, failed: Bool)
+        /// `section` keeps a tap's failure and Local's apart when both say the same.
+        case failure(section: String, message: String)
         case empty
         case loading
-        case workspace(id: String, label: String, focused: Bool)
-        case agent(id: String, name: String, subtitle: String?, tab: String?, focused: Bool, status: SessionStatusKind?)
+        case workspace(machine: String?, id: String, label: String, focused: Bool)
+        case agent(machine: String?, id: String, name: String, subtitle: String?, tab: String?, focused: Bool, status: SessionStatusKind?)
     }
 
     init(monitor: HerdrMonitor, channel: SSHTerminalChannel) {
@@ -100,9 +105,22 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
         var content = UIListContentConfiguration.subtitleCell()
         cell.accessories = []
         cell.accessibilityIdentifier = nil
+        cell.accessibilityValue = nil
+        cell.accessibilityTraits = []
         cell.indentationLevel = 0
         switch item {
-        case .failure(let message):
+        case .machine(_, let label, let note, let failed):
+            content.text = label
+            content.image = UIImage(systemName: "desktopcomputer")
+            content.imageProperties.tintColor = UIColor(palette.comment)
+            content.textProperties.color = UIColor(palette.fg)
+            content.textProperties.font = .preferredFont(forTextStyle: .headline)
+            content.secondaryText = note
+            content.secondaryTextProperties.color = UIColor(failed ? palette.red : palette.comment)
+            content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
+            cell.accessibilityIdentifier = "sshTerminal.herdr.machine"
+            cell.accessibilityTraits = .header
+        case .failure(_, let message):
             content.text = message
             content.textProperties.color = UIColor(palette.red)
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
@@ -114,14 +132,15 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
         case .loading:
             content.text = "Loading…"
             content.textProperties.color = UIColor(palette.comment)
-        case .workspace(_, let label, let focused):
+        case .workspace(_, _, let label, let focused):
             content.text = label
             content.image = UIImage(systemName: "square.stack")
             content.imageProperties.tintColor = UIColor(palette.comment)
             content.textProperties.color = UIColor(palette.fg)
             content.textProperties.font = Self.font(focused: focused)
             cell.accessibilityValue = focused ? "Focused" : ""
-        case .agent(_, let name, let subtitle, let tab, let focused, let kind):
+            cell.accessibilityTraits = .button
+        case .agent(_, _, let name, let subtitle, let tab, let focused, let kind):
             content.text = name
             content.secondaryText = [subtitle, tab.map { "tab \($0)" }].compactMap { $0 }.joined(separator: " · ")
             content.textProperties.color = UIColor(palette.fg)
@@ -140,6 +159,7 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
                 )),
             ]
             cell.accessibilityIdentifier = "sshTerminal.herdr.agent"
+            cell.accessibilityTraits = .button
             cell.accessibilityValue = [kind?.label ?? "Unknown", focused ? "Focused" : nil].compactMap { $0 }.joined(separator: ", ")
             cell.indentationLevel = 1
         }
@@ -157,53 +177,93 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
     private func applySnapshot() {
         guard dataSource != nil else { return }
         var snapshot = NSDiffableDataSourceSnapshot<String, Item>()
-        if let failure = monitor.failure {
-            snapshot.appendSections(["failure"])
-            snapshot.appendItems([.failure(failure)], toSection: "failure")
+        // With no saved machines the sheet is Local's alone and needs no
+        // machine headers; otherwise every machine leads its own workspaces
+        // with its state, so a machine that is down or disabled still shows.
+        let headed = monitor.machines.count > 1
+        if let failure = monitor.focusFailure {
+            snapshot.appendSections(["focus-failure"])
+            snapshot.appendItems([.failure(section: "focus-failure", message: failure)], toSection: "focus-failure")
         }
-        if let snapshotValue = monitor.snapshot {
-            if snapshotValue.workspaces.isEmpty {
+        for machine in monitor.machines {
+            let key = "machine|\(machine.id)|"
+            if headed {
+                snapshot.appendSections([key])
+                snapshot.appendItems([.machine(
+                    id: machine.machineID, label: machine.label,
+                    note: Self.note(machine), failed: machine.failure != nil
+                )], toSection: key)
+            } else if let failure = machine.failure {
+                snapshot.appendSections(["failure"])
+                snapshot.appendItems([.failure(section: "failure", message: failure)], toSection: "failure")
+            }
+            guard let machineSnapshot = machine.snapshot else {
+                if !headed, machine.failure == nil {
+                    snapshot.appendSections(["loading"])
+                    snapshot.appendItems([.loading], toSection: "loading")
+                }
+                continue
+            }
+            if !headed, machineSnapshot.workspaces.isEmpty {
                 snapshot.appendSections(["empty"])
                 snapshot.appendItems([.empty], toSection: "empty")
             }
-            for workspace in snapshotValue.workspaces {
-                snapshot.appendSections([workspace.id])
+            for workspace in machineSnapshot.workspaces {
+                let section = key + workspace.id
+                snapshot.appendSections([section])
                 snapshot.appendItems([
-                    .workspace(id: workspace.workspaceID, label: workspace.label, focused: workspace.focused),
-                ], toSection: workspace.id)
-                for agent in snapshotValue.agents(in: workspace) {
+                    .workspace(machine: machine.machineID, id: workspace.workspaceID, label: workspace.label, focused: workspace.focused),
+                ], toSection: section)
+                for agent in machineSnapshot.agents(in: workspace) {
                     snapshot.appendItems([
                         .agent(
+                            machine: machine.machineID,
                             id: agent.paneID,
                             name: agent.displayName,
                             subtitle: agent.subtitle,
-                            tab: snapshotValue.tabLabel(agent.tabID),
+                            tab: machineSnapshot.tabLabel(agent.tabID),
                             focused: agent.focused,
-                            status: snapshotValue.status(of: agent)
+                            status: machineSnapshot.status(of: agent)
                         ),
-                    ], toSection: workspace.id)
+                    ], toSection: section)
                 }
             }
-        } else if monitor.failure == nil {
-            snapshot.appendSections(["loading"])
-            snapshot.appendItems([.loading], toSection: "loading")
         }
         dataSource?.apply(snapshot, animatingDifferences: false)
+    }
+
+    /// A machine header's second line: why it cannot be read (its rows, if
+    /// any, are what it last reported), else its count of agents that need you.
+    private static func note(_ machine: HerdrMachineState) -> String? {
+        if let failure = machine.failure { return failure }
+        if !machine.enabled { return "Disabled in Herdr" }
+        guard let snapshot = machine.snapshot else { return "Loading…" }
+        if snapshot.workspaces.isEmpty { return "No workspaces" }
+        let waiting = snapshot.needsAttention
+        return waiting > 0 ? "\(waiting) waiting" : nil
+    }
+
+    /// Only workspaces and agents do something when tapped.
+    func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
+        switch dataSource?.itemIdentifier(for: indexPath) {
+        case .workspace?, .agent?: true
+        default: false
+        }
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
         guard let item = dataSource?.itemIdentifier(for: indexPath) else { return }
-        let target: HerdrRemote.FocusTarget?
+        let target: (HerdrRemote.FocusTarget, machine: String?)?
         switch item {
-        case .workspace(let id, _, _): target = .workspace(id)
-        case .agent(let id, _, _, _, _, _): target = .agent(id)
+        case .workspace(let machine, let id, _, _): target = (.workspace(id), machine)
+        case .agent(let machine, let id, _, _, _, _, _): target = (.agent(id), machine)
         default: target = nil
         }
         guard let target else { return }
         Task {
-            await monitor.focus(target, on: channel)
-            if monitor.failure == nil, isVisible { Router.finish(self) }
+            let focused = await monitor.focus(target.0, machine: target.machine, on: channel)
+            if focused, isVisible { Router.finish(self) } else { applySnapshot() }
         }
     }
 }

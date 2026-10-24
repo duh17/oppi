@@ -1465,11 +1465,108 @@ struct SSHTerminalTests {
         }
         // The focus call is one quoted word with the ID escaped, not the ID in
         // the clear; an ID that is not Herdr's own is never sent back.
-        let focus = try #require(HerdrRemote.focusCommand(.agent("w1:p2")))
+        let focus = try #require(HerdrRemote.focusCommand(.agent("w1:p2"), machine: nil))
         #expect(focus.hasPrefix("sh -c '"))
         #expect(focus.contains("exec herdr agent focus \"$i\""))
         #expect(focus.contains(SSHTerminalRemoteShell.octalEncoded("w1:p2")))
-        #expect(HerdrRemote.focusCommand(.workspace("w1; rm -rf ~")) == nil)
+        #expect(HerdrRemote.focusCommand(.workspace("w1; rm -rf ~"), machine: nil) == nil)
+    }
+
+    /// Every machine saved in the host's Herdr shows beside Local with its own
+    /// state: one that is down reports its failure without hiding the others,
+    /// a disabled one is listed but never asked, and waiting agents add up. A
+    /// repeated or empty profile ID is dropped, since the sheet keys rows by it.
+    @Test func herdrReadsLocalAndEverySavedMachine() async throws {
+        func ok(_ json: String) -> SSHExecResult { .init(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0) }
+        func snapshot(_ workspace: String, status: String) -> SSHExecResult {
+            ok(#"{"result":{"snapshot":{"workspaces":[{"workspace_id":"w1","label":"\#(workspace)","focused":true}],"tabs":[],"agents":[{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","agent":"pi","agent_status":"\#(status)","focused":true}]}}}"#)
+        }
+        let fixture = TerminalConnectionFixture()
+        await fixture.setRunResult(ok(#"""
+        [{"id":"aa11","label":"mac-mini","target":"mac-mini","session":"default","enabled":true,"selected":true},
+         {"id":"bb22","label":"build box","target":"build","session":"default","enabled":true,"selected":false},
+         {"id":"cc33","label":"old","target":"old","session":"default","enabled":false,"selected":false},
+         {"id":"aa11","label":"copy","target":"mac-mini","session":"other","enabled":true,"selected":false},
+         {"id":"","label":"blank","target":"x","session":"default","enabled":true,"selected":false}]
+        """#), for: HerdrRemote.machinesCommand)
+        await fixture.setRunResult(snapshot("oppi", status: "blocked"), for: "herdr api snapshot")
+        await fixture.setRunResult(snapshot("tools", status: "blocked"), for: try #require(HerdrRemote.snapshotCommand(machine: "aa11")))
+        await fixture.setRunResult(
+            .init(output: Data(), errorOutput: Data("ssh: connect to host build port 22: Operation timed out".utf8), exitStatus: 255),
+            for: try #require(HerdrRemote.snapshotCommand(machine: "bb22"))
+        )
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        defer { channel.close(reason: "done") }
+        let monitor = HerdrMonitor()
+
+        await monitor.refresh(on: channel)
+        #expect(await waitForMainActorCondition { monitor.machines.count == 4 && monitor.machines[2].failure != nil }, "every machine answered")
+
+        #expect(monitor.machines.map(\.label) == ["Local", "mac-mini", "build box", "old"])
+        #expect(monitor.machines.map { $0.snapshot?.workspaces.first?.label } == ["oppi", "tools", nil, nil])
+        #expect(monitor.machines[2].failure == "ssh: connect to host build port 22: Operation timed out")
+        #expect(monitor.machines[3].enabled == false && monitor.machines[3].failure == nil)
+        #expect(monitor.needsAttention == 2)
+        #expect(monitor.available)
+        let asked = await fixture.runs.map(\.command)
+        #expect(!asked.contains(try #require(HerdrRemote.snapshotCommand(machine: "cc33"))), "a disabled machine is not read")
+
+        // mac-mini stops answering: its last report stays under the error,
+        // but its waiting agent no longer counts.
+        await fixture.setRunResult(
+            .init(output: Data(), errorOutput: Data("ssh: connect to host mac-mini port 22: Connection refused".utf8), exitStatus: 255),
+            for: try #require(HerdrRemote.snapshotCommand(machine: "aa11"))
+        )
+        await monitor.refresh(on: channel)
+        #expect(await waitForMainActorCondition { monitor.machines[1].failure != nil })
+        #expect(monitor.machines[1].snapshot?.workspaces.first?.label == "tools")
+        #expect(monitor.machines[1].failure == "ssh: connect to host mac-mini port 22: Connection refused")
+        #expect(monitor.needsAttention == 1)
+
+        // A Herdr without saved machines answers the list with its usage: Local alone.
+        let older = TerminalConnectionFixture()
+        await older.setRunResult(snapshot("oppi", status: "idle"), for: "herdr api snapshot")
+        await older.setRunResult(.init(output: Data(), errorOutput: Data("error: unrecognized subcommand 'machine'".utf8), exitStatus: 2),
+                                 for: HerdrRemote.machinesCommand)
+        let olderChannel = try SSHTerminalChannel()
+        olderChannel.opened(older)
+        defer { olderChannel.close(reason: "done") }
+        let olderMonitor = HerdrMonitor()
+        await olderMonitor.refresh(on: olderChannel)
+        await olderMonitor.refresh(on: olderChannel)
+        #expect(olderMonitor.machines.map(\.label) == ["Local"])
+        #expect(olderMonitor.machines[0].failure == nil && olderMonitor.available)
+        let listed = await older.runs.filter { $0.command == HerdrRemote.machinesCommand }.count
+        #expect(listed == 1, "a Herdr without saved machines is asked once")
+    }
+
+    /// A saved machine that stops answering (a laptop asleep) must not slow
+    /// Local: the poll waits for Local only, and the hung machine is not asked
+    /// again while its read is still out.
+    @Test func aHungMachineDoesNotHoldUpLocal() async throws {
+        let ok = { (label: String) in
+            SSHExecResult(output: Data(#"{"result":{"snapshot":{"workspaces":[{"workspace_id":"w1","label":"\#(label)","focused":true}],"tabs":[],"agents":[]}}}"#.utf8), errorOutput: Data(), exitStatus: 0)
+        }
+        let fixture = TerminalConnectionFixture()
+        let laptop = try #require(HerdrRemote.snapshotCommand(machine: "aa11"))
+        await fixture.setRunResult(.init(output: Data(#"[{"id":"aa11","label":"laptop","enabled":true}]"#.utf8), errorOutput: Data(), exitStatus: 0),
+                                   for: HerdrRemote.machinesCommand)
+        await fixture.setRunResult(ok("oppi"), for: "herdr api snapshot")
+        await fixture.hang(laptop)
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        defer { channel.close(reason: "done") }
+        let monitor = HerdrMonitor()
+
+        await monitor.refresh(on: channel)
+        await fixture.setRunResult(ok("renamed"), for: "herdr api snapshot")
+        await monitor.refresh(on: channel)
+
+        #expect(monitor.machines.map { $0.snapshot?.workspaces.first?.label } == ["renamed", nil], "Local refreshed twice while the laptop hangs")
+        #expect(await fixture.runs.filter { $0.command == laptop }.count == 1, "the hung machine is asked once")
+        await fixture.releaseHangs()
+        #expect(await waitForMainActorCondition { monitor.machines[1].failure != nil }, "its timeout shows once it gives up")
     }
 
     @Test func keymapSpecsInEachSyntaxEncodeAsTerminalKeys() async throws {
@@ -2407,11 +2504,28 @@ private actor TerminalConnectionFixture: SSHTerminalConnection {
     }
     private(set) var runs = [(command: String, input: Data)]()
     private var runResult: SSHExecResult?
+    private var commandResults: [String: SSHExecResult] = [:]
     func setRunResult(_ result: SSHExecResult) { runResult = result }
+    /// The answer to one exact command; every other command gets `runResult`.
+    func setRunResult(_ result: SSHExecResult, for command: String) { commandResults[command] = result }
+    /// Commands that get no answer until `releaseHangs()`, as a host that
+    /// stopped responding would leave them.
+    private var hanging: Set<String> = []
+    private var hung: [CheckedContinuation<Void, Never>] = []
+    func hang(_ command: String) { hanging.insert(command) }
+    func releaseHangs() {
+        hanging.removeAll()
+        hung.forEach { $0.resume() }
+        hung.removeAll()
+    }
     func run(_ command: String, input: Data) async throws -> SSHExecResult {
         runs.append((command, input))
-        guard let runResult else { throw SSHConnectionError.commandRequestRejected }
-        return runResult
+        if hanging.contains(command) {
+            await withCheckedContinuation { hung.append($0) }
+            throw SSHConnectionError.requestTimedOut
+        }
+        guard let result = commandResults[command] ?? runResult else { throw SSHConnectionError.commandRequestRejected }
+        return result
     }
     private var alive = true
     func setAlive(_ value: Bool) { alive = value }
