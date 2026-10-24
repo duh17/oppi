@@ -66,7 +66,7 @@ describe("architecture layer rule helpers", () => {
       for (const file of [
         ...forbidden,
         "clients/apple/Oppi/App/AppOpener.swift",
-        "clients/apple/Oppi/Features/Settings/TailnetSettingsView.swift",
+        "clients/apple/Oppi/Features/Settings/TailnetSettingsViewController.swift",
       ]) {
         write(
           join(repoRoot, file),

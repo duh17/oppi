@@ -332,9 +332,11 @@ extension UICellAccessory {
     /// A trailing pop-up button showing the current choice.
     static func settingsPopUpMenu(
         identifier: String,
+        isEnabled: Bool = true,
         options: [(title: String, selected: Bool, action: () -> Void)]
     ) -> UICellAccessory {
         let button = UIButton(type: .system)
+        button.isEnabled = isEnabled
         button.showsMenuAsPrimaryAction = true
         button.changesSelectionAsPrimaryAction = true
         button.accessibilityIdentifier = identifier

@@ -111,6 +111,12 @@ targets:
       - path: Oppi/Resources/PrivacyInfo.xcprivacy
         type: file
         buildPhase: resources
+      # Install & Start sends this over SSH (`SSHInstallScript`). The repo-root
+      # script is the one source; `curl … | sh` runs the same file.
+      - path: ../../install.sh
+        group: Installer
+        type: file
+        buildPhase: resources
       - path: OppiCore
         type: group
       - path: Shared

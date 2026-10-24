@@ -321,7 +321,7 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
     }
 
     private var tailscaleSummary: String {
-        TailnetSettingsView.statusLabel(TailnetNodeController.shared.state)
+        TailnetSettingsViewController.statusLabel(TailnetNodeController.shared.state)
     }
 
     private var experimentsSummary: String {
@@ -355,7 +355,7 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         case .voice:
             navigator.push { SettingsVoicePage() }
         case .tailscale:
-            navigator.push { TailnetSettingsView() }
+            navigator.push(TailnetSettingsViewController(coordinator: coordinator))
         case .sshTerminal:
             navigator.push(SSHTerminalHostListViewController())
         case .privacy:

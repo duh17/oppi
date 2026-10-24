@@ -176,11 +176,17 @@ struct SSHConnection: Sendable {
     /// authentication, and collects its output. `input` is written to the
     /// command's stdin, which then closes. Stdout and stderr together may not
     /// exceed `maximumOutputBytes`.
+    ///
+    /// With `onOutput`, stdout is streamed instead of collected: each chunk is
+    /// handed over in order on the connection's event loop as it arrives, and
+    /// the result's `output` is empty. Stderr is still collected, and the
+    /// limit still counts every byte.
     func run(
         _ command: String,
         input: Data = Data(),
         maximumOutputBytes: Int,
-        timeout: TimeAmount
+        timeout: TimeAmount,
+        onOutput: (@Sendable (Data) -> Void)? = nil
     ) async throws -> SSHExecResult {
         let parent = channel
         let result = parent.eventLoop.makePromise(of: SSHExecResult.self)
@@ -197,7 +203,10 @@ struct SSHConnection: Sendable {
                 ssh.createChannel(opened, channelType: .session) { child, _ in
                     child.eventLoop.makeCompletedFuture {
                         try child.pipeline.syncOperations.addHandler(
-                            ExecHandler(command: command, input: input, limit: maximumOutputBytes, result: result)
+                            ExecHandler(
+                                command: command, input: input, limit: maximumOutputBytes,
+                                onOutput: onOutput, result: result
+                            )
                         )
                     }
                 }
@@ -348,8 +357,8 @@ private final class SignInWatcher: ChannelInboundHandler {
 }
 
 /// One exec request without a PTY. Once the command starts, `input` is written
-/// to stdin and stdin is closed; stdout and stderr are collected until the
-/// server closes the channel.
+/// to stdin and stdin is closed; stdout (unless streamed to `onOutput`) and
+/// stderr are collected until the server closes the channel.
 private final class ExecHandler: ChannelInboundHandler {
     typealias InboundIn = SSHChannelData
     typealias OutboundOut = SSHChannelData
@@ -357,15 +366,24 @@ private final class ExecHandler: ChannelInboundHandler {
     private let command: String
     private let input: Data
     private let limit: Int
+    private let onOutput: (@Sendable (Data) -> Void)?
     private let result: EventLoopPromise<SSHExecResult>
     private var output = ByteBuffer()
     private var errorOutput = ByteBuffer()
+    private var received = 0
     private var exitStatus: Int?
 
-    init(command: String, input: Data, limit: Int, result: EventLoopPromise<SSHExecResult>) {
+    init(
+        command: String,
+        input: Data,
+        limit: Int,
+        onOutput: (@Sendable (Data) -> Void)?,
+        result: EventLoopPromise<SSHExecResult>
+    ) {
         self.command = command
         self.input = input
         self.limit = limit
+        self.onOutput = onOutput
         self.result = result
     }
 
@@ -413,12 +431,19 @@ private final class ExecHandler: ChannelInboundHandler {
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let message = unwrapInboundIn(data)
         guard case .byteBuffer(var bytes) = message.data else { return }
-        guard output.readableBytes + errorOutput.readableBytes + bytes.readableBytes <= limit else {
+        received += bytes.readableBytes
+        guard received <= limit else {
             result.fail(SSHConnectionError.commandOutputTooLarge)
             context.close(promise: nil)
             return
         }
-        if message.type == .channel { output.writeBuffer(&bytes) } else { errorOutput.writeBuffer(&bytes) }
+        if message.type != .channel {
+            errorOutput.writeBuffer(&bytes)
+        } else if let onOutput {
+            onOutput(bytes.withUnsafeReadableBytes { Data($0) })
+        } else {
+            output.writeBuffer(&bytes)
+        }
     }
 
     func errorCaught(context: ChannelHandlerContext, error: any Error) {

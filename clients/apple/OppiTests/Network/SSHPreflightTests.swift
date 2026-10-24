@@ -67,11 +67,12 @@ struct SSHPreflightProbeTests {
     private static func output(
         node: String = "/opt/homebrew/bin/node",
         nodeVersion: String = "v22.19.0",
-        npm: String = "/opt/homebrew/bin/npm",
+        oppiNodeVersion: String = "",
         git: String = "/opt/homebrew/bin/git",
         oppi: String = "",
         tailscale: String = "/usr/local/bin/tailscale",
         oppiStatus: String? = nil,
+        oppiAnswers: Bool = false,
         clt: String = "1",
         end: Bool = true
     ) -> String {
@@ -82,13 +83,13 @@ struct SSHPreflightProbeTests {
         arch=arm64
         macos=26.1
         node=\(node)
-        npm=\(npm)
         git=\(git)
         oppi=\(oppi)
         tailscale=\(tailscale)
         node_version=\(nodeVersion)
+        oppi_node_version=\(oppiNodeVersion)
         clt=\(clt)
-        \(oppiStatus.map { "oppi_status=\($0)" } ?? "")
+        \(oppiStatus.map { "oppi_status=\($0)\noppi_health=\(oppiAnswers ? 1 : 0)" } ?? "")
         \(end ? "end=1" : "")
         """
     }
@@ -97,33 +98,34 @@ struct SSHPreflightProbeTests {
         Dictionary(uniqueKeysWithValues: report.checks.map { ($0.title, $0.status) })
     }
 
-    @Test func readyMacReportsEveryPrerequisite() throws {
+    @Test func macWithoutOppiOffersInstall() throws {
         let report = try SSHPreflightProbe.parse(Self.output())
         #expect(report.user == "chen")
         #expect(report.isMacOS)
         #expect(statuses(report) == [
-            "System": .ok, "Node.js": .ok, "npm": .ok, "git": .ok, "Tailscale CLI": .ok,
-            "Oppi": .info, "Tailscale HTTPS": .info,
+            "System": .ok, "Node.js": .ok, "git": .ok, "Tailscale CLI": .ok, "Oppi": .installs,
         ])
-        #expect(!report.isReadyToPair)
+        #expect(report.nextStep == .install)
         #expect(report.checks.first { $0.title == "System" }?.detail == "macOS 26.1 (arm64)")
     }
 
-    @Test func installedOppiIsReported() throws {
+    @Test func installedButStoppedOppiOffersInstallToStartIt() throws {
         let report = try SSHPreflightProbe.parse(Self.output(oppi: "/opt/homebrew/bin/oppi"))
         #expect(report.oppiPath == "/opt/homebrew/bin/oppi")
-        #expect(statuses(report)["Oppi"] == .ok)
+        #expect(statuses(report)["Oppi"] == .installs)
+        #expect(report.nextStep == .install)
     }
 
-    @Test func freshMacLacksNodeNpmAndRealGit() throws {
-        // sshd PATH on a new Mac: only the /usr/bin/git stub, no Command Line Tools.
+    @Test func freshMacWithOnlyRemoteLoginHasAClearPathAndNoBlockers() throws {
+        // sshd PATH on a new Mac: only the /usr/bin/git stub, no Command Line
+        // Tools, no Node.js, no Tailscale CLI. None of it blocks Install & Start.
         let report = try SSHPreflightProbe.parse(
-            Self.output(node: "", nodeVersion: "", npm: "", git: "/usr/bin/git", clt: "0")
+            Self.output(node: "", nodeVersion: "", git: "/usr/bin/git", tailscale: "", clt: "0")
         )
         #expect(statuses(report) == [
-            "System": .ok, "Node.js": .missing, "npm": .missing, "git": .missing, "Tailscale CLI": .ok,
-            "Oppi": .info, "Tailscale HTTPS": .info,
+            "System": .ok, "Node.js": .installs, "git": .info, "Tailscale CLI": .info, "Oppi": .installs,
         ])
+        #expect(report.nextStep == .install)
     }
 
     @Test func systemGitCountsOnceCommandLineToolsAreInstalled() throws {
@@ -132,69 +134,75 @@ struct SSHPreflightProbeTests {
     }
 
     @Test(arguments: [
-        ("v22.18.9", SSHPreflightCheck.Status.missing),
+        ("v22.18.9", SSHPreflightCheck.Status.installs),
         ("v22.19.0", .ok),
         ("v22.19.0-nightly2025", .ok),
         ("v23.0.0", .ok),
-        ("v20.19.4", .missing),
-        ("garbage", .missing),
+        ("v20.19.4", .installs),
+        ("garbage", .installs),
     ])
     func nodeVersionMustMeetServerEngines(version: String, expected: SSHPreflightCheck.Status) throws {
         let report = try SSHPreflightProbe.parse(Self.output(nodeVersion: version))
         #expect(statuses(report)["Node.js"] == expected)
     }
 
+    @Test func oppisOwnNodeCountsWhenTheUsersIsTooOld() throws {
+        let report = try SSHPreflightProbe.parse(Self.output(nodeVersion: "v20.11.0", oppiNodeVersion: "v22.20.0"))
+        #expect(statuses(report)["Node.js"] == .ok)
+        #expect(report.checks.first { $0.title == "Node.js" }?.detail.hasPrefix("v22.20.0") == true)
+    }
+
     // `oppi status --json` as the server prints it: pretty-printed, wrapped in `{ok, data}`.
     private static let oppiStatusLine = #"{ "ok": true, "data": { "status": { "paired": true, "dataDir": "/Users/chen/.config/oppi", "#
         + #""server": { "host": "0.0.0.0", "port": 7749, "transport": "https", "tlsMode": "tailscale", "trustedPeers": [] } } } }"#
 
-    @Test func macServingTailscaleHTTPSIsReadyToPair() throws {
+    @Test func macAnsweringWithTailscaleHTTPSOffersPair() throws {
         let report = try SSHPreflightProbe.parse(
-            Self.output(oppi: "/opt/homebrew/bin/oppi", oppiStatus: Self.oppiStatusLine)
+            Self.output(oppi: "/opt/homebrew/bin/oppi", oppiStatus: Self.oppiStatusLine, oppiAnswers: true)
         )
         #expect(report.oppiStatus == SSHOppiStatus(json: Self.oppiStatusLine))
         #expect(report.oppiStatus?.paired == true)
         #expect(report.oppiStatus?.port == 7749)
+        #expect(statuses(report)["Oppi"] == .ok)
         #expect(statuses(report)["Tailscale HTTPS"] == .ok)
-        #expect(statuses(report)["Tailscale CLI"] == .ok)
-        #expect(report.isReadyToPair)
+        #expect(report.nextStep == .pair)
     }
 
-    @Test(arguments: [
-        #"{"ok":true,"data":{"status":{"paired":true,"server":{"port":7749,"transport":"http","tlsMode":"disabled"}}}}"#,
-        #"{"ok":true,"data":{"status":{"paired":true,"server":{"port":7749,"transport":"https","tlsMode":"self-signed"}}}}"#,
-    ])
-    func serverWithoutTailscaleCertificateFailsTheHTTPSCheck(json: String) throws {
-        let report = try SSHPreflightProbe.parse(Self.output(oppi: "/opt/homebrew/bin/oppi", oppiStatus: json))
-        #expect(statuses(report)["Tailscale HTTPS"] == .missing)
-        #expect(!report.isReadyToPair)
-    }
-
-    @Test func missingTailscaleCLIBlocksReadiness() throws {
+    @Test func httpsConfigWhoseServerDoesNotAnswerIsNotPairable() throws {
         let report = try SSHPreflightProbe.parse(
-            Self.output(oppi: "/opt/homebrew/bin/oppi", tailscale: "", oppiStatus: Self.oppiStatusLine)
+            Self.output(oppi: "/opt/homebrew/bin/oppi", oppiStatus: Self.oppiStatusLine, oppiAnswers: false)
         )
-        #expect(statuses(report)["Tailscale CLI"] == .missing)
-        #expect(!report.isReadyToPair)
+        #expect(!report.canPairOverSSH)
+        #expect(report.nextStep == .install)
+        #expect(statuses(report)["Oppi"] == .installs)
+        #expect(statuses(report)["Tailscale HTTPS"] == nil)
+    }
+
+    @Test func plainHTTPOppiIsNotPairable() throws {
+        let http = #"{"ok":true,"data":{"status":{"paired":true,"server":{"port":7749,"transport":"http","tlsMode":"disabled"}}}}"#
+        let report = try SSHPreflightProbe.parse(Self.output(oppi: "/opt/homebrew/bin/oppi", oppiStatus: http, oppiAnswers: true))
+        #expect(report.nextStep == .install)
+    }
+
+    @Test func ownCertificateAndNoTailscaleCLIStillPairOverSSH() throws {
+        let selfSigned = #"{"ok":true,"data":{"status":{"paired":true,"server":{"port":7749,"transport":"https","tlsMode":"self-signed"}}}}"#
+        let report = try SSHPreflightProbe.parse(
+            Self.output(oppi: "/opt/homebrew/bin/oppi", tailscale: "", oppiStatus: selfSigned, oppiAnswers: true)
+        )
+        #expect(report.nextStep == .pair)
+        #expect(statuses(report)["Tailscale HTTPS"] == .info)
+        #expect(statuses(report)["Tailscale CLI"] == .info)
     }
 
     @Test(arguments: [
         "not json", "{\"ok\":true,\"data\":", "[1,2]", "null",
         #"{"paired":true,"server":{"port":7749,"transport":"https","tlsMode":"tailscale"}}"#,
     ])
-    func unreadableOppiStatusIsInformationalNotFatal(json: String) throws {
-        let report = try SSHPreflightProbe.parse(Self.output(oppi: "/opt/homebrew/bin/oppi", oppiStatus: json))
+    func unreadableOppiStatusIsNotFatalAndOffersInstall(json: String) throws {
+        let report = try SSHPreflightProbe.parse(Self.output(oppi: "/opt/homebrew/bin/oppi", oppiStatus: json, oppiAnswers: true))
         #expect(report.oppiStatus == nil)
-        #expect(statuses(report)["Tailscale HTTPS"] == .info)
-        #expect(statuses(report)["Oppi"] == .ok)
-        #expect(!report.isReadyToPair)
-    }
-
-    @Test func missingCheckBlocksReadinessEvenWhenOppiServesTailscaleHTTPS() throws {
-        let report = try SSHPreflightProbe.parse(
-            Self.output(npm: "", oppi: "/opt/homebrew/bin/oppi", oppiStatus: Self.oppiStatusLine)
-        )
-        #expect(!report.isReadyToPair)
+        #expect(statuses(report)["Oppi"] == .installs)
+        #expect(report.nextStep == .install)
     }
 
     @Test func statusWithoutEndMarkerIsNotTrusted() {
@@ -230,7 +238,6 @@ struct SSHPreflightProbeTests {
         macos=
         os=Ubuntu 24.04.1 LTS
         node=/usr/bin/node
-        npm=/usr/bin/npm
         git=/usr/bin/git
         oppi=
         tailscale=/usr/bin/tailscale
@@ -260,7 +267,6 @@ struct SSHPreflightProbeTests {
         macos=
         os=
         node=
-        npm=
         git=
         oppi=
         tailscale=
@@ -271,6 +277,7 @@ struct SSHPreflightProbeTests {
         #expect(report.osRelease == nil)
         #expect(report.checks.first { $0.title == "System" }?.detail == "Linux 6.8.0-alpine (aarch64)")
         #expect(statuses(report)["System"] == .ok)
+        #expect(report.nextStep == .install)
     }
 
     @Test func linuxServingTailscaleHTTPSIsReadyToPair() throws {
@@ -282,16 +289,15 @@ struct SSHPreflightProbeTests {
         os=Debian GNU/Linux 12 (bookworm)
         node=/usr/bin/node
         node_version=v22.19.0
-        npm=/usr/bin/npm
         git=/usr/bin/git
         oppi=/usr/local/bin/oppi
         tailscale=/usr/bin/tailscale
         clt=0
         oppi_status=\(Self.oppiStatusLine)
+        oppi_health=1
         end=1
         """)
-        #expect(report.isReadyToPair)
-        #expect(report.canPairOverSSH)
+        #expect(report.nextStep == .pair)
     }
 
     @Test(arguments: ["Windows_NT", "FreeBSD"])
@@ -304,7 +310,6 @@ struct SSHPreflightProbeTests {
         macos=
         os=
         node=/usr/bin/node
-        npm=/usr/bin/npm
         git=/usr/bin/git
         oppi=
         tailscale=
@@ -313,7 +318,10 @@ struct SSHPreflightProbeTests {
         end=1
         """)
         #expect(!report.isSupportedHost)
+        #expect(report.nextStep == .unsupported)
         #expect(statuses(report)["System"] == .missing)
+        // Install & Start is not offered, so nothing claims it would add Oppi.
+        #expect(!report.checks.contains { $0.status == .installs })
         #expect(report.checks.first { $0.title == "System" }?.detail.contains("supports macOS and Linux") == true)
     }
 }
@@ -347,16 +355,15 @@ struct SSHPairMintTests {
         macos=26.1
         node=/opt/homebrew/bin/node
         node_version=v22.19.0
-        npm=/opt/homebrew/bin/npm
         git=/usr/bin/git
         oppi=/usr/local/bin/oppi
         tailscale=
         clt=1
         oppi_status=\(Self.httpsStatus)
+        oppi_health=1
         end=1
         """)
         #expect(report.canPairOverSSH)
-        #expect(!report.isReadyToPair)
     }
 
     @Test func pairScriptIsFixedAndDoesNotTakeSecrets() {

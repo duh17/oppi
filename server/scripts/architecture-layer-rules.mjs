@@ -146,7 +146,7 @@ const IOS_SYSTEM_URL_OPEN_ALLOWED_FILES = new Set([
 ]);
 const IOS_IN_APP_BROWSER_ALLOWED_FILES = new Set([
   "clients/apple/Oppi/App/AppOpener.swift",
-  "clients/apple/Oppi/Features/Settings/TailnetSettingsView.swift", // Authentication always stays in-app.
+  "clients/apple/Oppi/Features/Settings/TailnetSettingsViewController.swift", // Authentication always stays in-app.
 ]);
 // App Lock parking has one caller, so every open waits the same way.
 const IOS_UNLOCK_DEFERRAL_ALLOWED_FILES = new Set([

@@ -355,9 +355,6 @@
     "clients/apple/Oppi/Features/Settings/QuickCommentsSettingsView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Settings/SSHPreflightView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Settings/ScopedLockToggle.swift": {
       "import SwiftUI": 1
     },
@@ -380,9 +377,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsVoicePage.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Settings/TailnetSettingsView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Skills/ServerCatalogServerRow.swift": {

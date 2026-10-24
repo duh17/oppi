@@ -146,13 +146,13 @@ struct TailnetPeer: Equatable, Identifiable, Sendable {
     }
 
     /// SSH setup row. The label follows the OS Tailscale reported, before the
-    /// probe has run. macOS and Linux both get a check; other kernels do too,
-    /// and the probe says they are unsupported.
+    /// check has run. macOS and Linux both get one; other kernels do too, and
+    /// the check says they are unsupported.
     var setupCheckTitle: String {
         switch os?.lowercased() {
-        case "macos": "Check this Mac"
-        case "linux": "Check this Linux machine"
-        default: "Check this machine"
+        case "macos": "Set Up This Mac"
+        case "linux": "Set Up This Linux Machine"
+        default: "Set Up This Machine"
         }
     }
 

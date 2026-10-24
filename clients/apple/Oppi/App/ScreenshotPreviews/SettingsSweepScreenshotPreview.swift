@@ -4,7 +4,9 @@ import SwiftUI
 /// The settings-like pages outside App, Server, and Workspace Settings: the
 /// real views over one fixture server, with API pages answered by
 /// `SettingsSweepFixtureURLProtocol`. `SCREENSHOT_SWEEP_PAGE` picks the page:
-/// `tailscale`, `ssh-preflight`, `ssh-preflight-result`, `ssh-preflight-mismatch`,
+/// `tailscale`, `ssh-preflight`, `ssh-preflight-result` (Oppi answers: Pair),
+/// `ssh-preflight-install` (a fresh Mac: Install & Start),
+/// `ssh-preflight-installing`, `ssh-preflight-install-failed`, `ssh-preflight-mismatch`,
 /// `ssh-hosts`, `ssh-hosts-empty` (the list with no saved host), `ssh-setup`,
 /// `mcp`, `mcp-workspace`,
 /// `mcp-detail`, `mcp-add`, `quick-comments`, `quick-comment-editor`,
@@ -229,6 +231,17 @@ struct SettingsSweepScreenshotPreview: View {
         case "ssh-setup":
             RouterPreviewControllerStack(root: root) { SSHTerminalSetupViewController() }
                 .ignoresSafeArea()
+        case "tailscale":
+            RouterPreviewControllerStack(root: root) { [coordinator] in
+                TailnetSettingsViewController(coordinator: coordinator, previewProbes: Self.tailnetProbes)
+            }
+            .ignoresSafeArea()
+        case "ssh-preflight", "ssh-preflight-result", "ssh-preflight-install", "ssh-preflight-installing",
+             "ssh-preflight-install-failed", "ssh-preflight-mismatch":
+            RouterPreviewControllerStack(root: root) { [coordinator, page] in
+                Self.sshPreflightPage(page, coordinator: coordinator)
+            }
+            .ignoresSafeArea()
         case "theme-import":
             RouterPreviewControllerStack(root: root) { ThemeImportViewController(root: root) }
                 .ignoresSafeArea()
@@ -274,17 +287,50 @@ struct SettingsSweepScreenshotPreview: View {
         .ignoresSafeArea()
     }
 
+    private static func sshPreflightPage(_ page: String, coordinator: ConnectionCoordinator) -> UIViewController {
+        let host = "mac-studio.tail1234.ts.net"
+        switch page {
+        case "ssh-preflight-result":
+            return SSHPreflightViewController(coordinator: coordinator, previewReport: sshReport, host: host)
+        case "ssh-preflight-install":
+            return SSHPreflightViewController(coordinator: coordinator, previewReport: freshMacReport, host: host)
+        case "ssh-preflight-installing":
+            return SSHPreflightViewController(
+                coordinator: coordinator, previewReport: freshMacReport, host: host,
+                installProgress: installProgress(failing: false)
+            )
+        case "ssh-preflight-install-failed":
+            return SSHPreflightViewController(
+                coordinator: coordinator, previewReport: freshMacReport, host: host,
+                installProgress: installProgress(failing: true),
+                installFailure: .installFailed(code: "npm", detail: "npm install exited 1: ETIMEDOUT registry.npmjs.org")
+            )
+        case "ssh-preflight-mismatch":
+            return SSHPreflightViewController(
+                coordinator: coordinator,
+                previewFailure: .hostKeyMismatch(saved: hostKeyA, presented: hostKeyB),
+                host: host
+            )
+        default:
+            return SSHPreflightViewController(coordinator: coordinator)
+        }
+    }
+
+    /// Node.js downloaded, Oppi's package mid-install (or failed there).
+    private static func installProgress(failing: Bool) -> SSHInstallProgress {
+        var progress = SSHInstallProgress()
+        progress.apply(.step(.node, .begin, detail: "Downloading Node.js v22.20.0 (darwin-arm64)"))
+        progress.apply(.step(.node, .ok, detail: "Node.js v22.20.0 in ~/.oppi/runtime/node"))
+        progress.apply(.step(.oppi, .begin, detail: "Installing oppi-server 0.31.0"))
+        if failing {
+            progress.apply(.error(code: "npm", detail: "npm install exited 1: ETIMEDOUT registry.npmjs.org"))
+        }
+        return progress
+    }
+
     @ViewBuilder
     private var pushedPage: some View {
         switch page {
-        case "ssh-preflight": SSHPreflightView()
-        case "ssh-preflight-result":
-            SSHPreflightView(previewReport: Self.sshReport, host: "mac-studio.tail1234.ts.net")
-        case "ssh-preflight-mismatch":
-            SSHPreflightView(
-                previewFailure: .hostKeyMismatch(saved: Self.hostKeyA, presented: Self.hostKeyB),
-                host: "mac-studio.tail1234.ts.net"
-            )
         case "mcp": McpServersView(scopeId: McpScopeSnapshot.globalId)
         case "mcp-detail":
             McpServerDetailView(
@@ -306,7 +352,8 @@ struct SettingsSweepScreenshotPreview: View {
         case "dictionary-workspace": DictationDictionaryView(workspaceId: "preview-ws")
         case "skill-detail":
             ServerSkillDetailView(target: .init(serverId: server.id, kind: .skill, resourceId: "release"))
-        default: TailnetSettingsView(previewProbes: Self.tailnetProbes)
+        default:
+            Text("Unknown SCREENSHOT_SWEEP_PAGE \(page)")
         }
     }
 
@@ -315,12 +362,23 @@ struct SettingsSweepScreenshotPreview: View {
     private static let hostKeyA = SSHHostKey(openSSH: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB0Rj5G0b3Y8Hn0m6WmTz7J1cC0Hf3p1G7f3vJmP7oXw")
     private static let hostKeyB = SSHHostKey(openSSH: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJq2m1m3m8k7mQ4o5r1y2u3i4o5p6a7s8d9f0g1h2j3k")
 
+    /// Oppi installed and answering over HTTPS: the result offers Pair.
     private static let sshReport = SSHPreflightReport(
         user: "chenda", kernel: "Darwin", release: "25.0.0", arch: "arm64",
         macOSVersion: "26.0", osRelease: nil,
-        nodePath: "/opt/homebrew/bin/node", nodeVersion: "v24.1.0", npmPath: "/opt/homebrew/bin/npm",
-        gitPath: "/usr/bin/git", oppiPath: nil, tailscalePath: "/usr/local/bin/tailscale",
-        oppiStatus: nil, hasCommandLineTools: true
+        nodePath: "/opt/homebrew/bin/node", nodeVersion: "v24.1.0", oppiNodeVersion: nil,
+        gitPath: "/usr/bin/git", oppiPath: "/Users/chenda/.oppi/bin/oppi", tailscalePath: "/usr/local/bin/tailscale",
+        oppiStatus: SSHOppiStatus(json: #"{"ok":true,"data":{"status":{"paired":false,"server":{"port":7749,"transport":"https","tlsMode":"self-signed"}}}}"#),
+        oppiAnswers: true, hasCommandLineTools: true
+    )
+
+    /// A new Mac with only Remote Login on: the result offers Install & Start.
+    private static let freshMacReport = SSHPreflightReport(
+        user: "chenda", kernel: "Darwin", release: "25.0.0", arch: "arm64",
+        macOSVersion: "26.0", osRelease: nil,
+        nodePath: nil, nodeVersion: nil, oppiNodeVersion: nil,
+        gitPath: "/usr/bin/git", oppiPath: nil, tailscalePath: nil,
+        oppiStatus: nil, oppiAnswers: false, hasCommandLineTools: false
     )
 
     private static let tailnetPeers: [TailnetPeer] = [

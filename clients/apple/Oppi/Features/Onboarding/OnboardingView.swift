@@ -232,13 +232,14 @@ struct OnboardingView: View {
             }
         }
         // Its machine rows and Check a Machine push through the navigator.
-        .routerModal(isPresented: $showTailscale, presentation: .sheet.inNavigation()) {
-            TailnetSettingsView(onPaired: completeTailscalePairing)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button(role: .cancel) { showTailscale = false }
-                    }
-                }
+        .routerScreenModal(isPresented: $showTailscale, presentation: .sheet.inNavigation()) {
+            .controller { [coordinator] in
+                TailnetSettingsViewController(
+                    coordinator: coordinator,
+                    onPaired: completeTailscalePairing,
+                    onClose: { showTailscale = false }
+                )
+            }
         }
     }
 
