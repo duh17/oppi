@@ -1,0 +1,16 @@
+{
+  "name": "oppi-live-voice",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Oppi built-in: the speak tool an agent answers a Live Voice call with.",
+  "type": "module",
+  "oppi": {
+    "durable": {
+      "entry": "./durable.js",
+      "runtimes": [
+        "host",
+        "sandbox"
+      ]
+    }
+  }
+}

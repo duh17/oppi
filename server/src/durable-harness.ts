@@ -71,6 +71,8 @@ import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { DurableThreads } from "./durable-threads.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
+import type { LiveVoiceRuntimePort } from "./live-voice-speech.js";
+import { LIVE_VOICE_EXTENSION } from "../extensions/durable/live-voice/contract.js";
 import { OPPI_CALLER_SESSION_ID_ENV } from "./session-caller-identity.js";
 import { properLockfile } from "./pi-lockfile.js";
 import { requireDurableStoreId } from "./session-runtime-capabilities.js";
@@ -213,6 +215,11 @@ const CONTROL_EXTENSION = "oppi.control";
 const SESSIONS_EXTENSION = "oppi.sessions";
 /** Offers `notify`; a session selects it only while the server offers it (`offersNotify`). */
 const NOTIFY_EXTENSION = "oppi.notify";
+/**
+ * Built-ins no default selection carries: the control conversation's, and `oppi.live-voice`,
+ * which `DurableBackend` enrolls only while a Live Voice call is attached.
+ */
+const NEVER_DEFAULT = new Set([CONTROL_EXTENSION, LIVE_VOICE_EXTENSION]);
 
 /**
  * The Session bound to a store's conversation. Both answers that depend on it ask here: the
@@ -246,6 +253,14 @@ const durableHost: OppiDurableHost = {
     const port = runtime.boundNotify;
     const sessionId = runtime.sessionIdOf(caller.host.storeId, caller.conversationId);
     return port && sessionId ? (input) => port.notify(sessionId, input) : undefined;
+  },
+  liveVoice: (env) => {
+    const caller = conversationOfEnv(env);
+    if (!caller) return undefined;
+    const { runtime } = caller.host;
+    const port = runtime.boundLiveVoice;
+    const sessionId = runtime.sessionIdOf(caller.host.storeId, caller.conversationId);
+    return port && sessionId ? (text) => port.spoke(sessionId, text) : undefined;
   },
   sandbox: sandboxHost,
 };
@@ -1243,6 +1258,7 @@ export class DurableHarness {
   private threads?: DurableThreads;
   private control?: DurableControlCli;
   private notifyBinding?: SessionNotifyPort;
+  private liveVoiceBinding?: LiveVoiceRuntimePort;
   private sessionBinding?: DurableSessionBinding;
   /** Extensions from Oppi's bundled packages, in install order. */
   private bundled: readonly LoadedDurableExtension[] = [];
@@ -1307,6 +1323,11 @@ export class DurableHarness {
     return this.builtIn(NOTIFY_EXTENSION);
   }
 
+  /** The installed `oppi.live-voice`, which offers `speak`. */
+  get liveVoiceExtension(): Extension {
+    return this.builtIn(LIVE_VOICE_EXTENSION);
+  }
+
   /** Whether `sessionId` selects `oppi.notify` now: top-level, while push is on. */
   offersNotify(sessionId: string): boolean {
     return this.notifyBinding?.offersNotify(sessionId) ?? false;
@@ -1318,7 +1339,8 @@ export class DurableHarness {
   }
 
   /**
-   * The Harness default selection: CodingTools and every built-in but control, in install order.
+   * The Harness default selection: CodingTools and every built-in but control and live voice, in
+   * install order.
    * A conversation whose stored selection is an `{ add }` edit starts from it, so it never picks
    * up another session's MCP extension from the registry.
    */
@@ -1328,7 +1350,7 @@ export class DurableHarness {
       ...this.bundled
         .filter(
           (builtIn) =>
-            builtIn.extension.name !== CONTROL_EXTENSION &&
+            !NEVER_DEFAULT.has(builtIn.extension.name) &&
             this.isExtensionEnabled(builtIn.extension.name),
         )
         .map((builtIn) => builtIn.extension),
@@ -1343,7 +1365,7 @@ export class DurableHarness {
         .filter(
           (builtIn) =>
             builtIn.runtimes.includes(runtime) &&
-            builtIn.extension.name !== CONTROL_EXTENSION &&
+            !NEVER_DEFAULT.has(builtIn.extension.name) &&
             this.isExtensionEnabled(builtIn.extension.name),
         )
         .map((builtIn) => builtIn.extension),
@@ -1381,6 +1403,7 @@ export class DurableHarness {
         (builtIn) =>
           builtIn.runtimes.includes("host") &&
           builtIn.runtimes.includes("sandbox") &&
+          builtIn.extension.name !== LIVE_VOICE_EXTENSION &&
           this.isExtensionEnabled(builtIn.extension.name) &&
           (spawn || builtIn.extension.name !== SESSIONS_EXTENSION) &&
           (notifies || builtIn.extension.name !== NOTIFY_EXTENSION),
@@ -1404,6 +1427,13 @@ export class DurableHarness {
   }
   bindNotify(binding: SessionNotifyPort): void {
     this.notifyBinding = binding;
+  }
+  /** Live Voice for `speak` and for each attachment's call-state toggle. */
+  bindLiveVoice(binding: LiveVoiceRuntimePort): void {
+    this.liveVoiceBinding = binding;
+  }
+  get boundLiveVoice(): LiveVoiceRuntimePort | undefined {
+    return this.liveVoiceBinding;
   }
   /** The Session each store's conversations belong to (caller identity and `notify`'s target). */
   bindSessions(binding: DurableSessionBinding): void {

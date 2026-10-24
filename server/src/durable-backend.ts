@@ -303,6 +303,10 @@ export class DurableBackend implements AgentBackend {
   private queueFingerprint = "";
   /** Error texts the current run already showed live; cleared when it ends. */
   private readonly shownRunErrors = new Set<string>();
+  /** Unregisters this attachment from Live Voice call-state changes. */
+  private detachLiveVoice?: () => void;
+  /** Live Voice selection commits, in the order calls attached and detached. */
+  private liveVoiceSelection: Promise<void> = Promise.resolve();
 
   private constructor(
     private readonly harness: Harness,
@@ -645,6 +649,14 @@ export class DurableBackend implements AgentBackend {
         conversation.id,
         ...events.snapshot.entries.map((entry) => entry.conversationId),
       ]);
+      // Last, so nothing after it can fail with the toggle registered. The attach's `{ add }`
+      // edit above dropped any `oppi.live-voice` a previous attachment left; this puts it back
+      // when a call is attached now. The control conversation never takes calls.
+      if (!control)
+        backend.detachLiveVoice = host.runtime.boundLiveVoice?.attachRuntime(
+          session.id,
+          (attached) => backend.selectLiveVoice(attached),
+        );
       return backend;
     } catch (error) {
       view.dispose();
@@ -974,10 +986,44 @@ export class DurableBackend implements AgentBackend {
     await this.host.closeMcp(this.session.id);
     return { disposal: "graceful" };
   }
+  /**
+   * Select `oppi.live-voice` while a call is attached, so the agent has `speak` and the call's
+   * prompt section; drop it when the call ends. pi-durable resolves the agent before each model
+   * request, so a run already in progress gets the change at its next model call. Commits run in
+   * call order; a failure only costs the agent its voice, and the run's final reply is still read
+   * aloud (`LiveVoiceSpeech.observe`).
+   */
+  private selectLiveVoice(attached: boolean): void {
+    const extension = this.host.runtime.liveVoiceExtension;
+    const on = attached && this.host.runtime.isExtensionEnabled(extension.name);
+    const policy = this.session.launch?.tools;
+    const tools = (extension.tools ?? [])
+      .map((tool) => tool.name)
+      .filter((name) => toolAllowed(policy, name));
+    const id = this.conversation.id;
+    this.liveVoiceSelection = this.liveVoiceSelection
+      .then(async () => {
+        if (this.disposed) return;
+        await this.conversation.commit(
+          async (tx) => selectExtension(await tx.doc(AgentDoc, id), extension.name, tools, on),
+          BACKGROUND_CONTEXT,
+        );
+      })
+      .catch((error: unknown) => {
+        log.warn("durable.live_voice_select_failed", {
+          sessionId: this.session.id,
+          attached,
+          error: safeErrorMessage(error),
+        });
+      });
+  }
+
   /** Projection teardown only: the recorded original submission must survive shutdown. */
   detachForRestart(): Promise<void> {
     return (this.detaching ??= (async () => {
       this.disposed = true;
+      this.detachLiveVoice?.();
+      this.detachLiveVoice = undefined;
       this.lifetime.abort(new Error("Session backend is disposed"));
       await this.ui.stop();
       await this.events.stop();
@@ -1379,4 +1425,35 @@ export class DurableBackend implements AgentBackend {
   appendAssistantMessage(): never {
     return this.unsupported("appendAssistantMessage");
   }
+}
+
+/**
+ * Turn one extension, and the tool names it offers, on or off in a stored `pi.agent` selection,
+ * whichever form it has: an exact list, or an `{ add, remove }` edit of the host default (which
+ * never carries this extension). An unset tool filter enables every selected tool. Writes only
+ * what changes.
+ */
+function selectExtension(
+  state: AgentState,
+  name: string,
+  tools: readonly string[],
+  on: boolean,
+): void {
+  const extensions = state.extensions;
+  if (Array.isArray(extensions)) {
+    if (on && !extensions.includes(name)) state.extensions = [...extensions, name];
+    if (!on && extensions.includes(name))
+      state.extensions = extensions.filter((entry) => entry !== name);
+  } else {
+    const add = extensions?.add ?? [];
+    if (on && !add.includes(name)) state.extensions = { ...extensions, add: [...add, name] };
+    if (!on && add.includes(name))
+      state.extensions = { ...extensions, add: add.filter((entry) => entry !== name) };
+  }
+  if (!Array.isArray(state.tools)) return;
+  const selected = state.tools;
+  const missing = tools.filter((tool) => !selected.includes(tool));
+  if (on && missing.length) state.tools = [...selected, ...missing];
+  if (!on && selected.some((tool) => tools.includes(tool)))
+    state.tools = selected.filter((tool) => !tools.includes(tool));
 }

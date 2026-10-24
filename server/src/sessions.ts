@@ -191,6 +191,15 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
           notify: async (sessionId, input) =>
             this.notifyPort ? this.notifyPort.notify(sessionId, input) : { status: "off" },
         });
+        // Read at each use: the server sets `liveVoiceSpeech` after constructing this manager.
+        runtime.bindLiveVoice({
+          attachRuntime: (sessionId, activate) =>
+            this.liveVoiceSpeech?.attachRuntime(sessionId, activate) ?? (() => {}),
+          spoke: (sessionId, text) => {
+            if (!this.liveVoiceSpeech) throw new Error("Live Voice is not available");
+            this.liveVoiceSpeech.spoke(sessionId, text);
+          },
+        });
         runtime.bindControl(
           new DurableControlCli({
             dataDir: storage.getDataDir(),

@@ -12,6 +12,7 @@ import { DURABLE_MCP_EXTENSION_PREFIX } from "./durable-mcp.js";
 import { BUILTIN_EXTENSION_PATH_PREFIX } from "./host-mcp-extensions.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
 import type { Session } from "./types.js";
+import { LIVE_VOICE_EXTENSION } from "../extensions/durable/live-voice/contract.js";
 
 type DurableToolPolicy = NonNullable<NonNullable<Session["launch"]>["tools"]>;
 
@@ -311,6 +312,8 @@ export function resolveDurableAgent(input: DurableAgentInput): {
       !extension.name.startsWith(DURABLE_MCP_EXTENSION_PREFIX) &&
       extension.name !== input.sessions.name &&
       extension.name !== input.notify.name &&
+      // A call belongs to the session it attached to; a child spawned during one has no voice.
+      extension.name !== LIVE_VOICE_EXTENSION &&
       // A saved Agent picks its own packages; a copy keeps the parent's.
       !(saved && packageNames.has(extension.name)),
   );

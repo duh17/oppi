@@ -220,6 +220,7 @@ const BUNDLED_PACKAGES = [
   "project-context",
   "sql-explorer",
   "notify",
+  "live-voice",
   "control",
 ] as const;
 

@@ -4,8 +4,16 @@ import type {
   ExtensionContext,
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 
+import {
+  CALL_STARTED,
+  NO_CALL_ATTACHED,
+  SAID_ALOUD,
+  SPEAK_DESCRIPTION,
+  SPEAK_GUIDELINES,
+  SPEAK_TOOL_NAME,
+  SpeakParams,
+} from "../extensions/durable/live-voice/contract.js";
 import type { VoiceCallController, VoiceDelegation } from "./continuous-voice-call.js";
 import { createLogger } from "./logger.js";
 import type { SessionBackendEvent } from "./pi-events.js";
@@ -15,14 +23,11 @@ const log = createLogger({ base: { component: "live_voice_speech" } });
 
 type RunMessages = Extract<SessionBackendEvent, { type: "agent_end" }>["messages"];
 
-export const SPEAK_TOOL = "speak";
+export const SPEAK_TOOL = SPEAK_TOOL_NAME;
 /** Hidden custom message in the session that tells the agent a call started or ended. */
 const CALL_MODE_TYPE = "oppi-live-voice-call";
-const CALL_STARTED =
-  "A Live Voice call started on this session. The user's messages now arrive as speech turned into text: they may be unpunctuated or contain recognition errors, so read for intent. This holds for messages that arrive while you are working too. Answer each one by calling speak first, before any other tool. If you can answer right away, speak the answer. Otherwise speak a few words acknowledging it (for example: On it, checking the logs), then work, and speak the outcome when done.";
 const CALL_ENDED =
   "The Live Voice call ended. The speak tool is gone and nobody is listening. The user's messages are typed again: resume normal written chat.";
-const MAX_SPOKEN_CHARS = 2_000;
 /** Live Voice status lines on the phone are a glance, not the transcript. */
 const STATUS_MAX_CHARS = 500;
 
@@ -39,11 +44,26 @@ export interface LiveVoiceSpeechSink {
   runEnded(sessionId: string, outcome: RunOutcome): void;
 }
 
+/**
+ * What a session runtime of either engine needs from Live Voice: to hear when a call attaches or
+ * detaches, and to say the `speak` tool's words. A durable runtime reaches it through
+ * `DurableHarness.bindLiveVoice`.
+ */
+export interface LiveVoiceRuntimePort {
+  /**
+   * Register a runtime of `sessionId` that turns `speak` on or off. It is called at once with the
+   * session's current call state, then on every attach and detach. Returns the unregister.
+   */
+  attachRuntime(sessionId: string, activate: (attached: boolean) => void): () => void;
+  /** `speak`'s words: plays them on the session's call. Throws when no call is attached. */
+  spoke(sessionId: string, text: string): void;
+}
+
 interface SessionSpeechState {
   callAttached: boolean;
   /** What this run said aloud, if anything. */
   spokenThisRun: string | undefined;
-  /** Each live Pi runtime of the session turns `speak` on or off here. */
+  /** Each live runtime of the session turns `speak` on or off here. */
   runtimes: Set<(attached: boolean) => void>;
 }
 
@@ -54,7 +74,7 @@ interface SessionSpeechState {
  * final reply's opening read aloud, and a failed run says it failed, so the caller is never
  * left in silence.
  */
-export class LiveVoiceSpeech {
+export class LiveVoiceSpeech implements LiveVoiceRuntimePort {
   private readonly sessions = new Map<string, SessionSpeechState>();
 
   constructor(private readonly sink: LiveVoiceSpeechSink) {}
@@ -77,6 +97,25 @@ export class LiveVoiceSpeech {
       }
     }
     this.forgetIfIdle(sessionId, state);
+  }
+
+  attachRuntime(sessionId: string, activate: (attached: boolean) => void): () => void {
+    const state = this.state(sessionId);
+    state.runtimes.add(activate);
+    activate(state.callAttached);
+    return () => {
+      const current = this.sessions.get(sessionId);
+      if (!current) return;
+      current.runtimes.delete(activate);
+      this.forgetIfIdle(sessionId, current);
+    };
+  }
+
+  spoke(sessionId: string, text: string): void {
+    const state = this.sessions.get(sessionId);
+    if (!state?.callAttached) throw new Error(NO_CALL_ATTACHED);
+    state.spokenThisRun = text;
+    this.sink.speak(sessionId, text);
   }
 
   /** Pi extension for one session's runtime: registers `speak`, active only during a call. */
@@ -148,13 +187,12 @@ export class LiveVoiceSpeech {
       setSpeakActive(attached);
       announce(attached);
     };
+    let detach: (() => void) | undefined;
     pi.on("session_start", (_event, ctx) => {
       readContext(ctx.sessionManager);
-      const state = this.state(sessionId);
-      state.runtimes.add(activate);
       // After a server restart the saved session may still say a call is live while the call
-      // is gone; this ends it in the context.
-      activate(state.callAttached);
+      // is gone; the first activation ends it in the context.
+      detach = this.attachRuntime(sessionId, activate);
     });
     // The context changed under the call: say again what the call is now.
     const resync = (_event: unknown, ctx: ExtensionContext): void => {
@@ -170,37 +208,23 @@ export class LiveVoiceSpeech {
       return undefined;
     });
     pi.on("session_shutdown", () => {
-      const state = this.sessions.get(sessionId);
-      if (!state) return;
-      state.runtimes.delete(activate);
-      this.forgetIfIdle(sessionId, state);
+      detach?.();
+      detach = undefined;
     });
     pi.registerTool({
       name: SPEAK_TOOL,
       label: "Speak",
-      description:
-        "Say something out loud to the user on the Live Voice call attached to this session.",
+      description: SPEAK_DESCRIPTION,
       promptSnippet: "Talk to the user out loud on the attached Live Voice call",
-      promptGuidelines: [
-        "A Live Voice call is attached: the user is listening, maybe away from the screen. Answer every user message with speak, in one to three short spoken sentences.",
-        "Write speak text the way you would say it: no markdown, lists, code, URLs, or file paths read out. Say what changed or what you found, not how.",
-        "On long work, use speak for a brief heads-up when you start and when you finish or need the user. Keep your normal written reply in the chat too.",
-      ],
-      parameters: Type.Object({
-        text: Type.String({ minLength: 1, maxLength: MAX_SPOKEN_CHARS }),
-      }),
+      promptGuidelines: SPEAK_GUIDELINES,
+      parameters: SpeakParams,
       defaultActive: false,
       executionMode: "sequential",
       execute: async (_toolCallId, params) => {
         const text = params.text.trim();
         if (!text) throw new Error("speak text must not be empty");
-        const state = this.sessions.get(sessionId);
-        if (!state?.callAttached) {
-          throw new Error("No Live Voice call is attached; answer in text.");
-        }
-        state.spokenThisRun = text;
-        this.sink.speak(sessionId, text);
-        return { content: [{ type: "text" as const, text: "Said aloud." }], details: { text } };
+        this.spoke(sessionId, text);
+        return { content: [{ type: "text" as const, text: SAID_ALOUD }], details: { text } };
       },
     });
   }

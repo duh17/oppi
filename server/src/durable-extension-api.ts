@@ -71,6 +71,12 @@ export interface OppiDurableHost {
   notify(
     env: ExecutionEnv | undefined,
   ): ((input: NotifyInput) => Promise<NotifyOutcome>) | undefined;
+  /**
+   * `speak`'s voice for the Session bound to the conversation running `env`: plays the words on
+   * its Live Voice call, and throws when no call is attached. Undefined for an env the server did
+   * not make, or a conversation without a Session.
+   */
+  liveVoice(env: ExecutionEnv | undefined): ((text: string) => void) | undefined;
   /** File tools over a sandbox session's Gondolin VM. */
   readonly sandbox: OppiSandboxHost;
 }

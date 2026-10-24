@@ -110,11 +110,15 @@ export function adaptDurableEvent(
     case "run_start":
       return [asPi({ type: "agent_start" })];
     case "run_end": {
-      // Durable run_end has no Pi message list. The caller supplies the ending
-      // run's assistant so SessionEventProcessor records turn_error on the SDK path.
-      const errored = runAssistant?.stopReason === "error" ? [runAssistant] : [];
+      // Durable run_end has no Pi message list. The caller supplies the ending run's assistant,
+      // last as in Pi's list: SessionEventProcessor records turn_error from it, and Live Voice
+      // reads its reply aloud when the agent never spoke.
       return [
-        asPi({ type: "agent_end", messages: errored, willRetry: false }),
+        asPi({
+          type: "agent_end",
+          messages: runAssistant ? [runAssistant] : [],
+          willRetry: false,
+        }),
         asPi({ type: "agent_settled" }),
       ];
     }

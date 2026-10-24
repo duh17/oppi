@@ -15,6 +15,7 @@ import { AgentDoc, type ConversationId, type Harness } from "@earendil-works/pi-
 import { ensureControlConversationSession } from "../src/control-conversation-service.js";
 import { SessionHost } from "../src/durable-harness.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
+import { LiveVoiceSpeech, type RunOutcome } from "../src/live-voice-speech.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
@@ -515,6 +516,63 @@ describe("durable built-in selection", () => {
     const reattached = await selection(f, session.id);
     expect(reattached.extensions).not.toContain("oppi.notify");
     expect(reattached.tools).not.toContain("notify");
+    await f.manager.stopSession(session.id);
+  });
+
+  it("gives speak only during a Live Voice call, plays it on the call, and reads an unspoken reply", async () => {
+    const f = await fixture([
+      fauxAssistantMessage([fauxToolCall("speak", { text: "On it." })], {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("Checked the logs."),
+      fauxAssistantMessage("All five tests pass."),
+    ]);
+    const spoken: string[] = [];
+    const ended: RunOutcome[] = [];
+    const speech = new LiveVoiceSpeech({
+      speak: (_sessionId, text) => spoken.push(text),
+      runEnded: (_sessionId, outcome) => ended.push(outcome),
+    });
+    f.manager.liveVoiceSpeech = speech;
+    const { session, workspace } = workspaceSession(f, "host");
+    const voiced = (s: Awaited<ReturnType<typeof selection>>) =>
+      s.extensions.includes("oppi.live-voice") &&
+      s.tools.includes("speak") &&
+      s.sections.includes("live-voice");
+    const run = async (prompt: string) => {
+      const done = new Promise<void>((resolve) => {
+        const unsubscribe = f.manager.subscribe(session.id, (message: ServerMessage) => {
+          if (message.type !== "agent_end") return;
+          unsubscribe();
+          resolve();
+        });
+      });
+      await f.manager.sendPrompt(session.id, prompt);
+      await done;
+    };
+
+    await f.manager.startSession(session.id, workspace);
+    expect(voiced(await selection(f, session.id))).toBe(false);
+
+    speech.setCallAttached(session.id, true);
+    await vi.waitFor(async () => expect(voiced(await selection(f, session.id))).toBe(true));
+    // A restart mid-call keeps the voice: the attach's `{ add }` edit drops it, the toggle restores it.
+    await f.manager.stopSession(session.id);
+    await f.manager.startSession(session.id, workspace);
+    await vi.waitFor(async () => expect(voiced(await selection(f, session.id))).toBe(true));
+
+    // The agent speaks: the words play once, and the run's end does not repeat its reply.
+    await run("check the logs");
+    expect(spoken).toEqual(["On it."]);
+    expect(ended.at(-1)).toEqual({ kind: "final", spoken: "On it." });
+
+    // The agent never speaks: its final reply's opening is read aloud instead.
+    await run("did the tests pass");
+    expect(spoken).toEqual(["On it.", "All five tests pass."]);
+    expect(ended.at(-1)).toEqual({ kind: "final", spoken: "All five tests pass." });
+
+    speech.setCallAttached(session.id, false);
+    await vi.waitFor(async () => expect(voiced(await selection(f, session.id))).toBe(false));
     await f.manager.stopSession(session.id);
   });
 });
