@@ -48,7 +48,6 @@ Options:
 
 Environment:
   OPPI_E2E_GROUP        Default --group value.
-  OPPI_RELEASE_E2E_GROUP Release-wrapper alias for OPPI_E2E_GROUP.
   OPPI_E2E_ONLY_TESTING Default --only-testing target. Overrides group target defaults.
   OPPI_E2E_RECORD_VIDEO Default simulator video policy (default: on-failure).
   OPPI_E2E_DURABLE      1 = --durable.
@@ -96,7 +95,7 @@ DURABLE_MODE=false
 [[ "${OPPI_E2E_DURABLE:-0}" == "1" ]] && DURABLE_MODE=true
 FAUX_MODEL=false
 [[ "${OPPI_E2E_FAUX_MODEL:-0}" == "1" ]] && FAUX_MODEL=true
-E2E_GROUP="${OPPI_E2E_GROUP:-${OPPI_RELEASE_E2E_GROUP:-gate}}"
+E2E_GROUP="${OPPI_E2E_GROUP:-gate}"
 ONLY_TESTING=()
 ONLY_TESTING_EXPLICIT=false
 if [[ -n "${OPPI_E2E_ONLY_TESTING:-}" ]]; then

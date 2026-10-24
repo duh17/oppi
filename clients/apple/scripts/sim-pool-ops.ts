@@ -2320,7 +2320,6 @@ export function pruneBuildKind(base: string): "pool" | "derived" | "mac-stale" |
     case "pre-push-mac":
     case "ci":
     case "privacy":
-    case "oppi-dev":
       return null;
     default:
       break;
