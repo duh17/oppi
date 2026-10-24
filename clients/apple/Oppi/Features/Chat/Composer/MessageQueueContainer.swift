@@ -17,9 +17,16 @@ enum MessageQueueContainerPresentation {
 }
 
 /// The queued steering and follow-up messages: each with its attachments and
-/// a remove button, and Edit in composer for the whole queue.
+/// a remove button, and Edit in composer for the whole queue. The messages sit
+/// in a viewport capped like an extension drawer's, so a long report scrolls
+/// inside it and the drawer's collapse button and Edit in composer stay on
+/// screen. A double tap on a message opens it full screen, rendered.
 final class MessageQueueView: UIView {
     private static let attachmentTileSize: CGFloat = 36
+
+    /// Opens one queued message full screen. Nil leaves messages without a
+    /// full-screen action.
+    var onOpenMessage: ((MessageQueueItem) -> Void)?
 
     private let presentation: MessageQueueContainerPresentation
     private let stack = UIStackView()
@@ -29,6 +36,10 @@ final class MessageQueueView: UIView {
     private let toggleChevron = UIImageView()
     private let errorLabel = ExtensionChromeFont.label(.caption1, lines: 0)
     private let sections = UIStackView()
+    private lazy var sectionsViewport = CappedScrollView(
+        content: sections,
+        maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight
+    )
     private let editButton = UIButton(type: .system)
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let editRow = UIStackView()
@@ -77,6 +88,9 @@ final class MessageQueueView: UIView {
             ])
             toggle.addAction(UIAction { [weak self] _ in
                 guard let self else { return }
+                // A host that sizes this view from outside (SwiftUI) measures
+                // it again; otherwise the capped list absorbs the squeeze.
+                self.invalidateIntrinsicContentSize()
                 UIView.animate(withDuration: 0.1, delay: 0, options: .curveEaseOut) {
                     self.isExpanded.toggle()
                     self.render()
@@ -90,7 +104,8 @@ final class MessageQueueView: UIView {
         sections.axis = .vertical
         sections.alignment = .fill
         sections.spacing = 8
-        stack.addArrangedSubview(sections)
+        sectionsViewport.scrollView.accessibilityIdentifier = "chat.messageQueue.list"
+        stack.addArrangedSubview(sectionsViewport)
 
         editButton.accessibilityIdentifier = "chat.messageQueue.editInComposer"
         editButton.titleLabel?.font = UIFont.scaled(.caption1, .semibold)
@@ -157,7 +172,7 @@ final class MessageQueueView: UIView {
         errorLabel.isHidden = error == nil
 
         let expanded = presentation == .drawer || isExpanded
-        sections.isHidden = !expanded
+        sectionsViewport.isHidden = !expanded
         editRow.isHidden = !expanded
         for view in sections.arrangedSubviews { view.removeFromSuperview() }
         if expanded {
@@ -194,6 +209,16 @@ final class MessageQueueView: UIView {
         let well = UIView()
         well.backgroundColor = UIColor(palette.bg.opacity(0.30))
         well.layer.cornerRadius = 10
+        if let onOpenMessage, !item.message.isEmpty {
+            well.addGestureRecognizer(DoubleTapRecognizer { onOpenMessage(item) })
+            message.accessibilityIdentifier = "chat.messageQueue.message.\(item.id)"
+            message.accessibilityCustomActions = [
+                UIAccessibilityCustomAction(name: "Open Full Screen") { _ in
+                    onOpenMessage(item)
+                    return true
+                },
+            ]
+        }
         body.translatesAutoresizingMaskIntoConstraints = false
         well.addSubview(body)
         NSLayoutConstraint.activate([
@@ -300,6 +325,21 @@ final class MessageQueueView: UIView {
         row.accessibilityIdentifier = "chat.messageQueue.attachment.\(id)"
         row.accessibilityLabel = "Attachment \(name)"
         return row
+    }
+
+    /// A double tap that runs its closure; the row it sits on is rebuilt, not
+    /// reconfigured, so the closure never goes stale.
+    private final class DoubleTapRecognizer: UITapGestureRecognizer {
+        private let action: () -> Void
+
+        init(_ action: @escaping () -> Void) {
+            self.action = action
+            super.init(target: nil, action: nil)
+            numberOfTapsRequired = 2
+            addTarget(self, action: #selector(fire))
+        }
+
+        @objc private func fire() { action() }
     }
 
     private func run(_ operation: @escaping () async throws -> Void) {

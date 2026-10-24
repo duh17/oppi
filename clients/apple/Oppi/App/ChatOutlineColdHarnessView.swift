@@ -410,6 +410,7 @@ private final class ChatOutlineColdHarnessProbeState {
 /// commit; one review comment is staged; Share is enabled.
 /// `CHAT_ROUTES_STATUS=busy` makes the session busy (busy send mode picker);
 /// `CHAT_ROUTES_ASK=1` puts a two-question ask in the composer.
+/// `CHAT_ROUTES_QUEUE=long` queues a report taller than the screen.
 /// `chatRoutes.createdSessions` counts the new sessions the stub received.
 /// Leading controls open the timeline's commit and file viewers through the
 /// production presenter (a test tap on a timeline pill did not reach the pill
@@ -420,6 +421,7 @@ struct ChatRoutesHarnessView: View {
     @State private var navigation = AppNavigation()
     @State private var stub = ChatRoutesStubRecord.shared
     @State private var landing = ""
+    @Environment(\.appRootEnvironment) private var root
 
     var body: some View {
         RouterPreviewControllerNavigation(id: ChatRoutesFixture.sessionId) { [connection, navigation] in
@@ -462,6 +464,13 @@ struct ChatRoutesHarnessView: View {
                 .accessibilityValue(landing)
                 .allowsHitTesting(false)
         }
+        .onChange(of: openedChatReader) { _, target in
+            // The chat opens its reader through app navigation; the shell that
+            // pushes it is not here, so the harness does.
+            guard let root, let target else { return }
+            let store = root.chatReaderPayloadStore
+            ChatRoutesFixture.push(root: root) { ChatReaderDestinationView(target: target, store: store) }
+        }
         .task {
             while !Task.isCancelled {
                 landing = ChatRoutesFixture.landingProbe()
@@ -476,8 +485,23 @@ struct ChatRoutesHarnessView: View {
             while !Task.isCancelled {
                 ChatRoutesFixture.seedTimelineIfNeeded()
                 ChatRoutesFixture.enableShare(on: connection)
+                ChatRoutesFixture.seedQueueIfNeeded(on: connection)
                 try? await Task.sleep(for: .milliseconds(200))
             }
+        }
+    }
+}
+
+extension ChatRoutesHarnessView {
+    /// The reader the chat last asked app navigation to open.
+    private var openedChatReader: ChatReaderNavTarget? {
+        switch navigation.workspaceNavigationPresentation {
+        case .stack:
+            guard case .chatReader(let target)? = navigation.workspaceStackRouteElements.last else { return nil }
+            return target
+        case .split:
+            guard case .chatReader(let target)? = navigation.splitDetailPathElements.last else { return nil }
+            return target
         }
     }
 }
@@ -626,6 +650,25 @@ private enum ChatRoutesFixture {
             _ = connection.askRequestStore.set(ask, for: sessionId)
         }
         return connection
+    }
+
+    /// `CHAT_ROUTES_QUEUE=long`: a subagent-style report queued as steering,
+    /// far taller than the screen, so the drawer has to keep its own controls
+    /// reachable. Reseeded like Share, since the connect loop clears the queue.
+    @MainActor static func seedQueueIfNeeded(on connection: ServerConnection) {
+        guard environment["CHAT_ROUTES_QUEUE"] == "long",
+              connection.messageQueueStore.queue(for: sessionId).steering.isEmpty else { return }
+        let rows = (1...40).map { "| `routes/step-\($0).ts:\($0 * 10)` | Route step \($0) | Keep |" }
+        let report = (["## Route review", "", "| Path | Finding | Action |", "|---|---|---|"] + rows
+            + ["", "**Edits and writes:** I edited and wrote nothing."]).joined(separator: "\n")
+        connection.messageQueueStore.apply(
+            MessageQueueState(
+                version: 1,
+                steering: [MessageQueueItem(id: "routes-queued-report", message: report, createdAt: 0)],
+                followUp: []
+            ),
+            for: sessionId
+        )
     }
 
     @MainActor static func enableShare(on connection: ServerConnection) {
@@ -991,6 +1034,17 @@ private enum ChatRoutesFixture {
             sourceView: timeline,
             presenter: presenter
         ))
+    }
+
+    /// Pushes a screen onto the chat's navigation controller.
+    @MainActor static func push<Content: View>(
+        root: AppRootEnvironment,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        guard let timeline = timelineCollectionInWindows(),
+              let navigation = sequence(first: timeline as UIResponder, next: \.next)
+                .lazy.compactMap({ $0 as? UINavigationController }).first else { return }
+        navigation.pushViewController(HostFactory.screen(root: root, content: content), animated: true)
     }
 
     @MainActor private static func timelineCollectionInWindows() -> UICollectionView? {

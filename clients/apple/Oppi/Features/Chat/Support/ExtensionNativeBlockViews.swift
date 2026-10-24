@@ -45,16 +45,6 @@ struct ExtensionNativeBlockContext {
         )
     }
 
-    /// Markdown blocks bind the session/workspace identity so wiki links become
-    /// the same resource references assistant prose produces.
-    var markdownResourceAccess: MarkdownResourceAccess {
-        MarkdownResourceAccess(identity: .init(
-            serverID: linkContext.serverID,
-            workspaceID: linkContext.workspaceID,
-            sessionID: linkContext.sessionID
-        ))
-    }
-
     /// Inputs that change painted output. Closures are refreshed on every apply.
     fileprivate var signature: Signature {
         Signature(themeID: themeID, linkContext: linkContext)
@@ -432,7 +422,7 @@ final class ExtensionNativeMarkdownBlockView: UIView, ExtensionNativeBlockRender
             content: markdown,
             isStreaming: false,
             themeID: context.themeID,
-            resourceAccess: context.markdownResourceAccess,
+            resourceAccess: context.linkContext.markdownResourceAccess,
             readerPreferences: Self.preferences,
             renderingMode: .staticReader
         ))

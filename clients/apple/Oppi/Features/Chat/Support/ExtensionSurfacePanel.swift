@@ -664,6 +664,7 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             stack.addArrangedSubview(viewport)
         case .messageQueue:
             let queue = MessageQueueView(presentation: .drawer)
+            queue.onOpenMessage = { [weak self] item in self?.openQueuedMessage(item) }
             messageQueue = queue
             stack.addArrangedSubview(queue)
         }
@@ -792,6 +793,15 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         case .title, .status, .messageQueue:
             break
         }
+    }
+
+    /// A queued message in the reader, rendered as the Markdown it will send.
+    private func openQueuedMessage(_ item: MessageQueueItem) {
+        actions.openReader(.document(content: .markdown(
+            content: item.message,
+            filePath: nil,
+            resourceAccess: actions.linkContext.markdownResourceAccess
+        )))
     }
 }
 

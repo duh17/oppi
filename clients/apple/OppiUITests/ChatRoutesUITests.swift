@@ -771,6 +771,35 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
     }
 
+    /// A queued report taller than the screen stays inside the drawer: its
+    /// collapse button and Edit in composer stay on screen, a double tap opens
+    /// the message rendered in the reader, and the drawer still collapses.
+    func testLongQueuedMessageKeepsTheDrawerCollapsibleAndOpensFullScreen() {
+        launch(environment: ["CHAT_ROUTES_QUEUE": "long"])
+        let pill = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-message-queue"]
+        XCTAssertTrue(pill.waitForExistence(timeout: 10), "The queued report shows the queue pill")
+        pill.tap()
+
+        let collapse = app.buttons["extension-strip-aboveEditor-drawer-collapse"]
+        let edit = app.buttons["chat.messageQueue.editInComposer"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5), "Expanding the queue shows Edit in composer")
+        XCTAssertTrue(collapse.isHittable, "A long report must not push the collapse button off screen")
+        XCTAssertTrue(edit.isHittable, "A long report must not push Edit in composer off screen")
+        attachScreenshot("message-queue-long-expanded")
+
+        app.descendants(matching: .any)["chat.messageQueue.message.routes-queued-report"].doubleTap()
+        let body = app.descendants(matching: .any)["full-screen.markdown.body"]
+        XCTAssertTrue(body.waitForExistence(timeout: 5), "A double tap opens the queued message rendered")
+        attachScreenshot("message-queue-full-screen")
+        app.buttons["fullscreen-code.back"].tap()
+        XCTAssertTrue(waitForDisappearance(of: body), "Back returns to the chat")
+
+        XCTAssertTrue(waitFor(collapse.isHittable), "The drawer is still open after the reader")
+        collapse.tap()
+        XCTAssertTrue(waitForDisappearance(of: edit), "Collapse closes the queue drawer")
+        assertRunning()
+    }
+
     /// The composers' covers, opened from harness controls: with the attach
     /// menu open the app never reports idle to the test runner.
     func testPhotoLibraryAndCanvasCovers() {

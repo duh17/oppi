@@ -6,6 +6,16 @@ struct ExtensionSurfaceLinkContext: Equatable {
     var sessionID: String? = nil
 
     static let empty = Self()
+
+    /// Markdown a surface paints binds the session/workspace identity so wiki
+    /// links become the same resource references assistant prose produces.
+    var markdownResourceAccess: MarkdownResourceAccess {
+        MarkdownResourceAccess(identity: .init(
+            serverID: serverID,
+            workspaceID: workspaceID,
+            sessionID: sessionID
+        ))
+    }
 }
 
 /// What an extension surface's link tap does: open a request through the app
