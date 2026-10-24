@@ -1,9 +1,13 @@
 /**
  * Session title generator — auto-generates concise task titles for sessions.
  *
- * Uses a configurable model provider to generate 3-5 word titles from the
+ * Uses a configurable model provider to generate 2-6 word titles from the
  * first user message. Standalone and stateless — no pi system prompt, no
  * conversation history.
+ *
+ * The instructions, the first-message prompt, and normalizeTitle() are one
+ * contract with the iOS on-device path (ChatActionHandler). Both sides' tests
+ * check it against protocol/session-title.json, so change all three together.
  */
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -51,10 +55,24 @@ Examples:
 - "install our app" -> Install App`;
 
 const MIN_MESSAGE_LENGTH = 15;
+const MAX_SOURCE_CHARACTERS = 600;
 const MAX_TITLE_LENGTH = 48;
 const GENERATION_TIMEOUT_MS = 15_000;
 
 const log = createLogger({ base: { component: "session_title_generator" } });
+
+/**
+ * Hand the first message over as data to title. Sent bare, models such as
+ * Haiku answer it ("I can't see the attachment...") instead of titling it.
+ */
+function titlePrompt(firstMessage: string): string {
+  const source = Array.from(firstMessage.trim()).slice(0, MAX_SOURCE_CHARACTERS).join("");
+  return `Create a concise session title from the first user message.
+
+<first_user_message>
+${source}
+</first_user_message>`;
+}
 
 // ─── Normalization ───
 
@@ -81,8 +99,8 @@ export function normalizeTitle(raw: string | null | undefined): string | null {
   title = title.replace(/^[\s"'`\u201c\u201d\u2018\u2019[\]()]+/, "");
   title = title.replace(/[\s"'`\u201c\u201d\u2018\u2019[\]()]+$/, "");
 
-  // Strip trailing punctuation
-  title = title.replace(/[.,:;!?]+$/, "");
+  // Strip leading and trailing punctuation
+  title = title.replace(/^[.,:;!?]+/, "").replace(/[.,:;!?]+$/, "");
 
   // Collapse whitespace
   title = title
@@ -165,7 +183,7 @@ export class ApiModelTitleProvider implements SessionTitleProvider {
           model,
           {
             systemPrompt: TITLE_SYSTEM_PROMPT,
-            messages: [{ role: "user", content: firstMessage, timestamp: Date.now() }],
+            messages: [{ role: "user", content: titlePrompt(firstMessage), timestamp: Date.now() }],
           },
           {
             maxTokens: 30,
@@ -180,6 +198,16 @@ export class ApiModelTitleProvider implements SessionTitleProvider {
           (response.usage?.input ?? 0) +
           (response.usage?.output ?? 0) +
           (response.usage?.cacheRead ?? 0);
+
+        // A 2-6 word title never fills maxTokens; a reply that does is the
+        // model answering the message, and its cut-off text is no title.
+        if (response.stopReason === "length") {
+          log.warn("session_title_generator.generation.not_a_title", {
+            model: this.modelId,
+            outputTokens: response.usage?.output ?? 0,
+          });
+          return null;
+        }
 
         const text = response.content
           .filter((c): c is { type: "text"; text: string } => c.type === "text")

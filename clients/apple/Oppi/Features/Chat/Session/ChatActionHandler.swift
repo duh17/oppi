@@ -41,10 +41,14 @@ final class ChatActionHandler {
     private var autoTitleAttemptedSessionIds: Set<String> = []
 
     private static let autoTitleMaxLength = 48
+    private static let autoTitleSourceLimit = 600
     /// Key for auto-title provider (server / onDevice / off). Tests use this
     /// to select the on-device path that invokes the test hook.
     static let autoTitleProviderDefaultsKey = AppPreferences.Session.autoTitleProviderKey
-    private static let autoTitleInstructions = """
+    /// The instructions, `autoTitlePrompt(for:)`, and `normalizeTitle(_:)` are one
+    /// contract with the server title generator (server/src/session-title-generator.ts).
+    /// Both sides' tests check it against protocol/session-title.json.
+    static let autoTitleInstructions = """
         You generate concise coding session titles.
         Return exactly one line containing only the title text.
 
@@ -732,8 +736,7 @@ final class ChatActionHandler {
             guard let self else { return }
             defer { self.autoTitleTasksBySessionId[sessionId] = nil }
 
-            let limitedSource = String(source.prefix(600))
-            let generated = await self.generateSessionTitle(from: limitedSource)
+            let generated = await self.generateSessionTitle(from: source)
             guard !Task.isCancelled, let generated else { return }
 
             guard var latest = sessionStore.sessions.first(where: { $0.id == sessionId }),
@@ -776,22 +779,28 @@ final class ChatActionHandler {
             return nil
         }
 
-        let prompt = """
-            Create a concise session title from the first user message.
-
-            <first_user_message>
-            \(firstMessage)
-            </first_user_message>
-            """
-
         do {
             let session = LanguageModelSession(instructions: autoTitleInstructions)
-            let response = try await session.respond(to: prompt)
+            let response = try await session.respond(to: autoTitlePrompt(for: firstMessage))
             return normalizeTitle(response.content)
         } catch {
             log.error("Auto title error: \(error.localizedDescription, privacy: .public)")
             return nil
         }
+    }
+
+    /// Hand the first message over as data to title, so the model titles it
+    /// instead of answering it.
+    static func autoTitlePrompt(for firstMessage: String) -> String {
+        let source = firstMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(autoTitleSourceLimit)
+        return """
+            Create a concise session title from the first user message.
+
+            <first_user_message>
+            \(source)
+            </first_user_message>
+            """
     }
 
     /// Normalize a title: first line, strip common LLM artifacts, cap length.

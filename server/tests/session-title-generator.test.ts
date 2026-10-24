@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockCompleteSimple = vi.fn();
@@ -11,75 +12,67 @@ import {
   type TitleGenerationMetrics,
 } from "../src/session-title-generator.js";
 
-// ─── normalizeTitle ───
+// ─── Shared title contract (protocol/session-title.json) ───
+
+interface TitleContract {
+  instructions: string;
+  prompts: Array<{ name: string; firstMessage: string; prompt: string }>;
+  normalize: Array<{ name: string; raw: string; expected: string | null }>;
+}
+
+const contract = JSON.parse(
+  readFileSync(new URL("../../protocol/session-title.json", import.meta.url), "utf8"),
+) as TitleContract;
 
 describe("normalizeTitle", () => {
-  it("returns null for null/undefined/empty", () => {
+  it.each(contract.normalize)("$name", ({ raw, expected }) => {
+    expect(normalizeTitle(raw)).toBe(expected);
+  });
+
+  it("returns null for null/undefined", () => {
     expect(normalizeTitle(null)).toBeNull();
     expect(normalizeTitle(undefined)).toBeNull();
-    expect(normalizeTitle("")).toBeNull();
-    expect(normalizeTitle("   ")).toBeNull();
+  });
+});
+
+describe("title request", () => {
+  function titleRuntime(stopReason: string, text: string) {
+    mockCompleteSimple.mockResolvedValue({
+      content: [{ type: "text", text }],
+      stopReason,
+      usage: { input: 10, output: 4, cacheRead: 0 },
+    });
+    return {
+      getModel: vi.fn(() => ({ provider: "anthropic", id: "claude-haiku-3" })),
+      completeSimple: mockCompleteSimple,
+    } as never;
+  }
+
+  beforeEach(() => {
+    mockCompleteSimple.mockReset();
   });
 
-  it("takes first line only", () => {
-    expect(normalizeTitle("Fix WebSocket Bug\nSome extra text")).toBe("Fix WebSocket Bug");
+  it.each(contract.prompts)("sends the shared prompt: $name", async ({ firstMessage, prompt }) => {
+    const provider = new ApiModelTitleProvider("anthropic/claude-haiku-3", titleRuntime("stop", "Fix Bug"));
+
+    await provider.generateTitle(firstMessage);
+
+    const [, context] = mockCompleteSimple.mock.calls[0];
+    expect(context.systemPrompt).toBe(contract.instructions);
+    expect(context.messages).toHaveLength(1);
+    expect(context.messages[0]).toMatchObject({ role: "user", content: prompt });
   });
 
-  it("strips Title: prefix (case-insensitive)", () => {
-    expect(normalizeTitle("Title: Fix WebSocket Bug")).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("title: Fix WebSocket Bug")).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("TITLE:  Fix WebSocket Bug")).toBe("Fix WebSocket Bug");
-  });
+  it("drops a reply that runs out of tokens instead of titling the session with it", async () => {
+    const onMetrics = vi.fn();
+    const provider = new ApiModelTitleProvider(
+      "anthropic/claude-haiku-3",
+      titleRuntime("length", "I can't see the attachment contents from here, so I"),
+      onMetrics,
+    );
 
-  it("strips wrapping quotes (straight, curly, backticks)", () => {
-    expect(normalizeTitle('"Fix WebSocket Bug"')).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("'Fix WebSocket Bug'")).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("`Fix WebSocket Bug`")).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("\u201cFix WebSocket Bug\u201d")).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("\u2018Fix WebSocket Bug\u2019")).toBe("Fix WebSocket Bug");
-  });
-
-  it("strips wrapping brackets and parens", () => {
-    expect(normalizeTitle("[Fix WebSocket Bug]")).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("(Fix WebSocket Bug)")).toBe("Fix WebSocket Bug");
-  });
-
-  it("strips trailing punctuation", () => {
-    expect(normalizeTitle("Fix WebSocket Bug.")).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("Fix WebSocket Bug!")).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("Fix WebSocket Bug?")).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("Fix WebSocket Bug;")).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("Fix WebSocket Bug:")).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("Fix WebSocket Bug,")).toBe("Fix WebSocket Bug");
-  });
-
-  it("collapses whitespace", () => {
-    expect(normalizeTitle("Fix   WebSocket   Bug")).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("  Fix  WebSocket  Bug  ")).toBe("Fix WebSocket Bug");
-  });
-
-  it("caps at 48 chars at word boundary", () => {
-    const long = "Investigate Really Long Session Title That Exceeds The Maximum Allowed Length";
-    const result = normalizeTitle(long);
-    expect(result).not.toBeNull();
-    expect(result!.length).toBeLessThanOrEqual(48);
-    // Should break at a word boundary
-    expect(result).not.toMatch(/\s$/);
-  });
-
-  it("handles combined artifacts", () => {
-    expect(normalizeTitle('Title: "Fix WebSocket Bug!"')).toBe("Fix WebSocket Bug");
-  });
-
-  it("preserves valid titles", () => {
-    expect(normalizeTitle("Fix WebSocket Bug")).toBe("Fix WebSocket Bug");
-    expect(normalizeTitle("Debug Auth Flow")).toBe("Debug Auth Flow");
-  });
-
-  it("returns null if nothing left after stripping", () => {
-    expect(normalizeTitle('""')).toBeNull();
-    expect(normalizeTitle("Title:")).toBeNull();
-    expect(normalizeTitle("...")).toBeNull();
+    expect(await provider.generateTitle("Look at the attached screenshot")).toBeNull();
+    expect(onMetrics).toHaveBeenCalledWith(expect.objectContaining({ status: "error" }));
   });
 });
 

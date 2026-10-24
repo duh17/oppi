@@ -1704,6 +1704,7 @@
 		C14B736B4EC1453462715141 /* MessageQueueContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC5457DE50129E7A15ADFB87 /* MessageQueueContainer.swift */; };
 		C14FDDC557E8BDC3BC692812 /* AskCardExpanded.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA4ABC7C06CA7707A966A3E3 /* AskCardExpanded.swift */; };
 		C16510DEF09B0A29C3D82719 /* SessionListNavigationStressE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E300DECEA808CC41BCAD837B /* SessionListNavigationStressE2ETests.swift */; };
+		C193A891355CF4DDADE1F31B /* SessionTitleContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9473D1845066C62DF7DAAACC /* SessionTitleContractTests.swift */; };
 		C1BAC52BA5C94D8134238A1F /* LiveNestedToolCalls.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEB0FA22FB9526394205548C /* LiveNestedToolCalls.swift */; };
 		C1C3792DE1EBB4939B6EDACC /* ServerListRepeatedIdTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F54ED7A5B2FB1CB02A99B67 /* ServerListRepeatedIdTests.swift */; };
 		C1CA3C883433CFEBBDFA3246 /* MermaidKanbanParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B231D97AE677A326B334E5 /* MermaidKanbanParser.swift */; };
@@ -3426,6 +3427,7 @@
 		943E8A11B1E33EA9AACAEEA0 /* SSHTerminalAgentDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalAgentDetection.swift; sourceTree = "<group>"; };
 		9440CD44E4839CC1B3C14CEE /* PreviewComposerController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewComposerController.swift; sourceTree = "<group>"; };
 		945A1BD7F7865221CB0D7C9E /* ToolCallFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallFormatting.swift; sourceTree = "<group>"; };
+		9473D1845066C62DF7DAAACC /* SessionTitleContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTitleContractTests.swift; sourceTree = "<group>"; };
 		9496F488480CA2B43FFA9DB6 /* UIHarnessTestCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIHarnessTestCase.swift; sourceTree = "<group>"; };
 		94CB003D4B03D38558E5AB99 /* TimelineInlineVideoNativePlayE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineInlineVideoNativePlayE2ETests.swift; sourceTree = "<group>"; };
 		94F97095846D9C1AD24928AC /* MermaidJourneyRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidJourneyRenderer.swift; sourceTree = "<group>"; };
@@ -4321,6 +4323,7 @@
 				102D18AD71072B6D8DC4124C /* PushPairingPlaintextTests.swift */,
 				E68FFE421F8D984376C30215 /* ServerConnectionTypesTests.swift */,
 				CE05C1042766513E84B5152B /* ServerMessageTests.swift */,
+				9473D1845066C62DF7DAAACC /* SessionTitleContractTests.swift */,
 				FEAF4733EB54BD5B0F364849 /* ThinkingLevelMenuSourceTests.swift */,
 			);
 			path = Protocol;
@@ -9070,6 +9073,7 @@
 				6B3757365571A8C7647CEED4 /* SessionStreamCoordinatorTests.swift in Sources */,
 				DF39BF562EAE5A36CC5EDCD1 /* SessionThreadsTests.swift in Sources */,
 				98D7F76AF466CA41AB00078E /* SessionTimelineNavigationTests.swift in Sources */,
+				C193A891355CF4DDADE1F31B /* SessionTitleContractTests.swift in Sources */,
 				458EA23A7516B551B49FED91 /* SessionToolOutputAccessTests.swift in Sources */,
 				E64853F3AA54EB450248126E /* SessionTouchedFileRoutingTests.swift in Sources */,
 				15073B03B561880910123676 /* SessionTreeDisplayLayoutChatTests.swift in Sources */,
