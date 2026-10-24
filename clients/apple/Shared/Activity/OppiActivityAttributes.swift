@@ -16,12 +16,13 @@ struct OppiActivityAttributes: ActivityAttributes {
     /// one the app started for the same server are the same card.
     let slot: String
 
-    /// Top-level sessions only; subagents never count. Field names are the relay template's
-    /// `content-state` keys, decoded with ActivityKit's default JSON strategy.
+    /// Counts are per thread (a top-level session with its subagents). Field names are the
+    /// relay template's `content-state` keys, decoded with ActivityKit's default JSON strategy.
     struct ContentState: Codable, Hashable {
-        /// Sessions working.
+        /// Threads running: none of their sessions is blocked, and one is working.
         var running: Int
-        /// Sessions waiting on the person: an approval, a question, or a sign-in.
+        /// Threads waiting on the person: a session in them is blocked on an approval, a question,
+        /// or a sign-in.
         var needsYou: Int
     }
 }

@@ -423,7 +423,8 @@ events stack per session.
 ### 3.6 Live Activity
 
 One counts-only card per paired server on the phone's Lock Screen and Dynamic Island: how
-many top-level sessions run and how many wait on the person. Apple and the relay can read
+many threads run and how many wait on the person (a thread is a top-level session with its
+subagents; see below). Apple and the relay can read
 ActivityKit payloads, so this path carries two integers and a random slot, never text. It is not encrypted; there is nothing in it to encrypt beyond the counts.
 
 **Slot.** The phone makes a random 16-byte value per server (22 base64url characters,
@@ -631,8 +632,9 @@ removes them from Notification Center when it becomes active: they open nothing.
   function constructs. No code path builds an APNs payload or a relay body from plaintext.
 - Live Activity (3.6), for devices whose registration has `liveActivity: true` and that
   hold no live stream (a present app drives its own card; the server never drives it at the
-  same time). Counts are the server's live sessions without a parent: `running` = program
-  status `working`, `needsYou` = `blocked`. The server sends only when the card's counts
+  same time). Counts are per thread (a top-level session with all its subagents): `needsYou` =
+  threads where any session has program status `blocked`, `running` = the other threads where
+  any session is `working`, so a lead idling while its subagents work counts as running, once. The server sends only when the card's counts
   would change, at most once a minute per device, the latest counts winning. Per device it
   tracks whether a card exists: none (start when work begins), unknown (the app drove it, or
   the server restarted with no saved card), live (started by this server), or lost (out of reach). Zero counts

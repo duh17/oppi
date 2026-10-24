@@ -7,7 +7,7 @@ import type { PushRegistration, Session } from "./types.js";
 
 const log = createLogger({ base: { component: "live_activity" } });
 
-/** What the card shows. Top-level sessions only. */
+/** What the card shows: counts of threads (a top-level session with its subagents), not sessions. */
 export interface LiveActivityCounts {
   running: number;
   needsYou: number;
@@ -42,13 +42,12 @@ const PERSIST_DEBOUNCE_MS = 2_000;
 export const LIVE_ACTIVITY_MISSING_TOKEN_RETRIES = 5;
 
 /**
- * Running and waiting top-level sessions. Subagents (sessions with a parent) never count: the
- * card answers "what is on my plate", and a lead already counts while its children work.
+ * Threads that need you and threads that run. The card answers "what is on my plate", and a
+ * subagent is part of its lead's thread, not another item on it.
  */
 export function liveActivityCounts(sessions: Iterable<Session>): LiveActivityCounts {
-  // One count per thread: a top-level session with all its subagents. A thread needs you
-  // while any session in it is blocked, else runs while any is working, so a lead idling
-  // while its subagents work still counts as running, once.
+  // A thread needs you while any session in it is blocked, else runs while any is working,
+  // so a lead idling while its subagents work still counts as running, once.
   const byId = new Map<string, Session>();
   for (const session of sessions) byId.set(session.id, session);
   const threads = new Map<string, "working" | "blocked">();

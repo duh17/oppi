@@ -5,7 +5,8 @@ import OSLog
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "LiveActivity")
 
 /// Oppi's Live Activity: one counts-only card per server whose card is on
-/// (`LiveActivitySettings`), saying how many top-level sessions run and how many wait on you.
+/// (`LiveActivitySettings`), saying how many threads (a top-level session with its subagents) run
+/// and how many wait on you.
 ///
 /// While Oppi runs it drives each card from the server's sessions. While Oppi is closed, a
 /// server with push on drives the same card through the relay (protocol/push/spec.md "Live
