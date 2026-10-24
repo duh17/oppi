@@ -549,6 +549,7 @@ struct ToolTimelineRowFullScreenActivationTests {
 
     @Test("hosted destination shows a stored diff instead of empty chrome")
     func hostedDestinationShowsStoredDiffInsteadOfEmptyChrome() async throws {
+        forgetSharedScopedLockFlags()
         FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff)
         defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
 
@@ -566,6 +567,7 @@ struct ToolTimelineRowFullScreenActivationTests {
 
     @Test("hosted destination keeps a valid diff after the store drops the payload")
     func hostedDestinationKeepsValidDiffAfterStoreDrop() async throws {
+        forgetSharedScopedLockFlags()
         FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff)
         defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
 
@@ -593,6 +595,7 @@ struct ToolTimelineRowFullScreenActivationTests {
 
     @Test("hosted destination keeps a valid markdown document after the store drops the payload")
     func hostedDestinationKeepsValidMarkdownAfterStoreDrop() async throws {
+        forgetSharedScopedLockFlags()
         let markdown = """
         # Build 50 changelog
 
@@ -629,6 +632,7 @@ struct ToolTimelineRowFullScreenActivationTests {
 
     @Test("production activate-to-navigation keeps the diff across a stacked store miss")
     func productionActivateToNavigationKeepsDiffAcrossStackedStoreMiss() async throws {
+        forgetSharedScopedLockFlags()
         FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff)
         defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
 
@@ -663,6 +667,7 @@ struct ToolTimelineRowFullScreenActivationTests {
 
     @Test("true navigation pop releases the store and covering keeps a stacked payload")
     func trueNavigationPopReleasesStoreAndCoveringKeepsStackedPayload() async throws {
+        forgetSharedScopedLockFlags()
         FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff)
         defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
 

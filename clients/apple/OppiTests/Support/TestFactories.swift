@@ -283,3 +283,19 @@ func closeInlineComposer(in root: UIView) {
     }
     search(root)?.dismiss(animated: false)
 }
+
+/// Forgets every lock flag on `ScopedLockService.shared`.
+///
+/// `ChatReaderDestinationView` reads the process-wide service and replaces the
+/// reader with the lock cover whenever any flag exists, because it cannot tell
+/// which chat an origin-less payload came from. The service loads its flags from
+/// the test host's `UserDefaults.standard`, so a flag already stored there (the
+/// origin is unknown) blanks every hosted reader test at once. A test that
+/// renders a reader calls this first so it does not depend on that state.
+@MainActor
+func forgetSharedScopedLockFlags() {
+    let locks = ScopedLockService.shared
+    for serverId in Set(locks.flags.map(\.serverId)) {
+        locks.forgetServer(serverId)
+    }
+}
