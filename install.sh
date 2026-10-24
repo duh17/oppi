@@ -595,7 +595,7 @@ ensure_on_login_path() {
     read -r answer </dev/tty || answer=
     case "$answer" in
       [nN]*)
-        link_note="$dir is not on PATH; add it to use oppi by name"
+        link_note="${link_note:+$link_note; }$dir is not on PATH; add it to use oppi by name"
         return 0
         ;;
     esac
@@ -611,7 +611,8 @@ ensure_on_login_path() {
   else
     printf '\n%s\nexport PATH="%s:$PATH"\n' "$marker" "$profile_dir" >>"$profile"
   fi
-  link_note="added $dir to PATH in $profile"
+  # Append: link_launcher may already have noted a foreign file at the link path.
+  link_note="${link_note:+$link_note; }added $dir to PATH in $profile"
 }
 
 link_launcher() {
