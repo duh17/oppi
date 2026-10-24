@@ -329,6 +329,11 @@ extension ChatViewController {
             key: composerDraftKey,
             isEphemeral: composerDraftIsMemoryOnly
         )
+        // A chat that opens on its session's running call (one started before this chat
+        // mounted) sets the stored draft aside, as the chat that started the call did.
+        if liveVoiceCall?.holdsComposer == true {
+            composerDraftController.setAsideMessage()
+        }
         synchronizeComposerMode()
     }
 
@@ -375,42 +380,38 @@ extension ChatViewController {
         manager.setPlaybackInterrupter(audioPlayer)
     }
 
-    var liveVoiceCallOwnsMic: Bool { liveVoiceController.isLive }
+    /// A live call anywhere in the app, this session's or another's, owns the microphone.
+    var liveVoiceCallOwnsMic: Bool { root?.liveVoiceCalls.ownsMicrophone ?? false }
 
-    /// The composer's Live Voice entry: none while the Live Voice experiment is off, during a
-    /// call, for a terminal Pi mirror, which cannot answer out loud, or when the server's voice
+    /// The composer's Live Voice entry: none while the Live Voice experiment is off, while the
+    /// app's call policy refuses a new call (`LiveVoiceCallCenter.mayStartCall`: any live call),
+    /// for a terminal Pi mirror, which cannot answer out loud, or when the server's voice
     /// backend is not set up.
     var liveVoiceEntry: (() -> Void)? {
         guard AppPreferences.Experiments.liveVoiceEnabled, connection.liveVoiceAvailable,
-              !liveVoiceCallOwnsMic, session?.runtime != .piTui else {
+              root?.liveVoiceCalls.mayStartCall == true, session?.runtime != .piTui else {
             return nil
         }
         return { [weak self] in self?.startLiveVoice() }
     }
 
     /// Live Voice talks to this chat's session: its agent hears the caller and answers out loud.
-    /// `rejoinOnly` is for a start nobody tapped (a call carried across a shell swap): it
-    /// attaches the remembered call and ends rather than start a new one.
-    func startLiveVoice(rejoinOnly: Bool = false) {
-        guard let routeScope = focusedRouteScope else { return }
+    /// The app holds the call, so it keeps running when this chat leaves the screen.
+    func startLiveVoice() {
+        guard let routeScope = focusedRouteScope, let serverId = resolvedServerId,
+              let call = root?.liveVoiceCalls.placeCall(serverId: serverId, sessionId: sessionId) else {
+            return
+        }
         // The call starts with an empty field, now rather than on the next pass, so a
         // message placed in the composer right after (a Quick Session's first) is the
         // call's own and sends, not a draft set aside.
         composerDraftController.setAsideMessage()
         model.composerTextBeforeRecording = nil
         synchronizeComposerMode()
-        let liveVoiceController = liveVoiceController
         let sessionId = sessionId
         let connection = connection
-        Task { [weak self] in
-            await liveVoiceController.start(
-                sessionId: sessionId,
-                routeScope: routeScope,
-                using: connection,
-                rejoinOnly: rejoinOnly,
-                // The microphone prompt can outlast the chat.
-                isStillWanted: { self?.hasAppeared == true }
-            )
+        Task {
+            await call.start(sessionId: sessionId, routeScope: routeScope, using: connection)
         }
     }
 

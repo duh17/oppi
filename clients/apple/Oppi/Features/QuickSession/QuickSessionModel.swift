@@ -34,6 +34,7 @@ final class QuickSessionModel {
     @ObservationIgnored let coordinator: ConnectionCoordinator
     @ObservationIgnored let navigation: AppNavigation
     @ObservationIgnored let composerDraftStore: ComposerDraftStore?
+    @ObservationIgnored let liveVoiceCalls: LiveVoiceCallCenter
     /// Closes Quick Session; set by its view controller.
     @ObservationIgnored var onDismiss: () -> Void = {}
     @ObservationIgnored private let durableExperimentEnabled = AppPreferences.Experiments.durableSessionsEnabled
@@ -143,6 +144,7 @@ final class QuickSessionModel {
         coordinator = root.coordinator
         navigation = root.navigation
         composerDraftStore = root.composerDraftStore
+        liveVoiceCalls = root.liveVoiceCalls
     }
 
     // MARK: Derived values
@@ -302,9 +304,10 @@ final class QuickSessionModel {
     }
 
     /// Starts the session and opens it straight into a Live Voice call; none while the Live
-    /// Voice experiment is off or the selected server's voice backend is not set up.
+    /// Voice experiment is off, the app's call policy refuses a new call (a call is live), or
+    /// the selected server's voice backend is not set up.
     var liveVoiceEntry: (() -> Void)? {
-        guard AppPreferences.Experiments.liveVoiceEnabled,
+        guard AppPreferences.Experiments.liveVoiceEnabled, liveVoiceCalls.mayStartCall,
               selectedServerConnection()?.liveVoiceAvailable == true else { return nil }
         return { [weak self] in self?.handleSend(startsLiveVoice: true) }
     }

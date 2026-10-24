@@ -220,6 +220,7 @@ final class OppiApp {
             composerDraftStore: composerDraftStore,
             chatReaderPayloadStore: ChatReaderPayloadStore(),
             sessionRows: SessionRowDisplayStore(),
+            liveVoiceCalls: LiveVoiceCallCenter(),
             opener: opener
         )
         // An invite or a background pairing deny can arrive before launch has

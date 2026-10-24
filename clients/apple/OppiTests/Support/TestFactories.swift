@@ -51,7 +51,8 @@ func makeTestAppRoot(
     coordinator: ConnectionCoordinator? = nil,
     themeStore: ThemeStore = ThemeStore(),
     composerDraftStore: ComposerDraftStore? = nil,
-    sessionRows: SessionRowDisplayStore = SessionRowDisplayStore(fixed: SessionRowDisplay())
+    sessionRows: SessionRowDisplayStore = SessionRowDisplayStore(fixed: SessionRowDisplay()),
+    liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter()
 ) -> AppRootEnvironment {
     AppRootEnvironment(
         coordinator: coordinator ?? ConnectionCoordinator(serverStore: ServerStore()),
@@ -64,7 +65,8 @@ func makeTestAppRoot(
             saveDelay: .seconds(60)
         ),
         chatReaderPayloadStore: ChatReaderPayloadStore(),
-        sessionRows: sessionRows
+        sessionRows: sessionRows,
+        liveVoiceCalls: liveVoiceCalls
     )
 }
 

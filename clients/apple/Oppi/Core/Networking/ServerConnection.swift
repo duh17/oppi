@@ -2963,8 +2963,10 @@ final class ServerConnection {
         return client
     }
 
-    /// A second stream to the chat's session that carries its Live Voice call and audio.
-    /// It must not steal the focused chat WebSocket.
+    /// A second stream to a session that carries its Live Voice call and audio. It must not
+    /// steal the focused chat WebSocket, and the connection keeps no reference to it: the
+    /// call's channel owns it, so changing the focused session or the active server never
+    /// touches a running call.
     func makeLiveVoiceWebSocketClient(sessionId: String, routeScope: SessionRouteScope) -> WebSocketClient? {
         guard let selection = endpointSelection,
               let credentials,

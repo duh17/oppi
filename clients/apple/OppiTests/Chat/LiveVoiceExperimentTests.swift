@@ -36,6 +36,8 @@ struct LiveVoiceExperimentTests {
             connection: connection,
             navigation: AppNavigation()
         )
+        // The app root holds the app's Live Voice call, which decides whether one may start.
+        chat.traitOverrides.appRootEnvironment = makeTestAppRoot()
 
         for experiment in [false, true] {
             await withExperiment(experiment) {

@@ -258,7 +258,7 @@ extension ChatViewController: ChatComposerSource {
             voiceInputManager: liveVoiceCallOwnsMic ? nil : voiceInputManager,
             onLiveVoiceSelected: liveVoiceEntry,
             // The input bar is the call surface while a call holds the composer.
-            liveVoiceCall: liveVoiceController.composerCall,
+            liveVoiceCall: liveVoiceCall?.composerCall,
             showForceStop: actionHandler.showForceStop,
             isForceStopInFlight: actionHandler.isForceStopInFlight,
             askRequest: ask,

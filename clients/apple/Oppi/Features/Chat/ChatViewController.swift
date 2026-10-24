@@ -114,7 +114,6 @@ final class ChatViewController: UIViewController {
     let actionHandler = ChatActionHandler()
     let voiceInputManager = VoiceInputManager.shared
     let audioLifecycleCoordinator = AudioLifecycleCoordinator()
-    let liveVoiceController = LiveVoiceCallController()
     let composerDraftController: ChatComposerDraftController
     let reviewComments = ChatReviewCommentsController()
     let outlineAvailability = ChatTimelineOutlineAvailability()
@@ -284,6 +283,13 @@ final class ChatViewController: UIViewController {
 
     var resolvedServerId: String? {
         serverIdHint ?? connection.currentServerId ?? sessionStore.activeServerId
+    }
+
+    /// This session's Live Voice call. The app owns it (`LiveVoiceCallCenter`), so it keeps
+    /// running when this chat goes away and shows again in the next chat on the session.
+    var liveVoiceCall: LiveVoiceCallController? {
+        guard let resolvedServerId else { return nil }
+        return root?.liveVoiceCalls.call(serverId: resolvedServerId, sessionId: sessionId)
     }
 
     var reviewCommentLocalScopeId: String? {

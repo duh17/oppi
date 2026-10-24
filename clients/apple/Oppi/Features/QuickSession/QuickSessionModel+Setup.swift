@@ -134,6 +134,10 @@ extension QuickSessionModel {
             if error == nil { error = "Live Voice didn't start with that Agent. Pick one, then tap Live Voice." }
             return
         }
+        guard liveVoiceCalls.mayStartCall else {
+            error = "Live Voice is already on a call. End it, then start a new one."
+            return
+        }
         guard let liveVoiceEntry else {
             error = selectedServerConnection()?.serverCapabilities == nil
                 ? "Oppi couldn't reach the server to start Live Voice."

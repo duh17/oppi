@@ -228,7 +228,7 @@ extension ChatViewController {
             editorTextRevision: chatState.extensionEditorTextUpdate?.revision,
             showsNowPlayingPill: showsNowPlayingPill,
             showsReviewCommentPill: showsReviewCommentPill,
-            liveVoiceHoldsComposer: liveVoiceController.holdsComposer,
+            liveVoiceHoldsComposer: liveVoiceCall?.holdsComposer == true,
             draftKey: ChatDraftAttachmentKey(key: composerDraftKey, isEphemeral: composerDraftIsMemoryOnly),
             reviewCommentLoadKey: ReviewCommentLoadKey(localScopeId: reviewCommentLocalScopeId, sessionId: sessionId),
             scenePhaseIsActive: AppScenePhase.shared.isActive,
@@ -275,6 +275,12 @@ extension ChatViewController {
         }
         if previous.showsReviewCommentPill, !next.showsReviewCommentPill {
             model.reviewCommentDrawerExpanded = false
+        }
+        if !previous.liveVoiceHoldsComposer, next.liveVoiceHoldsComposer {
+            // Whoever started the call, the draft waits beside it (a no-op when this chat
+            // already set it aside in `startLiveVoice`).
+            composerDraftController.setAsideMessage()
+            synchronizeComposerMode()
         }
         if previous.liveVoiceHoldsComposer, !next.liveVoiceHoldsComposer {
             // The draft set aside when the call started returns when it ends.
@@ -355,18 +361,6 @@ extension ChatViewController {
             controller: scrollController,
             presentation: mountedPresentation
         )
-        // A call the same session's chat held in the other shell is rejoined here
-        // once that chat has detached it.
-        // Nobody tapped, so it only attaches that call; it never opens a new one.
-        LiveVoiceRemountHandoff.shared.chatDidAppear(
-            serverId: resolvedServerId ?? "",
-            sessionId: sessionId,
-            owner: self,
-            presentation: mountedPresentation
-        ) { [weak self] in
-            guard let self, hasAppeared, !liveVoiceController.isLive else { return }
-            startLiveVoice(rejoinOnly: true)
-        }
         logMountTelemetry(
             "Chat appeared",
             metadata: ChatMountTelemetry.appearMetadata(
@@ -499,11 +493,6 @@ extension ChatViewController {
                 presentation: mountedPresentation.telemetryLabel
             )
         )
-        LiveVoiceRemountHandoff.shared.chatDidDisappear(
-            serverId: resolvedServerId ?? "",
-            sessionId: sessionId,
-            owner: self
-        )
         // Freeze the viewport before cleanup can publish an empty timeline
         // and make collection geometry look tail-attached during the push.
         scrollController.suspendForNavigation()
@@ -537,16 +526,8 @@ extension ChatViewController {
         // Releases this runtime's focus claim only; a newer chat for the
         // same session keeps its stream (late or repeated cleanup is a no-op).
         sessionManager.cleanup()
-        let liveVoiceController = liveVoiceController
-        let sessionId = sessionId
-        let serverId = resolvedServerId ?? ""
-        // A locked server swaps the layout for its lock cover (`WorkspaceShellController`):
-        // the presentation differs then too, but nothing takes this chat over.
-        let shellCoveredByLock = root?.coordinator.activeServerId
-            .map { ScopedLockService.shared.isLocked(.server($0)) } ?? false
-        let callResumesUnder = shellSwapRemount && !shellCoveredByLock
-            ? appNavigation.workspaceNavigationPresentation
-            : nil
+        // A Live Voice call on this session is the app's (`LiveVoiceCallCenter`): it keeps
+        // running, and the session's next chat shows it.
         let composerDraftStore = root?.composerDraftStore
         let sessionManager = sessionManager
         let connection = connection
@@ -560,12 +541,6 @@ extension ChatViewController {
             if endedIncognito == nil, let incognitoEnd, let incognitoRouteWatch {
                 incognitoEnd.endWhenRouteDrops(incognitoRouteWatch)
             }
-            await LiveVoiceRemountHandoff.shared.leave(
-                call: liveVoiceController,
-                serverId: serverId,
-                sessionId: sessionId,
-                remountedUnder: callResumesUnder
-            )
             if let composerDraftStore {
                 await composerDraftStore.flush()
             }

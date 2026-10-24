@@ -17,7 +17,8 @@ struct LiveVoiceCallIdentity: Equatable, Sendable {
     var eventSeq: Int
 }
 
-/// Remembers the open call per server and session, so returning to the chat rejoins it.
+/// Remembers the open call per server and session, so a start after the app was closed
+/// mid-call rejoins it.
 @MainActor
 protocol LiveVoiceSessionMemory: AnyObject {
     func callIdentity(forServer serverKey: String) -> LiveVoiceCallIdentity?
@@ -25,8 +26,9 @@ protocol LiveVoiceSessionMemory: AnyObject {
     func clearCallIdentity(forServer serverKey: String)
 }
 
-/// Owns a Live Voice call on one chat's session and its duplex capture. It does not own the
-/// text composer, which shows the call (`holdsComposer`). What the caller says arrives in
+/// Owns a Live Voice call on one session and its duplex capture. The app's
+/// `LiveVoiceCallCenter` holds it, so the call outlives any chat showing it. It does not own
+/// the text composer, which shows the call (`holdsComposer`). What the caller says arrives in
 /// that session; its agent answers out loud.
 @MainActor
 @Observable
@@ -95,15 +97,14 @@ final class LiveVoiceCallController {
     @ObservationIgnored private var keepAliveTask: Task<Void, Never>?
     @ObservationIgnored private var didConfirmCall = false
     @ObservationIgnored private var startSent = false
-    /// This start may only attach the remembered call, never start one (see `start`).
-    @ObservationIgnored private var rejoinOnly = false
     private static let endedText = "Live Voice ended."
     @ObservationIgnored private var pendingRequestId: String?
     /// Request id of an attach that rejoins a call (a remembered one, or this one after the
     /// stream reconnected). Until it answers the lease is unknown, so no keepalive goes out;
     /// if it fails the call is gone and a fresh one starts.
     @ObservationIgnored private var rejoinRequestId: String?
-    @ObservationIgnored private var orphanFinishAction: FinishAction?
+    /// End was pressed before the server confirmed the call: its late snapshot is ended.
+    @ObservationIgnored private var endsOrphanedCall = false
     @ObservationIgnored private var startGeneration: UInt64 = 0
     @ObservationIgnored private var startWaiter: StartWaiter?
     @ObservationIgnored private var captureStarted = false
@@ -131,20 +132,10 @@ final class LiveVoiceCallController {
 
     var isActive: Bool { isLive }
 
-    /// The server confirmed the call and it is up. A call still connecting is not carried
-    /// across a shell swap: its detach would only go out later, from the orphan path.
-    var hasConfirmedCall: Bool { callState?.lifecycle == .active }
-
-    /// `rejoinOnly` starts no call of its own: it attaches the remembered one, and a missing or
-    /// refused call ends this one. For a start nobody tapped, which must not open the mic on a
-    /// new call. `isStillWanted` is asked once the microphone permission settles, so a start
-    /// whose chat went away meanwhile does not run the mic.
     func start(
         sessionId: String,
         routeScope: SessionRouteScope,
-        using connection: ServerConnection,
-        rejoinOnly: Bool = false,
-        isStillWanted: @MainActor () -> Bool = { true }
+        using connection: ServerConnection
     ) async {
         // Without the microphone the call would start and send silence while showing "Listening".
         guard await Self.hasMicrophoneAccess() else {
@@ -154,20 +145,18 @@ final class LiveVoiceCallController {
             )
             return
         }
-        guard isStillWanted() else { return }
         bind(connection, sessionId: sessionId)
         // A reply being read aloud would talk over the call.
         connection.audioPlayer.stop()
-        await start(sessionId: sessionId, routeScope: routeScope, rejoinOnly: rejoinOnly)
+        await start(sessionId: sessionId, routeScope: routeScope)
     }
 
-    func start(sessionId: String, routeScope: SessionRouteScope, rejoinOnly: Bool = false) async {
+    func start(sessionId: String, routeScope: SessionRouteScope) async {
         guard let channel else {
             failClosed("Live Voice is not connected to a server.", closeChannel: false)
             return
         }
 
-        self.rejoinOnly = rejoinOnly
         startGeneration &+= 1
         let generation = startGeneration
         consumeTask?.cancel()
@@ -182,7 +171,7 @@ final class LiveVoiceCallController {
             self?.audio?.play(data)
         }
         channel.close()
-        orphanFinishAction = nil
+        endsOrphanedCall = false
         pendingRequestId = nil
         didConfirmCall = false
         rejoinRequestId = nil
@@ -204,12 +193,33 @@ final class LiveVoiceCallController {
         }
     }
 
+    /// Ends the call for good. Only End, the server, or a dead link end a call: leaving its
+    /// chat does not.
     func end() async {
-        await finish(send: .end)
-    }
+        keepAliveTask?.cancel()
+        keepAliveTask = nil
 
-    func leave() async {
-        await finish(send: .detach)
+        if let callState, callState.lifecycle == .active {
+            invalidateStartWaiter()
+            consumeTask?.cancel()
+            await sendEnd(callState: callState)
+            resetLocalCall()
+            return
+        }
+
+        // Start was sent but the server has not confirmed a callId yet. Keep
+        // the stream open so the late snapshot can be ended instead of orphaned.
+        if startSent || pendingRequestId != nil {
+            endsOrphanedCall = true
+            isLive = false
+            statusText = "Listening"
+            invalidateStartWaiter()
+            return
+        }
+
+        invalidateStartWaiter()
+        consumeTask?.cancel()
+        resetLocalCall()
     }
 
     func toggleMute() {
@@ -226,11 +236,6 @@ final class LiveVoiceCallController {
                 requestId: nextRequestId()
             )
         )
-    }
-
-    private enum FinishAction {
-        case end
-        case detach
     }
 
     // nonisolated: the permission callback runs off the main actor (as in VoiceInputSystemAccess).
@@ -281,7 +286,7 @@ final class LiveVoiceCallController {
     }
 
     private func handle(_ message: ServerMessage, generation: UInt64) async {
-        if orphanFinishAction != nil {
+        if endsOrphanedCall {
             await handleOrphan(message)
             return
         }
@@ -309,15 +314,10 @@ final class LiveVoiceCallController {
             if requestId != nil, requestId == rejoinRequestId {
                 rejoinRequestId = nil
                 if !success {
-                    // The call is gone (ended, or the server no longer has it). On a call the
-                    // user is on, start a new one instead of failing it; an unconfirmed
-                    // automatic rejoin (`rejoinOnly`) ends instead, so no mic opens untapped.
+                    // The call is gone (ended, or the server no longer has it). The user is
+                    // on this call: start a new one instead of failing it.
                     forgetStoredCall()
-                    if rejoinOnly {
-                        failClosed(Self.endedText, closeChannel: true)
-                    } else {
-                        await sendStart()
-                    }
+                    await sendStart()
                     return
                 }
             }
@@ -403,33 +403,6 @@ final class LiveVoiceCallController {
         }
     }
 
-    private func finish(send action: FinishAction) async {
-        keepAliveTask?.cancel()
-        keepAliveTask = nil
-
-        if let callState, callState.lifecycle == .active {
-            invalidateStartWaiter()
-            consumeTask?.cancel()
-            await sendFinish(action, callState: callState)
-            resetLocalCall(clearIdentity: action == .end)
-            return
-        }
-
-        // Start was sent but the server has not confirmed a callId yet. Keep
-        // the stream open so the late snapshot can be ended instead of orphaned.
-        if startSent || pendingRequestId != nil {
-            orphanFinishAction = action
-            isLive = false
-            statusText = "Listening"
-            invalidateStartWaiter()
-            return
-        }
-
-        invalidateStartWaiter()
-        consumeTask?.cancel()
-        resetLocalCall(clearIdentity: action == .end)
-    }
-
     private func invalidateStartWaiter() {
         let waiter = startWaiter
         startWaiter = nil
@@ -457,11 +430,6 @@ final class LiveVoiceCallController {
             clientCallId = identity.clientCallId
             await sendAttach(callId: identity.callId, lastEventSeq: identity.eventSeq)
             rejoinRequestId = pendingRequestId
-            return
-        }
-        if rejoinOnly {
-            // Nothing remembered to rejoin; a rejoin never starts a call of its own.
-            failClosed(Self.endedText, closeChannel: true)
             return
         }
         // A reconnect with the start already sent: its reply went down with the old socket.
@@ -500,24 +468,16 @@ final class LiveVoiceCallController {
         )
     }
 
-    private func sendFinish(_ action: FinishAction, callState: VoiceCallStateSnapshot) async {
+    private func sendEnd(callState: VoiceCallStateSnapshot) async {
         let requestId = nextRequestId()
         pendingRequestId = requestId
-        let message: ClientMessage = switch action {
-        case .end:
+        await send(
             .voiceCallEnd(
                 callId: callState.callId,
                 controllerLeaseEpoch: callState.controllerLeaseEpoch,
                 requestId: requestId
             )
-        case .detach:
-            .voiceCallDetach(
-                callId: callState.callId,
-                controllerLeaseEpoch: callState.controllerLeaseEpoch,
-                requestId: requestId
-            )
-        }
-        await send(message)
+        )
     }
 
     private func handleOrphan(_ message: ServerMessage) async {
@@ -525,29 +485,29 @@ final class LiveVoiceCallController {
         case .streamConnected:
             // The socket dropped after the start (or attach) went out, so its snapshot will
             // never come. Ask again: the same clientCallId re-enters the call the first start
-            // made, and the snapshot reaches the end or detach this orphan is waiting to send.
+            // made, and the snapshot reaches the end this orphan is waiting to send.
             if startSent {
                 await sendStart()
             } else if let identity = memory.callIdentity(forServer: serverKey) {
                 await sendAttach(callId: identity.callId, lastEventSeq: identity.eventSeq)
             }
         case .voiceCallState(let snapshot):
-            guard snapshot.lifecycle == .active, let action = orphanFinishAction else { return }
-            orphanFinishAction = nil
-            await sendFinish(action, callState: snapshot)
-            resetLocalCall(clearIdentity: action == .end)
+            guard snapshot.lifecycle == .active else { return }
+            endsOrphanedCall = false
+            await sendEnd(callState: snapshot)
+            resetLocalCall()
         case .commandResult(_, let requestId, let success, _, _):
             // The stream also carries other callers' results; only the orphan's own request
-            // failing means there is no call to finish. The person already pressed End or
-            // Leave, so it closes quietly with no error left on the composer.
+            // failing means there is no call to finish. The person already pressed End, so it
+            // closes quietly with no error left on the composer.
             if !success, requestId != nil, requestId == pendingRequestId {
-                resetLocalCall(clearIdentity: true)
+                resetLocalCall()
             }
         case .error(_, _, let fatal):
             // A run error on the session's stream is not about this call; a fatal one means the
             // session is gone, so the call cannot be finished.
             if fatal {
-                resetLocalCall(clearIdentity: true)
+                resetLocalCall()
             }
         default:
             break
@@ -556,8 +516,6 @@ final class LiveVoiceCallController {
 
     private func confirmStart(generation: UInt64) {
         didConfirmCall = true
-        // A confirmed rejoin is the user's ordinary call from here on: it recovers like one.
-        rejoinOnly = false
         // Every call state (each partial transcript while the user talks) confirms the call.
         // Restarting the timer here would starve the keepalive during long speech and let
         // the server's lease expire under a live call.
@@ -589,7 +547,7 @@ final class LiveVoiceCallController {
         } catch {
             let activeCall = callState
             if let activeCall, activeCall.lifecycle == .active {
-                await sendFinish(.end, callState: activeCall)
+                await sendEnd(callState: activeCall)
             }
             memory.clearCallIdentity(forServer: serverKey)
             failClosed(error.localizedDescription, closeChannel: true)
@@ -620,7 +578,7 @@ final class LiveVoiceCallController {
         didConfirmCall = false
         startSent = false
         pendingRequestId = nil
-        orphanFinishAction = nil
+        endsOrphanedCall = false
         rejoinRequestId = nil
         callState = nil
         if closeChannel {
@@ -630,15 +588,13 @@ final class LiveVoiceCallController {
         resumeStartWaiter(generation: startGeneration)
     }
 
-    private func resetLocalCall(clearIdentity: Bool) {
-        if clearIdentity {
-            memory.clearCallIdentity(forServer: serverKey)
-        }
+    private func resetLocalCall() {
+        memory.clearCallIdentity(forServer: serverKey)
         channel?.close()
         didConfirmCall = false
         startSent = false
         pendingRequestId = nil
-        orphanFinishAction = nil
+        endsOrphanedCall = false
         rejoinRequestId = nil
         callState = nil
         lastError = nil
@@ -657,112 +613,9 @@ final class LiveVoiceCallController {
     }
 }
 
-/// Carries a Live Voice call across a stack/split shell swap.
-///
-/// A rotation that swaps the workspace shell frees the session's chat and mounts a new one
-/// (see `ChatScrollShellSwapHandoff`). The old chat detaches its call as it leaves; the call
-/// stays on the server and `LiveVoiceCallController.start` rejoins it from session memory.
-/// This hands the rejoin to the chat that takes over, once the detach has gone out, so a
-/// stale detach cannot land after the new chat's attach. A chat that leaves for any other
-/// reason (closed, session switched) is not a swap, so it never records a departure and
-/// the call stays detached as before.
-///
-/// The incoming chat can appear before or after the detach completes; either order rejoins.
-/// A departure is claimable for `departureWindow` only, so a chat opened later does not
-/// resume a call the user left.
-///
-/// Only a confirmed call is carried. One still connecting leaves through the orphan path,
-/// whose detach goes out later, possibly after the next chat's attach.
-@MainActor
-final class LiveVoiceRemountHandoff {
-    static let shared = LiveVoiceRemountHandoff()
-
-    static let departureWindow: Duration = .seconds(5)
-
-    /// The same session id on two servers is two chats.
-    private struct Key: Hashable {
-        let serverId: String
-        let sessionId: String
-    }
-
-    private struct Waiting {
-        let owner: ObjectIdentifier
-        let presentation: WorkspaceNavigationPresentation
-        let rejoin: @MainActor () -> Void
-    }
-
-    private struct Departure {
-        let resumeUnder: WorkspaceNavigationPresentation
-        let detachedAt: ContinuousClock.Instant
-    }
-
-    private var waiting: [Key: Waiting] = [:]
-    private var departures: [Key: Departure] = [:]
-
-    /// A chat for `sessionId` appeared under `presentation`; `rejoin` restarts its call. It runs
-    /// when the same session's chat in the other shell has detached a live call for this swap.
-    func chatDidAppear(
-        serverId: String,
-        sessionId: String,
-        owner: AnyObject,
-        presentation: WorkspaceNavigationPresentation,
-        now: ContinuousClock.Instant = .now,
-        rejoin: @escaping @MainActor () -> Void
-    ) {
-        let key = Key(serverId: serverId, sessionId: sessionId)
-        pruneDepartures(now: now)
-        if let departure = departures[key], departure.resumeUnder == presentation {
-            departures[key] = nil
-            waiting[key] = nil
-            rejoin()
-            return
-        }
-        waiting[key] = Waiting(
-            owner: ObjectIdentifier(owner),
-            presentation: presentation,
-            rejoin: rejoin
-        )
-    }
-
-    func chatDidDisappear(serverId: String, sessionId: String, owner: AnyObject) {
-        let key = Key(serverId: serverId, sessionId: sessionId)
-        if waiting[key]?.owner == ObjectIdentifier(owner) {
-            waiting[key] = nil
-        }
-    }
-
-    /// Leaves `call` for the chat of `sessionId` that is going away. With `remountedUnder` set,
-    /// the chat left because its shell was swapped for that presentation; if the call is
-    /// confirmed the chat that takes over rejoins it. Without it, or with a call still
-    /// connecting, the call leaves as before and stays detached.
-    func leave(
-        call: LiveVoiceCallController,
-        serverId: String,
-        sessionId: String,
-        remountedUnder: WorkspaceNavigationPresentation?,
-        now: @autoclosure () -> ContinuousClock.Instant = .now
-    ) async {
-        let carriesCall = remountedUnder != nil && call.hasConfirmedCall
-        await call.leave()
-        guard carriesCall, let presentation = remountedUnder else { return }
-        let key = Key(serverId: serverId, sessionId: sessionId)
-        let now = now()
-        pruneDepartures(now: now)
-        if let waiter = waiting[key], waiter.presentation == presentation {
-            waiting[key] = nil
-            waiter.rejoin()
-        } else {
-            departures[key] = Departure(resumeUnder: presentation, detachedAt: now)
-        }
-    }
-
-    private func pruneDepartures(now: ContinuousClock.Instant) {
-        departures = departures.filter { _, departure in
-            now - departure.detachedAt <= Self.departureWindow
-        }
-    }
-}
-
+/// The call's own stream to its session, from `ServerConnection.makeLiveVoiceWebSocketClient`.
+/// The connection keeps no reference to it, so focusing another session, switching the active
+/// server, or a chat releasing its stream leaves the call's socket alone.
 @MainActor
 final class ServerConnectionLiveVoiceChannel: LiveVoiceCallChannel {
     private let connection: ServerConnection
