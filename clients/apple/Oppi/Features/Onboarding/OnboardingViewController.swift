@@ -183,8 +183,6 @@ final class OnboardingViewController: UIViewController, RouterModalContainer {
 
     private let scrollView = UIScrollView()
     private let iconView = UIImageView()
-    private let titleLabel = UILabel()
-    private let taglineLabel = UILabel()
     private let prerequisiteLabel = UILabel()
     private let pairingSpinner = UIActivityIndicatorView(style: .medium)
     private let pairingLabel = UILabel()
@@ -239,8 +237,6 @@ final class OnboardingViewController: UIViewController, RouterModalContainer {
         let colors = ComposerThemeColors(palette: palette)
         view.backgroundColor = colors.bg
 
-        titleLabel.textColor = colors.fg
-        taglineLabel.textColor = colors.fg
         prerequisiteLabel.textColor = colors.comment
         pairingSpinner.color = colors.comment
         pairingLabel.textColor = colors.fg
@@ -271,41 +267,29 @@ final class OnboardingViewController: UIViewController, RouterModalContainer {
         iconView.layer.cornerRadius = 22
         iconView.layer.cornerCurve = .continuous
         iconView.clipsToBounds = true
-        iconView.isAccessibilityElement = false
+        // The screen's heading for VoiceOver; the icon is the only visible "Oppi".
+        iconView.isAccessibilityElement = true
+        iconView.accessibilityLabel = "Oppi"
+        iconView.accessibilityTraits = .header
         NSLayoutConstraint.activate([
             iconView.widthAnchor.constraint(equalToConstant: 96),
             iconView.heightAnchor.constraint(equalToConstant: 96),
         ])
 
-        titleLabel.text = "Oppi"
-        titleLabel.font = .scaled(.largeTitle, .bold)
-        titleLabel.accessibilityTraits.insert(.header)
-
-        taglineLabel.text = String(
-            localized: "Run AI coding agents on your own computer. Follow and approve their work from your \(deviceModel)."
-        )
-        taglineLabel.font = .scaled(.body)
-        taglineLabel.accessibilityIdentifier = "onboarding.tagline"
-
         prerequisiteLabel.text = String(
-            localized: "The agents run in the Oppi server on your Mac or Linux computer, not on this \(deviceModel). Set it up from here, or install it yourself and scan the pairing code it shows."
+            localized: "Pi runs on your own Mac or Linux computer. Set it up from here, or install Oppi there yourself and scan the pairing code it shows."
         )
         prerequisiteLabel.font = .scaled(.footnote)
         prerequisiteLabel.accessibilityIdentifier = "onboarding.prerequisite"
-        prerequisiteLabel.isHidden = mode != .initial
+        prerequisiteLabel.numberOfLines = 0
+        prerequisiteLabel.textAlignment = .center
+        prerequisiteLabel.adjustsFontForContentSizeCategory = true
 
-        for label in [titleLabel, taglineLabel, prerequisiteLabel] {
-            label.numberOfLines = 0
-            label.textAlignment = .center
-            label.adjustsFontForContentSizeCategory = true
-        }
-
-        let hero = UIStackView(arrangedSubviews: [iconView, titleLabel, taglineLabel, prerequisiteLabel])
+        let hero = UIStackView(arrangedSubviews: [iconView, prerequisiteLabel])
         hero.axis = .vertical
         hero.alignment = .center
         hero.spacing = 12
         hero.setCustomSpacing(16, after: iconView)
-        hero.setCustomSpacing(16, after: taglineLabel)
 
         pairingLabel.text = String(localized: "Pairing…")
         pairingLabel.font = .scaled(.body)

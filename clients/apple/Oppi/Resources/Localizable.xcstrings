@@ -2352,6 +2352,16 @@
     "Pi Extensions" : {
 
     },
+    "Pi runs on your own Mac or Linux computer. Set it up from here, or install Oppi there yourself and scan the pairing code it shows." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pi 运行在你自己的 Mac 或 Linux 电脑上。你可以在这里设置，也可以自行在那台电脑上安装 Oppi，然后扫描它显示的配对码。"
+          }
+        }
+      }
+    },
     "Pi SDK is the embedded Pi coding-agent package that runs Oppi sessions. Pi TUI is the installed pi CLI on this host." : {
 
     },
@@ -2701,16 +2711,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "运行"
-          }
-        }
-      }
-    },
-    "Run AI coding agents on your own computer. Follow and approve their work from your %@." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在你自己的电脑上运行 AI 编程智能体，并在 %@ 上跟进和批准它们的工作。"
           }
         }
       }
@@ -3251,16 +3251,6 @@
     },
     "That’s okay. Enter an existing folder path or leave the folder empty and Oppi creates one." : {
 
-    },
-    "The agents run in the Oppi server on your Mac or Linux computer, not on this %@. Set it up from here, or install it yourself and scan the pairing code it shows." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "智能体运行在你的 Mac 或 Linux 电脑上的 Oppi 服务器中，而不是在这台 %@ 上。你可以在这里设置，也可以自行安装后扫描它显示的配对码。"
-          }
-        }
-      }
     },
     "The configuration entry will be removed. Stored OAuth credentials are not deleted; sign out first if needed." : {
 
