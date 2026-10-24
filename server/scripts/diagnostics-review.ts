@@ -2,10 +2,10 @@
 
 /**
  * Oppi diagnostics snapshot — one command that captures telemetry, client logs,
- * MetricKit diagnostics, server log health, and optional external release sources.
+ * MetricKit diagnostics, and server log health.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,6 @@ interface ParsedArgs {
   limit: number;
   json: boolean;
   help: boolean;
-  external: boolean;
 }
 
 interface CommandResult {
@@ -39,7 +38,6 @@ function parseArgs(argv: string[]): ParsedArgs {
     limit: 20,
     json: false,
     help: false,
-    external: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -56,10 +54,6 @@ function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--out":
         args.out = argv[++i];
-        break;
-      case "--external":
-      case "--include-external":
-        args.external = true;
         break;
       case "--json":
         args.json = true;
@@ -113,23 +107,6 @@ function defaultReportPath(): string {
   return join(repoRoot, ".internal", "reports", `diagnostics-${stamp}.md`);
 }
 
-function externalCommands(): Array<{ title: string; command: string; args: string[]; cwd?: string }> {
-  const home = homedir();
-  const ascScript = join(home, ".pi", "agent", "skills", "oppi-dev", "scripts", "apple", "asc.ts");
-  const commands: Array<{ title: string; command: string; args: string[]; cwd?: string }> = [];
-
-  if (existsSync(ascScript)) {
-    commands.push({
-      title: "App Store Connect recent build usage",
-      command: bunExecutable,
-      args: [ascScript, "build-usage-recent", "10"],
-      cwd: repoRoot,
-    });
-  }
-
-  return commands;
-}
-
 function buildMarkdown(args: ParsedArgs, dataDir: string, results: CommandResult[]): string {
   const generatedAt = new Date().toISOString();
   const lines: string[] = [
@@ -138,7 +115,6 @@ function buildMarkdown(args: ParsedArgs, dataDir: string, results: CommandResult
     `- Generated: ${generatedAt}`,
     `- Window: last ${args.days} day(s)`,
     `- Data dir: \`${dataDir}\``,
-    `- External sources: ${args.external ? "included" : "not included"}`,
     "",
   ];
 
@@ -164,7 +140,7 @@ function printHelp(): void {
   console.error(`Oppi Diagnostics Review
 
   bun server/scripts/diagnostics-review.ts
-  bun server/scripts/diagnostics-review.ts --days 3 --external
+  bun server/scripts/diagnostics-review.ts --days 3
   bun server/scripts/diagnostics-review.ts --out .internal/reports/diagnostics.md
 
 Options:
@@ -172,7 +148,6 @@ Options:
   --days <n>              Days to include (default: 1)
   --limit <n>             Top/recent rows for subreports (default: 20)
   --out <path>            Markdown report path (default: .internal/reports/diagnostics-*.md)
-  --external              Include App Store Connect if configured
   --json                  Print command result metadata as JSON
   --help                  Show this help
 `);
@@ -226,10 +201,6 @@ function main(): void {
       args: [join(scriptDir, "server-log-review.ts"), ...commonArgs],
     },
   ];
-
-  if (args.external) {
-    commands.push(...externalCommands());
-  }
 
   const results = commands.map((item) => run(item.title, item.command, item.args, item.cwd));
   const reportPath = resolve(args.out ?? defaultReportPath());
