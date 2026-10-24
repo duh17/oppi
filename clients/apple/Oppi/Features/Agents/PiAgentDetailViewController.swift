@@ -242,7 +242,8 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
     // MARK: - Modals
 
     private func updateModals() {
-        let systemPromptPath = prompt?.resolvedPath ?? AgentManagementPresentation.globalSystemPromptPath
+        // Only a SYSTEM.md that exists is a host file to name.
+        let systemPromptPath = prompt?.resolvedPath
         guidedSheet.update(
             id: showsSystemPromptSession ? "system-prompt-session" : nil,
             presentation: .sheet.inNavigation(),

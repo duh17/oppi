@@ -261,22 +261,7 @@ final class GuidedControlComposerModel {
         let sessionStore = connection.sessionStore
         let comments = configuration.stagedComments
         do {
-            let candidateLaunch = GuidedControlSessionAtomicLaunch.make(
-                domain: configuration.domain,
-                intent: configuration.intent,
-                targetId: configuration.targetId,
-                targetName: configuration.targetName,
-                targetPath: configuration.targetPath,
-                workspaceId: workspaceContext?.id,
-                workspaceName: workspaceContext?.name,
-                sourceDraftText: request,
-                cleanRequest: cleanRequest,
-                sessionName: sessionName(request: cleanRequest),
-                model: effectiveModelId,
-                thinking: thinkingLevel,
-                requestId: revisionLaunchState.requestId,
-                comments: comments
-            )
+            let candidateLaunch = makeLaunch(cleanRequest: cleanRequest)
             // Freeze every POST field and the exact comment snapshots before
             // the first network attempt. A lost response cannot bind revised
             // draft content to the old idempotency key.
@@ -325,6 +310,27 @@ final class GuidedControlComposerModel {
                 ? error.localizedDescription
                 : "\(error.localizedDescription) Your staged comments are still saved."
         }
+    }
+
+    /// The launch this composer would post for `cleanRequest`: the workspace
+    /// context only for domains that take one and only when one is selected.
+    func makeLaunch(cleanRequest: String) -> GuidedControlSessionAtomicLaunch {
+        GuidedControlSessionAtomicLaunch.make(
+            domain: configuration.domain,
+            intent: configuration.intent,
+            targetId: configuration.targetId,
+            targetName: configuration.targetName,
+            targetPath: configuration.targetPath,
+            workspaceId: workspaceContext?.id,
+            workspaceName: workspaceContext?.name,
+            sourceDraftText: request,
+            cleanRequest: cleanRequest,
+            sessionName: sessionName(request: cleanRequest),
+            model: effectiveModelId,
+            thinking: thinkingLevel,
+            requestId: revisionLaunchState.requestId,
+            comments: configuration.stagedComments
+        )
     }
 
     private func sessionName(request: String) -> String {

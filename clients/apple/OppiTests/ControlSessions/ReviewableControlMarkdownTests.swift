@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("Reviewable control Markdown")
@@ -371,6 +372,114 @@ struct ReviewableControlMarkdownTests {
         #expect(navigationTarget == nil)
     }
 
+    @Test func presentedReaderFinishesBeforeTheRevisionChatOpens() async throws {
+        let presenter = UIViewController()
+        let window = try showInTestWindow(presenter)
+        defer { hideTestWindow(window) }
+        let reader = makeReader()
+        Router.present(reader, presentation: .sheet, from: presenter)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            presenter.presentedViewController === reader && !reader.isBeingPresented
+        })
+        let navigation = AppNavigation()
+        navigation.launchPhase = .ready
+        navigation.showOnboarding = false
+        let depthBefore = navigation.workspaceStackRouteElements.count
+
+        reader.openRevisionSession(
+            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "control-session-1", routeScope: .control),
+            navigation: navigation
+        )
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            presenter.presentedViewController == nil
+                && navigation.workspaceStackDiagnosticContext.sessionId == "control-session-1"
+        })
+        #expect(navigation.workspaceStackRouteElements.count == depthBefore + 1)
+    }
+
+    @Test func pushedReaderStaysUnderTheChatAndWaitsForTheGuidedSheetToDismiss() async throws {
+        let reader = makeReader()
+        let stack = UINavigationController(rootViewController: UIViewController())
+        let window = try showInTestWindow(stack)
+        defer { hideTestWindow(window) }
+        stack.pushViewController(reader, animated: false)
+        let navigation = AppNavigation()
+        navigation.launchPhase = .ready
+        navigation.showOnboarding = false
+        let depthBefore = navigation.workspaceStackRouteElements.count
+
+        reader.openRevisionSession(
+            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "control-session-1", routeScope: .control),
+            navigation: navigation
+        )
+        await Task.yield()
+
+        #expect(stack.topViewController === reader)
+        #expect(navigation.workspaceStackRouteElements.count == depthBefore)
+    }
+
+    @Test func retryAfterPromptedLaunchLosesItsRouteReusesTheCreatedSession() async throws {
+        var state = ControlRevisionSessionRetryState(requestId: "route-retry")
+        let launch = state.freeze(GuidedControlSessionAtomicLaunch.make(
+            domain: .agents,
+            intent: .revise,
+            targetId: "agent-1",
+            targetName: "Reviewer",
+            targetPath: nil,
+            workspaceId: nil,
+            workspaceName: nil,
+            sourceDraftText: "Tighten it.",
+            cleanRequest: "Tighten it.",
+            sessionName: "Revise Reviewer",
+            model: nil,
+            thinking: .high,
+            requestId: state.requestId,
+            comments: nil
+        ))
+        let session = makeTestSession(id: "control-session-route-retry")
+        var createCalls = 0
+
+        // The session is created and prompted, but no server is known to route to.
+        await #expect(throws: ControlRevisionCommentNavigationError.serverUnavailable) {
+            _ = try await GuidedControlSessionLaunchCoordinator.prepare(
+                launch: launch,
+                existingSession: state.createdSession,
+                starterPromptDelivered: state.starterPromptDelivered,
+                serverId: nil,
+                fallbackServerId: nil,
+                currentDraftText: "Tighten it.",
+                currentComments: [],
+                create: { _ in
+                    createCalls += 1
+                    return (session, true)
+                },
+                onSessionCreated: { state.recordCreatedSession($0, promptDelivered: $1) }
+            )
+        }
+        #expect(state.createdSession?.id == session.id)
+        #expect(state.starterPromptDelivered)
+
+        let retry = try await GuidedControlSessionLaunchCoordinator.prepare(
+            launch: launch,
+            existingSession: state.createdSession,
+            starterPromptDelivered: state.starterPromptDelivered,
+            serverId: "server-1",
+            fallbackServerId: nil,
+            currentDraftText: "Tighten it.",
+            currentComments: [],
+            create: { _ in
+                createCalls += 1
+                return (session, true)
+            },
+            onSessionCreated: { _, _ in Issue.record("A retry must reuse the prompted session") }
+        )
+
+        #expect(createCalls == 1)
+        #expect(retry.session.id == session.id)
+        #expect(retry.sessionTarget.sessionId == session.id)
+    }
+
     @Test func guidedSkillHandoffNavigatesOnlyAfterSheetDismissalCompletes() throws {
         let navigation = AppNavigation()
         navigation.launchPhase = .ready
@@ -626,5 +735,30 @@ struct ReviewableControlMarkdownTests {
         #expect(navigationTarget == nil)
         #expect(state.createdSession?.id == "control-session-1")
         #expect(state.starterPromptDelivered == false)
+    }
+
+    private func makeReader() -> ReviewableControlMarkdownViewController {
+        ReviewableControlMarkdownViewController(
+            content: "# Definition",
+            domain: .agents,
+            targetId: "agent-1",
+            targetName: "Reviewer",
+            sourceLabel: "Reviewer definition",
+            sourcePath: "Agents/agent-1/Definition.md"
+        )
+    }
+
+    /// Animated presentations only finish in a window on the test host's scene.
+    private func showInTestWindow(_ controller: UIViewController) throws -> UIWindow {
+        let scene = try #require(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "presentation tests need the test host's window scene"
+        )
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.view.layoutIfNeeded()
+        return window
     }
 }

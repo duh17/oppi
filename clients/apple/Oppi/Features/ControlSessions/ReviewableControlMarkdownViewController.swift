@@ -375,8 +375,8 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
             // necessarily the active one.
             connection: { connection },
             onSessionPrepared: { [weak self] target in
-                self?.guidedSessionHandoff.prepare(target)
-                self?.closeGuidedRevision()
+                guard let self else { return }
+                openRevisionSession(target, navigation: root.navigation)
             }
         )
         guidedSheet = sheet
@@ -387,6 +387,35 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
             theme: root.themeStore,
             onDismiss: { [weak self] in self?.completeGuidedSessionHandoff() }
         )
+    }
+
+    /// The screen to close when the revision session opens: this reader's own
+    /// screen when it is presented as a sheet, nil when it is pushed on a
+    /// stack (a Skill file), which stays under the chat.
+    private var presentedReaderScreen: UIViewController? {
+        var screen: UIViewController = self
+        while let parent = screen.parent, !(parent is UINavigationController) {
+            screen = parent
+        }
+        guard screen.navigationController == nil, screen.presentingViewController != nil else { return nil }
+        return screen
+    }
+
+    /// Opens the revision session's chat. A presented reader finishes first,
+    /// taking the guided sheet above it along, so the chat is not left under
+    /// either sheet. A pushed reader closes only the guided sheet and keeps
+    /// its place in the stack beneath the chat.
+    func openRevisionSession(_ target: WorkspaceSessionNavTarget, navigation: AppNavigation) {
+        guard let reader = presentedReaderScreen else {
+            guidedSessionHandoff.prepare(target)
+            closeGuidedRevision()
+            return
+        }
+        Router.finish(reader)
+        Task { @MainActor in
+            await Task.yield()
+            navigation.openWorkspaceSession(target)
+        }
     }
 
     private func closeGuidedRevision() {
