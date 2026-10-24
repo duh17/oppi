@@ -22,7 +22,7 @@ oppi config set --help
 
 `oppi server restart` interrupts running sessions, which resume afterward ([Running sessions across a restart](#running-sessions-across-a-restart)). A setup session (Edit with Oppi) runs with host-user authority: inspect the current state before changing configuration, and tell the owner when a restart is required instead of restarting unasked.
 
-Do not put these in config: owner tokens and pairing secrets (use `oppi pair` and `oppi token`), provider credentials (use `pi auth`), or per-workspace Agent and Skill content (use Agents, Skills, and workspace flows).
+Do not put these in config: owner tokens and pairing secrets (use `oppi pair` and `oppi token`), provider credentials (use the app's **Model Providers** screen, or a provider API key environment variable such as `ANTHROPIC_API_KEY`), or per-workspace Agent and Skill content (use Agents, Skills, and workspace flows).
 
 ## Common operator keys
 
@@ -56,7 +56,7 @@ oppi config set asr.sttEndpoint http://127.0.0.1:7936
 oppi config validate
 oppi server restart
 
-# xAI/Grok, using existing Pi/Oppi provider auth (`pi auth`, Settings login, or XAI_API_KEY)
+# xAI/Grok, using existing provider auth (Model Providers sign-in in the app, or XAI_API_KEY)
 oppi config set asr.provider xai
 oppi server restart
 ```

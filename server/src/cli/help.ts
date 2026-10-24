@@ -141,7 +141,8 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "On first run, serve creates owner credentials, enables TLS, and prints a pairing QR. It uses Tailscale TLS when `tailscale cert` can issue a certificate for this machine, otherwise self-signed TLS. It keeps any tls.mode other than disabled, and keeps disabled when publicUrl + proxy.trustedPeers configure a trusted HTTP reverse proxy.",
-      "Press Ctrl+C to stop the foreground server.",
+      "Until a device has enrolled, every start prints a fresh pairing QR. Run 'oppi pair' in another terminal for a new code if it expires.",
+      "Ctrl+C stops the foreground server and every phone paired with it. 'oppi server install' keeps it running in the background.",
     ],
     examples: [{ command: "oppi serve" }, { command: "oppi serve --host mac-studio.local" }],
   },
@@ -169,7 +170,6 @@ const HELP_TOPICS: HelpTopic[] = [
         value: "<duration>",
         summary: "invite lifetime, 1s to 30d (e.g. 10m, 14d); default 90s",
       },
-      { name: "--show-token", summary: "print the owner bearer token in human output; unsafe" },
     ],
     notes: [
       "The QR and link carry the same signed invite.",
@@ -178,7 +178,6 @@ const HELP_TOPICS: HelpTopic[] = [
       "When another device is already paired, an invite with a --ttl over 90s needs approval on that device within 2 minutes of being used; every new device also alerts the paired devices.",
       "When publicUrl is set, the invite advertises that HTTPS origin and omits the origin TLS leaf pin.",
       "--host must not conflict with publicUrl.",
-      "Use --show-token only for manual recovery; it exposes the owner token in the terminal.",
     ],
     examples: [
       { command: 'oppi pair "Chen"' },
@@ -232,11 +231,12 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["doctor"],
     title: "Doctor",
-    summary: "Run security, TLS, launchd, runtime, and environment diagnostics.",
+    summary: "Run security, TLS, launchd, runtime, model provider, and environment diagnostics.",
     usage: "oppi doctor",
     notes: [
       "Doctor exits non-zero for critical failures.",
       "It inspects TLS files but does not generate missing certificate material.",
+      "It warns when no model provider has credentials; connect one in the app's Model Providers screen or set the provider's API key environment variable.",
     ],
     examples: [{ command: "oppi doctor" }],
   },

@@ -12,6 +12,9 @@ import type { LocalApiConnection } from "./local-api-client.js";
 
 export interface CliConnectionConfig extends LocalApiConnection {
   getConfigPath(): string;
+  /** First-run setup has generated the owner token. */
+  hasOwnerToken(): boolean;
+  /** At least one enrolled, non-revoked device. */
   isPaired(): boolean;
 }
 
@@ -65,8 +68,12 @@ export class FileCliConnectionConfig implements CliConnectionConfig {
     return this.configPath;
   }
 
-  isPaired(): boolean {
+  hasOwnerToken(): boolean {
     return !!this.getToken();
+  }
+
+  isPaired(): boolean {
+    return (this.getConfig().authDevices ?? []).some((device) => device.revokedAt === undefined);
   }
 
   private loadConfig(): ServerConfig {
@@ -113,6 +120,10 @@ export class FileCliConfigStorage implements CliConfigCommandStorage {
 
   mutateConfig(mutator: (latest: ServerConfig) => Partial<ServerConfig>): ServerConfig {
     return this.configStore.mutate(mutator);
+  }
+
+  hasOwnerToken(): boolean {
+    return this.authStore.hasOwnerToken();
   }
 
   isPaired(): boolean {

@@ -261,6 +261,10 @@ export class Storage {
 
   // ─── Pairing / auth / push tokens ───
 
+  hasOwnerToken(): boolean {
+    return this.authStore.hasOwnerToken();
+  }
+
   isPaired(): boolean {
     return this.authStore.isPaired();
   }

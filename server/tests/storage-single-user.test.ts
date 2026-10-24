@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { generateKeyPairSync } from "node:crypto";
 import { Storage } from "../src/storage.js";
 
 describe("Storage pairing", () => {
@@ -23,12 +24,29 @@ describe("Storage pairing", () => {
     expect(storage.getOwnerName()).toBeTruthy();
   });
 
-  it("ensurePaired generates a token", () => {
+  it("ensurePaired generates an owner token without pairing a device", () => {
     const storage = new Storage(dir);
     const token = storage.ensurePaired();
     expect(token).toMatch(/^sk_/);
-    expect(storage.isPaired()).toBe(true);
+    expect(storage.isPaired()).toBe(false);
+    expect(storage.hasOwnerToken()).toBe(true);
     expect(storage.getToken()).toBe(token);
+  });
+
+  it("is paired only while a non-revoked device is enrolled", () => {
+    const storage = new Storage(dir);
+    storage.ensurePaired();
+    const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const enrollment = storage.enrollViaPairing(storage.issuePairingToken(), {
+      publicKey: publicKey.export({ format: "jwk" }),
+      name: "Phone",
+    });
+    if (!enrollment) throw new Error("pairing failed");
+    expect(storage.isPaired()).toBe(true);
+
+    expect(storage.revokeDevice(storage.listDevices()[0]!.id)).toBe(true);
+    expect(storage.isPaired()).toBe(false);
+    expect(storage.hasOwnerToken()).toBe(true);
   });
 
   it("ensurePaired is idempotent", () => {
@@ -99,7 +117,7 @@ describe("Storage pairing", () => {
 
     // users.json is ignored — no migration runs
     const storage = new Storage(dir);
-    expect(storage.isPaired()).toBe(false);
+    expect(storage.hasOwnerToken()).toBe(false);
     expect(existsSync(join(dir, "users.json"))).toBe(true);
   });
 });

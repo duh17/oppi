@@ -17,8 +17,16 @@ export class AuthStore {
     return `pt_${generateId(24)}`;
   }
 
-  isPaired(): boolean {
+  /** The owner token exists: first-run setup has run. No device need have enrolled. */
+  hasOwnerToken(): boolean {
     return !!this.configStore.getConfig().token;
+  }
+
+  /** At least one enrolled device is not revoked. An owner token alone is not a pairing. */
+  isPaired(): boolean {
+    return (this.configStore.getConfig().authDevices ?? []).some(
+      (device) => device.revokedAt === undefined,
+    );
   }
 
   getToken(): string | undefined {

@@ -201,7 +201,7 @@ describe("oppi help", () => {
     const cases: Array<{ args: string[]; expected: string[] }> = [
       { args: ["init", "--help"], expected: ["Usage: oppi init", "--data-dir <path>"] },
       { args: ["serve", "--help"], expected: ["Usage: oppi serve", "--host <host>"] },
-      { args: ["pair", "--help"], expected: ["Usage: oppi pair", "--show-token"] },
+      { args: ["pair", "--help"], expected: ["Usage: oppi pair", "--ttl <duration>"] },
       { args: ["status", "--help"], expected: ["Usage: oppi status", "Local Network"] },
       { args: ["doctor", "--help"], expected: ["Usage: oppi doctor", "diagnostics"] },
       { args: ["update", "--help"], expected: ["Usage: oppi update", "npm-installed"] },

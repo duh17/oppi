@@ -45,6 +45,7 @@ import { generateInvite, type GeneratedInvite } from "./invite.js";
 import { activePushRelays, releasePushPermissions } from "./push/push-sender.js";
 import { allowsTrustedPrivateHttpBind, parsePublicUrl } from "./proxy-config.js";
 import { getPackageInfo } from "./version.js";
+import { ModelRuntime, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { requestServerStop } from "./server-stop-marker.js";
 import {
   getServiceStatus,
@@ -223,12 +224,14 @@ function chooseFirstRunTlsMode(
 // ─── Commands ───
 
 async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
+  // An owner token only means first-run setup ran; "paired" needs an enrolled device.
+  const hasOwnerToken = storage.hasOwnerToken();
   const wasPaired = storage.isPaired();
 
   applyManagedHostEnv(storage.getConfig());
 
   // Auto-init: generate owner token + identity keys if this is a fresh install.
-  if (!wasPaired) {
+  if (!hasOwnerToken) {
     // Store the mode before new Server: Server.start validates TLS first.
     // The local socket has no consumer before this host is paired.
     const mode = chooseFirstRunTlsMode(storage, pairHost, console.log);
@@ -362,10 +365,14 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
     console.log(c.dim("  Run 'oppi pair' to re-pair or add devices."));
     console.log("");
   } else {
-    // First run: show pairing QR inline so user doesn't need a separate command.
+    // No device has enrolled yet (first run, or an earlier invite expired unused):
+    // show a fresh pairing QR inline so the user doesn't need a separate command.
     console.log("");
     showPairingQR(storage, undefined, pairHost);
-    console.log(c.green("  Server is running. Scan QR above, then Ctrl+C when done."));
+    console.log(c.green("  Server is running. Keep this terminal open while you pair."));
+    console.log(c.dim("  Code expired? Run 'oppi pair' in another terminal for a new one."));
+    console.log(c.dim("  Ctrl+C stops this server, including for the phone you just paired."));
+    console.log(c.dim("  To keep it running in the background, run 'oppi server install'."));
     console.log("");
   }
 }
@@ -409,7 +416,6 @@ function showPairingQR(
   storage: CliConfigStorage,
   requestedName?: string,
   hostOverride?: string,
-  showToken = false,
   pairingTokenTtlMs?: number,
 ): boolean {
   let invite;
@@ -456,22 +462,12 @@ function showPairingQR(
   console.log("  Or share this link:");
   console.log(`  ${c.cyan(invite.inviteURL)}`);
   console.log(c.dim(`  Single use. Expires ${new Date(invite.expiresAt).toLocaleString()}.`));
-  const hasPairedDevice = (storage.getConfig().authDevices ?? []).some(
-    (device) => device.revokedAt === undefined,
-  );
-  if (hasPairedDevice && (pairingTokenTtlMs ?? 90_000) > SHORT_INVITE_MAX_TTL_MS) {
+  if (storage.isPaired() && (pairingTokenTtlMs ?? 90_000) > SHORT_INVITE_MAX_TTL_MS) {
     console.log(
       c.yellow("  A paired device must approve the new device within 2 minutes of it scanning."),
     );
   }
   console.log("");
-
-  if (showToken) {
-    console.log(c.yellow("  ⚠️  Manual token display enabled (--show-token)"));
-    console.log(c.dim("  Owner token:"));
-    console.log(`  ${c.dim(storage.getToken() ?? "(none)")}`);
-    console.log("");
-  }
 
   return true;
 }
@@ -480,7 +476,6 @@ async function cmdPair(
   storage: CliConfigStorage,
   requestedName: string | undefined,
   hostOverride?: string,
-  showToken = false,
   jsonOutput = false,
   ttl?: string,
 ): Promise<void> {
@@ -497,7 +492,7 @@ async function cmdPair(
 
   // Pairing before the first serve decides TLS now, so the invite scheme and
   // host match the listener that serve starts later.
-  if (!storage.isPaired()) {
+  if (!storage.hasOwnerToken()) {
     const log = jsonOutput
       ? (line: string) => process.stderr.write(`${line}\n`)
       : (line: string) => console.log(line);
@@ -519,7 +514,7 @@ async function cmdPair(
     return;
   }
 
-  if (!showPairingQR(storage, requestedName, hostOverride, showToken, ttlMs)) {
+  if (!showPairingQR(storage, requestedName, hostOverride, ttlMs)) {
     process.exit(1);
   }
 }
@@ -529,7 +524,28 @@ function isLoopbackHost(host: string): boolean {
   return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
-function cmdDoctor(storage: CliConnectionConfig): void {
+/**
+ * Providers with usable credentials, resolved the way the server resolves them
+ * (Pi's `auth.json`, `models.json`, and provider API-key environment variables).
+ * `runtimeEnv` entries are applied first because the server applies them to its own
+ * environment. Extension-registered providers are not loaded here.
+ */
+async function listAuthenticatedModelProviders(config: ServerConfig): Promise<string[]> {
+  const runtimeEnv = resolveHostEnv(config).env;
+  for (const key of Object.keys(config.runtimeEnv ?? {})) {
+    const value = runtimeEnv[key];
+    if (value !== undefined) process.env[key] = value;
+  }
+  const agentDir = getAgentDir();
+  const runtime = await ModelRuntime.create({
+    authPath: join(agentDir, "auth.json"),
+    modelsPath: join(agentDir, "models.json"),
+  });
+  const models = await runtime.getAvailable();
+  return [...new Set(models.map((model) => model.provider))].sort();
+}
+
+async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
   type CheckLevel = "pass" | "warn" | "fail";
   type Check = { level: CheckLevel; message: string };
   const checks: Check[] = [];
@@ -588,11 +604,28 @@ function cmdDoctor(storage: CliConnectionConfig): void {
         : "runtime PATH is empty (configure runtimePathEntries in config)",
   });
 
+  // The `pi` CLI is optional: the server embeds the Pi SDK and only reads `pi --version`.
   const piPath = resolveExecutableOnPath("pi", runtimePath);
   if (piPath) {
     checks.push({ level: "pass", message: `pi executable found (${piPath})` });
-  } else {
-    checks.push({ level: "warn", message: "pi executable not found in runtime PATH" });
+  }
+
+  try {
+    const providers = await listAuthenticatedModelProviders(config);
+    checks.push(
+      providers.length > 0
+        ? { level: "pass", message: `model providers with credentials: ${providers.join(", ")}` }
+        : {
+            level: "warn",
+            message:
+              "no model provider has credentials, so sessions cannot start a model. Connect one in the Oppi app (server menu \u2192 Model Providers), or set a provider API key such as ANTHROPIC_API_KEY in the server's environment.",
+          },
+    );
+  } catch (err: unknown) {
+    checks.push({
+      level: "warn",
+      message: `could not check model providers (${safeErrorMessage(err)})`,
+    });
   }
 
   if (config.publicUrl) {
@@ -817,8 +850,8 @@ async function cmdToken(
   const mode = action || "help";
 
   if (mode === "rotate") {
-    if (!connection.isPaired()) {
-      console.log(c.red("  Error: server is not paired yet."));
+    if (!connection.hasOwnerToken()) {
+      console.log(c.red("  Error: server has no owner credentials yet."));
       console.log(c.dim("  Run 'oppi pair' first to generate owner credentials."));
       console.log("");
       process.exit(1);
@@ -987,7 +1020,7 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   // The token makes the host paired, so init owns the first-run TLS choice.
   storage.updateConfig({ port, maxSessionsGlobal });
   console.log("");
-  const tlsMode = !storage.isPaired()
+  const tlsMode = !storage.hasOwnerToken()
     ? chooseFirstRunTlsMode(storage, undefined, console.log)
     : undefined;
   // Rotation revokes every device and drops their push registrations, so release those
@@ -1404,7 +1437,6 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
         createCliConfigStorage(dataDir),
         positional[0],
         flags.host,
-        flags["show-token"] === "true",
         flags.json === "true",
         flags.ttl,
       );
@@ -1427,7 +1459,7 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
       break;
 
     case "doctor":
-      cmdDoctor(connection);
+      await cmdDoctor(connection);
       break;
 
     case "token":
