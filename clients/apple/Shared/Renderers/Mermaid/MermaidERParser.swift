@@ -155,8 +155,8 @@ enum MermaidERParser {
             if isIgnoredStatement(line) { continue }
 
             if let relationship = parseRelationship(line) {
-                register(Endpoint(name: relationship.from, alias: nil))
-                register(Endpoint(name: relationship.to, alias: nil))
+                _ = register(Endpoint(name: relationship.from, alias: nil))
+                _ = register(Endpoint(name: relationship.to, alias: nil))
                 relationships.append(relationship)
                 continue
             }
@@ -241,7 +241,7 @@ enum MermaidERParser {
     private static func parseRelationship(_ line: String) -> ERRelationship? {
         let (beforeLabel, labelPart) = splitLabel(line)
         guard let first = parseEndpoint(beforeLabel) else { return nil }
-        var remainder = first.remainder.trimmingCharacters(in: .whitespaces)
+        let remainder = first.remainder.trimmingCharacters(in: .whitespaces)
         guard !remainder.isEmpty else { return nil }
 
         // Symbol form: MARKER (--|..) MARKER, immediately followed by entity 2.

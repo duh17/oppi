@@ -319,6 +319,7 @@ struct ChangedRows<Item: Hashable> {
     }
 }
 
+@MainActor
 enum SSHTerminalSettingsList {
     static func pin(_ collectionView: UICollectionView, in view: UIView) {
         collectionView.translatesAutoresizingMaskIntoConstraints = false

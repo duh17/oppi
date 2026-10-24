@@ -78,7 +78,7 @@ final class SettingsChatTopBarViewController: UIViewController, UICollectionView
             self?.configure(cell, action: action)
         }
         let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, _, _ in
-            var content = UIListContentConfiguration.groupedFooter()
+            var content = UIListContentConfiguration.footer()
             content.text = self?.footer
             content.textProperties.numberOfLines = 0
             view.contentConfiguration = content

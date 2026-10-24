@@ -35,9 +35,10 @@ private struct PresentationCompletion: @unchecked Sendable {
 /// One notification Deny: its background task and the notification completion handler.
 /// `finish()` runs the handler exactly once and ends the task, on whichever comes first:
 /// the deny settled, the background budget expired, or the approval's server lifetime
-/// elapsed.
-private final class PairingDenyBudget: @unchecked Sendable {
-    private let lock = NSLock()
+/// elapsed. Every path runs on the main actor: the expiration handler, the lifetime task,
+/// and the deny itself.
+@MainActor
+private final class PairingDenyBudget {
     private var expired = false
     private var task = UIBackgroundTaskIdentifier.invalid
     private var completion: NotificationCompletion?
@@ -47,37 +48,26 @@ private final class PairingDenyBudget: @unchecked Sendable {
     }
 
     func setTask(_ task: UIBackgroundTaskIdentifier) {
-        lock.lock()
         if completion == nil {
             // Already finished (budget expired before the task id arrived).
-            lock.unlock()
             if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
             return
         }
         self.task = task
-        lock.unlock()
     }
 
     func markExpired() {
-        lock.lock()
         expired = true
-        lock.unlock()
         finish()
     }
 
-    var isExpired: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return expired
-    }
+    var isExpired: Bool { expired }
 
     func finish() {
-        lock.lock()
         let completion = self.completion
         self.completion = nil
         let task = self.task
         self.task = .invalid
-        lock.unlock()
         completion?.call()
         if task != .invalid {
             UIApplication.shared.endBackgroundTask(task)

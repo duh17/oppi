@@ -350,7 +350,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
             previewDivider.leadingAnchor.constraint(equalTo: previewPane.leadingAnchor),
             previewDivider.trailingAnchor.constraint(equalTo: previewPane.trailingAnchor),
             previewDivider.bottomAnchor.constraint(equalTo: previewPane.bottomAnchor),
-            previewDivider.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+            previewDivider.heightAnchor.constraint(equalToConstant: 1 / max(traitCollection.displayScale, 1)),
         ])
     }
 

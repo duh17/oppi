@@ -1143,11 +1143,6 @@ struct SessionThreadTimelineRowView: View {
     static let laneSpacing: CGFloat = 16
     static let rowHeight: CGFloat = 40
 
-    /// A lane takes the status color of the session drawing it on this row.
-    private func laneColor(_ lane: Int) -> Color {
-        row.laneStatus[lane]?.tint(theme) ?? theme.text.tertiary
-    }
-
     private var graphWidth: CGFloat {
         CGFloat(max(laneCount, 1)) * Self.laneSpacing + 12
     }
@@ -1212,9 +1207,17 @@ struct SessionThreadTimelineRowView: View {
     }
 
     private func canvas(pulse: Double) -> some View {
-        Canvas { context, size in
+        // The renderer runs off the main actor: read view state here.
+        let row = row
+        let theme = theme
+        let laneSpacing = Self.laneSpacing
+        return Canvas { context, size in
             let mid = size.height / 2
-            func x(_ lane: Int) -> CGFloat { 8 + CGFloat(lane) * Self.laneSpacing }
+            func x(_ lane: Int) -> CGFloat { 8 + CGFloat(lane) * laneSpacing }
+            /// A lane takes the status color of the session drawing it on this row.
+            func laneColor(_ lane: Int) -> Color {
+                row.laneStatus[lane]?.tint(theme) ?? theme.text.tertiary
+            }
             func stroke(_ path: Path, _ lane: Int, dashed: Bool = false, opacity: Double = 1) {
                 context.stroke(
                     path,

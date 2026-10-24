@@ -147,12 +147,12 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
             self?.configureButtonRow(cell, item: item)
         }
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.groupedHeader()
+            var content = UIListContentConfiguration.header()
             content.text = self?.section(at: indexPath).flatMap(Self.header)
             view.contentConfiguration = content
         }
         let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.groupedFooter()
+            var content = UIListContentConfiguration.footer()
             content.text = self?.section(at: indexPath).flatMap { self?.footer($0) }
             content.textProperties.numberOfLines = 0
             view.contentConfiguration = content

@@ -525,8 +525,11 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
             answer()
             return
         }
-        DispatchQueue.global().asyncAfter(deadline: .now() + Self.writeDelay) { [self] in
-            answer()
+        // URLProtocol is not Sendable; the loading system never touches this
+        // instance again until `answer()` reports through its client.
+        nonisolated(unsafe) let fixture = self
+        DispatchQueue.global().asyncAfter(deadline: .now() + Self.writeDelay) {
+            fixture.answer()
         }
     }
 

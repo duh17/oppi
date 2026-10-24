@@ -108,7 +108,7 @@ final class ModelPickerCell: UICollectionViewListCell {
         )
         checkmark.tintColor = UIColor(palette.blue)
 
-        var background = UIBackgroundConfiguration.listGroupedCell()
+        var background = UIBackgroundConfiguration.listCell()
         background.backgroundColor = isCurrent ? UIColor(palette.blue.opacity(0.12)) : UIColor(palette.bg)
         backgroundConfiguration = background
 

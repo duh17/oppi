@@ -497,9 +497,8 @@ final class InlineAnimatedRasterPlayback {
         let token = generation
         let gate = RasterPlaybackGate()
         self.gate = gate
-        let cfData = data as CFData
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            _ = CGAnimateImageDataWithBlock(cfData, nil) { _, cgImage, stop in
+            _ = CGAnimateImageDataWithBlock(data as CFData, nil) { _, cgImage, stop in
                 if gate.stopped {
                     stop.pointee = true
                     return
@@ -1007,7 +1006,7 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
         guard containerView.isRenderReady, !isSnapshotting else { return }
         isSnapshotting = true
         updateAnnotateAvailability()
-        Task { @MainActor in
+        Task { @MainActor [self] in
             defer {
                 isSnapshotting = false
                 updateAnnotateAvailability()
@@ -1548,11 +1547,15 @@ final class InlineVideoPlayerDelegate: NSObject, AVPlayerViewControllerDelegate 
         _ playerViewController: AVPlayerViewController,
         willBeginFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator
     ) {
-        wasPlayingBeforeFullScreen = playerViewController.player?.timeControlStatus == .playing
-            || playerViewController.player?.rate ?? 0 > 0
+        wasPlayingBeforeFullScreen = MainActor.assumeIsolated {
+            playerViewController.player?.timeControlStatus == .playing
+                || playerViewController.player?.rate ?? 0 > 0
+        }
         onFullScreenChange?(true)
         if wasPlayingBeforeFullScreen {
-            playerViewController.player?.play()
+            MainActor.assumeIsolated {
+                playerViewController.player?.play()
+            }
         }
 #if DEBUG
         MainActor.assumeIsolated {
@@ -1560,22 +1563,22 @@ final class InlineVideoPlayerDelegate: NSObject, AVPlayerViewControllerDelegate 
                 from: playerViewController,
                 destination: coordinator.viewController(forKey: .to)
             )
+            coordinator.animate(alongsideTransition: { context in
+                MainActor.assumeIsolated {
+                    AuthenticatedMediaE2EPlaybackProbe.bindPresentedFullscreen(
+                        from: playerViewController,
+                        destination: context.viewController(forKey: .to)
+                    )
+                }
+            }, completion: { context in
+                MainActor.assumeIsolated {
+                    AuthenticatedMediaE2EPlaybackProbe.bindPresentedFullscreen(
+                        from: playerViewController,
+                        destination: context.isCancelled ? nil : context.viewController(forKey: .to)
+                    )
+                }
+            })
         }
-        coordinator.animate(alongsideTransition: { context in
-            MainActor.assumeIsolated {
-                AuthenticatedMediaE2EPlaybackProbe.bindPresentedFullscreen(
-                    from: playerViewController,
-                    destination: context.viewController(forKey: .to)
-                )
-            }
-        }, completion: { context in
-            MainActor.assumeIsolated {
-                AuthenticatedMediaE2EPlaybackProbe.bindPresentedFullscreen(
-                    from: playerViewController,
-                    destination: context.isCancelled ? nil : context.viewController(forKey: .to)
-                )
-            }
-        })
 #endif
     }
 
@@ -1626,8 +1629,10 @@ final class InlineVideoPlayerDelegate: NSObject, AVPlayerViewControllerDelegate 
     func playerViewControllerDidStopPictureInPicture(
         _ playerViewController: AVPlayerViewController
     ) {
-        let hostIsAttached = playerViewController.view.window != nil
-            || playerViewController.view.superview != nil
+        let hostIsAttached = MainActor.assumeIsolated {
+            playerViewController.view.window != nil
+                || playerViewController.view.superview != nil
+        }
         onPictureInPictureDidStop?(hostIsAttached)
     }
 }

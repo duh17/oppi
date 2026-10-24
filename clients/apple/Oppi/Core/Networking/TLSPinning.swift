@@ -7,7 +7,7 @@ import Security
 /// system trust handling.
 final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
     private let pinnedLeafFingerprint: String?
-    private(set) var expectedServerName: String?
+    let expectedServerName: String?
     private let followsRedirects: Bool
 
     init(pinnedLeafFingerprint: String?, expectedServerName: String? = nil, followsRedirects: Bool = true) {

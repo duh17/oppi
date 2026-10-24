@@ -1,6 +1,7 @@
 import UIKit
 
 enum MarkdownChunkSettleMotionGate {
+    @MainActor
     static func allowsCurrentEnvironment() -> Bool {
         allows(
             reduceMotion: UIAccessibility.isReduceMotionEnabled,

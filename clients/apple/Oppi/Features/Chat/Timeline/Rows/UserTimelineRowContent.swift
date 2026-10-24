@@ -82,6 +82,7 @@ struct UserTimelineBubbleContent {
         showsTextRow || hasImages || showsBadgeRow || !allPathPills.isEmpty
     }
 
+    @MainActor
     static func resolve(text: String, images: [ImageAttachment]) -> UserTimelineBubbleContent {
         let parsed = UserMessageAttachmentPresentation.parse(rawText: text)
         let display = UserTimelineRowContentView.displayText(for: parsed.visibleText)

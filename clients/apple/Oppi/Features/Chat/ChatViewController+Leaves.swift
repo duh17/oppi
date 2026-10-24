@@ -184,7 +184,7 @@ extension ChatViewController {
 
     func reviewCommentStashScreen(_ presentation: ReviewCommentStripChrome.StashPresentation) -> RouterScreen {
         let comments = reviewComments
-        return .controller({
+        return .controller({ [weak self] in
             ReviewCommentStashViewController(
                 stash: comments,
                 editing: presentation.initialEditingComment,

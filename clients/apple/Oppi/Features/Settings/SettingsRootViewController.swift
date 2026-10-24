@@ -207,7 +207,7 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
             ) { [weak self] in self?.openServerSettings(paired) }
         }
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.groupedHeader()
+            var content = UIListContentConfiguration.header()
             content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section) == .servers
                 ? String(localized: "Servers")
                 : nil

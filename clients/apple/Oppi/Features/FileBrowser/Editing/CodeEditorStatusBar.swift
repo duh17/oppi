@@ -91,7 +91,7 @@ final class CodeEditorStatusBar: UIView, UITextFieldDelegate, UIGestureRecognize
             divider.leadingAnchor.constraint(equalTo: leadingAnchor),
             divider.trailingAnchor.constraint(equalTo: trailingAnchor),
             divider.topAnchor.constraint(equalTo: topAnchor),
-            divider.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+            divider.heightAnchor.constraint(equalToConstant: 1 / max(traitCollection.displayScale, 1)),
             row.leadingAnchor.constraint(equalTo: layoutMarginsGuide.leadingAnchor),
             row.trailingAnchor.constraint(equalTo: layoutMarginsGuide.trailingAnchor),
             row.centerYAnchor.constraint(equalTo: centerYAnchor),

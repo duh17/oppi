@@ -749,7 +749,7 @@ final class HTMLDOMPickController {
     var onPickStateChange: ((Bool, Bool) -> Void)?
     var onSelectionGeometryChange: (() -> Void)?
     func selectedTargetRect(in view: UIView) -> CGRect? {
-        guard snapshot != nil, !highlight.isHidden, let host else { return nil }
+        guard snapshot != nil, !highlight.isHidden, host != nil else { return nil }
         return highlight.convert(highlight.bounds, to: view)
     }
     var usesExternalPickControls: Bool {

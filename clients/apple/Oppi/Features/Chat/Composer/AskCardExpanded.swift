@@ -951,7 +951,7 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
         guard let manager = voiceInputManager, let activeQuestionId = dictationQuestionId else { return }
         if let questionId, activeQuestionId != questionId { return }
         clearDictationState()
-        Task {
+        Task { [self] in
             await ComposerShared.cancelOwnedVoiceInput(
                 manager: manager,
                 owner: .askCard,

@@ -88,7 +88,7 @@ enum ServerTransportAPIClient {
             key: try DeviceKeyProvider.shared.loadOrCreate(),
             transport: client,
             onRefresh: { result in
-                try? KeychainDeviceCredentialMerger.mergeRefresh(
+                _ = try? KeychainDeviceCredentialMerger.mergeRefresh(
                     serverId: server.id,
                     expectedDeviceId: credential.deviceId,
                     accessToken: result.accessToken,

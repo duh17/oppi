@@ -101,7 +101,7 @@ final class SSHTerminalColorPickerViewController: UIViewController, UICollection
         let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
             elementKind: UICollectionView.elementKindSectionFooter
         ) { [weak self] cell, _, indexPath in
-            var content = UIListContentConfiguration.groupedFooter()
+            var content = UIListContentConfiguration.footer()
             content.text = self?.footerText(at: indexPath)
             content.textProperties.numberOfLines = 0
             cell.contentConfiguration = content

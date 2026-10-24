@@ -35,6 +35,7 @@ private extension ChatViewController {
 }
 
 /// A view inset 16pt from the chat's safe edges, as the footer rows are.
+@MainActor
 private func footerInset(_ view: UIView, top: CGFloat = 0) -> UIView {
     let box = UIView()
     view.translatesAutoresizingMaskIntoConstraints = false
@@ -486,7 +487,7 @@ final class ChatStoppedFooterView: UIView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
-            rule.heightAnchor.constraint(equalToConstant: 1 / max(1, UIScreen.main.scale)),
+            rule.heightAnchor.constraint(equalToConstant: 1 / max(traitCollection.displayScale, 1)),
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),

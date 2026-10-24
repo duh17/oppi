@@ -434,7 +434,7 @@ extension ReviewCommentStashViewController: UICollectionViewDataSource {
     }
 
     fileprivate func configureEditorHeader(_ header: UICollectionViewListCell, at indexPath: IndexPath) {
-        var content = UIListContentConfiguration.groupedHeader()
+        var content = UIListContentConfiguration.header()
         content.text = switch editorSections[indexPath.section] {
         case .location: "Location"
         case .selectedText: "Selected Text"

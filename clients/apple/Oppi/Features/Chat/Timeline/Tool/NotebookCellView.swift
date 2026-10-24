@@ -476,7 +476,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         expectedTokens: Set<Int>
     ) {
         guard expectedTokens.contains(token) else { return }
-        for case let view as UITextView in textViews(in: cardStack) where view.tag == token {
+        for view in textViews(in: cardStack) where view.tag == token {
             view.attributedText = colored
         }
     }

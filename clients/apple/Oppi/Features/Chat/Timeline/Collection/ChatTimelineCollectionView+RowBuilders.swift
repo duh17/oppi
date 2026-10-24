@@ -503,7 +503,7 @@ extension ChatTimelineController {
         )
         context.inspection = inspection
         context.display = inspection.display
-        var chrome = ToolPresentationBuilder.build(
+        let chrome = ToolPresentationBuilder.build(
             itemID: itemID,
             tool: tool,
             argsSummary: argsSummary,

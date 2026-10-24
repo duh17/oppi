@@ -126,6 +126,13 @@ final class OrbMetalView: OrbPlatformView {
         backgroundColor = .clear
         clipsToBounds = true
         isUserInteractionEnabled = false
+        // Tint resolves per color appearance; frames rasterize at display scale.
+        registerForTraitChanges(
+            UITraitCollection.systemTraitsAffectingColorAppearance + [UITraitDisplayScale.self]
+        ) { (view: Self, _: UITraitCollection) in
+            view.fallbackLayer.fillColor = view.tintUIColor.cgColor
+            view.invalidateStillFrame()
+        }
         #else
         wantsLayer = true
         clipsToBounds = true
@@ -252,11 +259,6 @@ final class OrbMetalView: OrbPlatformView {
         updateRunning()
     }
 
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        fallbackLayer.fillColor = tintUIColor.cgColor
-        invalidateStillFrame()
-    }
     #else
     override var isHidden: Bool {
         didSet { updateRunning() }

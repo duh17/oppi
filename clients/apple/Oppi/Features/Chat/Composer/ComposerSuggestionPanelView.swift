@@ -198,7 +198,7 @@ private final class ComposerSuggestionCell: UICollectionViewCell {
             divider.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             divider.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             divider.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            divider.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+            divider.heightAnchor.constraint(equalToConstant: 1 / max(traitCollection.displayScale, 1)),
         ])
         contentView.backgroundColor = .clear
         backgroundColor = .clear

@@ -5969,13 +5969,11 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
             addSubview(scrollView)
 
             let contentView: UIView
-            let allowsHorizontalOverflow: Bool
             let enablesGraphicalZoom: Bool
             switch content {
             case .latex(let text):
                 let latex = makeLatexView(text: text)
                 contentView = latex.view
-                allowsHorizontalOverflow = true
                 enablesGraphicalZoom = latex.isGraphical
                 scrollView.accessibilityIdentifier = "fullscreen-latex.scroll"
                 scrollView.accessibilityLabel = "Full-screen formula"
@@ -5983,7 +5981,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
                 fatalError("Handled above")
             }
 
-            scrollView.alwaysBounceHorizontal = allowsHorizontalOverflow
+            scrollView.alwaysBounceHorizontal = true
             contentView.translatesAutoresizingMaskIntoConstraints = false
             scrollView.addSubview(contentView)
 
@@ -5999,21 +5997,12 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
                 contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -12),
             ])
 
-            let viewportWidth = scrollView.frameLayoutGuide.widthAnchor.constraint(
-                equalTo: contentView.widthAnchor,
-                constant: 28
-            )
-            if allowsHorizontalOverflow {
-                // LaTeX keeps its natural width. The content guide grows beyond
-                // the viewport when needed, creating real two-axis overflow.
-                contentView.widthAnchor.constraint(
-                    greaterThanOrEqualTo: scrollView.frameLayoutGuide.widthAnchor,
-                    constant: -28
-                ).isActive = true
-            } else {
-                // Text-based Org rendering still needs a viewport width reference.
-                viewportWidth.isActive = true
-            }
+            // LaTeX keeps its natural width. The content guide grows beyond
+            // the viewport when needed, creating real two-axis overflow.
+            contentView.widthAnchor.constraint(
+                greaterThanOrEqualTo: scrollView.frameLayoutGuide.widthAnchor,
+                constant: -28
+            ).isActive = true
 
             if enablesGraphicalZoom {
                 latexZoomContentView = contentView
@@ -6172,7 +6161,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
 #if DEBUG
 extension NativeFullScreenRenderedDocumentBody {
     func debugToggleLatexZoomForTesting(at pointInContent: CGPoint) {
-        guard let latexZoomContentView else { return }
+        guard latexZoomContentView != nil else { return }
         DoubleTapZoom.toggle(
             in: scrollView,
             tapInContent: pointInContent,

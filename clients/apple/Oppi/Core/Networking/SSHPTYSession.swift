@@ -258,7 +258,9 @@ final class SSHPTYSession: @unchecked Sendable {
                 ssh.createChannel(opened, channelType: .session) { child, _ in
                     // Even a late channel-open response after the timeout must
                     // close its child; it never acquires a shell or credentials.
-                    child.pipeline.addHandler(SSHKeepaliveProbeHandler())
+                    child.eventLoop.makeCompletedFuture {
+                        try child.pipeline.syncOperations.addHandler(SSHKeepaliveProbeHandler())
+                    }
                 }
             } catch { opened.fail(error) }
         }

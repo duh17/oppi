@@ -218,7 +218,7 @@ final class SSHTerminalConnectChrome {
     }
 
     private func pushTerminal(from host: UIViewController) {
-        guard !pushingTerminal, let channel = session.channel else { return }
+        guard !pushingTerminal, session.channel != nil else { return }
         pushingTerminal = true
         let session = session
         let editHost = editHost

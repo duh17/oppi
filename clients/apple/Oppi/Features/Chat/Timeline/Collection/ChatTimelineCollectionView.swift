@@ -1747,7 +1747,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             indexPath: indexPath
         )
         onQuietWorkLineToggle?(workLine.turnID)
-        DispatchQueue.main.async { [weak self, weak collectionView] in
+        DispatchQueue.main.async { [weak self, weak collectionView, weak anchoredCollectionView] in
             guard let self, let collectionView else { return }
             self.reconfigureItems(
                 [workLine.id] + workLine.sourceItemIDs,

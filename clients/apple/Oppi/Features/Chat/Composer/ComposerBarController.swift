@@ -321,7 +321,7 @@ final class ComposerThinkingPickerController: UIViewController, RouterModalConta
             let divider = UIView()
             divider.backgroundColor = colors.comment.withAlphaComponent(0.22)
             divider.translatesAutoresizingMaskIntoConstraints = false
-            divider.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale).isActive = true
+            divider.heightAnchor.constraint(equalToConstant: 1 / max(traitCollection.displayScale, 1)).isActive = true
             let wrap = UIView()
             wrap.addSubview(divider)
             NSLayoutConstraint.activate([

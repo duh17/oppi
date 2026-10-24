@@ -131,8 +131,7 @@ final class ComposerCircleActionButton: UIButton {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        configurationUpdateHandler = { [weak self] button in
-            guard let self else { return }
+        configurationUpdateHandler = { button in
             button.alpha = button.isEnabled ? (button.isHighlighted ? 0.82 : 1) : 0.45
         }
     }

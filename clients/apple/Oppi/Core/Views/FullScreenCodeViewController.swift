@@ -1046,7 +1046,7 @@ final class FullScreenCodeViewController: UIViewController {
         if htmlPicker?.canPick == true || diagramPicker?.hasSemanticTargets == true {
             actions.append(UIAction(title: picking ? "Browse" : (htmlPicker == nil ? "Pick Object" : "Pick Element"),
                                     image: UIImage(systemName: picking ? "hand.draw" : "cursorarrow.rays")) { [weak self] _ in
-                guard let self else { return }
+                guard self != nil else { return }
                 if let htmlPicker {
                     if picking { htmlPicker.exitPick() } else { htmlPicker.enterPick() }
                 } else {
@@ -2126,7 +2126,7 @@ final class FullScreenCodeViewController: UIViewController {
         guard isRenderedContentReady, !isSnapshotting else { return }
         isSnapshotting = true
         updateAnnotateAvailability()
-        Task { @MainActor in
+        Task { @MainActor [self] in
             defer {
                 isSnapshotting = false
                 updateAnnotateAvailability()

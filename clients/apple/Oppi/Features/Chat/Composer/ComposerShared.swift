@@ -902,7 +902,7 @@ private struct ComposerPhotoLibraryCoverModifier: ViewModifier {
 
 extension ComposerShared {
     private static func bind<Value>(_ get: @escaping () -> Value, _ set: @escaping (Value) -> Void) -> Binding<Value> {
-        Binding(get: get, set: set)
+        Binding(get: { get() }, set: { set($0) })
     }
 
     static func startVoiceInput(

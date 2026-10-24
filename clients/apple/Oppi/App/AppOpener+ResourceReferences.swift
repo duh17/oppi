@@ -514,7 +514,7 @@ extension AppOpener {
             return .finished
 
         case .hostFile(let file):
-            guard let connection = coordinator.connection(for: file.serverID) else {
+            guard coordinator.connection(for: file.serverID) != nil else {
                 guard isCurrent(generation) else { return .finished }
                 toast("Could not open file \(file.path)")
                 return .finished

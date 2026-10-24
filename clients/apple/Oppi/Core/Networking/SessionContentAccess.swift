@@ -117,7 +117,7 @@ final class SessionContentAccess {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                await failed()
+                failed()
                 throw error
             }
         }
@@ -133,7 +133,7 @@ final class SessionContentAccess {
         workspaceId: String?,
         sessionId: String
     ) -> ((_ path: String) async throws -> Data)? {
-        guard let apiClient = currentAPIClient(), let workspaceId else { return nil }
+        guard let apiClient = currentAPIClient(), workspaceId != nil else { return nil }
         return { path in
             try await apiClient.getSessionFileData(
                 sessionId: sessionId,
@@ -532,7 +532,7 @@ final class SessionContentAccess {
                 contentTypeHint: contentType,
                 sourceFileExtension: pathExtension
             )
-        case .session(let workspaceID, let sessionID, let path):
+        case .session(_, let sessionID, let path):
             return try await apiClient.makeSessionFileMediaSource(
                 sessionId: sessionID,
                 path: path,
@@ -557,7 +557,7 @@ final class SessionContentAccess {
         switch route {
         case .host(let path):
             return try await apiClient.browseHostFile(path: path)
-        case .session(let workspaceID, let sessionID, let path):
+        case .session(_, let sessionID, let path):
             return try await apiClient.getSessionFileData(
                 sessionId: sessionID,
                 path: path

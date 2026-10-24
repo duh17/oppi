@@ -13,6 +13,7 @@ enum SessionOutlineStyle {
         return UIFont(descriptor: descriptor, size: 0)
     }
 
+    @MainActor
     static func hairline(_ view: UIView) -> CGFloat {
         1 / max(view.traitCollection.displayScale, 1)
     }

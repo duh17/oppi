@@ -600,7 +600,7 @@ final class AgentNativeEditViewController: UIViewController, UICollectionViewDel
             self?.configure(cell, item: item)
         }
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.groupedHeader()
+            var content = UIListContentConfiguration.header()
             content.text = self?.section(at: indexPath).flatMap(Self.header)
             view.contentConfiguration = content
         }
@@ -631,7 +631,7 @@ final class AgentNativeEditViewController: UIViewController, UICollectionViewDel
     }
 
     private func configureFooter(_ view: UICollectionViewListCell, at indexPath: IndexPath) {
-        var content = UIListContentConfiguration.groupedFooter()
+        var content = UIListContentConfiguration.footer()
         content.text = section(at: indexPath).flatMap(footer)
         content.textProperties.numberOfLines = 0
         view.contentConfiguration = content

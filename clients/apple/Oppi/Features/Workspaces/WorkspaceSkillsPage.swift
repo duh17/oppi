@@ -76,7 +76,7 @@ private struct WorkspaceSkillRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Toggle(
-                isOn: Binding(get: { isEnabled }, set: onToggle)
+                isOn: Binding(get: { isEnabled }, set: { onToggle($0) })
             ) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {

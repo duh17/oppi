@@ -296,7 +296,7 @@ enum PhotoLibraryMediaImporter {
         )
     }
 
-    private static func copyOffMain(_ work: () throws -> Void) throws {
+    nonisolated private static func copyOffMain(_ work: () throws -> Void) throws {
         if Thread.isMainThread {
             try DispatchQueue.global(qos: .userInitiated).sync(execute: work)
         } else {

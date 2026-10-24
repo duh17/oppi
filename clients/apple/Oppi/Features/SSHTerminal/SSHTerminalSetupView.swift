@@ -126,7 +126,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
 
     /// Always in the navigation bar so Connect is tappable while the keyboard is up.
     private func updateConnectBarItem() {
-        let item = UIBarButtonItem(title: "Connect", style: .done, target: self, action: #selector(barConnect))
+        let item = UIBarButtonItem(title: "Connect", style: .prominent, target: self, action: #selector(barConnect))
         item.accessibilityIdentifier = "sshTerminal.connect"
         item.isEnabled = canConnect && !session.connecting
         navigationItem.rightBarButtonItem = item
@@ -143,12 +143,12 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             self?.configureList(cell, item: item)
         }
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] cell, _, indexPath in
-            var content = UIListContentConfiguration.groupedHeader()
+            var content = UIListContentConfiguration.header()
             content.text = self?.headerTitle(at: indexPath)
             cell.contentConfiguration = content
         }
         let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] cell, _, indexPath in
-            var content = UIListContentConfiguration.groupedFooter()
+            var content = UIListContentConfiguration.footer()
             content.text = self?.footerTitle(at: indexPath)
             content.textProperties.numberOfLines = 0
             cell.contentConfiguration = content

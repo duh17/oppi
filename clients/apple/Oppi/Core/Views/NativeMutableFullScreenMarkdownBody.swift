@@ -16,6 +16,7 @@ enum FullScreenMarkdownViewportIntent: Equatable {
     case tail
     case detached(FullScreenMarkdownViewportAnchor)
 
+    @MainActor
     static func capturing(
         scrollView: UIScrollView,
         followsTail: Bool,

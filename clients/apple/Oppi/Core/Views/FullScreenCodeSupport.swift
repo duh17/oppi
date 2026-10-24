@@ -60,6 +60,7 @@ enum SystemVerticalBar {
         return false
     }
 
+    @MainActor
     static func isActive(_ viewController: UIViewController) -> Bool {
         guard viewController.navigationController?.isNavigationBarHidden != true else { return false }
         return traitIsActive(viewController.traitCollection)
@@ -106,6 +107,7 @@ enum FullScreenPickCommentPlacement {
     }
 }
 
+@MainActor
 enum FullScreenFloatingControlChrome {
     static let bottomPadding: CGFloat = 22
     static let leadingPadding: CGFloat = 16
@@ -294,6 +296,7 @@ enum NavigationSwipeGesturePolicy {
     /// scroll view (chrome / empty chrome area) may claim immediately so an
     /// unrelated off-screen scrolled cell cannot veto navigation for the whole
     /// host.
+    @MainActor
     static func canClaimSwipe(
         direction: NavigationSwipeGestureDirection,
         scrollViews: [UIScrollView],
@@ -331,6 +334,7 @@ enum NavigationSwipeGesturePolicy {
     /// descendants cannot veto a gesture the user is not actually touching.
     /// Falls back to geometric containment only when the host cannot hit-test
     /// (detached test hosts without a full responder tree).
+    @MainActor
     static func scopedScrollViews(
         _ scrollViews: [UIScrollView],
         touchLocationInHost: CGPoint?,
@@ -355,6 +359,7 @@ enum NavigationSwipeGesturePolicy {
         }
     }
 
+    @MainActor
     static func scrollViewsOnAncestry(of view: UIView) -> [UIScrollView] {
         var matches: [UIScrollView] = []
         var current: UIView? = view
@@ -367,6 +372,7 @@ enum NavigationSwipeGesturePolicy {
         return matches
     }
 
+    @MainActor
     static func descendantScrollViews(in root: UIView) -> [UIScrollView] {
         var matches: [UIScrollView] = []
         func walk(_ view: UIView) {
@@ -381,6 +387,7 @@ enum NavigationSwipeGesturePolicy {
         return matches
     }
 
+    @MainActor
     static func isEligibleScrollView(_ scrollView: UIScrollView) -> Bool {
         guard scrollView.isScrollEnabled
             && scrollView.isUserInteractionEnabled
@@ -402,6 +409,7 @@ enum NavigationSwipeGesturePolicy {
         return true
     }
 
+    @MainActor
     static func canScrollVertically(_ scrollView: UIScrollView) -> Bool {
         let viewport = scrollView.bounds.height
             - scrollView.adjustedContentInset.top
@@ -409,6 +417,7 @@ enum NavigationSwipeGesturePolicy {
         return scrollView.contentSize.height > viewport + scrollEdgeTolerance
     }
 
+    @MainActor
     static func canScrollHorizontally(_ scrollView: UIScrollView) -> Bool {
         let viewport = scrollView.bounds.width
             - scrollView.adjustedContentInset.left
@@ -416,10 +425,12 @@ enum NavigationSwipeGesturePolicy {
         return scrollView.contentSize.width > viewport + scrollEdgeTolerance
     }
 
+    @MainActor
     static func isAtTopScrollEdge(_ scrollView: UIScrollView) -> Bool {
         scrollView.contentOffset.y <= -scrollView.adjustedContentInset.top + scrollEdgeTolerance
     }
 
+    @MainActor
     static func isAtLeadingScrollEdge(_ scrollView: UIScrollView) -> Bool {
         scrollView.contentOffset.x <= -scrollView.adjustedContentInset.left + scrollEdgeTolerance
     }
@@ -439,6 +450,7 @@ enum HorizontalBackSwipeGesturePolicy {
     static let minimumHorizontalDistance = NavigationSwipeGesturePolicy.minimumDistance
     static let leadingEdgeWidth: CGFloat = 20
 
+    @MainActor
     static func isLeadingEdgeStart(location: CGPoint?, in hostView: UIView?) -> Bool {
         guard let location, let hostView else { return false }
         switch hostView.effectiveUserInterfaceLayoutDirection {
@@ -1099,6 +1111,7 @@ struct FullScreenLineAnchorLayoutResult {
     var firstContentRect: CGRect? { contentRects.first }
 }
 
+@MainActor
 enum FullScreenLineAnchorLayout {
     static func layout(
         for textView: UITextView,

@@ -85,7 +85,7 @@ final class SettingsExperimentsViewController: UIViewController {
             self?.configure(cell, item: item)
         }
         let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.groupedFooter()
+            var content = UIListContentConfiguration.footer()
             content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section).map(Self.footer)
             content.textProperties.numberOfLines = 0
             view.contentConfiguration = content

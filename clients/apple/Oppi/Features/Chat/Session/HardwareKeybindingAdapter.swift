@@ -69,6 +69,7 @@ enum HardwareKeybindingAdapter {
         )
     }
 
+    @MainActor
     static func chord(from command: UIKeyCommand) -> KeybindingChord? {
         chord(input: command.input, modifierFlags: command.modifierFlags)
     }
@@ -96,6 +97,7 @@ enum HardwareKeybindingAdapter {
             }
     }
 
+    @MainActor
     static func uiKeyCommand(
         for chord: KeybindingChord,
         action: Selector

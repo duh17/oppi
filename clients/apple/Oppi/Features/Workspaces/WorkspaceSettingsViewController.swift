@@ -601,7 +601,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     }
 
     private func configureFooter(_ view: UICollectionViewListCell, at indexPath: IndexPath) {
-        var content = UIListContentConfiguration.groupedFooter()
+        var content = UIListContentConfiguration.footer()
         content.text = dataSource?.sectionIdentifier(for: indexPath.section).flatMap(footerText)
         content.textProperties.numberOfLines = 0
         view.contentConfiguration = content

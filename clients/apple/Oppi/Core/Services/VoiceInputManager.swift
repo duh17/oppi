@@ -681,7 +681,7 @@ final class VoiceInputManager {
     private var composerOwner: VoiceComposerOwner?
     private var composerGeneration = 0
     #if os(iOS)
-    nonisolated(unsafe) private var audioRouteChangeObserver: (any NSObjectProtocol)?
+    @ObservationIgnored nonisolated(unsafe) private var audioRouteChangeObserver: (any NSObjectProtocol)?
     #endif
 
     // MARK: - Init
@@ -1140,7 +1140,7 @@ final class VoiceInputManager {
         if !systemAccess.hasMicPermission {
             guard await systemAccess.requestMicPermission() else {
                 if activeStartRequestID == requestID {
-                    endPlaybackCaptureInterruptionIfNeeded()
+                    _ = endPlaybackCaptureInterruptionIfNeeded()
                     activeEngine = nil
                     activeRecordingSource = nil
                     state = .error("Microphone permission denied")

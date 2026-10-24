@@ -177,14 +177,18 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.colorChoiceChanged()
+            MainActor.assumeIsolated {
+                self?.colorChoiceChanged()
+            }
         }
         reduceMotionObserver = NotificationCenter.default.addObserver(
             forName: UIAccessibility.reduceMotionStatusDidChangeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.reduceMotionChanged()
+            MainActor.assumeIsolated {
+                self?.reduceMotionChanged()
+            }
         }
         keyboardObserver = NotificationCenter.default.addObserver(
             forName: UIResponder.keyboardWillChangeFrameNotification,
@@ -775,7 +779,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         )
         installSwitcherMenu()
         backPill.apply(themeID: themeID, attentionPending: attentionPending(), foreground: lastTerminalColors?.foreground.map(UIColor.init))
-        let shellTitle = channel.title.trimmingCharacters(in: .whitespacesAndNewlines)
         installMenu(
             title: SSHTerminalMenuHeader.name(
                 shellTitle: channel.title, hostLabel: hostLabel,

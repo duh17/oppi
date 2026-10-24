@@ -309,7 +309,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         if isShellRoute {
             syncLeadingItems(showsColumnBack: !isLocked && services != nil && replacesStackBackButton)
         }
-        if let lockTarget, isLocked {
+        if isLocked {
             show(.locked)
             return
         }
@@ -1078,7 +1078,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     /// The result count over the list's search results.
     private func configureSearchHeader(_ view: UICollectionViewListCell) {
-        var content = UIListContentConfiguration.plainHeader()
+        var content = UIListContentConfiguration.header()
         content.text = compactSearchHeader
         content.textProperties.font = UIFont.scaled(.caption2, monospacedDigits: true)
         content.textProperties.color = UIColor(palette.comment)

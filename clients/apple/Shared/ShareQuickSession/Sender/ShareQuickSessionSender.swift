@@ -140,7 +140,7 @@ enum ShareQuickSessionCredentialStore {
     /// record so a concurrent process cannot roll back or drop record fields.
     static func save(server: ShareQuickSessionServer, deviceCredential: DeviceCredential) {
         do {
-            try KeychainDeviceCredentialMerger.mergeRefresh(
+            _ = try KeychainDeviceCredentialMerger.mergeRefresh(
                 serverId: server.id,
                 expectedDeviceId: deviceCredential.deviceId,
                 accessToken: deviceCredential.accessToken,

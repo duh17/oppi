@@ -98,6 +98,7 @@ enum SSHTerminalKeyboard {
 
     /// The keyboard's end frame in `view`, or nil when the keyboard is on
     /// another display than the view's (or the notification names none).
+    @MainActor
     static func endFrame(
         _ frame: CGRect,
         keyboardScreen: AnyObject?,

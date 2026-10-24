@@ -613,7 +613,7 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
         guard canSubmit else { return }
         isHandlingVoiceLifecycle = true
         applyChrome()
-        Task { @MainActor in
+        Task { @MainActor [self] in
             await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
                 manager: voiceInputManager,
                 owner: .expandedComposer,
@@ -638,7 +638,7 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
         guard !live.isSubmitInFlight, !isHandlingVoiceLifecycle else { return }
         isHandlingVoiceLifecycle = true
         applyChrome()
-        Task { @MainActor in
+        Task { @MainActor [self] in
             if !self.configuration.preservesVoiceInputOnDismiss {
                 await ComposerShared.cancelOwnedVoiceInput(
                     manager: self.voiceInputManager,
@@ -678,7 +678,7 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
 
     private func handleMicTap() {
         guard let manager = voiceInputManager else { return }
-        Task {
+        Task { [self] in
             guard ComposerShared.canControlVoiceInput(manager, owner: .expandedComposer) else { return }
             switch ComposerShared.micTapAction(for: manager.state) {
             case .stop:

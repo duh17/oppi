@@ -333,7 +333,7 @@ final class SSHTerminalStatusDetailController: UIViewController, RouterModalCont
             elementKind: UICollectionView.elementKindSectionHeader
         ) { [weak self] cell, _, _ in
             guard let self else { return }
-            var content = UIListContentConfiguration.groupedHeader()
+            var content = UIListContentConfiguration.header()
             content.text = "Program status"
             content.secondaryText = SSHTerminalProgramStatusPresentation.hostCaption(self.hostLabel)
             content.textProperties.color = UIColor(self.themeID.palette.fg)

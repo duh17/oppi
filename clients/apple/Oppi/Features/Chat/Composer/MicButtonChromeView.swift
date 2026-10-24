@@ -197,7 +197,9 @@ final class MicButtonChromeView: UIControl {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.applyDictationStyleFromPreferences()
+            MainActor.assumeIsolated {
+                self?.applyDictationStyleFromPreferences()
+            }
         }
         updateAppearance(animated: false)
     }

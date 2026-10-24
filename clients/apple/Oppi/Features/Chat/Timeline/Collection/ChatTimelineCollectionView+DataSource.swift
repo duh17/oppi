@@ -452,7 +452,7 @@ extension ChatTimelineController {
             )
         }
 
-        let quietWorkRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+        let quietWorkRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self, weak collectionView] cell, _, itemID in
             let configureStartNs = ChatTimelinePerf.timestampNs()
             guard let self,
                   let workLine = self.currentWorkLineByID[itemID] else {

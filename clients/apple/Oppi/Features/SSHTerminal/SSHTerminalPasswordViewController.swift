@@ -50,7 +50,7 @@ final class SSHTerminalPasswordViewController: UIViewController, UICollectionVie
         navigationItem.largeTitleDisplayMode = .inline
         applyTheme()
         navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(cancel))
-        let confirm = UIBarButtonItem(title: confirmTitle, style: .done, target: self, action: #selector(confirm))
+        let confirm = UIBarButtonItem(title: confirmTitle, style: .prominent, target: self, action: #selector(confirm))
         confirm.accessibilityLabel = confirmTitle
         confirm.accessibilityIdentifier = "sshTerminal.passwordConnect"
         confirm.isEnabled = false
@@ -110,7 +110,7 @@ final class SSHTerminalPasswordViewController: UIViewController, UICollectionVie
             cell.contentConfiguration = content
         }
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] cell, _, indexPath in
-            var content = UIListContentConfiguration.groupedHeader()
+            var content = UIListContentConfiguration.header()
             content.text = indexPath.section == 0 ? self?.endpointLabel : nil
             cell.contentConfiguration = content
         }

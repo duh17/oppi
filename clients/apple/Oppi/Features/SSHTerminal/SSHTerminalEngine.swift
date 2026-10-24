@@ -631,14 +631,14 @@ final class SSHTerminalEngine {
             var scalar: UInt32 = 0
             var cluster: String?
             if length == 1 {
-                withUnsafeMutablePointer(to: &scalar) {
+                _ = withUnsafeMutablePointer(to: &scalar) {
                     ghostty_render_state_row_cells_get(
                         cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, $0
                     )
                 }
             } else if length > 1 {
                 var codepoints = [UInt32](repeating: 0, count: Int(length))
-                codepoints.withUnsafeMutableBufferPointer {
+                _ = codepoints.withUnsafeMutableBufferPointer {
                     ghostty_render_state_row_cells_get(
                         cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, $0.baseAddress
                     )

@@ -69,7 +69,7 @@ final class SSHTerminalTrustViewController: UIViewController {
             action.accessibilityIdentifier = "sshTerminal.trustKey"
             action.isEnabled = !connecting
             action.addAction(UIAction { [weak self] _ in self?.onTrust() }, for: .touchUpInside)
-            let bar = UIBarButtonItem(title: "Trust & Connect", style: .done, target: self, action: #selector(trust))
+            let bar = UIBarButtonItem(title: "Trust & Connect", style: .prominent, target: self, action: #selector(trust))
             bar.isEnabled = !connecting
             navigationItem.rightBarButtonItem = bar
         case .hostKeyMismatch(let saved, let presented):

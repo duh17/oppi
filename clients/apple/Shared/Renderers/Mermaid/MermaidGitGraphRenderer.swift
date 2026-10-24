@@ -322,7 +322,7 @@ enum MermaidGitGraphRenderer {
     private static func commitColumns(_ diagram: GitGraphDiagram) -> [String: Int] {
         var columns: [String: Int] = [:]
         if diagram.options.parallelCommits {
-            var byId = Dictionary(uniqueKeysWithValues: diagram.commits.map { ($0.id, $0) })
+            let byId = Dictionary(uniqueKeysWithValues: diagram.commits.map { ($0.id, $0) })
             func generation(_ id: String, stack: Set<String> = []) -> Int {
                 if let cached = columns[id] { return cached }
                 guard !stack.contains(id), let commit = byId[id] else { return 0 }

@@ -103,14 +103,14 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
     private lazy var headerRegistration = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
         elementKind: UICollectionView.elementKindSectionHeader
     ) { view, _, indexPath in
-        var content = UIListContentConfiguration.groupedHeader()
+        var content = UIListContentConfiguration.header()
         content.text = Section(rawValue: indexPath.section) == .settings ? "Redaction Settings" : "Redaction Preview"
         view.contentConfiguration = content
     }
     private lazy var footerRegistration = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
         elementKind: UICollectionView.elementKindSectionFooter
     ) { view, _, indexPath in
-        var content = UIListContentConfiguration.groupedFooter()
+        var content = UIListContentConfiguration.footer()
         content.text = Section(rawValue: indexPath.section) == .settings
             ? "These settings are remembered for future shares."
             : nil

@@ -101,12 +101,12 @@ final class SettingsEditorViewController: UIViewController, UICollectionViewDele
             self?.configure(cell, item: item)
         }
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.groupedHeader()
+            var content = UIListContentConfiguration.header()
             content.text = self?.section(at: indexPath).map(Self.header)
             view.contentConfiguration = content
         }
         let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.groupedFooter()
+            var content = UIListContentConfiguration.footer()
             content.text = self?.section(at: indexPath).flatMap(Self.footer)
             content.textProperties.numberOfLines = 0
             view.contentConfiguration = content
@@ -305,7 +305,7 @@ final class SettingsEditorKeyBarViewController: UIViewController, UICollectionVi
                 : [.insert(displayed: .always) { [weak self] in self?.add(key) }]
         }
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.groupedHeader()
+            var content = UIListContentConfiguration.header()
             content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section) == .shown
                 ? String(localized: "In the Bar")
                 : String(localized: "More Keys")

@@ -418,7 +418,7 @@ final class ChatReaderPayloadStore {
 }
 
 private struct ChatReaderPayloadStoreKey: EnvironmentKey {
-    nonisolated(unsafe) static let defaultValue: ChatReaderPayloadStore? = nil
+    static let defaultValue: ChatReaderPayloadStore? = nil
 }
 
 extension EnvironmentValues {

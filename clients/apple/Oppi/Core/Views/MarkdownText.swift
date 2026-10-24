@@ -1379,7 +1379,7 @@ enum FlatSegment: Sendable {
             )
         ) else { return nil }
 
-        let attachment = NSTextAttachment()
+        let attachment = InlineLatexTextAttachment(formulaLabel: formulaAccessibilityLabel(for: source))
         attachment.image = rendered.image
         attachment.bounds = CGRect(
             x: 0,
@@ -1387,7 +1387,6 @@ enum FlatSegment: Sendable {
             width: rendered.size.width,
             height: rendered.size.height
         )
-        attachment.accessibilityLabel = formulaAccessibilityLabel(for: source)
         return AttributedString(NSAttributedString(attachment: attachment))
     }
 
@@ -2563,13 +2562,17 @@ enum FlatSegment: Sendable {
     /// each one from a single substring. An attachment inside a link is deleted
     /// twice and the app aborts with `NSRangeException` ("NSMutableRLEArray
     /// replaceObjectsInRange:withObject:length:: Out of bounds").
+    private static let attachmentCharacter: Character = "\u{FFFC}"
+
     private static func applyLink(destination: String?, to text: AttributedString) -> AttributedString {
         guard let destination,
               let url = URL(string: destination),
               url.scheme != nil else {
             return text
         }
-        guard text.runs.contains(where: { $0.uiKit.attachment != nil }) else {
+        // Find attachments by their U+FFFC character: the attachment attribute's
+        // NSTextAttachment value is not Sendable, so AttributedString can't read it.
+        guard text.characters.contains(attachmentCharacter) else {
             var linked = text
             linked.link = url
             return linked
@@ -2577,7 +2580,7 @@ enum FlatSegment: Sendable {
         var linked = AttributedString()
         for run in text.runs {
             var piece = AttributedString(text[run.range])
-            if run.uiKit.attachment == nil {
+            if !piece.characters.contains(attachmentCharacter) {
                 piece.link = url
             }
             linked.append(piece)
@@ -2716,5 +2719,36 @@ enum FlatSegment: Sendable {
         case 4: return 8
         default: return 6
         }
+    }
+}
+
+/// An inline LaTeX image with a VoiceOver label fixed at creation.
+///
+/// Segments build off the main actor, where `accessibilityLabel`'s setter is
+/// unavailable. UIKit reads the label on the main actor through this override.
+final class InlineLatexTextAttachment: NSTextAttachment {
+    private static let formulaLabelKey = "oppi.formulaLabel"
+    private var formulaLabel: String
+
+    override class var supportsSecureCoding: Bool { true }
+
+    init(formulaLabel: String) {
+        self.formulaLabel = formulaLabel
+        super.init(data: nil, ofType: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        formulaLabel = coder.decodeObject(of: NSString.self, forKey: Self.formulaLabelKey) as String? ?? ""
+        super.init(coder: coder)
+    }
+
+    override func encode(with coder: NSCoder) {
+        super.encode(with: coder)
+        coder.encode(formulaLabel as NSString, forKey: Self.formulaLabelKey)
+    }
+
+    override var accessibilityLabel: String? {
+        get { formulaLabel }
+        set { formulaLabel = newValue ?? "" }
     }
 }

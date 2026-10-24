@@ -283,7 +283,7 @@ enum TimedText {
                     try await api.browseHostFile(path: path, controlSessionId: controlSessionId)
                 }
             )
-        case .session(let workspaceID, let sessionID, _):
+        case .session(_, let sessionID, _):
             return Access(
                 sourceKind: .session,
                 fetchFile: { path in
