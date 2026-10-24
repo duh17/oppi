@@ -43,18 +43,11 @@ bash setup.sh --install
 
 The global npm link points `oppi` to this checkout's `dist/src/cli.js`. Rebuilding the checkout therefore updates the terminal CLI, background server, and managed host-session CLI together. Run `setup.sh --install` again if another npm install replaces the link. The server reports this install as `source-link`: the iPhone's About This Server offers **Rebuild & Restart** once the checkout has changes the running build lacks, running `npm run build:in-place` (which keeps the old build if the compile fails), and `oppi update` refuses rather than replace the link.
 
-If you prefer the repo bootstrapper from outside the repo, use:
+The repository's root `install.sh` does not build the checkout: it installs the published package into `~/.oppi` (see [Onboarding](../docs/onboarding.md#install)). To try unreleased server changes through that installer, pack this directory and pass the tarball:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | bash
-```
-
-Equivalent explicit steps:
-
-```bash
-git clone https://github.com/duh17/oppi.git
-cd oppi
-bash install.sh
+npm pack --ignore-scripts=false
+sh ../install.sh --package "$PWD"/oppi-server-*.tgz
 ```
 
 Use this command only when you need to switch back to self-signed later:
@@ -273,10 +266,9 @@ ignores it and re-resolves ranges; verify a published version with
 `npm pack --ignore-scripts=false` or the lifecycle checks and the shrinkwrap are
 skipped.
 
-The source-checkout bootstrapper uses the same tree. Root `install.sh` delegates to
-`server/setup.sh`, which runs `npm ci --ignore-scripts`, `npm run build`, and then
-starts the server (or source-links it with `--install`) on Node.js 22.19+. There
-is no Bun lockfile.
+The source-checkout setup uses the same tree. `server/setup.sh` runs
+`npm ci --ignore-scripts`, `npm run build`, and then starts the server (or
+source-links it with `--install`) on Node.js 22.19+. There is no Bun lockfile.
 
 ```bash
 npm test                            # vitest unit tests

@@ -102,13 +102,15 @@ oppi serve --host <your-host>.ts.net
 
 ### Source checkout (development)
 
-Use the repository installer only when developing Oppi or testing unreleased server changes:
+Use a source checkout only when developing Oppi or testing unreleased server changes:
 
 ```bash
 git clone https://github.com/duh17/oppi.git
-cd oppi
-bash install.sh
+cd oppi/server
+bash setup.sh
 ```
+
+The root `install.sh` is the managed installer from [Onboarding](docs/onboarding.md#install); it installs the published package, not the checkout.
 
 For regular use, install from npm. Then update with `npm install -g oppi-server@latest`.
 
