@@ -475,8 +475,8 @@ final class RouterSettingsModalsUITests: XCTestCase {
     }
 
     /// Connect through Tailscale is a sheet in a navigation controller: its
-    /// Set Up a Machine row pushes inside the sheet, and Cancel closes it.
-    func testOnboardingTailscaleSheetPushesSetUpAMachine() {
+    /// Set Up a Computer row pushes inside the sheet, and Cancel closes it.
+    func testOnboardingTailscaleSheetPushesSetUpAComputer() {
         launch(page: "onboarding-tailscale")
         let connect = app.buttons["Connect through Tailscale"]
         XCTAssertTrue(connect.waitForExistence(timeout: 10), "Onboarding did not load")
@@ -488,8 +488,8 @@ final class RouterSettingsModalsUITests: XCTestCase {
         let setUp = app.buttons["tailnet.checkMachine"]
         for _ in 0..<6 where !setUp.isHittable { app.swipeUp() }
         setUp.tap()
-        XCTAssertTrue(app.navigationBars["Set Up a Machine"].waitForExistence(timeout: 5), "Set Up a Machine was not pushed")
-        attachScreenshot("onboarding-set-up-a-machine")
+        XCTAssertTrue(app.navigationBars["Set Up a Computer"].waitForExistence(timeout: 5), "Set Up a Computer was not pushed")
+        attachScreenshot("onboarding-set-up-a-computer")
         assertRunning()
         app.buttons["BackButton"].firstMatch.tap()
         XCTAssertTrue(tailscale.waitForExistence(timeout: 5), "Back must return to Tailscale")

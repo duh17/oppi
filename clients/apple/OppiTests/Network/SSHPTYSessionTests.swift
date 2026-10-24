@@ -548,6 +548,146 @@ private final class ControlledPresenceContext: SSHKeyPresenceContext, Sendable {
     func approve() { completion.yield(()) }
 }
 
+@Suite("Install & Start over SSH", .serialized)
+struct SSHInstallTransportTests {
+    private static func data(_ text: String) -> Data { Data(text.utf8) }
+
+    private static func request(_ fixture: SSHFixture) -> SSHPreflightClient.Request {
+        .init(username: "fixture", password: "fixture-correct", savedHostKey: fixture.savedHostKey)
+    }
+
+    /// Progress lines cut mid-line and mid-key across channel-data messages.
+    private static let splitProgress = [
+        "Installing Oppi\noppi-install: step=node sta",
+        "tus=begin detail=looking\noppi-install: step=node status=ok detail=v22.20.0\n",
+        "oppi-install: step=oppi status=ok detail=installed oppi-server 0.53.0\noppi-install: step=service status=warn detail=stops at logout\n",
+        "oppi-install: step=start status=ok detail=answers\noppi-install: do",
+        "ne version=0.53.0 port=17749\n",
+    ].map(data)
+
+    private static let httpsStatus = #"{"ok":true,"data":{"status":{"paired":false,"server":{"port":17749,"transport":"https","tlsMode":"self-signed"}}}}"#
+    private static let inviteJSON = #"{"name":"box","pairingToken":"pt","fingerprint":"sha256:abc","host":"box.local","port":17749,"scheme":"https","inviteURL":"oppi://connect?host=box.local"}"#
+
+    /// The installer, then the fresh check, status, and pair scripts, each
+    /// told apart by its stdin as on a real host. Every reply answers on its
+    /// first stdin bytes (each script fits in one message) so its exit status
+    /// can follow its EOF, which is what OpenSSH sends and what `mint` checks.
+    private static func machine(installer: FixtureExecReply) -> @Sendable (String, Data) -> FixtureExecReply {
+        { command, stdin in
+            if command == SSHInstallScript.command { return installer }
+            let script = String(decoding: stdin, as: UTF8.self)
+            if script == SSHPreflightProbe.script {
+                return FixtureExecReply(chunks: [data("""
+                user=chen
+                kernel=Linux
+                release=6.8.0
+                arch=x86_64
+                node=/home/chen/.oppi/runtime/node/bin/node
+                node_version=v22.20.0
+                oppi=/home/chen/.oppi/bin/oppi
+                oppi_status=\(httpsStatus)
+                oppi_health=1
+                end=1
+
+                """)], answersOnFirstInput: true)
+            }
+            if script == SSHPairMint.statusScript {
+                return FixtureExecReply(chunks: [data("oppi_status=\(httpsStatus)\nend=1\n")], answersOnFirstInput: true)
+            }
+            if script == SSHPairMint.pairScript {
+                return FixtureExecReply(chunks: [data(inviteJSON + "\n")], answersOnFirstInput: true)
+            }
+            return FixtureExecReply(exitStatus: 127)
+        }
+    }
+
+    @MainActor
+    private final class ProgressLog {
+        var states: [SSHInstallProgress] = []
+    }
+
+    @Test func streamedStdoutArrivesInOrderAndAnExitStatusAfterEOFIsKept() async throws {
+        let chunks = Self.splitProgress
+        let fixture = try await SSHFixture.start(auth: .passwordOnly) { _, _ in
+            FixtureExecReply(chunks: chunks, stderr: Self.data("npm warn deprecated"), exitStatus: 0, answersOnFirstInput: true)
+        }
+        defer { fixture.close() }
+        let connection = try await SSHConnection.open(
+            username: "fixture", authentication: .password("fixture-correct"),
+            savedHostKey: fixture.savedHostKey, socket: fixture.clientSocket
+        )
+        defer { connection.close() }
+        let received = Mutex<[Data]>([])
+        let result = try await connection.run(
+            SSHInstallScript.command, input: Self.data("script"), maximumOutputBytes: 1 << 20, timeout: .seconds(10)
+        ) { chunk in received.withLock { $0.append(chunk) } }
+        #expect(received.withLock { $0.reduce(Data(), +) } == chunks.reduce(Data(), +))
+        // Streaming keeps nothing: stdout went to the callback, stderr was counted and dropped.
+        #expect(result == SSHExecResult(output: Data(), errorOutput: Data(), exitStatus: 0))
+    }
+
+    @Test func installStreamsProgressThenChecksAgainAndMintsOnTheSameConnection() async throws {
+        let fixture = try await SSHFixture.start(
+            auth: .passwordOnly,
+            execReply: Self.machine(installer: FixtureExecReply(chunks: Self.splitProgress, exitStatus: 0, answersOnFirstInput: true))
+        )
+        defer { fixture.close() }
+        let log = await ProgressLog()
+        let outcome = try await SSHPreflightClient.install(
+            Self.request(fixture), script: Self.data("#!/bin/sh\n"), socket: fixture.clientSocket
+        ) { log.states.append($0) }
+        guard case .ready(let report, let invite) = outcome else {
+            Issue.record("Expected an invite, got \(outcome)")
+            return
+        }
+        #expect(report.nextStep == .pair)
+        #expect(invite.inviteURL == "oppi://connect?host=box.local")
+        let last = try #require(await log.states.last)
+        #expect(last.state(of: .node) == .finished("v22.20.0"))
+        #expect(last.state(of: .service) == .warning("stops at logout"))
+        #expect(last.verdict(exitStatus: 0) == .success(.init(version: "0.53.0", port: 17749)))
+        // One sign-in: installer, fresh check, status, pair.
+        #expect(fixture.authKinds == ["password"])
+        #expect(fixture.channelRequests == ["exec:\(SSHInstallScript.command)"] + Array(repeating: "exec:\(SSHPreflightProbe.command)", count: 3))
+    }
+
+    @Test func anErrorLineFailsTheInstallEvenWhenTheScriptExitsZero() async throws {
+        let installer = FixtureExecReply(chunks: [
+            Self.data("oppi-install: step=oppi status=begin detail=npm install\noppi-install: step=oppi status=fail detail=ETIMEDOUT\n"),
+            Self.data("oppi-install: error code=npm detail=ETIMEDOUT registry.npmjs.org\n"),
+        ], exitStatus: 0, answersOnFirstInput: true)
+        let fixture = try await SSHFixture.start(auth: .passwordOnly, execReply: Self.machine(installer: installer))
+        defer { fixture.close() }
+        await #expect(throws: SSHPreflightFailure.installFailed(code: "npm", detail: "ETIMEDOUT registry.npmjs.org")) {
+            _ = try await SSHPreflightClient.install(
+                Self.request(fixture), script: Self.data("#!/bin/sh\n"), socket: fixture.clientSocket
+            ) { _ in }
+        }
+        // Nothing after the installer ran: no check, no invite.
+        #expect(fixture.channelRequests == ["exec:\(SSHInstallScript.command)"])
+    }
+
+    @Test func cancellingAnInstallClosesItsChannel() async throws {
+        let fixture = try await SSHFixture.start(
+            auth: .passwordOnly,
+            execReply: Self.machine(installer: FixtureExecReply(hold: true))
+        )
+        defer { fixture.close() }
+        let installing = Task {
+            try await SSHPreflightClient.install(
+                Self.request(fixture), script: Self.data("#!/bin/sh\n"), socket: fixture.clientSocket
+            ) { _ in }
+        }
+        try await fixture.execStarted.futureResult.get()
+        let cancelled = ContinuousClock.now
+        installing.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await installing.value }
+        try await fixture.execClosed.futureResult.get()
+        try await fixture.clientClosed.futureResult.get()
+        #expect(ContinuousClock.now - cancelled < .seconds(5))
+    }
+}
+
 private final class EventCollector: @unchecked Sendable {
     private let storage = Mutex<[SSHPTYEvent]>([])
     private let loop = MultiThreadedEventLoopGroup.singleton.next()
@@ -593,6 +733,11 @@ private final class SSHFixture: @unchecked Sendable {
     var authenticationHeld: EventLoopPromise<Void> { state.authenticationHeld }
     var savedHostKey: SSHHostKey { SSHHostKey(openSSH: String(openSSHPublicKey: hostKey.publicKey)) }
 
+    /// Completed when a scripted exec request arrives (`execReply`).
+    var execStarted: EventLoopPromise<Void> { state.execStarted }
+    /// Completed when a scripted exec channel closes.
+    var execClosed: EventLoopPromise<Void> { state.execClosed }
+
     static func start(
         auth: Authentication = .acceptPublicKey,
         rejectPTY: Bool = false,
@@ -600,7 +745,8 @@ private final class SSHFixture: @unchecked Sendable {
         expectedInputBytes: Int = 0,
         failKeyExchange: Bool = false,
         closeAfterAuth: Bool = false,
-        holdAuthentication: Bool = false
+        holdAuthentication: Bool = false,
+        execReply: (@Sendable (_ command: String, _ stdin: Data) -> FixtureExecReply)? = nil
     ) async throws -> SSHFixture {
         var descriptors = [Int32](repeating: 0, count: 2)
         guard socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0 else {
@@ -617,7 +763,8 @@ private final class SSHFixture: @unchecked Sendable {
             rejectPTY: rejectPTY,
             expectedInputBytes: expectedInputBytes,
             closeAfterAuth: closeAfterAuth,
-            holdAuthentication: holdAuthentication
+            holdAuthentication: holdAuthentication,
+            execReply: execReply
         )
         do {
             let server = try await ClientBootstrap(group: loop)
@@ -723,6 +870,8 @@ private final class SSHFixture: @unchecked Sendable {
         state.inputReceived.succeed(())
         state.clientClosed.succeed(())
         state.authenticationHeld.succeed(())
+        state.execStarted.succeed(())
+        state.execClosed.succeed(())
         server.close(promise: nil)
     }
 
@@ -733,6 +882,7 @@ private final class SSHFixture: @unchecked Sendable {
         let expectedInputBytes: Int
         let closeAfterAuth: Bool
         let holdAuthentication: Bool
+        let execReply: (@Sendable (String, Data) -> FixtureExecReply)?
         /// Answered with `.failure` only when the connection closes.
         let heldAuthentication = Mutex<EventLoopPromise<NIOSSHUserAuthenticationOutcome>?>(nil)
         let parent = Mutex<Channel?>(nil)
@@ -746,6 +896,8 @@ private final class SSHFixture: @unchecked Sendable {
         let inputReceived: EventLoopPromise<Void>
         let clientClosed: EventLoopPromise<Void>
         let authenticationHeld: EventLoopPromise<Void>
+        let execStarted: EventLoopPromise<Void>
+        let execClosed: EventLoopPromise<Void>
 
         init(
             loop: EventLoop,
@@ -754,10 +906,14 @@ private final class SSHFixture: @unchecked Sendable {
             rejectPTY: Bool,
             expectedInputBytes: Int,
             closeAfterAuth: Bool,
-            holdAuthentication: Bool
+            holdAuthentication: Bool,
+            execReply: (@Sendable (String, Data) -> FixtureExecReply)?
         ) {
             self.closeAfterAuth = closeAfterAuth
             self.holdAuthentication = holdAuthentication
+            self.execReply = execReply
+            execStarted = loop.makePromise(of: Void.self)
+            execClosed = loop.makePromise(of: Void.self)
             self.acceptedKey = acceptedKey
             self.auth = auth
             self.rejectPTY = rejectPTY
@@ -828,9 +984,39 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
     private let state: SSHFixture.State
     private var sawPTY = false
     private var countingStdin: Int?
+    /// A scripted exec (`execReply`): its command and the stdin read so far.
+    private var scripted: (command: String, stdin: Data)?
+    private var answered = false
 
     init(state: SSHFixture.State) {
         self.state = state
+    }
+
+    /// Writes `reply` once stdin has closed: each stdout chunk as its own
+    /// channel-data message, then stderr, then EOF, and only after EOF the
+    /// exit status, as OpenSSH may order them.
+    private func answer(_ reply: FixtureExecReply, on channel: Channel) {
+        guard !reply.hold, !answered else { return }
+        answered = true
+        for chunk in reply.chunks {
+            channel.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(channel.allocator.buffer(bytes: chunk))), promise: nil)
+        }
+        if !reply.stderr.isEmpty {
+            channel.writeAndFlush(SSHChannelData(type: .stdErr, data: .byteBuffer(channel.allocator.buffer(bytes: reply.stderr))), promise: nil)
+        }
+        let eof = channel.eventLoop.makePromise(of: Void.self)
+        channel.close(mode: .output, promise: eof)
+        eof.futureResult.whenComplete { _ in
+            if let status = reply.exitStatus {
+                channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: status), promise: nil)
+            }
+            channel.close(promise: nil)
+        }
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        if scripted != nil { state.execClosed.succeed(()) }
+        context.fireChannelInactive()
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
@@ -847,6 +1033,12 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
             state.channelRequests.withLock { $0.append("exec:\(exec.command)") }
             context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
             guard !sawPTY else { return } // a startup command behaves like a shell
+            if state.execReply != nil {
+                scripted = (exec.command, Data())
+                try? context.channel.syncOptions?.setOption(ChannelOptions.allowRemoteHalfClosure, value: true)
+                state.execStarted.succeed(())
+                return
+            }
             if exec.command == "count-stdin" {
                 // Reads stdin to EOF, then reports how many bytes arrived.
                 countingStdin = 0
@@ -865,6 +1057,10 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
                 context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
             } else {
                 context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
+            }
+        case ChannelEvent.inputClosed where scripted != nil:
+            if let scripted, let reply = state.execReply?(scripted.command, scripted.stdin) {
+                answer(reply, on: context.channel)
             }
         case ChannelEvent.inputClosed where countingStdin != nil:
             let channel = context.channel
@@ -890,6 +1086,13 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let message = unwrapInboundIn(data)
         guard message.type == .channel, case .byteBuffer(let buffer) = message.data else { return }
+        if scripted != nil {
+            buffer.withUnsafeReadableBytes { scripted?.stdin.append(contentsOf: $0) }
+            if let scripted, let reply = state.execReply?(scripted.command, scripted.stdin), reply.answersOnFirstInput {
+                answer(reply, on: context.channel)
+            }
+            return
+        }
         if let counted = countingStdin {
             countingStdin = counted + buffer.readableBytes
             return
@@ -902,6 +1105,21 @@ private final class FixtureTerminalHandler: ChannelInboundHandler {
             state.inputReceived.succeed(())
         }
     }
+}
+
+/// What the fixture's scripted exec writes back.
+private struct FixtureExecReply: Sendable {
+    /// Stdout, each element its own SSH channel-data message.
+    var chunks: [Data] = []
+    var stderr = Data()
+    /// Sent after EOF; nil sends none.
+    var exitStatus: Int? = 0
+    /// Never answer: only the client closing the channel ends it.
+    var hold = false
+    /// Answer on the first stdin bytes, before the client's EOF arrives. A
+    /// NIOSSH server cannot send a request once both sides sent EOF, so this
+    /// is how its exit status can follow its own EOF, as OpenSSH may send it.
+    var answersOnFirstInput = false
 }
 
 private final class FixtureErrorHandler: ChannelInboundHandler {

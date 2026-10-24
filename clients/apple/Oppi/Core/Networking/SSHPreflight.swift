@@ -200,7 +200,7 @@ struct SSHPreflightReport: Equatable, Sendable {
     enum NextStep: Equatable, Sendable {
         /// Oppi answers over HTTPS: pair over SSH.
         case pair
-        /// A Mac or Linux machine without a running Oppi: Install & Start.
+        /// A Mac or Linux computer without a running Oppi: Install & Start.
         /// Node.js, git, and the Tailscale CLI do not block it; the installer
         /// brings its own Node.js and needs neither of the others.
         case install
@@ -377,7 +377,7 @@ struct SSHPreflightCheck: Equatable, Identifiable, Sendable {
 
 // MARK: - Address
 
-/// A machine typed into Set Up a Machine: a hostname or IP address, with
+/// A computer typed into Set Up a Computer: a hostname or IP address, with
 /// `:port` when SSH is not on 22 (`[address]:port` for IPv6). A bare IPv6
 /// address uses port 22.
 struct SSHSetupAddress: Equatable, Sendable {
@@ -463,33 +463,33 @@ enum SSHPreflightFailure: Error, Equatable, Sendable {
         case .tailnetNotRunning:
             "Tailscale is not connected."
         case .dialFailed(let reason):
-            "Could not reach the machine's SSH port: \(reason). \(Self.sshHint)"
+            "Could not reach the computer's SSH port: \(reason). \(Self.sshHint)"
         case .dialTimedOut:
-            "The machine's SSH port did not answer. Check that the machine is awake. \(Self.sshHint)"
+            "The computer's SSH port did not answer. Check that the computer is awake. \(Self.sshHint)"
         case .unknownHostKey:
-            "Oppi has not seen this machine's SSH key before. Compare the fingerprint "
+            "Oppi has not seen this computer's SSH key before. Compare the fingerprint "
                 + "before you trust it; your password is not sent until you do."
         case .hostKeyMismatch:
-            "This machine's SSH key changed since you trusted it. That can mean the system "
-                + "was reinstalled, or that another machine is answering. Your password was not sent."
+            "This computer's SSH key changed since you trusted it. That can mean the system "
+                + "was reinstalled, or that another computer is answering. Your password was not sent."
         case .passwordNotAllowed:
-            "This machine does not accept password sign-in over SSH."
+            "This computer does not accept password sign-in over SSH."
         case .authenticationFailed:
             "The username or password was not accepted."
         case .signInTimedOut:
-            "The machine did not finish SSH sign-in in time."
+            "The computer did not finish SSH sign-in in time."
         case .handshakeFailed(let reason):
             "SSH sign-in failed: \(reason)"
         case .probeRefused:
-            "The machine refused to run the check command."
+            "The computer refused to run the check command."
         case .probeTimedOut:
             "The check command did not finish in time."
         case .probeIncomplete:
             "The check command ended before reporting all results."
         case .serverNotServingHTTPS:
-            "Oppi is not running with HTTPS on this machine. Check again, then use Install & Start."
+            "Oppi is not running with HTTPS on this computer. Check again, then use Install & Start."
         case .inviteRefused:
-            "Oppi on this machine did not issue a pairing invite. Check the machine again, then try again."
+            "Oppi on this computer did not issue a pairing invite. Check the computer again, then try again."
         case .inviteInvalid:
             "The server's pairing invite was not usable. Request a fresh one and try again."
         case .installerMissing:
@@ -506,6 +506,15 @@ enum SSHPreflightFailure: Error, Equatable, Sendable {
         }
     }
 
+    /// An unknown or changed host key: the screen shows the fingerprints and
+    /// Trust or Forget, whichever command was running.
+    var isHostKeyFailure: Bool {
+        switch self {
+        case .unknownHostKey, .hostKeyMismatch: true
+        default: false
+        }
+    }
+
     /// What `SSHPreflightClient.installTimeout` allows, for the message.
     static let installTimeoutMinutes = 20
 
@@ -513,7 +522,9 @@ enum SSHPreflightFailure: Error, Equatable, Sendable {
     private static let retryHint = "Try again; setup picks up where it stopped."
 
     /// Plain words for the installer's error codes (`install.sh` contract).
-    /// An unknown code still says setup stopped and shows the code.
+    /// The installer's detail follows in the message, so a code whose fix
+    /// depends on the computer (which process holds the port) says only what
+    /// to do. An unknown code still says setup stopped and shows the code.
     private static func installFailureSummary(_ code: String) -> String {
         switch code {
         case "node_download": "Could not download Node.js."
@@ -522,7 +533,11 @@ enum SSHPreflightFailure: Error, Equatable, Sendable {
         case "service": "Could not set Oppi up to run in the background."
         case "start_timeout": "Oppi was installed but did not start in time."
         case "unsupported_platform": "Oppi cannot be installed on this kind of computer yet."
-        case "busy": "Setup is already running on this machine. Wait for it to finish, then try again."
+        case "busy": "Setup is already running on this computer. Wait for it to finish, then try again."
+        case "server_too_old":
+            "The Oppi server published right now is older than this app needs. Try again later, or install the server from a terminal."
+        case "port_in_use":
+            "Another program, or another Oppi server, is using Oppi's port. Stop it (for example an `oppi serve` started by hand) or run `oppi server uninstall` on the computer, then try again."
         case "usage": "The installer did not accept how Oppi started it. Update Oppi on this device and try again."
         default: "Setup stopped (\(code))."
         }

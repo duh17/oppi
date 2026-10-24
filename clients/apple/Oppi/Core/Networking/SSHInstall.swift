@@ -32,7 +32,9 @@ enum SSHInstallStep: String, CaseIterable, Sendable {
 /// One `oppi-install:` line.
 enum SSHInstallEvent: Equatable, Sendable {
     enum StepStatus: String, Sendable {
-        case begin, ok, skip, fail
+        /// `warn`: the step finished, but something needs attention (for
+        /// example a Linux service that stops at logout). Setup goes on.
+        case begin, ok, skip, warn, fail
     }
 
     case step(SSHInstallStep, StepStatus, detail: String)
@@ -131,6 +133,8 @@ struct SSHInstallProgress: Equatable, Sendable {
         case running(String)
         case finished(String)
         case skipped(String)
+        /// Finished with something to fix later; setup continues.
+        case warning(String)
         case failed(String)
     }
 
@@ -159,6 +163,7 @@ struct SSHInstallProgress: Equatable, Sendable {
             case .begin: steps[step] = .running(detail)
             case .ok: steps[step] = .finished(detail)
             case .skip: steps[step] = .skipped(detail)
+            case .warn: steps[step] = .warning(detail)
             case .fail: steps[step] = .failed(detail)
             }
         case .done(let version, let port):

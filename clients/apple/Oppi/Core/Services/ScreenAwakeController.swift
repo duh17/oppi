@@ -4,7 +4,8 @@ import UIKit
 /// Controls `UIApplication.isIdleTimerDisabled` for chat activity.
 ///
 /// Sole iOS writer of the idle timer. Reasons are voice capture (not a session
-/// id) and `session::<id>` for running agents.
+/// id), Install & Start on Set Up a Computer, and `session::<id>` for running
+/// agents.
 ///
 /// Behavior:
 /// - While voice capture is active or any tracked session is running, screen
@@ -21,6 +22,7 @@ final class ScreenAwakeController {
     typealias SleepFunction = @Sendable (Duration) async throws -> Void
 
     private static let voiceInputReason = "voice-input"
+    private static let setupInstallReason = "setup-install"
     private static let sessionReasonPrefix = "session::"
 
     private let timeoutProvider: TimeoutProvider
@@ -54,6 +56,12 @@ final class ScreenAwakeController {
 
     func setVoiceInputActive(_ isActive: Bool) {
         setReason(Self.voiceInputReason, isActive: isActive)
+    }
+
+    /// Install & Start runs over an in-process SSH connection that a locked,
+    /// suspended app would drop.
+    func setSetupInstallActive(_ isActive: Bool) {
+        setReason(Self.setupInstallReason, isActive: isActive)
     }
 
     func setSessionActivity(_ isActive: Bool, sessionId: String) {

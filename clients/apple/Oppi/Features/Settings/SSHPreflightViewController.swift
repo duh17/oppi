@@ -1,6 +1,6 @@
 import UIKit
 
-/// Set Up a Machine: signs in to a Mac or Linux machine's sshd (macOS Remote
+/// Set Up a Computer: signs in to a Mac or Linux computer's sshd (macOS Remote
 /// Login, or Linux sshd) with a password, through the embedded Tailscale node
 /// for a tailnet name and the current network otherwise, and runs one
 /// read-only check. When Oppi already answers there, Pair mints an invite
@@ -71,9 +71,19 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
     private var username = "" { didSet { setNeedsUpdateProperties() } }
     private var password = "" { didSet { setNeedsUpdateProperties() } }
     private var phase = Phase.idle { didSet { setNeedsUpdateProperties() } }
-    private var install = Install.none { didSet { installStateChanged() } }
+    private var install = Install.none { didSet { installStateChanged(from: oldValue) } }
     private var pairing = false { didSet { setNeedsUpdateProperties() } }
-    private var pairMessage: String? { didSet { setNeedsUpdateProperties() } }
+    /// An invite is being enrolled; `cancel()` lets it finish.
+    private var enrolling = false
+    private var pairMessage: String? {
+        didSet {
+            // The outcome of Pair or Install & Start: "Paired with …" or why not.
+            if let pairMessage, pairMessage != oldValue, UIAccessibility.isVoiceOverRunning {
+                UIAccessibility.post(notification: .announcement, argument: pairMessage)
+            }
+            setNeedsUpdateProperties()
+        }
+    }
     private var runID = UUID()
     private var task: Task<Void, Never>?
     private var keepAwake: SetupKeepAwake?
@@ -95,7 +105,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         config.footerMode = .supplementary
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
         super.init(nibName: nil, bundle: nil)
-        title = String(localized: "Set Up a Machine")
+        title = String(localized: "Set Up a Computer")
         navigationItem.largeTitleDisplayMode = .never
     }
 
@@ -206,18 +216,19 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
 
     private var canCheck: Bool { !isBusy && canSignIn }
 
-    /// "Mac", "Linux machine", or "machine", for copy about the checked machine.
-    private func machineNoun(_ report: SSHPreflightReport?) -> String {
-        guard let report else { return String(localized: "machine") }
+    /// "Mac", "Linux computer", or "computer", for copy about the checked computer.
+    private func computerNoun(_ report: SSHPreflightReport?) -> String {
+        guard let report else { return String(localized: "computer") }
         if report.isMacOS { return String(localized: "Mac") }
-        if report.isLinux { return String(localized: "Linux machine") }
-        return String(localized: "machine")
+        if report.isLinux { return String(localized: "Linux computer") }
+        return String(localized: "computer")
     }
 
     /// "iPhone" or "iPad": this device, in setup copy.
     private var deviceName: String { UIDevice.current.model }
 
-    private func installStateChanged() {
+    private func installStateChanged(from old: Install) {
+        announceInstallChange(from: old)
         let active = install.isActive
         if active, keepAwake == nil {
             keepAwake = SetupKeepAwake()
@@ -284,17 +295,13 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
             }
         }
 
-        // Sections without a text field redraw whole, footers included. The
-        // fields are reconfigured in place so typing keeps its cursor; the
-        // machine menu only when its choices change, so an open menu stays.
+        // Rows already shown are reconfigured in place, never reloaded, so a
+        // text field keeps its cursor and VoiceOver focus stays on its row.
+        // The machine menu only when its choices change, so an open menu stays.
         let shown = dataSource.snapshot()
-        snapshot.reloadSections(snapshot.sectionIdentifiers.filter {
-            $0 != .machine && $0 != .signIn && shown.sectionIdentifiers.contains($0)
+        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter {
+            $0 != .machine && shown.itemIdentifiers.contains($0)
         })
-        let fields = [Item.manualHost, .username, .password].filter {
-            snapshot.itemIdentifiers.contains($0) && shown.itemIdentifiers.contains($0)
-        }
-        snapshot.reconfigureItems(fields)
         let machineChanged = machineRow.changed(in: [.machine]) { _ in
             AnyHashable([AnyHashable(setupPeers.map(\.dialHost)), AnyHashable(selection), AnyHashable(isBusy), AnyHashable(appliedThemeID)])
         }
@@ -302,6 +309,9 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
             snapshot.reconfigureItems([.machine])
         }
         dataSource.apply(snapshot, animatingDifferences: false)
+        SetupListSupplementaries.refresh(collectionView) { [weak self] view, kind, indexPath in
+            self?.configureSupplementary(view, kind: kind, at: indexPath)
+        }
     }
 
     private func nextItems(_ report: SSHPreflightReport) -> [Item] {
@@ -314,7 +324,9 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
             if progress.completion != nil { items.append(.installStatus) }
             items.append(.installCancel)
         case .pairing:
-            items += [.installStatus, .installCancel]
+            // No Cancel: stopping an enrollment midway could leave this device
+            // enrolled on the server without the app knowing. It is short.
+            items.append(.installStatus)
         case .failed, .stopped:
             items += [.installError, .installRetry]
         case .none, .completed:
@@ -343,16 +355,11 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         let value = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
             self?.configureValue(cell, item: item)
         }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section).flatMap { self?.header($0) }
-            view.contentConfiguration = content
+        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, kind, indexPath in
+            self?.configureSupplementary(view, kind: kind, at: indexPath)
         }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.footer()
-            content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section).flatMap { self?.footer($0) }
-            content.textProperties.numberOfLines = 0
-            view.contentConfiguration = content
+        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, kind, indexPath in
+            self?.configureSupplementary(view, kind: kind, at: indexPath)
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
             switch item {
@@ -375,6 +382,20 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
     }
 
     private var palette: ThemePalette { ThemeRuntimeState.currentPalette() }
+
+    private func configureSupplementary(_ view: UICollectionViewListCell, kind: String, at indexPath: IndexPath) {
+        let section = dataSource?.sectionIdentifier(for: indexPath.section)
+        var content: UIListContentConfiguration
+        if kind == UICollectionView.elementKindSectionHeader {
+            content = .header()
+            content.text = section.flatMap(header)
+        } else {
+            content = .footer()
+            content.text = section.flatMap(footer)
+            content.textProperties.numberOfLines = 0
+        }
+        view.contentConfiguration = content
+    }
 
     private func configureField(_ cell: SSHTerminalTextFieldCell, item: Item) {
         let fg = UIColor(palette.fg)
@@ -453,7 +474,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         cell.accessories = []
         switch item {
         case .machine:
-            content.text = String(localized: "Machine")
+            content.text = String(localized: "Computer")
             let peers = setupPeers
             var options: [(title: String, selected: Bool, action: () -> Void)] = peers.map { peer in
                 (peer.displayName, selection == peer.dialHost, { [weak self] in self?.selection = peer.dialHost })
@@ -557,10 +578,18 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         }
     }
 
-    private func installStepRow(_ step: SSHInstallStep) -> SetupRow {
-        let fg = UIColor(palette.fg)
+    /// How one installer step reads: its name, symbol, detail line, and the
+    /// state word VoiceOver speaks.
+    private struct StepPresentation {
+        let title: String
+        let leading: SetupRow.Leading
+        let detail: String
+        let word: String
+    }
+
+    private func presentation(of step: SSHInstallStep, _ state: SSHInstallProgress.StepState) -> StepPresentation {
         let comment = UIColor(palette.comment)
-        let state = install.progress?.state(of: step) ?? .pending
+        let orange = UIColor(palette.orange)
         let title: String
         let about: String
         switch step {
@@ -577,49 +606,76 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
             title = String(localized: "Start")
             about = String(localized: "Waits until Oppi answers.")
         }
-        let leading: SetupRow.Leading
-        let detail: String
-        let word: String
+        func or(_ text: String, _ fallback: String) -> String { text.isEmpty ? fallback : text }
         switch state {
         case .pending:
-            leading = .symbol("circle", comment)
-            detail = about
-            word = String(localized: "Waiting")
+            return .init(title: title, leading: .symbol("circle", comment), detail: about, word: String(localized: "Waiting"))
         case .running(let text):
-            leading = .spinner
-            detail = text.isEmpty ? about : text
-            word = String(localized: "In progress")
+            return .init(title: title, leading: .spinner, detail: or(text, about), word: String(localized: "In progress"))
         case .finished(let text):
-            leading = .symbol("checkmark.circle.fill", UIColor(palette.green))
-            detail = text.isEmpty ? about : text
-            word = String(localized: "Done")
+            return .init(title: title, leading: .symbol("checkmark.circle.fill", UIColor(palette.green)), detail: or(text, about), word: String(localized: "Done"))
         case .skipped(let text) where step == .service:
             // Linux without a systemd user manager: Oppi runs in the
             // background but will not come back after a restart. Setup goes
             // on to pairing; the installer's detail says what to change.
-            leading = .symbol("exclamationmark.triangle.fill", UIColor(palette.orange))
-            detail = text.isEmpty ? String(localized: "Oppi is running, but will not start again after a restart.") : text
-            word = String(localized: "Running without a service")
+            return .init(
+                title: title, leading: .symbol("exclamationmark.triangle.fill", orange),
+                detail: or(text, String(localized: "Oppi is running, but will not start again after a restart.")),
+                word: String(localized: "Needs attention")
+            )
         case .skipped(let text):
-            leading = .symbol("checkmark.circle", UIColor(palette.green))
-            detail = text.isEmpty ? about : text
-            word = String(localized: "Already done")
+            return .init(title: title, leading: .symbol("checkmark.circle", UIColor(palette.green)), detail: or(text, about), word: String(localized: "Already done"))
+        case .warning(let text):
+            // Done, with something to fix later; the installer's detail says
+            // what. Setup goes on to pairing.
+            return .init(title: title, leading: .symbol("exclamationmark.triangle.fill", orange), detail: or(text, about), word: String(localized: "Needs attention"))
         case .failed(let text):
-            leading = .symbol("xmark.circle.fill", UIColor(palette.red))
-            detail = text.isEmpty ? about : text
-            word = String(localized: "Failed")
+            return .init(title: title, leading: .symbol("xmark.circle.fill", UIColor(palette.red)), detail: or(text, about), word: String(localized: "Failed"))
         }
+    }
+
+    private func installStepRow(_ step: SSHInstallStep) -> SetupRow {
+        let shown = presentation(of: step, install.progress?.state(of: step) ?? .pending)
         return SetupRow(
-            leading: leading, title: title, titleColor: fg,
-            lines: [.init(text: detail, color: comment)],
+            leading: shown.leading, title: shown.title, titleColor: UIColor(palette.fg),
+            lines: [.init(text: shown.detail, color: UIColor(palette.comment))],
             identifier: "sshPreflight.install.step.\(step.rawValue)",
-            accessibilityLabel: "\(title), \(word), \(detail)"
+            accessibilityLabel: "\(shown.title), \(shown.word), \(shown.detail)"
         )
+    }
+
+    /// VoiceOver hears each step change, the finish, and a failure, since
+    /// the rows change while focus may be elsewhere.
+    private func announceInstallChange(from old: Install) {
+        guard UIAccessibility.isVoiceOverRunning else { return }
+        var spoken: [String] = []
+        if let progress = install.progress {
+            for step in SSHInstallStep.allCases {
+                let state = progress.state(of: step)
+                guard state != .pending, state != old.progress?.state(of: step) else { continue }
+                let shown = presentation(of: step, state)
+                spoken.append("\(shown.title), \(shown.word)")
+            }
+        }
+        switch install {
+        case .pairing:
+            if case .pairing = old {} else {
+                spoken.append(String(localized: "Oppi is installed and running. Pairing this \(deviceName)."))
+            }
+        case .failed(_, let failure):
+            spoken.append(failure.message)
+        case .stopped:
+            if case .stopped = old {} else { spoken.append(String(localized: "Setup stopped.")) }
+        case .none, .running, .completed:
+            break
+        }
+        guard !spoken.isEmpty else { return }
+        UIAccessibility.post(notification: .announcement, argument: spoken.joined(separator: ". "))
     }
 
     private func header(_ section: Section) -> String? {
         switch section {
-        case .machine: String(localized: "Machine")
+        case .machine: String(localized: "Computer")
         case .signIn: String(localized: "Sign In")
         case .failure:
             if case .failed(_, let address) = phase { address.label } else { nil }
@@ -646,7 +702,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
             return String(localized: "A Tailscale name needs Oppi's Tailscale connection.")
         case .failure:
             guard case .failed(.unknownHostKey(let key), _) = phase else { return nil }
-            return String(localized: "On the machine, `ssh-keygen -lf /etc/ssh/ssh_host_\(Self.keyFileStem(key))_key.pub` prints the same value.")
+            return String(localized: "On the computer, `ssh-keygen -lf /etc/ssh/ssh_host_\(Self.keyFileStem(key))_key.pub` prints the same value.")
         case .result:
             guard let report = currentReport?.0, report.nextStep == .unsupported else { return nil }
             return String(localized: "Oppi runs on macOS and Linux.")
@@ -659,7 +715,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
 
     private func nextFooter() -> String? {
         guard let report = currentReport?.0 else { return nil }
-        let machine = machineNoun(report)
+        let computer = computerNoun(report)
         var parts: [String] = []
         switch install {
         case .running, .pairing:
@@ -669,9 +725,9 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         case .none, .completed:
             switch report.nextStep {
             case .pair:
-                parts.append(String(localized: "Oppi is running on this \(machine). Pair signs this \(deviceName) in with a one-time invite."))
+                parts.append(String(localized: "Oppi is running on this \(computer). Pair signs this \(deviceName) in with a one-time invite."))
             case .install:
-                parts.append(String(localized: "Installs Oppi and the Node.js it runs on in your home folder on this \(machine), keeps Oppi running in the background, then pairs this \(deviceName). Downloads come from nodejs.org and npm, so it can take a few minutes. No administrator password is needed."))
+                parts.append(String(localized: "Installs Oppi and the Node.js it runs on in your home folder on this \(computer), keeps Oppi running in the background, then pairs this \(deviceName). Downloads come from nodejs.org and npm, so it can take a few minutes. No administrator password is needed."))
             case .unsupported:
                 break
             }
@@ -742,8 +798,11 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         }
     }
 
-    /// Cancelling the task closes the SSH connection.
+    /// Cancelling the task closes the SSH connection. An enrollment already
+    /// sent is left to finish: stopping it midway could leave this device
+    /// enrolled on the server with no saved pairing and no `onPaired`.
     private func cancel() {
+        guard !enrolling else { return }
         task?.cancel()
         task = nil
         runID = UUID()
@@ -776,6 +835,11 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
                 let socket = try await dialSSH(address)
                 let invite = try await SSHPreflightClient.mintInvite(request, socket: socket)
                 (message, paired) = try await enroll(invite)
+            } catch let failure as SSHPreflightFailure where failure.isHostKeyFailure {
+                guard isCurrent() else { return }
+                pairing = false
+                phase = .failed(failure, address)
+                return
             } catch {
                 message = Self.pairingMessage(for: error, host: address.host)
             }
@@ -834,7 +898,14 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
                 }
             } catch let failure as SSHPreflightFailure {
                 guard isCurrent() else { return }
-                install = .failed(install.progress ?? SSHInstallProgress(), failure)
+                if failure.isHostKeyFailure {
+                    // The key changed since the check: the same fingerprints
+                    // and Trust or Forget that Check shows, not a setup error.
+                    install = .none
+                    phase = .failed(failure, address)
+                } else {
+                    install = .failed(install.progress ?? SSHInstallProgress(), failure)
+                }
             } catch {
                 // Cancelled: `cancel()` already showed it stopped.
             }
@@ -844,6 +915,8 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
     /// Enrolls a minted invite. Returns the message to show and whether the
     /// new server is now the selected one.
     private func enroll(_ invite: TailscalePairingInvite) async throws -> (String, Bool) {
+        enrolling = true
+        defer { enrolling = false }
         let enrolled = try await InviteBootstrapService.enroll(
             inviteURL: invite.inviteURL,
             serverStore: coordinator.serverStore,
@@ -943,18 +1016,18 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
 /// connection; the installer is idempotent and Try Again finishes it.
 @MainActor
 private final class SetupKeepAwake {
-    private let wasIdleTimerDisabled: Bool
     private let tasks = UIApplicationBackgroundTasks(name: "oppi.setup.install")
     private var backgroundTask: UIBackgroundTaskIdentifier?
 
+    /// The idle timer is one reason in `ScreenAwakeController`, its only
+    /// writer, so ending clears this reason and leaves other owners' alone.
     init() {
-        wasIdleTimerDisabled = UIApplication.shared.isIdleTimerDisabled
-        UIApplication.shared.isIdleTimerDisabled = true
+        ScreenAwakeController.shared.setSetupInstallActive(true)
         backgroundTask = tasks.begin { [weak self] in self?.endBackgroundTask() }
     }
 
     func end() {
-        UIApplication.shared.isIdleTimerDisabled = wasIdleTimerDisabled
+        ScreenAwakeController.shared.setSetupInstallActive(false)
         endBackgroundTask()
     }
 

@@ -12,6 +12,8 @@ struct SSHInstallEventTests {
         #expect(SSHInstallEvent.parse("oppi-install: step=oppi status=skip detail=key=value stays in the detail")
             == .step(.oppi, .skip, detail: "key=value stays in the detail"))
         #expect(SSHInstallEvent.parse("oppi-install: step=start status=ok") == .step(.start, .ok, detail: ""))
+        #expect(SSHInstallEvent.parse("oppi-install: step=service status=warn detail=stops at logout until an admin runs sudo loginctl enable-linger chen")
+            == .step(.service, .warn, detail: "stops at logout until an admin runs sudo loginctl enable-linger chen"))
         // sshd output may arrive with CRLF.
         #expect(SSHInstallEvent.parse("oppi-install: step=oppi status=ok detail=0.31.0\r") == .step(.oppi, .ok, detail: "0.31.0"))
     }
@@ -79,6 +81,16 @@ struct SSHInstallProgressTests {
         #expect(progress.state(of: .oppi) == .pending)
     }
 
+    @Test func aWarnedStepStaysAWarningAndSetupStillSucceeds() {
+        let progress = Self.progress([
+            .step(.service, .begin, detail: ""),
+            .step(.service, .warn, detail: "stops at logout"),
+            .done(version: "0.31.0", port: 7749),
+        ])
+        #expect(progress.state(of: .service) == .warning("stops at logout"))
+        #expect(progress.verdict(exitStatus: 0) == .success(.init(version: "0.31.0", port: 7749)))
+    }
+
     @Test func doneWithExitZeroSucceeds() {
         let progress = Self.progress([.step(.start, .ok, detail: ""), .done(version: "0.31.0", port: 7749)])
         #expect(progress.verdict(exitStatus: 0) == .success(.init(version: "0.31.0", port: 7749)))
@@ -110,7 +122,7 @@ struct SSHInstallProgressTests {
     }
 }
 
-@Suite("Set Up a Machine address")
+@Suite("Set Up a Computer address")
 struct SSHSetupAddressTests {
     @Test(arguments: [
         ("studio.local", "studio.local", UInt16(22)),

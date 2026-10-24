@@ -25,7 +25,7 @@ struct SSHExecResult: Sendable, Equatable {
     let exitStatus: Int?
 }
 
-/// Every SSH connection and terminal failure. Check a Machine maps these to
+/// Every SSH connection and terminal failure. Set Up a Computer maps these to
 /// its own setup wording (`SSHPreflightClient`).
 enum SSHConnectionError: Error, Equatable, Sendable {
     case unknownHostKey(SSHHostKey)
@@ -102,7 +102,7 @@ enum SSHConnectionError: Error, Equatable, Sendable {
 /// socketpair end or a direct TCP socket). It is the only place Oppi verifies
 /// a host key and offers a credential: the presented key must match the saved
 /// one before the credential is sent once, and sign-in must finish within
-/// `signInTimeout`. Check a Machine runs one-shot commands on it; the SSH
+/// `signInTimeout`. Set Up a Computer runs one-shot commands on it; the SSH
 /// Terminal adds its PTY and keepalive children (`SSHPTYSession`).
 struct SSHConnection: Sendable {
     static let signInTimeout: TimeAmount = .seconds(20)
@@ -178,9 +178,9 @@ struct SSHConnection: Sendable {
     /// exceed `maximumOutputBytes`.
     ///
     /// With `onOutput`, stdout is streamed instead of collected: each chunk is
-    /// handed over in order on the connection's event loop as it arrives, and
-    /// the result's `output` is empty. Stderr is still collected, and the
-    /// limit still counts every byte.
+    /// handed over in order on the connection's event loop as it arrives.
+    /// Nothing is kept, so the result's `output` and `errorOutput` are empty;
+    /// the limit still counts every byte of both.
     func run(
         _ command: String,
         input: Data = Data(),
@@ -437,12 +437,13 @@ private final class ExecHandler: ChannelInboundHandler {
             context.close(promise: nil)
             return
         }
-        if message.type != .channel {
-            errorOutput.writeBuffer(&bytes)
-        } else if let onOutput {
-            onOutput(bytes.withUnsafeReadableBytes { Data($0) })
-        } else {
+        if let onOutput {
+            // Streaming keeps nothing: a long run's stderr is counted, not held.
+            if message.type == .channel { onOutput(bytes.withUnsafeReadableBytes { Data($0) }) }
+        } else if message.type == .channel {
             output.writeBuffer(&bytes)
+        } else {
+            errorOutput.writeBuffer(&bytes)
         }
     }
 

@@ -1,7 +1,7 @@
 import Foundation
 import NIOCore
 
-/// Check a Machine's SSH commands: signs in to OpenSSH (macOS Remote Login or
+/// Set Up a Computer's SSH commands: signs in to OpenSSH (macOS Remote Login or
 /// Linux sshd) with a password over an `SSHConnection` and runs either the
 /// setup probe or the pair-mint scripts. No PTY, shell session, or port
 /// forwarding.
@@ -63,7 +63,9 @@ enum SSHPreflightClient {
         socket: Int32,
         progress: @escaping @MainActor @Sendable (SSHInstallProgress) -> Void
     ) async throws -> InstallOutcome {
-        try await signedIn(request, socket: socket, outputTooLarge: .inviteInvalid) { connection in
+        // The installer's own overflow maps in `installFailure`; past it, an
+        // over-long reply is the fresh check's, as for `run`.
+        try await signedIn(request, socket: socket, outputTooLarge: .probeIncomplete) { connection in
             let (chunks, continuation) = AsyncStream.makeStream(of: Data.self)
             try await withThrowingTaskGroup(of: Int?.self) { group in
                 group.addTask {
@@ -177,7 +179,7 @@ enum SSHPreflightClient {
         case .passwordNotAllowed: .passwordNotAllowed
         case .authenticationFailed: .authenticationFailed
         case .signInTimedOut: .signInTimedOut
-        case .unsupportedAlgorithms: .handshakeFailed("this machine offers no SSH algorithms Oppi supports")
+        case .unsupportedAlgorithms: .handshakeFailed("this computer offers no SSH algorithms Oppi supports")
         case .connectionClosed: .handshakeFailed("the connection closed")
         case .keyExchangeFailed(let reason): .handshakeFailed(reason)
         case .commandRequestRejected: .probeRefused

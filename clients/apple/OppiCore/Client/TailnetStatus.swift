@@ -151,8 +151,8 @@ struct TailnetPeer: Equatable, Identifiable, Sendable {
     var setupCheckTitle: String {
         switch os?.lowercased() {
         case "macos": "Set Up This Mac"
-        case "linux": "Set Up This Linux Machine"
-        default: "Set Up This Machine"
+        case "linux": "Set Up This Linux Computer"
+        default: "Set Up This Computer"
         }
     }
 

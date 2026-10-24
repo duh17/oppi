@@ -1,6 +1,6 @@
 import UIKit
 
-/// One row of the Tailscale and Set Up a Machine lists: an optional leading
+/// One row of the Tailscale and Set Up a Computer lists: an optional leading
 /// symbol or spinner, a title, secondary lines, an optional trailing badge or
 /// spinner, and at most one action.
 ///
@@ -265,6 +265,40 @@ final class SetupRowCell: UICollectionViewListCell {
         accessories = []
         leadingSpinner.stopAnimating()
         isHighlighted = false
+    }
+}
+
+/// Headers and footers of the setup lists, kept current without reloading
+/// their sections: a section reload rebuilds its rows, which moves VoiceOver
+/// focus off a row the person was on.
+@MainActor
+enum SetupListSupplementaries {
+    /// Runs `configure` again on every visible header and footer (diffable
+    /// reconfigure leaves them alone) and re-measures those whose text changed.
+    /// Off-screen ones are configured when they are dequeued.
+    static func refresh(
+        _ collectionView: UICollectionView,
+        configure: (UICollectionViewListCell, _ kind: String, IndexPath) -> Void
+    ) {
+        let context = UICollectionViewLayoutInvalidationContext()
+        var changed = false
+        for kind in [UICollectionView.elementKindSectionHeader, UICollectionView.elementKindSectionFooter] {
+            var paths: [IndexPath] = []
+            for indexPath in collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind) {
+                guard let view = collectionView.supplementaryView(forElementKind: kind, at: indexPath) as? UICollectionViewListCell else { continue }
+                let before = view.contentConfiguration as? UIListContentConfiguration
+                configure(view, kind, indexPath)
+                let after = view.contentConfiguration as? UIListContentConfiguration
+                if before?.text != after?.text || before?.textProperties.color != after?.textProperties.color {
+                    paths.append(indexPath)
+                }
+            }
+            if !paths.isEmpty {
+                context.invalidateSupplementaryElements(ofKind: kind, at: paths)
+                changed = true
+            }
+        }
+        if changed { collectionView.collectionViewLayout.invalidateLayout(with: context) }
     }
 }
 

@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-/// Which network an SSH host is dialed on, for Check a Machine and the SSH
+/// Which network an SSH host is dialed on, for Set Up a Computer and the SSH
 /// Terminal. Both hand the connected socket to `SSHConnection`.
 enum SSHDial {
     enum Route: Equatable, Sendable {
@@ -14,7 +14,7 @@ enum SSHDial {
 
     /// What a tailnet name does while Oppi's Tailscale node is stopped.
     enum WhenNodeStopped: Sendable {
-        /// Check a Machine: never hand a `*.ts.net` name to the system resolver.
+        /// Set Up a Computer: never hand a `*.ts.net` name to the system resolver.
         case fail
         /// SSH Terminal: dial on the system network, where the Tailscale app
         /// or a VPN may still route it.

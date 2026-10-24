@@ -1,7 +1,7 @@
 import UIKit
 
 /// Connect Oppi's embedded Tailscale node, list online tailnet machines, and
-/// open Set Up a Machine for one that is not running Oppi yet.
+/// open Set Up a Computer for one that is not running Oppi yet.
 ///
 /// Each online machine that can host Oppi is probed for Oppi's `/health`
 /// while the screen is visible. A visit starts the probes over, so a result
@@ -240,11 +240,14 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
             snapshot.appendSections([.disconnect])
             snapshot.appendItems([.disconnect], toSection: .disconnect)
         }
-        // No text fields or menus here: every section redraws whole, footers
-        // included, so each pass shows current state.
-        let shown = dataSource.snapshot().sectionIdentifiers
-        snapshot.reloadSections(snapshot.sectionIdentifiers.filter(shown.contains))
+        // Rows already shown are reconfigured in place, never reloaded, so
+        // VoiceOver focus stays on its row while probes and pairing update.
+        let shown = Set(dataSource.snapshot().itemIdentifiers)
+        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter(shown.contains))
         dataSource.apply(snapshot, animatingDifferences: false)
+        SetupListSupplementaries.refresh(collectionView) { [weak self] view, kind, indexPath in
+            self?.configureSupplementary(view, kind: kind, at: indexPath)
+        }
     }
 
     private var palette: ThemePalette { ThemeRuntimeState.currentPalette() }
@@ -269,7 +272,7 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
         let index = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
             guard let self else { return }
             cell.configure(
-                title: String(localized: "Set Up a Mac or Linux Machine"),
+                title: String(localized: "Set Up a Mac or Linux Computer"),
                 systemImage: "laptopcomputer.and.arrow.down",
                 value: nil,
                 showsDisclosure: true,
@@ -277,32 +280,11 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
                 identifier: "tailnet.checkMachine"
             ) { [weak self] in self?.openSetup(peer: nil) }
         }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            switch self?.dataSource?.sectionIdentifier(for: indexPath.section) {
-            case .status:
-                content.text = String(localized: "Tailscale")
-                content.image = UIImage(named: "tailscale")
-                content.imageProperties.maximumSize = CGSize(width: 16, height: 16)
-                content.imageProperties.tintColor = .secondaryLabel
-            case .peers:
-                content.text = String(localized: "Online Machines")
-            default:
-                content.text = nil
-            }
-            view.contentConfiguration = content
+        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, kind, indexPath in
+            self?.configureSupplementary(view, kind: kind, at: indexPath)
         }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, _, indexPath in
-            guard let self else { return }
-            var content = UIListContentConfiguration.footer()
-            content.textProperties.numberOfLines = 0
-            if let section = dataSource?.sectionIdentifier(for: indexPath.section) {
-                content.text = footer(section)
-                if section == .status, case .failed = tailnet.state {
-                    content.textProperties.color = UIColor(palette.red)
-                }
-            }
-            view.contentConfiguration = content
+        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, kind, indexPath in
+            self?.configureSupplementary(view, kind: kind, at: indexPath)
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
             switch item {
@@ -324,6 +306,35 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
             }
             return collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
         }
+    }
+
+    private func configureSupplementary(_ view: UICollectionViewListCell, kind: String, at indexPath: IndexPath) {
+        let section = dataSource?.sectionIdentifier(for: indexPath.section)
+        var content: UIListContentConfiguration
+        if kind == UICollectionView.elementKindSectionHeader {
+            content = .header()
+            switch section {
+            case .status:
+                content.text = String(localized: "Tailscale")
+                content.image = UIImage(named: "tailscale")
+                content.imageProperties.maximumSize = CGSize(width: 16, height: 16)
+                content.imageProperties.tintColor = .secondaryLabel
+            case .peers:
+                content.text = String(localized: "Online Machines")
+            default:
+                content.text = nil
+            }
+        } else {
+            content = .footer()
+            content.textProperties.numberOfLines = 0
+            if let section {
+                content.text = footer(section)
+                if section == .status, case .failed = tailnet.state {
+                    content.textProperties.color = UIColor(palette.red)
+                }
+            }
+        }
+        view.contentConfiguration = content
     }
 
     private func configureValue(_ cell: UICollectionViewListCell, item: Item) {
@@ -447,7 +458,7 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
             return pairingMessage
                 ?? String(localized: "Pair with a Mac or Linux machine that runs Oppi and is signed into the same Tailscale account.")
         case .setup:
-            return String(localized: "Signs in to your computer over SSH and checks what Oppi needs. If Oppi isn\u{2019}t there yet, Install & Start sets it up and pairs this \(UIDevice.current.model). Works with any machine this \(UIDevice.current.model) can reach, on Tailscale or not.")
+            return String(localized: "Signs in to your computer over SSH and checks what Oppi needs. If Oppi isn\u{2019}t there yet, Install & Start sets it up and pairs this \(UIDevice.current.model). Works with any computer this \(UIDevice.current.model) can reach, on Tailscale or not.")
         case .disconnect:
             return nil
         }
