@@ -202,6 +202,7 @@ extension ServerConnection {
     ) {
         guard var current = sessionStore.session(id: sessionId) else { return }
         if let onlyFrom, current.status != onlyFrom { return }
+        let wasRunning = current.status.isRunning
         let completedAt = Date()
         current.status = status
         if status == .ready || status == .stopped || status == .error {
@@ -212,6 +213,9 @@ extension ServerConnection {
             current.workspaceId = workspaceId
         }
         sessionStore.upsert(current)
+        if wasRunning, status.isTerminal {
+            notePushDiscoveryMoment()
+        }
         if let resolvedWorkspaceId = current.workspaceId ?? workspaceId {
             syncWorkspaceSummary(workspaceId: resolvedWorkspaceId)
         }

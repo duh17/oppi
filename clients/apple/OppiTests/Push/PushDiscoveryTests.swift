@@ -148,6 +148,41 @@ struct PushDiscoveryTests {
         #expect(PushDiscovery.stage(serverId: serverId) == nil)
     }
 
+    /// A session that stops running because it ended, was stopped, or hit a fatal error is
+    /// as much a first moment as one that settled; a session that was not running is not.
+    @Test func aBackgroundSessionEndingStoppingOrFailingMakesTheCardDue() throws {
+        let events: [(String, AppEventMessage)] = [
+            ("ended", .sessionEnded(sessionId: "background", workspaceId: "w1", emittedAt: 2, reason: "done")),
+            ("stop confirmed", .stopConfirmed(sessionId: "background", workspaceId: "w1", emittedAt: 2, source: nil, reason: nil)),
+            ("error", .sessionError(sessionId: "background", workspaceId: "w1", emittedAt: 2, message: "boom", code: nil, fatal: true)),
+        ]
+        for (name, event) in events {
+            let (conn, serverId) = try makeConnection()
+            defer { PushDiscovery.forget(serverId: serverId) }
+            conn.sessionStore.switchServer(to: serverId)
+            // Stop confirmation only applies to a session that was stopping.
+            let status: SessionStatus = name == "stop confirmed" ? .stopping : .busy
+            conn.sessionStore.upsert(makeTestSession(id: "background", workspaceId: "w1", status: status))
+
+            conn.handleAppEvent(event)
+
+            #expect(PushDiscovery.stage(serverId: serverId) == .ready, "\(name)")
+        }
+    }
+
+    @Test func aStopRequestOrAnEventForAnIdleSessionLeavesTheCardAlone() throws {
+        let (conn, serverId) = try makeConnection()
+        defer { PushDiscovery.forget(serverId: serverId) }
+        conn.sessionStore.switchServer(to: serverId)
+        conn.sessionStore.upsert(makeTestSession(id: "background", workspaceId: "w1", status: .busy))
+        conn.handleAppEvent(.stopRequested(sessionId: "background", workspaceId: "w1", emittedAt: 2, source: nil, reason: nil))
+        #expect(PushDiscovery.stage(serverId: serverId) == nil)
+
+        conn.sessionStore.upsert(makeTestSession(id: "idle", workspaceId: "w1", status: .ready))
+        conn.handleAppEvent(.sessionEnded(sessionId: "idle", workspaceId: "w1", emittedAt: 3, reason: "done"))
+        #expect(PushDiscovery.stage(serverId: serverId) == nil)
+    }
+
     // MARK: - Turn-on progress
 
     @Test func aTurnOnsProgressShowsOnlyOnItsOwnServer() {
