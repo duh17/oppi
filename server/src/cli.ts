@@ -50,13 +50,13 @@ import { requestServerStop } from "./server-stop-marker.js";
 import {
   getServiceStatus,
   installService,
-  launchAgentRuntimeMigrationWarning,
   readInstalledPlist,
   restartService,
   stopService,
   uninstallService,
 } from "./launchd.js";
 import * as systemd from "./systemd.js";
+import { doctorServiceManager, inspectService } from "./cli/doctor-service.js";
 import { parseCliArgs } from "./cli/args.js";
 import {
   createCliConfigStorage,
@@ -609,11 +609,9 @@ async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
     checks.push({ level: "pass", message: `pi executable found (${piPath})` });
   }
 
-  // launchd is macOS-only; elsewhere `launchctl` does not exist and probing it would abort
-  // doctor. Off macOS, `oppi serve` runs under the host's own supervisor, so skip the check.
-  // Extend this to the other platforms' services where `oppi server install` manages one.
-  const svcStatus = process.platform === "darwin" ? getServiceStatus() : undefined;
-  const serviceInstalled = svcStatus?.installed === true;
+  // The service `oppi server install` manages here (LaunchAgent or systemd user service).
+  const service = inspectService(doctorServiceManager(process.platform));
+  const serviceInstalled = service?.installed === true;
 
   try {
     const providers = await listAuthenticatedModelProviders(config, serviceInstalled);
@@ -792,45 +790,7 @@ async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
     message: `Oppi CLI: ${packageInfo.name}@${packageInfo.version}`,
   });
 
-  // ── LaunchAgent checks ──
-
-  if (svcStatus?.installed) {
-    checks.push({ level: "pass", message: "LaunchAgent installed" });
-    if (svcStatus.running) {
-      checks.push({
-        level: "pass",
-        message: `LaunchAgent running (PID ${svcStatus.pid})`,
-      });
-    } else {
-      checks.push({
-        level: "warn",
-        message: "LaunchAgent installed but not running (oppi server restart)",
-      });
-    }
-
-    const paths = readInstalledPlist();
-    if (paths) {
-      if (!existsSync(paths.runtimePath)) {
-        checks.push({
-          level: "fail",
-          message: `LaunchAgent runtime missing: ${paths.runtimePath} (oppi server install to fix)`,
-        });
-      }
-      if (!existsSync(paths.cliPath)) {
-        checks.push({
-          level: "fail",
-          message: `LaunchAgent CLI missing: ${paths.cliPath} (oppi server install to fix)`,
-        });
-      }
-      const migration = launchAgentRuntimeMigrationWarning(paths);
-      if (migration) checks.push({ level: "warn", message: migration });
-    }
-  } else if (svcStatus) {
-    checks.push({
-      level: "warn",
-      message: "LaunchAgent not installed (oppi server install for background service)",
-    });
-  }
+  checks.push(...(service?.checks ?? []));
 
   let criticalFailures = 0;
   for (const check of checks) {

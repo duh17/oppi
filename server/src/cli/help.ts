@@ -231,7 +231,8 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["doctor"],
     title: "Doctor",
-    summary: "Run security, TLS, launchd, runtime, model provider, and environment diagnostics.",
+    summary:
+      "Run security, TLS, background service, runtime, model provider, and environment diagnostics.",
     usage: "oppi doctor",
     notes: [
       "Doctor exits non-zero for critical failures.",
