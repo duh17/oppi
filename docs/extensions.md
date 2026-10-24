@@ -13,7 +13,7 @@ Pi owns skills and extensions. Oppi resolves them for the session's working dire
 
 Pi's normal sources are auto-discovered directories (`~/.pi/agent/extensions/`, `.pi/extensions/`), `extensions` paths in `settings.json`, and packages installed with `pi install`.
 
-Oppi registers no server-owned tool. It adds a lifecycle-journal extension and Pi's built-ins:
+Oppi adds a lifecycle-journal extension and Pi's built-ins to each managed session, plus two tools only when they apply: `notify` for top-level sessions while a device has push on for the server ([Push notifications](server-configuration.md#push-notifications)), and `speak` while a Live Voice call is attached. Pi's built-ins by session:
 
 | Session | Built-ins loaded |
 | --- | --- |
@@ -33,7 +33,7 @@ A Pi Control session is the workspace-less session Oppi opens for **Edit with Op
 - **Tools:** only `read`, `bash`, `edit`, and `write` are active, plus `ask` when an installed extension provides it.
 - **Extensions:** they still load, so provider registrations and `ask` work. Their other tools are not active.
 - **Mobile Output Guide:** applies when it is on ([below](#mobile-output-guide)).
-- **Authority:** the session runs with host-user authority. Changes through `oppi` commands wait for your approval.
+- **Authority:** the session runs as the server's host user and can run any command through `bash`, including the `oppi` CLI. Its prompt tells it to show each `oppi` write and wait for your yes. That is an instruction to the model, not an enforced confirmation like the durable control conversation's.
 
 The durable control conversation (`oppi control open`, `oppi control send`) is separate and needs `experimental.serverDurable`. It has one tool per Oppi action (`agents_list`, `agents_create`, `schedules_run`, `sessions_send`, … and `oppi` for any CLI command) plus pi-durable's `codemode`, whose scripts call the same tools as `tools.<name>(…)` and resume after a server restart without rerunning finished calls. Read tools only read. Every write waits for a confirm card showing the request and, for an update, a diff: Yes or No for a direct call, plus Yes to all remaining in this script inside a codemode script. No setting skips it. No other durable session gets these tools.
 
@@ -150,7 +150,7 @@ return {
 
 Use native widgets for display-only state: progress, task lists, status summaries, and links to Oppi destinations such as `oppi://session/<id>`. A widget component that works in both places has `render()` for terminal Pi, `renderNative()` for Oppi, `fallback.lines` or `fallback.text`, and stable IDs for rows that update.
 
-On mobile, widgets group by Pi placement. `aboveEditor` widgets sit in a strip above the composer and `belowEditor` widgets in a strip below it. Each collapsed strip is one row of pills that scrolls horizontally. Tapping a pill opens that widget in the placement's shared drawer; tapping another pill replaces it. The drawer is height-bounded and scrolls, and long content can open full screen. A widget without `renderNative()` shows the sanitized terminal snapshot from `render(width)`, which keeps it readable but has no row-level native behavior such as activity-row links.
+A widget without `renderNative()` shows the sanitized terminal snapshot from `render(width)`, which keeps it readable but has no row-level native behavior such as activity-row links. Placement, strips, and drawers are in [Extension native UI](extension-native-ui.md#placement).
 
 Widgets are data rendered by Oppi, not downloaded Swift views.
 

@@ -44,7 +44,7 @@ Do not put these in config: owner tokens and pairing secrets (use `oppi pair` an
 | `auth.module` | Absolute path to an owner auth module (restart; see [Auth module](#auth-module)) |
 | `autoTitle.enabled` / `autoTitle.model` | Automatic session titles |
 | `serverMetrics.enabled` | Server and host samples behind **Server Metrics** (default `false`; the Server Settings toggle applies at once; see [Server Metrics](#server-metrics)) |
-| `experimental.serverDurable` | Offer durable sessions ([Using Oppi](usage.md#durable-sessions-experiment)) |
+| `experimental.serverDurable` | Offer durable sessions (restart; [Using Oppi](usage.md#durable-sessions-experiment)) |
 
 ## Dictation (ASR / STT)
 
@@ -163,7 +163,7 @@ Agent messages, Failed alerts, and new-device notices are ordinary notifications
 
 **Badge.** The number on Oppi's icon counts sessions waiting on you (approval, question, or sign-in, subagents included, on every paired server), each once. It drops when one stops waiting, at once while Oppi is open and otherwise at the next open. Failed runs and agent messages do not add to it. The [Live Activity](#live-activity) counts per thread instead, so a lead and its subagent both waiting are 2 on the badge and 1 on the card.
 
-**Registration and limits.** A device that opts in registers its push public key and relay send token, signed by its pairing key, together with the alert types its app can open; the server sends it nothing else. Revoking the device removes the registration. A device with no push key gets nothing, with no unencrypted fallback. Each device gets at most 100 pushes a UTC day from this server (alerts and Live Activity updates together) and 10 alerts a minute; Live Activity updates stop at 70 so 30 stay for alerts, and Failed, agent, and new-device alerts stop at 90 a day and 8 a minute so approvals and questions always have room. These limits are preliminary and may change. A relay `429`, or `503 relay_capacity` with `Retry-After`, pauses that device until the time it names; pushes over a limit are dropped and logged as `push.device_budget_exhausted`, and the budget restarts with the server.
+**Registration and limits.** A device that opts in registers its push public key and relay send token, signed by its pairing key, together with the alert types its app can open; the server sends it nothing else. The server stores it with that device in `config.json` (`pushRegistrations`; `oppi config show` redacts it). Revoking the device or rotating the owner token removes it and asks the relay to release the send token, and a `410` from the primary relay removes it too. A device with no push key gets nothing, with no unencrypted fallback. Each device gets at most 100 pushes a UTC day from this server (alerts and Live Activity updates together) and 10 alerts a minute; Live Activity updates stop at 70 so 30 stay for alerts, and Failed, agent, and new-device alerts stop at 90 a day and 8 a minute so approvals and questions always have room. These limits are preliminary and may change. A relay `429`, or `503 relay_capacity` with `Retry-After`, pauses that device until the time it names; pushes over a limit are dropped and logged as `push.device_budget_exhausted`, and the budget restarts with the server.
 
 ### Live Activity
 

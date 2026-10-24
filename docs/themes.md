@@ -97,7 +97,7 @@ Built-in themes set their contrast automatically, like Pi's system theme ([Earen
 - Keep `userMessageAccent` at least **3:1** against `bg`.
 - Assistant rows recede. Leave `assistantMessageBg` unset unless you want a wash, and keep it close to `bg`.
 
-iOS **Increase Contrast** adds a 1.5 pt border in `userMessageAccent` (or `userMessageText` without an accent). **Differentiate Without Color** adds a "You" caption on user rows. Custom themes get the border and caption, not the built-in stronger fills.
+iOS **Increase Contrast** uses a stronger built-in user fill plus a 1.5 pt border in `userMessageAccent` (or `userMessageText` without an accent). **Differentiate Without Color** adds a "You" caption on user rows. Custom themes get the border and caption, but not the stronger built-in fill.
 
 ## Tokens
 

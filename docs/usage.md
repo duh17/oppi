@@ -51,7 +51,7 @@ If an Ask card is visible, the composer answers that prompt instead. With an emp
 
 ## Siri, Quick Session, and the share sheet
 
-**Siri** starts a session with a prompt and opens that chat. Say "Start a session in Oppi", "Open a session in Oppi", or "New session in Oppi", optionally followed by "in <workspace>". Without a prompt, Siri asks "What should Pi do?". Siri and Shortcuts show the exact prompt, the workspace, and (with more than one server) the server for you to confirm before anything is sent. Cancel sends nothing. Prompts over 280 characters or 12 lines are too long to confirm; open Oppi and send them from the app.
+**Siri** starts a session with a prompt and opens that chat. Say "Start a session in Oppi", "Open a session in Oppi", or "New session in Oppi", optionally followed by "in <workspace>". Without a prompt, Siri asks "What should Pi do?". Siri and Shortcuts show the exact prompt, the workspace, and (with more than one server) the server for you to confirm before anything is sent. Invisible formatting characters are removed from the prompt first, so what you confirm is what is sent. Cancel sends nothing. The same confirmation applies when the prompt comes from another Shortcut action. Prompts over 280 characters or 12 lines are too long to confirm; open Oppi and send them from the app.
 
 **Quick Session** opens the composer without creating a session yet. Launch it from Oppi, Control Center, the Action Button, or the Shortcuts **New Session** action.
 
@@ -122,7 +122,7 @@ The sidebar holds saved **Agents** and **Schedules**.
 
 ## Edit with Oppi
 
-Describe a change in a composer. Oppi opens one setup session that inspects the current setup, asks if the outcome is unclear, shows the change, and applies it. Changes made through `oppi` commands change the live server, so the session waits for your approval before each server write. Before it edits a file, it says what will change. At the end it tells you where to see the change and whether a running session must reload.
+Describe a change in a composer. Oppi opens one setup session that inspects the current setup, asks if the outcome is unclear, shows the change, and applies it. Changes made through `oppi` commands change the live server, so the setup prompt tells the session to show each server write and wait for your approval. That is an instruction to the model, not an enforced confirmation. Before it edits a file, the session says what will change. At the end it tells you where to see the change and whether a running session must reload.
 
 The setup session uses Oppi's own short prompt, not your global Pi prompt ([Pi Control sessions](extensions.md#pi-control-sessions)).
 
@@ -130,7 +130,7 @@ The setup session uses Oppi's own short prompt, not your global Pi prompt ([Pi C
 | --- | --- | --- |
 | Agents | Composer in the Agents list | **Edit with Oppi** on an Agent; comments on its definition become the request |
 | Schedules | Composer in the Schedules list | **Edit with Oppi** on a schedule; comments on its prompt become the request |
-| Pi's system prompt (`SYSTEM.md`) | | **Edit with Oppi** on the Pi entry under Agents; comments on the file |
+| Pi's system prompt (`SYSTEM.md`) | | **Edit SYSTEM.md with Pi** on the Pi entry under Agents; comments on the file |
 | Skill files | | **Edit → Edit with Oppi** on an editable Skill's file, with your staged comments |
 | Extensions | | **Edit with Oppi** in the chat's context panel, or on the **Extensions** page |
 | Custom themes | Composer in **Settings → Appearance → Custom Themes** | Swipe a theme, or touch and hold, then **Edit with Oppi** |
@@ -150,7 +150,7 @@ Turn on **Settings → Experiments → Durable Sessions** (off by default, saved
 
 Durable sessions appear in All Sessions with a small **∞** after the title and follow **Settings → Chat → Style**. A durable session has no tree, so Outline lists the timeline and you fork from a message to branch.
 
-A durable session runs only extensions that ship a durable entry ([Durable extensions](extensions.md#durable-extensions)), plus MCP when the Agent selects it. It starts without the rest, including codemode, and shows a session warning that names them. MCP tools load through `tool_search`, the durable stand-in for codemode.
+A durable session runs only extensions that ship a durable entry ([Durable extensions](extensions.md#durable-extensions)), plus MCP when the Agent selects it. It starts without the rest, including codemode. When a saved Agent selected extensions that have no durable entry (or that `oppi extensions disable` turned off), the session shows a warning that names them. MCP tools load through `tool_search`, the durable stand-in for codemode.
 
 From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session (it fails while the server flag is off). Add `--agent <name>` for a saved Agent, or use `oppi schedule create --engine durable`.
 

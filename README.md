@@ -44,7 +44,7 @@ Oppi renders extension prompts, confirmations, editor requests, status, and widg
 
 The Workspaces tab opens **All Sessions** for the active server. It keeps **Your Turn** and **Working** at the top, groups recent stopped sessions by day, and shows each workspace name. Use the sidebar or drawer to manage saved Agents and schedules, collapse the workspace list, open App Settings, or browse a workspace's sessions, files, and settings.
 
-The create and edit sheets for Agents, schedules, workspaces, and Skills can open a **Pi Control** session. Pi Control is ordinary Pi with global settings, tools, Skills, Extensions, `SYSTEM.md`, and `APPEND_SYSTEM.md`. It runs with the server host user's permissions and can use the installed `oppi` CLI through `bash`. You can also use the native forms in the same sheets.
+**Edit with Oppi** (and the create composers for Agents, schedules, themes, and workspaces) opens a **Pi Control** setup session. It uses Oppi's own short prompt, with no global `SYSTEM.md`, `APPEND_SYSTEM.md`, `AGENTS.md`, or Skills, and only `read`, `bash`, `edit`, `write`, and `ask` as tools. It runs as the server host user and uses the installed `oppi` CLI through `bash`. See [Pi Control sessions](docs/extensions.md#pi-control-sessions). You can also use the native forms in the same sheets.
 
 **Quick Session** starts a session without opening a workspace first. Launch it from Oppi, Control Center, the Action Button, Spotlight, Siri, or Shortcuts. The **Live Voice** control starts a new session straight into a Live Voice call, and the Shortcuts **New Session** action picks the mode (Message, Dictation, Live Voice), Agent, workspace, text, and image.
 
@@ -165,21 +165,24 @@ Start at [docs/index.md](docs/index.md). Public docs are two tracks: daily use a
 
 ### Daily use
 
-- [Using Oppi](docs/usage.md) — screens, prompt vs steer vs follow-up, Quick Session, files, voice
 - [Onboarding and pairing](docs/onboarding.md)
-- [Deep links](docs/deeplinks.md)
-- [Document viewers](docs/document-viewers.md)
+- [Using Oppi](docs/usage.md) — screens, prompt vs steer vs follow-up, Quick Session, files, voice, Edit with Oppi
+- [Custom themes](docs/themes.md)
+- [Server configuration](docs/server-configuration.md)
+- [Reverse proxy](docs/reverse-proxy.md)
 - [Sandbox workspaces](docs/sandbox.md)
 - [Oppi Mirror](docs/oppi-mirror.md)
+- [SSH Terminal](docs/ssh-terminal.md)
+- [Document viewers](docs/document-viewers.md)
 - [Provider quotas](docs/provider-quotas.md)
-- [Server configuration](docs/server-configuration.md)
+- [Deep links](docs/deeplinks.md)
 - [Support](docs/support.md)
 - [Privacy](docs/privacy.md)
 - [Screenshots](docs/demo/)
 
 ### Extension authoring
 
-- [Extensions](docs/extensions.md) — Oppi overlay and mobile don'ts; Pi owns the tool API
+- [Extension behavior](docs/extensions.md) — what Oppi loads, mobile rules, Oppi event channels, durable extensions; Pi owns the tool API
 - [Extension native UI](docs/extension-native-ui.md)
 - [Attachment rendering](docs/attachment-rendering.md)
 - [Pi extensions](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md)
@@ -196,7 +199,6 @@ Start at [docs/index.md](docs/index.md). Public docs are two tracks: daily use a
 - [Config schema](server/docs/config-schema.md)
 - [Dictation / ASR](server/docs/asr.md)
 - [Voice replies / TTS](server/docs/tts.md)
-- [Custom themes](docs/themes.md)
 - [Model selection](server/docs/model-selection.md)
 - [Session tree semantics](server/docs/session-tree-semantics.md)
 - [Protocol snapshots](protocol/README.md)
