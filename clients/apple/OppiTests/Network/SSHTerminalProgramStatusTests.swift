@@ -234,7 +234,7 @@ struct SSHTerminalProgramStatusEngineTests {
 
         seed()
         engine.close()
-        #expect(Set(store.records.keys) == ["d", "e"]) // Unseen outcomes outlive the process.
+        #expect(Set(store.records.keys) == ["d", "e"]) // Done and error records outlive the process.
         engine.receive(osc("state=working:id=late"))
         #expect(store.record(id: "late") == nil)
     }

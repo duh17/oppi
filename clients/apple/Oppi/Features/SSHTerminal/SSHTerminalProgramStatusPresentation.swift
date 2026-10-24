@@ -31,9 +31,10 @@ enum SSHTerminalProgramStatusPresentation {
     }
 
     /// A terminal's records are never unseen, so Done and Error settle to Idle
-    /// (Stopped once the connection ended) with no green or red phase. The
-    /// terminal on screen already shows them, and the switcher and attention
-    /// surfaces read only blocked states.
+    /// (Stopped once the connection ended); the resolved status has no green or
+    /// red phase. The terminal on screen already shows them, and the switcher and
+    /// attention surfaces read only blocked states. `SSHTerminalStatusHold` alone
+    /// briefly colours the button when the root just finished.
     static func status(
         state: GhosttyProgramStatusState,
         kind: GhosttyProgramStatusKind = GHOSTTY_PROGRAM_STATUS_KIND_NONE,
