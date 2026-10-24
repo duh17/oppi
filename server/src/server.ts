@@ -1245,11 +1245,12 @@ export class Server {
       shutdownError = error;
     } finally {
       // A throw above skips closeWebSocketServer; these timers must not keep a
-      // stopped Server alive after an update restore replaces it.
-      await this.mcp?.dispose();
-      await this.uploadGcInFlight;
+      // stopped Server alive after an update restore replaces it. The cleanup and the
+      // GC wait come before mcp.dispose(), whose rejection would skip them.
       for (const timer of this.accessExpiryTimers.values()) clearTimeout(timer);
       this.accessExpiryTimers.clear();
+      await this.uploadGcInFlight;
+      await this.mcp?.dispose();
     }
 
     const closeResults = await Promise.allSettled([
