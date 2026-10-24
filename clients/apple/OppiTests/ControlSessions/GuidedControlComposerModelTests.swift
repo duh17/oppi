@@ -35,21 +35,6 @@ struct GuidedControlComposerModelTests {
         model.disappear()
     }
 
-    /// Runs `body` with the last-used workspace preference set, then restores it.
-    private func withLastUsedWorkspace(_ id: String, _ body: () async throws -> Void) async rethrows {
-        let key = "\(AppIdentifiers.subsystem).quickSession.lastWorkspaceId"
-        let previous = UserDefaults.standard.object(forKey: key)
-        AppPreferences.QuickSession.saveWorkspaceId(id)
-        defer {
-            if let previous {
-                UserDefaults.standard.set(previous, forKey: key)
-            } else {
-                UserDefaults.standard.removeObject(forKey: key)
-            }
-        }
-        try await body()
-    }
-
     @Test(arguments: [
         ControlSessionDomain.agents, .extensions, .schedules, .skills, .themes, .workspaces,
     ])
@@ -77,35 +62,31 @@ struct GuidedControlComposerModelTests {
         #expect(!prompt.contains("Canonical workspace"))
     }
 
-    @Test func agentsComposerLaunchNamesTheSelectedWorkspace() async throws {
-        try await withLastUsedWorkspace("w2") {
-            let connection = makeConnection(workspaces: [
-                makeTestWorkspace(id: "w1", name: "First"),
-                makeTestWorkspace(id: "w2", name: "Second"),
-            ])
-            let model = makeModel(domain: .agents, connection: connection)
-            try await appear(model)
+    @Test func agentsComposerLaunchNamesItsWorkspace() async throws {
+        // No shared preference: other suites write the last-used workspace key, so this
+        // test relies only on the first-workspace fallback, with IDs no other suite uses.
+        let connection = makeConnection(workspaces: [
+            makeTestWorkspace(id: "composer-only-ws", name: "Composer Only"),
+        ])
+        let model = makeModel(domain: .agents, connection: connection)
+        try await appear(model)
 
-            let prompt = model.makeLaunch(cleanRequest: "A reviewer").request.prompt ?? ""
-            #expect(prompt.contains("Canonical workspace ID: w2"))
-            #expect(prompt.contains("Canonical workspace name: Second"))
-        }
+        let prompt = model.makeLaunch(cleanRequest: "A reviewer").request.prompt ?? ""
+        #expect(prompt.contains("Canonical workspace ID: composer-only-ws"))
+        #expect(prompt.contains("Canonical workspace name: Composer Only"))
     }
 
-    @Test func themesComposerSendsNoWorkspaceEvenWhenOneIsPreferred() async throws {
-        try await withLastUsedWorkspace("w2") {
-            let connection = makeConnection(workspaces: [
-                makeTestWorkspace(id: "w1", name: "First"),
-                makeTestWorkspace(id: "w2", name: "Second"),
-            ])
-            let model = makeModel(domain: .themes, connection: connection)
-            try await appear(model)
+    @Test func themesComposerSendsNoWorkspaceEvenWithServerWorkspaces() async throws {
+        let connection = makeConnection(workspaces: [
+            makeTestWorkspace(id: "composer-only-ws", name: "Composer Only"),
+        ])
+        let model = makeModel(domain: .themes, connection: connection)
+        try await appear(model)
 
-            #expect(model.acceptsInput)
-            #expect(model.selectedWorkspace == nil)
-            #expect(!model.showsWorkspacePicker)
-            let prompt = model.makeLaunch(cleanRequest: "A warm dark theme").request.prompt ?? ""
-            #expect(!prompt.contains("Canonical workspace"))
-        }
+        #expect(model.acceptsInput)
+        #expect(model.selectedWorkspace == nil)
+        #expect(!model.showsWorkspacePicker)
+        let prompt = model.makeLaunch(cleanRequest: "A warm dark theme").request.prompt ?? ""
+        #expect(!prompt.contains("Canonical workspace"))
     }
 }
