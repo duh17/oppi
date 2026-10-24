@@ -541,6 +541,8 @@ export class Server {
   private dictationManager: DictationManager | undefined;
   private dictationConfig: DictationConfig | undefined;
   private uploadGcTimer: ReturnType<typeof setInterval> | null = null;
+  /** The upload GC pass in flight; stop() waits for it so nothing writes after stop(). */
+  private uploadGcInFlight: Promise<void> | undefined;
   private scheduleRunner!: AgentScheduleRunner;
 
   constructor(
@@ -1245,6 +1247,7 @@ export class Server {
       // A throw above skips closeWebSocketServer; these timers must not keep a
       // stopped Server alive after an update restore replaces it.
       await this.mcp?.dispose();
+      await this.uploadGcInFlight;
       for (const timer of this.accessExpiryTimers.values()) clearTimeout(timer);
       this.accessExpiryTimers.clear();
     }
@@ -1277,7 +1280,7 @@ export class Server {
 
   private startUploadGcLoop(): void {
     const config = resolveUploadStoreConfig(this.storage.getConfig());
-    const run = async (): Promise<void> => {
+    const pass = async (): Promise<void> => {
       try {
         const result = await garbageCollectUploadStore(
           resolveUploadStoreConfig(this.storage.getConfig()),
@@ -1295,11 +1298,18 @@ export class Server {
         });
       }
     };
+    // One pass at a time, tracked: a pass creates the store's directories, so one that
+    // outlived stop() would write into a data directory the owner is already removing.
+    const run = (): void => {
+      if (this.uploadGcInFlight) return;
+      const inFlight = pass().finally(() => {
+        if (this.uploadGcInFlight === inFlight) this.uploadGcInFlight = undefined;
+      });
+      this.uploadGcInFlight = inFlight;
+    };
 
-    void run();
-    this.uploadGcTimer = setInterval(() => {
-      void run();
-    }, this.uploadGcIntervalMs(config));
+    run();
+    this.uploadGcTimer = setInterval(run, this.uploadGcIntervalMs(config));
     this.uploadGcTimer.unref?.();
   }
 
