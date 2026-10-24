@@ -43,9 +43,18 @@
 # format exact. One line each on stdout; other output is for people and the app
 # ignores it:
 #
-#   oppi-install: step=<node|oppi|service|start> status=<begin|ok|skip|fail> detail=<one line>
+#   oppi-install: step=<node|oppi|service|start> status=<begin|ok|warn|skip|fail> detail=<one line>
 #   oppi-install: done version=<x.y.z> port=<n>
 #   oppi-install: error code=<code> detail=<one line>
+#
+# Statuses: `ok`, `warn`, `skip`, and `fail` end a step. `skip` means nothing new
+# was done, or a fallback ran (already installed, an offline rerun kept the old
+# Node, the service fell back to a background `oppi serve`). `warn` means the
+# step is done, with a caveat the user must see: lingering is off, so the service
+# stops at logout; or another `oppi`, a foreign file at the link path, or a link
+# directory off PATH means `oppi` by name may not run this install. `warn` and
+# `skip` are not failures; the app shows both as warnings, and the run still
+# ends in `done`.
 #
 # Error codes: usage, unsupported_platform, busy, node_download, checksum, npm,
 # server_too_old, port_in_use, service, start_timeout. A failing step prints
@@ -451,6 +460,14 @@ install_oppi() {
   link_launcher
   [ -n "$other_oppi" ] && oppi_result="$oppi_result; left another oppi at $other_oppi in place"
   [ -n "$link_note" ] && oppi_result="$oppi_result; $link_note"
+  # Another oppi, a foreign file at the link path, or a link directory off PATH:
+  # `oppi` by name may not be this install. Adding the directory to the profile is
+  # only a note (a new terminal picks it up).
+  [ -n "$other_oppi" ] && oppi_status=warn
+  case "$link_note" in
+    "" | "added "*) ;;
+    *) oppi_status=warn ;;
+  esac
   progress oppi "$oppi_status" "$oppi_result"
 }
 
@@ -779,7 +796,7 @@ install_service() {
     if [ "$linger" = yes ]; then
       progress service ok "systemd user service oppi.service installed; starts at boot"
     else
-      progress service ok "systemd user service oppi.service installed; it stops when you log out until an admin runs: sudo loginctl enable-linger $(id -un)"
+      progress service warn "systemd user service oppi.service installed; it stops when you log out until an admin runs: sudo loginctl enable-linger $(id -un)"
     fi
   fi
 }
@@ -851,6 +868,25 @@ wait_for_server() {
   done
 }
 
+# Show a pairing code only to someone at a terminal. `ssh host 'curl ... | sh'`,
+# CI, and `| tee` would leave a working first-device invite in a log, and a rerun
+# (an upgrade) must not replace an invite someone is about to use: there is one
+# slot. So: stdout is a terminal, no device has enrolled, and no invite is
+# pending (the same rule `oppi serve` follows).
+offer_pairing_code() {
+  if [ -t 1 ]; then
+    pairing_state=$(oppi_cli status --json)
+    if [ "$(json_field "$pairing_state" data.status.paired)" = false ] &&
+      [ "$(json_field "$pairing_state" data.status.pairingInvitePending)" = false ]; then
+      say "Scan this code in the Oppi app on your iPhone:"
+      "$launcher" pair </dev/null || say "Run 'oppi pair' to show a pairing code."
+      say "Later, 'oppi pair' shows a fresh code (open a new terminal first if 'oppi' is not found)."
+      return 0
+    fi
+  fi
+  say "Run 'oppi pair' to show a pairing code (open a new terminal first if 'oppi' is not found)."
+}
+
 # ---------------------------------------------------------------- main
 
 main() {
@@ -910,13 +946,11 @@ main() {
   release_lock
 
   say "oppi-install: done version=$version port=$port"
-  # A terminal install shows an invite here, because the service prints none.
   # The app (--non-interactive) mints its own invite over SSH.
   if [ "$interactive" = 1 ]; then
     say ""
-    say "Oppi $version is running. Scan this code in the Oppi app on your iPhone:"
-    "$launcher" pair </dev/null || say "Run 'oppi pair' to show a pairing code."
-    say "Later, 'oppi pair' shows a fresh code (open a new terminal first if 'oppi' is not found)."
+    say "Oppi $version is running."
+    offer_pairing_code
   fi
   return 0
 }
