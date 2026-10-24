@@ -58,7 +58,7 @@ On a Mac or Linux machine, install the server, start it as a background service,
 curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | sh
 ```
 
-Run it again to upgrade. [Onboarding](docs/onboarding.md) lists what it changes and how to do the same from the iPhone over SSH. Sessions need at least one model provider: add one in the app under **Server Settings → Model Providers**, or see [Connect a model provider](docs/onboarding.md#connect-a-model-provider). Sandbox workspaces also need QEMU. Self-signed TLS on Linux also requires `openssl` on PATH.
+Run it again to upgrade. [Onboarding](docs/onboarding.md) lists what it changes and how to do the same from the iPhone over SSH. Sessions need at least one model provider: add one in the app under **Server Settings → Model Providers**, or see [Connect a model provider](docs/onboarding.md#connect-a-model-provider). The background service does not read your shell's environment, so a provider API key variable such as `ANTHROPIC_API_KEY` reaches it only through `runtimeEnv`; it applies directly to a foreground `oppi serve`. `oppi doctor` warns when no provider has credentials. Sandbox workspaces also need QEMU. Self-signed TLS on Linux also requires `openssl` on PATH.
 
 To manage Node.js 22.19+ yourself, install with npm instead:
 
@@ -67,7 +67,7 @@ npm install -g oppi-server
 oppi serve
 ```
 
-On first run, `oppi serve` creates `~/.config/oppi/`, generates owner credentials, starts local HTTPS/WSS, and prints a pairing QR code and invite link. In the iOS TestFlight app, choose **Scan QR Code**, **Connect through Tailscale**, or **Enter manually**. Tailscale opens the in-app connection; it does not sign in by itself. You can also open the printed `oppi://connect` link on your phone.
+On first run, `oppi serve` creates `~/.config/oppi/`, generates owner credentials, starts local HTTPS/WSS, and prints a pairing QR code and invite link. In the iOS TestFlight app, choose **Scan QR Code**, **Connect through Tailscale**, or **Enter manually**. Tailscale opens the in-app connection; it does not sign in by itself. You can also open the printed `oppi://connect` link on your phone. Keep `oppi serve` running while you pair: Ctrl+C stops the server. The code is valid for 90 seconds; run `oppi pair` in another terminal for a new one. Until a device has enrolled, `oppi serve` in a terminal prints a fresh code unless an invite is still pending. A background service prints none: run `oppi pair`.
 
 To run an npm install as a background service (macOS LaunchAgent or Linux systemd user service; the installer does this for you):
 

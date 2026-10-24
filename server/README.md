@@ -4,7 +4,17 @@ Server for [Oppi](../README.md). It embeds the [Pi SDK](https://github.com/badlo
 
 ## Quickstart
 
+### Installer
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | sh
+```
+
+The installer sets up the server as a background service and shows a pairing code. See [Onboarding](../docs/onboarding.md#install).
+
 ### npm global install
+
+To install by hand instead:
 
 ```bash
 npm install -g oppi-server
@@ -12,7 +22,7 @@ oppi --version
 oppi serve
 ```
 
-On the first `serve`, Oppi creates `~/.config/oppi/`, generates owner credentials, starts the local CLI API at `~/.config/oppi/run/oppi.sock`, bootstraps remote HTTPS/WSS (`tls.mode=tailscale` when `tailscale cert` can issue a certificate for this machine, otherwise `tls.mode=self-signed`), and prints a pairing QR and invite link for the iPhone/iPad app. Use `oppi pair` later to generate a fresh single-use invite.
+On the first `serve`, Oppi creates `~/.config/oppi/`, generates owner credentials, starts the local CLI API at `~/.config/oppi/run/oppi.sock`, bootstraps remote HTTPS/WSS (`tls.mode=tailscale` when `tailscale cert` can issue a certificate for this machine, otherwise `tls.mode=self-signed`), and prints a pairing QR and invite link for the iPhone/iPad app. Keep `oppi serve` running while you pair, because Ctrl+C stops the server. The invite is valid for 90 seconds. Run `oppi pair` in another terminal for a fresh single-use invite. Until a device has enrolled, `oppi serve` in a terminal prints a fresh invite unless one is still pending. A background service or a log prints none, so a restart never replaces a pending invite: run `oppi pair`. To keep the server running in the background, run `oppi server install`.
 
 Upgrade or uninstall the global CLI with npm:
 
@@ -77,7 +87,7 @@ Create a workspace in the app and start a session.
 
 - Node.js 22.19+
 - [Pi](https://github.com/badlogic/pi-mono) runtime dependency, installed automatically with the npm package
-- At least one Pi provider configured with `pi auth` or an API key such as `ANTHROPIC_API_KEY`
+- At least one model provider with credentials. In the app, open **Server Settings → Model Providers** to sign in or set an API key. A background service does not read environment variables from your shell, so a provider API key variable such as `ANTHROPIC_API_KEY` reaches it only through `runtimeEnv`; it applies directly to a foreground `oppi serve`. `oppi doctor` reports when none is set up.
 - macOS or Linux
 - OpenSSL on PATH for `tls.mode=self-signed` certificate generation
 
@@ -135,7 +145,7 @@ Important security note:
 Use these commands:
 
 ```bash
-# Logs (watch startup + pairing hints)
+# Logs (startup; with no pairing code it says to run `oppi pair`)
 docker compose logs -f oppi-server
 
 # Health
@@ -230,7 +240,7 @@ Key config sections:
 | `asr`    | Dictation pipeline: STT backend endpoint                                    |
 | `images` | Image attachment preprocessing before upload                                |
 
-Manage provider API keys with `pi auth`, not Oppi config. See [model-selection.md](docs/model-selection.md) for model routing. Unknown config keys are ignored on startup and reported by `oppi config validate`.
+Manage provider credentials in the app's **Model Providers** screen. A foreground `oppi serve` also reads provider API key environment variables such as `ANTHROPIC_API_KEY`; a background service reads them only through `runtimeEnv`, which stores the value in plain text (see [Onboarding](../docs/onboarding.md#connect-a-model-provider)). See [model-selection.md](docs/model-selection.md) for model routing. Unknown config keys are ignored on startup and reported by `oppi config validate`.
 
 Use the redacted CLI view and typed setters; do not print the raw credential-bearing config:
 
