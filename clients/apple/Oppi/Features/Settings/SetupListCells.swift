@@ -186,7 +186,8 @@ final class SetupRowCell: UICollectionViewListCell {
             }
             badge.configuration = config
             badge.isUserInteractionEnabled = false
-            badge.isAccessibilityElement = false
+            // The row's own label already says "Paired".
+            badge.accessibilityElementsHidden = true
             accessories = [.customView(configuration: .init(customView: badge, placement: .trailing()))]
         }
 
@@ -204,19 +205,24 @@ final class SetupRowCell: UICollectionViewListCell {
             overlayAction = action
             overlay.addAction(action, for: .touchUpInside)
             accessories.append(.disclosureIndicator())
-            isAccessibilityElement = false
-            accessibilityElements = [overlay]
+            contentView.isAccessibilityElement = false
+            contentView.accessibilityElements = [overlay]
         } else if row.button != nil {
             overlay.isHidden = true
-            isAccessibilityElement = false
-            accessibilityElements = [SetupRowTextElement(label: spoken, container: self, anchor: titleLabel), inlineButton]
+            contentView.isAccessibilityElement = false
+            contentView.accessibilityElements = [
+                SetupRowTextElement(label: spoken, container: contentView, anchor: titleLabel),
+                inlineButton,
+            ]
         } else {
-            // One element reads the whole row and carries its identifier.
+            // One element reads the whole row and carries its identifier. The
+            // list exposes the content view's elements, not the cell's.
             overlay.isHidden = true
-            isAccessibilityElement = false
-            let element = SetupRowTextElement(label: spoken, container: self, anchor: contentView)
-            element.accessibilityIdentifier = row.identifier
-            accessibilityElements = [element]
+            contentView.accessibilityElements = nil
+            contentView.isAccessibilityElement = true
+            contentView.accessibilityLabel = spoken
+            contentView.accessibilityIdentifier = row.identifier
+            contentView.accessibilityTraits = .staticText
         }
     }
 
@@ -252,9 +258,10 @@ final class SetupRowCell: UICollectionViewListCell {
         overlay.accessibilityIdentifier = nil
         overlay.accessibilityLabel = nil
         inlineButton.accessibilityIdentifier = nil
-        accessibilityIdentifier = nil
-        accessibilityLabel = nil
-        accessibilityElements = nil
+        contentView.isAccessibilityElement = false
+        contentView.accessibilityIdentifier = nil
+        contentView.accessibilityLabel = nil
+        contentView.accessibilityElements = nil
         accessories = []
         leadingSpinner.stopAnimating()
         isHighlighted = false
