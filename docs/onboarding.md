@@ -89,7 +89,7 @@ Oppi runs sessions with [Pi](https://github.com/badlogic/pi-mono), so it needs P
 
    - **Set Up a Computer** signs in to Oppi's in-app Tailscale connection and lists the Mac and Linux machines on your tailnet. Pick one to install and pair over SSH ([Set up from the app over SSH](#set-up-from-the-app-over-ssh)). It does not install the Tailscale VPN app.
    - **Scan QR Code** (devices with a camera) reads the code `oppi pair` shows.
-   - **Enter manually** takes a pasted pairing link, an `oppi://connect` link, or the output of `oppi pair --json`. Its advanced option, **Use Host and Pairing Token**, takes a host, port, and pairing token instead. The host must be a Tailscale `*.ts.net` name or a public HTTPS hostname: a server with a self-signed certificate pairs only through an invite link or QR code.
+   - **Enter manually** has one field: run `oppi pair` on the host and paste what it prints. It accepts a pairing link, an `oppi://connect` link, the QR code's contents, or the output of `oppi pair --json`. Oppi rejects anything without the server's signature.
 
    Opening an `oppi://connect` invite link also starts pairing.
 
