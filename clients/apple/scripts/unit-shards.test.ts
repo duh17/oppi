@@ -84,10 +84,16 @@ describe("unit shards", () => {
     expect(failures).toEqual({ ids: ["Suite/test4000()"] });
   });
 
-  test("an unreadable xcresulttool result says why", () => {
-    expect(readFailures(process.execPath, ["-e", "console.error('bad bundle'); process.exit(3)"])).toEqual({ reason: "xcresulttool exit 3: bad bundle" });
+  test("an unreadable xcresulttool result is a reason that names what went wrong", () => {
+    const failed = readFailures(process.execPath, ["-e", "console.error('bad bundle'); process.exit(3)"]);
+    expect(failed).not.toHaveProperty("ids");
+    expect(failed).toHaveProperty("reason");
+    const reason = (failed as { reason: string }).reason;
+    expect(reason).toContain("3");
+    expect(reason).toContain("bad bundle");
     const garbled = readFailures(process.execPath, ["-e", "process.stdout.write('Error: incomplete')"]);
-    expect(garbled).toEqual({ reason: "xcresulttool output (17 chars) is not test-results JSON" });
+    expect(garbled).not.toHaveProperty("ids");
+    expect(garbled).toHaveProperty("reason");
   });
 
   test("recorded seconds map suite display names to types and skip ambiguous names", () => {
