@@ -36,6 +36,21 @@ struct PushDiscoveryCardConfiguration: UIContentConfiguration {
     }
 }
 
+/// A turn-on's progress, kept with the server it was started for: the card on another
+/// server shows none of it.
+struct PushDiscoveryProgress: Equatable {
+    let serverId: String
+    let status: PushDiscoveryCardConfiguration.Status
+
+    static func status(
+        of progress: PushDiscoveryProgress?,
+        for serverId: String
+    ) -> PushDiscoveryCardConfiguration.Status {
+        guard let progress, progress.serverId == serverId else { return .idle }
+        return progress.status
+    }
+}
+
 final class PushDiscoveryCardView: UIView, UIContentView {
     private let card = UIStackView()
     private let titleLabel = UILabel()
@@ -143,6 +158,10 @@ final class PushDiscoveryCardView: UIView, UIContentView {
             statusLabel.text = message
             statusLabel.textColor = colors.orange
             statusLabel.isHidden = false
+            // The line appears under the button the person just used; say it aloud once.
+            if previousStatus != configuration.status {
+                UIAccessibility.post(notification: .announcement, argument: message)
+            }
         case .idle, .working:
             statusLabel.text = nil
             statusLabel.isHidden = true

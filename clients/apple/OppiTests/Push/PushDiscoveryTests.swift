@@ -118,4 +118,46 @@ struct PushDiscoveryTests {
 
         #expect(PushDiscovery.stage(serverId: serverId) == nil)
     }
+
+    @Test func aBackgroundSessionFinishingThroughAnAppEventMakesTheCardDue() throws {
+        let (conn, serverId) = try makeConnection()
+        defer { PushDiscovery.forget(serverId: serverId) }
+        conn.sessionStore.switchServer(to: serverId)
+        var session = makeTestSession(id: "background", workspaceId: "w1", status: .busy)
+        conn.sessionStore.upsert(session)
+        session.status = .ready
+
+        conn.handleAppEvent(.sessionSummary(
+            sessionId: "background", workspaceId: "w1", emittedAt: 2, summary: SessionSummary(from: session)
+        ))
+
+        #expect(PushDiscovery.stage(serverId: serverId) == .ready)
+    }
+
+    @Test func anAppEventForASessionThatWasNotRunningLeavesTheCardAlone() throws {
+        let (conn, serverId) = try makeConnection()
+        defer { PushDiscovery.forget(serverId: serverId) }
+        conn.sessionStore.switchServer(to: serverId)
+        let session = makeTestSession(id: "background", workspaceId: "w1", status: .ready)
+        conn.sessionStore.upsert(session)
+
+        conn.handleAppEvent(.sessionSummary(
+            sessionId: "background", workspaceId: "w1", emittedAt: 2, summary: SessionSummary(from: session)
+        ))
+
+        #expect(PushDiscovery.stage(serverId: serverId) == nil)
+    }
+
+    // MARK: - Turn-on progress
+
+    @Test func aTurnOnsProgressShowsOnlyOnItsOwnServer() {
+        let working = PushDiscoveryProgress(serverId: "a", status: .working)
+        let failed = PushDiscoveryProgress(serverId: "a", status: .failed("Couldn't turn on push"))
+
+        #expect(PushDiscoveryProgress.status(of: working, for: "a") == .working)
+        #expect(PushDiscoveryProgress.status(of: failed, for: "a") == .failed("Couldn't turn on push"))
+        #expect(PushDiscoveryProgress.status(of: working, for: "b") == .idle)
+        #expect(PushDiscoveryProgress.status(of: failed, for: "b") == .idle)
+        #expect(PushDiscoveryProgress.status(of: nil, for: "a") == .idle)
+    }
 }

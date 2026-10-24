@@ -178,8 +178,13 @@ extension ServerConnection {
            !workspaceId.isEmpty {
             normalized.workspaceId = workspaceId
         }
-        let previousWorkspaceId = sessionStore.session(id: normalized.id)?.workspaceId
+        let previous = sessionStore.session(id: normalized.id)
+        let previousWorkspaceId = previous?.workspaceId
         sessionStore.applySummary(normalized)
+        // A background session that stops running reaches here, not the focused stream.
+        if previous?.status.isRunning == true, normalized.session.status.isTerminal {
+            notePushDiscoveryMoment()
+        }
         if let previousWorkspaceId, previousWorkspaceId != normalized.workspaceId {
             syncWorkspaceSummary(workspaceId: previousWorkspaceId)
         }

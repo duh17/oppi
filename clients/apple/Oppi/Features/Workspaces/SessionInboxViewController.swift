@@ -53,7 +53,7 @@ final class SessionInboxViewController: UIViewController {
     }
     /// The push discovery card's own progress: the relay disclosure was accepted and
     /// registration is running, or it failed.
-    private var pushDiscoveryStatus: PushDiscoveryCardConfiguration.Status = .idle {
+    private var pushDiscoveryProgress: PushDiscoveryProgress? {
         didSet { setNeedsUpdateProperties() }
     }
     private var hasAutoOpenedE2EWorkspace = false
@@ -262,7 +262,7 @@ final class SessionInboxViewController: UIViewController {
         // progress and a failure stay visible.
         let showsPushDiscovery = !showsVersionNotice && !showsProviderPrompt
             && activeServerId.map { serverId in
-                pushDiscoveryStatus != .idle || PushDiscovery.shouldShow(
+                PushDiscoveryProgress.status(of: pushDiscoveryProgress, for: serverId) != .idle || PushDiscovery.shouldShow(
                     stage: PushDiscovery.stage(serverId: serverId),
                     pushAvailable: PushDiscovery.isPushAvailable(relay: connection?.pushRelay),
                     pushEnabled: PushRegistration.isEnabled(serverId: serverId)
@@ -617,7 +617,7 @@ final class SessionInboxViewController: UIViewController {
             next.appendSection(
                 .pushDiscovery,
                 item: .pushDiscovery,
-                row: .pushDiscovery(serverId: serverId, status: pushDiscoveryStatus)
+                row: .pushDiscovery(serverId: serverId, status: PushDiscoveryProgress.status(of: pushDiscoveryProgress, for: serverId))
             )
         }
 
@@ -770,16 +770,17 @@ final class SessionInboxViewController: UIViewController {
             },
             progress: { [weak self] outcome in
                 switch outcome {
-                case .cancelled, .enabled: self?.pushDiscoveryStatus = .idle
-                case .working: self?.pushDiscoveryStatus = .working
-                case .failed(let message): self?.pushDiscoveryStatus = .failed(message)
+                case .cancelled, .enabled: self?.pushDiscoveryProgress = nil
+                case .working: self?.pushDiscoveryProgress = PushDiscoveryProgress(serverId: serverId, status: .working)
+                case .failed(let message):
+                    self?.pushDiscoveryProgress = PushDiscoveryProgress(serverId: serverId, status: .failed(message))
                 }
             }
         )
     }
 
     private func dismissPushDiscovery(serverId: String) {
-        pushDiscoveryStatus = .idle
+        pushDiscoveryProgress = nil
         PushDiscovery.close(serverId: serverId)
     }
 
