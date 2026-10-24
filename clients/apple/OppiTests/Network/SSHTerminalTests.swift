@@ -1472,15 +1472,6 @@ struct SSHTerminalTests {
         #expect(HerdrRemote.focusCommand(.workspace("w1; rm -rf ~")) == nil)
     }
 
-    @Test func onlyARunOnConnectHerdrCommandAttachesHerdr() {
-        for command in ["herdr", "herdr session attach main", "/opt/homebrew/bin/herdr", "  herdr\tattach"] {
-            #expect(SSHTerminalAgentDetection.isHerdrCommand(command), "\(command)")
-        }
-        for command in [nil, "", "tmux new -A -s main", "herdrx", "echo herdr"] as [String?] {
-            #expect(!SSHTerminalAgentDetection.isHerdrCommand(command), "\(command ?? "login shell")")
-        }
-    }
-
     @Test func keymapSpecsInEachSyntaxEncodeAsTerminalKeys() async throws {
         func parse(_ spec: String, _ syntax: SSHTerminalKeymap.Syntax = .plus) throws -> [SSHTerminalKeyStroke] {
             try #require(SSHTerminalKeymap.parse(spec, syntax: syntax), "\(spec) did not parse")

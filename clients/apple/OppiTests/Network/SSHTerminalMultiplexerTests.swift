@@ -11,6 +11,7 @@ struct SSHTerminalMultiplexerDetectionTests {
         let herdr = [
             "herdr", "  herdr  ", "herdr --attach", "herdr\n",
             "/Users/duh/.local/bin/herdr", "herdr\tworkspace",
+            "herdr session attach main", "  herdr\tattach", "/opt/homebrew/bin/herdr",
         ]
         for command in herdr {
             #expect(SSHTerminalMultiplexerKind.detected(in: command) == .herdr, "\(command)")
@@ -24,7 +25,7 @@ struct SSHTerminalMultiplexerDetectionTests {
         // A login shell, another program, a different program whose name merely
         // starts with one, and a first word this device cannot see behind a
         // quote: all keep the plain folder shell.
-        for command in [nil, "", "   ", "sh -l", "htop", "herdr2", "tmuxinator new", "'herdr'", "\"tmux\"", "# herdr"] {
+        for command in [nil, "", "   ", "sh -l", "htop", "herdr2", "tmuxinator new", "'herdr'", "\"tmux\"", "# herdr", "herdrx", "echo herdr"] {
             #expect(SSHTerminalMultiplexerKind.detected(in: command) == nil, "\(command ?? "nil")")
         }
     }

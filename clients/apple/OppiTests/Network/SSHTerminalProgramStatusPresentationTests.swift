@@ -267,9 +267,6 @@ struct SSHTerminalProgramStatusPresentationTests {
         #expect(Detection.mode(root: nil, app: "", herdrAttached: true, herdr: nil) == .terminal)
         // Herdr running on the host does not mean this terminal shows it.
         #expect(Detection.mode(root: nil, app: "", herdrAttached: false, herdr: focused) == nil)
-        #expect(Detection.mode(
-            override: .terminal, root: agent, app: "pi", herdrAttached: true, herdr: focused
-        ) == .terminal)
 
         // The key strip follows the same order; `claude-code` uses Claude's.
         #expect(Detection.keymapProgram(root: prefixed, app: "claude-code", herdrAttached: true, herdr: focused) == "claude")

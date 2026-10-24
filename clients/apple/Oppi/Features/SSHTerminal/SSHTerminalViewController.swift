@@ -1326,7 +1326,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     // MARK: - Mode
 
-    private var herdrAttached: Bool { SSHTerminalAgentDetection.isHerdrCommand(channel.command) }
+    private var herdrAttached: Bool { SSHTerminalMultiplexerKind.detected(in: channel.command) == .herdr }
     private var detectedMode: SSHTerminalInputMode? {
         SSHTerminalAgentDetection.mode(
             root: channel.programStatus.liveRoot, app: channel.programStatus.app(of: ""),

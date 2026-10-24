@@ -10,7 +10,8 @@ enum SSHTerminalInputMode: Equatable {
 
 /// Picks the input mode and key strip from what the host declares: the
 /// program's own OSC 7501 report, or a Run on Connect command that starts
-/// Herdr. Oppi never inspects the host's process table to guess.
+/// Herdr (`SSHTerminalMultiplexerKind`). Oppi never inspects the host's
+/// process table to guess.
 enum SSHTerminalAgentDetection {
     /// OSC 7501 `app` ids of coding agents. An id also matches by its first
     /// `-`/`_`/`.` segment, so `claude-code` reads as `claude`.
@@ -19,17 +20,15 @@ enum SSHTerminalAgentDetection {
         "crush", "droid", "cursor-agent", "qwen", "kimi", "copilot", "kilo", "grok",
     ]
 
-    /// Manual override, then the OSC 7501 root, then Herdr's focused pane when
-    /// this connection runs Herdr. Nil means nothing has decided; the terminal
-    /// view treats that as direct typing.
+    /// The OSC 7501 root, then Herdr's focused pane when this connection runs
+    /// Herdr. Nil means nothing has decided; the terminal view treats that as
+    /// direct typing. The view controller's `inputMode` owns the manual override.
     static func mode(
-        override: SSHTerminalInputMode? = nil,
         root: SSHTerminalProgramStatusStore.Record?,
         app: String,
         herdrAttached: Bool,
         herdr: HerdrSnapshot?
     ) -> SSHTerminalInputMode? {
-        if let override { return override }
         if agentApp(root: root, app: app) != nil { return .chat }
         guard herdrAttached else { return nil }
         return herdr?.focusedAgent == nil ? .terminal : .chat
@@ -65,13 +64,6 @@ enum SSHTerminalAgentDetection {
         let names = [app, root.app].map(normalizedApp).filter { !$0.isEmpty }
         guard !names.contains(where: isShellApp) else { return nil }
         return names.lazy.compactMap(agentName).first
-    }
-
-    /// Run on Connect starts Herdr, so this PTY is a Herdr client for the
-    /// whole connection: the connection ends when that command exits.
-    static func isHerdrCommand(_ command: String?) -> Bool {
-        guard let first = command?.split(whereSeparator: \.isWhitespace).first else { return false }
-        return first.split(separator: "/").last == "herdr"
     }
 
     static func normalizedApp(_ app: String) -> String {
