@@ -84,9 +84,6 @@ final class SSHTerminalProgramStatusStore {
         let message: String
         /// Increases with every update across the store. The eviction order.
         let revision: UInt64
-        /// When this state and kind began. A repeat of the same state keeps it,
-        /// so a re-report is not a new unseen outcome.
-        let since: Date
         /// The store revision of what the person is shown: it advances when
         /// this state and kind begin (an episode; two never share it), and for
         /// new text once reports to this record pause for
@@ -156,15 +153,12 @@ final class SSHTerminalProgramStatusStore {
             let storedKind = report.state == GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED ? kind : GHOSTTY_PROGRAM_STATUS_KIND_NONE
             let title = SSHTerminalDisplayText.sanitized(report.title, limit: SSHTerminalDisplayText.titleLimit)
             let message = SSHTerminalDisplayText.sanitized(report.message, limit: SSHTerminalDisplayText.messageLimit)
-            let since: Date
             let notice: UInt64
             if let previous = records[report.id], previous.state == report.state, previous.kind == storedKind {
-                since = previous.since
                 let newText = previous.title != title || previous.message != message
                 let paused = previous.reportedAt.duration(to: now) >= SSHTerminalNotice.burstInterval
                 notice = newText && paused ? revision : previous.notice
             } else {
-                since = Date()
                 notice = revision
             }
             records[report.id] = Record(
@@ -176,7 +170,6 @@ final class SSHTerminalProgramStatusStore {
                 title: title,
                 message: message,
                 revision: revision,
-                since: since,
                 notice: notice,
                 reportedAt: now)
         default:

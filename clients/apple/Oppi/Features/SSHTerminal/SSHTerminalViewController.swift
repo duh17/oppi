@@ -843,8 +843,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             herdrWaiting: herdr.snapshot?.needsAttention ?? 0,
             blockedProgram: SSHTerminalProgramStatusPresentation.blockedNotice(
                 store: channel.programStatus,
-                isStopped: programIsStopped,
-                seenAt: SSHTerminalProgramStatusPresentation.seenAt
+                isStopped: programIsStopped
             ) != nil
         )
     }
@@ -1345,8 +1344,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var programRollup: SessionStatusRollup? {
         SSHTerminalProgramStatusPresentation.rollup(
             store: channel.programStatus,
-            isStopped: programIsStopped,
-            seenAt: SSHTerminalProgramStatusPresentation.seenAt
+            isStopped: programIsStopped
         )
     }
     private var visibleNotice: SSHTerminalNotice? {
@@ -1357,8 +1355,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var programStatusRows: [SSHTerminalStatusRow] {
         SSHTerminalProgramStatusPresentation.detailRows(
             store: channel.programStatus,
-            isStopped: programIsStopped,
-            seenAt: SSHTerminalProgramStatusPresentation.seenAt
+            isStopped: programIsStopped
         )
     }
     private var statusText: String {

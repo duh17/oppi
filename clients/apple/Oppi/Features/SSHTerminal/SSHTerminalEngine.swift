@@ -104,8 +104,8 @@ final class SSHTerminalEngine {
     /// different host) leaves the folder unknown instead of resolving this
     /// server's paths against it.
     private var workingDirectoryHost: String?
-    /// OSC 7501 records for this terminal. Outlives `close()` so unseen
-    /// `done`/`error` records can still be shown after the program exits.
+    /// OSC 7501 records for this terminal. Outlives `close()` so `done`/`error`
+    /// records can still be shown after the program exits.
     let programStatus = SSHTerminalProgramStatusStore()
     /// The program's OSC 9;4 progress. Cleared by RIS and when the process ends.
     let progress = SSHTerminalProgressStore()

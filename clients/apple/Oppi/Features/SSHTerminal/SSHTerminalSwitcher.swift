@@ -32,8 +32,7 @@ enum SSHTerminalSwitcher {
         terminals.map { terminal in
             let blocked = SSHTerminalProgramStatusPresentation.rollup(
                 store: terminal.channel.programStatus,
-                isStopped: false,
-                seenAt: SSHTerminalProgramStatusPresentation.seenAt
+                isStopped: false
             )?.headline.flatMap { $0.isBlocked ? $0 : nil }
             var subtitle = detail(profile: terminal.profile, folder: terminal.folder)
             if let blocked { subtitle += " \u{00B7} " + blocked.label }

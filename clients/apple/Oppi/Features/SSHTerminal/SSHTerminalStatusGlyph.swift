@@ -244,10 +244,10 @@ final class SSHTerminalStatusGlyphButton: UIButton {
 
 /// A just-finished root, held in its outcome colour for a moment.
 ///
-/// On screen, done and error are seen at once, so the resolved headline is
-/// already Idle. The hold is presentation only: it never touches the seen
-/// ledger. It lives while the root is still that same done or error report
-/// and the headline is still Idle; anything else ends it at once.
+/// Done and error resolve to Idle (`SSHTerminalProgramStatusPresentation.status`),
+/// so the headline is already Idle. The hold is presentation only. It lives
+/// while the root is still that same done or error report and the headline is
+/// still Idle; anything else ends it at once.
 struct SSHTerminalStatusHold: Equatable {
     struct Root: Equatable {
         var state: GhosttyProgramStatusState
@@ -396,13 +396,12 @@ extension SSHTerminalProgramStatusPresentation {
     @MainActor
     static func detailRows(
         store: SSHTerminalProgramStatusStore,
-        isStopped: Bool,
-        seenAt: Date?
+        isStopped: Bool
     ) -> [SSHTerminalStatusRow] {
         var records = store.subtree()
         if let root = store.root { records.insert(root, at: 0) }
         return records.compactMap { record in
-            guard let status = status(of: record, isStopped: isStopped, seenAt: seenAt) else { return nil }
+            guard let status = status(of: record, isStopped: isStopped) else { return nil }
             let title = remoteText(message: "", title: record.title)
             let app = SSHTerminalDisplayText.sanitized(record.app, limit: SSHTerminalDisplayText.titleLimit)
             let name = title.isEmpty ? (app.isEmpty ? "Program" : app) : title

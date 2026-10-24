@@ -6,8 +6,6 @@ import Testing
 @Suite("SSH terminal program status presentation", .serialized)
 @MainActor
 struct SSHTerminalProgramStatusPresentationTests {
-    private let since = Date(timeIntervalSince1970: 1_000)
-
     private func record(
         id: String = "",
         _ state: GhosttyProgramStatusState,
@@ -18,7 +16,7 @@ struct SSHTerminalProgramStatusPresentationTests {
     ) -> SSHTerminalProgramStatusStore.Record {
         .init(
             id: id, state: state, kind: kind, progress: -1, app: app,
-            title: title, message: message, revision: 1, since: since, notice: 1, reportedAt: .now
+            title: title, message: message, revision: 1, notice: 1, reportedAt: .now
         )
     }
 
@@ -55,50 +53,35 @@ struct SSHTerminalProgramStatusPresentationTests {
         for (state, programState) in states {
             #expect(SSHTerminalProgramStatusPresentation.programState(state) == programState)
             for kind in kinds {
-                let unseen = SSHTerminalProgramStatusPresentation.status(
-                    state: state, kind: kind, since: since, seenAt: nil
-                )
-                let seen = SSHTerminalProgramStatusPresentation.status(
-                    state: state, kind: kind, since: since, seenAt: since
-                )
+                let status = SSHTerminalProgramStatusPresentation.status(state: state, kind: kind)
                 switch state {
                 case GHOSTTY_PROGRAM_STATUS_STATE_IDLE:
-                    #expect(unseen == .idle)
-                    #expect(seen == .idle)
+                    #expect(status == .idle)
                 case GHOSTTY_PROGRAM_STATUS_STATE_WORKING:
-                    #expect(unseen == .working)
-                    #expect(seen == .working)
+                    #expect(status == .working)
                 case GHOSTTY_PROGRAM_STATUS_STATE_DONE:
-                    #expect(unseen == .done)
-                    #expect(seen == .idle)
+                    #expect(status == .idle, "Done settles to Idle")
                 case GHOSTTY_PROGRAM_STATUS_STATE_ERROR:
-                    #expect(unseen == .error)
-                    #expect(seen == .idle)
+                    #expect(status == .idle, "Error settles to Idle")
                 case GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED:
                     let expected: SessionStatusKind = switch kind {
                     case GHOSTTY_PROGRAM_STATUS_KIND_PERMISSION: .needsApproval
                     case GHOSTTY_PROGRAM_STATUS_KIND_AUTH: .signIn
                     default: .question
                     }
-                    #expect(unseen == expected)
-                    #expect(seen == expected)
+                    #expect(status == expected)
                 default:
-                    #expect(unseen == nil)
-                    #expect(seen == nil)
+                    #expect(status == nil)
                 }
             }
         }
     }
 
-    @Test func aStoppedSeenOutcomeReadsAsStopped() {
-        let done = SSHTerminalProgramStatusPresentation.status(
-            state: GHOSTTY_PROGRAM_STATUS_STATE_DONE, since: since, isStopped: true, seenAt: since
-        )
-        let unseen = SSHTerminalProgramStatusPresentation.status(
-            state: GHOSTTY_PROGRAM_STATUS_STATE_ERROR, since: since, isStopped: true, seenAt: nil
-        )
+    @Test func aStoppedTerminalSettlesDoneAndErrorToStopped() {
+        let done = SSHTerminalProgramStatusPresentation.status(state: GHOSTTY_PROGRAM_STATUS_STATE_DONE, isStopped: true)
+        let error = SSHTerminalProgramStatusPresentation.status(state: GHOSTTY_PROGRAM_STATUS_STATE_ERROR, isStopped: true)
         #expect(done == .stopped)
-        #expect(unseen == .error)
+        #expect(error == .stopped)
     }
 
     @Test func aTerminalTreeRollsUpWithoutCountingTheRootTwice() {
@@ -108,22 +91,18 @@ struct SSHTerminalProgramStatusPresentationTests {
         store.apply(report(GHOSTTY_PROGRAM_STATUS_STATE_DONE, id: "us"))
         store.apply(report(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, id: "us/logs"))
 
-        let unseen = SSHTerminalProgramStatusPresentation.rollup(store: store, isStopped: false, seenAt: .distantPast)
-        #expect(unseen?.root == .working)
-        #expect(unseen?.headline == .needsApproval)
-        #expect(unseen?.count(.working) == 1) // the child, not the root
-        #expect(unseen?.count(.needsApproval) == 1)
-        #expect(unseen?.count(.done) == 1)
-        #expect(unseen?.rootChipText == "Root: Working")
-        #expect(unseen?.summaryText.contains("needs approval") == true)
-
-        let seen = SSHTerminalProgramStatusPresentation.rollup(store: store, isStopped: false, seenAt: .distantFuture)
-        #expect(seen?.headline == .needsApproval)
-        #expect(seen?.count(.done) == 0)
-        #expect(seen?.count(.idle) == 1)
+        let rollup = SSHTerminalProgramStatusPresentation.rollup(store: store, isStopped: false)
+        #expect(rollup?.root == .working)
+        #expect(rollup?.headline == .needsApproval)
+        #expect(rollup?.count(.working) == 1) // the child, not the root
+        #expect(rollup?.count(.needsApproval) == 1)
+        #expect(rollup?.count(.done) == 0)
+        #expect(rollup?.count(.idle) == 1)
+        #expect(rollup?.rootChipText == "Root: Working")
+        #expect(rollup?.summaryText.contains("needs approval") == true)
 
         let empty = SSHTerminalProgramStatusStore()
-        #expect(SSHTerminalProgramStatusPresentation.rollup(store: empty, isStopped: false, seenAt: nil) == nil)
+        #expect(SSHTerminalProgramStatusPresentation.rollup(store: empty, isStopped: false) == nil)
     }
 
     @Test func aBlockedBannerKeepsRemoteTextOutOfTheHostLine() {
@@ -136,14 +115,14 @@ struct SSHTerminalProgramStatusPresentationTests {
             GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED, id: "other", kind: GHOSTTY_PROGRAM_STATUS_KIND_QUESTION,
             message: "What next?"
         ))
-        let notice = SSHTerminalProgramStatusPresentation.blockedNotice(store: store, isStopped: false, seenAt: nil)
+        let notice = SSHTerminalProgramStatusPresentation.blockedNotice(store: store, isStopped: false)
         #expect(notice?.kind == .needsApproval)
         #expect(notice?.recordID == "")
         #expect(notice?.remoteText == "from Oppi Allow running rg?")
         #expect(notice?.remoteText.contains("\u{202e}") == false)
         #expect(SSHTerminalProgramStatusPresentation.hostCaption("evil\u{2028}from Oppi") == "evil from Oppi")
         #expect(SSHTerminalProgramStatusPresentation.blockedNotice(
-            store: SSHTerminalProgramStatusStore(), isStopped: false, seenAt: nil
+            store: SSHTerminalProgramStatusStore(), isStopped: false
         ) == nil)
     }
 
@@ -158,7 +137,7 @@ struct SSHTerminalProgramStatusPresentationTests {
             store.apply(report, at: clock)
         }
         func notice() -> SSHTerminalBlockedNotice? {
-            SSHTerminalProgramStatusPresentation.blockedNotice(store: store, isStopped: false, seenAt: nil)
+            SSHTerminalProgramStatusPresentation.blockedNotice(store: store, isStopped: false)
         }
         func key() -> SSHTerminalNotice.Key? { notice().map { SSHTerminalNotice.blocked($0).key } }
         func asking(_ message: String, kind: GhosttyProgramStatusKind = GHOSTTY_PROGRAM_STATUS_KIND_PERMISSION)

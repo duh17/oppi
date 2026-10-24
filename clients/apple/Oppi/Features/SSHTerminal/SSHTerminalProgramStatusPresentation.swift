@@ -7,11 +7,6 @@ import GhosttyVt
 /// a terminal's record tree up with `SessionStatusRollup`. Terminal record ids
 /// are not session ids and never reach `SessionStore`.
 enum SSHTerminalProgramStatusPresentation {
-    /// Every record is seen: a terminal lives only while its screen is shown
-    /// (leaving it closes the connection), the same rule as an open session
-    /// chat, which reports distant future from `SessionStore.seenAt`.
-    static let seenAt = Date.distantFuture
-
     static func programState(_ state: GhosttyProgramStatusState) -> ProgramStatusState? {
         switch state {
         case GHOSTTY_PROGRAM_STATUS_STATE_IDLE: .idle
@@ -35,36 +30,31 @@ enum SSHTerminalProgramStatusPresentation {
         }
     }
 
+    /// A terminal's records are never unseen, so Done and Error settle to Idle
+    /// (Stopped once the connection ended) with no green or red phase. The
+    /// terminal on screen already shows them, and the switcher and attention
+    /// surfaces read only blocked states.
     static func status(
         state: GhosttyProgramStatusState,
         kind: GhosttyProgramStatusKind = GHOSTTY_PROGRAM_STATUS_KIND_NONE,
-        since: Date,
-        isStopped: Bool = false,
-        seenAt: Date?
+        isStopped: Bool = false
     ) -> SessionStatusKind? {
         guard let programState = programState(state) else { return nil }
         let programKind = programState == .blocked ? programKind(kind) : nil
         return SessionStatusKind.resolve(
             state: programState,
             kind: programKind,
-            since: since,
+            since: .distantPast, // with `seenAt` below: never newer than seen
             isStopped: isStopped,
-            seenAt: seenAt
+            seenAt: .distantFuture
         )
     }
 
     static func status(
         of record: SSHTerminalProgramStatusStore.Record,
-        isStopped: Bool = false,
-        seenAt: Date?
+        isStopped: Bool = false
     ) -> SessionStatusKind? {
-        status(
-            state: record.state,
-            kind: record.kind,
-            since: record.since,
-            isStopped: isStopped,
-            seenAt: seenAt
-        )
+        status(state: record.state, kind: record.kind, isStopped: isStopped)
     }
 
     /// Nil when no program has reported. The root record is the roll-up root;
@@ -72,11 +62,10 @@ enum SSHTerminalProgramStatusPresentation {
     @MainActor
     static func rollup(
         store: SSHTerminalProgramStatusStore,
-        isStopped: Bool,
-        seenAt: Date?
+        isStopped: Bool
     ) -> SessionStatusRollup? {
-        let root = store.root.flatMap { status(of: $0, isStopped: isStopped, seenAt: seenAt) }
-        let others = store.subtree().compactMap { status(of: $0, isStopped: isStopped, seenAt: seenAt) }
+        let root = store.root.flatMap { status(of: $0, isStopped: isStopped) }
+        let others = store.subtree().compactMap { status(of: $0, isStopped: isStopped) }
         guard root != nil || !others.isEmpty else { return nil }
         return SessionStatusRollup(root: root, others: others)
     }
@@ -86,11 +75,10 @@ enum SSHTerminalProgramStatusPresentation {
     @MainActor
     static func blockedNotice(
         store: SSHTerminalProgramStatusStore,
-        isStopped: Bool,
-        seenAt: Date?
+        isStopped: Bool
     ) -> SSHTerminalBlockedNotice? {
         let blocked = store.records.values.compactMap { record -> (SSHTerminalProgramStatusStore.Record, SessionStatusKind)? in
-            guard let kind = status(of: record, isStopped: isStopped, seenAt: seenAt), kind.isBlocked else { return nil }
+            guard let kind = status(of: record, isStopped: isStopped), kind.isBlocked else { return nil }
             return (record, kind)
         }
         guard !blocked.isEmpty else { return nil }

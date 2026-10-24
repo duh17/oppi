@@ -160,7 +160,7 @@ struct SSHTerminalAttention {
     ) -> [SSHTerminalNotice] {
         var candidates = [SSHTerminalNotice]()
         if let blocked = SSHTerminalProgramStatusPresentation.blockedNotice(
-            store: programStatus, isStopped: isStopped, seenAt: SSHTerminalProgramStatusPresentation.seenAt
+            store: programStatus, isStopped: isStopped
         ) {
             candidates.append(.blocked(blocked))
         }
