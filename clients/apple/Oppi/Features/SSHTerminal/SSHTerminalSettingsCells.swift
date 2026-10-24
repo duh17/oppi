@@ -257,10 +257,12 @@ final class SSHTerminalHostRowCell: UICollectionViewListCell {
 extension UICellAccessory {
     /// A trailing switch. `identifier` makes it `app.switches[id]` in UI tests.
     /// A disabled switch keeps a row's saved value visible while the row cannot
-    /// be changed.
+    /// be changed. `label` names the switch for VoiceOver and `app.switches[label]`
+    /// where the row's text is not its name.
     static func settingsToggle(
         _ isOn: Bool,
         identifier: String? = nil,
+        label: String? = nil,
         isEnabled: Bool = true,
         label: String? = nil,
         onChange: @escaping (Bool) -> Void

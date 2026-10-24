@@ -197,11 +197,18 @@ struct SettingsSweepScreenshotPreview: View {
     private var content: some View {
         switch page {
         case "workspace-create":
-            RouterPreviewStack(root: root) { WorkspaceCreateView(server: server) }
-                .ignoresSafeArea()
+            RouterPreviewControllerStack(root: root) {
+                WorkspaceCreateViewController(root: root, server: server)
+            }
+            .ignoresSafeArea()
         case "workspace-create-configure":
-            RouterPreviewStack(root: root) {
-                WorkspaceCreateView(server: server, prefillName: "oppi", prefillPath: "~/workspace/oppi")
+            RouterPreviewControllerStack(root: root) {
+                WorkspaceCreateViewController(
+                    root: root,
+                    server: server,
+                    prefillName: "oppi",
+                    prefillPath: "~/workspace/oppi"
+                )
             }
             .ignoresSafeArea()
         case "onboarding-add-server", "onboarding-tailscale":

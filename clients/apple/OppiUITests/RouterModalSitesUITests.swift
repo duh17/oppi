@@ -270,6 +270,27 @@ final class RouterModalSitesUITests: XCTestCase {
         pickIconAndSave(row: app.buttons["workspace.create.icon"])
     }
 
+    func testWorkspaceCreateWithOppiOpensTheGuidedComposerAboveTheForm() {
+        launch(screen: "settings-sweep", environment: ["SCREENSHOT_SWEEP_PAGE": "workspace-create"])
+        let row = app.buttons["workspace.create.createWithOppi"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "Create with Oppi row did not appear")
+        row.tap()
+        XCTAssertTrue(
+            app.navigationBars["Create Workspace"].waitForExistence(timeout: 5),
+            "Create with Oppi must open the guided composer titled Create Workspace"
+        )
+        attachScreenshot("workspace-create-guided-composer")
+
+        // Cancel closes the guided sheet and leaves the form under it.
+        cancelButton.tap()
+        XCTAssertTrue(
+            waitForDisappearance(of: app.navigationBars["Create Workspace"]),
+            "Cancel must close the guided composer"
+        )
+        XCTAssertTrue(app.buttons["workspace.create.manual"].waitForExistence(timeout: 5), "The create form must stay open")
+        assertRunning()
+    }
+
     func testWorkspaceDetailsIconPickerSavesIntoTheDraft() {
         launch(screen: "workspace-settings", environment: ["SCREENSHOT_WORKSPACE_PAGE": "details"])
         pickIconAndSave(row: app.buttons["workspace.edit.icon"])

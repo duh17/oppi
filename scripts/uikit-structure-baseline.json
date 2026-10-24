@@ -412,9 +412,6 @@
     "clients/apple/Oppi/Features/Workspaces/WorkspaceComponents.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceDetailsPage.swift": {
       "import SwiftUI": 1
     },

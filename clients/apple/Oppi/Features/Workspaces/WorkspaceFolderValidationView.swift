@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// What the server said about a typed workspace folder: checking, missing with
-/// a confirm-before-create flow, invalid, or valid. Shared by New Workspace and
-/// Workspace Details so both validate and create folders the same way.
+/// a confirm-before-create flow, invalid, or valid. Workspace Details draws it;
+/// New Workspace draws the same `WorkspaceFolderCheck` states in UIKit
+/// (`WorkspaceFolderCheckCell`), so both validate and create folders the same way.
 ///
 /// The caller owns the check and the create call; this view only presents them.
 struct WorkspaceFolderValidationView: View {
@@ -20,39 +21,39 @@ struct WorkspaceFolderValidationView: View {
     let identifierPrefix: String
     let confirmCreate: () -> Void
 
-    private var isMissing: Bool {
-        guard let status else { return false }
-        return status.path == folder && status.issue == "missing"
-    }
-
-    private var isValid: Bool {
-        guard let status else { return false }
-        return status.path == folder && status.isValidWorkspaceDirectory
+    private var check: WorkspaceFolderCheck {
+        WorkspaceFolderCheck(
+            folder: folder,
+            status: status,
+            validationMessage: validationMessage,
+            isChecking: isChecking
+        )
     }
 
     /// Whether there is anything to show. Callers emit this view only then, so
     /// an empty body never leaves a blank row in a list section.
     var hasContent: Bool {
-        !folder.isEmpty && (isChecking || isMissing || validationMessage != nil || isValid)
+        check != .none
     }
 
     var body: some View {
-        if !folder.isEmpty {
-            if isChecking {
-                Label("Checking folder\u{2026}", systemImage: "clock")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-            } else if isMissing {
-                missingFolder
-            } else if let validationMessage {
-                Label(validationMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.themeRed)
-            } else if isValid {
-                Label("Folder exists", systemImage: "checkmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.themeGreen)
-            }
+        switch check {
+        case .none:
+            EmptyView()
+        case .checking:
+            Label("Checking folder\u{2026}", systemImage: "clock")
+                .font(.caption)
+                .foregroundStyle(.themeComment)
+        case .missing:
+            missingFolder
+        case .invalid(let message):
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.themeRed)
+        case .valid:
+            Label("Folder exists", systemImage: "checkmark.circle")
+                .font(.caption)
+                .foregroundStyle(.themeGreen)
         }
     }
 

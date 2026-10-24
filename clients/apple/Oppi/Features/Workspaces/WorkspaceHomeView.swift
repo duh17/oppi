@@ -246,24 +246,34 @@ struct WorkspaceCreateSheetContext: Identifiable {
         ].joined(separator: "|")
     }
 
-    /// Presents `WorkspaceCreateView` in a sheet with a navigation bar, from a
+    /// The create screen for this context, to present in a sheet with a
+    /// navigation bar. `onCreate` takes the workspace it created.
+    @MainActor
+    func makeScreen(
+        root: AppRootEnvironment,
+        onCreate: ((Workspace) -> Void)? = nil
+    ) -> WorkspaceCreateViewController {
+        WorkspaceCreateViewController(
+            root: root,
+            server: server,
+            presentation: presentation,
+            prefillName: prefillName,
+            prefillPath: prefillPath,
+            onCreate: onCreate
+        )
+    }
+
+    /// Presents the create screen in a sheet with a navigation bar, from a
     /// UIKit screen (the workspace sidebar). `onDismiss` runs after any dismissal.
     @MainActor
     func present(root: AppRootEnvironment, from presenter: UIViewController, onDismiss: @escaping () -> Void) {
-        let context = self
         Router.present(
-            root: root,
+            makeScreen(root: root),
             presentation: .sheet.inNavigation(),
             from: presenter,
+            theme: root.themeStore,
             onDismiss: onDismiss
-        ) {
-            WorkspaceCreateView(
-                server: context.server,
-                presentation: context.presentation,
-                prefillName: context.prefillName,
-                prefillPath: context.prefillPath
-            )
-        }
+        )
     }
 }
 

@@ -81,6 +81,27 @@ struct WorkspaceIconPickerView: View {
         }
     }
 
+    /// The picker as the router's root screen over New Workspace's form: a
+    /// pick lands in the model, and a Genmoji uploads to the model's server.
+    static func screen(editing model: WorkspaceCreateModel) -> RouterScreen {
+        .hosted {
+            AnyView(WorkspaceIconPickerView(
+                icon: Binding(get: { model.icon }, set: { model.icon = $0 }),
+                uploadOperation: { data, description in
+                    try await model.uploadGenmoji(data: data, contentDescription: description)
+                }
+            ))
+        }
+    }
+
+    /// How the router presents the picker for `traits`' size classes.
+    static func presentation(_ traits: UITraitCollection) -> ModalPresentation {
+        .iconPicker(
+            horizontalSizeClass: UserInterfaceSizeClass(traits.horizontalSizeClass),
+            verticalSizeClass: UserInterfaceSizeClass(traits.verticalSizeClass)
+        )
+    }
+
     static func description(_ value: IconChoice) -> String {
         switch AgentIconContent.resolve(value) {
         case .text(let emoji): return "Emoji \(emoji)"

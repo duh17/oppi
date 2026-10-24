@@ -79,8 +79,11 @@ struct WorkspaceListView: View {
                 .accessibilityIdentifier("server.workspace.create")
             }
         }
-        .routerModal(isPresented: $showCreate, presentation: .sheet.inNavigation()) {
-            WorkspaceCreateView(server: server)
+        .routerScreenModal(isPresented: $showCreate, presentation: .sheet.inNavigation()) {
+            .controller {
+                guard let root else { preconditionFailure("WorkspaceListView needs the app root above it") }
+                return WorkspaceCreateViewController(root: root, server: server)
+            }
         }
         .refreshable {
             guard await coordinator.apiClientReady(for: server.id) != nil,

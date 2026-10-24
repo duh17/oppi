@@ -353,6 +353,8 @@ private struct WorkspaceUtilityDestinationView: View {
 /// Workspace creation the shell starts by itself: an `oppi://workspace` link,
 /// or the guided first workspace after pairing a server that has none.
 struct WorkspaceCreationIntakeModifier: ViewModifier {
+    let root: AppRootEnvironment
+
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
@@ -378,22 +380,19 @@ struct WorkspaceCreationIntakeModifier: ViewModifier {
             .routerModal(
                 item: $createSheetContext,
                 presentation: .sheet.inNavigation(),
-                onDismiss: handleCreateSheetDismissed
-            ) { context in
-                WorkspaceCreateView(
-                    server: context.server,
-                    presentation: context.presentation,
-                    prefillName: context.prefillName,
-                    prefillPath: context.prefillPath,
-                    onCreate: { workspace in
-                        guard context.openWorkspaceAfterCreate else { return }
-                        pendingCreatedWorkspaceTarget = WorkspaceNavTarget(
-                            serverId: context.server.id,
-                            workspace: workspace
-                        )
+                onDismiss: handleCreateSheetDismissed,
+                screen: { context in
+                    .controller {
+                        context.makeScreen(root: root) { workspace in
+                            guard context.openWorkspaceAfterCreate else { return }
+                            pendingCreatedWorkspaceTarget = WorkspaceNavTarget(
+                                serverId: context.server.id,
+                                workspace: workspace
+                            )
+                        }
                     }
-                )
-            }
+                }
+            )
             .task(id: coordinator.activeServerId) {
                 await processWorkspaceCreationIntake()
             }

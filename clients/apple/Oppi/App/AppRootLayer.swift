@@ -21,7 +21,7 @@ struct AppRootLayer: View {
             .background {
                 // Only the shell starts workspace creation by itself.
                 if navigation.launchPhase == .ready, !navigation.showOnboarding {
-                    Color.clear.modifier(WorkspaceCreationIntakeModifier())
+                    Color.clear.modifier(WorkspaceCreationIntakeModifier(root: root))
                 }
             }
             .modifier(PairingApprovalPromptHost(root: root))
